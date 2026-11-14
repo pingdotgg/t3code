@@ -151,7 +151,9 @@ cannot drag or move threads within it. Your saved order returns when you turn it
 ### Group threads by project (beta)
 
 Turn on **Settings → Labs → Boring sidebar (group by project)** on web and desktop to put active
-threads in a folder for each project. Pinned projects come first. A project with no active
+threads in a folder for each project. Pinned projects come first. To fix the folder order, set
+**Settings → General → Project order** to **Manual** and drag projects into place in **Settings →
+Projects**; agent activity won't move them then. A project with no active
 threads has no folder unless it is pinned or you pick it in the project filter. An archived
 project's folder comes last and shows only while it has active threads. Click a folder to open or
 close it. A closed folder shows how many threads it holds, and a dot when one of them
