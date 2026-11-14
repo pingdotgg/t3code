@@ -5,6 +5,7 @@ import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer";
 import {
   DesktopBrowserCommand,
   DesktopBrowserEvent,
+  PREVIEW_URL_MAX_LENGTH,
   type DesktopBrowserCommand as DesktopBrowserCommandType,
   type PreviewAutomationLoadError,
 } from "@t3tools/contracts";
@@ -133,7 +134,7 @@ const make = Effect.gen(function* () {
           return PubSub.publish(changes, { key, attached: true });
         case "loadFailed":
           loadFailures.set(id, {
-            url: event.url.slice(0, 2048),
+            url: event.url.slice(0, PREVIEW_URL_MAX_LENGTH),
             code: event.code,
             description: event.description,
           });
