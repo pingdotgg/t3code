@@ -1,0 +1,165 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import type { GitCommandError } from "@t3tools/contracts";
+
+import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+
+import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
+
+const withRepository = <A, E>(
+  test: (input: {
+    readonly git: (...args: string[]) => Effect.Effect<string, GitCommandError>;
+    readonly write: (path: string, contents: string) => Effect.Effect<void>;
+    readonly commit: Effect.Effect<void, GitCommandError>;
+    readonly readTemplate: (treeish?: string) => Effect.Effect<Option.Option<string>>;
+  }) => Effect.Effect<A, E>,
+) =>
+  Effect.gen(function* () {
+    const host = yield* SourceControlHost.SourceControlHost;
+    const cwd = yield* Effect.acquireRelease(
+      Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-azure-template-"))),
+      (directory) => Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true })),
+    );
+    const git = (...args: string[]) =>
+      host.git
+        .execute({ operation: "AzureDevOpsTemplate.test", cwd, args })
+        .pipe(Effect.map((result) => result.stdout.trim()));
+    const write = (path: string, contents: string) =>
+      Effect.sync(() => {
+        NodeFS.mkdirSync(NodePath.dirname(NodePath.join(cwd, path)), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(cwd, path), contents);
+      });
+    const commit = Effect.gen(function* () {
+      yield* git("add", "-A");
+      yield* git("commit", "--allow-empty", "-m", "Add pull request templates");
+    });
+    yield* git("init", "--initial-branch=main");
+    yield* git("config", "user.email", "test@example.com");
+    yield* git("config", "user.name", "Test User");
+    yield* git("config", "core.autocrlf", "false");
+    yield* git("remote", "add", "origin", cwd);
+    const provider = yield* AzureDevOpsSourceControlProvider.make.pipe(
+      Effect.provide(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({})),
+    );
+    return yield* test({
+      git,
+      write,
+      commit,
+      readTemplate: (treeish = "main") => provider.readChangeRequestTemplate!({ cwd, treeish }),
+    });
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      TestSourceControlHost.layerWithRealGit({
+        git: { resolvePrimaryRemoteName: () => Effect.succeed("origin") },
+      }),
+    ),
+  );
+
+const publishMain = (git: (...args: string[]) => Effect.Effect<string, GitCommandError>) =>
+  Effect.gen(function* () {
+    yield* git("update-ref", "refs/remotes/origin/main", "main");
+    yield* git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+  });
+
+it.effect("reads the default-branch template whatever branch the pull request targets", () =>
+  withRepository(({ git, write, commit, readTemplate }) =>
+    Effect.gen(function* () {
+      const templatePath = ".azuredevops/pull_request_template.md";
+      yield* write(templatePath, "Default branch template");
+      yield* commit;
+      yield* publishMain(git);
+      yield* git("checkout", "-b", "release");
+      yield* write(templatePath, "Release branch template");
+      yield* commit;
+      yield* write(templatePath, "Uncommitted template");
+
+      assert.deepStrictEqual(
+        yield* readTemplate("release"),
+        Option.some("Default branch template"),
+      );
+    }),
+  ),
+);
+
+// Microsoft searches these locations in order, ignoring case; extension must not override folder.
+it.effect.each([
+  [".AzureDevOps/PULL_REQUEST_TEMPLATE.txt", ".vsts/pull_request_template.md"],
+  [".VSTS/pull_request_template.TXT", "docs/pull_request_template.md"],
+  ["Docs/Pull_Request_Template.txt", "pull_request_template.md"],
+] as const)("prefers %s over %s", ([preferred, fallback]) =>
+  withRepository(({ git, write, commit, readTemplate }) =>
+    Effect.gen(function* () {
+      yield* write(preferred, "Preferred template");
+      yield* write(fallback, "Fallback template");
+      yield* commit;
+      yield* publishMain(git);
+
+      assert.deepStrictEqual(yield* readTemplate(), Option.some("Preferred template"));
+    }),
+  ),
+);
+
+it.effect("ignores missing, blank, symlinked, and nested templates", () =>
+  withRepository(({ git, write, commit, readTemplate }) =>
+    Effect.gen(function* () {
+      yield* commit;
+      yield* publishMain(git);
+      assert.deepStrictEqual(yield* readTemplate(), Option.none());
+
+      yield* write(".azuredevops/pull_request_template.md", " \n\t ");
+      yield* commit;
+      yield* publishMain(git);
+      assert.deepStrictEqual(yield* readTemplate(), Option.none());
+
+      yield* git("rm", "-q", ".azuredevops/pull_request_template.md");
+      yield* write("template.md", "Not a default template");
+      yield* write("docs/nested/pull_request_template.md", "Nested template");
+      yield* commit;
+      // An index mode commits a symlink even on hosts without symlink support.
+      const blob = yield* git("rev-parse", "HEAD:template.md");
+      yield* git(
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        `120000,${blob},.azuredevops/pull_request_template.md`,
+      );
+      yield* git("commit", "-m", "Add a symlinked template");
+      yield* publishMain(git);
+      assert.deepStrictEqual(yield* readTemplate(), Option.none());
+    }),
+  ),
+);
+
+it.effect("bounds template content and marks truncation", () =>
+  withRepository(({ git, write, commit, readTemplate }) =>
+    Effect.gen(function* () {
+      const prefix = "x".repeat(8_000);
+      yield* write("pull_request_template.md", prefix + "EXCLUDED_SUFFIX");
+      yield* commit;
+      yield* publishMain(git);
+
+      assert.deepStrictEqual(yield* readTemplate(), Option.some(prefix + "\n\n[truncated]"));
+    }),
+  ),
+);
+
+it.effect("returns no template when the local remote default branch is unknown", () =>
+  withRepository(({ write, commit, readTemplate }) =>
+    Effect.gen(function* () {
+      yield* write("pull_request_template.md", "Target branch template");
+      yield* commit;
+
+      assert.deepStrictEqual(yield* readTemplate(), Option.none());
+    }),
+  ),
+);

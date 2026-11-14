@@ -1,4 +1,4 @@
-import type { NativeReviewDiffHighlightScheme } from "../diffs/nativeReviewDiffHighlighter";
+import type { HighlightScheme } from "../../lib/highlights";
 
 function hashReviewDiffKey(diff: string | null | undefined): string {
   if (!diff) {
@@ -16,7 +16,7 @@ function hashReviewDiffKey(diff: string | null | undefined): string {
 export function buildNativeReviewTokensResetKey(input: {
   readonly threadKey: string | null;
   readonly sectionId: string | null;
-  readonly scheme: NativeReviewDiffHighlightScheme;
+  readonly scheme: HighlightScheme;
   readonly diff: string | null | undefined;
   readonly fileCount: number;
   readonly rowCount: number;

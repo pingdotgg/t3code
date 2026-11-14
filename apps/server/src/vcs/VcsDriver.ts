@@ -2,13 +2,10 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 
 import type {
-  VcsDriverCapabilities,
   VcsError,
   VcsInitInput,
   VcsListRemotesResult,
   VcsListWorkspaceFilesResult,
-  ReviewDiffPreviewInput,
-  ReviewDiffPreviewResult,
   VcsRepositoryIdentity,
 } from "@t3tools/contracts";
 import { CheckpointRef } from "@t3tools/contracts";
@@ -17,6 +14,8 @@ import * as VcsProcess from "./VcsProcess.ts";
 export interface VcsCaptureCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  /** The checkpoint this one follows, so a turn that switched branches starts where it landed. */
+  readonly previousCheckpointRef?: CheckpointRef;
 }
 
 export interface VcsRestoreCheckpointInput {
@@ -71,11 +70,10 @@ export interface VcsCheckpointOps {
 export class VcsDriver extends Context.Service<
   VcsDriver,
   {
-    readonly capabilities: VcsDriverCapabilities;
     readonly execute: (
       input: Omit<VcsProcess.VcsProcessInput, "command">,
     ) => Effect.Effect<VcsProcess.VcsProcessOutput, VcsError>;
-    readonly checkpoints?: VcsCheckpointOps;
+    readonly checkpoints: VcsCheckpointOps;
     readonly detectRepository: (
       cwd: string,
     ) => Effect.Effect<VcsRepositoryIdentity | null, VcsError>;
@@ -89,8 +87,5 @@ export class VcsDriver extends Context.Service<
       relativePaths: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyArray<string>, VcsError>;
     readonly initRepository: (input: VcsInitInput) => Effect.Effect<void, VcsError>;
-    readonly getDiffPreview?: (
-      input: ReviewDiffPreviewInput,
-    ) => Effect.Effect<ReviewDiffPreviewResult, VcsError>;
   }
 >()("t3/vcs/VcsDriver") {}

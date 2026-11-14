@@ -1,12 +1,13 @@
 import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/contracts";
 
+import { isWebUrl } from "./browser/webUrl";
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
 
 let cachedApi: LocalApi | undefined;
 
-function createBrowserLocalApi(): LocalApi {
+export function createLocalApi(): LocalApi {
   return {
     dialogs: {
       pickFolder: async (options) => {
@@ -27,10 +28,11 @@ function createBrowserLocalApi(): LocalApi {
           return;
         }
 
+        if (!isWebUrl(url)) throw new Error("Unable to open link.");
         window.open(url, "_blank", "noopener,noreferrer");
       },
       openSystemSettings: async (pane) => {
-        if (!window.desktopBridge?.openSystemSettings) {
+        if (!window.desktopBridge) {
           throw new Error("Unable to open System Settings.");
         }
         const opened = await window.desktopBridge.openSystemSettings(pane);
@@ -49,9 +51,7 @@ function createBrowserLocalApi(): LocalApi {
         }
         return showContextMenuFallback(items, position);
       },
-      // A native desktop menu blocks keyboard input and closes on outside
-      // interaction, so nothing to do there; the DOM fallback needs an explicit
-      // dismiss when the state behind it goes away.
+      // Unlike native menus, the DOM fallback needs dismissal when underlying state disappears.
       close: async () => {
         if (!window.desktopBridge) {
           dismissContextMenu();
@@ -73,10 +73,6 @@ function createBrowserLocalApi(): LocalApi {
       },
     },
   };
-}
-
-export function createLocalApi(): LocalApi {
-  return createBrowserLocalApi();
 }
 
 export function readLocalApi(): LocalApi | undefined {
