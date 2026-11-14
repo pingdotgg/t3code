@@ -802,6 +802,74 @@ it.effect("a desktop status answers with the last viewport while the renderer ca
   ).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())), Effect.provide(layer)),
 );
 
+it.effect.each([
+  { name: "an agent navigate", message: null },
+  { name: "a viewer navigate", message: { type: "navigate", url: "http://localhost:5173/next" } },
+  { name: "a viewer Back", message: { type: "history", delta: -1 } },
+  { name: "a viewer Forward", message: { type: "history", delta: 1 } },
+  { name: "a viewer Reload", message: { type: "reload" } },
+  { name: "a viewer hard reload", message: { type: "reload", ignoreCache: true } },
+])("$name stops a page script that never yields before it navigates", ({ message }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      const viewer = message ? yield* browser.attachViewer(viewerInput(tabId, true)) : null;
+      if (viewer) yield* viewer.input({ type: "takeControl" });
+      const { page, sessions } = contexts[0]!;
+      // As in Chrome: the hung renderer answers nothing, and a terminate reaches it only while
+      // no navigation is pending.
+      let stopped = false;
+      const probed = Promise.withResolvers<void>();
+      const navigatedAfterStop: Array<boolean> = [];
+      for (const cdp of sessions) {
+        const send = cdp.send.getMockImplementation()!;
+        cdp.send.mockImplementation((method, input) => {
+          if (
+            method === "Runtime.evaluate" &&
+            (input as { expression: string }).expression === "0"
+          ) {
+            probed.resolve();
+            return new Promise(() => {});
+          }
+          if (method === "Runtime.terminateExecution") stopped = true;
+          if (method === "Page.reload") navigatedAfterStop.push(stopped);
+          return send(method, input);
+        });
+      }
+      const goto = page.goto.getMockImplementation()!;
+      page.goto.mockImplementation(async (next, options) => {
+        navigatedAfterStop.push(stopped);
+        return goto(next, options);
+      });
+      for (const method of ["goBack", "goForward", "reload"] as const) {
+        page[method].mockImplementation(async () => {
+          navigatedAfterStop.push(stopped);
+        });
+      }
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const result = yield* (
+        viewer
+          ? viewer.input(message)
+          : broker.invoke<PreviewAutomationStatus>({
+              scope,
+              tabId,
+              operation: "navigate",
+              input: { url: "http://localhost:5173/next", timeoutMs: 5_000 },
+            })
+      ).pipe(Effect.forkScoped);
+      const probing = yield* Effect.raceFirst(
+        Effect.promise(() => probed.promise).pipe(Effect.as(true)),
+        Fiber.await(result).pipe(Effect.as(false)),
+      );
+      if (probing) yield* Effect.promise(() => vi.advanceTimersByTimeAsync(1_000));
+      yield* Fiber.join(result);
+
+      expect(navigatedAfterStop).toEqual([true]);
+    }),
+  ).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())), Effect.provide(layer)),
+);
+
 it.live("navigate fails when the page never commits within its timeout", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -136,6 +136,7 @@ const PICTURE_IN_PICTURE_JPEG_QUALITY = 80;
 const CAPTURE_PAGE_RETRY_ATTEMPTS = 3;
 const CAPTURE_PAGE_RETRY_DELAY_MS = 120;
 const CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS = 1_000;
+const BUSY_PAGE_PROBE_MS = 1_000;
 const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
 const PICTURE_IN_PICTURE_INITIAL_HEIGHT = 320;
 const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
@@ -2038,6 +2039,28 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  /**
+   * A same-site navigation reuses the renderer, so it never commits while a page script holds it.
+   * Runs before the navigation starts: Chromium does not deliver a terminate once one is pending.
+   */
+  const leaveBusyPage = Effect.fn("PreviewManager.leaveBusyPage")(function* (
+    wc: Electron.WebContents,
+  ) {
+    const control = (yield* SynchronizedRef.get(controlSessionsRef)).get(wc.id);
+    if (!control) return;
+    const answered = yield* Effect.promise(() =>
+      control.debugger.sendCommand("Runtime.evaluate", { expression: "0" }).then(
+        () => undefined,
+        () => undefined,
+      ),
+    ).pipe(Effect.timeoutOption(BUSY_PAGE_PROBE_MS));
+    if (Option.isSome(answered)) return;
+    // Not awaited: a renderer blocked on something other than script may never acknowledge it.
+    yield* Effect.sync(() => {
+      void control.debugger.sendCommand("Runtime.terminateExecution").catch(() => undefined);
+    });
+  });
+
   const navigate = Effect.fn("PreviewManager.navigate")(function* (tabId: string, rawUrl: string) {
     const url = yield* attempt({ operation: "navigate.normalizeUrl", tabId }, () =>
       normalizePreviewUrl(rawUrl),
@@ -2120,6 +2143,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       return;
     }
+    yield* leaveBusyPage(wc);
     if (wc.getURL() === url) {
       yield* attempt({ operation: "navigate.reload", tabId, webContentsId: wc.id }, () =>
         wc.reload(),
@@ -2155,18 +2179,28 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* attempt({ operation, tabId, webContentsId: wc.id }, () => use(wc));
   });
 
+  const leavePage = Effect.fn("PreviewManager.leavePage")(function* (
+    operation: string,
+    tabId: string,
+    use: (wc: Electron.WebContents) => void,
+  ) {
+    const wc = yield* requireWebContents(tabId);
+    yield* leaveBusyPage(wc);
+    yield* attempt({ operation, tabId, webContentsId: wc.id }, () => use(wc));
+  });
+
   const goBack = (tabId: string) =>
-    withWebContents("goBack", tabId, (wc) => {
+    leavePage("goBack", tabId, (wc) => {
       if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
     });
   const goForward = (tabId: string) =>
-    withWebContents("goForward", tabId, (wc) => {
+    leavePage("goForward", tabId, (wc) => {
       if (wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
     });
-  const refresh = (tabId: string) => withWebContents("refresh", tabId, (wc) => wc.reload());
+  const refresh = (tabId: string) => leavePage("refresh", tabId, (wc) => wc.reload());
   const stopLoading = (tabId: string) => withWebContents("stopLoading", tabId, (wc) => wc.stop());
   const hardReload = (tabId: string) =>
-    withWebContents("hardReload", tabId, (wc) => wc.reloadIgnoringCache());
+    leavePage("hardReload", tabId, (wc) => wc.reloadIgnoringCache());
   const findInPage = (
     tabId: string,
     text: string,
