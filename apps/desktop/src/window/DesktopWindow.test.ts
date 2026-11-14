@@ -881,7 +881,7 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("recreates main for Settings when only an auxiliary window survives", () =>
+  it.effect("recreates main for Settings when only an unregistered popup survives", () =>
     Effect.gen(function* () {
       const main = makeFakeBrowserWindow();
       const auxiliary = makeFakeBrowserWindow();
