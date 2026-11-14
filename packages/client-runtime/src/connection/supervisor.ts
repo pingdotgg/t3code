@@ -1281,6 +1281,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     Effect.forkScoped,
   );
   yield* wakeups.changes.pipe(
+    Stream.filter(ConnectionWakeups.reachesConnectionSupervisor),
     Stream.runForEach((reason) =>
       // A long suspension can hide a network change the platform never reported.
       (reason === "network-changed" || reason === "application-active-long"
