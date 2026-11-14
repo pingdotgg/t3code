@@ -6,6 +6,9 @@ import {
   DEFAULT_TERMINAL_ID,
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   retainedTerminalHistory,
+  TERMINAL_SEQUENCE_GROUND,
+  terminalSequenceEnd,
+  terminalSequenceStateAfter,
   TerminalCwdError,
   TerminalCwdNotDirectoryError,
   TerminalCwdNotFoundError,
@@ -888,6 +891,14 @@ interface TerminalHistoryPersistenceCursor {
   readonly fileBytes: number;
 }
 
+function countLineBreaks(data: string): number {
+  let lineBreaks = 0;
+  for (let index = data.indexOf("\n"); index !== -1; index = data.indexOf("\n", index + 1)) {
+    lineBreaks += 1;
+  }
+  return lineBreaks;
+}
+
 export class BoundedTerminalHistory {
   private readonly maxLines: number;
   private readonly maxBytes: number;
@@ -897,6 +908,8 @@ export class BoundedTerminalHistory {
   private lineBreaks = 0;
   // Reading the old string's tail on each append can force chunk concatenation.
   private lastCodeUnit: number | undefined;
+  // The terminal parser's state at the first retained code unit, which is where a replay starts.
+  private sequenceState = TERMINAL_SEQUENCE_GROUND;
   private cachedValue: string | null = "";
   private generation = 0;
   private appendedLength = 0;
@@ -961,10 +974,7 @@ export class BoundedTerminalHistory {
 
   private appendChunk(data: string): void {
     const byteLength = Buffer.byteLength(data);
-    let lineBreaks = 0;
-    for (let index = data.indexOf("\n"); index !== -1; index = data.indexOf("\n", index + 1)) {
-      lineBreaks += 1;
-    }
+    const lineBreaks = countLineBreaks(data);
     const previous = this.chunks.at(-1);
     if (previous && previous.data.length + data.length <= MAX_HISTORY_CHUNK_LENGTH) {
       previous.data += data;
@@ -981,6 +991,7 @@ export class BoundedTerminalHistory {
 
   private discardChunk(): void {
     const first = this.chunks[this.start]!;
+    this.sequenceState = terminalSequenceStateAfter(this.sequenceState, first.data);
     this.byteLength -= first.byteLength;
     this.lineBreaks -= first.lineBreaks;
     this.chunks[this.start++] = undefined;
@@ -992,6 +1003,7 @@ export class BoundedTerminalHistory {
       this.discardChunk();
       return;
     }
+    this.sequenceState = terminalSequenceStateAfter(this.sequenceState, first.data, 0, offset);
     first.data = first.data.slice(offset);
     first.byteLength -= byteLength;
     first.lineBreaks -= lineBreaks;
@@ -1039,6 +1051,12 @@ export class BoundedTerminalHistory {
       }
       this.trimChunk(offset, bytes, lineBreaks);
     }
+    // A cut inside a control sequence would replay the rest of it as text.
+    while (this.sequenceState !== TERMINAL_SEQUENCE_GROUND && this.start < this.chunks.length) {
+      const first = this.chunks[this.start]!;
+      const dropped = first.data.slice(0, terminalSequenceEnd(this.sequenceState, first.data));
+      this.trimChunk(dropped.length, Buffer.byteLength(dropped), countLineBreaks(dropped));
+    }
     if (
       this.start === this.chunks.length ||
       (this.start > 2_048 && this.start * 2 >= this.chunks.length)
@@ -1057,6 +1075,7 @@ export class BoundedTerminalHistory {
     this.byteLength = 0;
     this.lineBreaks = 0;
     this.lastCodeUnit = undefined;
+    this.sequenceState = TERMINAL_SEQUENCE_GROUND;
     this.cachedValue = "";
   }
 
@@ -1842,14 +1861,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
   };
 
-  const legacyHistoryPath = (threadId: string) =>
-    path.join(logsDir, `${legacySafeThreadId(threadId)}.log`);
+  const legacyHistoryName = (threadId: string) => `${legacySafeThreadId(threadId)}.log`;
+  // Legacy names in the current "terminal_" namespace would alias another thread's history,
+  // case-insensitively on some filesystems.
+  const hasLegacyHistoryName = (threadId: string) =>
+    !legacySafeThreadId(threadId).toLowerCase().startsWith("terminal_");
 
   const historyPaths = (threadId: string, terminalId: string) => [
     ...new Set([
       historyPath(threadId, terminalId),
       encodedHistoryPath(threadId, terminalId),
-      ...(terminalId === DEFAULT_TERMINAL_ID ? [legacyHistoryPath(threadId)] : []),
+      ...(terminalId === DEFAULT_TERMINAL_ID && hasLegacyHistoryName(threadId)
+        ? [path.join(logsDir, legacyHistoryName(threadId))]
+        : []),
     ]),
   ];
 
@@ -2176,6 +2200,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const info = yield* file.stat;
     const limit = BigInt(historyByteLimit);
     const offset = info.size > limit ? info.size - limit : 0n;
+    // The tail can start inside a control sequence; only the bytes before it say which.
+    const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+    let sequenceState = TERMINAL_SEQUENCE_GROUND;
+    const skipped = new Uint8Array(Math.min(Number(offset), 64 * 1024));
+    for (let remaining = Number(offset); remaining > 0;) {
+      const read = Number(yield* file.read(skipped.subarray(0, remaining)));
+      if (read === 0) break;
+      remaining -= read;
+      sequenceState = terminalSequenceStateAfter(
+        sequenceState,
+        decoder.decode(skipped.subarray(0, read), { stream: true }),
+      );
+    }
     yield* file.seek(offset, "start");
     const bytes = new Uint8Array(Number(info.size - offset));
     let length = 0;
@@ -2189,8 +2226,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       // A tail read can start inside a UTF-8 code point. Skip its remaining bytes.
       while (start < length && ((bytes[start] ?? 0) & 0xc0) === 0x80) start += 1;
     }
+    sequenceState = terminalSequenceStateAfter(
+      sequenceState,
+      decoder.decode(bytes.subarray(0, start)),
+    );
+    const history = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+      bytes.subarray(start, length),
+    );
     return {
-      history: new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes.subarray(start, length)),
+      history: history.slice(terminalSequenceEnd(sequenceState, history)),
       truncated: offset > 0n,
     };
   });
@@ -2301,7 +2345,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* Effect.forEach(
       entries.filter(
         (name) =>
-          name === `${legacySafeThreadId(threadId)}.log` ||
+          (hasLegacyHistoryName(threadId) && name === legacyHistoryName(threadId)) ||
           threadParts.some((part) => name === `${part}.log` || name.startsWith(`${part}_`)),
       ),
       (name) =>
