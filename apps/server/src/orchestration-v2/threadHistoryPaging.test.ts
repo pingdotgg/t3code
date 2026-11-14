@@ -396,6 +396,38 @@ describe("threadHistoryPaging", () => {
     expect([...older.items, ...first.items].map((row) => row.sourceItemId)).toEqual(
       items.map((row) => row.sourceItemId),
     );
+
+    // A caller that holds only the newest rows gets the same page when it says what it left
+    // out: a user turn, and run 3, whose late notification is then not a new turn.
+    const late = items.with(402, inRun(402, 3, notification("Late")));
+    const cursor = encodeThreadHistoryCursor({
+      snapshotSequence: 1,
+      sourceThreadId: THREAD,
+      sourceItemId: late.at(-1)!.sourceItemId,
+      position: late.length - 1,
+    });
+    const prefix = { hasUserTurn: true, startedRuns: new Set(["run-3"]) };
+    const whole = selectHistoryPageFromCursor({ items: late, cursor, snapshotSequence: 1, policy });
+    expect(whole.items[0]?.sourceItemId).toBe(`item-${11 * 4 + 1}`);
+    expect(
+      selectHistoryPageFromCursor({
+        items: late.slice(22),
+        cursor,
+        snapshotSequence: 1,
+        policy,
+        prefix,
+      }),
+    ).toEqual({ ...whole, oldestScanned: late[45] });
+    // A part that ends above the page reports its first row, so the caller reads further back.
+    expect(
+      selectHistoryPageFromCursor({
+        items: late.slice(60),
+        cursor,
+        snapshotSequence: 1,
+        policy,
+        prefix,
+      }).oldestScanned,
+    ).toBe(late[60]);
   });
 
   it("pages agent-only child transcripts instead of dropping their earlier activity", () => {
@@ -904,39 +936,46 @@ describe("threadHistoryPaging", () => {
     expect(bounded.projection.visibleTurnItems).toEqual(actionable.visibleTurnItems);
   });
 
-  it("keeps agent-only turns visible when checkpoint file lists fill the byte budget", () => {
-    const items = Array.from({ length: 3 }, (_, turn) => {
-      const first = makeRow(turn * 5);
-      const prompt = {
-        ...first,
-        item: {
-          ...first.item,
-          type: "user_message" as const,
-          createdBy: "agent" as const,
-          creationSource: "provider" as const,
-          inputIntent: "turn_start" as const,
-          messageId: MessageId.make(`agent-prompt-${turn}`),
-          text: `Step ${turn}`,
-          attachments: [],
-        },
-      } as OrchestrationV2ProjectedTurnItem;
-      return [prompt, ...Array.from({ length: 4 }, (_, index) => makeRow(turn * 5 + index + 1))];
-    }).flat();
-    const files = Array.from(
-      { length: 15_000 },
-      (_, index) =>
-        `work/ws-${index % 40}/.jj/repo/store/extra/${index.toString(16).padStart(40, "0")}`,
-    );
-    const projection = {
-      ...makeProjection(items),
-      checkpoints: [{ id: "checkpoint-1", files }],
-    } as unknown as ReturnType<typeof makeProjection>;
+  it.each([false, true])(
+    "keeps agent-only turns visible when checkpoint file lists fill the byte budget (stored interrupt request: %s)",
+    (withInterruptRequest) => {
+      const items = Array.from({ length: 3 }, (_, turn) => {
+        const first = makeRow(turn * 5);
+        const prompt = {
+          ...first,
+          item: {
+            ...first.item,
+            type: "user_message" as const,
+            createdBy: "agent" as const,
+            creationSource: "provider" as const,
+            inputIntent: "turn_start" as const,
+            messageId: MessageId.make(`agent-prompt-${turn}`),
+            text: `Step ${turn}`,
+            attachments: [],
+          },
+        } as OrchestrationV2ProjectedTurnItem;
+        return [prompt, ...Array.from({ length: 4 }, (_, index) => makeRow(turn * 5 + index + 1))];
+      }).flat();
+      const files = Array.from(
+        { length: 15_000 },
+        (_, index) =>
+          `work/ws-${index % 40}/.jj/repo/store/extra/${index.toString(16).padStart(40, "0")}`,
+      );
+      const base = makeProjection(items);
+      const projection = {
+        ...base,
+        turnItems: withInterruptRequest
+          ? [interruptItem("old-interrupt-req", "run_interrupt_request", 0), ...base.turnItems]
+          : base.turnItems,
+        checkpoints: [{ id: "checkpoint-1", files }],
+      } as unknown as ReturnType<typeof makeProjection>;
 
-    const bounded = buildBoundedThreadProjection({ projection, snapshotSequence: 1 });
+      const bounded = buildBoundedThreadProjection({ projection, snapshotSequence: 1 });
 
-    expect(bounded.projection.visibleTurnItems).toHaveLength(items.length);
-    expect(bounded.hasMoreHistory).toBe(false);
-  });
+      expect(bounded.projection.visibleTurnItems).toHaveLength(items.length);
+      expect(bounded.hasMoreHistory).toBe(false);
+    },
+  );
 
   it("keeps paged historical plan detail in the turn item and only status in its artifact", () => {
     const detail = "Implement the historical plan exactly.\n".repeat(1_000);
