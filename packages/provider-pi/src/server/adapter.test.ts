@@ -3232,6 +3232,118 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("shows the members of an async pi-subagents workflow as running subagents", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      // Frames as pi-subagents 0.88.1 sends them for an async `runs.all([alpha, beta])` workflow.
+      const step = (key: string, state: string) => ({
+        id: key,
+        kind: "step",
+        label: key,
+        state,
+        startedAt: 1_000,
+        updatedAt: 2_000,
+        activity: { currentTool: "bash", turnCount: 1, toolCount: 1 },
+        agent: "scout",
+        model: "anthropic/claude-haiku-5-5",
+      });
+      const emitSnapshot = (state: string, alpha: string, beta: string) =>
+        fake.emit({
+          type: "extension_ui_request",
+          id: `widget-${state}`,
+          method: "setWidget",
+          widgetKey: "subagent-async",
+          widgetLines: [
+            `PI_SUBAGENT_ASYNC_JSON:${JSON.stringify({
+              kind: "pi-subagents.async-status-snapshot",
+              version: 1,
+              generatedAt: 2_000,
+              runs: [
+                {
+                  id: "wf-1",
+                  kind: "workflow",
+                  label: "scout, scout",
+                  state,
+                  startedAt: 1_000,
+                  updatedAt: 2_000,
+                  children: [step("alpha", alpha), step("beta", beta)],
+                },
+              ],
+            })}`,
+          ],
+        });
+      const collect = (marker: string) =>
+        Effect.gen(function* () {
+          yield* fake.emit({
+            type: "tool_execution_end",
+            toolCallId: marker,
+            toolName: marker,
+            result: { content: [{ type: "text", text: "after" }] },
+          });
+          const statuses = new Map<string, string>();
+          const pending: Array<boolean> = [];
+          while (true) {
+            const event = yield* takeEvent(
+              (event) =>
+                event.type === "subagent.updated" ||
+                event.type === "background_work.updated" ||
+                (event.type === "turn_item.updated" &&
+                  event.turnItem.type === "dynamic_tool" &&
+                  event.turnItem.toolName === marker),
+            );
+            if (event.type === "background_work.updated") pending.push(event.pending);
+            else if (event.type === "subagent.updated")
+              statuses.set(event.subagent.id, event.subagent.status);
+            else break;
+          }
+          return { statuses: [...statuses.values()].toSorted(), pending };
+        });
+      // The launch snapshot precedes the tool result that names the run.
+      yield* emitSnapshot("running", "running", "running");
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_wf",
+        toolName: "subagent",
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "Async workflow started: wf-1" }],
+          details: {
+            mode: "workflow",
+            runId: "wf-1",
+            asyncId: "wf-1",
+            results: [],
+            workflowChildren: {
+              version: 1,
+              parentToolCallId: "call_wf",
+              workflowRunId: "wf-1",
+              inventoryComplete: false,
+              workflowState: "running",
+              children: [],
+            },
+          },
+        },
+      });
+      assert.deepEqual(yield* collect("marker-1"), {
+        statuses: ["running", "running"],
+        pending: [true],
+      });
+      yield* emitSnapshot("failed", "complete", "failed");
+      assert.deepEqual(yield* collect("marker-2"), {
+        statuses: ["completed", "failed"],
+        pending: [false],
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("persists edit patches and write content on file change items", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
