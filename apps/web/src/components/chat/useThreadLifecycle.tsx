@@ -33,6 +33,7 @@ import {
   type BackgroundWorkStopRequest,
   isBackgroundWorkStopPending,
 } from "@t3tools/client-runtime/state/thread-execution";
+import { useClientSettings } from "../../hooks/useSettings";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../../hooks/useThreadActions";
 import { settleAndAdvance } from "../../settleAndAdvance";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
@@ -225,12 +226,15 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     activeThreadShell?.lastVisitedAt,
     activeThreadLocalVisitedAt,
   );
-  const activeThreadWokeVisible = isThreadWokeUnseen({
-    wokeAt: activeThreadWokeAt,
-    settled: activeThreadShell?.settledOverride === "settled",
-    lastVisitedAt: activeThreadLastVisitedAt,
-    latestRunCompletedAt: activeLatestRun?.completedAt ?? null,
-  });
+  const wokeIndicatorOff = useClientSettings((settings) => settings.sidebarWokeIndicator) === "off";
+  const activeThreadWokeVisible =
+    !wokeIndicatorOff &&
+    isThreadWokeUnseen({
+      wokeAt: activeThreadWokeAt,
+      settled: activeThreadShell?.settledOverride === "settled",
+      lastVisitedAt: activeThreadLastVisitedAt,
+      latestRunCompletedAt: activeLatestRun?.completedAt ?? null,
+    });
   const activeThreadSettled =
     serverConfigLoaded && activeThreadShell?.settledOverride === "settled";
   const unsettleThreadMutation = useOrchestrationCommand(threadEnvironment.unsettle, {

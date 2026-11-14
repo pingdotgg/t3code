@@ -24,6 +24,7 @@ import {
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
   ScreenReaderAnnouncements,
+  SidebarWokeIndicator,
   ToolCallVisibility,
 } from "@t3tools/contracts/settings";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
@@ -143,6 +144,13 @@ const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string>
   manual: msg("Manual"),
 };
 const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
+
+const SIDEBAR_WOKE_INDICATOR_LABELS: Record<SidebarWokeIndicator, string> = {
+  label: "Icon and label",
+  icon: "Icon only",
+  off: "Off",
+};
+const isSidebarWokeIndicator = Schema.is(SidebarWokeIndicator);
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: msg("System default"),
@@ -496,6 +504,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.sidebarWokeIndicator !== DEFAULT_UNIFIED_SETTINGS.sidebarWokeIndicator
+      ? ["Woke indicator"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -677,6 +688,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarWokeIndicator: DEFAULT_UNIFIED_SETTINGS.sidebarWokeIndicator,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -928,6 +940,45 @@ export function GeneralSettingsPanel() {
               }
               aria-label={gt("Working section")}
             />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("woke-indicator")}
+          description="How the sidebar marks a thread that woke from snooze. Off also hides the Woke from snooze line in the open thread."
+          resetAction={
+            settings.sidebarWokeIndicator !== DEFAULT_UNIFIED_SETTINGS.sidebarWokeIndicator ? (
+              <SettingResetButton
+                label="woke indicator"
+                onClick={() =>
+                  updateSettings({
+                    sidebarWokeIndicator: DEFAULT_UNIFIED_SETTINGS.sidebarWokeIndicator,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarWokeIndicator}
+              onValueChange={(value) => {
+                if (isSidebarWokeIndicator(value)) {
+                  updateSettings({ sidebarWokeIndicator: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Woke indicator">
+                <SelectValue>
+                  {SIDEBAR_WOKE_INDICATOR_LABELS[settings.sidebarWokeIndicator]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {SidebarWokeIndicator.literals.map((indicator) => (
+                  <SelectItem hideIndicator key={indicator} value={indicator}>
+                    {SIDEBAR_WOKE_INDICATOR_LABELS[indicator]}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
       </SettingsSection>
