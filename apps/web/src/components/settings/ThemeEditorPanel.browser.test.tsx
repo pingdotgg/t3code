@@ -50,7 +50,7 @@ function pointerAt(target: HTMLElement, type: string, xFraction: number) {
 
 async function renderPanel(appContent?: ReactNode) {
   await page.viewport(1280, 900);
-  const stack = new AsyncDisposableStack();
+  await using stack = new AsyncDisposableStack();
   // Synthetic pointer ids are not active pointers, so the browser would reject capture.
   stack.use(vi.spyOn(HTMLElement.prototype, "setPointerCapture").mockImplementation(() => {}));
   // Tailwind is not loaded here; give the panel its fixed, card-sized box.
@@ -74,9 +74,10 @@ async function renderPanel(appContent?: ReactNode) {
   );
   const panel = screen.getByRole("dialog", { name: "Create theme" });
   await expect.element(panel).toBeVisible();
+  const owned = stack.move();
   return {
     panel: panel.element() as HTMLElement,
-    [Symbol.asyncDispose]: () => stack.disposeAsync(),
+    [Symbol.asyncDispose]: () => owned.disposeAsync(),
   };
 }
 
