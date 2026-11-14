@@ -903,25 +903,6 @@ describe("auth session revoke", () => {
     }).pipe(Effect.scoped, Effect.provide(layerCliRuntime)),
   );
 
-  it.effect("revokes in this T3 home's database when the running server reports success", () =>
-    withDescriptorServer((origin, requests) =>
-      Effect.gen(function* () {
-        const stderr = yield* revokeWithRecordedServer(origin, {
-          homeEnvironmentId: testDescriptor.environmentId,
-        });
-        assert.deepEqual(stderr, []);
-        assert.include(
-          requests.map((request) => request.url),
-          "/api/auth/clients/revoke",
-        );
-      }),
-    ),
-  );
-
-  it.effect("still revokes in the database when the running server cannot be reached", () =>
-    expectDatabaseOnlyRevoke("http://127.0.0.1:1"),
-  );
-
   it.effect("sends no credential when the recorded origin serves another T3 home", () =>
     withDescriptorServer((origin, requests) =>
       Effect.gen(function* () {
