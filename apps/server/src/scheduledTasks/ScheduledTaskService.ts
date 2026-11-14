@@ -1400,6 +1400,14 @@ export const layer = Layer.effect(
           input.id === undefined ? {} : { taskId: input.id },
         );
       }
+      // A sandbox workspace belongs to a fleet worker; a scheduled launch
+      // would run in the project root instead, so refuse it at save time.
+      if (input.workspaceStrategy.type === "sandbox") {
+        return yield* taskError(
+          "A sandbox workspace runs in a fleet worker, so delegate the work with isolation 'openshell-auto' instead of scheduling it here.",
+          input.id === undefined ? {} : { taskId: input.id },
+        );
+      }
       const now = yield* localNow;
       const uuid =
         input.commandId === undefined

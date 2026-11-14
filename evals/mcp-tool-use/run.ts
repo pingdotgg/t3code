@@ -38,6 +38,7 @@ import * as McpSchema from "effect/ai/McpSchema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
+import * as OpenShellFleetService from "../../apps/server/src/environment/OpenShellFleetService.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
 import * as Contracts from "@t3tools/contracts";
@@ -2763,7 +2764,12 @@ const main = Effect.gen(function* () {
 if (import.meta.main) {
   main.pipe(
     Effect.provide(
-      Layer.mergeAll(NodeServices.layer, PlatformNodeCrypto.layer, FetchHttpClient.layer),
+      Layer.mergeAll(
+        NodeServices.layer,
+        PlatformNodeCrypto.layer,
+        FetchHttpClient.layer,
+        Layer.mock(OpenShellFleetService.OpenShellFleetService)({}),
+      ),
     ),
     NodeRuntime.runMain,
   );

@@ -1,4 +1,5 @@
 import { OrchestrationMessageContext } from "./composerContext.ts";
+import { OpenShellWorkerClass } from "./openshellGateway.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -714,6 +715,13 @@ export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
     baseRef: TrimmedNonEmptyString,
     branch: Schema.optional(TrimmedNonEmptyString),
     startFromOrigin: Schema.optional(Schema.Boolean),
+  }),
+  Schema.Struct({
+    /** Reserved wire member: no launch path provisions a sandbox yet; launches
+     * refuse it and sandbox work runs through `delegate_task` (spec section 6.3). */
+    type: Schema.Literal("sandbox"),
+    /** Persistent workers stay after the thread settles; ephemeral ones drain and release. */
+    workerClass: Schema.optional(OpenShellWorkerClass),
   }),
 ]);
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
@@ -3858,6 +3866,12 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   threadId: Schema.optional(ThreadId),
   reuseExistingThread: Schema.optional(Schema.Boolean),
   projectId: ProjectId,
+  /**
+   * Launch target; only the local environment is accepted here. A foreign
+   * `environmentId` and `workspaceStrategy: "sandbox"` are refused with a hint
+   * to use `delegate_task`, which runs the child remotely.
+   */
+  environmentId: Schema.optional(EnvironmentId),
   title: TrimmedNonEmptyString,
   generateTitle: Schema.optional(Schema.Boolean),
   modelSelection: ModelSelection,

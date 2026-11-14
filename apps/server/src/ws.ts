@@ -2143,6 +2143,20 @@ export const layerWsRpc = (
             "orchestration_v2.project_id": input.projectId,
           }).pipe(
             Effect.andThen(
+              Effect.flatMap(serverEnvironment.getEnvironmentId, (selfId) =>
+                input.environmentId === undefined || input.environmentId === selfId
+                  ? Effect.void
+                  : Effect.fail(
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message:
+                          "A thread launches in this environment. To run work in another environment, use delegate_task with target.environmentId; its result arrives when the task settles.",
+                      }),
+                    ),
+              ),
+            ),
+            Effect.andThen(
               startup
                 .enqueueCommand(
                   threadLaunch

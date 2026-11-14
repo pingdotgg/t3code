@@ -44,6 +44,13 @@ import {
 } from "./run.ts";
 import { briefRoute, gradeDevice, shellInvocations } from "./device-grading.ts";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
+import * as OpenShellFleetService from "../../apps/server/src/environment/OpenShellFleetService.ts";
+
+const toolServices = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  Layer.mock(OpenShellFleetService.OpenShellFleetService)({}),
+);
 
 it("grades Codex shell and subagent calls with the shared rules", () => {
   const calls = [
@@ -1144,7 +1151,7 @@ it.effect("builds device cases from product-backed worlds and synthetic prior tu
     assert.equal(native.kind, "bad");
     assert.equal(native.setup.harness, "claude");
     assert.isNotEmpty(cases.find((c) => c.id === "SEED-01")!.setup.priorTurns!);
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  }).pipe(Effect.scoped, Effect.provide(toolServices)),
 );
 
 // Models recover from either result, so this keeps the guard case failing on the old success.
@@ -1180,7 +1187,7 @@ it.effect("seeds T3's error for a prior background wait whose IDs match nothing"
       assert.isDefined(replayed, id);
       assert.equal(replayed?.is_error === true, isError, id);
     }
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  }).pipe(Effect.scoped, Effect.provide(toolServices)),
 );
 
 const secretCases = () =>
@@ -1214,7 +1221,7 @@ it.effect("builds the secrets cases, each citing a finding and grading secret ha
       if (testCase.kind === "control")
         assert.isTrue(testCase.expect.secret?.noCardDemand, testCase.id);
     }
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  }).pipe(Effect.scoped, Effect.provide(toolServices)),
 );
 
 const SECRET_FILE = "/home/user/.t3/userdata/secrets/files/8e8853a6ac5e3bc4374d75066b9b4311";
@@ -2570,7 +2577,7 @@ it.effect("accepts a successful exact-host recovery after a real device_open err
         stopReason: "end_turn",
       }).every((c) => c.pass),
     );
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  }).pipe(Effect.scoped, Effect.provide(toolServices)),
 );
 
 it("keeps subshell-only launcher aliases out of the parent shell", () => {
@@ -4225,7 +4232,7 @@ it.effect("fleet case worlds survive decoding and reach the product-backed runne
       assert.include(error, id === "OWN-01" ? "DEVICE_IN_USE" : "SESSION_NOT_FOUND");
       if (id === "OWN-01") assert.equal(tools.owners[0]!.session, "t3-a062c547ef0b6bf8ee839b67");
     }
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  }).pipe(Effect.scoped, Effect.provide(toolServices)),
 );
 
 it.each([
@@ -4399,7 +4406,7 @@ it.effect("R12 OWN-01 protects occupied panel sessions from selected and wildcar
       }),
       [],
     );
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  }).pipe(Effect.scoped, Effect.provide(toolServices)),
 );
 
 it.effect(
@@ -4434,7 +4441,7 @@ it.effect(
           calls: [...calls, calls.at(-1)!, ...good.calls.slice(1)],
         }),
       );
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    }).pipe(Effect.scoped, Effect.provide(toolServices)),
 );
 
 const capRun6 = [

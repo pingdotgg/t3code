@@ -937,6 +937,50 @@ it.effect("checks a task's destination thread only when the destination changes"
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("refuses to schedule a sandbox workspace", () =>
+  Effect.gen(function* () {
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadShell: () => Effect.succeed(null),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({
+            consume: () => Effect.succeed("secret"),
+          }),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const refused = yield* service
+        .upsert({
+          title: "Run in a worker",
+          prompt: "Check progress",
+          enabled: true,
+          schedule: { type: "interval", everyMs: 60_000 },
+          projectId: ProjectId.make("project:test"),
+          threadId: null,
+          workspaceStrategy: { type: "sandbox" },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        })
+        .pipe(Effect.flip);
+      assert.match(refused.message, /isolation 'openshell-auto'/);
+      assert.lengthOf((yield* service.list()).tasks, 0);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect("a run interrupted right after it reserves the task does not block the next run", () =>
   Effect.gen(function* () {
     const launches = yield* Ref.make(0);

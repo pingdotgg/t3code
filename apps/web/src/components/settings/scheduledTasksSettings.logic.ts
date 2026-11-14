@@ -90,7 +90,7 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
 }
 
 export type ScheduleMode = "fixed" | "once" | "interval" | "webhook";
-export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
+export type WorkspaceMode = "root" | "worktree" | "existing_worktree" | "sandbox";
 
 export interface DraftState {
   readonly editingId: string | null;
@@ -109,6 +109,8 @@ export interface DraftState {
   readonly threadId: string;
   readonly threadMode: ScheduledTaskThreadMode;
   readonly workspaceMode: WorkspaceMode;
+  /** The stored task runs in a fleet worker sandbox; leaving it is confirmed. */
+  readonly storedSandbox: boolean;
   readonly baseRef: string;
   readonly startFromOrigin: boolean;
   readonly existingWorktreePath: string;
@@ -271,6 +273,13 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
   };
 }
 
+/** An edit that moves a stored sandbox task off its fleet worker; the editor confirms it. */
+export function leavesSandboxWorkspace(
+  draft: Pick<DraftState, "storedSandbox" | "workspaceMode">,
+): boolean {
+  return draft.storedSandbox && draft.workspaceMode !== "sandbox";
+}
+
 export function taskToDraft(task: ScheduledTask): DraftState {
   const schedule = task.schedule;
   const filters = webhookFilterDrafts(schedule.type === "webhook" ? schedule.filters : undefined);
@@ -294,7 +303,10 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     projectId: task.projectId,
     threadId: task.threadId ?? "",
     threadMode: scheduledTaskThreadMode(task),
+    // A sandbox workspace stays: editing an unrelated field must not silently
+    // move the task off its fleet worker.
     workspaceMode: task.workspaceStrategy.type,
+    storedSandbox: task.workspaceStrategy.type === "sandbox",
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
     startFromOrigin:
       task.workspaceStrategy.type === "worktree"

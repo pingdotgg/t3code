@@ -24,6 +24,7 @@ import {
   scheduleFromDraft,
   scheduleLabel,
   taskToDraft,
+  leavesSandboxWorkspace,
   unbindDraftFromThread,
 } from "./scheduledTasksSettings.logic";
 
@@ -407,6 +408,32 @@ it("rejects dedupe templates without a request placeholder", () => {
   const draft = taskToDraft({ ...legacyTask, schedule: { type: "webhook", signature: null } });
   expect(scheduleFromDraft({ ...draft, replayKey: "literal" })).toBeNull();
   expect(scheduleFromDraft({ ...draft, coalesceKey: "{{body.bad" })).toBeNull();
+});
+
+describe("sandbox workspace retention", () => {
+  const sandboxTask: ScheduledTask = {
+    ...legacyTask,
+    workspaceStrategy: { type: "sandbox" },
+  };
+
+  it("keeps a stored sandbox strategy when editing an unrelated field", () => {
+    const draft = taskToDraft(sandboxTask);
+    expect(draft.workspaceMode).toBe("sandbox");
+    expect(draft.storedSandbox).toBe(true);
+    expect(leavesSandboxWorkspace(draft)).toBe(false);
+    // Saving with only the title touched does not move the task off the worker.
+    expect(scheduleFromDraft({ ...draft, title: "renamed" })).not.toBeNull();
+  });
+
+  it("flags leaving the sandbox only when the workspace control changes", () => {
+    const draft = taskToDraft(sandboxTask);
+    expect(leavesSandboxWorkspace({ ...draft, workspaceMode: "worktree" })).toBe(true);
+    expect(leavesSandboxWorkspace({ ...draft, workspaceMode: "root" })).toBe(true);
+    // A task that never ran in a sandbox is never flagged.
+    const worktreeDraft = taskToDraft(legacyTask);
+    expect(worktreeDraft.storedSandbox).toBe(false);
+    expect(leavesSandboxWorkspace({ ...worktreeDraft, workspaceMode: "root" })).toBe(false);
+  });
 });
 
 it("appends the server zone only to fixed-time schedule labels", () => {

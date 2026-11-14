@@ -32,6 +32,7 @@
         "linux-after-pack.ts",
         "mobile-behavior/run.ts",
         "mobile-native-client.ts",
+        "openshell-smoke.ts",
         // e2e loads its config and the scenarios by path, and starts the app script.
         "e2e.config.ts",
         "prove-scenario.ts",

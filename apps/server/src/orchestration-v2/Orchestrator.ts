@@ -935,6 +935,16 @@ function delegatedTaskTerminalStatus(
 function worktreeSetupPending(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
 ): boolean {
+  // A sandbox run can never resolve to a local workspace, so it holds only
+  // while it is the latest run: a newer run supersedes it. A worktree holds
+  // until its path exists, whatever came after it.
+  const latest = latestExecutedRun(projection.runs);
+  if (
+    latest !== null &&
+    (latest.status === "failed" || latest.status === "interrupted") &&
+    latest.workspacePreparation?.type === "sandbox"
+  )
+    return true;
   return (
     projection.thread.worktreePath === null &&
     projection.runs.some(
@@ -2424,8 +2434,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : undefined;
       const worktreeMissing =
         failedRun?.id === options?.endedRunId &&
-        failedRun?.workspacePreparation?.type === "worktree" &&
-        projection.thread.worktreePath === null;
+        (failedRun?.workspacePreparation?.type === "sandbox" ||
+          (failedRun?.workspacePreparation?.type === "worktree" &&
+            projection.thread.worktreePath === null));
       const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
       const projectOverride =
         settings.projectSettingsOverrides[projection.thread.projectId]?.providerInstances?.[
@@ -7285,8 +7296,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       activeRun === undefined &&
       (dispatchMode.type === "queue_after_active" || dispatchMode.type === "start_immediately") &&
       (latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
-      latestRun.workspacePreparation?.type === "worktree" &&
-      projection.thread.worktreePath === null
+      (latestRun.workspacePreparation?.type === "sandbox" ||
+        (latestRun.workspacePreparation?.type === "worktree" &&
+          projection.thread.worktreePath === null))
         ? latestRun
         : undefined;
     const queueBehindRun = activeRun ?? worktreeMissingRun;
@@ -14749,6 +14761,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.command_type": command.type,
       "orchestration_v2.thread_id": commandThreadId(command),
     });
+    // A sandbox workspace is provisioned by delegation, never by a dispatch;
+    // refuse before any event records it on a run. Replays short-circuit above.
+    if (
+      (command.type === "message.dispatch" &&
+        command.dispatchMode.type === "defer_start" &&
+        command.dispatchMode.workspaceStrategy?.type === "sandbox") ||
+      (command.type === "delegated_task.request" && command.workspaceStrategy?.type === "sandbox")
+    )
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause:
+          "A sandbox workspace runs in a fleet worker, so delegate the work with isolation 'openshell-auto' instead of launching it here.",
+      });
 
     const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
     const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);

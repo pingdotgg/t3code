@@ -976,6 +976,54 @@ const preparationSettled = (threadId: ThreadId) =>
     return yield* threads.getThreadProjection(threadId);
   });
 
+it.effect("refuses a sandbox launch before creating a thread or run", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const failed = yield* launches
+      .launch(
+        launchInput({
+          command: "command:launch:sandbox",
+          thread: "thread:launch:sandbox",
+          message: "Run in a worker",
+          workspace: { type: "sandbox" },
+        }),
+      )
+      .pipe(Effect.flip);
+    if (failed._tag !== "ThreadLaunchError") {
+      assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
+    }
+    assert.equal(failed.operation, "create-thread");
+    assert.match(String(failed.cause), /isolation 'openshell-auto'/);
+    assert.equal(harness.runSetup.mock.calls.length, 0);
+    assert.equal(yield* threads.getThreadShell(ThreadId.make("thread:launch:sandbox")), null);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("refuses a sandbox launch without an initial message too", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const failed = yield* launches
+      .launch(
+        launchInput({
+          command: "command:launch:sandbox-silent",
+          thread: "thread:launch:sandbox-silent",
+          workspace: { type: "sandbox" },
+        }),
+      )
+      .pipe(Effect.flip);
+    assert.equal(failed._tag, "ThreadLaunchError");
+    assert.equal(harness.runSetup.mock.calls.length, 0);
+    assert.equal(
+      yield* threads.getThreadShell(ThreadId.make("thread:launch:sandbox-silent")),
+      null,
+    );
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect.each([
   { prefix: "my-prefix", collision: null, expected: /^my-prefix\/[0-9a-f]{8}$/ },
   { prefix: "my-prefix", collision: "my-prefix", expected: /^my-prefix-[0-9a-f]{8}$/ },
