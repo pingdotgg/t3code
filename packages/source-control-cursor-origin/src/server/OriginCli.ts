@@ -57,12 +57,20 @@ export class OriginCliError extends Schema.TaggedError<OriginCliError>()("Origin
 /** What `origin auth status --json` reports. Only the fields this package reads. */
 const OriginAuthStatusSchema = Schema.Struct({
   authenticated: Schema.Boolean,
-  tokenValid: Schema.optional(Schema.Boolean),
+  tokenValid: Schema.optional(Schema.NullOr(Schema.Boolean)),
   account: Schema.optional(
     Schema.NullOr(Schema.Struct({ email: Schema.optional(Schema.NullOr(Schema.String)) })),
   ),
 });
 type OriginAuthStatus = typeof OriginAuthStatusSchema.Type;
+
+/** `origin` exits 1 on a bare `--json`, so this names the fields `OriginAuthStatusSchema` reads. */
+export const ORIGIN_AUTH_STATUS_ARGS = [
+  "auth",
+  "status",
+  "--json",
+  "authenticated,tokenValid,account",
+] as const;
 
 export function parseOriginAuthStatus(raw: string): OriginAuthStatus | null {
   const decoded = decodeJsonResult(OriginAuthStatusSchema)(raw);
@@ -382,7 +390,7 @@ const make = Effect.gen(function* () {
   });
 
   const authStatus = (cwd: string) =>
-    run({ cwd, operation: "authStatus", args: ["auth", "status", "--json"] }).pipe(
+    run({ cwd, operation: "authStatus", args: ORIGIN_AUTH_STATUS_ARGS }).pipe(
       Effect.flatMap((result) => {
         const status = parseOriginAuthStatus(result.stdout);
         if (status !== null) return Effect.succeed(status);
