@@ -37,37 +37,33 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
+import { createContextMenuInstaller } from "./contextMenuInstaller.ts";
+import { makeShowConnectingSplash } from "./connectingSplash.ts";
+import {
+  bindFirstRevealTrigger,
+  buildConnectingSplashDataUrl,
+  concealPendingQuitWindow,
+  DEVELOPMENT_LOAD_RETRY_DELAYS_MS,
+  getIconOption,
+  getInitialWindowBackgroundColor,
+  getWindowTitleBarOptions,
+  isRetryableDevelopmentRendererLoadFailure,
+  isSameOriginRendererNavigation,
+  MAIN_WINDOW_BOUNDS_PERSIST_DEBOUNCE_MS,
+  type RevealSubscription,
+  resolveInitialMainWindowBounds,
+  RENDERER_RECOVERY_MAX_ATTEMPTS,
+  RENDERER_RECOVERY_RELOAD_DELAY_MS,
+  RENDERER_RECOVERY_WINDOW_MS,
+  syncMacosWindowButtons,
+  syncWindowAppearance,
+  windowBoundsEqual,
+} from "./DesktopWindowChrome.ts";
 
-const TITLEBAR_HEIGHT = 40;
-// Match --workspace-topbar-height in apps/web/src/index.css; native macOS buttons stay 14 points at any zoom.
-const MACOS_WORKSPACE_TOPBAR_HEIGHT = 52;
-const MACOS_WINDOW_BUTTON_RADIUS = 7;
-
-function syncMacosWindowButtons(window: Electron.BrowserWindow): void {
-  if (window.isDestroyed() || window.isFullScreen()) return;
-  window.setWindowButtonPosition({
-    x: 16,
-    y: Math.round(
-      (MACOS_WORKSPACE_TOPBAR_HEIGHT * window.webContents.getZoomFactor()) / 2 -
-        MACOS_WINDOW_BUTTON_RADIUS,
-    ),
-  });
-}
-
-const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
-const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
-const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
-const MAIN_WINDOW_BOUNDS_PERSIST_DEBOUNCE_MS = 500;
-const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
-const RENDERER_RECOVERY_RELOAD_DELAY_MS = 500;
-const RENDERER_RECOVERY_MAX_ATTEMPTS = 3;
-const RENDERER_RECOVERY_WINDOW_MS = 60_000;
-const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([-2, -7, -9, -102, -105, -106, -118]);
-
-type WindowTitleBarOptions = Pick<
-  Electron.BrowserWindowConstructorOptions,
-  "titleBarOverlay" | "titleBarStyle" | "trafficLightPosition"
->;
+export {
+  isSameOriginRendererNavigation,
+  resolveInitialMainWindowBounds,
+} from "./DesktopWindowChrome.ts";
 
 type DesktopWindowRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
@@ -119,177 +115,6 @@ export class DesktopWindow extends Context.Service<
 
 const { logInfo: logWindowInfo, logWarning: logWindowWarning } =
   makeComponentLogger("desktop-window");
-
-function getIconOption(
-  iconPaths: DesktopAssets.DesktopIconPaths,
-  platform: NodeJS.Platform,
-): { icon: string } | Record<string, never> {
-  if (platform === "darwin") return {};
-  const ext = platform === "win32" ? "ico" : "png";
-  return Option.match(iconPaths[ext], {
-    onNone: () => ({}),
-    onSome: (icon) => ({ icon }),
-  });
-}
-
-function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
-  return shouldUseDarkColors ? "#000000" : "#ffffff";
-}
-
-type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
-
-function windowFitsWithinDisplay(
-  windowBounds: DesktopAppSettings.DesktopWindowBounds,
-  displayBounds: DisplayBounds,
-): boolean {
-  return (
-    windowBounds.x >= displayBounds.x &&
-    windowBounds.y >= displayBounds.y &&
-    windowBounds.x + windowBounds.width <= displayBounds.x + displayBounds.width &&
-    windowBounds.y + windowBounds.height <= displayBounds.y + displayBounds.height
-  );
-}
-
-function windowBoundsEqual(
-  left: DesktopAppSettings.DesktopWindowBounds,
-  right: DesktopAppSettings.DesktopWindowBounds,
-): boolean {
-  return (
-    left.x === right.x &&
-    left.y === right.y &&
-    left.width === right.width &&
-    left.height === right.height
-  );
-}
-
-export function resolveInitialMainWindowBounds(
-  persistedBounds: DesktopAppSettings.DesktopWindowBounds | null,
-  displays: readonly DisplayBounds[],
-): DesktopAppSettings.DesktopWindowBounds | typeof DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE {
-  if (
-    persistedBounds !== null &&
-    displays.some((display) => windowFitsWithinDisplay(persistedBounds, display))
-  ) {
-    return persistedBounds;
-  }
-  return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
-}
-
-function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
-  const background = getInitialWindowBackgroundColor(shouldUseDarkColors);
-  const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
-  const accent = shouldUseDarkColors ? "#f8fafc" : "#1f2937";
-  const track = shouldUseDarkColors ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">Connecting to WSL…</div></body></html>`;
-  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
-}
-
-export function isSameOriginRendererNavigation(input: {
-  readonly applicationUrl: string;
-  readonly navigationUrl: string;
-}): boolean {
-  try {
-    const applicationUrl = new URL(input.applicationUrl);
-    const navigationUrl = new URL(input.navigationUrl);
-    // Node serializes custom-scheme origins as "null", even for different hosts and schemes.
-    return (
-      applicationUrl.host !== "" &&
-      navigationUrl.protocol === applicationUrl.protocol &&
-      navigationUrl.host === applicationUrl.host
-    );
-  } catch {
-    return false;
-  }
-}
-
-function isRetryableDevelopmentRendererLoadFailure(input: {
-  readonly applicationUrl: string;
-  readonly errorCode: number;
-  readonly isMainFrame: boolean;
-  readonly validatedUrl: string;
-}): boolean {
-  return (
-    input.isMainFrame &&
-    DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES.has(input.errorCode) &&
-    isSameOriginRendererNavigation({
-      applicationUrl: input.applicationUrl,
-      navigationUrl: input.validatedUrl,
-    })
-  );
-}
-
-function concealPendingQuitWindow(
-  window: Pick<
-    Electron.BrowserWindow,
-    "isDestroyed" | "isFullScreen" | "setFullScreen" | "setOpacity"
-  >,
-): void {
-  if (window.isDestroyed()) return;
-  if (window.isFullScreen()) {
-    window.setFullScreen(false);
-  }
-  // Linux lacks Electron window opacity; release-gated quits remain visible there.
-  window.setOpacity(0);
-}
-
-function getWindowTitleBarOptions(
-  shouldUseDarkColors: boolean,
-  platform: NodeJS.Platform,
-): WindowTitleBarOptions {
-  if (platform === "darwin") {
-    return {
-      titleBarStyle: "hiddenInset",
-      trafficLightPosition: {
-        x: 16,
-        y: MACOS_WORKSPACE_TOPBAR_HEIGHT / 2 - MACOS_WINDOW_BUTTON_RADIUS,
-      },
-    };
-  }
-
-  return {
-    titleBarStyle: "hidden",
-    titleBarOverlay: {
-      color: TITLEBAR_COLOR,
-      height: TITLEBAR_HEIGHT,
-      symbolColor: shouldUseDarkColors ? TITLEBAR_DARK_SYMBOL_COLOR : TITLEBAR_LIGHT_SYMBOL_COLOR,
-    },
-  };
-}
-
-function syncWindowAppearance(
-  window: Electron.BrowserWindow,
-  shouldUseDarkColors: boolean,
-  platform: NodeJS.Platform,
-): Effect.Effect<void> {
-  return Effect.sync(() => {
-    if (window.isDestroyed()) {
-      return;
-    }
-
-    window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
-    const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
-    if (typeof titleBarOverlay === "object") {
-      window.setTitleBarOverlay(titleBarOverlay);
-    }
-  });
-}
-
-type RevealSubscription = (listener: () => void) => void;
-
-function bindFirstRevealTrigger(
-  subscribers: readonly RevealSubscription[],
-  reveal: () => void,
-): void {
-  let revealed = false;
-  const fire = () => {
-    if (revealed) return;
-    revealed = true;
-    reveal();
-  };
-  for (const subscribe of subscribers) {
-    subscribe(fire);
-  }
-}
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -533,81 +358,16 @@ export const make = Effect.gen(function* () {
       }
     });
 
-    const contextMenuContents = new WeakSet<Electron.WebContents>();
-    const installContextMenu = (
-      ownerWindow: Electron.BrowserWindow,
-      contents: Electron.WebContents,
-    ): void => {
-      if (contextMenuContents.has(contents)) return;
-      contextMenuContents.add(contents);
-      contents.on("context-menu", (event, params) => {
-        event.preventDefault();
-        if (contents.isDestroyed() || ownerWindow.isDestroyed()) return;
-        // Right-clicking a guest may leave native editing roles targeting the host renderer.
-        contents.focus();
-
-        const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
-
-        if (params.misspelledWord) {
-          for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
-            menuTemplate.push({
-              label: suggestion,
-              click: () => {
-                if (!contents.isDestroyed()) contents.replaceMisspelling(suggestion);
-              },
-            });
-          }
-          if (params.dictionarySuggestions.length === 0) {
-            menuTemplate.push({ label: "No suggestions", enabled: false });
-          }
-          menuTemplate.push({ type: "separator" });
-        }
-
-        if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
-          menuTemplate.push(
-            {
-              label: "Copy Link",
-              click: () => {
-                void runPromise(electronShell.copyText(params.linkURL));
-              },
-            },
-            { type: "separator" },
-          );
-        }
-
-        if (params.mediaType === "image") {
-          menuTemplate.push({
-            label: "Copy Image",
-            click: () => {
-              void runPromise(
-                Effect.tryPromise(() => copyContextMenuImage(contents, params)).pipe(
-                  Effect.catch(() => logWindowWarning("failed to copy context-menu image")),
-                ),
-              );
-            },
-          });
-          menuTemplate.push({ type: "separator" });
-        }
-
-        menuTemplate.push(
-          { role: "cut", enabled: params.editFlags.canCut },
-          { role: "copy", enabled: params.editFlags.canCopy },
-          { role: "paste", enabled: params.editFlags.canPaste },
-          { role: "selectAll", enabled: params.editFlags.canSelectAll },
-        );
-
+    const installContextMenu = createContextMenuInstaller({
+      copyText: (text) => void runPromise(electronShell.copyText(text)),
+      copyImage: (contents, params) =>
         void runPromise(
-          electronMenu.popupTemplate({
-            window: ownerWindow,
-            template: menuTemplate,
-            ...(params.frame ? { frame: params.frame } : {}),
-          }),
-        );
-      });
-      contents.on("did-create-window", (popup) => {
-        installContextMenu(popup, popup.webContents);
-      });
-    };
+          Effect.tryPromise(() => copyContextMenuImage(contents, params)).pipe(
+            Effect.catch(() => logWindowWarning("failed to copy context-menu image")),
+          ),
+        ),
+      popupMenu: (input) => void runPromise(electronMenu.popupTemplate(input)),
+    });
     installContextMenu(window, window.webContents);
     window.webContents.on("did-attach-webview", (_event, contents) => {
       installContextMenu(window, contents);
@@ -911,56 +671,17 @@ export const make = Effect.gen(function* () {
     yield* ensureMain;
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
 
-  const showConnectingSplash = Effect.gen(function* () {
-    if (yield* Ref.get(desktopState.quitting)) return;
-    const existingSplash = yield* Ref.get(splashWindowRef);
-    if (Option.isSome(existingSplash)) return;
-    const existingWindow = yield* electronWindow.currentMainOrFirst;
-    if (Option.isSome(existingWindow)) return;
-
-    const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-    if (yield* Ref.get(desktopState.quitting)) return;
-    const splash = yield* electronWindow.create({
-      width: 360,
-      height: 220,
-      resizable: false,
-      minimizable: false,
-      maximizable: false,
-      fullscreenable: false,
-      frame: false,
-      center: true,
-      show: false,
-      skipTaskbar: false,
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
-      title: environment.displayName,
-      webPreferences: {
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-      },
-    });
-    if (yield* Ref.get(desktopState.quitting)) {
-      yield* electronWindow.destroyAll;
-      return;
-    }
-    yield* rendererHistory.register(splash.webContents, { surface: "splash" });
-    yield* Ref.set(splashWindowRef, Option.some(splash));
-    splash.once("closed", () => {
-      void runPromise(Ref.set(splashWindowRef, Option.none()));
-    });
-    splash.once("ready-to-show", () => {
-      if (!splash.isDestroyed()) {
-        splash.show();
-      }
-    });
-    void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors));
-    yield* logWindowInfo("connecting splash shown");
-  }).pipe(
-    Effect.catch((error) =>
-      logWindowWarning("failed to show connecting splash", { message: error.message }),
-    ),
-    Effect.withSpan("desktop.window.showConnectingSplash"),
-  );
+  const showConnectingSplash = makeShowConnectingSplash({
+    quitting: Ref.get(desktopState.quitting),
+    splashWindowRef,
+    electronWindow,
+    electronTheme,
+    displayName: environment.displayName,
+    rendererHistory,
+    clearSplashRef: () => void runPromise(Ref.set(splashWindowRef, Option.none())),
+    logInfo: logWindowInfo,
+    logWarning: logWindowWarning,
+  });
 
   const dispatchRendererEvent = Effect.fn("desktop.window.dispatchRendererEvent")(function* (
     channel: string,

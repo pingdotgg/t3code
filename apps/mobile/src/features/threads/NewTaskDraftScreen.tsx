@@ -1,18 +1,22 @@
 import { DraftEnvironmentControl } from "./DraftEnvironmentControl";
-import { NativeScrollEdgeEffectsContext } from "../../native/NativeScrollViewMarker";
 import { DraftThreadHeader } from "./DraftThreadHeader";
-import { threadHeaderAppearance } from "./thread-header-appearance";
-import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useComposerAttachmentActions } from "../../state/use-composer-attachment-actions";
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { submittedThreadParams } from "./thread-route-state";
-import { ThreadScreenBinding, ThreadScreenFallback } from "./ThreadScreenHost";
+import { ThreadScreenBinding } from "./ThreadScreenHost";
 import { draftThreadShell } from "./draft-thread-shell";
 import { useRememberThreadProject } from "./useRememberThreadProject";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { connectionTone } from "../connection/connectionTone";
-import { AppBar } from "../../components/ui/AppBar";
 import { ThreadId } from "@t3tools/contracts";
+import {
+  NewTaskDraftHero,
+  NewTaskDraftModelFallback,
+  NewTaskDraftWorkspaceControls,
+  newTaskDraftHeroViewport,
+} from "./NewTaskDraftScreenParts";
+import { useNewTaskProjectRemoval } from "./use-new-task-project-removal";
+import { newTaskDraftBranchPresentation } from "./new-task-draft-presentation";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
@@ -29,8 +33,7 @@ import {
   useRoute,
 } from "@react-navigation/native";
 import { useEffect, useRef, useState } from "react";
-import { Platform, Pressable, View } from "react-native";
-import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
+import { View } from "react-native";
 import { KeyboardController } from "react-native-keyboard-controller";
 
 import {
@@ -39,11 +42,10 @@ import {
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 
-import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
+import { type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { composerContextImportsAtom } from "../../state/use-composer-drafts";
 import { abortComposerDraftOperations } from "../../state/composerDraftOperations";
 import { composerContextSendBlockReason } from "../../lib/composerContext";
-import { ComposerInlineControl } from "../../components/ComposerToolbar";
 
 import {
   composerAttachmentUploadBlockReason,
@@ -51,7 +53,6 @@ import {
   composerAttachmentUploadsAtom,
 } from "../../state/composer-attachment-uploads";
 
-import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
 
@@ -65,9 +66,6 @@ import {
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import { useProjectClone } from "../../state/projectClones";
-import { projectEnvironment } from "../../state/projects";
-import { sourceControlEnvironment } from "../../state/sourceControl";
-import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectCloneBanner } from "./ProjectCloneBanner";
 import {
   describeUnavailableModelSelection,
@@ -84,63 +82,13 @@ import {
   nextEnvironmentId,
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
-import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 import { resolveDraftProjectSelection } from "./new-task-project-selection";
-import {
-  resolveNewTaskBranchLabel,
-  resolveNewTaskWorkspaceLabel,
-} from "./new-task-context-presentation";
 import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShareProvider";
 import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
 import { newTaskFlowKey } from "./new-task-flow-state";
 import { appAtomRegistry } from "../../state/atom-registry";
 
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-
-function NewTaskWorkspaceIcon(props: {
-  readonly workspaceMode: "local" | "worktree";
-  readonly worktreePath: string | null;
-  readonly size: number;
-}) {
-  if (props.workspaceMode === "local" && props.worktreePath === null) {
-    return (
-      <SymbolView
-        name="folder"
-        size={props.size}
-        tintColorClassName="accent-icon-muted"
-        type="monochrome"
-      />
-    );
-  }
-
-  const boxSize = (14 * props.size) / 16;
-  return (
-    <View
-      className="size-4"
-      style={Platform.OS === "android" ? { width: boxSize, height: boxSize } : undefined}
-    >
-      <SymbolView
-        name="folder"
-        size={props.size}
-        tintColorClassName="accent-icon-muted"
-        type="monochrome"
-      />
-      <View
-        className="absolute -right-1 -bottom-1"
-        style={
-          Platform.OS === "android" ? { right: -boxSize / 4, bottom: -boxSize / 4 } : undefined
-        }
-      >
-        <SymbolView
-          name="arrow.triangle.branch"
-          size={Math.round((9 * props.size) / 16)}
-          tintColorClassName="accent-icon-muted"
-          type="monochrome"
-        />
-      </View>
-    </View>
-  );
-}
 
 export function NewTaskDraftScreen(props: {
   readonly initialProjectRef?: {
@@ -206,42 +154,11 @@ export function NewTaskDraftScreen(props: {
     selectedProject.environmentId === props.initialProjectRef.environmentId;
   const cloneBlocksStart =
     awaitingKnownClone || (projectClone !== null && projectClone.phase !== "done");
-  const cancelProjectClone = useAtomCommand(sourceControlEnvironment.cancelProjectClone, {
-    reportFailure: false,
-  });
-  const retryProjectClone = useAtomCommand(sourceControlEnvironment.retryProjectClone, {
-    reportFailure: false,
-  });
-  const runCloneAction = async (
-    title: string,
-    action: () => Promise<AsyncResult.AsyncResult<unknown, unknown>>,
-  ) => {
-    const result = await action();
-    if (AsyncResult.isFailure(result)) {
-      const error = Cause.squash(result.cause);
-      Dialog.alert(title, error instanceof Error ? error.message : "An error occurred.");
-    }
-  };
-  const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
-  const removeClonedProject = async () => {
-    if (!selectedProject) return;
-    const removed = selectedProject;
-    const result = await deleteProject({
-      environmentId: removed.environmentId,
-      input: { projectId: removed.id },
+  const { cancelProjectClone, retryProjectClone, runCloneAction, removeClonedProject } =
+    useNewTaskProjectRemoval({
+      selectedProject,
+      getSelectedProjectKey: flow.getSelectedProjectKey,
     });
-    if (AsyncResult.isFailure(result)) {
-      const error = Cause.squash(result.cause);
-      Dialog.alert(
-        "Failed to remove project",
-        error instanceof Error ? error.message : "An error occurred.",
-      );
-      return;
-    }
-    if (flow.getSelectedProjectKey() === scopedProjectKey(removed.environmentId, removed.id)) {
-      navigation.dispatch(StackActions.replace("Home"));
-    }
-  };
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
   const attachmentBlockReason = selectedProject
     ? composerAttachmentUploadBlockReason({
@@ -521,29 +438,8 @@ export function NewTaskDraftScreen(props: {
     flow.environments.find(
       (environment) => environment.environmentId === flow.selectedEnvironmentId,
     )?.environmentLabel ?? "Environment";
-  const availableCurrentBranchName =
-    flow.availableBranches.find((branch) => branch.current)?.name ??
-    flow.availableBranches.find((branch) => branch.isDefault)?.name ??
-    null;
-  const selectedBranchName = resolveProjectThreadCreationBranch({
-    workspaceMode: flow.workspaceMode,
-    selectedBranch:
-      flow.selectedBranchName ??
-      (flow.workspaceMode === "worktree" ? availableCurrentBranchName : null),
-    currentCheckoutBranch: flow.currentCheckoutBranchName,
-  });
-  const selectedBranchLabel = resolveNewTaskBranchLabel({
-    branchName: selectedBranchName,
-    startFromOrigin: flow.startFromOrigin,
-    workspaceMode: flow.workspaceMode,
-    pullRequestReference: flow.pullRequestReference,
-  });
-  const workspaceLabel = resolveNewTaskWorkspaceLabel({
-    workspaceMode: flow.workspaceMode,
-    worktreePath: flow.selectedWorktreePath,
-  });
-  const showBranchLoading =
-    environmentConnected && flow.branchesLoading && flow.availableBranches.length === 0;
+  const { selectedBranchName, selectedBranchLabel, workspaceLabel, showBranchLoading } =
+    newTaskDraftBranchPresentation(flow, environmentConnected);
 
   const {
     onPickDraftMedia: handlePickMedia,
@@ -729,158 +625,46 @@ export function NewTaskDraftScreen(props: {
       The shared content is no longer in the inbox. You can continue editing this task draft.
     </Text>
   ) : null;
-  const hero = flow.isScratchDraft ? (
-    <View className="items-center gap-2 px-6" testID="new-task-hero">
-      <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
-        What should we work on?
-      </Text>
-      <View className="flex-row flex-wrap items-center justify-center gap-x-1">
-        <ComposerInlineControl
-          accessibilityHint="Opens the project picker"
-          accessibilityLabel="No project"
-          chevronDirection="right"
-          disabled={isComposerInteractionLocked}
-          icon="folder"
-          label="No project"
-          onPress={chooseProject}
-        />
-        {environmentControl}
-      </View>
-      {shareUnavailableNotice}
-    </View>
-  ) : (
-    <View className="items-center gap-6 px-6" testID="new-task-hero">
-      <View className="w-full items-center gap-1.5">
-        <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
-          What should we build
-        </Text>
-        <View className="max-w-full flex-row items-center justify-center">
-          <Text className="text-2xl font-t3-medium tracking-tight text-foreground">in </Text>
-          <Pressable
-            accessibilityHint="Opens the project picker"
-            accessibilityLabel={selectedProjectLabel ?? selectedProject.title}
-            accessibilityRole="button"
-            disabled={isComposerInteractionLocked}
-            onPress={chooseProject}
-            className="min-w-0 max-w-[250px] border-b border-foreground-muted active:opacity-65"
-          >
-            <Text
-              className="text-2xl font-t3-medium tracking-tight text-foreground"
-              numberOfLines={1}
-            >
-              {selectedProjectLabel ?? selectedProject.title}
-            </Text>
-          </Pressable>
-          <Text className="text-2xl font-t3-medium tracking-tight text-foreground">?</Text>
-        </View>
-      </View>
-
-      {environmentControl}
-      {shareUnavailableNotice}
-    </View>
+  const hero = (
+    <NewTaskDraftHero
+      isScratchDraft={flow.isScratchDraft}
+      projectTitle={selectedProject.title}
+      projectLabel={selectedProjectLabel}
+      interactionLocked={isComposerInteractionLocked}
+      onChooseProject={chooseProject}
+      environmentControl={environmentControl}
+      shareUnavailableNotice={shareUnavailableNotice}
+    />
   );
   // The nested hero scroll view does not receive UIKit's automatic navigation inset in split columns.
   const heroViewport = (headerInset: number, bottomInset: number, availableHeight: number) =>
-    availableHeight < 180 ? null : (
-      <NativeScrollEdgeEffectsContext
-        value={{ top: "hidden", bottom: "hidden", left: "hidden", right: "hidden" }}
-      >
-        <View
-          collapsable={false}
-          style={{
-            position: "absolute",
-            top: headerInset,
-            bottom: bottomInset,
-            left: 0,
-            right: 0,
-            overflow: "hidden",
-          }}
-        >
-          <ScrollView
-            alwaysBounceVertical={false}
-            className="flex-1"
-            contentInsetAdjustmentBehavior="never"
-            contentContainerClassName="grow items-center"
-            contentContainerStyle={{ paddingVertical: 24 }}
-            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-            style={{ flex: 1 }}
-            testID="new-task-hero-scroll"
-          >
-            <View style={{ flexGrow: 1 }} />
-            {hero}
-            <View style={{ flexGrow: 2 }} />
-          </ScrollView>
-        </View>
-      </NativeScrollEdgeEffectsContext>
-    );
+    newTaskDraftHeroViewport({ hero, headerInset, bottomInset, availableHeight });
 
   const workspaceControls = (
-    <View className="flex-row items-center gap-1 px-2">
-      <ComposerInlineControl
-        accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
-        accessibilityLabel={workspaceLabel}
-        disabled={isComposerInteractionLocked || !flow.isGitRepo}
-        renderIcon={(size) => (
-          <NewTaskWorkspaceIcon
-            workspaceMode={flow.workspaceMode}
-            worktreePath={flow.selectedWorktreePath}
-            size={size}
-          />
-        )}
-        label={workspaceLabel}
-        maxWidth="100%"
-        onPress={() => flow.setWorkspaceMode(flow.workspaceMode === "local" ? "worktree" : "local")}
-        showChevron={false}
-      />
-
-      <View className="min-w-0 shrink">
-        <ComposerInlineControl
-          accessibilityLabel={`${flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}: ${selectedBranchLabel}`}
-          chevronDirection="right"
-          disabled={isComposerInteractionLocked || !flow.isGitRepo}
-          icon="arrow.triangle.branch"
-          label={showBranchLoading ? "Loading branches…" : selectedBranchLabel}
-          maxWidth="100%"
-          onPress={() => openContextPicker("NewTaskBranch")}
-        />
-      </View>
-    </View>
+    <NewTaskDraftWorkspaceControls
+      workspaceLabel={workspaceLabel}
+      selectedBranchLabel={selectedBranchLabel}
+      showBranchLoading={showBranchLoading}
+      workspaceMode={flow.workspaceMode}
+      isGitRepo={flow.isGitRepo}
+      selectedWorktreePath={flow.selectedWorktreePath}
+      interactionLocked={isComposerInteractionLocked}
+      onToggleWorkspaceMode={() =>
+        flow.setWorkspaceMode(flow.workspaceMode === "local" ? "worktree" : "local")
+      }
+      onOpenBranchPicker={() => openContextPicker("NewTaskBranch")}
+    />
   );
 
   if (!flow.selectedModel) {
     return (
-      <ThreadScreenFallback
-        header={
-          <AppBar
-            title="New thread"
-            sidebar={false}
-            onBack={goBack}
-            options={{
-              ...threadHeaderAppearance(NATIVE_LIQUID_GLASS_SUPPORTED),
-              unstable_headerSubtitle: undefined,
-              unstable_headerRightItems: () => [],
-              unstable_headerToolbarItems: () => [],
-            }}
-          />
-        }
-      >
-        <View className="flex-1 justify-end gap-3 p-4">
-          {environmentControl}
-          <Text className="text-foreground-muted">
-            Your draft is saved on this device. Connect to an environment to choose its first model.
-          </Text>
-          <ComposerEditor
-            draftKey={flow.draftKey}
-            value={flow.prompt}
-            onChangeText={flow.setPrompt}
-            placeholder="Ask anything"
-            multiline
-            style={{ minHeight: 64 }}
-          />
-        </View>
-      </ThreadScreenFallback>
+      <NewTaskDraftModelFallback
+        onBack={goBack}
+        environmentControl={environmentControl}
+        draftKey={flow.draftKey}
+        prompt={flow.prompt}
+        onChangePrompt={flow.setPrompt}
+      />
     );
   }
   const thread = draftThreadShell({

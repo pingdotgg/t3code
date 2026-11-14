@@ -8,38 +8,24 @@ import {
   sessionGrantsScope,
 } from "@t3tools/contracts";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
-import { SymbolView } from "../../components/ui/AppSymbol";
-import { AppBar } from "../../components/ui/AppBar";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useAtomMount } from "@effect/atom-react";
 import { useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppText as Text } from "../../components/ui/AppText";
-import { TerminalContextSheet } from "./TerminalContextSheet";
-import { hasNativeTerminalSurface, supportsNativeTerminalOutput } from "./nativeTerminalModule";
+import { supportsNativeTerminalOutput } from "./nativeTerminalModule";
 import * as Clipboard from "expo-clipboard";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import {
   KeyboardController,
   KeyboardEvents,
-  KeyboardStickyView,
   useKeyboardState,
 } from "react-native-keyboard-controller";
 
-import {
-  ComposerToolbarButton,
-  ComposerToolbarRow,
-  ComposerToolbarScroller,
-} from "../../components/ComposerToolbar";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { GlassSurface } from "../../components/ui/GlassSurface";
 import { LoadingScreen } from "../../components/LoadingScreen";
-import { ScreenContent } from "../../components/ui/ScreenContent";
-import { Button } from "../../components/ui/Button";
-import { IconButton } from "../../components/ui/IconButton";
 import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { terminalEnvironment } from "../../state/terminal";
@@ -49,13 +35,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { uuidv4 } from "../../lib/uuid";
 import { useServerConfigs } from "../../state/entities";
-import { useConnectionsReady } from "../../state/workspace";
-import {
-  MAX_TERMINAL_FONT_SIZE,
-  MIN_TERMINAL_FONT_SIZE,
-  TERMINAL_FONT_SIZE_STEP,
-  stepTerminalFontSize,
-} from "../../lib/appearancePreferences";
+import { stepTerminalFontSize } from "../../lib/appearancePreferences";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   useAttachedTerminalSession,
@@ -63,8 +43,7 @@ import {
 } from "../../state/use-terminal-session";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadProjection } from "../../state/use-thread-detail";
-import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
-import { TerminalSurface, type TerminalSurfaceHandle } from "./NativeTerminalSurface";
+import { type TerminalSurfaceHandle } from "./NativeTerminalSurface";
 import { getMobileTerminalTheme } from "./terminalTheme";
 import { useTerminalExitNavigation } from "./useTerminalExitNavigation";
 import {
@@ -73,9 +52,7 @@ import {
   type PendingTerminalLaunch,
 } from "./terminalLaunchContext";
 import {
-  basename,
   buildTerminalMenuSessions,
-  getTerminalStatusLabel,
   nextOpenTerminalId,
   previousLiveTerminalId,
   resolveTerminalSessionLabel,
@@ -89,11 +66,13 @@ import {
 } from "./terminalInput";
 import { createTerminalPasteSession } from "./terminalPaste";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
-import { TerminalHeader } from "./ThreadTerminalRouteScreenParts";
+import {
+  TERMINAL_ACCESSORY_HEIGHT,
+  ThreadTerminalRouteScreenBody,
+} from "./ThreadTerminalRouteScreenBody";
 
 const DEFAULT_TERMINAL_COLS = 80;
 const DEFAULT_TERMINAL_ROWS = 24;
-const TERMINAL_ACCESSORY_HEIGHT = 52;
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
 class TerminalClipboardReadError extends Schema.TaggedError<TerminalClipboardReadError>()(
@@ -105,7 +84,7 @@ class TerminalClipboardReadError extends Schema.TaggedError<TerminalClipboardRea
   }
 }
 
-type TerminalToolbarAction =
+export type TerminalToolbarAction =
   | { readonly kind: "send"; readonly key: string; readonly label: string; readonly data: string }
   | { readonly kind: "clear"; readonly key: string; readonly label: string }
   | { readonly kind: "paste"; readonly key: string; readonly label: string }
@@ -164,7 +143,7 @@ export type ThreadTerminalRouteScreenProps = StaticScreenProps<{
   readonly terminalId?: string;
 }>;
 
-type ThreadSelection = ReturnType<typeof useThreadSelection>;
+export type ThreadSelection = ReturnType<typeof useThreadSelection>;
 
 export function useTerminalAccess(environmentId: EnvironmentId | null) {
   const session = useEnvironmentQuery(
@@ -667,270 +646,56 @@ export function ThreadTerminal(props: {
   }
 
   return (
-    <>
-      {capturedOutput !== null ? (
-        <TerminalContextSheet
-          text={capturedOutput}
-          environmentId={selectedThread.environmentId}
-          threadId={selectedThread.id}
-          terminalId={terminalId}
-          terminalLabel={resolveTerminalSessionLabel(terminalId, terminal.summary)}
-          onClose={() => setCapturedOutput(null)}
-          onAttach={() => {
-            setCapturedOutput(null);
-            if (navigation.canGoBack()) navigation.goBack();
-          }}
-        />
-      ) : null}
-      <TerminalHeader
-        canOperateTerminal={canOperateTerminal}
-        subtitle={headerSubtitle}
-        isEnvironmentReady={isEnvironmentReady}
-        fontSize={fontSize}
-        terminalId={terminalId}
-        sessions={terminalMenuSessions}
-        status={{
-          status: terminal.status,
-          hasRunningSubprocess: terminal.hasRunningSubprocess,
-        }}
-        workspaceRoot={selectedThreadProject.workspaceRoot}
-        onCloseTerminal={handleCloseTerminal}
-        onDecreaseFontSize={handleDecreaseFontSize}
-        onIncreaseFontSize={handleIncreaseFontSize}
-        onOpenNewTerminal={handleOpenNewTerminal}
-        onSelectTerminal={handleSelectTerminal}
-      />
-
-      <ScreenContent>
-        <View
-          className="flex-1"
-          style={{
-            backgroundColor:
-              Platform.OS === "android"
-                ? themeVariables["--color-card-alt"]
-                : terminalTheme.background,
-            // Measured top reservation is zero when UIKit already inset the body or moved the bar.
-            paddingTop:
-              Platform.OS === "ios" ? (nativeColumnMetrics?.safeArea.top ?? insets.top) : 0,
-            paddingBottom:
-              Platform.OS === "android" && !keyboardState.isVisible ? insets.bottom : 0,
-          }}
-        >
-          {!isEnvironmentReady ? (
-            <EnvironmentConnectionNotice
-              environmentLabel={
-                environment.presentation?.entry.target.label ??
-                selectedEnvironmentConnection?.environmentLabel ??
-                "Environment"
-              }
-              connection={
-                environment.presentation?.connection ?? {
-                  phase: "available",
-                  error: null,
-                  traceId: null,
-                }
-              }
-              resourceName="terminal"
-              onRetry={handleRetryEnvironment}
-            />
-          ) : terminalSession.data === null && terminalSession.error === null ? (
-            <EmptyState
-              title="Checking terminal access"
-              detail="Waiting for this connection's permissions."
-            />
-          ) : !canReadTerminal && !canOperateTerminal ? (
-            <EmptyState
-              title={
-                terminalSession.error
-                  ? "Could not check terminal access"
-                  : "Terminal access unavailable"
-              }
-              detail={
-                terminalSession.error ??
-                "This connection does not have permission to view terminals."
-              }
-            />
-          ) : canOperateTerminal && launchLocation === null ? (
-            sessionsError !== null ? (
-              <EmptyState title="Could not load terminals" detail={sessionsError} />
-            ) : (
-              <EmptyState title="Loading terminals" detail="Reading existing terminal sessions." />
-            )
-          ) : !canOperateTerminal && !hasTerminalTarget && sessionsPending ? (
-            <EmptyState title="Loading terminals" detail="Reading existing terminal sessions." />
-          ) : !canOperateTerminal && !hasTerminalTarget && sessionsError !== null ? (
-            <EmptyState title="Could not load terminals" detail={sessionsError} />
-          ) : !canOperateTerminal && !hasTerminalTarget ? (
-            <EmptyState
-              title="No terminal sessions"
-              detail="Existing terminals will appear here when another client opens one."
-            />
-          ) : !canOperateTerminal && terminal.error !== null ? (
-            <EmptyState title="Terminal unavailable" detail={terminal.error} />
-          ) : (
-            <>
-              <View
-                style={{
-                  flex: 1,
-                  paddingBottom: terminalBottomInset,
-                }}
-              >
-                <View
-                  pointerEvents="none"
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    backgroundColor: terminalTheme.background,
-                  }}
-                />
-                <TerminalSurface
-                  ref={surfaceRef}
-                  autoFocus={canOperateTerminal && terminalAutoFocus}
-                  readOnly={!canOperateTerminal}
-                  buffer={terminal.version === 0 ? null : terminal.buffer}
-                  output={terminal.version === 0 ? null : terminal.output}
-                  fontSize={fontSize}
-                  grid={terminal.grid}
-                  isRunning={isRunning}
-                  keyboardFocusRequest={keyboardFocusRequest}
-                  captureRequest={captureRequest}
-                  onCapture={(text) => {
-                    setCaptureRequest(0);
-                    if (text.trim()) setCapturedOutput(text);
-                    else
-                      Dialog.alert("No terminal output", "There is no visible output to attach.");
-                  }}
-                  onInput={handleInput}
-                  onResize={handleResize}
-                  style={{ flex: 1 }}
-                  terminalKey={terminalKey}
-                  theme={terminalTheme}
-                />
-              </View>
-
-              {Platform.OS === "android" && !keyboardState.isVisible ? (
-                <View className="min-h-14 flex-row items-center gap-2 bg-card-alt px-2">
-                  {hasNativeTerminalSurface() ? (
-                    <Button label="Attach output" tone="text" onPress={requestCapture} />
-                  ) : null}
-                  <View className="flex-1" />
-                  <IconButton
-                    accessibilityLabel="Show keyboard"
-                    disabled={!canOperateTerminal}
-                    icon="keyboard"
-                    onPress={handleShowKeyboard}
-                  />
-                </View>
-              ) : Platform.OS !== "android" && hasNativeTerminalSurface() ? (
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => {
-                    KeyboardController.dismiss();
-                    requestCapture();
-                  }}
-                  className="px-4 pt-2"
-                  style={{
-                    paddingBottom:
-                      8 +
-                      (keyboardState.isVisible
-                        ? 0
-                        : (nativeColumnMetrics?.safeArea.bottom ?? insets.bottom)),
-                  }}
-                >
-                  <Text style={{ color: terminalTheme.foreground }}>Attach visible output</Text>
-                </Pressable>
-              ) : null}
-              {isAccessoryVisible ? (
-                <KeyboardStickyView
-                  style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
-                  offset={{ closed: 0, opened: 0 }}
-                >
-                  <View
-                    className="border-t"
-                    style={{
-                      backgroundColor: terminalTheme.background,
-                      borderTopColor: terminalTheme.border,
-                      minHeight: TERMINAL_ACCESSORY_HEIGHT,
-                    }}
-                  >
-                    <ComposerToolbarRow paddingBottom={4} paddingHorizontal={8} paddingTop={4}>
-                      <ComposerToolbarScroller
-                        contentPaddingRight={2}
-                        fadeOpaque={terminalTheme.background}
-                        fadeTransparent={`${terminalTheme.background}00`}
-                      >
-                        {terminalToolbarActions.map((action) => {
-                          const active =
-                            action.kind === "modifier" && pendingModifier === action.modifier;
-
-                          return (
-                            <ComposerToolbarButton
-                              key={action.key}
-                              active={active}
-                              label={action.label}
-                              maxWidth={120}
-                              minWidth={action.label.length > 1 ? 56 : 44}
-                              onPress={() => handleToolbarActionPress(action)}
-                              showChevron={false}
-                              textTransform={
-                                action.kind === "modifier" || action.kind === "clear"
-                                  ? "uppercase"
-                                  : "none"
-                              }
-                            />
-                          );
-                        })}
-                      </ComposerToolbarScroller>
-                      <ComposerToolbarButton
-                        accessibilityLabel="Dismiss keyboard"
-                        icon={{ ios: "keyboard.chevron.compact.down", android: "keyboard_hide" }}
-                        onPress={handleDismissKeyboard}
-                        showChevron={false}
-                      />
-                    </ComposerToolbarRow>
-                  </View>
-                </KeyboardStickyView>
-              ) : canOperateTerminal && !keyboardState.isVisible && Platform.OS !== "android" ? (
-                <Pressable
-                  accessibilityLabel="Show keyboard"
-                  accessibilityRole="button"
-                  onPress={handleShowKeyboard}
-                  style={({ pressed }) => ({
-                    bottom: 16,
-                    borderRadius: 28,
-                    opacity: pressed ? 0.72 : 1,
-                    position: "absolute",
-                    right: 16,
-                  })}
-                >
-                  <GlassSurface
-                    chrome="none"
-                    fallbackColor={terminalTheme.background}
-                    glassEffectStyle="regular"
-                    tintColor="transparent"
-                    style={{
-                      alignItems: "center",
-                      borderRadius: 24,
-                      height: 48,
-                      justifyContent: "center",
-                      width: 48,
-                    }}
-                    pointerEvents="none"
-                  >
-                    <SymbolView
-                      name={{ ios: "keyboard", android: "keyboard" }}
-                      size={20}
-                      tintColor={terminalTheme.foreground}
-                      type="monochrome"
-                    />
-                  </GlassSurface>
-                </Pressable>
-              ) : null}
-            </>
-          )}
-        </View>
-      </ScreenContent>
-    </>
+    <ThreadTerminalRouteScreenBody
+      capturedOutput={capturedOutput}
+      setCapturedOutput={setCapturedOutput}
+      canOperateTerminal={canOperateTerminal}
+      canReadTerminal={canReadTerminal}
+      environment={environment}
+      fontSize={fontSize}
+      handleCloseTerminal={handleCloseTerminal}
+      handleDecreaseFontSize={handleDecreaseFontSize}
+      handleDismissKeyboard={handleDismissKeyboard}
+      handleIncreaseFontSize={handleIncreaseFontSize}
+      handleInput={handleInput}
+      handleOpenNewTerminal={handleOpenNewTerminal}
+      handleResize={handleResize}
+      handleRetryEnvironment={handleRetryEnvironment}
+      handleSelectTerminal={handleSelectTerminal}
+      handleShowKeyboard={handleShowKeyboard}
+      handleToolbarActionPress={handleToolbarActionPress}
+      hasTerminalTarget={hasTerminalTarget}
+      headerSubtitle={headerSubtitle}
+      insets={insets}
+      isAccessoryVisible={isAccessoryVisible}
+      isEnvironmentReady={isEnvironmentReady}
+      isRunning={isRunning}
+      keyboardState={keyboardState}
+      keyboardFocusRequest={keyboardFocusRequest}
+      captureRequest={captureRequest}
+      setCaptureRequest={setCaptureRequest}
+      pendingModifier={pendingModifier}
+      launchLocation={launchLocation}
+      nativeColumnMetrics={nativeColumnMetrics}
+      navigation={navigation}
+      requestCapture={requestCapture}
+      selectedEnvironmentConnection={selectedEnvironmentConnection}
+      selectedThread={selectedThread}
+      selectedThreadProject={selectedThreadProject}
+      sessionsError={sessionsError}
+      sessionsPending={sessionsPending}
+      surfaceRef={surfaceRef}
+      terminal={terminal}
+      terminalAutoFocus={terminalAutoFocus}
+      terminalBottomInset={terminalBottomInset}
+      terminalId={terminalId}
+      terminalKey={terminalKey}
+      terminalMenuSessions={terminalMenuSessions}
+      terminalSession={terminalSession}
+      terminalTheme={terminalTheme}
+      terminalToolbarActions={terminalToolbarActions}
+      themeVariables={themeVariables}
+    />
   );
 }
 export * from "./ThreadTerminalRouteScreenParts2";

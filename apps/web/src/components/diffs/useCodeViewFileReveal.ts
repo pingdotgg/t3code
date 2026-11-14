@@ -1,7 +1,7 @@
 import type { CodeViewScrollTarget } from "@pierre/diffs";
 import { useState } from "react";
 
-interface FileRevealHandle {
+export interface FileRevealHandle {
   getInstance(): object | undefined;
   getItem(id: string): object | undefined;
   scrollTo(target: CodeViewScrollTarget): void;

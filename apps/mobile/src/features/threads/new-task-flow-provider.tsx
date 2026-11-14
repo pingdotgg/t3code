@@ -10,23 +10,14 @@ import type {
   ProviderInteractionMode,
   ProviderOptionSelection,
   RuntimeMode,
-  ServerProvider,
 } from "@t3tools/contracts";
-import {
-  CommandId,
-  DEFAULT_PROVIDER_INTERACTION_MODE,
-  MessageId,
-  repositoryGroupingKeyOf,
-  ThreadId,
-} from "@t3tools/contracts";
-import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
+import { DEFAULT_PROVIDER_INTERACTION_MODE, repositoryGroupingKeyOf } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
 import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities";
 import type { TurnCommandMetadata } from "../../lib/commandMetadata";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
-import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import {
   buildModelOptions,
   groupByProvider,
@@ -77,16 +68,9 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
-import {
-  buildHomeProjectScopes,
-  sortHomeProjectScopes,
-  type HomeProjectScope,
-} from "../home/homeThreadList";
+import { buildHomeProjectScopes, sortHomeProjectScopes } from "../home/homeThreadList";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
-import {
-  resolvePendingTaskInteractionMode,
-  resolveProviderInteractionMode,
-} from "../../state/legacy-plan-mode";
+import { resolveProviderInteractionMode } from "../../state/legacy-plan-mode";
 import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
   resolveNewTaskDraftWorkspace,
@@ -94,9 +78,9 @@ import {
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import { buildPendingTaskMessage as buildPendingTaskMessageForFlow } from "./new-task-pending-message";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import { resolveNewThreadRuntimeMode } from "./thread-settings-options";
-import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 import {
   INACTIVE_FLOW_KEY,
   type NewTaskFlowState,
@@ -636,76 +620,23 @@ export function NewTaskFlowProvider(
   const buildPendingTaskMessage = (
     metadata: TurnCommandMetadata,
     options?: { readonly currentCheckoutBranch?: string | null },
-  ): QueuedThreadMessage | null => {
-    if (!selectedProject || !selectedProjectDraftKey) {
-      return null;
-    }
-    const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
-    const text = draft.text.trim();
-    const draftModelSelection =
-      resolveSelectableModelSelection(
+  ): QueuedThreadMessage | null =>
+    buildPendingTaskMessageForFlow(
+      {
+        selectedProject,
+        selectedProjectDraftKey,
         selectedEnvironmentServerConfig,
-        draft.modelSelection ?? null,
-        selectedProject.id,
-      ) ?? selectedModel;
-    if ((text.length === 0 && draft.attachments.length === 0) || !draftModelSelection) {
-      return null;
-    }
-    if (
-      threadContextsOutsideEnvironment({
-        text: draft.text,
-        records: draft.context?.records ?? [],
-        environmentId: selectedProject.environmentId,
+        selectedModel,
         linkedEnvironments,
-      }).length > 0
-    ) {
-      return null;
-    }
-    const workspaceSelection = resolveWorkspaceSelection(draft.workspaceSelection);
-    const mode = workspaceSelection.mode;
-    return {
-      environmentId: selectedProject.environmentId,
-      threadId: ThreadId.make(metadata.threadId),
-      messageId: MessageId.make(metadata.messageId),
-      commandId: CommandId.make(metadata.commandId),
-      text,
-      attachments: draft.attachments,
-      context: draft.context,
-      modelSelection: draftModelSelection,
-      runtimeMode: resolveNewThreadRuntimeMode(
-        draft.runtimeMode,
+        resolveWorkspaceSelection,
         defaultRuntimeMode,
         managedPolicy,
-      ),
-      interactionMode: resolvePendingTaskInteractionMode({
-        planModeEnabled: legacyPlanModeEnabled,
-        draftInteractionMode: draft.interactionMode,
-        provider: selectedEnvironmentServerConfig?.providers.find(
-          (candidate) => candidate.instanceId === draftModelSelection.instanceId,
-        ),
-      }),
-      creation: {
-        projectId: selectedProject.id,
-        projectTitle: selectedProject.title,
-        projectCwd: selectedProject.workspaceRoot,
-        workspaceMode: mode,
-        ...(mode === "worktree" && workspaceSelection?.pullRequestReference
-          ? { pullRequestReference: workspaceSelection.pullRequestReference }
-          : {}),
-        // Queued local tasks use drain-time checkout; snapshot branches only for immediate sends or explicit choices.
-        branch: resolveProjectThreadCreationBranch({
-          workspaceMode: mode,
-          selectedBranch: workspaceSelection?.branch ?? null,
-          currentCheckoutBranch: options?.currentCheckoutBranch ?? null,
-        }),
-        worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
-        ...((workspaceSelection?.startFromOrigin ?? startFromOrigin)
-          ? { startFromOrigin: true }
-          : {}),
+        legacyPlanModeEnabled,
+        startFromOrigin,
       },
-      createdAt: metadata.createdAt,
-    };
-  };
+      metadata,
+      options,
+    );
 
   const scratchEnvironments = connectedEnvironments.filter(
     (environment) =>
