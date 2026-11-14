@@ -1,7 +1,7 @@
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import { exhaustedUsageWindow, resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
@@ -47,6 +47,7 @@ import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
@@ -333,7 +334,7 @@ import { useProactivePanels } from "../hooks/useProactivePanels";
 import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
 import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
-import { modelFallbackBannerItem } from "./chat/ComposerUsageLimits";
+import { modelFallbackBannerItem, providerOutOfUsageBannerItem } from "./chat/ComposerUsageLimits";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { resolveThreadSyncPhase } from "../threadSync";
 import { hasAvailableCompactionProvider } from "./chat/compaction.logic";
@@ -483,6 +484,9 @@ export default function ChatView(props: ChatViewProps) {
   });
   const loadEarlierThreadHistory = useAtomCommand(threadEnvironment.loadEarlierHistory, {
     label: "load earlier thread history",
+    reportFailure: false,
+  });
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
   const { environments } = useEnvironments();
@@ -831,6 +835,15 @@ export default function ChatView(props: ChatViewProps) {
       )
     : undefined;
   const isServerThread = serverThread !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- usage is only re-probed on demand, so a new draft asks the server for fresh limits (throttled per environment)
+  useEffect(() => {
+    if (draftId === null || isServerThread) return;
+    void refreshUsageLimits(
+      environmentId,
+      () => refreshProviders({ environmentId, input: {} }),
+      true,
+    );
+  }, [draftId, environmentId, isServerThread, refreshProviders]);
   const activeThread = isServerThread ? serverThread : localDraftThread;
   const serverLatestRun =
     serverProjection === null ? null : deriveLatestThreadRun(serverProjection);
@@ -2652,6 +2665,29 @@ export default function ChatView(props: ChatViewProps) {
             }),
           ]
         : [];
+    const outOfUsageModel =
+      composerSelectedModelSelection?.instanceId === activeProviderInstanceId
+        ? composerSelectedModelSelection.model
+        : activeThread?.modelSelection.model;
+    const outOfUsageWindow =
+      !isServerThread && fallbackItems.length === 0 && activeProviderStatus
+        ? exhaustedUsageWindow(
+            activeProviderStatus,
+            Date.parse(`${nowMinute}:00Z`),
+            outOfUsageModel,
+          )
+        : undefined;
+    const outOfUsageItems: ComposerBannerStackItem[] =
+      outOfUsageWindow && activeProviderStatus
+        ? [
+            providerOutOfUsageBannerItem({
+              instanceId: activeProviderStatus.instanceId,
+              providerName: activeProviderStatus.displayName ?? activeProviderStatus.driver,
+              resetsAt: outOfUsageWindow.resetsAt ?? null,
+              timestampFormat,
+            }),
+          ]
+        : [];
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
     const extensionStatusBanner = extensionStatusBannerItem(
       deriveProviderExtensionStatuses(serverProjection),
@@ -2668,6 +2704,7 @@ export default function ChatView(props: ChatViewProps) {
       return [
         ...feedbackBannerItems,
         ...fallbackItems,
+        ...outOfUsageItems,
         ...limitRecoveryItems,
         ...extensionStatusItems,
         ...usageLimitsItems,
@@ -2679,6 +2716,7 @@ export default function ChatView(props: ChatViewProps) {
     return [
       ...feedbackBannerItems,
       ...fallbackItems,
+      ...outOfUsageItems,
       ...limitRecoveryItems,
       ...extensionStatusItems,
       ...usageLimitsItems,

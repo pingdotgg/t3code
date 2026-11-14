@@ -102,6 +102,28 @@ export function modelFallbackBannerItem({
   };
 }
 
+export function providerOutOfUsageBannerItem({
+  instanceId,
+  providerName,
+  resetsAt,
+  timestampFormat,
+}: {
+  readonly instanceId: string;
+  readonly providerName: string;
+  readonly resetsAt: string | null;
+  readonly timestampFormat: TimestampFormat;
+}): ComposerBannerStackItem {
+  return {
+    id: `provider-out-of-usage:${instanceId}:${resetsAt ?? ""}`,
+    variant: "warning",
+    icon: <GaugeIcon />,
+    title: `${providerName} is out of usage`,
+    description: resetsAt
+      ? `Resets ${formatUpcomingTimestamp(resetsAt, timestampFormat)} · pick another model to keep working`
+      : "Pick another model to keep working",
+  };
+}
+
 function UsageLimitsBannerBody({
   report,
   environmentId,
