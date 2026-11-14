@@ -22,7 +22,7 @@ import {
   type OpenCode2Model,
   type OpenCode2Workspace,
 } from "./status.ts";
-import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
+import { readOpenCodeUsageLimits } from "./usageLimits.ts";
 import { probeOpenCodeRuntime } from "./versionProbe.ts";
 import {
   OPENCODE_1_RESPONSES,
@@ -36,7 +36,7 @@ const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
 it.effect("reads Go limits with the instance's XDG credentials and preserves reset times", () =>
   Effect.gen(function* () {
     const resetsAt = "2026-09-17T12:00:00.000Z";
-    const limits = yield* readOpenCodeGoUsageLimits({
+    const { limits } = yield* readOpenCodeUsageLimits({
       enabled: true,
       serverUrl: "",
       environment: { XDG_DATA_HOME: "/instance/data", OPENCODE_API_KEY: "env-key" },
@@ -177,7 +177,7 @@ it.effect(
         }
         const before = yield* fs.readFile(`${dataHome}/opencode/opencode.db`);
         const authorizations: string[] = [];
-        const limits = yield* readOpenCodeGoUsageLimits({
+        const { limits } = yield* readOpenCodeUsageLimits({
           enabled: true,
           serverUrl: "",
           environment: {
@@ -230,7 +230,7 @@ it.effect("does not read local credentials for external or disabled OpenCode ins
       { enabled: true, serverUrl: "https://remote.example" },
       { enabled: false, serverUrl: "" },
     ]) {
-      const limits = yield* readOpenCodeGoUsageLimits({ ...settings, environment: {} }).pipe(
+      const { limits } = yield* readOpenCodeUsageLimits({ ...settings, environment: {} }).pipe(
         Effect.provideService(
           FileSystem.FileSystem,
           FileSystem.makeNoop({
@@ -255,7 +255,7 @@ it.effect("keeps Go entitlement absence distinct from failed or malformed usage 
       [401, "probeFailed"],
       [200, "probeFailed"],
     ] as const) {
-      const limits = yield* readOpenCodeGoUsageLimits({
+      const { limits } = yield* readOpenCodeUsageLimits({
         enabled: true,
         serverUrl: "",
         environment: {

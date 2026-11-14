@@ -111,10 +111,13 @@ current model's limits without leaving the conversation. The result opens above 
 closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
 anything. The command is offered only for providers that appear under **Usage → Limits**.
 
-OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
-the environment. T3 cannot report limits for external OpenCode servers because their credentials
-belong to the remote server. Limits need an OpenCode Go API key, or an OpenCode Console connected
-in OpenCode with an API key. A Console browser sign-in alone does not report them. You can also add
+OpenCode reports ChatGPT subscription limits when you sign in to ChatGPT from OpenCode on
+that machine. The session, weekly, and monthly windows match Codex, including how much is left
+and when each window resets. An OpenAI API key does not include those limits. OpenCode Go also
+reports its session, weekly, and monthly allowance when OpenCode runs locally in the environment.
+T3 cannot report limits for external OpenCode servers because their credentials belong to the
+remote server. Go limits need an OpenCode Go API key, or an OpenCode Console connected in
+OpenCode with an API key. A Console browser sign-in alone does not report them. You can also add
 your Go API key as `OPENCODE_API_KEY` in the OpenCode instance's **Environment variables**, then
 refresh provider status. Cursor reports
 its monthly allowance, including separate Auto and API usage, using the CLI login or

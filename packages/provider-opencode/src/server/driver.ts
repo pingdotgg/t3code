@@ -21,7 +21,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { openCodeUsageReader, type OpenCodeUsageReaderEnv } from "./usage.ts";
-import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
+import { readOpenCodeUsageLimits } from "./usageLimits.ts";
 import { loadOpenCode2Catalog } from "./openCode2Catalog.ts";
 import {
   checkOpenCodeProviderStatus,
@@ -351,7 +351,7 @@ export const OpenCodeDriver: ProviderDriver<
           runtimeProbe.refresh,
           loadOpenCode2Models,
         ),
-        usageLimits: readOpenCodeGoUsageLimits({
+        usage: readOpenCodeUsageLimits({
           enabled: effectiveConfig.enabled,
           serverUrl: effectiveConfig.serverUrl,
           environment: processEnv,
@@ -359,7 +359,18 @@ export const OpenCodeDriver: ProviderDriver<
       },
       { concurrency: "unbounded" },
     ).pipe(
-      Effect.map(({ provider, usageLimits }) => ({ ...provider, usageLimits })),
+      Effect.map(({ provider, usage }) => ({
+        ...provider,
+        usageLimits: usage.limits,
+        auth: {
+          ...provider.auth,
+          ...(provider.auth.email || !usage.identity?.email ? {} : { email: usage.identity.email }),
+          ...(provider.auth.label || !usage.identity?.plan ? {} : { label: usage.identity.plan }),
+          ...(provider.auth.workspaceId || !usage.identity?.workspaceId
+            ? {}
+            : { workspaceId: usage.identity.workspaceId }),
+        },
+      })),
       Effect.map(stampIdentity),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, pathService),
