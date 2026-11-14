@@ -10,6 +10,31 @@ import {
   type OfficeWorkerRequest,
 } from "./officePreviewProtocol";
 
+// Word limits, measured against the @betteroffice/docx engine, which lays out in its own worker.
+export const WORD_LIMITS = {
+  /** document.xml read and kept, about 700 pages of prose; the engine opens it in about 1 s. */
+  bodyBytes: 4 * 1024 * 1024,
+  bodyElements: 50_000,
+  bodyTags: 1_000_000,
+  /** A table is laid out in one go: 100,000 tags is a 4,000-row table, about 2 s. */
+  elementTags: 100_000,
+  /** Line breaking grows with the square of a paragraph's text: 40K characters take about 2 s. */
+  paragraphText: 128 * 1024,
+  styles: 8_192,
+  styleBytes: 16 * 1024 * 1024,
+  styleUnits: 400_000,
+  styleVisits: 131_072,
+  stylePropertyVisits: 2_000_000,
+  numberingReferences: 20_000,
+  numberingBytes: 32 * 1024 * 1024,
+  numberingMarkup: 400_000,
+  auxiliaryPartBytes: 8 * 1024 * 1024,
+  auxiliaryMarkup: 1_000_000,
+  /** Body, styles, lists and notes, with headers and footers counted once per page. */
+  expandedBytes: 64 * 1024 * 1024,
+  expandedMarkup: 4_000_000,
+};
+
 function xmlParser() {
   const parser = new SaxesParser({ xmlns: true });
   parser.on("doctype", () => {
@@ -143,27 +168,41 @@ function wordDocuments(
   let elementTags = 0;
   let batchTags = 0;
   let elements = 0;
+  // The text each open paragraph lays out (its w:t runs); a nested paragraph counts apart.
+  const paragraphText: number[] = [];
+  let inText = false;
   let truncated = incomplete;
   const limit = Symbol("Word preview limit");
+  const countText = (text: string) => {
+    if (!inText || paragraphText.length === 0) return;
+    const length = paragraphText.at(-1)! + text.length;
+    if (length > WORD_LIMITS.paragraphText) throw limit;
+    paragraphText[paragraphText.length - 1] = length;
+  };
+  parser.on("text", countText);
+  parser.on("cdata", countText);
   parser.on("opentag", (tag) => {
     names.push(tag.name);
+    if (prefix && tag.local === "p") paragraphText.push(0);
+    if (tag.local === "t") inText = true;
     if (names.length === 2 && tag.local === "body") {
       prefix = xml.slice(0, parser.position).replace(/\/>$/, ">");
       suffix = `</${tag.name}></${names[0]}>`;
       boundary = batchStart = parser.position;
     } else if (prefix && names.length > 2) {
-      if (names.length === 3 && ++elements > 5_000) throw limit;
+      if (names.length === 3 && ++elements > WORD_LIMITS.bodyElements) throw limit;
       tags++;
       elementTags++;
       batchTags++;
-      if (tags > 100_000 || elementTags > 2_000 || parser.position - boundary > 128 * 1024)
-        throw limit;
+      if (tags > WORD_LIMITS.bodyTags || elementTags > WORD_LIMITS.elementTags) throw limit;
     }
     if (names.length > 64) throw limit;
   });
   parser.on("closetag", (tag) => {
+    if (prefix && tag.local === "p") paragraphText.pop();
+    if (tag.local === "t") inText = false;
     if (prefix && names.length === 3 && tag.local !== "sectPr") {
-      if (parser.position - prefix.length > 3 * 1024 * 1024) throw limit;
+      if (parser.position - prefix.length > WORD_LIMITS.bodyBytes) throw limit;
       boundary = parser.position;
       elementTags = 0;
       if (batchTags >= 500) {
@@ -177,7 +216,6 @@ function wordDocuments(
   try {
     for (let offset = 0; offset < xml.length; offset += 16 * 1024) {
       parser.write(xml.slice(offset, offset + 16 * 1024));
-      if (prefix && parser.position - boundary > 128 * 1024) throw limit;
     }
     if (!incomplete) parser.close();
   } catch (cause) {
@@ -195,7 +233,7 @@ function wordDocuments(
     const document = prefix + batch.content + (section?.xml ?? "") + suffix;
     length += batch.content.length;
     markup += batch.content.match(/<(?![!?/])/g)?.length ?? 0;
-    if (length > 3 * 1024 * 1024 || markup > 100_000) {
+    if (length > WORD_LIMITS.bodyBytes || markup > WORD_LIMITS.bodyTags) {
       truncated = true;
       break;
     }
@@ -215,10 +253,21 @@ function boundedWorksheet(
   const rowTags = new Map<number, string>();
   const metadataAttributes = new Map<
     string,
-    { ref: string | undefined; min: string | undefined; max: string | undefined }
+    {
+      ref: string | undefined;
+      min: string | undefined;
+      max: string | undefined;
+      hidden: string | undefined;
+    }
   >();
   let dataStart = 0;
+  let dataTag = 0;
+  let dataPrefix = "";
+  let dataNamespace = "";
   let dataEnd = 0;
+  let defaultWidth: number | undefined;
+  let gridlines: boolean | undefined;
+  const sizedColumns: { min: number; max: number }[] = [];
   let emptyData = false;
   let depth = 0;
   let row = 0;
@@ -267,17 +316,42 @@ function boundedWorksheet(
           ref: attribute("ref"),
           min: attribute("min"),
           max: attribute("max"),
+          hidden: attribute("hidden"),
         },
       );
+    // The engine draws gridlines on every sheet, so the first view's choice travels beside the bytes.
+    if (depth === 3 && tag.local === "sheetView" && gridlines === undefined) {
+      const shown = attribute("showGridLines");
+      gridlines = shown !== "0" && shown !== "false";
+    }
+    if (depth === 2 && tag.local === "sheetFormatPr") {
+      const width = Number(attribute("defaultColWidth") ?? Number.NaN);
+      if (width >= 0 && width <= 255) defaultWidth = width;
+    }
+    if (depth === 3 && tag.local === "col") {
+      const hidden = attribute("hidden");
+      const min = Number(attribute("min") ?? 1);
+      const max = Number(attribute("max") ?? min);
+      if (
+        (attribute("width") !== undefined || hidden === "1" || hidden === "true") &&
+        Number.isInteger(min) &&
+        Number.isInteger(max)
+      )
+        sizedColumns.push({ min, max });
+    }
     if (depth === 2 && tag.local === "sheetData") {
       dataStart = parser.position;
+      dataTag = xml.lastIndexOf("<", parser.position - 1);
+      dataPrefix = tag.prefix ? `${tag.prefix}:` : "";
+      dataNamespace = tag.uri
+        .replaceAll("&", "&amp;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("<", "&lt;");
       emptyData = tag.isSelfClosing;
     }
+    // A dimension past the limits loses nothing by itself; the cells past them say whether content is lost.
     if (depth === 2 && tag.local === "dimension") {
-      for (const ref of (attribute("ref") ?? "").split(":")) {
-        const { col, line } = coordinate(ref);
-        if (col > OFFICE_PREVIEW_MAX_COLUMNS || line > OFFICE_PREVIEW_MAX_ROWS) truncated = true;
-      }
+      for (const ref of (attribute("ref") ?? "").split(":")) coordinate(ref);
     } else if (depth === 3 && tag.local === "row") {
       explicitRow = attribute("r") !== undefined;
       row = attribute("r") === undefined ? row + 1 : Number(attribute("r"));
@@ -403,7 +477,12 @@ function boundedWorksheet(
         }
         if (/<(?:\w+:)?col\b/.test(opening)) {
           const min = Math.max(1, Number(attributes.min ?? 1));
-          const max = Math.min(OFFICE_PREVIEW_MAX_COLUMNS, Number(attributes.max ?? 16384));
+          // Hidden columns keep their full span, or the columns past the limit would show again.
+          const hidden = attributes.hidden === "1" || attributes.hidden === "true";
+          const max = Math.min(
+            hidden ? 16384 : OFFICE_PREVIEW_MAX_COLUMNS,
+            Number(attributes.max ?? 16384),
+          );
           if (!Number.isInteger(min) || !Number.isInteger(max) || min > max) return "";
           replace("min", String(min));
           replace("max", String(max));
@@ -411,10 +490,28 @@ function boundedWorksheet(
         return tag;
       },
     );
+  // The engine sizes columns without a width at Excel's 8.43 characters and ignores `defaultColWidth`, so the
+  // columns it covers get that width spelled out. A second `<cols>` is valid: the schema allows any number.
+  let defaultColumns = "";
+  if (defaultWidth !== undefined) {
+    let next = 1;
+    for (const span of sizedColumns.toSorted((a, b) => a.min - b.min)) {
+      if (span.min > next)
+        defaultColumns += `<${dataPrefix}col min="${next}" max="${Math.min(span.min - 1, OFFICE_PREVIEW_MAX_COLUMNS)}" width="${defaultWidth}"/>`;
+      next = Math.max(next, span.max + 1);
+      if (next > OFFICE_PREVIEW_MAX_COLUMNS) break;
+    }
+    if (next <= OFFICE_PREVIEW_MAX_COLUMNS)
+      defaultColumns += `<${dataPrefix}col min="${next}" max="${OFFICE_PREVIEW_MAX_COLUMNS}" width="${defaultWidth}"/>`;
+    if (defaultColumns)
+      defaultColumns = `<${dataPrefix}cols xmlns${dataPrefix ? `:${dataPrefix.slice(0, -1)}` : ""}="${dataNamespace}">${defaultColumns}</${dataPrefix}cols>`;
+  }
+  const head = (part: string) =>
+    metadata(part.slice(0, dataTag) + defaultColumns + part.slice(dataTag));
   return {
     xml: emptyData
-      ? metadata(xml)
-      : `${metadata(xml.slice(0, dataStart))}${[...rows]
+      ? head(xml)
+      : `${head(xml.slice(0, dataStart))}${[...rows]
           .sort(([a], [b]) => a - b)
           .map(
             ([line, values]) =>
@@ -425,12 +522,84 @@ function boundedWorksheet(
           )
           .join("")}${metadata(xml.slice(dataEnd))}`,
     truncated,
+    gridlines: gridlines ?? true,
   };
+}
+
+/**
+ * A stylesheet as Excel reads it, in the terms the engine understands. The engine takes a number format id under 164 as
+ * Excel's built-in one, though workbooks define their own there (Excel writes its locale formats 5 to 8 that way), so
+ * those move to free ids. It also reads `<u val="…">` as a boolean, which loses every named underline but the bare one.
+ */
+function engineStyles(xml: string) {
+  const name = (local: string) => `<((?:[\\w.-]+:)?)${local}\\b`;
+  const blocks = new Map<string, { start: number; end: number }>();
+  const parser = xmlParser();
+  let depth = 0;
+  parser.on("opentag", (tag) => {
+    if (++depth > 64) throw new Error("This workbook contains excessive XML nesting.");
+    if (depth !== 2 || !["numFmts", "cellStyleXfs", "cellXfs"].includes(tag.local)) return;
+    if (blocks.has(tag.local))
+      throw new Error("This workbook contains duplicate stylesheet blocks.");
+    blocks.set(tag.local, {
+      start: xml.lastIndexOf("<", parser.position - 1),
+      end: parser.position,
+    });
+  });
+  parser.on("closetag", (tag) => {
+    if (depth === 2) {
+      const block = blocks.get(tag.local);
+      if (block) block.end = parser.position;
+    }
+    depth--;
+  });
+  parser.write(xml).close();
+  const id = /(numFmtId\s*=\s*)(["'])(\d+)\2/g;
+  const moved = new Map<number, number>();
+  const formatBlock = blocks.get("numFmts");
+  const formats = formatBlock ? xml.slice(formatBlock.start, formatBlock.end) : "";
+  const used = new Set([...formats.matchAll(id)].map((match) => Number(match[3])));
+  let next = 164;
+  const renumber = (part: string, assign: boolean) =>
+    part.replace(id, (attribute: string, key: string, quote: string, value: string) => {
+      const number = Number(value);
+      if (assign && number < 164 && !moved.has(number)) {
+        while (used.has(next)) next++;
+        if (next > 65535) throw new Error("This workbook has too many custom number formats.");
+        moved.set(number, next++);
+      }
+      const to = moved.get(number);
+      return to === undefined ? attribute : `${key}${quote}${to}${quote}`;
+    });
+  const numberedFormats = renumber(formats, true);
+  const parts: string[] = [];
+  let offset = 0;
+  for (const [local, block] of blocks) {
+    parts.push(
+      xml.slice(offset, block.start),
+      local === "numFmts" ? numberedFormats : renumber(xml.slice(block.start, block.end), false),
+    );
+    offset = block.end;
+  }
+  parts.push(xml.slice(offset));
+  return parts
+    .join("")
+    .replace(
+      new RegExp(
+        `${name("u")}\\s+val\\s*=\\s*(["'])(?:single|double|singleAccounting|doubleAccounting)\\2\\s*(?:/>|>\\s*</\\1u\\s*>)`,
+        "g",
+      ),
+      "<$1u/>",
+    );
 }
 
 async function boundWorkbook(archive: JSZip) {
   const paths = new Map<string, string>();
+  // Chart sheets and other non-grid sheets hold no cells to bound.
+  const otherSheets = new Set<string>();
   let sharedPath = "xl/sharedStrings.xml";
+  let stylesPath = "xl/styles.xml";
+  let themePath = "xl/theme/theme1.xml";
   const relationships = xmlParser();
   relationships.on("opentag", (tag) => {
     if (tag.local !== "Relationship") return;
@@ -440,22 +609,44 @@ async function boundWorkbook(archive: JSZip) {
       "https://docx.invalid/xl/workbook.xml",
     ).pathname.slice(1);
     if (type?.endsWith("/worksheet")) paths.set(tag.attributes.Id?.value ?? "", path);
+    else if (/\/(?:chartsheet|dialogsheet|xlMacrosheet|xlIntlMacrosheet)$/.test(type ?? ""))
+      otherSheets.add(tag.attributes.Id?.value ?? "");
     if (type?.endsWith("/sharedStrings")) sharedPath = path;
+    if (type?.endsWith("/styles")) stylesPath = path;
+    if (type?.endsWith("/theme")) themePath = path;
   });
   relationships
     .write((await archive.file("xl/_rels/workbook.xml.rels")?.async("string")) ?? "")
     .close();
   const sheetPaths: string[] = [];
+  // Every sheet in workbook order, as the engine indexes them; chart sheets have no worksheet path.
+  const sheetOrder: (string | undefined)[] = [];
   const workbook = xmlParser();
   workbook.on("opentag", (tag) => {
     if (tag.local !== "sheet") return;
     const id = Object.values(tag.attributes).find((attribute) => attribute.local === "id")?.value;
+    if (otherSheets.has(id ?? "")) {
+      sheetOrder.push(undefined);
+      return;
+    }
     const path = paths.get(id ?? "");
     if (!path || sheetPaths.length === 100)
       throw new Error("This workbook has invalid or too many sheets.");
     sheetPaths.push(path);
+    sheetOrder.push(path);
   });
   workbook.write((await archive.file("xl/workbook.xml")?.async("string")) ?? "").close();
+  const theme = (await archive.file(themePath)?.async("string")) ?? "";
+  const typeface = (font: string, fallback: string) =>
+    new RegExp(
+      `<(?:[\\w.-]+:)?${font}\\b[^>]*>\\s*<(?:[\\w.-]+:)?latin\\b[^>]*\\btypeface\\s*=\\s*["']([^"']+)["']`,
+    ).exec(theme)?.[1] ?? fallback;
+  const themeFonts = {
+    major: typeface("majorFont", "Calibri Light"),
+    minor: typeface("minorFont", "Calibri"),
+  };
+  const styles = await archive.file(stylesPath)?.async("string");
+  if (styles) archive.file(stylesPath, engineStyles(styles));
   const strings: string[] = [];
   const shared = await archive.file(sharedPath)?.async("string");
   if (shared) {
@@ -478,15 +669,20 @@ async function boundWorkbook(archive: JSZip) {
     parser.write(shared).close();
   }
   const budget = { remaining: 1024 * 1024, cells: 0 };
-  const limited = new Map<string, boolean>();
+  const bounded = new Map<string, { truncated: boolean; gridlines: boolean }>();
   for (const path of new Set(sheetPaths)) {
     const file = archive.file(path);
     if (!file) throw new Error("This workbook has a missing worksheet.");
     const sheet = boundedWorksheet(await file.async("string"), strings, budget);
     archive.file(path, sheet.xml);
-    limited.set(path, sheet.truncated);
+    bounded.set(path, sheet);
   }
-  return sheetPaths.map((path) => limited.get(path) ?? false);
+  return {
+    sheets: sheetOrder.map(
+      (path) => (path && bounded.get(path)) || { truncated: false, gridlines: true },
+    ),
+    themeFonts,
+  };
 }
 
 const WORD_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
@@ -616,16 +812,17 @@ function wordPartTypes() {
 }
 
 // Bound inherited style and numbering expansion before the engine loads it.
-// Picture bullets can duplicate embedded images, so omit those definitions.
-const WORD_STYLE_MAX_BYTES = 1024 * 1024;
-const WORD_STYLE_MAX_UNITS = 20_000;
-
+// Picture bullets can duplicate embedded images, so `pictures` locates those definitions to omit.
 function wordXmlCost(xml: string, roles: Set<string> | undefined) {
   const parser = xmlParser();
   let depth = 0;
   let markup = 0;
   const limit = Symbol("Word style budget");
-  const exceeded = { bytes: Infinity, markup: Infinity, pictures: false };
+  const exceeded = {
+    bytes: Infinity,
+    markup: Infinity,
+    pictures: [] as { start: number; end: number }[],
+  };
   let styleCount = 0;
   let ownUnits = 0;
   const styles = new Map<
@@ -639,7 +836,8 @@ function wordXmlCost(xml: string, roles: Set<string> | undefined) {
   const references: { id: string; selector: number }[] = [];
   let definition: { id: string; start: number; markup: number } | null = null;
   let reference: { id: string; selector: number } | null = null;
-  let pictures = false;
+  const pictures: { start: number; end: number }[] = [];
+  let picture: { start: number; depth: number } | null = null;
   parser.on("opentag", (tag) => {
     if (++depth > 64)
       throw new Error("Preview limited: this Word document has excessive XML nesting.");
@@ -648,7 +846,7 @@ function wordXmlCost(xml: string, roles: Set<string> | undefined) {
       Object.values(tag.attributes).find((a) => a.local === name)?.value ?? "";
     names.push(tag.local === "tblStylePr" ? `${tag.local}:${attr("type")}` : tag.local);
     if (roles?.has("styles") && (tag.local === "style" || tag.local === "docDefaults")) {
-      if (++styleCount > 1_024 || attr("styleId").length > 256) throw limit;
+      if (++styleCount > WORD_LIMITS.styles || attr("styleId").length > 256) throw limit;
       style = { id: attr("styleId"), properties: new Map(), base: "", linked: "" };
     }
     if (style) {
@@ -659,7 +857,7 @@ function wordXmlCost(xml: string, roles: Set<string> | undefined) {
         const size = new TextEncoder().encode(
           xml.slice(xml.lastIndexOf("<", parser.position - 1), parser.position),
         ).length;
-        if (++ownUnits > WORD_STYLE_MAX_UNITS) throw limit;
+        if (++ownUnits > WORD_LIMITS.styleUnits) throw limit;
         style.properties.set(key, size);
       }
     }
@@ -671,15 +869,20 @@ function wordXmlCost(xml: string, roles: Set<string> | undefined) {
           markup: markup - 1,
         };
       if (tag.local === "num") {
-        if (references.length >= 2_000) throw limit;
+        if (references.length >= WORD_LIMITS.numberingReferences) throw limit;
         reference = { id: "", selector: attr("numId").length + 32 };
         references.push(reference);
       }
       if (tag.local === "abstractNumId" && reference) reference.id = attr("val");
     }
-    if (tag.local === "numPicBullet") pictures = true;
+    if (!picture && (tag.local === "numPicBullet" || tag.local === "lvlPicBulletId"))
+      picture = { start: xml.lastIndexOf("<", parser.position - 1), depth };
   });
   parser.on("closetag", (tag) => {
+    if (picture?.depth === depth) {
+      pictures.push({ start: picture.start, end: parser.position });
+      picture = null;
+    }
     if (definition && tag.local === "abstractNum") {
       const previous = definitions.get(definition.id);
       definitions.set(definition.id, {
@@ -731,16 +934,16 @@ function wordXmlCost(xml: string, roles: Set<string> | undefined) {
       ]) {
         const seen = new Set<string>();
         for (let node = root; node; node = node.parent) {
-          if (++visited > 8_192) return exceeded;
+          if (++visited > WORD_LIMITS.styleVisits) return exceeded;
           for (const [key, size] of node.properties) {
-            if (++propertyVisits > 100_000) return exceeded;
+            if (++propertyVisits > WORD_LIMITS.stylePropertyVisits) return exceeded;
             if (seen.has(key)) continue;
             // Latent styles never enter properties. Charge each own property
             // once per resolved style, including linked and default selectors.
             const copies = id ? 1 : 2;
             bytes += (size * 2 + id.length + 32) * copies;
             expandedMarkup += copies;
-            if (bytes > WORD_STYLE_MAX_BYTES || expandedMarkup > WORD_STYLE_MAX_UNITS)
+            if (bytes > WORD_LIMITS.styleBytes || expandedMarkup > WORD_LIMITS.styleUnits)
               return exceeded;
             seen.add(key);
           }
@@ -756,7 +959,8 @@ function wordXmlCost(xml: string, roles: Set<string> | undefined) {
       if (!cost) continue;
       bytes += cost.bytes * 2 + cost.markup * ref.selector;
       markup += cost.markup;
-      if (bytes > 128 * 1024 || markup > 2_000) return exceeded;
+      if (bytes > WORD_LIMITS.numberingBytes || markup > WORD_LIMITS.numberingMarkup)
+        return exceeded;
     }
   }
   return { bytes, markup, pictures };
@@ -851,7 +1055,7 @@ async function wordExpansion(
       let expanded = memo.get(key);
       if (!expanded) {
         expandedXmlBytes += node.xml.length * 2;
-        if (expandedXmlBytes > 3 * 1024 * 1024) {
+        if (expandedXmlBytes > WORD_LIMITS.expandedBytes) {
           cost.bytes = Infinity;
           break;
         }
@@ -901,7 +1105,9 @@ async function wordExpansion(
     markup += cost.markup;
   }
   const overBudget =
-    bytes > 3 * 1024 * 1024 || markup > 100_000 || media > OFFICE_PREVIEW_MAX_BYTES;
+    bytes > WORD_LIMITS.expandedBytes ||
+    markup > WORD_LIMITS.expandedMarkup ||
+    media > OFFICE_PREVIEW_MAX_BYTES;
   const truncated = (used.size > 0 && overBudget) || bytes === Infinity;
   const omitted = new Set([...optional].filter((path) => truncated || !used.has(path)));
   for (const path of omitted) archive.remove(path);
@@ -1014,7 +1220,10 @@ export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type:
           // stay small before the engine parses it.
           if (input.kind === "docx" && !document && !media) {
             for (const byte of chunk) if (byte === 0x3c) wordAuxiliaryMarkup++;
-            if (length > 1024 * 1024 || wordAuxiliaryMarkup > 50_000) {
+            if (
+              length > WORD_LIMITS.auxiliaryPartBytes ||
+              wordAuxiliaryMarkup > WORD_LIMITS.auxiliaryMarkup
+            ) {
               stream.pause();
               reject(
                 new Error("Preview limited: this Word document has too much auxiliary markup."),
@@ -1052,14 +1261,21 @@ export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type:
       if (entry.name === "[Content_Types].xml" || entry.name.endsWith(".rels"))
         xml = partTypes.metadata(entry.name, xml);
       const roles = partTypes.roles.get(entry.name);
-      const cost = wordXmlCost(xml, roles);
+      let cost = wordXmlCost(xml, roles);
       // The renderer parses related parts even when their render option is off.
       if (roles && [...roles].every((role) => WORD_DISABLED_PARTS.has(role))) continue;
+      // Picture bullets come out, and their list levels keep the text bullets Word falls back to.
+      if (roles?.has("numbering") && cost.pictures.length > 0) {
+        for (const range of cost.pictures.toReversed())
+          xml = xml.slice(0, range.start) + xml.slice(range.end);
+        cost = wordXmlCost(xml, roles);
+        wordInputTruncated = true;
+      }
       if (
-        (roles?.has("numbering") && cost.pictures) ||
         (roles?.has("styles") &&
-          (cost.bytes > WORD_STYLE_MAX_BYTES || cost.markup > WORD_STYLE_MAX_UNITS)) ||
-        (roles?.has("numbering") && (cost.bytes > 128 * 1024 || cost.markup > 2_000))
+          (cost.bytes > WORD_LIMITS.styleBytes || cost.markup > WORD_LIMITS.styleUnits)) ||
+        (roles?.has("numbering") &&
+          (cost.bytes > WORD_LIMITS.numberingBytes || cost.markup > WORD_LIMITS.numberingMarkup))
       ) {
         wordInputTruncated = true;
         continue;
@@ -1098,8 +1314,8 @@ export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type:
       const images = extra.media;
       const batchImages = new Set(extra.images);
       if (
-        bytes + cost.bytes > 3 * 1024 * 1024 ||
-        markup + cost.markup > 100_000 ||
+        bytes + cost.bytes > WORD_LIMITS.expandedBytes ||
+        markup + cost.markup > WORD_LIMITS.expandedMarkup ||
         mediaBytes + images > OFFICE_PREVIEW_MAX_BYTES
       )
         break;
@@ -1116,8 +1332,8 @@ export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type:
     for (const path of mediaSizes.keys()) if (!usedImages.has(path)) archive.remove(path);
     archive.file("word/document.xml", documents[0]!);
   }
-  const truncatedSheets = input.kind === "xlsx" ? await boundWorkbook(archive) : [];
-  return { archive, word, truncatedSheets };
+  const workbook = input.kind === "xlsx" ? await boundWorkbook(archive) : undefined;
+  return { archive, word, workbook };
 }
 
 export async function prepareOffice(
@@ -1172,7 +1388,14 @@ export async function prepareOffice(
   }
   return {
     bytes: await result.archive.generateAsync({ type: "arraybuffer", compression: "STORE" }),
-    truncated: result.word?.truncated || result.truncatedSheets.some(Boolean) || false,
+    truncated:
+      result.word?.truncated || result.workbook?.sheets.some((sheet) => sheet.truncated) || false,
+    view: result.workbook && {
+      hiddenGridlines: result.workbook.sheets.flatMap((sheet, index) =>
+        sheet.gridlines ? [] : [index],
+      ),
+      themeFonts: result.workbook.themeFonts,
+    },
   };
 }
 

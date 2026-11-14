@@ -357,6 +357,8 @@ const classifyAzFailure = (stderr: string): VcsProcessExitFailureKind | null => 
   if (normalized.includes("az devops login") || /please run '?az login'?/.test(normalized)) {
     return "authentication";
   }
+  // Azure DevOps reports usage-limit throttling as TF400733, often without an HTTP status.
+  if (normalized.includes("tf400733")) return "rate-limited";
   return normalized.includes("pull request") &&
     (normalized.includes("not found") || normalized.includes("does not exist"))
     ? "not-found"
