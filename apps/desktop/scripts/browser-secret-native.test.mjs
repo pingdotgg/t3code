@@ -78,6 +78,18 @@ describe.skipIf(hostPlatform !== "linux")("bundled libsecret helper", () => {
     expect(result.stderr.length).toBe(0);
   });
 
+  it("returns every chrome key KWallet stores without an application attribute", () => {
+    const result = run(["chrome"]);
+    expect(result.status).toBe(5);
+    expect(result.stdout).toEqual(Buffer.from("stale\0live é€\0"));
+  });
+
+  it("returns a sole chromium KWallet key unframed", () => {
+    const result = run(["chromium"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toEqual(Buffer.from("live é€"));
+  });
+
   it.each([
     ["missing", 2],
     ["empty", 2],

@@ -166,10 +166,11 @@ export function decryptChromiumValue(
   }
   if (prefix === "v11") {
     if (!keys.cbcV11) return null;
-    return (
-      decryptCbc(payload, keys.cbcV11, domain, schemaVersion) ??
-      (keys.cbcEmpty ? decryptCbc(payload, keys.cbcEmpty, domain, schemaVersion) : null)
-    );
+    for (const key of keys.cbcEmpty ? [...keys.cbcV11, keys.cbcEmpty] : keys.cbcV11) {
+      const value = decryptCbc(payload, key, domain, schemaVersion);
+      if (value !== null) return value;
+    }
+    return null;
   }
   if (platform === "darwin" || platform === "linux") {
     return stripDomainBinding(buffer, domain, schemaVersion)?.toString("utf8") ?? null;
