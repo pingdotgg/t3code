@@ -236,10 +236,10 @@ The check is the one to trust; several review findings did not hold.
 4. Move the pin with `tools/bump-conn.sh <commit> --capture` and read "What to do" at the
    top of its report (`docs/upkeep.md`).
 
-CI: on 2026-11-13 the test step passed on Linux in one run and failed in the next on the
-terminal byte-window test, which is fixed since. The rust job now installs the SDK host first
-(Node 26.12.1, `npm ci`), so its provider tests run instead of skipping, and the recordings
-decode step runs even after a test failure. These changes have not run in CI yet; the same
-commands pass on Beast. `cargo-deny` and the musl release build pass. The nightly schedule
-is switched off until the job with the Conn checkout can run: it needs the repository secret
-`CONN_READ_TOKEN` (read access to `nckrtl/conn`).
+CI: on 2026-11-14 the rust job passed on Linux for the first time, with every step green:
+format, clippy, the tests of all crates (with the SDK host installed, Node 26.12.1), and the
+recordings decode step. That is one run; on 2026-11-13 the test step passed in one run and
+failed in the next on the terminal byte-window test, which is fixed since. `cargo-deny` and
+the musl release build pass. The job with the Conn checkout fails: it needs the repository
+secret `CONN_READ_TOKEN` (read access to `nckrtl/conn`). The nightly schedule is switched off
+until that job can run.
