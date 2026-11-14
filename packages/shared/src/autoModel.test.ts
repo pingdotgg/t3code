@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { AUTO_LEVEL_DESCRIPTOR, isAutoModelSlug, resolveAutoModelSelection } from "./autoModel.ts";
+import { AUTO_LEVEL_MODELS, isAutoModelSlug, resolveAutoModelSelection } from "./autoModel.ts";
 
 const now = Date.parse("2026-11-12T12:00:00.000Z");
 const resetsAt = "2026-11-12T15:00:00.000Z";
@@ -26,6 +26,7 @@ function claude(id: string, usedPercent: number, autoAware = true): ServerProvid
   return {
     instanceId: ProviderInstanceId.make(id),
     driver: ProviderDriverKind.make("claudeAgent"),
+    ...(autoAware ? { displayName: id.endsWith("B") ? "Auto B" : "Auto" } : {}),
     enabled: true,
     installed: true,
     version: null,
@@ -39,16 +40,8 @@ function claude(id: string, usedPercent: number, autoAware = true): ServerProvid
         isCustom: false,
         capabilities: effortCapabilities,
       })),
-      ...(autoAware
-        ? [
-            {
-              slug: "auto",
-              name: "Auto",
-              isCustom: true,
-              capabilities: { optionDescriptors: [AUTO_LEVEL_DESCRIPTOR] },
-            },
-          ]
-        : []),
+      // Every Claude provider lists the Auto levels; only "Auto" instances carry the Auto prompt.
+      ...AUTO_LEVEL_MODELS.map((model) => ({ ...model, isCustom: false, capabilities: {} })),
     ],
     slashCommands: [],
     skills: [],
@@ -104,6 +97,12 @@ describe("resolveAutoModelSelection", () => {
       resolveAutoModelSelection({ selection: auto("medium"), providers, now })?.selection
         .instanceId,
     ).toBe("claudeAutoB");
+    // Same account, so same usage: the plain instance comes first in the registry.
+    const sameAccount = [claude("claudeAgent", 20, false), claude("claudeAuto", 20)];
+    expect(
+      resolveAutoModelSelection({ selection: auto("medium"), providers: sameAccount, now })
+        ?.selection.instanceId,
+    ).toBe("claudeAuto");
   });
 
   it("keeps the thread's current model until it passes 90% used", () => {

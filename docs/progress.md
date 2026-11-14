@@ -52,3 +52,10 @@
 - Why: Tomáš wants Auto in every thread, including threads that run on his PC's own T3 server, which has none of the hub's settings.
 - Numbers: 1 new server test, 3 new picker tests; server and web typecheck clean (6 min and 62 s on the hub).
 - Next: Tomáš builds the fork desktop app on his PC; Auto there routes only to the providers logged in on that PC.
+
+## 2026-11-14: Auto routes to the Auto instances again; fork synced with upstream for hub2
+
+- What: Auto prefers instances named "Auto…" (the ones launched with `auto-mode.md`) when accounts tie. The fork merged upstream main (653 commits, no conflicts) and runs on hub2 from `~/projects/t3code-auto`.
+- Why: since every Claude provider lists the Auto levels (#6), the old "lists an Auto model" check matched every Claude instance. Plain `claudeAgent` shares account A's usage with `claudeAuto` and comes first in the registry, so Auto sent turns to it and the orchestrator never got the routing prompt. hub2 ran upstream nightly (DB schema 89); the fork stopped at 85, so it could not run there.
+- Numbers: autoModel 12/12 (the same-account case failed before the fix), ClaudeProvider + ProviderRegistry 80/80, web Auto tests 7/7; typecheck of contracts, shared, server and web clean (21 s server on hub2). Fork build 59 s on hub2.
+- Next: link hub and deploy the same branch there; rebuild the desktop app on the PC.
