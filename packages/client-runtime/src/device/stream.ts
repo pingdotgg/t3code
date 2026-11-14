@@ -147,9 +147,14 @@ const ICE_GATHERING_MAX_TIMEOUT_MS = 4_000;
 const MJPEG_FRAME_CHECK_MS = 250;
 const FRAME_DURATION_US = 16_667;
 const SEMU_MAGIC = 0x53454d55;
-const SEMU_HEADER_BYTES = 16;
+const SEMU_HEADER_V1_BYTES = 16;
+const SEMU_HEADER_V2_BYTES = 24;
 const SEMU_FLAG_KEY = 1;
 const SOFT_DECODE_QUEUE = 8;
+// The frames that arrive while the decoder is being configured are kept, so the
+// picture is not missing the frames between the key frame that carried the SPS
+// and the decoder becoming usable.
+const PENDING_SEQUENCE_LIMIT = 30;
 // expo-device-hub 0.15.3 serve-emu input.js MAX_TEXT_BYTES limits packets to 300 UTF-8 bytes.
 const ANDROID_MAX_TEXT_BYTES = 300;
 // The pinned hub queue depth is 128; the client does not read queue rejections.
@@ -206,15 +211,20 @@ export function parseSemuPacket(raw: ArrayBuffer): {
   readonly timestamp: number | null;
 } {
   const bytes = new Uint8Array(raw);
-  if (bytes.byteLength > SEMU_HEADER_BYTES) {
-    const view = new DataView(raw, 0, SEMU_HEADER_BYTES);
-    if (view.getUint32(0, false) === SEMU_MAGIC && view.getUint8(4) === 1) {
+  if (bytes.byteLength > SEMU_HEADER_V1_BYTES) {
+    const view = new DataView(raw, 0, SEMU_HEADER_V1_BYTES);
+    if (view.getUint32(0, false) === SEMU_MAGIC) {
+      const version = view.getUint8(4);
+      const isKey = (view.getUint8(5) & SEMU_FLAG_KEY) !== 0;
       const pts = view.getBigUint64(8, false);
-      return {
-        data: bytes.subarray(SEMU_HEADER_BYTES),
-        isKey: (view.getUint8(5) & SEMU_FLAG_KEY) !== 0,
-        timestamp: pts <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(pts) : null,
-      };
+      const timestamp = pts <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(pts) : null;
+      // v2 appends the server send time after the pts; v1 stops at the pts.
+      if (version === 2 && bytes.byteLength > SEMU_HEADER_V2_BYTES) {
+        return { data: bytes.subarray(SEMU_HEADER_V2_BYTES), isKey, timestamp };
+      }
+      if (version === 1) {
+        return { data: bytes.subarray(SEMU_HEADER_V1_BYTES), isKey, timestamp };
+      }
     }
   }
   return { data: bytes, isKey: null, timestamp: null };
@@ -226,6 +236,20 @@ const isVideoSessionMessage = (text: string) => {
     return message.type === "video-session";
   } catch {
     return false;
+  }
+};
+
+/** The size the hub reports for a video session, or null when it reports none. */
+const parseVideoSessionSize = (text: string): { width: number; height: number } | null => {
+  try {
+    const message = JSON.parse(text) as { type?: unknown; size?: unknown };
+    if (message.type !== "video-session") return null;
+    const size = message.size as { width?: unknown; height?: unknown } | undefined;
+    if (typeof size?.width !== "number" || typeof size.height !== "number") return null;
+    if (!Number.isFinite(size.width) || !Number.isFinite(size.height)) return null;
+    return { width: size.width, height: size.height };
+  } catch {
+    return null;
   }
 };
 
@@ -383,6 +407,13 @@ function hidUsageForCode(code: string): number | null {
   return HID_USAGE_BY_CODE[code] ?? null;
 }
 
+/** A frame kept while the decoder is being configured. */
+type PendingFrame = {
+  readonly data: Uint8Array;
+  readonly isKey: boolean;
+  readonly timestamp: number | null;
+};
+
 const ANDROID_KEYCODE_BY_KEY: Readonly<Record<string, number>> = {
   ArrowUp: 19,
   ArrowDown: 20,
@@ -437,6 +468,17 @@ export function createDeviceStreamClient(
   let screen: DeviceScreenSize | null = null;
   let firstFrame = false;
   let configuring = false;
+  let pendingSequence: PendingFrame[] = [];
+  let videoSessionSize: { width: number; height: number } | null = null;
+  let configuredCodec: string | null = null;
+  // Set when the decoder was kept across an encoder restart: the next key
+  // frame has to be checked, because a new encoder can describe the stream
+  // with a different parameter set.
+  let checkSpsOnKeyframe = false;
+  // The frames the decoder still holds when the encoder restarts belong to the
+  // old session, so they must not report the new session as live.
+  let queuedFrames = 0;
+  let staleFrames = 0;
   let mjpeg = false;
   let generation = 0;
   let decoderEpoch = 0;
@@ -597,6 +639,48 @@ export function createDeviceStreamClient(
     } catch {}
     videoDecoder = null;
     awaitingKeyframe = true;
+    // A configuration that is still in flight belongs to the decoder that
+    // just went away; its result is discarded by the epoch check.
+    configuring = false;
+    configuredCodec = null;
+    checkSpsOnKeyframe = false;
+    // The frames that were kept for the decoder that just went away do not
+    // belong to the next one.
+    pendingSequence = [];
+    queuedFrames = 0;
+    staleFrames = 0;
+  };
+
+  /**
+   * Keeps a frame that arrived while the decoder was still coming up. A key
+   * frame supersedes everything before it: only the frames that follow it can
+   * be decoded against it.
+   */
+  const retainPending = (data: Uint8Array, isKey: boolean, timestamp: number | null) => {
+    if (isKey) {
+      pendingSequence = [{ data, isKey, timestamp }];
+      return;
+    }
+    pendingSequence.push({ data, isKey, timestamp });
+    if (pendingSequence.length > PENDING_SEQUENCE_LIMIT) {
+      pendingSequence.splice(0, pendingSequence.length - PENDING_SEQUENCE_LIMIT);
+    }
+  };
+
+  /**
+   * Whether the hub restarted the encoder at a different size. A restart at
+   * the same size keeps the decoder: its configuration still describes the
+   * stream, and rebuilding it would drop the frames in between.
+   */
+  const videoSessionSizeChanged = (text: string): boolean => {
+    const size = parseVideoSessionSize(text);
+    if (size === null) return true;
+    // The size the frames are decoded at is what the decoder describes.
+    const known =
+      videoSessionSize ?? (screen ? { width: screen.width, height: screen.height } : null);
+    const changed = known === null || known.width !== size.width || known.height !== size.height;
+    videoSessionSize = size;
+    return changed;
   };
 
   const recoverDecoder = () => {
@@ -617,8 +701,16 @@ export function createDeviceStreamClient(
     const decoder = new VideoDecoder({
       output: (frame) => {
         try {
+          if (queuedFrames > 0) queuedFrames -= 1;
           if (videoDecoder === decoder && (!avcc || feedGeneration === videoGeneration)) {
             decodedVideoGeneration = feedGeneration;
+            // A frame the old session left in the decoder must not report the
+            // new session as streaming: the panel would wait for a frame that
+            // never comes.
+            if (staleFrames > 0) {
+              staleFrames -= 1;
+              return;
+            }
             paint(frame, frame.displayWidth, frame.displayHeight);
           }
         } finally {
@@ -639,16 +731,36 @@ export function createDeviceStreamClient(
     isCurrent = () => !stopped,
   ): Promise<boolean> => {
     const epoch = decoderEpoch;
-    const full: VideoDecoderConfig = { ...config, optimizeForLatency: true };
-    const support = await VideoDecoder.isConfigSupported(full).catch(() => ({ supported: false }));
+    const full: VideoDecoderConfig = {
+      ...config,
+      optimizeForLatency: true,
+      // serve-emu encodes H.264 in software (libx264). The GPU decoder Electron
+      // picks by default rejects that stream on some hosts, and the failure is
+      // silent: the decoder errors and the panel never shows a frame.
+      ...(platform === "android" ? { hardwareAcceleration: "prefer-software" as const } : {}),
+    };
+    const supports = async (candidate: VideoDecoderConfig) =>
+      (await VideoDecoder.isConfigSupported(candidate).catch(() => ({ supported: false })))
+        .supported;
+    let chosen: VideoDecoderConfig | undefined = full;
+    if (!(await supports(full))) {
+      // A host with hardware decoding but no software decoder cannot use the
+      // preference, so the default is tried before the stream is given up on.
+      chosen =
+        "hardwareAcceleration" in full
+          ? (await supports({ ...full, hardwareAcceleration: "no-preference" }))
+            ? { ...full, hardwareAcceleration: "no-preference" }
+            : undefined
+          : undefined;
+    }
     if (!isCurrent() || epoch !== decoderEpoch) return false;
-    if (!support.supported) {
+    if (chosen === undefined) {
       if (platform === "android") fail(`This browser cannot decode ${config.codec}.`);
       return false;
     }
     try {
       if (!videoDecoder || videoDecoder.state === "closed") videoDecoder = makeDecoder();
-      videoDecoder.configure(full);
+      videoDecoder.configure(chosen);
       return true;
     } catch (cause) {
       if (platform === "android") fail(`Video decoder: ${(cause as Error).message}`);
@@ -656,22 +768,23 @@ export function createDeviceStreamClient(
     }
   };
 
-  const decode = (isKey: boolean, data: Uint8Array, pts?: number | null) => {
-    if (!videoDecoder || videoDecoder.state !== "configured") return;
+  /** Returns whether the chunk reached the decoder. */
+  const decode = (isKey: boolean, data: Uint8Array, pts?: number | null): boolean => {
+    if (!videoDecoder || videoDecoder.state !== "configured") return false;
     if (awaitingKeyframe) {
-      if (!isKey) return;
+      if (!isKey) return false;
       awaitingKeyframe = false;
     }
     if (videoDecoder.decodeQueueSize > SOFT_DECODE_QUEUE) {
       if (!avcc) {
         recoverDecoder();
-        return;
+        return false;
       }
       // Native IDRs are spaced by frame count, so an idle simulator may take
       // minutes to produce one. A new AVCC subscription forces a fresh IDR.
       controller?.abort();
       closeDecoder();
-      return;
+      return false;
     }
     try {
       videoDecoder.decode(
@@ -681,9 +794,12 @@ export function createDeviceStreamClient(
           data,
         }),
       );
+      queuedFrames += 1;
       timestamp += FRAME_DURATION_US;
+      return true;
     } catch {
       recoverDecoder();
+      return false;
     }
   };
 
@@ -1210,11 +1326,24 @@ export function createDeviceStreamClient(
     ws.onmessage = (event) => {
       if (stopped || socket !== ws || inputOnly) return;
       if (typeof event.data === "string") {
-        // The encoder restarts at a new size when the device rotates; the
-        // next keyframe carries a fresh SPS, so the decoder is rebuilt from it.
+        // The hub reports a new video session when the encoder restarts: at a
+        // new size when the device rotates, and at the same size when the
+        // encoder is reset.
         if (isVideoSessionMessage(event.data)) {
-          closeDecoder();
-          configuring = false;
+          // A restart at the same size keeps the decoder: its configuration is
+          // still valid, and rebuilding it would drop the frames in between.
+          if (videoSessionSizeChanged(event.data)) {
+            closeDecoder();
+          } else {
+            checkSpsOnKeyframe = true;
+            // The frames the old session left in the decoder arrive before the
+            // new session's first frame, so they belong to the old one.
+            staleFrames = queuedFrames;
+            // The frames kept for a pending configuration belong to the old
+            // session too, and the new one brings its own key frame.
+            pendingSequence = [];
+          }
+          awaitingKeyframe = true;
           connecting();
           requestKeyframe();
         }
@@ -1224,22 +1353,72 @@ export function createDeviceStreamClient(
       const packet = parseSemuPacket(event.data);
       const needsScan =
         packet.isKey === null ||
-        (packet.isKey && (!videoDecoder || videoDecoder.state !== "configured"));
+        (packet.isKey &&
+          (!videoDecoder || videoDecoder.state !== "configured" || checkSpsOnKeyframe));
       const scanned = needsScan ? scanAccessUnit(packet.data) : null;
       const isKey = packet.isKey ?? scanned?.isKey ?? false;
+      if (checkSpsOnKeyframe && isKey) {
+        checkSpsOnKeyframe = false;
+        // A parameter set that no longer matches the decoder means the stream
+        // is described differently: the decoder is rebuilt from the new one.
+        if (scanned?.sps && configuredCodec !== null) {
+          if (avcCodecString(scanned.sps) !== configuredCodec) closeDecoder();
+        }
+      }
       if (scanned?.sps && (!videoDecoder || videoDecoder.state !== "configured")) {
-        if (configuring) return;
+        if (configuring) {
+          // A newer key frame supersedes the frames kept so far.
+          retainPending(packet.data, isKey, packet.timestamp);
+          return;
+        }
         configuring = true;
         const epoch = decoderEpoch;
         const isCurrent = () => !stopped && socket === ws;
-        void configureDecoder({ codec: avcCodecString(scanned.sps) }, isCurrent).then(
-          (configured) => {
-            if (!isCurrent() || epoch !== decoderEpoch) return;
-            configuring = false;
+        const codec = avcCodecString(scanned.sps);
+        // The packet carrying the SPS is a key frame itself, and the frames
+        // that follow it are needed to produce a picture. Keep them all: the
+        // decoder is configured from the whole sequence, so nothing is lost
+        // while it comes up.
+        retainPending(packet.data, isKey, packet.timestamp);
+        void configureDecoder({ codec }, isCurrent).then((configured) => {
+          if (!isCurrent() || epoch !== decoderEpoch) return;
+          configuring = false;
+          awaitingKeyframe = true;
+          const sequence = pendingSequence;
+          pendingSequence = [];
+          if (!configured) {
+            requestKeyframe();
+            return;
+          }
+          configuredCodec = codec;
+          let drained = true;
+          for (const frame of sequence) {
+            // A delta before the first key frame cannot be decoded.
+            if (awaitingKeyframe && !frame.isKey) continue;
+            // Stop before the decoder queue overflows: the frames that are
+            // left are older than the frames still coming.
+            if (videoDecoder && videoDecoder.decodeQueueSize >= SOFT_DECODE_QUEUE) {
+              drained = false;
+              break;
+            }
+            if (!decode(frame.isKey, frame.data, frame.timestamp)) {
+              drained = false;
+              break;
+            }
+          }
+          // Frames were skipped or no key frame was decoded: the next deltas
+          // have no valid reference, so ask for a fresh key frame.
+          if (!drained || awaitingKeyframe) {
             awaitingKeyframe = true;
-            if (configured) requestKeyframe();
-          },
-        );
+            requestKeyframe();
+          }
+        });
+        return;
+      }
+      if (configuring) {
+        // The decoder is still coming up: keep the frames that arrive in the
+        // meantime, so the picture does not start after a gap.
+        retainPending(packet.data, isKey, packet.timestamp);
         return;
       }
       if (!videoDecoder || videoDecoder.state !== "configured") {
@@ -1330,6 +1509,7 @@ export function createDeviceStreamClient(
     socket = null;
     discarded?.close();
     closeDecoder();
+    videoSessionSize = null;
   };
 
   const send = (payload: Uint8Array<ArrayBuffer> | string) => {
