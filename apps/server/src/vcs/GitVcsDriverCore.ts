@@ -2696,7 +2696,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         );
         const reports = check.stdout.split("\n");
         const conflicted: string[] = [];
-        let topLevel: string | undefined;
+        let emptyTree: string | undefined;
         for (const file of unmergedPaths) {
           const markerLines = new Set(
             reports.flatMap((line) => {
@@ -2707,11 +2707,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             }),
           );
           if (markerLines.size === 0) continue;
-          topLevel ??= (yield* runGitStdout("GitVcsDriver.commit.topLevel", cwd, [
-            "rev-parse",
-            "--show-toplevel",
-          ])).trim();
-          const lines = (yield* fileSystem.readFileString(path.join(topLevel, file)).pipe(
+          emptyTree ??= yield* readEmptyTreeHash(cwd);
+          // --check numbers lines after working-tree-encoding and clean filters; a diff from the
+          // empty tree prints that view. Read it in full so large resolved files can still commit.
+          const fileDiff = yield* runGitStdoutWithOptions(
+            "GitVcsDriver.commit.conflictMarkers",
+            cwd,
+            [
+              "-c",
+              "diff.relative=false",
+              "diff",
+              "--no-color",
+              "--no-ext-diff",
+              "--no-textconv",
+              "--text",
+              emptyTree,
+              "--",
+              `:(top,literal)${file}`,
+            ],
+            { ...(env ? { env } : {}), maxOutputBytes: Number.POSITIVE_INFINITY },
+          ).pipe(
             Effect.mapError(
               (cause) =>
                 new GitCommandError({
@@ -2722,7 +2737,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                   cause,
                 }),
             ),
-          )).split("\n");
+          );
+          const diffLines = fileDiff.split("\n");
+          const lines = diffLines
+            .slice(diffLines.findIndex((line) => line.startsWith("@@")) + 1)
+            .filter((line) => line.startsWith("+"))
+            .map((line) => line.slice(1));
           // Git also reports a lone "=======", which is valid content such as a heading underline.
           const reported = (marker: string) =>
             lines.some((line, index) => markerLines.has(index) && line.startsWith(marker));
