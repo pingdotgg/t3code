@@ -9,27 +9,29 @@ the app.
 For one prompt on a timer or from a webhook, use a scheduled task. Reach for a workflow when the
 work has stages, such as triage, then a fix, then your approval, then a release.
 
-## Turn workflows on
+## Write a workflow
 
-1. Write a definitions file. The [`t3-workflows` skill](../../skills/t3-workflows/SKILL.md)
-   describes the format with a full example. Copy that folder into your agent's skills directory
-   (for example `~/.claude/skills/` or `~/.agents/skills/`) and ask the agent to write the workflow
-   for you.
-2. Start the server with `T3CODE_WORKFLOWS` set to the file's absolute path.
+Workflows are TypeScript files in the `workflows` folder of your T3 home, `~/.t3/workflows/` by
+default. Each file defines one or more workflows, and there is nothing to turn on.
 
-## Change a workflow
+- **In the app:** open **Definitions** on the Workflows page. It lists the files, makes new ones
+  and edits them. Saving checks the file first: one with a mistake is not saved and says what is
+  wrong, and one that passes runs from then on without a restart.
+- **With an agent:** the [`t3-workflows` skill](../../skills/t3-workflows/SKILL.md) describes the
+  format with a full example. Copy that folder into your agent's skills directory (for example
+  `~/.claude/skills/` or `~/.agents/skills/`) and ask the agent to write the workflow.
+- **In your own editor:** the server picks up a changed file the same way.
 
-**Definitions** on the Workflows page shows the file and lets you edit it. Saving checks the file
-first: one with a mistake is not saved and says what is wrong, and one that passes runs from then
-on without a restart. The check finds a file that does not load, a workflow defined twice, and a
-version removed while its runs are unfinished. It does not find a mistake inside a workflow's
-body; that shows when a run reaches it and pauses. Saving needs a connection that may use the
-terminal, since the server runs this file.
+A file that is wrong never stops the others: its last good version keeps running, and the page
+says what is wrong with it. The check finds a file that does not load, a workflow defined twice,
+and a version removed while its runs are unfinished. It does not find a mistake inside a
+workflow's body; that shows when a run reaches it and pauses. To change the steps of a workflow
+that has unfinished runs, add the new body under a higher `version` and keep the old one until
+those runs end.
 
-You can also change the file in your own editor or have an agent do it. The server picks the
-change up the same way, and when the file is wrong it keeps running the last version that loaded
-and says so on the page. To change the steps of a workflow that has unfinished runs, add the new
-body under a higher `version` and keep the old one until those runs end.
+Saving and deleting files in the app need a connection that may use the terminal, since the
+server runs these files. To keep the files somewhere else, start the server with
+`T3CODE_WORKFLOWS` set to that folder, or to a single file.
 
 Runs live on the machine that started them and only make progress while its server is running. For
 a schedule that must not be missed, run the server on a machine that stays on.

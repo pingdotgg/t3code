@@ -7,6 +7,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { PlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { useTheme } from "../../hooks/useTheme";
@@ -18,7 +19,9 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import { useEditableAfterHighlight } from "../files/useEditableAfterHighlight";
+import { requestConfirmDialog } from "../../confirmDialog";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { WorkflowsEmpty } from "./WorkflowRunsView";
 
 type DefinitionEditor = Editor<"file", undefined, undefined>;
@@ -73,17 +76,25 @@ function ProblemList({
 
 function Surface({
   environmentId,
+  name,
   path,
   source,
   revision,
-  loadProblem,
+  onDisk,
+  draft,
+  onDelete,
 }: {
   readonly environmentId: EnvironmentId;
+  readonly name: string;
   readonly path: string;
   readonly source: string;
   readonly revision: number;
   /** Why the file on disk is not what runs, when it is not. */
-  readonly loadProblem: string | null;
+  readonly onDisk: ReadonlyArray<WorkflowDefinitionProblem>;
+  /** What a file that is not on disk yet starts as. */
+  readonly draft?: string;
+  /** Take the file away. Absent where that cannot be done. */
+  readonly onDelete?: (() => void) | undefined;
 }) {
   const { resolvedTheme } = useTheme();
   const canSave = useAtomValue(
@@ -98,8 +109,8 @@ function Surface({
   // a save, `source` is still the old text until the server's answer is read again.
   const [seen, setSeen] = useState(source);
   const [stale, setStale] = useState(false);
-  const [shown, setShown] = useState(() => fileOf(path, source, revision));
-  const [edited, setEdited] = useState<string | null>(null);
+  const [shown, setShown] = useState(() => fileOf(path, draft ?? source, revision));
+  const [edited, setEdited] = useState<string | null>(draft ?? null);
   const [problems, setProblems] = useState<ReadonlyArray<WorkflowDefinitionProblem>>([]);
   const [failure, setFailure] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -127,7 +138,7 @@ function Surface({
     if (!dirty || saving || !canSave || edited === null) return;
     setSaving(true);
     setFailure(null);
-    const result = await save({ environmentId, input: { source: edited } });
+    const result = await save({ environmentId, input: { name, source: edited } });
     setSaving(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) setFailure(String(squashAtomCommandFailure(result)));
@@ -191,6 +202,11 @@ function Surface({
             {status}
           </span>
         )}
+        {canSave && onDelete !== undefined ? (
+          <Button size="sm" variant="ghost" disabled={saving} onClick={onDelete}>
+            Delete
+          </Button>
+        ) : null}
         {canSave ? (
           <Button size="sm" disabled={!dirty || saving} onClick={() => void saveNow()}>
             Save
@@ -207,10 +223,10 @@ function Surface({
           </Button>
         </div>
       ) : null}
-      {loadProblem !== null && problems.length === 0 ? (
+      {onDisk.length > 0 && problems.length === 0 ? (
         <ProblemList
           title="The file on disk does not load. The last version that did keeps running."
-          problems={[{ message: loadProblem }]}
+          problems={onDisk}
         />
       ) : null}
       {problems.length > 0 ? (
@@ -245,7 +261,18 @@ function Surface({
   );
 }
 
-/** The server's workflow definitions file, to read and to change in place. */
+const NEW_FILE = `const { workflow, step, agent, ask, stop } = T3;
+
+workflow(
+  "my-workflow",
+  { version: 1, payload: Schema.Struct({}) },
+  Effect.fn(function* () {
+    // yield* agent("first", { project: "/path/to/project", brief: "What to do." });
+  }),
+);
+`;
+
+/** The files that define this server's workflows, to read and to change in place. */
 export default function WorkflowDefinitionEditor({
   environmentId,
 }: {
@@ -254,40 +281,152 @@ export default function WorkflowDefinitionEditor({
   const query = useEnvironmentQuery(
     serverEnvironment.workflowDefinition({ environmentId, input: {} }),
   );
+  const canChange = useAtomValue(
+    serverEnvironment.saveWorkflowDefinition.permissionAtom(environmentId),
+  );
+  const remove = useAtomCommand(serverEnvironment.deleteWorkflowDefinition, {
+    label: "workflow definition delete",
+  });
+  const [picked, setPicked] = useState<string | null>(null);
+  /** A file being written that is not on disk yet. */
+  const [fresh, setFresh] = useState<string | null>(null);
+  const [naming, setNaming] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<ReadonlyArray<WorkflowDefinitionProblem>>([]);
   if (query.error) {
-    return <WorkflowsEmpty title="Could not read the definitions file" description={query.error} />;
+    return <WorkflowsEmpty title="Could not read the workflow files" description={query.error} />;
   }
   if (!query.data) {
     return (
       <p className="p-6 text-sm text-muted-foreground" role="status">
-        Loading the definitions file…
+        Loading the workflow files…
       </p>
     );
   }
-  const definition = query.data.definition;
-  if (definition === null) {
-    return (
-      <WorkflowsEmpty
-        title="No definitions file"
-        description={
-          <>
-            Start the server with <code className="font-mono">T3CODE_WORKFLOWS</code> set to a
-            definitions file. It then shows here, where you can change it.
-          </>
-        }
-      />
-    );
-  }
+  const { directory, single, files, problems, revision } = query.data;
+  const onDisk = files.find((file) => file.name === picked) ?? null;
+  // A new file is its own tab until it is saved, which is when the folder has it.
+  const unsaved = fresh !== null && !files.some((file) => file.name === fresh) ? fresh : null;
+  const name = unsaved ?? onDisk?.name ?? files[0]?.name ?? null;
+  const shown = files.find((file) => file.name === name) ?? null;
+  const pick = (next: string) => {
+    setPicked(next);
+    setFresh(null);
+    setRefusal([]);
+  };
+  const begin = () => {
+    const wanted = (naming ?? "").trim();
+    if (wanted === "") return;
+    const next = /\.(ts|mts|js|mjs)$/.test(wanted) ? wanted : `${wanted}.ts`;
+    setNaming(null);
+    if (files.some((file) => file.name === next)) return pick(next);
+    setPicked(next);
+    setFresh(next);
+    setRefusal([]);
+  };
+  const removeFile = async (target: string) => {
+    const confirmed = await (requestConfirmDialog(
+      `Delete ${target}? The workflows it defines can no longer be started.`,
+      { variant: "destructive" },
+    ) ?? Promise.resolve(false));
+    if (!confirmed) return;
+    const result = await remove({ environmentId, input: { name: target } });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        setRefusal([{ message: String(squashAtomCommandFailure(result)) }]);
+      }
+      return;
+    }
+    setRefusal(result.value.problems);
+    if (result.value.problems.length === 0) setPicked(null);
+  };
+
   return (
-    <DiffWorkerPoolProvider>
-      <Surface
-        key={definition.path}
-        environmentId={environmentId}
-        path={definition.path}
-        source={definition.source}
-        revision={definition.revision}
-        loadProblem={definition.problem}
-      />
-    </DiffWorkerPoolProvider>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b px-3 py-1.5">
+        {[...files.map((file) => file.name), ...(unsaved === null ? [] : [unsaved])].map((file) => {
+          const wrong = files.find((candidate) => candidate.name === file)?.problems.length ?? 0;
+          return (
+            <Button
+              key={file}
+              size="xs"
+              variant={file === name ? "secondary" : "ghost"}
+              aria-pressed={file === name}
+              onClick={() => (file === unsaved ? undefined : pick(file))}
+            >
+              <span className="font-mono">{file}</span>
+              {wrong > 0 ? (
+                <span className="text-destructive-foreground" aria-label="does not load">
+                  ●
+                </span>
+              ) : null}
+            </Button>
+          );
+        })}
+        {single || !canChange ? null : naming === null ? (
+          <Button size="xs" variant="ghost" onClick={() => setNaming("")}>
+            <PlusIcon />
+            New file
+          </Button>
+        ) : (
+          <form
+            className="flex items-center gap-1"
+            onSubmit={(event) => {
+              event.preventDefault();
+              begin();
+            }}
+          >
+            <Input
+              autoFocus
+              size="sm"
+              aria-label="File name"
+              placeholder="release.ts"
+              value={naming}
+              onChange={(event) => setNaming(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setNaming(null);
+              }}
+            />
+            <Button size="xs" type="submit" variant="outline">
+              Create
+            </Button>
+          </form>
+        )}
+      </div>
+      {problems.length + refusal.length > 0 ? (
+        <ProblemList
+          title={
+            refusal.length > 0
+              ? "Not deleted. Nothing changed on the server."
+              : "These files do not fit together. What ran before keeps running."
+          }
+          problems={refusal.length > 0 ? refusal : problems}
+        />
+      ) : null}
+      {name === null ? (
+        <WorkflowsEmpty
+          title="No workflows yet"
+          description={
+            <>
+              Every file in <code className="font-mono">{directory}</code> defines workflows. Make
+              the first one with New file, or ask an agent to write one there.
+            </>
+          }
+        />
+      ) : (
+        <DiffWorkerPoolProvider>
+          <Surface
+            key={name}
+            environmentId={environmentId}
+            name={name}
+            path={`${directory}/${name}`}
+            source={shown?.source ?? ""}
+            revision={revision}
+            onDisk={shown?.problems ?? []}
+            {...(shown === null ? { draft: NEW_FILE } : {})}
+            onDelete={single || shown === null ? undefined : () => void removeFile(name)}
+          />
+        </DiffWorkerPoolProvider>
+      )}
+    </div>
   );
 }

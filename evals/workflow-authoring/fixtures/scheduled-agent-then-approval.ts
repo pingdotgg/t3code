@@ -1,16 +1,8 @@
 // Written the way an agent with only the skill would write it.
 // @effect-diagnostics globalDateInEffect:off globalJsonInEffect:off
-export default ({
-  workflow,
-  agent,
-  ask,
-  stop,
-  daily,
-  Tick,
-  Effect,
-  Schema,
-  Option,
-}: typeof import("../../../apps/server/src/workflows/api.ts")) => [
+const { workflow, agent, ask, stop, daily, Tick } = T3;
+
+export default [
   workflow(
     "todo-sweep",
     { version: 1, payload: Tick, triggers: [daily("09:00", { weekdays: [1, 2, 3, 4, 5] })] },

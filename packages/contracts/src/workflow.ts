@@ -87,9 +87,10 @@ export const WorkflowSummary = Schema.Struct({
 });
 export type WorkflowSummary = typeof WorkflowSummary.Type;
 
-/** Something wrong with a definitions file, at `line` of it when the problem names a place. */
+/** Something wrong with the definitions: in `file` when it is one file's, at `line` when it names one. */
 export const WorkflowDefinitionProblem = Schema.Struct({
   message: Schema.String,
+  file: Schema.optional(Schema.String),
   line: Schema.optional(Schema.Number),
 });
 export type WorkflowDefinitionProblem = typeof WorkflowDefinitionProblem.Type;
@@ -102,24 +103,39 @@ export const WorkflowDefinitionState = Schema.Struct({
   problem: Schema.NullOr(Schema.String),
 });
 
-export const WorkflowDefinitionSource = Schema.Struct({
-  path: Schema.String,
+export const WorkflowDefinitionFile = Schema.Struct({
+  name: Schema.String,
+  /** The file as it is on disk, which is not what runs while it has problems. */
   source: Schema.String,
-  ...WorkflowDefinitionState.fields,
-});
-export type WorkflowDefinitionSource = typeof WorkflowDefinitionSource.Type;
-
-export const WorkflowDefinitionGetInput = Schema.Struct({});
-export const WorkflowDefinitionGetResult = Schema.Struct({
-  /** Nothing, on a server that names no definitions file. */
-  definition: Schema.NullOr(WorkflowDefinitionSource),
-});
-export const WorkflowDefinitionSaveInput = Schema.Struct({ source: Schema.String });
-export const WorkflowDefinitionSaveResult = Schema.Struct({
-  /** Empty when the file was written and is what runs now. Otherwise nothing changed. */
   problems: Schema.Array(WorkflowDefinitionProblem),
 });
-export type WorkflowDefinitionSaveResult = typeof WorkflowDefinitionSaveResult.Type;
+export type WorkflowDefinitionFile = typeof WorkflowDefinitionFile.Type;
+
+/** The files that define this server's workflows. */
+export const WorkflowDefinitionFiles = Schema.Struct({
+  /** The folder the files are in. */
+  directory: Schema.String,
+  /** The server was pointed at one file: no file can be added beside it or taken away. */
+  single: Schema.Boolean,
+  files: Schema.Array(WorkflowDefinitionFile),
+  /** What is wrong between files, such as one workflow defined in two of them. */
+  problems: Schema.Array(WorkflowDefinitionProblem),
+  ...WorkflowDefinitionState.fields,
+});
+export type WorkflowDefinitionFiles = typeof WorkflowDefinitionFiles.Type;
+
+export const WorkflowDefinitionGetInput = Schema.Struct({});
+/** A file by its name in the folder. Saving a name that is not there yet makes the file. */
+export const WorkflowDefinitionSaveInput = Schema.Struct({
+  name: Schema.String,
+  source: Schema.String,
+});
+export const WorkflowDefinitionDeleteInput = Schema.Struct({ name: Schema.String });
+export const WorkflowDefinitionChangeResult = Schema.Struct({
+  /** Empty when the change was made and is what runs now. Otherwise nothing changed. */
+  problems: Schema.Array(WorkflowDefinitionProblem),
+});
+export type WorkflowDefinitionChangeResult = typeof WorkflowDefinitionChangeResult.Type;
 
 export const WorkflowRunsSnapshot = Schema.Struct({
   workflows: Schema.Array(WorkflowSummary),
