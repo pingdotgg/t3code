@@ -419,6 +419,53 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("a worktree task saved in a project folder outside Git runs in the folder", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:plain-folder");
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            checkWorktreeBase: () =>
+              Effect.fail(
+                new ThreadLaunchService.ThreadLaunchNotRepositoryError({
+                  projectId,
+                  projectTitle: "Plain folder",
+                  workspaceRoot: "/projects/plain-folder",
+                }),
+              ),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    const { task } = yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      return yield* service.upsert({
+        title: "Check the build",
+        prompt: "Check the build",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId,
+        threadMode: "fresh_session",
+        workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: true },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+    }).pipe(Effect.provide(layer));
+    assert.deepEqual(task.workspaceStrategy, { type: "root" });
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect.each([
   { status: "failed", error: "Weekly usage limit reached" },
   { status: "interrupted", error: "The run was stopped." },
