@@ -12,9 +12,9 @@ import {
 } from "@t3tools/contracts/relay";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
-import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Mac from "effect/crypto/Mac";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -423,6 +423,7 @@ interface SendLiveActivityDeliveryInputBase {
   readonly target: LiveActivityDeliveryTarget;
   readonly token: string;
   readonly sourceJobId: string;
+  readonly expiresAtEpochSeconds: number;
 }
 
 export type SendLiveActivityDeliveryInput =
@@ -445,6 +446,7 @@ function makeLiveActivityDeliveryRequest(
   const epochSeconds = Math.floor(now.epochMilliseconds / 1_000);
   const base = {
     token: input.token,
+    expiresAtEpochSeconds: input.expiresAtEpochSeconds,
     nowEpochSeconds: epochSeconds,
     nowIso: DateTime.formatIso(now),
   };
@@ -494,6 +496,7 @@ export class ApnsDeliveries extends Context.Service<
       readonly target: LiveActivityDeliveryTarget;
       readonly token: string;
       readonly sourceJobId: string;
+      readonly expiresAtEpochSeconds: number;
       readonly notification: ApnsNotificationPayload;
     }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
   }
@@ -802,6 +805,7 @@ const make = Effect.gen(function* () {
     });
     const request = apns.makePushNotificationRequest({
       token: input.token,
+      expiresAtEpochSeconds: input.expiresAtEpochSeconds,
       notification,
     });
     const recoverTransportError = (cause: Apns.ApnsError) =>
@@ -933,6 +937,10 @@ const make = Effect.gen(function* () {
       job: signedJob,
       nowMs: now.epochMilliseconds,
     }).pipe(Effect.provideService(Mac.Mac, mac));
+    // APNs accepts whole seconds; rounding down cannot extend the signed job's lifetime.
+    const expiresAtEpochSeconds = Math.floor(
+      DateTime.toEpochMillis(DateTime.makeUnsafe(payload.expiresAt)) / 1_000,
+    );
     yield* Effect.annotateCurrentSpan({
       "relay.mobile.device_id": payload.target.deviceId,
       "relay.delivery.kind": payload.kind,
@@ -960,6 +968,7 @@ const make = Effect.gen(function* () {
             },
             token: payload.target.token,
             sourceJobId: payload.jobId,
+            expiresAtEpochSeconds,
             kind: payload.kind,
             aggregate: payload.aggregate,
             alert: payload.alert ?? null,
@@ -974,6 +983,7 @@ const make = Effect.gen(function* () {
             },
             token: payload.target.token,
             sourceJobId: payload.jobId,
+            expiresAtEpochSeconds,
             kind: payload.kind,
             aggregate: payload.aggregate,
             alert: payload.alert ?? null,
@@ -997,6 +1007,7 @@ const make = Effect.gen(function* () {
             },
             token: payload.target.token,
             sourceJobId: payload.jobId,
+            expiresAtEpochSeconds,
             notification: payload.notification,
           });
       }
