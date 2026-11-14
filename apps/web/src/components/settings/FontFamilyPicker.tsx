@@ -199,8 +199,11 @@ export function FontFamilyPicker({
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <ComboboxEmpty>No fonts found.</ComboboxEmpty>
-          <div className="relative min-h-0 max-h-72 w-full flex-1 overflow-hidden">
-            <ComboboxListVirtualized>
+          {/* A short window caps the popup. The list must shrink with it: rows
+              clipped here are unreachable, and keyboard scrollIntoView scrolls
+              this overflow-hidden box, which hides the top of the list. */}
+          <div className="relative flex min-h-0 max-h-72 w-full flex-1 flex-col overflow-hidden">
+            <ComboboxListVirtualized className="flex size-full min-h-0 min-w-0 flex-col">
               <LegendList<string>
                 ref={scrollRef}
                 data={items}
@@ -216,6 +219,7 @@ export function FontFamilyPicker({
                 onScroll={handleMetricsChange}
                 onLayout={handleMetricsChange}
                 onReady={handleMetricsChange}
+                className="min-h-0"
                 style={{ height: listHeight }}
               />
             </ComboboxListVirtualized>
