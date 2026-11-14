@@ -756,4 +756,15 @@ describe("presentPendingBackgroundWork", () => {
     ]);
     expect(presentation?.items[0]?.label).toBe("mv a.ts b.ts\ncat > b.ts <<'EOF'\nexport {};\nEOF");
   });
+
+  it("says a pull request watch is waiting after it stops holding the thread", () => {
+    const presentation = presentPendingBackgroundWork([
+      {
+        taskId: "pull-request-watch:github.com/acme/app#1",
+        kind: "monitor",
+        description: "Watching pull request #1",
+      },
+    ]);
+    expect(presentation?.title).toBe("Waiting · Watching pull request #1");
+  });
 });
