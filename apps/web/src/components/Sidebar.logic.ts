@@ -585,6 +585,13 @@ export function isSidebarHiddenThread(thread: Pick<SidebarThreadSummary, "lineag
   return !isListedThreadLineage(thread.lineage);
 }
 
+export function buildBulkMarkUnreadContextMenuItem(input: {
+  eligibleCount: number;
+}): ContextMenuItem<"mark-unread"> | null {
+  if (input.eligibleCount === 0) return null;
+  return { id: "mark-unread", label: `Mark unread (${input.eligibleCount})` };
+}
+
 // Subagent and side-chat threads have no sidebar row, so an open one is represented by
 // its nearest listed ancestor. A broken chain (missing parent, cycle,
 // other environment) resolves to the thread itself, which then matches no row.

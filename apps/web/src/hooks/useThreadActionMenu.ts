@@ -19,6 +19,7 @@ import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.sn
 import {
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
+  threadRuntimeHidesMarkUnread,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
 import { titleRegenerationToast } from "../components/threadTitleRegenerationToast";
@@ -149,6 +150,7 @@ export function useThreadActionMenu(input: {
         canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
         isRegeneratingTitle,
         isRunning: !threadRuntimeCanArchive(thread.runtime),
+        hidesMarkUnread: threadRuntimeHidesMarkUnread(thread.runtime),
         supports,
         snoozePresets,
         canShareWithGuest,
