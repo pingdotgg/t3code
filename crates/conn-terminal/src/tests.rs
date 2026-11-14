@@ -425,6 +425,28 @@ async fn clears_and_reports_the_foreground_command() {
     .expect("no idle upsert after Ctrl-C");
 }
 
+/// The test above, in a copy of this test binary started with SIGINT ignored, as a background
+/// job of a shell without job control starts it. node-pty gives the shell default signals.
+#[cfg(target_os = "linux")]
+#[test]
+fn ctrl_c_stops_a_command_when_the_server_ignores_sigint() {
+    let exe = std::env::current_exe().unwrap();
+    let output = std::process::Command::new("/bin/sh")
+        .args([
+            "-c",
+            "trap '' INT; exec \"$0\" --exact tests::clears_and_reports_the_foreground_command",
+        ])
+        .arg(&exe)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn relabels_a_foreground_command_that_execs_another() {
     // The job keeps its process group when `sh` execs `sleep`: only the name changes, as when
