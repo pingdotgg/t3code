@@ -7,12 +7,14 @@ import {
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
   resolveProjectProviderInstanceEnabled,
+  resolveTextGenerationSelectionEnabled,
   type ResolvedServerSettings,
   type ServerSettings,
   type T3ProjectFile,
   type ThreadEnvMode,
   type WorktreeCleanupRules,
 } from "@t3tools/contracts";
+import { readCustomModelEntries } from "./model.ts";
 import { normalizeProjectPathForComparison } from "./path.ts";
 import { fallbackTextGenerationModelSelection } from "./serverSettings.ts";
 
@@ -139,26 +141,38 @@ function resolveProjectOverrides(
       (key === "textGenerationModelSelection" || key === "defaultModelSelection") &&
       value !== undefined &&
       value !== null &&
-      !resolveProjectProviderInstanceEnabled(
-        settings,
-        projectId,
-        (value as ModelSelection).instanceId,
-      )
+      !(
+        key === "textGenerationModelSelection"
+          ? resolveTextGenerationSelectionEnabled
+          : resolveProjectProviderInstanceEnabled
+      )(settings, projectId, (value as ModelSelection).instanceId)
     ) {
       continue;
+    }
+    // Clients resolve a hidden model to the catalog's first visible one, so a
+    // hidden project default would silently pick a model nobody chose.
+    // Custom models stay visible even when listed as hidden, as in the clients.
+    if (key === "defaultModelSelection" && value !== null) {
+      const { instanceId, model } = value as ModelSelection;
+      const config = settings.providerInstances[instanceId]?.config as
+        | { customModels?: unknown }
+        | undefined;
+      if (
+        settings.providerModelPreferences?.[instanceId]?.hiddenModels.includes(model) &&
+        !readCustomModelEntries(config?.customModels).some((entry) => entry.slug === model)
+      ) {
+        continue;
+      }
     }
     effective[key] = value;
     sources[key] = "project";
   }
   const textGeneration = effective.textGenerationModelSelection as ModelSelection;
-  if (!resolveProjectProviderInstanceEnabled(settings, projectId, textGeneration.instanceId)) {
+  if (!resolveTextGenerationSelectionEnabled(settings, projectId, textGeneration.instanceId)) {
     const fallback = fallbackTextGenerationModelSelection(
       settings.providerInstances,
       (instanceId) => resolveProjectProviderInstanceEnabled(settings, projectId, instanceId),
-      {
-        includeConfiguredInstances: true,
-        defaultModelSelection: effective.defaultModelSelection as ModelSelection | null,
-      },
+      { defaultModelSelection: effective.defaultModelSelection as ModelSelection | null },
     );
     if (fallback !== null) effective.textGenerationModelSelection = fallback;
   }

@@ -4,6 +4,5 @@ export interface InternalWorkerModule {
 }
 
 /** Load a prebuilt internal Worker without making its module part of the caller's build graph. */
-export const loadInternalWorker = (
-  specifier: string,
-): Promise<InternalWorkerModule> => import(specifier);
+export const loadInternalWorker = (specifier: string): Promise<InternalWorkerModule> =>
+  import(specifier);

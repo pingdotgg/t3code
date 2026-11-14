@@ -9,5 +9,8 @@
     "target": "ESNext",
     "types": ["bun"]
   },
-  "references": [{ "path": "../../packages/alchemy/tsconfig.json" }]
+  "references": [
+    { "path": "../../packages/alchemy/tsconfig.json" },
+    { "path": "../../packages/kubernetes/tsconfig.json" }
+  ]
 }

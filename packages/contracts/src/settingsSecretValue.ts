@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
 
@@ -22,30 +23,107 @@ export function settingsSecretLiteral(value: SettingsSecretValue | undefined): s
   return typeof value === "string" ? value : "";
 }
 
+export class SettingsSecretUnresolvedError extends Schema.TaggedError<SettingsSecretUnresolvedError>()(
+  "SettingsSecretUnresolvedError",
+  { provider: Schema.String },
+) {
+  override get message(): string {
+    return `Could not read the credential from the secret provider "${this.provider}". Unlock or fix it in Settings, then try again.`;
+  }
+}
+
+/**
+ * The literal a credential setting holds once its secret is resolved. A reference still in place
+ * could not be read, and fails instead of passing for a missing token, so callers that would fall
+ * back to another credential cannot silently switch accounts.
+ */
+export const requireSettingsSecretLiteral = (
+  value: SettingsSecretValue | undefined,
+  secretProviders: Readonly<Record<string, { readonly label: string } | undefined>>,
+): Effect.Effect<string, SettingsSecretUnresolvedError> =>
+  isSecretReference(value)
+    ? Effect.fail(
+        new SettingsSecretUnresolvedError({
+          provider:
+            (Object.hasOwn(secretProviders, value.provider)
+              ? secretProviders[value.provider]?.label.trim()
+              : undefined) || value.provider,
+        }),
+      )
+    : Effect.succeed(value ?? "");
+
 export function acceptsSecretReference(schema: Schema.Top): boolean {
   return Schema.resolveAnnotationsKey(schema)?.settingsSecretReference === true;
 }
 
-/** Fields of a settings struct typed `SettingsSecretValue`; any other schema has none. */
-function secretReferenceSettingsFields(schema: Schema.Top): ReadonlyArray<string> {
-  if (!SchemaAST.isObjects(schema.ast)) return [];
-  return schema.ast.propertySignatures.flatMap((property) =>
-    property.type.context?.annotations?.settingsSecretReference === true &&
-    typeof property.name === "string"
-      ? [property.name]
-      : [],
-  );
+const declaresSecretReference = (ast: SchemaAST.AST) =>
+  ast.context?.annotations?.settingsSecretReference === true;
+
+interface SecretReferenceField {
+  readonly field: string;
+  readonly keyed: boolean;
 }
 
-/** Each declared reference field of `settings` that holds a reference, in field order. */
+/**
+ * Fields of a settings struct typed `SettingsSecretValue`, or a record of it such as one value
+ * per host; any other schema has none.
+ */
+function secretReferenceSettingsFields(schema: Schema.Top): ReadonlyArray<SecretReferenceField> {
+  if (!SchemaAST.isObjects(schema.ast)) return [];
+  return schema.ast.propertySignatures.flatMap<SecretReferenceField>(({ name, type }) => {
+    if (typeof name !== "string") return [];
+    if (declaresSecretReference(type)) return [{ field: name, keyed: false }];
+    return SchemaAST.isObjects(type) &&
+      type.indexSignatures.some((signature) => declaresSecretReference(signature.type))
+      ? [{ field: name, keyed: true }]
+      : [];
+  });
+}
+
+/** Where a reference sits: a field, or one key of a record field. */
+export interface SettingsSecretSlot {
+  readonly field: string;
+  readonly key: string | undefined;
+}
+
+interface SettingsSecretReference extends SettingsSecretSlot {
+  readonly reference: SecretReference;
+}
+
+/** Each declared reference slot of `settings` that holds a reference, in field order. */
 export function secretReferencesInSettings(
   schema: Schema.Top,
   settings: unknown,
-): ReadonlyArray<{ readonly field: string; readonly reference: SecretReference }> {
+): ReadonlyArray<SettingsSecretReference> {
   if (settings === null || typeof settings !== "object") return [];
   const values = settings as Readonly<Record<string, unknown>>;
-  return secretReferenceSettingsFields(schema).flatMap((field) => {
-    const value = values[field];
-    return isSecretReference(value) ? [{ field, reference: value }] : [];
-  });
+  return secretReferenceSettingsFields(schema).flatMap<SettingsSecretReference>(
+    ({ field, keyed }) => {
+      const value = values[field];
+      if (!keyed)
+        return isSecretReference(value) ? [{ field, key: undefined, reference: value }] : [];
+      if (value === null || typeof value !== "object") return [];
+      return Object.entries(value).flatMap(([key, entry]) =>
+        isSecretReference(entry) ? [{ field, key, reference: entry }] : [],
+      );
+    },
+  );
 }
+
+/** `settings` with each slot set to its value, keeping the other keys of a record field. */
+export function withSettingsSecrets<Settings extends Readonly<Record<string, unknown>>>(
+  settings: Settings,
+  slots: ReadonlyArray<SettingsSecretSlot & { readonly value: string }>,
+): Settings {
+  const next: Record<string, unknown> = { ...settings };
+  for (const { field, key, value } of slots) {
+    next[field] = key === undefined ? value : { ...(next[field] as object), [key]: value };
+  }
+  return next as Settings;
+}
+
+export const SecretSourceCheckResult = Schema.Union([
+  Schema.TaggedStruct("Resolved", {}),
+  Schema.TaggedStruct("Failed", { detail: Schema.String }),
+]);
+export type SecretSourceCheckResult = typeof SecretSourceCheckResult.Type;

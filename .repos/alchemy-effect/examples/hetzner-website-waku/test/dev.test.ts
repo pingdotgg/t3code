@@ -23,13 +23,7 @@ const root = path.resolve(import.meta.dirname, "..");
 // Spawn the CLI entry directly (not through `bun run` / the cli.js
 // launcher) so signals hit the actual CLI process, whose scope teardown
 // kills the dev server and the provider sidecars.
-const alchemyBin = path.join(
-  root,
-  "node_modules",
-  "alchemy",
-  "bin",
-  "alchemy.js",
-);
+const alchemyBin = path.join(root, "node_modules", "alchemy", "bin", "alchemy.js");
 // Isolated stage so this suite never fights integ.test.ts (same stack
 // name) over state rows.
 const STAGE = "dev-cli-test";
@@ -39,8 +33,7 @@ const STAGE = "dev-cli-test";
 const pagePath = path.join(root, "src", "pages", "index.tsx");
 const pageSource = fs.readFileSync(pagePath, "utf8");
 const MARKER = "This page is rendered by the server on every request.";
-const MARKER_V2 =
-  "This page is rendered by the server on every request. [dev-v2]";
+const MARKER_V2 = "This page is rendered by the server on every request. [dev-v2]";
 
 let proc: ReturnType<typeof spawn> | undefined;
 let output = "";
@@ -84,9 +77,7 @@ const fetchOk = async (
     }
     await Bun.sleep(delayMs);
   }
-  throw new Error(
-    `GET ${url} never returned 2xx (last status: ${last?.status})`,
-  );
+  throw new Error(`GET ${url} never returned 2xx (last status: ${last?.status})`);
 };
 
 /** Extract the stack-output URL the CLI prints on stdout. */
