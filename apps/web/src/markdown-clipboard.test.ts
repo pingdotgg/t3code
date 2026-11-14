@@ -81,6 +81,7 @@ class FakeElement {
       if (target === 'input[type="checkbox"]') {
         return element.tagName === "INPUT" && element.getAttribute("type") === "checkbox";
       }
+      if (target === "[data-read-only-task]") return element.hasAttribute("data-read-only-task");
       return element.tagName === target?.toUpperCase();
     };
     const search = (parent: FakeElement): FakeElement | null => {
@@ -259,6 +260,34 @@ describe("serializeRenderedMarkdownFragment", () => {
       "0. A\n5. B\n6. C\n0. D",
     );
   });
+
+  it.each([false, true])(
+    "preserves read-only task markers with paragraph wrapper: %s",
+    (paragraph) => {
+      const task = (checked: boolean, text: string) => {
+        const input = new FakeElement("INPUT", [], { type: "checkbox" });
+        input.checked = checked;
+        const marker = new FakeElement("SPAN", [], { "data-read-only-task": "" }).append(input);
+        const content = paragraph ? new FakeElement("P").append(marker, new FakeText(text)) : null;
+        return content
+          ? new FakeElement("LI").append(content)
+          : new FakeElement("LI").append(marker, new FakeText(text));
+      };
+      const list = new FakeElement("UL").append(
+        task(true, "Done"),
+        task(false, "Pending"),
+        new FakeElement("LI").append(
+          new FakeText("Parent"),
+          new FakeText("\n"),
+          new FakeElement("UL").append(task(true, "Nested")),
+        ),
+      );
+
+      expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(list)))).toBe(
+        "- [x] Done\n- [ ] Pending\n- Parent\n  - [x] Nested",
+      );
+    },
+  );
 
   it("keeps a bare list item that sits alongside the code block", () => {
     const container = new FakeElement("DIV").append(

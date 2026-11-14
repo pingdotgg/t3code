@@ -129,9 +129,11 @@ function serializeListItem(
   index: number,
   inTableCell: boolean,
 ): string {
-  const checkbox = item.querySelector(
-    ':scope > input[type="checkbox"], :scope > p > input[type="checkbox"]',
-  );
+  const checkbox =
+    item.querySelector(':scope > input[type="checkbox"], :scope > p > input[type="checkbox"]') ??
+    item.querySelector(
+      ':scope > [data-read-only-task] > input[type="checkbox"], :scope > p > [data-read-only-task] > input[type="checkbox"]',
+    );
   const task = checkbox ? `[${(checkbox as HTMLInputElement).checked ? "x" : " "}] ` : "";
   const bullet = ordered ? `${index}. ` : "- ";
   const marker = `${bullet}${task}`;
