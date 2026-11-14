@@ -1524,6 +1524,11 @@ it.effect("does not choose a default Forgejo login across ambiguous SSH server p
       url: `http://forgejo.local:4000/${login.name}`,
     }));
     assert.isUndefined(ForgejoCli.matchForgejoLogin(mounted, hostOnly!, undefined, true));
+    const rootAndMounted = [logins[1]!, { ...logins[0]!, url: "http://forgejo.local:4000/gitea" }];
+    const underMount = ForgejoCli.parseForgejoRemote(
+      "http://forgejo.local:4000/gitea/maria/project.git",
+    );
+    assert.strictEqual(ForgejoCli.matchForgejoLogin(rootAndMounted, underMount!)?.name, "one");
   }),
 );
 
