@@ -42,6 +42,10 @@ pub struct McpConfig {
     pub providers: Arc<dyn Fn() -> Vec<Value> + Send + Sync>,
     /// Outside callers get thread links through this app, as Copy thread's do.
     pub hosted_app_url: String,
+    /// Scheduled tasks; without it the scheduled task tools answer that they are not served.
+    pub scheduled_tasks: Option<conn_features::scheduled::ScheduledTasks>,
+    /// Annotations; without it the annotation tools answer that they are not served.
+    pub annotations: Option<conn_features::annotations::Annotations>,
 }
 
 impl std::fmt::Debug for McpConfig {

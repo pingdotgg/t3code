@@ -285,6 +285,8 @@ struct MessageDispatch {
     title_seed: Option<String>,
     /// A wake the server queued (`{ source, outcome, summary }`): shown as a notice.
     notification: Option<Value>,
+    /// The scheduled task whose run sent this message.
+    scheduled_task_id: Option<String>,
 }
 
 /// How a message reaches the thread, after the busy-thread rules.
@@ -498,6 +500,10 @@ fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     }
     if let Some(notification) = &c.notification {
         message["notification"] = notification.clone();
+    }
+    // A scheduled run's message names its task; the client's timeline marks it.
+    if let Some(task) = &c.scheduled_task_id {
+        message["scheduledTaskId"] = json!(task);
     }
     tx.append(draft("message.updated", message))?;
     let item_id = format!("turn-item:{}", c.message_id);
@@ -964,6 +970,7 @@ fn queued_message_promote_to_steer(tx: &mut Tx<'_>, command: Value) -> Outcome {
             .get("notification")
             .filter(|v| v.is_object())
             .cloned(),
+        scheduled_task_id: message["scheduledTaskId"].as_str().map(str::to_owned),
     };
     let mut effects = steer_into(tx, &dispatch, &target)?;
     // The item records that it came from the queue.

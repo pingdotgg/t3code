@@ -560,6 +560,8 @@ impl Inner {
             }
         };
         let creation_source = input["creationSource"].as_str().unwrap_or("web").to_owned();
+        // `ThreadLaunchService` records the launch's own actor (a scheduled task's creator).
+        let created_by = input["createdBy"].as_str().unwrap_or("user").to_owned();
         let to_err = |e: DispatchError| match e {
             DispatchError::Rejected(message) => (message, false),
             DispatchError::Internal(message) => (message, true),
@@ -587,7 +589,7 @@ impl Inner {
                     "interactionMode": input["interactionMode"],
                     "branch": if branch.is_string() { branch } else { Value::Null },
                     "worktreePath": worktree_path,
-                    "createdBy": "user",
+                    "createdBy": created_by,
                     "creationSource": creation_source,
                 }))
                 .await
@@ -606,9 +608,12 @@ impl Inner {
                 "attachments": message["attachments"],
                 "modelSelection": input["modelSelection"],
                 "dispatchMode": {"type": "start_immediately"},
-                "createdBy": "user",
+                "createdBy": created_by,
                 "creationSource": creation_source,
             });
+            if let Some(task) = message["scheduledTaskId"].as_str() {
+                command["scheduledTaskId"] = json!(task);
+            }
             if message["context"].is_object() {
                 command["context"] = message["context"].clone();
             }

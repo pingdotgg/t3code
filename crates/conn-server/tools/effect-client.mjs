@@ -225,6 +225,31 @@ const decodeEach = (client) =>
       title: "Repo",
       workspaceRoot: repo,
     });
+    // Scheduled tasks. `runNow` names a missing task: a run would start a real provider.
+    const scheduled = yield* call("scheduledTasks.upsert", {
+      commandId: "effect-client-task",
+      title: "Nightly review",
+      prompt: "Review the open pull requests.",
+      enabled: true,
+      schedule: { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 2, 3, 4, 5] },
+      projectId: "effect-client-p1",
+      workspaceStrategy: { type: "root" },
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+    });
+    const taskId = Exit.isSuccess(scheduled) ? scheduled.value.task.id : none;
+    yield* call("scheduledTasks.subscribe", {});
+    yield* call("scheduledTasks.setEnabled", { id: taskId, enabled: false });
+    yield* call("scheduledTasks.runNow", { id: none });
+    yield* call("scheduledTasks.delete", { id: taskId });
+    // Annotations, in the project made above.
+    yield* call("annotations.subscribe", { projectId: "effect-client-p1" });
+    yield* call("annotations.create", {
+      projectId: "effect-client-p1",
+      annotation: { id: "effect-client-a1", comment: "Make the button bigger", source: "browser" },
+    });
+    yield* call("annotations.remove", { projectId: "effect-client-p1", ids: ["effect-client-a1"] });
     yield* call("projects.writeFile", { cwd: repo, relativePath: "b.txt", contents: "b\n" });
     yield* call("projects.listIgnoredFiles", { cwd: repo });
     yield* call("review.getDiffFileContents", {
@@ -285,7 +310,6 @@ const decodeEach = (client) =>
     yield* call("shell.openInEditor", { cwd: repo, editor: "vscode" });
     yield* call("terminal.clear", { threadId: none, terminalId: "default" });
     yield* call("terminal.observe", { threadId: none, terminalId: "default" });
-    yield* call("panels.requests", {});
     // Source control: every host probed, with no login or token of this machine (sealedEnv).
     yield* call("server.discoverSourceControl", {});
     // As a T3 server without an app client id: typed refusals, signed-out, not starred.

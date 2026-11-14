@@ -16,6 +16,10 @@ fn keeps_null(tool: &str, argument: &str) -> bool {
         .any(|line| line.split_once(' ') == Some((tool, argument)))
 }
 
+/// Arguments whose schema the advertised JSON Schema does not show whole, so their tool
+/// decodes them itself: `schedule` also takes JSON text (`OrchestratorMcpScheduleFromJsonString`).
+const DECODED_BY_TOOL: [(&str, &str); 1] = [("schedule_task", "schedule")];
+
 pub(crate) fn lines() -> impl Iterator<Item = &'static str> {
     CATALOG.lines().filter(|line| !line.is_empty())
 }
@@ -146,7 +150,9 @@ pub(crate) fn check_arguments(
         }
     }
     for (key, value) in arguments.iter() {
-        if value.is_null() && keeps_null(name, key) {
+        if value.is_null() && keeps_null(name, key)
+            || DECODED_BY_TOOL.contains(&(name, key.as_str()))
+        {
             continue;
         }
         let optional = !required.contains(&key.as_str());

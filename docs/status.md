@@ -54,10 +54,10 @@ settings; about 140 MiB for the `claude` program alone).
 
 | Part | State |
 | --- | --- |
-| RPC methods | 89 of 236 served; 88 have a run that the real client's decoders accept |
+| RPC methods | 95 of 236 served; 95 have a run that the real client's decoders accept |
 | Engine commands | 43 of 56 |
 | HTTP routes | 13 of 57 |
-| `/mcp` tools | 20 of 87 |
+| `/mcp` tools | 28 of 87 |
 | Providers | Claude and Codex, of the 10 the T3 server has without Pi |
 
 Proven:
@@ -154,6 +154,17 @@ range and literal failures in Effect's words and keeps `null` where the schema t
 (generated). `crates/conn-mcp/README.md` has a table of all 87 tools with what each unserved
 one needs. 17 tools that a text we send to an agent names are still not served; a test holds
 that list.
+
+## Scheduled tasks and annotations (2026-11-14)
+
+`scheduledTasks.subscribe`, `upsert`, `setEnabled`, `delete`, `runNow` and the `/mcp` tools
+`schedule_task`, `list_scheduled_tasks`, `delete_scheduled_task`, `run_scheduled_task_now`
+(`crates/conn-features`). One timer sleeps until the next run; no poll. Proven by 31 ported
+unit tests on a paused clock, the real client's decoders, and `parity.mjs` (no differences).
+Not built: webhook tasks and `fresh_session` tasks (refused on save). Annotations
+(`annotations.*` and the four `annotations_*` tools) on the T3 server's own files, also with
+parity. `docs/conn-only-areas.md`
+maps the Conn-only areas and what each needs.
 
 ## Provider interface, brought up to the T3 server's (2026-11-14)
 

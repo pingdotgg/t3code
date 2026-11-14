@@ -122,3 +122,18 @@ packages/shared/src/socketFrameParts.ts
 
 [SDK and CLI pins]
 apps/server/package.json
+
+[crates/conn-features]
+apps/server/src/scheduledTasks/Schedule.ts
+apps/server/src/scheduledTasks/ScheduledTaskService.ts
+apps/server/src/scheduling
+apps/server/src/mcp/toolkits/orchestrator/handlers.ts
+apps/server/src/mcp/toolkits/thread/handlers.ts
+apps/server/src/mcp/OrchestratorMcpService.ts
+apps/server/src/mcp/McpToolAccess.ts
+apps/server/src/annotations
+apps/server/src/mcp/toolkits/annotations
+apps/server/src/wsFork.ts
+packages/contracts/src/scheduledTask.ts
+packages/contracts/src/annotations.ts
+packages/contracts/src/orchestratorMcp.ts

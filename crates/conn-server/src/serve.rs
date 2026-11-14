@@ -153,6 +153,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
         vcs: vcs.clone(),
         terminals: terminals.clone(),
         environment: environment.clone(),
+        scheduled_tasks: OnceLock::new(),
     });
 
     let mut config = EngineConfig::new(state_dir.join("engine.sqlite"));
@@ -166,8 +167,24 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
         SqliteEngine::open(config),
         "cannot open the engine",
     ));
+    let scheduled_tasks =
+        conn_features::scheduled::ScheduledTasks::start(conn_features::scheduled::Config {
+            state_dir: state_dir.clone(),
+            clock: Arc::new(conn_features::clock::SystemClock),
+            zone: jiff::tz::TimeZone::system(),
+            runner: Arc::new(conn_features::scheduled::EngineRunner::new(engine.clone())),
+            start_timer: true,
+        })
+        .await;
+    let _ = host.scheduled_tasks.set(scheduled_tasks.clone());
     let mut deps = Deps {
         engine: Some(engine.clone()),
+        scheduled_tasks: Some(scheduled_tasks),
+        annotations: Some(conn_features::annotations::Annotations::new(
+            &state_dir,
+            Arc::new(conn_features::clock::SystemClock),
+            Arc::new(conn_features::annotations::EngineProjects(engine.clone())),
+        )),
         providers,
         environment: Some(environment.clone()),
         files,

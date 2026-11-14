@@ -547,6 +547,28 @@ async fn launch_thread_creates_and_starts_in_one_call() {
     );
 }
 
+/// `ThreadLaunchService.launch` for a scheduled run: the first message carries the task id
+/// (the client's timeline marks it) and the launch's own actor.
+#[tokio::test(flavor = "current_thread")]
+async fn a_scheduled_launch_keeps_its_task_id_and_actor() {
+    let db = TempDb::new("launch-scheduled");
+    let (engine, _) = open(&db);
+    let input = json!({
+        "commandId": "scheduled-task:t:1:manual", "projectId": project_id(), "title": "Nightly",
+        "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-4-5"},
+        "runtimeMode": "full-access", "interactionMode": "default",
+        "workspaceStrategy": {"type": "root"},
+        "initialMessage": {"messageId": "scheduled-task-message:t:1:manual",
+                           "scheduledTaskId": "scheduled-task:t", "text": "hi", "attachments": []},
+        "createdBy": "agent", "creationSource": "mcp",
+    });
+    let result = engine.launch_thread(input).await.unwrap();
+    assert_eq!(result["threadId"], "thread:scheduled-task:t:1:manual");
+    let message = &result["projection"]["messages"][0];
+    assert_eq!(message["scheduledTaskId"], "scheduled-task:t");
+    assert_eq!(message["createdBy"], "agent");
+}
+
 fn message_with(
     thread: &str,
     command: &str,

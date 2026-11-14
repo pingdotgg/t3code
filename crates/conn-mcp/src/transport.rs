@@ -230,6 +230,9 @@ async fn call(service: &Arc<McpService>, caller: &Caller, id: &Value, mut params
                 json!({"_tag": "OrchestratorMcpFailure", "code": code, "message": message});
             json!({"content": [{"type": "text", "text": failure.to_string()}], "isError": true})
         }
+        Err(tools::ToolError::Message(message)) => {
+            json!({"content": [{"type": "text", "text": message}], "isError": true})
+        }
         Err(tools::ToolError::InvalidParams(problem)) => {
             return rpc_error(
                 id,

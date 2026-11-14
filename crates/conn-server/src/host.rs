@@ -30,6 +30,8 @@ pub struct Host {
     pub vcs: VcsShared,
     pub terminals: TerminalManager,
     pub environment: Arc<Environment>,
+    /// Set once the service exists; it needs the engine, which needs this host.
+    pub scheduled_tasks: OnceLock<conn_features::scheduled::ScheduledTasks>,
 }
 
 impl std::fmt::Debug for Host {
@@ -159,6 +161,17 @@ impl EngineHost for Host {
                     delete_history: Some(reason == ThreadClose::Deleted),
                 });
             }
+        }
+        // `ResourceCleanupService`: a deleted thread takes the tasks bound to it.
+        if reason == ThreadClose::Deleted
+            && let Some(tasks) = self.scheduled_tasks.get().cloned()
+        {
+            let thread_id = thread_id.to_owned();
+            tokio::spawn(async move {
+                if let Err(error) = tasks.delete_for_thread(&thread_id).await {
+                    eprintln!("scheduled tasks: {error}");
+                }
+            });
         }
     }
 }

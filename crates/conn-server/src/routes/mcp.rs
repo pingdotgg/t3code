@@ -53,6 +53,8 @@ pub fn service(deps: &Deps) -> Option<Arc<McpService>> {
             )
         }),
         hosted_app_url: conn_mcp::DEFAULT_HOSTED_APP_URL.to_owned(),
+        scheduled_tasks: deps.scheduled_tasks.clone(),
+        annotations: deps.annotations.clone(),
     }))
 }
 
