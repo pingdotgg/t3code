@@ -70,6 +70,23 @@ const syncHtmlFullscreen = () => {
 syncHtmlFullscreen();
 document.addEventListener("fullscreenchange", syncHtmlFullscreen);
 
+let primaryPasteEnabled = true;
+try {
+  primaryPasteEnabled =
+    ipcRenderer.sendSync(IpcChannels.GET_PRIMARY_PASTE_ENABLED_CHANNEL) !== false;
+} catch {}
+
+if (!primaryPasteEnabled) {
+  // Blink pastes the PRIMARY selection on a middle-click mouseup unless it is default-prevented.
+  window.addEventListener(
+    "mouseup",
+    (event) => {
+      if (event.button === 1) event.preventDefault();
+    },
+    true,
+  );
+}
+
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
     typeof result === "object" &&
@@ -116,6 +133,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return () => ipcRenderer.removeListener(IpcChannels.TRACKPAD_SCROLL_END_CHANNEL, handler);
   },
   revealWindow: () => ipcRenderer.invoke(IpcChannels.REVEAL_WINDOW_CHANNEL),
+  getPrimaryPasteEnabled: () => primaryPasteEnabled,
   getSystemLocale: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);
     return typeof result === "string" ? result : null;
@@ -220,14 +238,17 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setWslDistro: (distro) => ipcRenderer.invoke(IpcChannels.SET_WSL_DISTRO_CHANNEL, distro),
   setWslOnly: (enabled) => ipcRenderer.invoke(IpcChannels.SET_WSL_ONLY_CHANNEL, enabled),
   pickFolder: (options) => ipcRenderer.invoke(IpcChannels.PICK_FOLDER_CHANNEL, options),
+  toLocalBackendPath: (backendId, path) =>
+    ipcRenderer.invoke(IpcChannels.TO_LOCAL_BACKEND_PATH_CHANNEL, { backendId, path }),
   pickProjectFavicon: (initialPath) =>
     ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
   pickThemeFiles: () => ipcRenderer.invoke(IpcChannels.PICK_THEME_FILES_CHANNEL, undefined),
   setTheme: (theme) => ipcRenderer.invoke(IpcChannels.SET_THEME_CHANNEL, theme),
-  showContextMenu: (items, position) =>
+  showContextMenu: (items, position, source) =>
     ipcRenderer.invoke(IpcChannels.CONTEXT_MENU_CHANNEL, {
       items,
       ...(position === undefined ? {} : { position }),
+      ...(source === undefined ? {} : { source }),
     }),
   receiveProviderAuthCallback: (url: string) =>
     ipcRenderer.invoke(IpcChannels.RECEIVE_PROVIDER_AUTH_CALLBACK_CHANNEL, url),
@@ -371,6 +392,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     goBack: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_GO_BACK_CHANNEL, { tabId }),
     goForward: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_GO_FORWARD_CHANNEL, { tabId }),
     refresh: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_REFRESH_CHANNEL, { tabId }),
+    stopLoading: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_STOP_LOADING_CHANNEL, { tabId }),
     zoomIn: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_ZOOM_IN_CHANNEL, { tabId }),
     zoomOut: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_ZOOM_OUT_CHANNEL, { tabId }),
     resetZoom: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_RESET_ZOOM_CHANNEL, { tabId }),

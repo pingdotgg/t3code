@@ -1,6 +1,7 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
+import { rollupCheckStatuses } from "@t3tools/source-control-core/server/pullRequestChecks";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
@@ -35,13 +36,49 @@ import type {
 } from "./azureDevOpsPullRequestJson.ts";
 import { definition } from "../shared/definition.ts";
 
-/** Each file pays for two Python startups. */
+/** A file the blob batch missed pays for two Python startups. */
 const DIFF_FILE_CONCURRENCY = 4;
 
 /** Readers share a spawn budget across requests. */
 export const MAX_DIFF_SPAWNS = 2 * DIFF_FILE_CONCURRENCY;
 
 export const LOCATION_CACHE_CAPACITY = 128;
+
+/** A version's change list can run to thousands of paths. */
+const CHANGES_CACHE_CAPACITY = 32;
+
+/**
+ * Files whose contents one `az` run fetches. The run costs about the same for 10 blobs as for
+ * 100, and a slice rarely spends this many before its budgets close it.
+ */
+export const BLOB_BATCH_FILES = 100;
+
+/** Least recently used goes first. */
+function remember<V>(cache: Map<string, V>, capacity: number, key: string, value: V): V {
+  cache.delete(key);
+  if (cache.size >= capacity) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  cache.set(key, value);
+  return value;
+}
+
+function recall<V>(cache: Map<string, V>, key: string): V | undefined {
+  const held = cache.get(key);
+  if (held !== undefined) remember(cache, Number.POSITIVE_INFINITY, key, held);
+  return held;
+}
+
+/** The blobs a file's two sides need, as the change list names them. */
+function blobIdsOf(change: AzureDevOpsChangeEntry): ReadonlyArray<string> {
+  const ids: string[] = [];
+  if (change.changeKind !== "new" && change.originalObjectId !== null) {
+    ids.push(change.originalObjectId);
+  }
+  if (change.changeKind !== "deleted" && change.objectId !== null) ids.push(change.objectId);
+  return ids;
+}
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
@@ -137,6 +174,8 @@ export const make = Effect.gen(function* () {
   const diffSpawns = yield* Semaphore.make(MAX_DIFF_SPAWNS);
   const readItemContent = (input: Parameters<typeof cli.readItemContent>[0]) =>
     diffSpawns.withPermits(1)(cli.readItemContent(input));
+  const readBlobs = (input: Parameters<typeof cli.readBlobs>[0]) =>
+    diffSpawns.withPermits(1)(cli.readBlobs(input));
 
   const fail =
     (operation: string) => (error: AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError) =>
@@ -162,42 +201,73 @@ export const make = Effect.gen(function* () {
 
   // PR locations are immutable; caching avoids full PR reads for viewed-file checks.
   const locations = new Map<string, AzureDevOpsRepositoryLocation>();
+  // A pushed iteration never changes, so neither do its commits nor its change list.
+  const knownIterations = new Map<string, ReadonlyArray<AzureDevOpsIteration>>();
+  const iterationChanges = new Map<string, AzureDevOpsPullRequestCli.AzureDevOpsIterationChanges>();
 
   const locationOf = (input: { readonly cwd: string; readonly number: number }) => {
     const key = `${input.cwd} ${input.number}`;
-    const held = locations.get(key);
-    if (held !== undefined) {
-      locations.delete(key);
-      locations.set(key, held);
-      return Effect.succeed(held);
-    }
-    return cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
-      Effect.map((pullRequest) => {
-        const location = pullRequest.location;
-        if (location === null) return null;
-        if (locations.size >= LOCATION_CACHE_CAPACITY) {
-          const oldest = locations.keys().next().value;
-          if (oldest !== undefined) locations.delete(oldest);
-        }
-        locations.set(key, location);
-        return location;
-      }),
-    );
+    const held = recall(locations, key);
+    if (held !== undefined) return Effect.succeed(held);
+    return cli
+      .getPullRequest({ cwd: input.cwd, number: input.number })
+      .pipe(
+        Effect.map((pullRequest) =>
+          pullRequest.location === null
+            ? null
+            : remember(locations, LOCATION_CACHE_CAPACITY, key, pullRequest.location),
+        ),
+      );
   };
 
+  const readChecks = (input: { readonly cwd: string }, pullRequest: AzureDevOpsPullRequest) =>
+    cli.listPolicyChecks({
+      cwd: input.cwd,
+      number: pullRequest.number,
+      isDraft: pullRequest.isDraft,
+    });
+
+  /** A later slice names its iteration, which the list it was cut from already holds. */
   const diffScope = Effect.fn("AzureDevOpsPullRequestProvider.diffScope")(function* (input: {
     readonly cwd: string;
     readonly number: number;
+    readonly iterationId?: number;
   }) {
     const location = yield* locationOf(input);
     if (location === null) return null;
+    const key = `${input.cwd} ${input.number}`;
+    const held = recall(knownIterations, key);
+    if (
+      input.iterationId !== undefined &&
+      held?.some((iteration) => iteration.id === input.iterationId)
+    ) {
+      return { location, iterations: held };
+    }
     const iterations = yield* cli.listIterations({
       cwd: input.cwd,
       location,
       number: input.number,
     });
+    remember(knownIterations, LOCATION_CACHE_CAPACITY, key, iterations);
     return { location, iterations };
   });
+
+  const changesOf = (input: {
+    readonly cwd: string;
+    readonly location: AzureDevOpsRepositoryLocation;
+    readonly number: number;
+    readonly iterationId: number;
+  }) => {
+    const key = `${input.cwd} ${input.number} ${input.iterationId}`;
+    const held = recall(iterationChanges, key);
+    return held !== undefined
+      ? Effect.succeed(held)
+      : cli
+          .listIterationChanges(input)
+          .pipe(
+            Effect.map((listed) => remember(iterationChanges, CHANGES_CACHE_CAPACITY, key, listed)),
+          );
+  };
 
   const EMPTY_ITEM: AzureDevOpsItemContent = { contents: "", isBinary: false };
 
@@ -249,7 +319,7 @@ export const make = Effect.gen(function* () {
           changes: [],
           truncated: false,
         } as AzureDevOpsPullRequestCli.AzureDevOpsIterationChanges)
-      : cli.listIterationChanges({
+      : changesOf({
           cwd: input.cwd,
           location: input.location,
           number: input.number,
@@ -307,10 +377,30 @@ export const make = Effect.gen(function* () {
         })),
       ),
 
-    getChangeRequestSummary: (input) =>
-      cli
-        .getPullRequest({ cwd: input.cwd, number: input.number })
-        .pipe(Effect.mapError(fail("getChangeRequestSummary")), Effect.map(toSummary)),
+    getChangeRequestChecks: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequestChecks")(
+      function* (input) {
+        const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
+        const checks = yield* readChecks(input, pullRequest);
+        return { state: pullRequest.state, checks };
+      },
+      Effect.mapError(fail("getChangeRequestChecks")),
+    ),
+
+    getChangeRequestSummary: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequestSummary")(
+      function* (input) {
+        const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
+        // Undefined keeps the last known state; null would claim no checks exist.
+        const checksState = yield* readChecks(input, pullRequest).pipe(
+          Effect.map((checks) => rollupCheckStatuses(checks.map((check) => check.status))),
+          Effect.orElseSucceed(() => undefined),
+        );
+        return {
+          ...toSummary(pullRequest),
+          ...(checksState === undefined ? {} : { checksState }),
+        };
+      },
+      Effect.mapError(fail("getChangeRequestSummary")),
+    ),
 
     getChangeRequest: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequest")(
       function* (input) {
@@ -336,6 +426,7 @@ export const make = Effect.gen(function* () {
                 Effect.map((listed) => listed.changes.length),
                 Effect.orElseSucceed(() => 0),
               );
+        const checks = yield* readChecks(input, pullRequest).pipe(Effect.orElseSucceed(() => []));
         const detail: ProviderChangeRequestDetail = {
           ...toChangeRequest(pullRequest),
           body: pullRequest.body,
@@ -344,7 +435,7 @@ export const make = Effect.gen(function* () {
           mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
           closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
           reviewers: pullRequest.reviewers,
-          checks: [],
+          checks,
           mergeCapabilities: { merge: true, squash: true, rebase: false },
           viewerPermissions: AZURE_DEVOPS_VIEWER_PERMISSIONS,
           autoMergeEnabled: pullRequest.autoMergeEnabled,
@@ -391,15 +482,19 @@ export const make = Effect.gen(function* () {
     // the Code tab has nothing to scope itself to and always asks for the whole change.
     getDiff: Effect.fn("AzureDevOpsPullRequestProvider.getDiff")(
       function* (input) {
-        const scope = yield* diffScope(input);
-        if (scope === null) return EMPTY_DIFF_SLICE;
         const cursor = parseAzureDevOpsDiffCursor(input.cursor);
+        const scope = yield* diffScope({
+          cwd: input.cwd,
+          number: input.number,
+          ...(cursor === null ? {} : { iterationId: cursor.iterationId }),
+        });
+        if (scope === null) return EMPTY_DIFF_SLICE;
         const iteration =
           cursor === null
             ? scope.iterations.at(-1)
             : scope.iterations.find((candidate) => candidate.id === cursor.iterationId);
         if (iteration === undefined) return EMPTY_DIFF_SLICE;
-        const listed = yield* cli.listIterationChanges({
+        const listed = yield* changesOf({
           cwd: input.cwd,
           location: scope.location,
           number: input.number,
@@ -428,12 +523,47 @@ export const make = Effect.gen(function* () {
             ),
           );
         };
+        let blobs: ReadonlyMap<string, AzureDevOpsItemContent> = new Map();
+        let blobsUntil = index;
+        const fromBlobs = (change: AzureDevOpsChangeEntry): AzureDevOpsFileTexts | null => {
+          const side = (id: string | null) =>
+            id === null ? undefined : blobs.get(id.toLowerCase());
+          const oldItem = change.changeKind === "new" ? EMPTY_ITEM : side(change.originalObjectId);
+          const newItem = change.changeKind === "deleted" ? EMPTY_ITEM : side(change.objectId);
+          return oldItem === undefined || newItem === undefined
+            ? null
+            : {
+                oldContents: oldItem.contents,
+                newContents: newItem.contents,
+                binary: oldItem.isBinary || newItem.isBinary,
+              };
+        };
         while (!full && index < changes.length) {
-          const batch = changes.slice(index, index + batchWidth());
+          if (index >= blobsUntil) {
+            blobsUntil = index + BLOB_BATCH_FILES;
+            blobs = yield* readBlobs({
+              cwd: input.cwd,
+              location: scope.location,
+              objectIds: changes.slice(index, blobsUntil).flatMap(blobIdsOf),
+            }).pipe(
+              // Per-file reads then answer, or fail, for each file.
+              Effect.catchTags({
+                AzureDevOpsPullRequestNotFoundError: () => Effect.succeed(new Map()),
+                AzureDevOpsCommandFailedError: () => Effect.succeed(new Map()),
+                AzureDevOpsPullRequestReadError: () => Effect.succeed(new Map()),
+              }),
+            );
+          }
+          const batch = changes.slice(index, Math.min(index + batchWidth(), blobsUntil));
           const read = yield* Effect.forEach(
             batch,
             (change) =>
-              readTexts({ cwd: input.cwd, location: scope.location, iteration, change }).pipe(
+              Effect.suspend(() => {
+                const held = fromBlobs(change);
+                return held === null
+                  ? readTexts({ cwd: input.cwd, location: scope.location, iteration, change })
+                  : Effect.succeed(held);
+              }).pipe(
                 // Auth, rate-limit and CLI failures must reach the caller.
                 Effect.catchTags({
                   AzureDevOpsPullRequestNotFoundError: () => Effect.succeed(null),

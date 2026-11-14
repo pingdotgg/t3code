@@ -2756,6 +2756,38 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("lists only the head's workflow runs that have not finished", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation(() =>
+        Effect.succeed(
+          output(
+            encodeJson({
+              workflow_runs: ["queued", "in_progress", "completed", "action_required", null].map(
+                (status, index) => ({ id: index, name: `${status}`, html_url: null, status }),
+              ),
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const runs = yield* cli.listUnfinishedWorkflowRuns({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        headSha: "abc123",
+      });
+
+      expect(restCallsTo("actions/runs?")[0]?.path).toBe(
+        "repos/acme/web/actions/runs?head_sha=abc123&per_page=100",
+      );
+      expect(runs).toEqual([
+        { id: 0, name: "queued", url: null },
+        { id: 1, name: "in_progress", url: null },
+      ]);
+    }),
+  );
+
   it.effect("refuses workflow approval when one head belongs to several pull requests", () =>
     Effect.gen(function* () {
       workflowApprovalRoutes(() => crossRepositoryDetail(), heads([7, 8]), workflowRuns([]));

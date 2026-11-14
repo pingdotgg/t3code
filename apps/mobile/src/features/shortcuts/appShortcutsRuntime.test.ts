@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 vi.mock("expo-quick-actions", () => ({}));
 vi.mock("react-native", () => ({ Platform: { OS: "android" } }));
+vi.mock("../../connection/catalog", () => ({}));
 vi.mock("../../persistence/imperative", () => ({}));
 vi.mock("../../state/atom-registry", () => ({}));
 vi.mock("../../state/threads", () => ({ environmentThreadShells: {} }));
@@ -52,6 +53,23 @@ describe("createRecentThreadShortcuts", () => {
     recents.recordActiveThread(thread("a"));
     await recents.saved();
     expect(save).toHaveBeenLastCalledWith([thread("a")]);
+  });
+
+  it("drops threads of environments that are no longer saved", async () => {
+    const gone = { environmentId: "gone", threadId: "b", title: "b" };
+    const kept = { environmentId: "kept", threadId: "c", title: "c" };
+    const { save, publish, recents } = setup(() => Promise.resolve([thread("a"), gone, kept]));
+    recents.retainEnvironments(new Set(["env", "kept"]));
+    await recents.loaded;
+    expect(publish).toHaveBeenLastCalledWith([thread("a"), kept]);
+
+    recents.retainEnvironments(new Set(["kept"]));
+    await recents.saved();
+    expect(publish).toHaveBeenLastCalledWith([kept]);
+    expect(save).toHaveBeenLastCalledWith([kept]);
+
+    recents.recordActiveThread(thread("a"));
+    expect(publish).toHaveBeenLastCalledWith([kept]);
   });
 
   it("records title changes of the open thread and ignores repeats", async () => {

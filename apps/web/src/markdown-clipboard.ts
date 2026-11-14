@@ -1,3 +1,5 @@
+import { UNFINISHED_DRIVE_PATH } from "@t3tools/shared/markdownWindowsPaths";
+
 const SKIPPED_TAGS = new Set(["BUTTON", "INPUT", "SCRIPT", "STYLE", "TEMPLATE"]);
 const SKIPPED_CLASS_NAMES = ["select-none", "sr-only"];
 const SANITIZED_HTML_SELECTOR = [
@@ -9,6 +11,9 @@ const SANITIZED_HTML_SELECTOR = [
   '[aria-hidden="true"]',
   ...SKIPPED_CLASS_NAMES.map((className) => `.${className}`),
 ].join(", ");
+
+const ALERT_ATTRIBUTE = "data-markdown-alert";
+const ALERT_LABEL = "data-markdown-alert-label";
 
 export interface MarkdownClipboardPayload {
   text: string;
@@ -45,7 +50,9 @@ function wrapInlineCode(code: string): string {
     0,
   );
   const fence = "`".repeat(Math.max(1, longestRun + (longestRun > 0 ? 1 : 0)));
-  const pad = code.startsWith("`") || code.endsWith("`") ? " " : "";
+  // CommonMark strips one edge space from content that has both and isn't all spaces.
+  const spaceEdges = code.startsWith(" ") && code.endsWith(" ") && /[^ ]/.test(code);
+  const pad = spaceEdges || code.startsWith("`") || code.endsWith("`") ? " " : "";
   return `${fence}${pad}${code}${pad}${fence}`;
 }
 
@@ -159,16 +166,32 @@ function serializeList(list: Element, ordered: boolean, inTableCell: boolean): s
     .join("\n")}\n\n`;
 }
 
-function serializeBlockquote(quote: Element, inTableCell: boolean): string {
-  const content = outsideCode(serializeChildren(quote, inTableCell), (prose) =>
-    prose.replace(/\n{3,}/g, "\n\n"),
-  ).trim();
+function serializeQuoteBody(quote: Element, inTableCell: boolean): string {
+  let content = "";
+  for (const child of quote.childNodes) {
+    // A callout's rendered label stands for the marker its serializer writes.
+    if (child.nodeType === Node.ELEMENT_NODE && (child as Element).hasAttribute(ALERT_LABEL)) {
+      continue;
+    }
+    content += serializeNode(child, inTableCell);
+  }
+  return outsideCode(content, (prose) => prose.replace(/\n{3,}/g, "\n\n")).trim();
+}
+
+function serializeBlockquote(quote: Element, inTableCell: boolean, marker = ""): string {
+  const body = serializeQuoteBody(quote, inTableCell);
+  const content = marker && body ? `${marker}\n${body}` : marker || body;
   if (!content) return "";
   const quoted = content
     .split("\n")
     .map((line) => (line.length > 0 ? `> ${line}` : ">"))
     .join("\n");
   return `${quoted}\n\n`;
+}
+
+function serializeInsight(insight: Element, inTableCell: boolean): string {
+  const body = serializeQuoteBody(insight, inTableCell);
+  return `★ Insight ${"─".repeat(37)}\n${body ? `${body}\n` : ""}${"─".repeat(49)}\n\n`;
 }
 
 function serializeDetails(details: Element): string {
@@ -181,16 +204,48 @@ function serializeDetails(details: Element): string {
   return `<details${open}>\n<summary>${summary}</summary>${content ? `\n\n${content}` : ""}\n</details>\n\n`;
 }
 
+// Prose that would read as inline Markdown once pasted back: a backslash before punctuation,
+// backticks, brackets, and emphasis or strikethrough runs (user remark-gfm sets singleTilde: false).
+const INLINE_MARKDOWN = /\\(?=[!-/:-@[-`{-~\n]|$)|[`[\]]|\*+|_+|~{2,}/g;
+const ESCAPED_PUNCTUATION = /\\([!-/:-@[-`{-~])/g;
+
+/** Escapes rendered prose so it parses back to the same text, leaving runs that cannot open or close. */
+function escapeProse(text: string): string {
+  return text.replace(/\S+/g, (word, wordOffset: number) => {
+    // Check each word once; testing every escape's growing prefix would be quadratic.
+    const drive = UNFINISHED_DRIVE_PATH.exec(word);
+    const driveStart = drive ? drive.index + drive[0].search(/[A-Za-z]/) + 2 : Infinity;
+    return word.replace(INLINE_MARKDOWN, (match: string, offset: number) => {
+      if (offset >= driveStart) return match;
+      const before = text[wordOffset + offset - 1];
+      const after = text[wordOffset + offset + match.length];
+      if (match === "\\" && after !== undefined && /[^\S\n]/.test(after)) return match;
+      // A text node's edge may touch another node's markers, so it counts as neither.
+      const between = (pattern: RegExp) =>
+        before !== undefined && after !== undefined && pattern.test(before) && pattern.test(after);
+      if (/[*_~]/.test(match[0]!) && between(/\s/)) return match;
+      if (match[0] === "_" && between(/[\p{L}\p{N}]/u)) return match;
+      return match.replace(/[\s\S]/g, "\\$&");
+    });
+  });
+}
+
 function serializeAnchor(anchor: Element, inTableCell: boolean): string {
   const markdownCopy = anchor.getAttribute("data-markdown-copy");
   if (markdownCopy !== null) return escapeTablePipes(markdownCopy, inTableCell);
   const content = serializeChildren(anchor, inTableCell);
-  const href = escapeTablePipes(anchor.getAttribute("href") ?? "", inTableCell);
-  if (!/^https?:\/\//i.test(href)) return content;
+  const href = anchor.getAttribute("href") ?? "";
+  if (!/^(?:https?:\/\/|mailto:)/i.test(href)) return content;
   const label = content.trim();
   if (!label) return "";
-  if (label === href) return href;
-  return `[${label}](${href})`;
+  // The label arrives escaped; a bare address goes out as shown, since GFM links it again.
+  const shown = label.replace(ESCAPED_PUNCTUATION, "$1");
+  if (shown === href) return escapeTablePipes(href, inTableCell);
+  // GFM autolinks a bare address only when it fits this shape.
+  if (href === `mailto:${shown}` && /^[\w.+-]+@[\w-]+(?:\.[\w-]+)+(?<=[a-zA-Z])$/.test(shown))
+    return shown;
+  const destination = escapeTablePipes(href.replace(/[\\()]/g, "\\$&"), inTableCell);
+  return `[${label}](${destination})`;
 }
 
 /**
@@ -213,7 +268,7 @@ function serializeNode(node: Node, inTableCell = false): string {
   if (node.nodeType === Node.TEXT_NODE) {
     const text = node.textContent ?? "";
     if (text.includes("\n") && text.trim().length === 0) return "\n";
-    return escapeTablePipes(text, inTableCell);
+    return escapeTablePipes(escapeProse(text), inTableCell);
   }
   if (node.nodeType !== Node.ELEMENT_NODE) return "";
   const element = node as Element;
@@ -231,6 +286,9 @@ function serializeNode(node: Node, inTableCell = false): string {
       : escapeTablePipes(markdownCopy, inTableCell);
   }
   if (isSkippedElement(element)) return "";
+  const alert = element.getAttribute(ALERT_ATTRIBUTE);
+  if (alert === "insight") return serializeInsight(element, inTableCell);
+  if (alert !== null) return serializeBlockquote(element, inTableCell, `[!${alert.toUpperCase()}]`);
 
   const headingLevel = /^H([1-6])$/.exec(element.tagName)?.[1];
   if (headingLevel) {
@@ -470,13 +528,21 @@ export function chatMarkdownClipboardPayload(
       htmls.push(`<meta charset="utf-8">${mathSourceElement(math).outerHTML}`);
       continue;
     }
-    if (ancestorElement?.closest("pre")) {
+    // A range inside one code element clones only its text, which would otherwise be escaped as prose.
+    if (ancestorElement?.closest("pre, code")) {
       const text = range.toString();
       if (text) {
         texts.push(text);
         htmls.push(sanitizedHtmlFrom(container));
       }
       continue;
+    }
+    // A range spanning exactly one callout's text clones its contents but not the callout.
+    const callout = ancestorElement?.closest(`[${ALERT_ATTRIBUTE}]`);
+    if (callout && range.toString().trim() === (callout.textContent ?? "").trim()) {
+      const wrapper = callout.cloneNode(false) as Element;
+      wrapper.append(...container.childNodes);
+      container.replaceChildren(wrapper);
     }
     const text = serializeRenderedMarkdownFragment(container);
     if (!text) continue;

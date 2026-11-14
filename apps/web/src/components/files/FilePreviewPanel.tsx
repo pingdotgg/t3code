@@ -47,7 +47,14 @@ import {
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
@@ -61,7 +68,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { requestWorkspaceFocus } from "~/lib/workspaceFocus";
 import type { ChatFileAttachment } from "~/types";
 import { isHostPath } from "@t3tools/shared/path";
@@ -242,13 +249,20 @@ export function WorkspaceBrowserPreview(props: {
     workspaceRoot: props.workspaceRoot,
     absolutePath: props.absolutePath,
   });
-  const assetUrl = useAssetUrlState(
-    props.environmentId,
-    resource,
-    pdf ? props.workspaceMutationId : undefined,
-  );
+  // Each workspace mutation re-mints the URL: a file outside the workspace is signed by its
+  // inode, which an atomic replace changes.
+  const assetUrl = useAssetUrlState(props.environmentId, resource, props.workspaceMutationId);
+  // The HTML frame keeps its first URL per key, so the key moves only once the re-minted URL arrives.
+  const [settledMutationId, setSettledMutationId] = useState(props.workspaceMutationId);
+  if (
+    assetUrl._tag === "Success" &&
+    !assetUrl.waiting &&
+    settledMutationId !== props.workspaceMutationId
+  ) {
+    setSettledMutationId(props.workspaceMutationId);
+  }
   const fileRevision = pdf && assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
-  const revision = fileRevision ?? props.workspaceMutationId;
+  const revision = fileRevision ?? (pdf ? props.workspaceMutationId : settledMutationId);
   const revisionSuffix =
     revision === null
       ? ""
@@ -387,6 +401,64 @@ function WorkspaceAudioPreview(props: {
       name={props.name}
       revision={revision}
       onError={() => setFailedUrl(url)}
+    />
+  );
+}
+
+function WorkspaceDocumentPreview(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
+  readonly draft: boolean;
+  readonly document: boolean;
+  readonly absolutePath: string;
+  readonly workspaceRoot: string;
+  readonly name: string;
+  readonly workspaceMutationId: string | null;
+  readonly refreshRevision: number;
+}) {
+  const resource =
+    props.draft && props.document
+      ? {
+          _tag: "draft-workspace-file" as const,
+          cwd: props.workspaceRoot,
+          path: props.absolutePath,
+        }
+      : {
+          _tag: "media-file" as const,
+          threadId: props.threadRef.threadId,
+          path: props.absolutePath,
+          ...(props.document ? {} : { disposition: "attachment" as const }),
+        };
+  // Drafts keep reloading on every workspace mutation, as before.
+  const revisioned = resource._tag === "media-file";
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    revisioned ? resource : null,
+    props.workspaceMutationId ?? undefined,
+  );
+  const resolved =
+    assetUrl._tag === "Success" ? (assetUrl.fileRevision ?? props.workspaceMutationId) : undefined;
+  // A reconnect reports Loading and keeps the last revision, so the open file stays loaded;
+  // a failure (say the file was deleted) remounts so the preview shows its error.
+  const [shown, setShown] = useState(resolved);
+  if (resolved !== undefined && resolved !== shown) setShown(resolved);
+  const revision = !revisioned
+    ? props.workspaceMutationId
+    : assetUrl._tag === "Failure"
+      ? `failure:${props.workspaceMutationId}`
+      : (resolved ?? shown);
+  // Waiting on the first revision keeps the preview from mounting twice when it opens.
+  if (revisioned && revision === undefined && assetUrl._tag === "Loading") {
+    return <FileSurfaceLoading />;
+  }
+  return (
+    <AttachmentFilePreview
+      key={`${revision}:${props.refreshRevision}`}
+      name={props.name}
+      mimeType="application/octet-stream"
+      sizeBytes={0}
+      asset={{ environmentId: props.environmentId, resource }}
+      origin="File"
     />
   );
 }
@@ -933,6 +1005,25 @@ function EditableFileSurface({
   );
 }
 
+function selectRenderedContentOnSelectAll(event: ReactKeyboardEvent<HTMLElement>) {
+  const mac = isMacPlatform(navigator.platform);
+  const selectAll =
+    event.key.toLowerCase() === "a" &&
+    (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) &&
+    !event.shiftKey &&
+    !event.altKey;
+  // React bubbles keys from portaled children (the image dialog) through this surface.
+  if (
+    !selectAll ||
+    !(event.target instanceof Node) ||
+    !event.currentTarget.contains(event.target)
+  ) {
+    return;
+  }
+  event.preventDefault();
+  window.getSelection()?.selectAllChildren(event.currentTarget);
+}
+
 function RenderedMarkdownSurface({
   environmentId,
   cwd,
@@ -960,7 +1051,7 @@ function RenderedMarkdownSurface({
   useFileSaveSession(saveTarget, onPendingChange);
 
   return (
-    <ScrollArea className="min-h-0 flex-1">
+    <ScrollArea className="min-h-0 flex-1" onKeyDown={selectRenderedContentOnSelectAll}>
       <FileMarkdownPreview
         text={contents}
         cwd={cwd}
@@ -1512,24 +1603,17 @@ export default function FilePreviewPanel({
           ) : relativePath &&
             absolutePath &&
             (isDocument || file.readError?.failure === "binary_file") ? (
-            <AttachmentFilePreview
-              key={`${environmentId}:${absolutePath}:${workspaceMutationId}:${fileRefreshRevision}`}
+            <WorkspaceDocumentPreview
+              key={`${environmentId}:${absolutePath}`}
+              environmentId={environmentId}
+              threadRef={threadRef}
+              draft={draft}
+              document={isDocument}
+              absolutePath={absolutePath}
+              workspaceRoot={cwd}
               name={relativePath.split(/[\\/]/).at(-1) || relativePath}
-              mimeType="application/octet-stream"
-              sizeBytes={0}
-              asset={{
-                environmentId,
-                resource:
-                  draft && isDocument
-                    ? { _tag: "draft-workspace-file", cwd, path: absolutePath }
-                    : {
-                        _tag: "media-file",
-                        threadId: threadRef.threadId,
-                        path: absolutePath,
-                        ...(isDocument ? {} : { disposition: "attachment" as const }),
-                      },
-              }}
-              origin="File"
+              workspaceMutationId={workspaceMutationId}
+              refreshRevision={fileRefreshRevision}
             />
           ) : relativePath && file.error && file.data === null ? (
             <div
