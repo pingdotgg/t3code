@@ -617,6 +617,32 @@ describe("PreviewManager", () => {
     webviewSend.mockClear();
   });
 
+  effectIt.effect("preserves recording artifacts saved in the same millisecond", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const stored = new Map<string, Uint8Array>();
+        const save = (path: string, bytes: Uint8Array) => {
+          stored.set(path, Uint8Array.from(bytes));
+          return undefined;
+        };
+        writeFile.mockImplementationOnce(save).mockImplementationOnce(save);
+        const firstBytes = new Uint8Array([1, 2, 3]);
+        const secondBytes = new Uint8Array([4, 5, 6]);
+        const [first, second] = yield* Effect.all(
+          [
+            manager.saveRecording("tab_first", "video/webm", firstBytes),
+            manager.saveRecording("tab_second", "video/webm", secondBytes),
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        expect(first.path).not.toBe(second.path);
+        expect(stored.get(first.path)).toEqual(firstBytes);
+        expect(stored.get(second.path)).toEqual(secondBytes);
+      }),
+    ),
+  );
+
   effectIt.effect.each([false, true])(
     "preserves simultaneous same-name downloads with an existing destination: %s",
     (existing) =>
