@@ -327,12 +327,14 @@ type DelegateTaskResult = {
 Reads a delegated task from the parent thread's durable projection. A task ID
 from another parent thread is rejected. `childRunId` identifies the original
 run. `status: "starting"` means the child's provider has not started its turn
-yet, so a task that stays there has not begun work. `workState` distinguishes
-active work, a finished turn waiting for children, and an available result. The
-task remains nonterminal until its known work finishes. Its published `summary`
-and result transfer then remain stable across later follow-ups. `hasPendingChildRuns` reports later queued or executing turns;
-`latestTerminal*` exposes later executed, non-monitor results without replacing
-the published task result.
+yet, so a task that stays there has not begun work. A task in a linked
+environment reads `running` until it has a result, because the parent does not
+read the remote run's status. `workState` distinguishes active work, a finished
+turn waiting for children, and an available result. The task remains nonterminal
+until its known work finishes. Its published `summary` and result transfer then
+remain stable across later follow-ups. `hasPendingChildRuns` reports later
+queued or executing turns; `latestTerminal*` exposes later executed, non-monitor
+results without replacing the published task result.
 
 ### `task_cancel`
 
