@@ -1,10 +1,4 @@
-import {
-  OrchestrationV2Run,
-  OrchestrationV2TurnItem,
-  RunId,
-  ThreadId,
-  TurnItemId,
-} from "@t3tools/contracts";
+import { OrchestrationV2TurnItem, RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -28,15 +22,14 @@ export interface TurnItemPositionStoreV2Shape {
     readonly turnItemId: TurnItemId;
     readonly runId: RunId | null;
     readonly runOrdinal?: number;
-    readonly runStatus?: OrchestrationV2Run["status"];
-    /** Moves a stored position that lies outside the item's started run into that run. */
+    /** Moves a stored position that lies outside the item's run into that run. */
     readonly keepWithinRun?: boolean;
     // `run_start` takes the run's unused first slot, ahead of its items, and appends once it is taken.
     readonly placement?: "append" | "run_start";
   }) => Effect.Effect<number, TurnItemPositionStoreError>;
   readonly normalize: (
     item: OrchestrationV2TurnItem,
-    run?: Pick<OrchestrationV2Run, "ordinal" | "status">,
+    runOrdinal?: number,
   ) => Effect.Effect<OrchestrationV2TurnItem, TurnItemPositionStoreError>;
 }
 
@@ -58,7 +51,6 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           turnItemId,
           runId,
           runOrdinal: suppliedRunOrdinal,
-          runStatus: suppliedRunStatus,
           keepWithinRun = false,
           placement = "append",
         }) {
@@ -76,8 +68,8 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           const runRows =
             runId === null || suppliedRunOrdinal !== undefined
               ? []
-              : yield* sql<{ readonly ordinal: number; readonly status: string }>`
-                SELECT ordinal, status
+              : yield* sql<{ readonly ordinal: number }>`
+                SELECT ordinal
                 FROM orchestration_v2_projection_runs
                 WHERE thread_id = ${threadId} AND run_id = ${runId}
                 LIMIT 1
@@ -86,11 +78,8 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           const lowerBound = runOrdinal === null ? 0 : runOrdinal * 1_000_000;
           const upperBound = runOrdinal === null ? 999_999 : lowerBound + 999_999;
           if (existingOrdinal !== undefined) {
-            // Declined steers queue in the order of their original positions.
-            const runStatus = suppliedRunStatus ?? runRows[0]?.status;
             if (
               runOrdinal === null ||
-              runStatus === "queued" ||
               (existingOrdinal >= lowerBound && existingOrdinal <= upperBound)
             ) {
               return existingOrdinal;
@@ -145,16 +134,16 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
     return TurnItemPositionStoreV2.of({
       allocate,
       // Per-event normalization shares the enclosing orchestration span.
-      normalize: Effect.fnUntraced(function* (item, run) {
+      normalize: Effect.fnUntraced(function* (item, runOrdinal) {
         return yield* allocate({
           threadId: item.threadId,
           turnItemId: item.id,
           runId: item.runId,
-          ...(run === undefined ? {} : { runOrdinal: run.ordinal, runStatus: run.status }),
+          ...(runOrdinal === undefined ? {} : { runOrdinal }),
           // A user message keeps its id when it changes runs: a steer that
-          // missed its turn starts the next run, and a queued message is
-          // promoted into the running one. Its row follows the run it went to.
-          keepWithinRun: item.type === "user_message",
+          // missed its turn starts the next run. It moves once delivered, since
+          // declined steers queue in the order of their original positions.
+          keepWithinRun: item.type === "user_message" && item.startedAt !== null,
         }).pipe(Effect.map((ordinal) => (item.ordinal === ordinal ? item : { ...item, ordinal })));
       }),
     });
