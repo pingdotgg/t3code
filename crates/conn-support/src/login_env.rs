@@ -137,6 +137,14 @@ pub fn apply(shell: &[(&'static str, String)]) {
     }
 }
 
+/// Forgets the login shell's values, so children see the server's own environment again:
+/// for a tool that runs several servers' start-ups in one process.
+pub fn clear() {
+    if let Ok(mut overlay) = OVERLAY.write() {
+        *overlay = Overlay::default();
+    }
+}
+
 /// Marks a refresh as started; `false` when one ran less than [`REFRESH_TTL`] ago.
 pub fn claim_refresh(now: Instant) -> bool {
     let Ok(mut overlay) = OVERLAY.write() else {
@@ -315,16 +323,19 @@ pub const SLOW_TIMEOUT: Duration = Duration::from_secs(20);
 /// `PATH`; after the first timeout, one more try with [`SLOW_TIMEOUT`]. Unlike T3 it does not
 /// read the account's shell from the user database nor ask `launchctl` on macOS. Blocking.
 pub fn hydrate() -> bool {
+    hydrate_from(std::env::var_os("SHELL").as_deref())
+}
+
+/// [`hydrate`] with `shell_var` in place of `$SHELL`: for a tool that proves the start-up
+/// against a stand-in login shell without changing its own environment. Blocking.
+pub fn hydrate_from(shell_var: Option<&OsStr>) -> bool {
     if !(cfg!(target_os = "macos") || cfg!(target_os = "linux")) {
         return false;
     }
     let mut candidates: Vec<String> = Vec::new();
-    for candidate in [
-        login_shell(std::env::var_os("SHELL").as_deref(), None),
-        login_shell(None, None),
-    ]
-    .into_iter()
-    .flatten()
+    for candidate in [login_shell(shell_var, None), login_shell(None, None)]
+        .into_iter()
+        .flatten()
     {
         if !candidates.contains(&candidate) {
             candidates.push(candidate);

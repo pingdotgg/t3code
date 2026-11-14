@@ -43,6 +43,12 @@ const SCENARIOS = {
   resume: { fixture: "provider_thread_resume", covers: "a resumed thread on a new process" },
   mcp: { fixture: "simple", mcp: true, covers: "a turn with the t3-code MCP server" },
   approval: { fixture: "tool_call_read_only_on_request", covers: "an approval and its answer" },
+  login: {
+    fixture: "simple",
+    loginShell: true,
+    covers:
+      "PATH, __MISE_DIFF and JAVA_HOME from a stand-in login shell (os-jank.ts fixPath), and the codex found on that PATH",
+  },
   elicitation: {
     fixture: "tool_call_read_only_on_request",
     derive: "elicitation",
@@ -246,18 +252,64 @@ function deriveElicitation(fixture, dir) {
   return file;
 }
 
+/** The executable name the `login` scenario starts: only the stand-in shell's PATH has it. */
+const LOGIN_CODEX = "codex-conn-login";
+
+/**
+ * A stand-in login shell for one side: its profile sets PATH (a folder that holds only the
+ * stub, as LOGIN_CODEX, then the system folders `printenv` needs), __MISE_DIFF and JAVA_HOME,
+ * then it runs the command it was given (`-ilc <command>`). Named `sh`, so neither server adds
+ * its DEBUG-trap prefix. The real `codex` can never be found by that name.
+ */
+function loginShell(sideDir) {
+  const bin = NodePath.join(sideDir, "login-bin");
+  NodeFS.mkdirSync(bin, { recursive: true });
+  NodeFS.copyFileSync(NodePath.join(sideDir, "codex"), NodePath.join(bin, LOGIN_CODEX));
+  NodeFS.chmodSync(NodePath.join(bin, LOGIN_CODEX), 0o755);
+  const path = `${bin}:/usr/bin:/bin`;
+  const shell = NodePath.join(sideDir, "shell", "sh");
+  NodeFS.mkdirSync(NodePath.dirname(shell), { recursive: true });
+  NodeFS.writeFileSync(
+    shell,
+    [
+      "#!/bin/sh",
+      `PATH=${JSON.stringify(path)}; export PATH`,
+      `__MISE_DIFF="conn-login-diff"; export __MISE_DIFF`,
+      `JAVA_HOME="/conn-login/jdk"; export JAVA_HOME`,
+      'for arg; do command="$arg"; done',
+      'exec /bin/sh -c "$command"',
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return { shell, path };
+}
+
 const plan = selected.map((name) => {
   const dir = NodePath.join(work, name);
   const scenario = SCENARIOS[name];
+  const tsCodex = wrapper(NodePath.join(dir, "ts"));
+  const rustCodex = wrapper(NodePath.join(dir, "rust"));
+  const login = scenario.loginShell
+    ? { ts: loginShell(NodePath.join(dir, "ts")), rust: loginShell(NodePath.join(dir, "rust")) }
+    : undefined;
   return {
     name,
     dir,
     ...scenario,
+    ...(login
+      ? {
+          tsShell: login.ts.shell,
+          rustShell: login.rust.shell,
+          tsShellPath: login.ts.path,
+          rustShellPath: login.rust.path,
+        }
+      : {}),
     ...(scenario.derive === "elicitation"
       ? { transcriptFile: deriveElicitation(scenario.fixture, dir) }
       : {}),
-    tsCodex: wrapper(NodePath.join(dir, "ts")),
-    rustCodex: wrapper(NodePath.join(dir, "rust")),
+    tsCodex: login ? LOGIN_CODEX : tsCodex,
+    rustCodex: login ? LOGIN_CODEX : rustCodex,
   };
 });
 NodeFS.writeFileSync(
@@ -286,6 +338,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
+import { fixPath } from "../../os-jank.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import * as CodexAdapterV2 from "../Adapters/CodexAdapterV2.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
@@ -355,7 +408,9 @@ const harnessFor = (scenario: any, log: Array<unknown>) => {
   ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
   const adapterLayer = (transcript: any) => {
     fs.writeFileSync(\`\${scenario.dir}/transcript.json\`, JSON.stringify(transcript));
-    fs.writeFileSync(\`\${scenario.dir}/ts/env.json\`, JSON.stringify(process.env));
+    if (!scenario.loginShell) {
+      fs.writeFileSync(\`\${scenario.dir}/ts/env.json\`, JSON.stringify(process.env));
+    }
     const registry = ProviderAdapterRegistry.layerFromAdaptersEffect(
       CodexAdapterV2.createCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
@@ -446,14 +501,36 @@ describe("conn codex conformance", () => {
         ...(scenario.model ? { modelSelection: { ...driver.modelSelection, model: scenario.model } } : {}),
         ...(scenario.policy ? { runtimePolicyOverride: { ...driver.runtimePolicyOverride, ...scenario.policy } } : {}),
       };
-      return runReplayFixture({
+      // The \`login\` scenario: the server's start-up PATH fix with a stand-in login shell,
+      // as \`server.ts\` runs it, then the scenario; the environment is put back after.
+      const saved = { ...process.env };
+      const prepare = scenario.loginShell
+        ? Effect.sync(() => {
+            fs.writeFileSync(\`\${scenario.dir}/ts/env.json\`, JSON.stringify(process.env));
+            process.env.SHELL = scenario.tsShell;
+          }).pipe(
+            Effect.andThen(fixPath().pipe(Effect.provide(NodeServices.layer))),
+            Effect.andThen(
+              Effect.sync(() => {
+                if (saved.SHELL === undefined) delete process.env.SHELL;
+                else process.env.SHELL = saved.SHELL;
+              }),
+            ),
+          )
+        : Effect.void;
+      const restore = Effect.sync(() => {
+        if (!scenario.loginShell) return;
+        for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+        Object.assign(process.env, saved);
+      });
+      return prepare.pipe(Effect.andThen(runReplayFixture({
         fixtureName: scenario.fixture,
         buildInput: () => changedInput(scenario, fixture.buildInput()),
         driver: driverWithModel,
         harness: harnessFor(scenario, log) as any,
         materializeWorkspace: (transcript, workspace) =>
           Effect.succeed(materializeReplayTranscriptWorkspace(transcript, workspace)),
-      }).pipe(
+      })), Effect.ensuring(restore)).pipe(
         Effect.timeout("25 seconds"),
         Effect.exit,
         Effect.map((exit) => {
@@ -537,6 +614,28 @@ const processes = (log) => {
     if (!p.end.some((e) => e.kind === "linger-exit")) p.end.push({ kind: "killed", afterMs: p.lastAlive ?? 0 });
   }
   return out;
+};
+
+/**
+ * T3's \`mergePathEntries\`: the login shell's entries first, then the server's own, each once.
+ * In the \`login\` scenario a child PATH that is exactly that merge reads as one marker, so the
+ * two sides compare equal although their stand-in folders and their own PATH differ.
+ */
+const mergePath = (preferred, inherited) => {
+  const merged = [];
+  for (const value of [preferred, inherited]) {
+    for (const entry of (value ?? "").split(":").map((e) => e.trim())) {
+      if (entry !== "" && !merged.includes(entry)) merged.push(entry);
+    }
+  }
+  return merged.join(":");
+};
+const loginPath = (delta, shellPath, parent) => {
+  if (shellPath === undefined || delta.PATH === undefined) return delta;
+  if (delta.PATH === mergePath(shellPath, parent.PATH)) {
+    return { ...delta, PATH: "<login shell PATH, then the server's PATH>" };
+  }
+  return delta;
 };
 
 /** The child's environment as a change to its parent's. */
@@ -650,14 +749,35 @@ for (const scenario of plan) {
   const add = (kind, detail) => diffs.push({ kind, ...detail });
 
   if (ts.length !== rs.length) add("process-count", { ts: ts.length, rust: rs.length });
+  // The \`login\` scenario proves something only when each side found the stub through the
+  // login shell's PATH and passed that shell's values on; equal failures must not pass.
+  if (scenario.loginShell) {
+    const expected = { PATH: "<login shell PATH, then the server's PATH>", __MISE_DIFF: "conn-login-diff" };
+    for (const [side, list, env, shellPath] of [
+      ["ts", ts, tsEnv, scenario.tsShellPath],
+      ["rust", rs, rustEnv, scenario.rustShellPath],
+    ]) {
+      if (list.length === 0) {
+        add("login-shell", { key: "codex", [side]: `${LOGIN_CODEX} not started` });
+        continue;
+      }
+      const delta = loginPath(envDelta(list[0].start.env, env), shellPath, env);
+      const want = { ...expected, ...(env.JAVA_HOME ? {} : { JAVA_HOME: "/conn-login/jdk" }) };
+      for (const [key, value] of Object.entries(want)) {
+        if (delta[key] !== value) {
+          add("login-shell", { key, [side]: `${delta[key] ?? "<absent>"} (want ${value})` });
+        }
+      }
+    }
+  }
   for (let p = 0; p < Math.min(ts.length, rs.length); p += 1) {
     const a = ts[p];
     const b = rs[p];
     if (JSON.stringify(a.start.argv) !== JSON.stringify(b.start.argv)) {
       add("argv", { process: p, ts: a.start.argv, rust: b.start.argv });
     }
-    const da = envDelta(a.start.env, tsEnv);
-    const db = envDelta(b.start.env, rustEnv);
+    const da = loginPath(envDelta(a.start.env, tsEnv), scenario.tsShellPath, tsEnv);
+    const db = loginPath(envDelta(b.start.env, rustEnv), scenario.rustShellPath, rustEnv);
     for (const key of [...new Set([...Object.keys(da), ...Object.keys(db)])].sort()) {
       if (HOST_NOISE.test(key)) continue;
       if (da[key] !== db[key]) add("env", { process: p, key, ts: da[key], rust: db[key] });
@@ -759,7 +879,7 @@ for (const r of report) {
   if (!r.tsOk) console.log(`   note: the TS fixture assertions failed: ${String(r.tsFailure).split("\n")[0]}`);
   for (const d of r.diffs) {
     const tag = d.known ? "known" : "OPEN ";
-    const where = d.kind === "frame" || d.kind === "result" ? `${d.method} ${d.path}` : d.kind === "env" ? d.key : (d.method ?? "");
+    const where = d.kind === "frame" || d.kind === "result" ? `${d.method} ${d.path}` : d.kind === "env" || d.kind === "login-shell" ? d.key : (d.method ?? "");
     const values =
       d.kind === "rust-only-frame" || d.kind === "ts-only-frame" ? short(d.frame.params ?? d.frame.result ?? null) : `ts=${short(d.ts)} rust=${short(d.rust)}`;
     console.log(`   ${tag} ${d.kind} ${where}: ${values}${d.known ? ` (${d.known})` : ""}`);

@@ -174,6 +174,36 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
         Value::Object(env).to_string().as_bytes(),
     )
     .map_err(|e| e.to_string())?;
+    // The `login` scenario: the server's start-up PATH fix (`serve.rs`, T3's `fixPath`) with
+    // a stand-in login shell in place of `$SHELL`.
+    let login = scenario["loginShell"] == true;
+    if login {
+        let shell = scenario["rustShell"]
+            .as_str()
+            .ok_or("rustShell")?
+            .to_owned();
+        let applied = tokio::task::spawn_blocking(move || {
+            conn_support::login_env::hydrate_from(Some(std::ffi::OsStr::new(&shell)))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        if !applied {
+            return Err("the stand-in login shell printed no PATH".into());
+        }
+    }
+    let result = run_scenario(plan, scenario, &dir, &calls).await;
+    if login {
+        conn_support::login_env::clear();
+    }
+    result
+}
+
+async fn run_scenario(
+    plan: &Value,
+    scenario: &Value,
+    dir: &std::path::Path,
+    calls: &Value,
+) -> Result<(), String> {
     let config = CodexConfig {
         binary: PathBuf::from(scenario["rustCodex"].as_str().ok_or("rustCodex")?),
         home_path: plan["codexHome"].as_str().map(PathBuf::from),
