@@ -62,9 +62,9 @@ export const ModelListRow = memo(function ModelListRow(props: {
         acpRegistryIconUrl={props.acpRegistryIconUrl}
         showBadge={props.showInstanceBadge}
         className="size-4"
+        size="compact"
         iconClassName="size-4"
         indicatorBackground="var(--popover)"
-        badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
       />
       <div className="flex min-w-0 flex-1 items-center gap-2 text-left">
         <div

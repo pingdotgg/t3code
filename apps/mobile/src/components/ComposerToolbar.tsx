@@ -69,9 +69,10 @@ export function ComposerInlineControl(props: {
         style={{ opacity: props.disabled ? 0.45 : 1 }}
       >
         {props.renderIcon ? (
+          // minWidth, not width: an account tab beside the logo makes the icon wider.
           <View
-            className="size-4 shrink-0 items-center justify-center"
-            style={{ width: iconSize, height: iconSize }}
+            className="shrink-0 items-center justify-center"
+            style={{ minWidth: iconSize, height: iconSize }}
           >
             {props.renderIcon(iconSize)}
           </View>

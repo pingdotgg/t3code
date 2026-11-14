@@ -62,7 +62,7 @@ export function ThreadRelationshipIcon({
     : undefined;
   const showInstanceBadge = entry !== undefined && shouldShowInstanceBadge(entry, providerEntries);
   return (
-    <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
+    <span className="relative inline-flex h-4 min-w-4 shrink-0 items-center justify-center">
       {driver ? (
         <ProviderInstanceIcon
           driverKind={driver}

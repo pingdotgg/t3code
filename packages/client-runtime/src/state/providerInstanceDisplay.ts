@@ -61,6 +61,28 @@ export function providerAccentForegroundColor(accentColor: string) {
   return blackContrast >= whiteContrast ? "#000000" : "#ffffff";
 }
 
+/**
+ * Size of the initials tab beside a provider logo, in px. Web and mobile both read it so the
+ * tab looks the same. The letters stay at 9px or more; smaller text is not readable.
+ */
+export function providerInstanceTabMetrics(iconSize: number) {
+  const large = iconSize >= 18;
+  return {
+    height: large ? 13 : 12,
+    fontSize: large ? 10 : 9,
+    paddingHorizontal: 3,
+    /** Fixed width in a "corner" slot, so the space kept beside the slot fits any initials. */
+    cornerWidth: 22,
+    borderRadius: 4,
+    /** How far the tab sits over the logo's right edge. */
+    overlap: 4,
+    /** How far the tab hangs below the logo. */
+    drop: 3,
+    /** Width of the surface-colored ring that separates the tab from the logo. */
+    ring: 1.5,
+  } as const;
+}
+
 export function shouldShowInstanceBadge(
   entry: {
     readonly driverKind: ProviderDriverKind;

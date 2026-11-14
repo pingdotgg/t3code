@@ -4,6 +4,7 @@ import {
   normalizeProviderAccentColor,
   providerAccentForegroundColor,
   providerInstanceInitials,
+  providerInstanceTabMetrics,
 } from "@t3tools/client-runtime/state/provider-instance-display";
 
 import { ProviderDriverKind } from "@t3tools/contracts";
@@ -94,6 +95,8 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   acpRegistryIconUrl?: string | undefined;
   showBadge?: boolean;
   badgeContent?: "initials" | "none";
+  /** "corner" keeps the logo centered in a fixed slot; the tab then hangs outside it. */
+  badgePlacement?: "inline" | "corner";
   size?: "default" | "compact";
   className?: string;
   iconClassName?: string;
@@ -121,7 +124,41 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
     iconUrl: props.acpRegistryIconUrl,
   });
 
-  return (
+  const tab = providerInstanceTabMetrics(props.size === "compact" ? 14 : 20);
+  const rem = (px: number) => `${px / 16}rem`;
+  const corner = props.badgePlacement === "corner";
+  const initialsTab =
+    !isCustomEndpoint && props.showBadge && badgeContent === "initials" ? (
+      <span
+        className={cn(
+          "pointer-events-none z-30 flex shrink-0 items-center justify-center font-bold leading-none tracking-wide",
+          accentColor
+            ? "bg-(--provider-accent) text-(--provider-accent-foreground)"
+            : "text-foreground",
+          corner ? "absolute" : "relative",
+        )}
+        style={{
+          height: rem(tab.height),
+          ...(corner
+            ? { width: rem(tab.cornerWidth) }
+            : { padding: `0 ${rem(tab.paddingHorizontal)}` }),
+          borderRadius: rem(tab.borderRadius),
+          fontSize: rem(tab.fontSize),
+          boxShadow: `0 0 0 ${rem(tab.ring)} ${indicatorBackground}`,
+          ...(accentColor
+            ? {}
+            : { background: "color-mix(in srgb, var(--foreground) 24%, var(--background))" }),
+          ...(corner
+            ? { left: `calc(100% - ${rem(tab.overlap)})`, bottom: rem(-tab.drop) }
+            : { marginLeft: rem(-tab.overlap), marginBottom: rem(-tab.drop) }),
+        }}
+        aria-hidden
+      >
+        {providerInstanceInitials(props.displayName)}
+      </span>
+    ) : null;
+
+  const icon = (
     <span
       className={cn(
         "relative isolate z-30 inline-flex shrink-0 items-center justify-center overflow-visible",
@@ -172,23 +209,26 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           {providerInstanceInitials(props.displayName)}
         </span>
       )}
-      {isCustomEndpoint ? null : props.showBadge ? (
+      {corner ? initialsTab : null}
+      {!isCustomEndpoint && props.showBadge && badgeContent === "none" ? (
         <span
           className={cn(
-            "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border px-0.5 text-4xs font-semibold leading-none shadow-sm",
-            accentColor
-              ? "bg-(--provider-accent) text-(--provider-accent-foreground)"
-              : "bg-card text-muted-foreground",
-            props.size === "compact" &&
-              "right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3 px-0.5 text-5xs",
+            "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 rounded-full border shadow-sm",
+            accentColor ? "bg-(--provider-accent)" : "bg-card",
+            props.size === "compact" && "right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3",
             props.badgeClassName,
           )}
           style={{ borderColor: indicatorBackground }}
           aria-hidden
-        >
-          {badgeContent === "initials" ? providerInstanceInitials(props.displayName) : null}
-        </span>
+        />
       ) : null}
+    </span>
+  );
+  if (!initialsTab || corner) return icon;
+  return (
+    <span className="inline-flex shrink-0 items-end" style={accentStyle}>
+      {icon}
+      {initialsTab}
     </span>
   );
 });
