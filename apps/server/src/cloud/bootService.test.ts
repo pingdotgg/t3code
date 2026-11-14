@@ -748,10 +748,10 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         activeVersion: "1.2.3",
       });
       expect(plan.program).toEqual([runtime.entryPath, "__service-launcher"]);
-      expect(yield* fs.readFileString(plan.unitPath)).not.toContain("T3CODE_INSTALL_BIN_DIR");
-      expect(yield* fs.readFileString(plan.unitPath)).toContain(
-        `ExecStart=${runtime.entryPath} __service-launcher`,
-      );
+      const unit = yield* fs.readFileString(plan.unitPath);
+      expect(unit).not.toContain("T3CODE_INSTALL_BIN_DIR");
+      expect(unit).toContain(`ExecStart=${runtime.entryPath} __service-launcher`);
+      expect(unit).not.toContain("ManagedOOMPreference=");
       expect(yield* service.status).toMatchObject({
         current: true,
         installedVersion: "1.2.3",
