@@ -32,6 +32,11 @@ describe("semver helpers", () => {
   });
 
   it("compares prerelease versions before stable versions", () => {
+    expect(compareSemverVersions("1.0.0-Z", "1.0.0-a")).toBeLessThan(0);
+    expect(compareSemverVersions("1.0.0-alpha-1", "1.0.0-alpha1")).toBeLessThan(0);
+    expect(compareSemverVersions("1.0.0-9007199254740992", "1.0.0-9007199254740993")).toBeLessThan(
+      0,
+    );
     expect(compareSemverVersions("2.1.111-beta.1", "2.1.111")).toBeLessThan(0);
   });
 
