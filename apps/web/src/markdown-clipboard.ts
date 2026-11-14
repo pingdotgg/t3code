@@ -202,6 +202,25 @@ function serializeDetails(details: Element): string {
   return `<details${open}>\n<summary>${summary}</summary>${content ? `\n\n${content}` : ""}\n</details>\n\n`;
 }
 
+// Prose that would read as inline Markdown once pasted back: a backslash before punctuation,
+// backticks, link openers, and emphasis or strikethrough runs (`~` alone never strikes in sent text).
+const INLINE_MARKDOWN = /\\(?=[!-/:-@[-`{-~\n]|$)|[`[]|\*+|_+|~{2,}/g;
+const ESCAPED_PUNCTUATION = /\\([!-/:-@[-`{-~])/g;
+
+/** Escapes rendered prose so it parses back to the same text, leaving runs that cannot open or close. */
+function escapeProse(text: string): string {
+  return text.replace(INLINE_MARKDOWN, (match, offset: number) => {
+    const before = text[offset - 1];
+    const after = text[offset + match.length];
+    // A text node's edge may touch another node's markers, so it counts as neither.
+    const between = (pattern: RegExp) =>
+      before !== undefined && after !== undefined && pattern.test(before) && pattern.test(after);
+    if (/[*_~]/.test(match[0]!) && between(/\s/)) return match;
+    if (match[0] === "_" && between(/[\p{L}\p{N}]/u)) return match;
+    return match.replace(/[\s\S]/g, "\\$&");
+  });
+}
+
 function serializeAnchor(anchor: Element, inTableCell: boolean): string {
   const markdownCopy = anchor.getAttribute("data-markdown-copy");
   if (markdownCopy !== null) return escapeTablePipes(markdownCopy, inTableCell);
@@ -211,10 +230,12 @@ function serializeAnchor(anchor: Element, inTableCell: boolean): string {
   const label = content.trim();
   if (!label) return "";
   const cellHref = escapeTablePipes(href, inTableCell);
-  if (cellHref === label) return label;
+  // A bare address is copied as shown, since GFM links it again.
+  const shown = label.replace(ESCAPED_PUNCTUATION, "$1");
+  if (shown === href) return cellHref;
   // GFM autolinks a bare address only when it fits this shape.
-  if (cellHref === `mailto:${label}` && /^[\w.+-]+@[\w-]+(?:\.[\w-]+)+(?<=[a-zA-Z])$/.test(label))
-    return label;
+  if (href === `mailto:${shown}` && /^[\w.+-]+@[\w-]+(?:\.[\w-]+)+(?<=[a-zA-Z])$/.test(shown))
+    return shown;
   const destination = escapeTablePipes(href.replace(/[\\()]/g, "\\$&"), inTableCell);
   return `[${label}](${destination})`;
 }
@@ -239,7 +260,7 @@ function serializeNode(node: Node, inTableCell = false): string {
   if (node.nodeType === Node.TEXT_NODE) {
     const text = node.textContent ?? "";
     if (text.includes("\n") && text.trim().length === 0) return "\n";
-    return escapeTablePipes(text, inTableCell);
+    return escapeTablePipes(escapeProse(text), inTableCell);
   }
   if (node.nodeType !== Node.ELEMENT_NODE) return "";
   const element = node as Element;

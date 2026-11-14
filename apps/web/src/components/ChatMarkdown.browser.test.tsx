@@ -132,7 +132,10 @@ vi.mock(import("../hooks/useSettings"), async (original) => {
   return { ...actual, useClientSettings };
 });
 
+import type { Editor } from "@tiptap/core";
 import ChatMarkdown from "./ChatMarkdown";
+import { ComposerPromptEditorTiptap } from "./ComposerPromptEditorTiptap";
+import { serializeEditorDoc } from "../composer-rich-text-doc";
 import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
 import { AudioPreview } from "./files/AudioPreview";
 
@@ -698,6 +701,64 @@ describe("ChatMarkdown alert copy", () => {
       "> [!WARNING]\n> Back up first.",
     );
     expect(select(labelText, bodyText, "Back up".length)).toBe("Warning\n\nBack up");
+  });
+});
+
+describe("ChatMarkdown literal prose copy", () => {
+  const visibleText = (container: HTMLElement) =>
+    [...container.querySelectorAll(".chat-markdown p")].map((node) => node.textContent).join("\n");
+
+  it.each([
+    ["Type \\*word\\* literally.", "Type \\*word\\* literally."],
+    [
+      "Type \\[label](https://example.com) literally.",
+      "Type \\[label](https://example.com) literally.",
+    ],
+    [
+      "Keep *real* emphasis, snake_case, 2 * 3 and https://example.com/_next/ as typed.",
+      "Keep *real* emphasis, snake_case, 2 * 3 and https://example.com/_next/ as typed.",
+    ],
+  ])("pastes and sends %j as it was shown", async (source, expectedCopy) => {
+    setup();
+    await using screen = await renderText(source);
+    const shown = visibleText(screen.container);
+    const range = document.createRange();
+    range.selectNodeContents(screen.container.querySelector(".chat-markdown")!);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    const clipboardData = new DataTransfer();
+    screen.container
+      .querySelector(".chat-markdown")!
+      .dispatchEvent(
+        new ClipboardEvent("copy", { clipboardData, bubbles: true, cancelable: true }),
+      );
+    window.getSelection()!.removeAllRanges();
+    expect(clipboardData.getData("text/plain")).toBe(expectedCopy);
+
+    await screen.rerender(
+      <ComposerPromptEditorTiptap
+        editorRef={{ current: null }}
+        value=""
+        cursor={0}
+        richTextEnabled
+        contextRecords={new Map()}
+        skills={[]}
+        disabled={false}
+        placeholder=""
+        onChange={() => {}}
+        onPaste={() => {}}
+        onCommandKeyDown={() => false}
+      />,
+    );
+    const editorNode = screen.container.querySelector<HTMLElement & { editor: Editor }>(".tiptap")!;
+    await act(() => {
+      editorNode.editor.view.focus();
+      editorNode.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+    });
+    const sent = serializeEditorDoc(editorNode.editor.state.doc).value;
+
+    await screen.rerender(<ChatMarkdown cwd="/tmp/project" text={sent} />);
+    expect(visibleText(screen.container)).toBe(shown);
   });
 });
 
