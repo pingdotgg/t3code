@@ -54,6 +54,7 @@ run() {
   local started=$SECONDS status
   "$@" 2>&1 | tee -a "$canary_log"
   status=${PIPESTATUS[0]}
+  node tools/canary.mjs mark "$canary" "$name"
   if [ "$status" -eq 0 ]; then
     passed+=("$name")
     printf 'ok %s\n' "$name" >>"$summary"

@@ -854,6 +854,71 @@ Established, not fixed:
   provider configs at start and on change, as for Grok, with a conformance scenario that shows
   the CLI each server starts.
 
+## The canary: no check reads the home or the shell's secrets (2026-11-14)
+
+`tools/canary.mjs` holds the rule in `AGENTS.md` ("never read provider, `gh` or `git`
+settings or credentials in a check"). `tools/check.sh` sets it up before the first check, so
+every check runs with:
+
+- a decoy HOME: marker files where `~/.claude/settings.json`, `~/.claude.json`,
+  `~/.codex/config.toml`, `~/.grok/settings.json`, `~/.config/gh/config.yml`, `~/.t3/…/settings.json`,
+  the shell profiles and `~/.gitconfig` would be (readable, access time set to 2000), and
+  credential stand-ins (`.claude/.credentials.json`, `.codex/auth.json`,
+  `.grok/user-settings.json`, `.config/gh/hosts.yml`, glab, `.netrc`, `.t3/…/secrets`) at mode
+  000. The `.gitconfig` carries a marker identity and a credential helper that is a tripwire;
+- marker values in `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`,
+  `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`, `CODEX_HOME`, `XAI_API_KEY`, `GH_TOKEN`,
+  `GITHUB_TOKEN`, `GITLAB_TOKEN`, `T3CODE_HOME` and `CONN_CANARY`;
+- a stand-in `SHELL` (runs the `-c` script with `/bin/sh`, reads no profile, keeps no history),
+  and a `TMPDIR` inside the canary's folder, which a watcher scans every 0.5 s.
+
+The last check (`canary`) first runs a self-test (each kind of breach must fail `verify`, and
+each lint rule must fire on a sample), then fails when: a readable decoy file's access time
+moved; the decoy home differs from its listing (type, mode, size, SHA-256); the tripwire ran;
+a marker appears in any check's output or in a file under TMPDIR or the check's scratch folder;
+or the lint finds `os.userInfo().homedir`, `getpwuid`, a `home_dir` lookup, `env -i` without
+`HOME=`, or `HOME: os.homedir()` passed on (a line marked `canary: allow` is exempt: the live
+recorder and `parity.mjs --model`).
+
+**What it cannot see:** a `stat` or an existence check of a decoy path; an open of a mode-000
+file whose error is swallowed and not printed (a readable sibling in the same tool's folder,
+such as `config.toml` next to `auth.json`, is what usually reveals the tool); a marker in a file
+that lived less than 0.5 s; writes outside TMPDIR, the scratch folder and the decoy home; a read
+on a `noatime` file system (the setup's self-test then fails the run rather than pass it); a
+passwd lookup in a program we do not own (T3's `hydratePosixHome`, `os-jank.ts:99-108`, uses
+`os.userInfo().homedir` only when `HOME` is empty; every sealed environment sets `HOME`).
+
+**How each check finds a home, and what it caught** (first run: 36 checks green, canary 1,875
+findings; now 0):
+
+| Check | How it finds a home | Sealed before | Found and done |
+| --- | --- | --- | --- |
+| fmt, clippy, release build, cargo deny | cargo: `CARGO_HOME`, and `~/.gitconfig` through `HOME` (its own proxy lookup) | no | read `~/.gitconfig`; check.sh now runs cargo with `GIT_CONFIG_GLOBAL=/dev/null` |
+| cargo test, decode check | the code under test: `HOME` (`std::env::var_os`), `$SHELL`; `git` reads `~/.gitconfig` | no | `interrupt_tests` opened `ClaudeConfig::default()` and read the real `~/.claude/settings.json` on every run (now a home that does not exist); git tests in `conn-vcs`, `conn-files`, `conn-engine`, `conn-server` read the git config (cargo sealed as above); `conn-terminal` tests started an interactive `/bin/sh` that wrote `~/.bash_history` (now `HISTFILE=/dev/null`); the decode check ran cargo past the seal |
+| gen-contract, gen-tools, gen-keybindings, gen-upstream, gen-graphql, check-copies, limits-diff, instructions checks | in-process T3 code (`os.homedir()` → `HOME`); `git rev-parse` in `monorepo.mjs` | no | every run read `~/.gitconfig`; `gitEnv()` |
+| effect-client, replay | our server: `sealedEnv` (a denylist that let `OPENAI_API_KEY`, `CODEX_HOME`, `T3CODE_HOME` through); `git` with the shell's environment | partly | `sealedEnv` is now an allowlist with a stand-in shell; `gitEnv()` |
+| client-check | `cargo run` of `export_turn` (fake provider) | no (check.sh's decoy only) | nothing read |
+| settings-diff, served (decode coverage) | our server with the whole environment, the real `HOME` | no | `sealedEnv` |
+| secrets-interop, textgen-diff, registry-diff, webhook-diff | our server or examples, inherited environment | no | `sealedEnv` / `sealedEnvTemp` |
+| parity | T3 server: `HOME: os.homedir()` (real), `~/.local/bin` and Homebrew on `PATH`, so its provider probes could run this machine's `claude` and `codex` with their logins; our server: the whole environment | no | without `--model`: a throwaway HOME, `/usr/bin:/bin` beside node; our server `sealedEnv` |
+| codex conformance | `vp` (T3) and `cargo run` (ours) with the whole environment | no | the stub recorded every token variable and HOME into `env.json` and `stub.ndjson` (80 files); `sealedNodeEnv` / `sealedCargoEnv` |
+| acp conformance, grok probe conformance | the same | no | the same leak (34 and 22 stub logs, the parent-env files); sealed the same way |
+| claude catalog, claude conformance, claude t3-replay | `env -i` with a throwaway `HOME` | yes | cargo builds read `~/.gitconfig`; sealed |
+| claude probe conformance, t3 fixture replay | `sealedNodeEnv`, a known base environment | yes | cargo build read `~/.gitconfig`; `gitEnv()` |
+| orbit-flow (fake provider) | our server with the whole environment | no | `sealedEnv` without a model; the live Haiku run keeps the shell's environment |
+| Not in check.sh: capture-ts-events (Codex, ACP), memory-flow, test-contract-change, bump-report, churn | the same patterns | no | sealed the same way; `fixtures/recorder/record.mjs` keeps the real HOME (live turns, marked `canary: allow`) |
+
+Our Rust code finds a home only through `HOME` (`home.rs`, the providers' `expand_home`,
+`conn-files`, `conn-terminal`); it has no passwd lookup, and the lint keeps it so. Children
+started with `env_clear()` (`conn-provider-support::probe`, the ACP probe, the terminal) get an
+environment built from the server's, which holds `HOME`.
+
+**Not proven:** `cargo test` run by hand, outside `tools/check.sh`, still uses the shell's
+`HOME`, `SHELL` and git configuration: the git tests read `~/.gitconfig`, and a test that
+reaches the login PATH refresh (`methods/source_control.rs:254`) runs the real `$SHELL -ilc`. A `[env]` table in
+`.cargo/config.toml` would seal it, but it would also change `cargo run` of the server by hand.
+That is a decision for Nick.
+
 ## Faults found in the T3 server
 
 Faults that the T3 server has and this server fixes on purpose. Each is to be written up for

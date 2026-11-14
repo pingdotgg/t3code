@@ -26,6 +26,7 @@
 // Usage:
 //   node tools/canary.mjs setup <root>       writes <root>/env.sh to source
 //   node tools/canary.mjs watch <root>       scans <root>/tmp until <root>/stop exists
+//   node tools/canary.mjs mark <root> <check> after each check: names the decoy files it read
 //   node tools/canary.mjs verify <root> <output log> [more folders to scan]
 //   node tools/canary.mjs selftest            proves verify fails on each kind of breach
 //   node tools/canary.mjs lint
@@ -267,6 +268,26 @@ function findMarkers(text, token) {
   return found;
 }
 
+/** After one check: names the decoy files it read, then resets their access time. */
+function mark(root, check) {
+  const state = readState(root);
+  const lines = [];
+  for (const file of state.files) {
+    const full = NodePath.join(state.home, file.path);
+    let stat;
+    try {
+      stat = NodeFS.statSync(full);
+    } catch {
+      continue;
+    }
+    if (stat.atimeMs > OLD_ATIME.getTime()) {
+      lines.push(`decoy file read: ~/${file.path} (${file.kind}) during "${check}"\n`);
+      NodeFS.utimesSync(full, OLD_ATIME, stat.mtime);
+    }
+  }
+  if (lines.length > 0) NodeFS.appendFileSync(NodePath.join(root, "reads.txt"), lines.join(""));
+}
+
 async function watch(root) {
   const state = readState(root);
   const seen = new Map();
@@ -296,6 +317,12 @@ function verify(root, outputLog, extra) {
       continue;
     }
     if (stat.atimeMs > OLD_ATIME.getTime()) problems.push(`decoy file read: ~/${file.path} (${file.kind})`);
+  }
+
+  // Reads that `mark` named after each check.
+  const reads = NodePath.join(root, "reads.txt");
+  if (NodeFS.existsSync(reads)) {
+    for (const line of NodeFS.readFileSync(reads, "utf8").split("\n").filter(Boolean)) problems.push(line);
   }
 
   // 2. The git credential tripwire.
@@ -461,6 +488,10 @@ switch (command) {
   case "verify":
     if (!rest[0] || !rest[1]) fail("usage: verify <root> <output log> [folders]");
     verify(NodePath.resolve(rest[0]), rest[1], rest.slice(2));
+    break;
+  case "mark":
+    if (!rest[0] || !rest[1]) fail("usage: mark <root> <check name>");
+    mark(NodePath.resolve(rest[0]), rest[1]);
     break;
   case "selftest":
     selftest();
