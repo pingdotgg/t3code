@@ -186,6 +186,23 @@ methods. Not proven: T3's recorded `thread_rollback`, `thread_fork_native*` and
 200-file repository): live heap 428 KiB without and 430 KiB with checkpoints; `.git` grew from
 924 to 1,736 KiB (about 16 KiB per checkpoint); the database from 1.31 to 1.76 MB.
 
+## Claude interrupt as the T3 server does it (2026-11-14)
+
+The T3 server closes the Claude query after a Stop (`ClaudeAdapterV2.ts` `interruptTurn`:
+`interrupt` at most 10 s, then `query.close`, then up to 10 s for the CLI to exit, else
+`InterruptTimeout` and Force stop). Its effect outbox runs a thread's effects one at a time
+(`EffectOutbox.ts`, the claim query), so the next turn starts after the CLI exited, in a new
+CLI with `--resume`. Ours only sent `interrupt` and kept the CLI for the next turn: a
+difference the CLI could see. The conformance check hid it, because its T3 side did not wait
+for the Stop and raced the close (it failed once on a loaded machine).
+
+Now the provider closes and waits as T3 does, and holds a turn start behind a running Stop.
+The conformance harness waits for the Stop, as the outbox does: `interrupt` compares 2 CLI
+starts, the new `interrupt_twice` 3. Our engine still runs a thread's effects side by side;
+only the Claude provider orders Stop and start. Not done: a Stop while no Claude turn runs
+(T3's `requestRuntimeRestart` closes the query then, for background work; our engine does not
+call the provider without a running turn).
+
 ## What is left, in the planned order
 
 1. **Rust hygiene, step 1: done (2026-11-14).** The toolchain is pinned to 1.99.1; BeautifulRust's
