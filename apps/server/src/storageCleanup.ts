@@ -40,6 +40,7 @@ import { parse as parseYaml } from "yaml";
 
 import * as ServerConfig from "./config.ts";
 import * as GitManager from "./git/GitManager.ts";
+import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import { scratchFolderRoot } from "./project/ManagedProjectFolders.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -47,6 +48,7 @@ import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import { threadHasQueuedTurnStart } from "./orchestration-v2/ThreadSettlementService.ts";
 import { MAX_OVERDUE_ARM_MS } from "./orchestration-v2/UsageLimitRecoveryWorker.ts";
+import * as WorktreeBranchSync from "./orchestration-v2/WorktreeBranchSync.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -321,6 +323,8 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
+  const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+  const reconcileBranch = yield* WorktreeBranchSync.makeReconcile;
   const terminals = yield* TerminalManager.TerminalManager;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -707,6 +711,21 @@ const make = Effect.gen(function* () {
     return name !== branch;
   });
 
+  // Nothing watches an idle worktree, so its threads still record the branch it left.
+  // Record the checked-out one so the next sweep can apply the rules to it.
+  const followBranch = Effect.fn("StorageCleanup.followBranch")(
+    function* (worktreePath: string) {
+      const cwd = yield* fs.realPath(worktreePath);
+      yield* reconcileBranch({ cwd, refName: yield* gitWorkflow.currentBranch(cwd) });
+    },
+    (effect, worktreePath) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to reconcile worktree branch", { cwd: worktreePath, cause }),
+        ),
+      ),
+  );
+
   // Git status and non-forced worktree removal both skip assume-unchanged and skip-worktree files.
   const hiddenTrackedChange = Effect.fn("StorageCleanup.hiddenTrackedChange")(function* (
     cwd: string,
@@ -798,6 +817,21 @@ const make = Effect.gen(function* () {
       files.find(({ id }, i) => worktreeIds[i] !== id) ??
       linkFiles.find(({ id }, i) => linkIds[i] !== id);
     return changed === undefined ? null : reason(changed.file);
+  });
+
+  // A worktree can outlive its project moving to another clone. Git removes a
+  // worktree through the repository that registered it, not through the
+  // project's current checkout, so resolve the owning repository first.
+  const worktreeRepository = Effect.fn("StorageCleanup.worktreeRepository")(function* (
+    worktreePath: string,
+  ) {
+    const commonDir = yield* git.execute({
+      operation: "StorageCleanup.worktreeRepository",
+      cwd: worktreePath,
+      args: ["rev-parse", "--git-common-dir"],
+    });
+    const resolved = path.resolve(worktreePath, commonDir.stdout.trim());
+    return path.basename(resolved) === ".git" ? path.dirname(resolved) : resolved;
   });
 
   const localChangesReason = Effect.fn("StorageCleanup.localChangesReason")(function* (
@@ -1388,8 +1422,11 @@ const make = Effect.gen(function* () {
         if (pathReason !== null) return keep(pathReason);
         if (yield* containsProjectRoot(worktreePaths, [project, ...snapshot.projects]))
           return keep("contains a project checkout");
-        if (yield* branchChanged(worktreePath, thread.branch))
+        if (yield* branchChanged(worktreePath, thread.branch)) {
+          // A deleted owner cannot follow, so its remaining subagents stay on its branch.
+          if (!deleted) yield* followBranch(worktreePath);
           return keep("repository or branch changed");
+        }
         const changes = yield* localChangesReason(worktreePath, settings);
         if (changes !== null) return keep(changes);
         const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
@@ -1526,14 +1563,15 @@ const make = Effect.gen(function* () {
               const changes = yield* localChangesReason(worktreePath, settings);
               if (changes !== null) return keep(changes);
             }
+            const repository = yield* worktreeRepository(worktreePath);
             yield* removeLinkedWorktree({
               operation: "StorageCleanup.cleanupGit",
-              cwd: project.workspaceRoot,
+              cwd: repository,
               worktreePath,
               // Git requires force for submodules; recursive checks above cannot make removal atomic.
               force: submodules.force,
               execute: git.execute,
-              run: (args) => cleanupGit(project.workspaceRoot, [...args], "git worktree remove"),
+              run: (args) => cleanupGit(repository, [...args], "git worktree remove"),
             });
             entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
             yield* gitManager.invalidateStatus(project.workspaceRoot);

@@ -139,6 +139,7 @@ const AUTO_SETTLE_SETTING_KEYS: ReadonlySet<string> = new Set([
   "sidebarAutoSettleAfterDays",
   "autoResumeLimitedThreads",
   "snoozeLimitedThreads",
+  "snoozeThreadsUntilScheduledTask",
 ]);
 
 function planServerSettingsWrites(
