@@ -45,7 +45,7 @@ const makeDebuggee = (
     readonly deferFocus?: boolean;
     /** The guest is still loading its first page. */
     readonly loading?: boolean;
-    readonly refuse?: (method: string, sessionId: string | undefined) => boolean;
+    readonly refuse?: (method: string, sessionId: string | undefined) => boolean | Error;
   } = {},
 ) => {
   const emitter = new NodeEvents.EventEmitter();
@@ -63,8 +63,9 @@ const makeDebuggee = (
       sessionId?: string,
     ) =>
       new Promise((resolve, reject) => {
-        if (options.refuse?.(method, sessionId)) {
-          reject(new Error("Refused"));
+        const refusal = options.refuse?.(method, sessionId);
+        if (refusal) {
+          reject(refusal instanceof Error ? refusal : new Error("Refused"));
           return;
         }
         if (method === "Target.getTargetInfo") {
@@ -328,6 +329,176 @@ describe("DesktopBrowserHost", () => {
       expect(yield* Queue.take(replies)).toBe(1);
       expect(debuggee.sent).toEqual([1, 3, 2]);
     }),
+  );
+
+  it.effect.each(["frames", "refused wait", "timeout", "refused retry"] as const)(
+    "keeps painting through a missing-surface retry with %s",
+    (outcome) =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        let captures = 0;
+        const debuggee = makeDebuggee({
+          refuse: (method) => {
+            if (method === "Page.captureScreenshot") {
+              captures += 1;
+              if (captures === 1 || outcome === "refused retry") {
+                return new Error("Unable to capture screenshot");
+              }
+            }
+            return method === "Runtime.evaluate" && outcome === "refused wait";
+          },
+        });
+        host.attach(key, debuggee.tab);
+        const replies = yield* watchReplies(host);
+        const painting = yield* watchPainting(host);
+        const sent = debuggee.nextSend();
+        yield* command(host, 1, "Page.captureScreenshot");
+
+        yield* Effect.raceFirst(
+          Effect.promise(() => sent),
+          Queue.take(replies),
+        );
+        expect(painting).toEqual([true]);
+        if (outcome === "refused wait") {
+          yield* Effect.promise(() => sent);
+        } else {
+          yield* Effect.promise(() => sent);
+          expect(debuggee.methods).toEqual(["Runtime.evaluate"]);
+          expect(painting).toEqual([true]);
+          const retry = outcome === "refused retry" ? undefined : debuggee.nextSend();
+          if (outcome === "timeout") yield* TestClock.adjust("1 second");
+          else debuggee.releaseFirst();
+          if (retry) yield* Effect.promise(() => retry);
+        }
+        if (outcome !== "refused retry") {
+          expect(captures).toBe(2);
+          expect(painting).toEqual([true]);
+          debuggee.release();
+        }
+        expect(yield* Queue.take(replies)).toBe(1);
+        expect(captures).toBe(2);
+        expect(painting).toEqual([true, false]);
+        // A late frame callback cannot retry again after the bounded wait finished.
+        debuggee.release();
+        yield* TestClock.adjust("10 seconds");
+        expect(captures).toBe(2);
+        expect(debuggee.focusEmulation).toEqual([true, false]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["navigation", "detach", "release", "turn end", "session detach"] as const)(
+    "ends retry preparation on %s without sending into a stale document",
+    (ending) =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        let captures = 0;
+        const debuggee = makeDebuggee({
+          refuse: (method) => {
+            if (method !== "Page.captureScreenshot") return false;
+            captures += 1;
+            return captures === 1 ? new Error("Unable to capture screenshot") : false;
+          },
+        });
+        host.attach(key, debuggee.tab);
+        const replies = yield* watchReplies(host);
+        const painting = yield* watchPainting(host);
+        const raw = (message: Record<string, unknown>) =>
+          host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
+        yield* raw({ id: 10, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+        expect(yield* Queue.take(replies)).toBe(10);
+        const waiting = debuggee.nextSend();
+        yield* raw({ id: 1, method: "Page.captureScreenshot", sessionId: "t3-preview-page-1" });
+        yield* Effect.raceFirst(
+          Effect.promise(() => waiting),
+          Queue.take(replies),
+        );
+        expect(painting).toEqual([true]);
+
+        if (ending === "navigation") debuggee.navigate();
+        else if (ending === "detach") host.detach(key);
+        else if (ending === "release") {
+          yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
+        } else if (ending === "turn end") {
+          yield* host.handleCommandLine(
+            encodeJson({ type: "turn", threadId: key.threadId, active: false }),
+          );
+        } else {
+          yield* raw({
+            id: 11,
+            method: "Target.detachFromTarget",
+            params: { sessionId: "t3-preview-page-1" },
+          });
+          expect(yield* Queue.take(replies)).toBe(11);
+        }
+        expect(painting).toEqual([true, false]);
+
+        // New contents can capture while the old frame wait still has not answered.
+        const replacement = makeDebuggee();
+        host.attach(key, replacement.tab);
+        const sent = replacement.nextSend();
+        yield* command(host, 2, "Page.captureScreenshot");
+        yield* Effect.promise(() => sent);
+        debuggee.release();
+        yield* TestClock.adjust("1 second");
+        expect(captures).toBe(1);
+        expect(painting).toEqual([true, false, true]);
+        replacement.release();
+        expect(yield* Queue.take(replies)).toBe(2);
+        expect(painting).toEqual([true, false, true, false]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "keeps the capture slot through retry preparation without releasing another painter",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        let captures = 0;
+        const debuggee = makeDebuggee({
+          refuse: (method) => {
+            if (method !== "Page.captureScreenshot") return false;
+            captures += 1;
+            return captures === 1 ? new Error("Unable to capture screenshot") : false;
+          },
+        });
+        host.attach(key, debuggee.tab);
+        const replies = yield* watchReplies(host);
+        const painting = yield* watchPainting(host);
+        const waiting = debuggee.nextSend();
+        yield* command(host, 1, "Page.captureScreenshot");
+        yield* Effect.raceFirst(
+          Effect.promise(() => waiting),
+          Queue.take(replies),
+        );
+        expect(painting).toEqual([true]);
+        yield* command(host, 2, "Page.captureScreenshot");
+        expect(captures).toBe(1);
+        const streaming = debuggee.nextSend();
+        yield* command(host, 3, "Page.startScreencast");
+        yield* Effect.promise(() => streaming);
+        const retry = debuggee.nextSend();
+        debuggee.releaseFirst();
+        yield* Effect.promise(() => retry);
+        expect(captures).toBe(2);
+        expect(painting).toEqual([true]);
+        const queued = debuggee.nextSend();
+        debuggee.release();
+        yield* Effect.promise(() => queued);
+        expect(captures).toBe(3);
+        debuggee.release();
+        expect(
+          [
+            yield* Queue.take(replies),
+            yield* Queue.take(replies),
+            yield* Queue.take(replies),
+          ].sort(),
+        ).toEqual([1, 2, 3]);
+        expect(painting).toEqual([true]);
+        const stopping = debuggee.nextSend();
+        yield* command(host, 4, "Page.stopScreencast");
+        yield* Effect.promise(() => stopping);
+        expect(painting).toEqual([true, false]);
+      }).pipe(Effect.scoped),
   );
 
   it.effect("stops waiting on a screenshot the page navigated away from", () =>

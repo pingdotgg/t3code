@@ -32,7 +32,11 @@ const POINTER_TRAVEL = new Set<unknown>(["mouseMoved", "mouseWheel"]);
 const FOCUS_IDLE = "5 seconds";
 /** Well inside the server's 10 s DESKTOP_ATTACH_TIMEOUT, for a first page that never reports it is up. */
 const FIRST_PAGE_TIMEOUT = "5 seconds";
+const SURFACE_WAIT = "1 second";
 const ERR_ABORTED = -3;
+
+const isMissingSurface = (cause: unknown) =>
+  cause instanceof Error && cause.message === "Unable to capture screenshot";
 
 export interface DesktopBrowserTabKey {
   readonly threadId: string;
@@ -71,6 +75,8 @@ interface AttachedTab {
   readonly focusPending: Map<object, string | undefined>;
   /** Screenshots Chromium was sent and has not answered; each keeps its wake lock until then. */
   readonly capturing: Set<object>;
+  /** Serialized captures preparing a surface; lifecycle release prevents a late retry. */
+  readonly preparingScreenshots: Map<object, string | undefined>;
   /** Whether the client keeps the guest painting, as published on `painting`. */
   painting: boolean;
   /**
@@ -131,7 +137,9 @@ export const make = Effect.gen(function* () {
     readonly key: DesktopBrowserTabKey;
     readonly active: boolean;
   }>();
-  const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  const context = yield* Effect.context<never>();
+  const runFork = Effect.runForkWith(context);
+  const runPromise = Effect.runPromiseWith(context);
   const tabs = new Map<string, AttachedTab>();
   /** Threads whose agent turn runs, by the server's account. */
   const agentTurns = new Set<string>();
@@ -246,6 +254,7 @@ export const make = Effect.gen(function* () {
       tabs.get(keyOf(tab.key)) === tab &&
       (tab.screencasts.size > 0 ||
         tab.capturing.size > 0 ||
+        tab.preparingScreenshots.size > 0 ||
         tab.waitingScreenshots.some((waiting) => waiting.live()));
     if (tab.painting === active) return;
     tab.painting = active;
@@ -284,6 +293,7 @@ export const make = Effect.gen(function* () {
    */
   const dropFocusHolds = (tab: AttachedTab) => {
     tab.focusPending.clear();
+    tab.preparingScreenshots.clear();
     releaseFocusWhenIdle(tab);
     syncPainting(tab);
   };
@@ -306,6 +316,9 @@ export const make = Effect.gen(function* () {
     leaveScreencast(tab, owner);
     for (const [pending, holder] of tab.focusPending) {
       if (holder === owner) tab.focusPending.delete(pending);
+    }
+    for (const [pending, holder] of tab.preparingScreenshots) {
+      if (holder === owner) tab.preparingScreenshots.delete(pending);
     }
     releaseFocusWhenIdle(tab);
     syncPainting(tab);
@@ -335,6 +348,20 @@ export const make = Effect.gen(function* () {
       if (method === "Network.clearBrowserCookies") await cookiesCleared?.();
       return result;
     };
+    const waitForFrame = (sessionId?: string) =>
+      runPromise(
+        Effect.promise(() =>
+          send(
+            "Runtime.evaluate",
+            {
+              expression:
+                "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+              awaitPromise: true,
+            },
+            sessionId,
+          ).catch(() => undefined),
+        ).pipe(Effect.timeoutOption(SURFACE_WAIT)),
+      );
     const detachedOwners = new Set<string>();
     /** Viewers and recordings stream; the agent's own sessions never do. */
     const streamingOwners = new Set<string>();
@@ -382,7 +409,29 @@ export const make = Effect.gen(function* () {
                 relay,
                 () => owner === undefined || !detachedOwners.has(owner),
                 (current, held) =>
-                  held ? holdFocus(tab, owner, () => forward(current)) : forward(current),
+                  held
+                    ? holdFocus(tab, owner, () => {
+                        const preparing = {};
+                        tab.preparingScreenshots.set(preparing, owner);
+                        syncPainting(tab);
+                        return forward(current)
+                          .catch(async (cause: unknown) => {
+                            if (
+                              !isMissingSurface(cause) ||
+                              !current() ||
+                              !tab.preparingScreenshots.has(preparing)
+                            )
+                              throw cause;
+                            await waitForFrame(sessionId);
+                            if (!tab.preparingScreenshots.has(preparing)) throw cause;
+                            return forward(current);
+                          })
+                          .finally(() => {
+                            tab.preparingScreenshots.delete(preparing);
+                            syncPainting(tab);
+                          });
+                      })
+                    : forward(current),
               )
             : method === "Page.startScreencast"
               ? holdFocus(tab, owner, forward).then(
@@ -479,6 +528,7 @@ export const make = Effect.gen(function* () {
     const announced = tab.stopWaiting === null;
     tab.stopWaiting?.();
     tab.relay = null;
+    tab.preparingScreenshots.clear();
     tab.debuggee.debugger.off("message", tab.onMessage);
     tab.debuggee.webContents.off("did-navigate", tab.onNewDocument);
     syncPainting(tab);
@@ -504,6 +554,7 @@ export const make = Effect.gen(function* () {
       focusUses: 0,
       focusPending: new Map(),
       capturing: new Set(),
+      preparingScreenshots: new Map(),
       painting: false,
       agentUsed: false,
       focusReleasing: false,
