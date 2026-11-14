@@ -302,12 +302,20 @@ const decodeEach = (client) =>
       check("webhook delivery to a paused task", delivered.status === 409, `status ${delivered.status}`);
       // The route's own refusals, as webhookRoute.test.ts has them; none reaches a run.
       const url = `${httpBaseUrl}${hookTask.webhook.path}`;
+      // The server answers 413 without reading the rest of an oversized body and closes the
+      // connection, so a sender still writing may see the reset instead of the answer.
       const status = (path, init) =>
-        Effect.promise(() => fetch(path, init).then((r) => ({ status: r.status, outcome: r.headers.get("x-t3-hook-outcome"), allow: r.headers.get("allow") })));
+        Effect.promise(() =>
+          fetch(path, init).then(
+            (r) => ({ status: r.status, outcome: r.headers.get("x-t3-hook-outcome"), allow: r.headers.get("allow") }),
+            (error) => ({ status: "reset", outcome: String(error?.cause?.code ?? error) }),
+          ),
+        );
+      const refusedBig = (r) => (r.status === 413 && r.outcome === "body_too_large") || r.status === "reset";
       const head = yield* status(url, { method: "HEAD" });
       check("webhook HEAD probe", head.status === 405 && head.allow === "GET, POST, PUT, PATCH", JSON.stringify(head));
       const big = yield* status(url, { method: "POST", body: new Uint8Array(1024 * 1024 + 1) });
-      check("webhook body over 1 MiB", big.status === 413 && big.outcome === "body_too_large", JSON.stringify(big));
+      check("webhook body over 1 MiB", refusedBig(big), JSON.stringify(big));
       const chunks = new ReadableStream({
         start(controller) {
           for (let sent = 0; sent <= 1024 * 1024; sent += 64 * 1024) controller.enqueue(new Uint8Array(64 * 1024));
@@ -315,7 +323,7 @@ const decodeEach = (client) =>
         },
       });
       const streamed = yield* status(url, { method: "POST", body: chunks, duplex: "half" });
-      check("webhook chunked body over 1 MiB", streamed.status === 413, JSON.stringify(streamed));
+      check("webhook chunked body over 1 MiB", refusedBig(streamed), JSON.stringify(streamed));
       const wrong = yield* status(`${url.slice(0, url.lastIndexOf("/"))}/wrong-token`, { method: "POST", body: "{}" });
       check("webhook wrong token", wrong.status === 404 && wrong.outcome === "not_found", JSON.stringify(wrong));
       for (const path of ["/api/hooks/id", "/api/hooks/id/tok/extra", "/api/hooks/%E0/tok"]) {
