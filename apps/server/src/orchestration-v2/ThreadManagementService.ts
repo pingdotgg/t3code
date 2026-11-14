@@ -604,6 +604,7 @@ function runAwaitsUser(
   projection: Pick<OrchestrationV2ThreadProjection, "providerTurns" | "runtimeRequests">,
   run: OrchestrationV2Run,
 ): boolean {
+  if (!isActiveRun(run)) return false;
   const turnIds = new Set(
     projection.providerTurns
       .filter((turn) => turn.runAttemptId === run.activeAttemptId)
@@ -899,7 +900,8 @@ const make = Effect.gen(function* () {
     const steerableRun = latestSteerableRun(target);
     // A fresh send never joins a running turn, so it needs none to steer or restart.
     const mode =
-      input.freshContext && (input.mode === "steer" || input.mode === "restart")
+      (input.freshContext && (input.mode === "steer" || input.mode === "restart")) ||
+      (input.mode === "auto" && target.runs.some((run) => runAwaitsUser(target, run)))
         ? "queue"
         : input.mode;
     let dispatchMode: Extract<
@@ -918,9 +920,7 @@ const make = Effect.gen(function* () {
         targetRunId: steerableRun.id,
       };
     } else if (mode === "auto" && steerableRun !== undefined) {
-      dispatchMode = runAwaitsUser(target, steerableRun)
-        ? { type: "queue_after_active" }
-        : { type: "steer_active", targetRunId: steerableRun.id };
+      dispatchMode = { type: "steer_active", targetRunId: steerableRun.id };
     } else {
       dispatchMode = {
         type: mode === "queue" ? "queue_after_active" : "start_immediately",

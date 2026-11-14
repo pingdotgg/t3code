@@ -276,6 +276,7 @@ it.effect.each([
                   },
                 ]
               : [],
+            runtimeRequests: [],
             messages: [],
             turnItems: [],
           } as unknown as OrchestrationV2ThreadProjection),
@@ -902,8 +903,35 @@ it.effect("an auto send queues behind a turn waiting on the user's answer", () =
       creationSource: "web",
     });
     const now = yield* DateTime.now;
-    const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+    const initial = yield* orchestrator.getThreadProjection(threadId);
+    const run = initial.runs[0]!;
     const providerTurnId = ProviderTurnId.make("provider-turn:auto-send");
+    const providerSessionId = ProviderSessionId.make("provider-session:auto-send");
+    yield* projections.apply({
+      id: EventId.make("event:auto-send:session"),
+      type: "provider-session.attached",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: providerSessionId,
+        driver: adapter.driver,
+        providerInstanceId: instanceId,
+        status: "ready",
+        cwd: "/repo",
+        model: "gpt-5.1-codex",
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make("event:auto-send:provider-thread"),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: { ...initial.providerThreads[0]!, providerSessionId },
+    });
     yield* projections.apply({
       id: EventId.make("event:auto-send:running"),
       type: "run.updated",
@@ -942,10 +970,7 @@ it.effect("an auto send queues behind a turn waiting on the user's answer", () =
         nativeRequestRef: null,
         kind: "user_input",
         status: "pending",
-        responseCapability: {
-          type: "live",
-          providerSessionId: ProviderSessionId.make("provider-session:auto-send"),
-        },
+        responseCapability: { type: "live", providerSessionId },
         createdAt: now,
         resolvedAt: null,
       },
@@ -967,6 +992,7 @@ it.effect("an auto send queues behind a turn waiting on the user's answer", () =
     expect(sent.run.status).toBe("queued");
   }).pipe(Effect.provide(layerTest));
 });
+
 it.effect.each([
   {
     name: "kills the thread's own agent and ends its turn",
