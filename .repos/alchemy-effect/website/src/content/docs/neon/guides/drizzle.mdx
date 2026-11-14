@@ -37,7 +37,7 @@ Run this when the schema changes, then review and commit the schema, generated S
 
 ```typescript
 // src/Db.ts
-import * as Neon from "alchemy/Neon";
+import * as Neon from "@alchemy.run/neon";
 import * as Effect from "effect/Effect";
 
 export const NeonDb = Effect.gen(function* () {
@@ -65,7 +65,7 @@ Deploy the committed files; this configuration does not generate SQL during depl
 ## Connect at runtime
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Hyperdrive = Effect.gen(function* () {
   const { branch } = yield* NeonDb;

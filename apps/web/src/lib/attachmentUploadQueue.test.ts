@@ -379,6 +379,32 @@ describe("attachmentUploadQueue", () => {
     }
   });
 
+  it("stamps a file that lands in a draft after its upload finished", async () => {
+    const draftId = DraftId.make("draft-restored-upload");
+    const file = makeFile("restored");
+    try {
+      startAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
+      await Promise.resolve();
+      const settled = awaitAttachmentUploads([file.id]);
+      TestXmlHttpRequest.requests[0]!.complete();
+      await settled;
+
+      useComposerDraftStore.getState().addFiles(draftId, [file]);
+      startAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
+
+      expect(TestXmlHttpRequest.requests).toHaveLength(1);
+      expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.files).toMatchObject([
+        {
+          id: file.id,
+          uploadedAttachmentId: "pending-environment-1-restored.pdf",
+          uploadEnvironmentId: firstEnvironment,
+        },
+      ]);
+    } finally {
+      useComposerDraftStore.getState().clearComposerContent(draftId);
+    }
+  });
+
   it("turns an expired persisted file into a marker that a re-pick can replace", async () => {
     const draftId = DraftId.make("draft-expired-upload");
     const file: ComposerFileAttachment = {

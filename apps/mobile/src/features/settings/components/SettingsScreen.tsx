@@ -1,57 +1,58 @@
-import { useNavigation, useNavigationState, useRoute } from "@react-navigation/native";
+import { useRoute } from "@react-navigation/native";
 import type { ReactNode } from "react";
-import { Platform, View } from "react-native";
+import { View } from "react-native";
 
 import type { AppBarProps } from "../../../components/ui/AppBar.types";
 import { AppBar } from "../../../components/ui/AppBar";
 import { ScreenContent as SettingsScreenContent } from "../../../components/ui/ScreenContent";
-import { useWorkspaceTabs } from "../../workspace/WorkspaceTabsContext";
-import { useWorkspaceSurface } from "../../workspace/useWorkspaceSurface";
+import { useWorkspaceTabs } from "../../layout/workspace/WorkspaceTabsContext";
 import { useDeviceType } from "../../../native/native-layout-metrics";
-import { useCompactWorkspaceTabs } from "../../workspace/useSystemWorkspaceTabBar";
-import { ScreenScrollViewBottomInset } from "../../../components/ui/ScreenScrollView";
+import { useCompactWorkspaceTabs } from "../../layout/workspace/useSystemWorkspaceTabBar";
+import { useSettingsPageBack } from "../useSettingsPageBack";
+import {
+  ScreenScrollViewBottomInset,
+  ScreenScrollViewSurface,
+} from "../../../components/ui/ScreenScrollView";
 
 export { SettingsScreenContent };
 
 export function SettingsScreen(
-  props: Pick<AppBarProps, "title" | "actions" | "trailing"> & {
+  props: Pick<
+    AppBarProps,
+    "title" | "actions" | "refresh" | "trailing" | "search" | "menus" | "guardBack"
+  > & {
     readonly children: ReactNode;
-    readonly formSheet?: boolean;
     readonly workspaceRoot?: boolean;
   },
 ) {
-  const navigation = useNavigation();
   const route = useRoute();
-  const index = useNavigationState((state) => state.index);
   const workspace = useWorkspaceTabs();
-  const surface = useWorkspaceSurface();
   const deviceType = useDeviceType();
   const compactTabs = useCompactWorkspaceTabs();
+  const back = useSettingsPageBack();
   const cover = deviceType === "duo-folded";
-  // Android opens Settings as a workspace tab; its root page has nothing to go back to.
-  const workspaceRoot =
-    props.workspaceRoot ||
-    (Platform.OS === "android" && workspace !== null && index === 0 && route.name === "Settings");
+  // Opened as a workspace tab, the Settings list has nothing to go back to.
+  const workspaceRoot = props.workspaceRoot || (workspace !== null && route.name === "Settings");
+
+  const surfaceClassName = workspaceRoot || cover ? "bg-screen" : "bg-sheet";
 
   return (
-    <View
-      collapsable={false}
-      className={`flex-1 ${workspaceRoot || cover ? surface.className : "bg-sheet"}`}
-    >
+    <View collapsable={false} className={`flex-1 ${surfaceClassName}`}>
       <AppBar
         title={props.title}
         actions={props.actions}
-        trailing={Platform.OS === "android" ? props.trailing : undefined}
-        sidebar={false}
-        onBack={workspaceRoot ? undefined : () => navigation.goBack()}
-        hideBottomBorder={!props.formSheet}
+        refresh={props.refresh}
+        search={props.search}
+        trailing={props.trailing}
+        menus={props.menus}
+        onBack={workspaceRoot ? undefined : back}
+        guardBack={props.guardBack}
+        hideBottomBorder
       />
       <ScreenScrollViewBottomInset value={deviceType === "pad" || compactTabs ? 80 : 0}>
-        {props.formSheet ? (
-          props.children
-        ) : (
+        <ScreenScrollViewSurface value={surfaceClassName}>
           <SettingsScreenContent>{props.children}</SettingsScreenContent>
-        )}
+        </ScreenScrollViewSurface>
       </ScreenScrollViewBottomInset>
     </View>
   );

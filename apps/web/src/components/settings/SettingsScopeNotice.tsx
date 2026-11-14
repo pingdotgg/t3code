@@ -32,8 +32,11 @@ export function SettingsScopeNotice({
   target,
   targetId,
   eligibleEnvironmentIds,
+  inline = false,
 }: {
   children: string;
+  /** Renders inside a section instead of as its own page. */
+  inline?: boolean;
   target: "environment" | "all" | "project" | "checkout";
   targetId?: string;
   eligibleEnvironmentIds?: readonly EnvironmentId[];
@@ -81,6 +84,7 @@ export function SettingsScopeNotice({
         ? groups.map((group) => ({
             label: group.displayName,
             secondary: [
+              ...(group.archived ? ["Archived"] : []),
               ...(groups.some(
                 (other) =>
                   other.projectKey !== group.projectKey && other.displayName === group.displayName,
@@ -125,7 +129,16 @@ export function SettingsScopeNotice({
         )}
         onClick={() => {
           if (targetId)
-            void navigate({ to: pathname, search: () => choice.search, hash: targetId });
+            void navigate({
+              to: pathname,
+              search: () => ({
+                project: undefined,
+                machine: undefined,
+                checkout: undefined,
+                ...choice.search,
+              }),
+              hash: targetId,
+            });
           else selectScope(choice.search);
         }}
       >
@@ -147,26 +160,23 @@ export function SettingsScopeNotice({
       </button>
     ));
   };
-  return (
-    <SettingsPageContainer>
-      <div className="space-y-3">
-        <p role="status" className="px-3 text-sm text-muted-foreground sm:px-4">
-          {children}
-        </p>
-        <div className="space-y-4">
-          {choiceGroups.map((group) =>
-            group?.displayName ? (
-              <SettingsSection key={group.projectKey} title={group.displayName}>
-                {renderChoices(group)}
-              </SettingsSection>
-            ) : (
-              <SettingsGroup key={group?.projectKey ?? target}>
-                {renderChoices(group)}
-              </SettingsGroup>
-            ),
-          )}
-        </div>
+  const notice = (
+    <div className="space-y-3">
+      <p role="status" className="px-3 text-sm text-muted-foreground sm:px-4">
+        {children}
+      </p>
+      <div className="space-y-4">
+        {choiceGroups.map((group) =>
+          group?.displayName ? (
+            <SettingsSection key={group.projectKey} title={group.displayName}>
+              {renderChoices(group)}
+            </SettingsSection>
+          ) : (
+            <SettingsGroup key={group?.projectKey ?? target}>{renderChoices(group)}</SettingsGroup>
+          ),
+        )}
       </div>
-    </SettingsPageContainer>
+    </div>
   );
+  return inline ? notice : <SettingsPageContainer>{notice}</SettingsPageContainer>;
 }

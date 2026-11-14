@@ -18,6 +18,8 @@ export interface UsageRecord {
   readonly rateModel?: string;
   readonly sessionId: string;
   readonly totals: UsageTokenTotals;
+  /** The part of `totals.cacheCreationTokens` written with a 1-hour TTL. */
+  readonly cacheCreation1hTokens?: number;
   readonly reportedCostUsd: number | null;
   readonly speed: UsageSpeed;
   readonly unresolvedServiceTierTurnId?: string;
@@ -56,10 +58,7 @@ export type SelectedFields = { readonly [key: string]: true | SelectedFields };
 
 export interface TranscriptUsageFormat<State> {
   readonly selectFields: SelectedFields;
-  /**
-   * ASCII substrings, at least one of which every line that matters contains.
-   * Lines that only update `State` must match too.
-   */
+  /** ASCII markers must match every relevant line, including state-only updates. */
   readonly usageMarkers: readonly [string, ...string[]];
   parseLine(line: string, state: State): readonly UsageRecord[];
   parseProjected(projected: unknown, state: State): readonly UsageRecord[];
@@ -74,20 +73,13 @@ export interface TranscriptUsageFormat<State> {
     readonly initial: () => State;
     readonly schema: Schema.Codec<State, unknown>;
   };
-  /**
-   * Whether one session's records may appear in several files, such as a
-   * rollout copied when it moves. The server then keys those sessions'
-   * records for cross-file de-duplication.
-   */
+  /** Enable cross-file deduplication when session records can appear in multiple files. */
   readonly sharedSessionsAcrossFiles?: true;
 }
 
 export interface ProviderUsageInstance<Config> {
   readonly instanceId: ProviderInstanceId;
-  /**
-   * `undefined` when the stored config does not decode. The instance still has
-   * history on disk, so readers that need no config read it anyway.
-   */
+  /** Undefined for invalid stored config; config-independent readers should still read history. */
   readonly config: Config | undefined;
   readonly environment: NodeJS.ProcessEnv;
   readonly configured: boolean;
@@ -99,7 +91,6 @@ export interface ProviderUsageScan {
   readonly hostId?: string;
   readonly status?: UsageSource["status"];
   readonly message?: string;
-  readonly action?: UsageSource["action"];
   readonly files:
     | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
     | null;
@@ -122,10 +113,16 @@ export type ProviderUsageReader<Config, R> =
       readonly resolveServiceTiers?: (
         records: readonly UsageRecord[],
       ) => Effect.Effect<ReadonlyMap<UsageRecord, UsageSpeed>, never, R>;
+      /** A `refreshing` entry is not scanned; it reports its source as still being located. */
       readonly directories: (
         instance: ProviderUsageInstance<Config>,
+        options: { readonly awaitRefresh: boolean },
       ) => Effect.Effect<
-        ReadonlyArray<{ readonly dir: string; readonly fileName?: string }>,
+        ReadonlyArray<{
+          readonly dir: string;
+          readonly fileName?: string;
+          readonly refreshing?: true;
+        }>,
         never,
         R
       >;

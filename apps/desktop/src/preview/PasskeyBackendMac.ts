@@ -6,8 +6,7 @@ import type { PasskeyCeremonyResult } from "./PasskeyBridge.ts";
 
 const ES256 = -7;
 
-// WebAuthn rejects RP IDs that are public suffixes, private registries
-// included, so one github.io site cannot mint passkeys for every other one.
+// WebAuthn rejects public suffix RP IDs, including private registries such as github.io.
 const isPublicSuffix = (domain: string) =>
   domain !== "localhost" && getPublicSuffix(domain, { allowPrivateDomains: true }) === domain;
 
@@ -32,13 +31,10 @@ const toBase64Url = (value: BufferSource) =>
       : new Uint8Array(value),
   ).toString("base64url");
 
-/**
- * Needs Apple's managed browser entitlement in the signed build.
- */
+/** Requires Apple's managed browser entitlement in the signed build. */
 export const macPasskeyBackend: PasskeyBackend = {
   create: async (publicKey, context): Promise<PasskeyCeremonyResult> => {
-    // The native layer only converts P-256 keys and never settles for any
-    // other algorithm, so ES256 is the only one it may negotiate.
+    // The native layer only converts P-256 keys, so negotiate only ES256.
     const params: unknown = publicKey.pubKeyCredParams;
     if (params !== undefined && !Array.isArray(params))
       return { success: false, error: "TypeError" };
@@ -56,8 +52,7 @@ export const macPasskeyBackend: PasskeyBackend = {
       options,
     );
     if (!result.success) return { success: false, error: result.error };
-    // The native layer reports parsed authenticator data as JSON and claims
-    // every credential is a synced platform passkey; neither is reliable.
+    // Native parsed authenticator JSON and synced-platform-passkey claims are unreliable.
     const authData = authenticatorDataFromAttestation(
       Buffer.from(result.data.attestationObject, "base64url"),
     );
@@ -79,8 +74,7 @@ export const macPasskeyBackend: PasskeyBackend = {
       options,
     );
     if (!result.success) return { success: false, error: result.error };
-    // The native layer applies the site's allow list to platform passkeys only,
-    // so a security key can answer with a credential the site did not ask for.
+    // Native allow lists cover only platform passkeys; security-key responses need checking here.
     const allowed = (Array.isArray(publicKey.allowCredentials) ? publicKey.allowCredentials : [])
       .filter((credential) => credential?.type === "public-key" && isBufferSource(credential.id))
       .map((credential) => toBase64Url(credential.id));

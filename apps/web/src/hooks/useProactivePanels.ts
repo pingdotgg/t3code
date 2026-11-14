@@ -38,7 +38,6 @@ export function useProactivePanels(input: {
   readonly isGitRepo: boolean | undefined;
   readonly linkedPullRequest: ThreadLinkedPullRequest | null;
   readonly hasLinkedPullRequestDetail: boolean;
-  // Identifies the change requests the thread shows, so a new one can open the panel.
   readonly pullRequestsKey: string | null;
   readonly pullRequestsCapabilityKnown: boolean;
   readonly supportsPullRequests: boolean;
@@ -70,6 +69,7 @@ export function useProactivePanels(input: {
   > | null>(null);
   const threadKey = threadRef ? scopedThreadKey(threadRef) : null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens proactive surfaces in the right panel store as runs and linked PRs change
   useEffect(() => {
     if (threadKey === null || threadRef === null) {
       proactivePanelObservationRef.current = null;
