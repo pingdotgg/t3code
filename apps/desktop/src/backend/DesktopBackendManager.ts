@@ -1014,15 +1014,15 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                 .toWellFormed(),
             ).pipe(Effect.andThen(backendOutputLog.writeOutputChunk(streamName, chunk))),
         } satisfies RunBackendProcessOptions;
-        const runExternal = Effect.gen(function* () {
+        const runExternal = Effect.fn("desktop.backendInstance.runExternal")(function* (
+          external: NonNullable<DesktopBackendStartConfig["external"]>,
+        ) {
           yield* waitForHttpReady({
             ...config.value,
             timeout: DEFAULT_BACKEND_READINESS_TIMEOUT,
           });
-          yield* processOptions.onReady();
+          yield* processOptions.onReady(external.pid);
           yield* Effect.sync(() => {
-            const external = config.value.external;
-            if (!external) return false;
             try {
               process.kill(external.pid, 0);
               return true;
@@ -1043,18 +1043,21 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             Effect.repeat({ schedule: Schedule.spaced("5 seconds"), while: (healthy) => healthy }),
           );
           return { code: Option.none<number>(), reason: "external server disconnected" };
-        }).pipe(
-          Effect.catchTags({
-            BackendReadinessTimeoutError: (error) =>
-              processOptions
-                .onReadinessFailure(error)
-                .pipe(
-                  Effect.as({ code: Option.none<number>(), reason: "external server unavailable" }),
-                ),
-          }),
-        );
+        });
         const program = (
-          config.value.external ? runExternal : runBackendProcess(processOptions)
+          config.value.external
+            ? runExternal(config.value.external).pipe(
+                Effect.catchTags({
+                  BackendReadinessTimeoutError: (error) =>
+                    processOptions.onReadinessFailure(error).pipe(
+                      Effect.as({
+                        code: Option.none<number>(),
+                        reason: "external server unavailable",
+                      }),
+                    ),
+                }),
+              )
+            : runBackendProcess(processOptions)
         ).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(HttpClient.HttpClient, httpClient),
