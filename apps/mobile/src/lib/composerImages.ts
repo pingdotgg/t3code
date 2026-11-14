@@ -569,15 +569,19 @@ function isOwnedPastedImageUri(uri: string): boolean {
   }
 }
 
+/** Leave out existingCount when the draft store caps after its duplicate check. */
 export async function convertPastedImagesToAttachments(input: {
   readonly uris: ReadonlyArray<string>;
-  readonly existingCount: number;
+  readonly existingCount?: number;
 }): Promise<{
   readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
   readonly error: string | null;
 }> {
   const { File } = await import("expo-file-system");
-  const remainingSlots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
+  const remainingSlots =
+    input.existingCount === undefined
+      ? Number.POSITIVE_INFINITY
+      : PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
   const attachments: DraftComposerImageAttachment[] = [];
   let error: string | null = null;
 
