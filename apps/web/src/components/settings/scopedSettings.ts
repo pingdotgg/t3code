@@ -30,20 +30,6 @@ import type { ResolvedSettingsScope } from "./settingsScope";
 
 export type ScopedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
 
-export function createScopedSettingsSaveQueue() {
-  let pending: Promise<void> | undefined;
-  return (save: () => Promise<void>) => {
-    const next = pending ? pending.then(save, save) : save();
-    pending = next;
-    void next
-      .finally(() => {
-        if (pending === next) pending = undefined;
-      })
-      .catch(() => {});
-    return next;
-  };
-}
-
 interface ScopedSettingsEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
@@ -71,38 +57,15 @@ export function isConnectedWithConfig(
   return environment.connection.phase === "connected" && environment.serverConfig !== null;
 }
 
+/**
+ * A server save shown before its environment pushes the new settings back. It applies while in
+ * flight, and after success only until that environment's settings change from `settledOver`.
+ */
 export interface PendingScopedWrite {
+  readonly save: object;
   readonly environmentId: EnvironmentId;
   readonly patch: ServerSettingsPatch;
-  readonly savedOver?: ServerSettings;
-  readonly confirmed?: ServerSettings;
-  readonly predecessors?: readonly ServerSettings[];
-}
-
-export function appendPendingScopedWrites(
-  current: readonly PendingScopedWrite[],
-  pending: readonly PendingScopedWrite[],
-) {
-  return [
-    ...current,
-    ...pending.map((write) => {
-      const previous = current
-        .filter((candidate) => candidate.environmentId === write.environmentId)
-        .at(-1);
-      const expected =
-        previous?.confirmed ??
-        (previous?.savedOver
-          ? applyServerSettingsPatch(
-              previous.predecessors?.at(-1) ?? previous.savedOver,
-              previous.patch,
-            )
-          : undefined);
-      return {
-        ...write,
-        predecessors: expected ? [...(previous?.predecessors ?? []), expected] : [],
-      };
-    }),
-  ];
+  readonly settledOver?: ServerSettings;
 }
 
 export const pendingScopedWritesAtom = Atom.make<readonly PendingScopedWrite[]>([]).pipe(
@@ -110,16 +73,24 @@ export const pendingScopedWritesAtom = Atom.make<readonly PendingScopedWrite[]>(
   Atom.withLabel("web-settings:pending-scoped-writes"),
 );
 
-export function pendingScopedWriteApplies(
-  write: PendingScopedWrite,
-  settings: ServerSettings | undefined,
-) {
-  return (
-    settings !== undefined &&
-    (write.savedOver === undefined ||
-      write.savedOver === settings ||
-      write.predecessors?.some((previous) => Equal.equals(previous, settings)) === true)
-  );
+const pendingWriteApplies = (write: PendingScopedWrite, settings: ServerSettings | undefined) =>
+  settings !== undefined && (write.settledOver === undefined || write.settledOver === settings);
+
+/** Settles one environment's write: a failure or an already-pushed result drops it. */
+export function settlePendingScopedWrites(
+  writes: readonly PendingScopedWrite[],
+  target: Pick<PendingScopedWrite, "save" | "environmentId">,
+  readSettings: (environmentId: EnvironmentId) => ServerSettings | undefined,
+  saved?: ServerSettings,
+): readonly PendingScopedWrite[] {
+  return writes.flatMap((write) => {
+    const current = readSettings(write.environmentId);
+    if (write.save !== target.save || write.environmentId !== target.environmentId) {
+      return pendingWriteApplies(write, current) ? [write] : [];
+    }
+    if (saved === undefined || current === undefined || Equal.equals(current, saved)) return [];
+    return [{ ...write, settledOver: current }];
+  });
 }
 
 export function applyPendingScopedWrites<T extends ScopedSettingsEnvironment>(
@@ -133,19 +104,19 @@ export function applyPendingScopedWrites<T extends ScopedSettingsEnvironment>(
     const settings = writes.reduce(
       (current, write) =>
         write.environmentId === environment.environmentId &&
-        pendingScopedWriteApplies(write, config.settings)
-          ? (write.confirmed ?? applyServerSettingsPatch(current, write.patch))
+        pendingWriteApplies(write, config.settings)
+          ? applyServerSettingsPatch(current, write.patch)
           : current,
       config.settings,
     );
+    if (settings === config.settings) return environment;
+    // Legacy servers read `compactIdleThreads`, so project the mode back onto it.
     const { idleCompaction: _mode, ...legacy } = settings;
     const projected =
       config.settings.idleCompaction === undefined
         ? { ...legacy, ...idleCompactionPatch(config.settings, globalIdleCompaction(settings)) }
         : settings;
-    return settings === config.settings
-      ? environment
-      : { ...environment, serverConfig: { ...config, settings: projected } };
+    return { ...environment, serverConfig: { ...config, settings: projected } };
   });
 }
 
