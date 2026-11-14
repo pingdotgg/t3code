@@ -37,10 +37,6 @@ claude_nested_subagent_model/claudeAgent   provider: a subagent's model is the C
 claude_mcp_tool_presentation/claudeAgent   provider: MCP tool items have no title; T3 titles them ("Firecrawl scrape")
 web_search/claudeAgent                     provider: the web_search item has no `patterns`; T3 fills them from the query
 command_output_streaming/claudeAgent       provider: Claude emits no live command output (command_output.delta)
-turn_interrupt_restart/claudeAgent         provider: after a restarted turn completes, Claude's last thread update says active; T3's says idle
-
-# --- Engine: differences found, not fixed yet ---
-thread_rollback_after_restart/codex   engine: T3 calls resumeThread at every turn start (ProviderTurnStartService); after a rollback on a new process Codex gets thread/resume again before turn/start. Ours resumes only on a new session; matching it needs the Codex provider to skip a loaded thread, as T3's adapter does
 
 # --- The replay driver: steps it cannot run yet ---
 queued_cancelled_while_active/codex           driver: release_replay_gate / finish_held_run (the stub sends frames at once; no replay gate)

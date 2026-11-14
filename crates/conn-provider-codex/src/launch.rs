@@ -344,6 +344,30 @@ pub fn selection_model(selection: &ModelSelection) -> String {
         .to_owned()
 }
 
+/// `normalizeCodexThreadLoadModelSelection`: Codex applies the effort on `turn/start`, so an
+/// effort change alone does not reload the thread. The other options stay; none left drops
+/// `options`.
+pub fn thread_load_selection(selection: &ModelSelection) -> ModelSelection {
+    let mut value = to_json(selection);
+    if let Some(object) = value.as_object_mut() {
+        let kept: Option<Vec<Value>> = object.get("options").and_then(Value::as_array).map(|o| {
+            o.iter()
+                .filter(|option| option["id"] != "reasoningEffort")
+                .cloned()
+                .collect()
+        });
+        match kept {
+            Some(kept) if !kept.is_empty() => {
+                object.insert("options".into(), Value::Array(kept));
+            }
+            _ => {
+                object.remove("options");
+            }
+        }
+    }
+    conn_contract::from_json(value).unwrap_or_else(|_| selection.clone())
+}
+
 /// `turn/start` params (`buildCodexTurnStartParams`), without Cyber Access and app context.
 /// `t3_tools` is set when the thread has T3's MCP server: the turn then carries T3's
 /// `additionalContext`.
@@ -545,6 +569,32 @@ mod tests {
         assert_eq!(direct["enabled_tools"], json!(["t3_thread_wait"]));
         assert_eq!(direct["http_headers"]["Authorization"], "Bearer abc");
         assert_eq!(main["tool_timeout_sec"], MCP_TOOL_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn the_thread_load_selection_drops_only_the_effort() {
+        let selection: ModelSelection = conn_contract::from_json(json!({
+            "instanceId": "codex",
+            "model": "gpt-6-luna",
+            "options": [
+                {"id": "reasoningEffort", "value": "high"},
+                {"id": "fastMode", "value": true}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(
+            to_json(&thread_load_selection(&selection)),
+            json!({"instanceId": "codex", "model": "gpt-6-luna", "options": [{"id": "fastMode", "value": true}]})
+        );
+        let effort_only: ModelSelection = conn_contract::from_json(json!({
+            "model": "gpt-6-luna",
+            "options": [{"id": "reasoningEffort", "value": "low"}]
+        }))
+        .unwrap();
+        assert_eq!(
+            to_json(&thread_load_selection(&effort_only)),
+            json!({"model": "gpt-6-luna"})
+        );
     }
 
     #[test]

@@ -452,6 +452,13 @@ impl Session for CodexSession {
         &self.id
     }
 
+    fn thread_load_model_selection(
+        &self,
+        selection: &conn_contract::ModelSelection,
+    ) -> conn_contract::ModelSelection {
+        launch::thread_load_selection(selection)
+    }
+
     fn ensure_thread(
         &self,
         input: EnsureThreadInput,

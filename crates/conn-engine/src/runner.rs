@@ -13,7 +13,8 @@ use std::{
 use conn_contract::{ProviderThread, ProviderTurnId, from_json, to_json};
 use conn_provider::{
     EnsureThreadInput, InterruptInput, OpenSessionInput, ProviderEvent, ResumeThreadInput,
-    RuntimePolicy, RuntimeRequestResponse, Session, SteerInput, SteerStatus, TurnInput,
+    RuntimePolicy, RuntimeRequestResponse, Session, SteerInput, SteerStatus, ThreadDisposition,
+    TurnInput,
     TurnMessage, TurnStatus,
 };
 use serde_json::{Value, json};
@@ -47,6 +48,9 @@ pub(crate) struct LiveThread {
     background_tasks_end_with_process: bool,
     /// Revokes the agent tools this session got ([`crate::EngineHost::session_closed`]).
     tools_key: Option<String>,
+    /// What the session last loaded for this thread (`providerThreadLoadKey` in T3's
+    /// `ProviderSessionManager`): a turn start resumes the native thread when it differs.
+    loaded_key: Mutex<Option<String>>,
 }
 
 #[derive(Default)]
@@ -150,7 +154,6 @@ fn status_name(status: TurnStatus) -> &'static str {
 
 impl Inner {
     pub(crate) async fn start_turn(self: Arc<Self>, thread_id: String, run_id: String) {
-        self.after_rollback(&thread_id).await;
         match self.try_start_turn(&thread_id, &run_id).await {
             Ok(()) | Err(StartError::Abandoned) => {}
             Err(StartError::Failed(message)) => {
@@ -223,6 +226,21 @@ impl Inner {
         }
         if let Some(observer) = &self.observer {
             self.observe_end(observer.clone(), thread, run).await;
+        }
+    }
+
+    /// A terminal whose native thread cannot take another turn leaves the provider thread
+    /// `error` (`finalProviderThreadStatus`).
+    async fn mark_thread_broken(&self, thread_id: &str, run_id: &str) {
+        let (tid, rid) = (thread_id.to_owned(), run_id.to_owned());
+        let result = self
+            .write(move |tx| match tx.entity(&tid, "runs", &rid)? {
+                Some(run) => crate::commands::settle_provider_thread(tx, &tid, &run, "error"),
+                None => Ok(()),
+            })
+            .await;
+        if let Err(e) = result {
+            eprintln!("conn-engine: could not mark a provider thread broken: {e}");
         }
     }
 
@@ -311,6 +329,7 @@ impl Inner {
                     .to_owned(),
                 background_tasks_end_with_process: opened.background_tasks_end_with_process,
                 tools_key: tools.map(|t| t.key),
+                loaded_key: Mutex::new(None),
             });
             lock(&self.live).insert(thread_id.to_owned(), live.clone());
             // The session's row, from `open_session` (T3: the runtime's
@@ -481,45 +500,86 @@ impl Inner {
 
         live.touch(self.clock.now_millis());
         let known = lock(&live.state).provider_thread.clone();
-        let provider_thread =
-            match (known, context.provider_thread) {
-                (Some(provider_thread), _) => provider_thread,
-                (None, Some(stored)) => live
-                    .session
-                    .resume_thread(ResumeThreadInput {
-                        provider_thread: from_json(stored).map_err(|e| e.to_string())?,
-                        thread_id: Some(thread_id.into()),
-                        model_selection: Some(model_selection.clone()),
-                        runtime_policy: Some(runtime_policy.clone()),
-                    })
-                    .await
-                    .map_err(|e| e.to_string())?,
-                // A fork's first turn: the provider forks the source's native thread.
-                (None, None) if context.fork.is_some() => {
-                    let fork = context.fork.as_mut().map(|f| {
-                        f.input.model_selection = Some(model_selection.clone());
-                        f.input.runtime_policy = Some(runtime_policy.clone());
-                        f.input.clone()
-                    });
-                    match fork {
-                        Some(input) => live.session.fork_thread(input).await.map_err(|e| {
-                            StartError::Failed(format!("The native fork failed: {e}"))
-                        })?,
-                        None => return Err(StartError::Abandoned),
-                    }
+        let stored = match (known, context.provider_thread) {
+            (Some(known), _) => Some(known),
+            (None, Some(stored)) => Some(from_json(stored).map_err(|e| e.to_string())?),
+            (None, None) => None,
+        };
+        let load_key = |thread: &ProviderThread| {
+            thread_load_key(
+                live.session.as_ref(),
+                thread,
+                &model_selection,
+                &runtime_policy,
+            )
+        };
+        // T3's `ProviderTurnStartService` resumes a thread with a native id at every turn
+        // start; its session manager skips the load when the session already loaded that
+        // native thread with this selection and policy. A rollback's own resume does not
+        // count, so a send after a rollback on a new process resumes again.
+        let provider_thread = match stored {
+            Some(stored) if stored.native_thread_ref.is_some() => {
+                let key = load_key(&stored);
+                if lock(&live.loaded_key).as_deref() == Some(key.as_str()) {
+                    stored
+                } else {
+                    let resumed = live
+                        .session
+                        .resume_thread(ResumeThreadInput {
+                            provider_thread: stored,
+                            thread_id: Some(thread_id.into()),
+                            model_selection: Some(model_selection.clone()),
+                            runtime_policy: Some(runtime_policy.clone()),
+                        })
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    *lock(&live.loaded_key) = Some(load_key(&resumed));
+                    resumed
                 }
-                (None, None) => live
-                    .session
-                    .ensure_thread(EnsureThreadInput {
-                        thread_id: thread_id.into(),
-                        title: context.thread["title"].as_str().map(str::to_owned),
-                        model_selection: model_selection.clone(),
-                        runtime_policy: runtime_policy.clone(),
-                        existing_provider_thread: None,
-                    })
-                    .await
-                    .map_err(|e| e.to_string())?,
-            };
+            }
+            stored => {
+                let thread = match stored {
+                    Some(existing) => live
+                        .session
+                        .ensure_thread(EnsureThreadInput {
+                            thread_id: thread_id.into(),
+                            title: context.thread["title"].as_str().map(str::to_owned),
+                            model_selection: model_selection.clone(),
+                            runtime_policy: runtime_policy.clone(),
+                            existing_provider_thread: Some(existing),
+                        })
+                        .await
+                        .map_err(|e| e.to_string())?,
+                    // A fork's first turn: the provider forks the source's native thread.
+                    None if context.fork.is_some() => {
+                        let fork = context.fork.as_mut().map(|f| {
+                            f.input.model_selection = Some(model_selection.clone());
+                            f.input.runtime_policy = Some(runtime_policy.clone());
+                            f.input.clone()
+                        });
+                        match fork {
+                            Some(input) => live.session.fork_thread(input).await.map_err(|e| {
+                                StartError::Failed(format!("The native fork failed: {e}"))
+                            })?,
+                            None => return Err(StartError::Abandoned),
+                        }
+                    }
+                    None => live
+                        .session
+                        .ensure_thread(EnsureThreadInput {
+                            thread_id: thread_id.into(),
+                            title: context.thread["title"].as_str().map(str::to_owned),
+                            model_selection: model_selection.clone(),
+                            runtime_policy: runtime_policy.clone(),
+                            existing_provider_thread: None,
+                        })
+                        .await
+                        .map_err(|e| e.to_string())?,
+                };
+                *lock(&live.loaded_key) = Some(load_key(&thread));
+                thread
+            }
+        };
         let root = context.run["rootNodeId"]
             .as_str()
             .unwrap_or_default()
@@ -534,9 +594,10 @@ impl Inner {
                 provider_thread_json["firstRunOrdinal"] = ordinal.clone();
             }
             provider_thread_json["lastRunOrdinal"] = ordinal;
-            // T3 also marks it `active` here and its adapters mark it `idle` at the turn's
-            // end. Our Codex provider sends no thread updates, so the status stays the
-            // provider's own.
+            // T3 marks it `active` here; the run's end marks it `idle` again
+            // (`RunExecutionService`, `finalProviderThreadStatus`). `updatedAt` is the
+            // write's time.
+            provider_thread_json["status"] = json!("active");
         }
         if provider_thread_json
             .get("appThreadId")
@@ -584,11 +645,9 @@ impl Inner {
                         .node(Some(&root_id))
                 };
                 if provider_thread_json["id"].is_string() {
-                    tx.append(Draft::new(
-                        &tid,
-                        "provider-thread.updated",
-                        provider_thread_json.clone(),
-                    ))?;
+                    let mut running = provider_thread_json.clone();
+                    running["updatedAt"] = json!(now);
+                    tx.append(Draft::new(&tid, "provider-thread.updated", running))?;
                 }
                 if let Some(transfer) = &fork_transfer {
                     tx.append(
@@ -785,6 +844,10 @@ impl Inner {
                 && draft.payload.is_object()
             {
                 draft.payload["providerInstanceId"] = json!(live.instance);
+                // A broken thread loads again at the next turn start (T3 forgets its load).
+                if draft.payload["status"] == "error" {
+                    *lock(&live.loaded_key) = None;
+                }
             }
             // A settled command's stored item has its output; its live tail goes.
             if let Translated::Event(draft) = &translated
@@ -838,11 +901,14 @@ impl Inner {
                     self.commit_after(&mut held, &mut deadline, vec![]).await;
                     self.request_continuation(&thread_id, detail).await;
                 }
-                Translated::Terminal(status, failure) => {
+                Translated::Terminal(status, failure, broken) => {
                     self.commit_after(&mut held, &mut deadline, vec![]).await;
                     if let Some(run_id) = run_id {
                         live.take_active();
                         self.end_run(&thread_id, &run_id, status, failure).await;
+                        if broken {
+                            self.mark_thread_broken(&thread_id, &run_id).await;
+                        }
                     }
                 }
             }
@@ -1456,7 +1522,8 @@ enum Translated {
     Ignore,
     Event(Draft),
     ProviderTurn(ProviderTurnId, Draft),
-    Terminal(&'static str, Option<Value>),
+    /// The status, the failure, and whether the native thread is broken.
+    Terminal(&'static str, Option<Value>, bool),
     /// A provider-made thread (a subagent's child): created once, never overwritten.
     CreateThread(Value),
     /// A steer was taken or dropped: the user message's turn item follows.
@@ -1466,6 +1533,33 @@ enum Translated {
     },
     /// The provider has output with no turn running and asks for one.
     Continuation(Option<String>),
+}
+
+/// `providerThreadLoadKey`: the native thread, the provider's load part of the selection,
+/// and the runtime policy.
+fn thread_load_key(
+    session: &dyn Session,
+    thread: &ProviderThread,
+    selection: &conn_contract::ModelSelection,
+    policy: &RuntimePolicy,
+) -> String {
+    let native = thread.native_thread_ref.as_ref().map_or_else(
+        || to_json(&thread.id),
+        |native| {
+            let native = to_json(native);
+            json!(format!(
+                "{}:{}",
+                native["driver"].as_str().unwrap_or_default(),
+                native["nativeId"].as_str().unwrap_or_default()
+            ))
+        },
+    );
+    json!({
+        "providerThread": native,
+        "modelSelection": to_json(&session.thread_load_model_selection(selection)),
+        "runtimePolicy": to_json(policy),
+    })
+    .to_string()
 }
 
 /// Maps one provider event to a domain event. Adding an event kind is one arm here.
@@ -1557,7 +1651,11 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
                 }
                 _ => None,
             };
-            Translated::Terminal(status, failure)
+            Translated::Terminal(
+                status,
+                failure,
+                terminal.thread_disposition == ThreadDisposition::Broken,
+            )
         }
         ProviderEvent::AppThreadCreated { app_thread, .. } => {
             Translated::CreateThread(to_json(&app_thread))
