@@ -1146,6 +1146,7 @@ describe("CodexAdapterV2 session initialize", () => {
             runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
           }),
         initializeRequests: () => initializeRequests,
+        events: runtime.events,
       };
     });
 
@@ -1280,6 +1281,89 @@ describe("CodexAdapterV2 session initialize", () => {
         failure.cause.message,
         "Codex 0.144.3 does not work with this T3 Code release. Update Codex to >=0.159.0, then retry.",
       );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("fails the open when initialize never answers during open", () =>
+    Effect.gen(function* () {
+      const initializeAwaitingResponse = yield* Deferred.make<void>();
+      const opened = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario: "initialize-hung-open",
+          entries: replayPreamble("initialize-hung-open").slice(0, 2),
+        }),
+        (entry) =>
+          entry.label === "initialize"
+            ? Deferred.succeed(initializeAwaitingResponse, undefined).pipe(
+                Effect.andThen(Effect.never),
+              )
+            : Effect.void,
+        () => Effect.die("initialize never answers"),
+      ).pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(initializeAwaitingResponse);
+      yield* TestClock.adjust("30 seconds");
+
+      // The session manager discards a session whose open fails.
+      assert.instanceOf(yield* Fiber.join(opened), ProviderAdapter.ProviderAdapterOpenSessionError);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("retires the shared session when initialize never answers", () =>
+    Effect.gen(function* () {
+      const initializeAwaitingResponse = yield* Deferred.make<void>();
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario: "initialize-hung",
+          entries: replayPreamble("initialize-hung").slice(0, 2),
+        }),
+        (entry) =>
+          entry.label === "initialize"
+            ? Deferred.succeed(initializeAwaitingResponse, undefined).pipe(
+                Effect.andThen(Effect.never),
+              )
+            : Effect.void,
+      );
+      const eventsExit = yield* Stream.runDrain(session.events).pipe(
+        Effect.exit,
+        Effect.forkChild({ startImmediately: true }),
+      );
+
+      const ensured = yield* session
+        .ensureThread("thread-initialize-hung")
+        .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(initializeAwaitingResponse);
+      const waiting = yield* session
+        .ensureThread("thread-initialize-hung-waiting")
+        .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("30 seconds");
+
+      assert.equal((yield* Fiber.join(ensured))._tag, "ProviderAdapterEnsureThreadError");
+      // A waiter fails at once instead of re-sending initialize to the hung app-server.
+      assert.equal((yield* Fiber.join(waiting))._tag, "ProviderAdapterEnsureThreadError");
+      assert.equal(session.initializeRequests(), 1);
+      // The session manager retires a session whose event stream fails.
+      const exit = yield* Fiber.join(eventsExit);
+      assert.isTrue(Exit.isFailure(exit));
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -1518,6 +1602,81 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         awaitTerminal: (count: number) => changes.until(() => terminalEvents().length >= count),
       };
     });
+
+  it.effect.each(["native", "ordinary"] as const)(
+    "resumes Codex without a prompt only for an existing conversation (%s)",
+    (mode) =>
+      Effect.gen(function* () {
+        const nativeThreadId = `resume-${mode}`;
+        const nativeTurnId = `resume-turn-${mode}`;
+        const preamble = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId,
+          prompt: "Hello",
+        });
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: `manual-resume-${mode}`,
+            entries: [
+              ...preamble.map((entry) =>
+                mode === "native" &&
+                entry.type === "expect_outbound" &&
+                Predicate.isObject(entry.frame) &&
+                Predicate.isObject(entry.frame.params) &&
+                entry.frame.method === "turn/start"
+                  ? {
+                      ...entry,
+                      frame: {
+                        ...entry.frame,
+                        params: {
+                          ...entry.frame.params,
+                          input: [],
+                        },
+                      },
+                    }
+                  : entry,
+              ),
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        const input = {
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`resume-${mode}`),
+            text: "Hello",
+          }),
+          nativeThreadHasTurns: true,
+        };
+        const { message, ...resumeInput } = input;
+        if (mode === "native")
+          yield* harness.runtime.resumeTurn!({ ...resumeInput, messageId: message.messageId });
+        else yield* harness.runtime.startTurn(input);
+        yield* harness.firstTerminal;
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
 
   it.effect("keeps native image views available to the clients", () =>
     Effect.gen(function* () {
@@ -1859,6 +2018,68 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           },
         },
       ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  // regression: #36520 MCP servers can tell a delegate_task child from a user thread
+  it.effect("starts delegate_task children with the subagent thread source", () =>
+    Effect.gen(function* () {
+      const scenario = "delegated-thread-source";
+      const preamble = codexReplayPreamble({
+        nativeThreadId: "delegated-parent-thread",
+        nativeTurnId: "unused",
+        prompt: "unused",
+      }).slice(0, 5);
+      const childStart = codexReplayPreamble({
+        nativeThreadId: "delegated-child-thread",
+        nativeTurnId: "unused",
+        prompt: "unused",
+      })
+        .slice(3, 5)
+        .map((entry) => withReplayRequestId(entry, 3))
+        .map((entry) =>
+          entry.type === "expect_outbound" &&
+          Predicate.isObject(entry.frame) &&
+          Predicate.isObject(entry.frame["params"])
+            ? {
+                ...entry,
+                frame: {
+                  ...entry.frame,
+                  params: { ...entry.frame["params"], threadSource: "subagent" },
+                },
+              }
+            : entry,
+        );
+      const threadSources: Array<unknown> = [];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({ scenario, entries: [...preamble, ...childStart] }),
+        () => Effect.void,
+        (method, params) =>
+          Effect.sync(() => {
+            if (method === "thread/start" && Predicate.isObject(params)) {
+              threadSources.push(params["threadSource"]);
+            }
+          }),
+      );
+      const childThreadId = (yield* IdAllocator.IdAllocatorV2).derive.delegatedTaskThread({
+        commandId: CommandId.make(`mcp:${scenario}:delegate-task:child`),
+      });
+      yield* harness.runtime.ensureThread({
+        threadId: childThreadId,
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      assert.deepEqual(threadSources, [undefined, "subagent"]);
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -4375,27 +4596,30 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const scenario = "codex-provider-retry-stall";
       const nativeThreadId = `native-${scenario}-thread`;
       const nativeTurnId = `native-${scenario}-turn`;
+      const retryNotice = (attempt: number) => ({
+        type: "emit_inbound" as const,
+        label: `error/retry-${attempt}`,
+        frame: {
+          method: "error",
+          params: {
+            threadId: nativeThreadId,
+            turnId: nativeTurnId,
+            willRetry: true,
+            error: {
+              message: `Reconnecting... ${attempt}/5`,
+              additionalDetails: "exceeded retry limit, last status: 429 Too Many Requests",
+              codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
+            },
+          },
+        },
+      });
       const transcript = makeCodexReplayTranscript({
         scenario,
         entries: [
           ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
-          {
-            type: "emit_inbound",
-            label: "error/retry",
-            frame: {
-              method: "error",
-              params: {
-                threadId: nativeThreadId,
-                turnId: nativeTurnId,
-                willRetry: true,
-                error: {
-                  message: "Reconnecting... 1/5",
-                  additionalDetails: "exceeded retry limit, last status: 429 Too Many Requests",
-                  codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
-                },
-              },
-            },
-          },
+          retryNotice(1),
+          // A later notice in the same retry window must not push the deadline back.
+          { ...retryNotice(2), afterMs: 5 * 60 * 1000 },
           {
             type: "expect_outbound",
             label: "turn/interrupt",
@@ -4454,7 +4678,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         terminal.failure.message,
         "exceeded retry limit, last status: 429 Too Many Requests",
       );
-      assert.equal(terminal.retry?.attempt, 1);
+      assert.equal(terminal.retry?.attempt, 2);
       assert.equal(terminal.threadDisposition, "reusable");
     }).pipe(
       Effect.provide(

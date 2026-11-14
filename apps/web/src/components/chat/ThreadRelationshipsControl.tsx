@@ -62,8 +62,8 @@ import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   useProjects,
+  useQuietThreadProjection,
   useQuietThreadShell,
-  useThreadProjection,
   useThreadRelationshipShells,
   useHiddenThreadKeys,
   useAnyEnvironmentHiding,
@@ -118,7 +118,7 @@ function ThreadLineageRowList(props: {
       {/* ScrollArea's max-height viewport measures badly inside this scrolling panel. */}
       <ul
         aria-label="Related threads"
-        className="m-0 max-h-[13.5rem] list-none overflow-y-auto overscroll-contain p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
+        className="m-0 max-h-[13.5rem] list-none overflow-y-auto p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
       >
         {props.children}
       </ul>
@@ -428,7 +428,7 @@ export function ThreadRelationshipsPanel(props: {
   readonly showSideChats: boolean;
 }) {
   const ref = scopeThreadRef(props.environmentId, props.threadId);
-  const projection = useThreadProjection(ref)?.projection ?? null;
+  const projection = useQuietThreadProjection(ref)?.projection ?? null;
   const providersByEnvironment = useEnvironmentProviders();
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
   const relationshipShells = useThreadRelationshipShells(ref);
@@ -455,7 +455,7 @@ export function ThreadRelationshipsPanel(props: {
     parentShell && isProviderNativeSubagentThread(parentShell)
       ? scopeThreadRef(props.environmentId, parentShell.id)
       : null;
-  const parentProjection = useThreadProjection(parentRef)?.projection;
+  const parentProjection = useQuietThreadProjection(parentRef)?.projection;
   const navigate = useNavigate();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
   const stopSession = useAtomCommand(threadEnvironment.stopSession);
