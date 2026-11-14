@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{Caller, McpConfig, McpService};
 
+mod manage;
 mod message;
 mod projects;
 mod tasks;
@@ -39,7 +40,8 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 17] = [
+pub(crate) const HANDLED: [&str; 18] = [
+    "t3_thread_organize",
     "send_to_user",
     "orchestrator_capabilities",
     "delegate_task",
@@ -89,6 +91,7 @@ pub(crate) async fn call(
         "t3_thread_interrupt" => threads::interrupt(&cx, &args).await,
         "t3_thread_update" => threads::update(&cx, &args).await,
         "t3_pending_request" => threads::pending_request(&cx, &args).await,
+        "t3_thread_organize" => manage::organize(&cx, &args).await,
         "send_to_user" => message::send_to_user(&cx, &args).await,
         "delegate_task" => tasks::delegate(&cx, &args).await,
         "task_status" => tasks::status(&cx, &args).await,
@@ -367,7 +370,7 @@ const ACTIVE_RUN_STATUSES: [&str; 4] = ["preparing", "starting", "running", "wai
 
 /// The thread shell's `activeRunId`, from a projection: the latest run that started (queued
 /// runs and runs cancelled before they started do not count), if it is still active.
-fn has_active_run(projection: &Value) -> bool {
+pub(crate) fn has_active_run(projection: &Value) -> bool {
     let Some(runs) = projection["runs"].as_array() else {
         return false;
     };

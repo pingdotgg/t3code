@@ -149,6 +149,8 @@ pub struct McpService {
     config: McpConfig,
     credentials: Mutex<credentials::Credentials>,
     sessions: Mutex<sessions::Sessions>,
+    /// Threads whose own agent asked to settle them when the active run completes.
+    settling: Mutex<std::collections::HashSet<String>>,
     endpoint: OnceLock<String>,
 }
 
@@ -168,6 +170,7 @@ impl McpService {
             config,
             credentials: Mutex::new(credentials::Credentials::default()),
             sessions: Mutex::new(sessions::Sessions::default()),
+            settling: Mutex::new(std::collections::HashSet::new()),
             endpoint: OnceLock::new(),
         })
     }

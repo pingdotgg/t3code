@@ -248,9 +248,37 @@ const steps = [
       workspaceStrategy: { type: "worktree", baseRef: "HEAD", branch: "parity/worktree" },
       clientRequestId: "parity-worktree",
     }),
-    undefined,
+    (c, v) => (c.idleThreadId = v.threadId),
     { noTurn: true },
   ],
+  // t3_thread_organize on the idle worktree thread: every action, then the refusals.
+  ...[
+    "pin",
+    "unpin",
+    "settle",
+    "unsettle",
+    "mark_unread",
+    "archive",
+    "unarchive",
+    "unsnooze",
+  ].map((action) => ["t3_thread_organize", (c) => ({ threadId: c.idleThreadId, action })]),
+  [
+    "t3_thread_organize",
+    (c) => ({ threadId: c.idleThreadId, action: "snooze", snoozedUntil: "2099-01-01T00:00:00.000Z" }),
+  ],
+  ["t3_thread_organize", (c) => ({ threadId: c.idleThreadId, action: "unsnooze" })],
+  ["t3_thread_organize", (c) => ({ threadId: c.idleThreadId, action: "snooze" })],
+  [
+    "t3_thread_organize",
+    (c) => ({ threadId: c.idleThreadId, action: "snooze", snoozedUntil: "2001-01-01T00:00:00.000Z" }),
+  ],
+  [
+    "t3_thread_organize",
+    (c) => ({ threadId: c.idleThreadId, action: "snooze", snoozedUntil: "not a date" }),
+  ],
+  ["t3_thread_organize", () => ({ action: "pin" })],
+  ["t3_thread_organize", () => ({ threadId: "thread:none", action: "pin" })],
+  ["t3_thread_organize", (c) => ({ threadId: c.idleThreadId, action: "bogus" })],
   [
     "t3_thread_launch",
     (c) => ({

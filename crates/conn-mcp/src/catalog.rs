@@ -151,7 +151,7 @@ fn type_problem(schema: &Value, value: &Value) -> Option<String> {
         && !allowed.contains(value)
     {
         let names: Vec<String> = allowed.iter().map(Value::to_string).collect();
-        return Some(format!("Expected {}, got {value}", names.join(" | ")));
+        return Some(format!("Expected {}", names.join(" | ")));
     }
     if schema["type"] == "string"
         && let Some(text) = value.as_str()

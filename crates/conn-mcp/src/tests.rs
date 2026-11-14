@@ -1072,3 +1072,161 @@ async fn send_to_user_echoes_the_message_to_a_live_thread_caller() {
         .await;
     assert_eq!(code, "parent_not_active");
 }
+
+async fn thread_field(f: &Fixture, thread_id: &str, field: &str) -> Value {
+    f.service
+        .config
+        .engine
+        .get_thread_projection(thread_id.into())
+        .await
+        .unwrap()["thread"][field]
+        .clone()
+}
+
+/// Polls until `field` of the thread equals `want`, for at most two seconds.
+async fn until_field(f: &Fixture, thread_id: &str, field: &str, want: &Value) -> bool {
+    for _ in 0..200 {
+        if &thread_field(f, thread_id, field).await == want {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    false
+}
+
+/// `t3_thread_organize` (`toolkits/thread/handlers.ts`): `writesThreads([threadId])`, one
+/// engine command per action, and the own agent's settle deferred to the end of its turn.
+#[tokio::test(flavor = "current_thread")]
+async fn organize_writes_as_the_typescript_server() {
+    let f = fixture("organize");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let full = launch_as_swamp(&mut swamp, "Full", "hang", "full-access", "default").await;
+    let narrow = launch_as_swamp(&mut swamp, "Narrow", "hang", "approval-required", "plan").await;
+
+    // Refusals first: a read-only client, a caller below the target's modes, a dead caller.
+    let mut reader = Client::open(&f.service, client(false)).await;
+    let (code, _) = reader
+        .failure(
+            "t3_thread_organize",
+            json!({"threadId": full, "action": "pin"}),
+        )
+        .await;
+    assert_eq!(code, "capability_denied");
+    let mut agent = Client::open(&f.service, agent_of(&f, &narrow)).await;
+    for action in ["pin", "archive", "settle", "mark_unread"] {
+        let (code, _) = agent
+            .failure(
+                "t3_thread_organize",
+                json!({"threadId": full, "action": action}),
+            )
+            .await;
+        assert_eq!(code, "runtime_mode_escalation_denied", "{action}");
+    }
+    let (code, message) = agent
+        .failure("t3_thread_organize", json!({"action": "snooze"}))
+        .await;
+    assert_eq!(
+        (code.as_str(), message.as_str()),
+        ("invalid_request", "snooze requires snoozedUntil.")
+    );
+    let (code, _) = swamp
+        .failure("t3_thread_organize", json!({"action": "pin"}))
+        .await;
+    assert_eq!(code, "target_required");
+
+    // Normal cases from outside: pin, unpin, archive, unarchive, snooze, unsnooze.
+    let pinned = swamp
+        .ok(
+            "t3_thread_organize",
+            json!({"threadId": full, "action": "pin"}),
+        )
+        .await;
+    assert!(pinned["sequence"].as_u64().unwrap() > 0);
+    assert!(thread_field(&f, &full, "pinnedAt").await.is_string());
+    swamp
+        .ok(
+            "t3_thread_organize",
+            json!({"threadId": full, "action": "unpin"}),
+        )
+        .await;
+    assert!(thread_field(&f, &full, "pinnedAt").await.is_null());
+    swamp
+        .ok(
+            "t3_thread_organize",
+            json!({"threadId": full, "action": "snooze", "snoozedUntil": "2099-01-01T00:00:00.000Z"}),
+        )
+        .await;
+    assert!(thread_field(&f, &full, "snoozedUntil").await.is_string());
+    swamp
+        .ok(
+            "t3_thread_organize",
+            json!({"threadId": full, "action": "unsnooze"}),
+        )
+        .await;
+    assert!(thread_field(&f, &full, "snoozedUntil").await.is_null());
+    // A running thread cannot settle from outside: the engine refuses.
+    let (code, _) = swamp
+        .failure(
+            "t3_thread_organize",
+            json!({"threadId": full, "action": "settle"}),
+        )
+        .await;
+    assert_eq!(code, "orchestration_error");
+
+    // The own agent settles mid-turn: the answer says when, and the thread settles once the
+    // turn completes (a steer completes the fake turn).
+    let mut own = Client::open(&f.service, agent_of(&f, &narrow)).await;
+    let deferred = own
+        .ok("t3_thread_organize", json!({"action": "settle"}))
+        .await;
+    assert_eq!(deferred, json!({"settlesWhenTurnEnds": true}));
+    // A second request while one waits adds no second waiter.
+    own.ok("t3_thread_organize", json!({"action": "settle"}))
+        .await;
+    assert_eq!(crate::lock(&f.service.settling).len(), 1);
+    assert!(thread_field(&f, &narrow, "settledAt").await.is_null());
+    swamp
+        .ok(
+            "t3_thread_send",
+            json!({"threadId": narrow, "message": "finish", "mode": "steer"}),
+        )
+        .await;
+    assert!(until_field(&f, &narrow, "settledOverride", &json!("settled")).await);
+    assert!(thread_field(&f, &narrow, "settledAt").await.is_string());
+    for _ in 0..100 {
+        if crate::lock(&f.service.settling).is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(crate::lock(&f.service.settling).is_empty());
+
+    // An interrupted turn does not settle.
+    let other = launch_as_swamp(&mut swamp, "Other", "hang", "auto", "default").await;
+    let mut other_agent = Client::open(&f.service, agent_of(&f, &other)).await;
+    other_agent
+        .ok("t3_thread_organize", json!({"action": "settle"}))
+        .await;
+    swamp
+        .ok("t3_thread_interrupt", json!({"threadId": other}))
+        .await;
+    for _ in 0..100 {
+        if crate::lock(&f.service.settling).is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(crate::lock(&f.service.settling).is_empty());
+    assert_ne!(thread_field(&f, &other, "settledOverride").await, "settled");
+
+    // Archived: the caller is no longer live.
+    dispatch(
+        &f,
+        json!({"type": "thread.archive", "commandId": "archive-other", "threadId": other}),
+    )
+    .await;
+    let (code, _) = other_agent
+        .failure("t3_thread_organize", json!({"action": "unarchive"}))
+        .await;
+    assert_eq!(code, "parent_not_active");
+}
