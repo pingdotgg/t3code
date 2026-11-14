@@ -82,6 +82,7 @@ import {
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
+import { isPlaceholderThreadTitle } from "./placeholderThreadTitle.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
@@ -722,9 +723,9 @@ function pendingThreadTitleGenerationEffect(
   };
 }
 
-// Clients seed a new thread with its first message, and empty threads start as "New thread".
-// Any other title on a thread without messages was chosen on purpose. Forks and side chats are
-// titled from their source history instead.
+// Clients seed a new thread with its first message, and empty threads start as "New thread" or
+// an agent's placeholder. Any other title on a thread without messages was chosen on purpose.
+// Forks and side chats are titled from their source history instead.
 function hasTitleSetBeforeFirstMessage(
   thread: OrchestrationV2AppThread,
   titleSeed: string | undefined,
@@ -735,6 +736,7 @@ function hasTitleSetBeforeFirstMessage(
     thread.lineage.sideChat !== true &&
     title.length > 0 &&
     title !== "New thread" &&
+    !isPlaceholderThreadTitle(title) &&
     title !== titleSeed?.trim()
   );
 }

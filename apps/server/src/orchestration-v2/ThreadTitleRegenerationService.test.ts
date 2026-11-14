@@ -34,6 +34,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import { placeholderThreadTitle } from "./placeholderThreadTitle.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const projectId = ProjectId.make("project:title-regeneration");
@@ -333,53 +334,58 @@ describe("formatThreadTitleContext", () => {
 });
 
 describe("ThreadTitleRegenerationService", () => {
-  it.effect("keeps a title set before the first message and generates none", () =>
+  it.effect("keeps a title set before the first message unless it is a placeholder", () =>
     Effect.gen(function* () {
-      const issueTitle = "[API] #4821 — retry webhook deliveries after a timeout";
+      const seed = "work on this and pr to dev";
       const harness = makeHarness();
       yield* Effect.gen(function* () {
         const threads = yield* ThreadManagement.ThreadManagementService;
         const outbox = yield* EffectOutbox.EffectOutboxV2;
-        // An MCP launch names the thread and sends no message.
-        const threadId = ThreadId.make("thread:title:preset");
-        yield* threads.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make("command:title:preset:create"),
-          threadId,
-          projectId,
-          title: issueTitle,
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          createdBy: "agent",
-          creationSource: "mcp",
-        });
-        const requestId = CommandId.make("command:title:preset:message");
-        yield* threads.dispatch({
-          type: "message.dispatch",
-          commandId: requestId,
-          threadId,
-          messageId: MessageId.make("command:title:preset:message:message"),
-          text: "work on this and pr to dev",
-          titleSeed: "work on this and pr to dev",
-          attachments: [],
-          modelSelection,
-          dispatchMode: { type: "defer_start" },
-          createdBy: "user",
-          creationSource: "web",
-        });
+        // An MCP launch names the thread, or leaves a placeholder, and sends no message.
+        for (const [key, title, expectedTitle, generates] of [
+          ["preset", "[API] #4821 — retry webhook deliveries after a timeout", undefined, false],
+          ["placeholder", placeholderThreadTitle("Parent", 0), seed, true],
+        ] as const) {
+          const threadId = ThreadId.make(`thread:title:${key}`);
+          yield* threads.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`command:title:${key}:create`),
+            threadId,
+            projectId,
+            title,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdBy: "agent",
+            creationSource: "mcp",
+          });
+          const requestId = CommandId.make(`command:title:${key}:message`);
+          yield* threads.dispatch({
+            type: "message.dispatch",
+            commandId: requestId,
+            threadId,
+            messageId: MessageId.make(`command:title:${key}:message:message`),
+            text: seed,
+            titleSeed: seed,
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "defer_start" },
+            createdBy: "user",
+            creationSource: "web",
+          });
 
-        const settled = yield* threads.getThreadProjection(threadId);
-        assert.equal(settled.thread.title, issueTitle);
-        assert.isNotOk(settled.thread.titleRegeneration);
-        assert.deepEqual(
-          (yield* outbox.listByCommandId(requestId)).filter(
-            (effect) => effect.request.type === "thread-title.generate",
-          ),
-          [],
-        );
+          const settled = yield* threads.getThreadProjection(threadId);
+          assert.equal(settled.thread.title, expectedTitle ?? title, key);
+          assert.equal(
+            (yield* outbox.listByCommandId(requestId)).some(
+              (effect) => effect.request.type === "thread-title.generate",
+            ),
+            generates,
+            key,
+          );
+        }
       }).pipe(Effect.provide(harness.layer));
     }),
   );
