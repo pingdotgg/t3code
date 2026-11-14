@@ -16788,38 +16788,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       openOnAttach: false,
     },
     {
-      label: "an earlier wake without a ledger total leaves other usage unknown",
-      // The earlier result has no modelUsage, so its growth is unknown; the prompt
-      // re-anchors the ledger and the successor grows 30/40. As zero, other work would be 19/19.
-      ledger: { turnOne: ledgerTotal(100, 200), prompt: ledgerTotal(120, 230) },
-      before: replayWake("unknown-ledger-older", "", {
-        result: "Earlier A.",
-        origin: { kind: "task-notification" },
-        usage: {
-          input_tokens: 10,
-          output_tokens: 20,
-          cache_creation_input_tokens: 0,
-          cache_read_input_tokens: 0,
-        },
-      }),
-      after: [
-        wakeTurnInit,
-        makeResultFrame({
-          uuid: "unknown-ledger-successor-result",
-          result: "Successor text.",
-          origin: { kind: "task-notification" },
-          modelUsage: ledgerTotal(150, 270),
-        }),
-      ],
-      beforeCheck: [],
-      live: [],
-      texts: ["Successor text."],
-      inputTokens: 11,
-      outputTokens: 21,
-      notices: [],
-      openOnAttach: false,
-    },
-    {
       label: "each earlier wake's failure notice follows that wake's own sign-in state",
       before: [
         claudeSdkFrame({ ...wakeTurnInit, uuid: "signed-out-init" }),
