@@ -1,10 +1,16 @@
-import { applyThreadPullRequestLinkUpdate } from "@t3tools/shared/threadPullRequests";
+import { applyThreadPullRequestLinkUpdate } from "../threadPullRequests.ts";
+import { applyOrchestrationV2ThreadVisit } from "@t3tools/contracts";
 import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import {
+  restoreSubagentBodies,
+  restoreTurnItemBodies,
+  type DedupedBodySource,
+} from "@t3tools/shared/orchestrationV2DedupedBodies";
 import {
   createOrchestrationV2TurnItemVisibility,
   isOrchestrationV2TurnItemVisible,
@@ -54,6 +60,16 @@ function upsertEntity<T extends { readonly id: unknown }>(
   const next = [...items];
   next[index] = item;
   return next;
+}
+
+// A deduped item repeats a record the stream just sent, so search newest first.
+function latestBodies(projection: OrchestrationV2ThreadProjection): DedupedBodySource {
+  return {
+    messageText: (id) => projection.messages.findLast((message) => message.id === id)?.text,
+    checkpointFiles: (id) =>
+      projection.checkpoints.findLast((checkpoint) => checkpoint.id === id)?.files,
+    subagent: (id) => projection.subagents.findLast((subagent) => subagent.id === id),
+  };
 }
 
 function removeVisibleItem(
@@ -241,6 +257,29 @@ function upsertVisibleTurnItem(
   return updated;
 }
 
+// A user item retained for a queued run stays hidden until the run leaves the
+// queue, and its update can arrive before or after that run update. Items in
+// `turnItems` were loaded or streamed, so they skip the partial-window check;
+// items never received stay absent.
+function restoreQueuedUserItems(
+  projection: OrchestrationV2ThreadProjection,
+  runId: OrchestrationV2Run["id"],
+): OrchestrationV2ThreadProjection["visibleTurnItems"] {
+  let visibleTurnItems = projection.visibleTurnItems;
+  for (const item of projection.turnItems) {
+    if (item.runId !== runId || item.type !== "user_message" || item.inputIntent !== "queued_turn")
+      continue;
+    if (!shouldShowLocalTurnItem(projection, item)) continue;
+    visibleTurnItems = upsertVisibleTurnItem(
+      { ...projection, visibleTurnItems },
+      item,
+      false,
+      null,
+    );
+  }
+  return visibleTurnItems;
+}
+
 export function applyOrchestrationV2ProjectionEvent(
   projection: OrchestrationV2ThreadProjection | null,
   event: OrchestrationV2DomainEvent,
@@ -276,15 +315,28 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.interaction-mode-updated":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
+    case "thread.guest-share-updated":
       return { ...base, thread: event.payload };
-    // Visited tracking is read state, not activity: skip the updatedAt bump.
+    // Visited tracking and tags are not activity: skip the updatedAt bump.
     case "thread.visited":
+    case "thread.tags-updated":
     case "thread.marked-unread":
       return { ...projection, thread: event.payload };
+    case "thread.visit-recorded":
+      return {
+        ...projection,
+        thread: applyOrchestrationV2ThreadVisit(projection.thread, event.payload),
+      };
     case "run.created":
     case "run.updated": {
       const next = { ...base, runs: upsertEntity(base.runs, event.payload) };
-      return { ...next, visibleTurnItems: activeVisibleTurnItems(next) };
+      const visible = { ...next, visibleTurnItems: activeVisibleTurnItems(next) };
+      const wasQueued = base.runs.some(
+        (run) => run.id === event.payload.id && run.status === "queued",
+      );
+      return wasQueued && event.payload.status !== "queued"
+        ? { ...visible, visibleTurnItems: restoreQueuedUserItems(visible, event.payload.id) }
+        : visible;
     }
     case "run.background-work-cancelled":
       return {
@@ -306,7 +358,16 @@ export function applyOrchestrationV2ProjectionEvent(
     case "node.updated":
       return { ...base, nodes: upsertEntity(base.nodes, event.payload) };
     case "subagent.updated":
-      return { ...base, subagents: upsertEntity(base.subagents, event.payload) };
+      return {
+        ...base,
+        subagents: upsertEntity(
+          base.subagents,
+          restoreSubagentBodies(
+            event.payload,
+            base.subagents.find((subagent) => subagent.id === event.payload.id),
+          ),
+        ),
+      };
     case "provider-session.attached":
     case "provider-session.updated":
       return {
@@ -345,35 +406,39 @@ export function applyOrchestrationV2ProjectionEvent(
     case "plan.updated":
       return { ...base, plans: upsertEntity(base.plans, event.payload) };
     case "turn-item.updated": {
+      let payload = restoreTurnItemBodies(event.payload, latestBodies(projection));
       // Streamed updates land on the newest items, so search from the end.
       let itemIndex = projection.turnItems.length - 1;
-      while (itemIndex >= 0 && projection.turnItems[itemIndex]!.id !== event.payload.id) {
+      while (itemIndex >= 0 && projection.turnItems[itemIndex]!.id !== payload.id) {
         itemIndex -= 1;
       }
+      const deferredWork =
+        itemIndex === -1 ? undefined : projection.turnItems[itemIndex]?.deferredWork;
+      if (deferredWork !== undefined) payload = { ...payload, deferredWork };
       if (
         partialTimeline &&
         itemIndex === -1 &&
-        shouldDropMissingPartialTurnItem(projection, event.payload, latestLocalTurnOrdinal)
+        shouldDropMissingPartialTurnItem(projection, payload, latestLocalTurnOrdinal)
       ) {
         return projection;
       }
       const turnItems =
         itemIndex === -1
-          ? [...projection.turnItems, event.payload]
-          : replaceProjectionArrayItem(projection.turnItems, itemIndex, event.payload);
+          ? [...projection.turnItems, payload]
+          : replaceProjectionArrayItem(projection.turnItems, itemIndex, payload);
       const next = { ...base, turnItems };
       // Only interrupt requests can change another item's visibility. Streaming
       // text/tool updates must not recheck every row against every run.
       const previous = itemIndex === -1 ? undefined : projection.turnItems[itemIndex];
       const visible =
-        event.payload.type === "run_interrupt_request" || previous?.type === "run_interrupt_request"
+        payload.type === "run_interrupt_request" || previous?.type === "run_interrupt_request"
           ? { ...next, visibleTurnItems: activeVisibleTurnItems(next) }
           : next;
       return {
         ...next,
-        visibleTurnItems: shouldShowLocalTurnItem(next, event.payload)
-          ? upsertVisibleTurnItem(visible, event.payload, partialTimeline, latestLocalTurnOrdinal)
-          : removeVisibleItem(visible.visibleTurnItems, event.payload.id),
+        visibleTurnItems: shouldShowLocalTurnItem(next, payload)
+          ? upsertVisibleTurnItem(visible, payload, partialTimeline, latestLocalTurnOrdinal)
+          : removeVisibleItem(visible.visibleTurnItems, payload.id),
       };
     }
     case "checkpoint-scope.created":

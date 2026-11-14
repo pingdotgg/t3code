@@ -2,12 +2,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { createFileRoute } from "@tanstack/react-router";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { useState } from "react";
-import {
-  createTodoAtom,
-  deleteTodoAtom,
-  listTodosAtom,
-  toggleTodoAtom,
-} from "../rpc-client.ts";
+import { createTodoAtom, deleteTodoAtom, listTodosAtom, toggleTodoAtom } from "../rpc-client.ts";
 
 export const Route = createFileRoute("/")({
   component: Home,
@@ -18,8 +13,8 @@ function Home() {
     <main style={{ maxWidth: 640, margin: "0 auto", padding: "4rem 1.5rem" }}>
       <h1 style={{ margin: 0, fontSize: "2.25rem" }}>Todos</h1>
       <p style={{ marginTop: "0.75rem", color: "#475569", lineHeight: 1.6 }}>
-        TanStack Start UI &rarr; <code>AtomRpc</code> client &rarr; Effect RPC
-        worker &rarr; Drizzle &rarr; Neon Postgres.
+        TanStack Start UI &rarr; <code>AtomRpc</code> client &rarr; Effect RPC worker &rarr; Drizzle
+        &rarr; Neon Postgres.
       </p>
       <section style={{ marginTop: "2rem" }}>
         <TodoForm />
@@ -70,21 +65,12 @@ function TodoList() {
 
   const todos = AsyncResult.getOrElse(atom, () => []);
 
-  if (
-    (AsyncResult.isWaiting(atom) && !todos.length) ||
-    typeof window === "undefined"
-  ) {
-    return (
-      <p style={{ color: "#94a3b8", marginTop: "1.5rem" }}>Loading todos…</p>
-    );
+  if ((AsyncResult.isWaiting(atom) && !todos.length) || typeof window === "undefined") {
+    return <p style={{ color: "#94a3b8", marginTop: "1.5rem" }}>Loading todos…</p>;
   }
 
   if (!todos.length) {
-    return (
-      <p style={{ color: "#94a3b8", marginTop: "1.5rem" }}>
-        No todos yet — add one above.
-      </p>
-    );
+    return <p style={{ color: "#94a3b8", marginTop: "1.5rem" }}>No todos yet — add one above.</p>;
   }
 
   return (

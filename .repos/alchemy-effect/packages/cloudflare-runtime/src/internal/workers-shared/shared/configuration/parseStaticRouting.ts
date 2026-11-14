@@ -1,7 +1,7 @@
+import type { StaticRouting } from "../types.ts";
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 import { MAX_ROUTES_RULE_LENGTH, MAX_ROUTES_RULES } from "./constants.ts";
-import type { StaticRouting } from "../types.ts";
 
 const MAX_REPORTED_DUPLICATED_RULES = 5;
 
@@ -11,9 +11,7 @@ const MAX_REPORTED_DUPLICATED_RULES = 5;
 
 export function parseStaticRouting(input: Array<string>): StaticRouting {
   if (input.length === 0) {
-    throw new Error(
-      "No `run_worker_first` rules were provided; must provide at least 1 rule.",
-    );
+    throw new Error("No `run_worker_first` rules were provided; must provide at least 1 rule.");
   }
   if (input.length > MAX_ROUTES_RULES) {
     const seenRules = new Set<string>();
@@ -31,8 +29,7 @@ export function parseStaticRouting(input: Array<string>): StaticRouting {
       const reportedDuplicatedRules = [...seenRules]
         .filter((rule) => duplicatedRules.has(rule))
         .slice(0, MAX_REPORTED_DUPLICATED_RULES);
-      const unreportedDuplicatedRuleCount =
-        duplicatedRules.size - reportedDuplicatedRules.length;
+      const unreportedDuplicatedRuleCount = duplicatedRules.size - reportedDuplicatedRules.length;
       const unreportedDuplicatedRulesMessage =
         unreportedDuplicatedRuleCount > 0
           ? `\n...and ${unreportedDuplicatedRuleCount} more duplicated ${unreportedDuplicatedRuleCount === 1 ? "rule" : "rules"}.`
@@ -72,8 +69,7 @@ export function parseStaticRouting(input: Array<string>): StaticRouting {
     );
   }
 
-  const invalidAssetWorkerRules =
-    validateStaticRoutingRules(rawAssetWorkerRules);
+  const invalidAssetWorkerRules = validateStaticRoutingRules(rawAssetWorkerRules);
   const invalidUserWorkerRules = validateStaticRoutingRules(userWorkerRules);
   const errorMessage = formatInvalidRoutes([
     ...invalidRules,
