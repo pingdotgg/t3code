@@ -18957,6 +18957,27 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const finalModel = reportsModel || source === "delayed" ? reportedModel : null;
         assert.equal(task?.model, finalModel);
         assert.equal(task?.modelSelection?.model, finalModel ?? undefined);
+        // The run stops ingesting once its subagents settle unless the lookup is reported as pending.
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) => event.type === "background_work.updated" && !event.pending,
+          ),
+        );
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "background_work.updated"
+              ? [`pending:${event.pending}`]
+              : event.type === "subagent.updated" && event.subagent.status === "completed"
+                ? [`completed:${event.subagent.model}`]
+                : [],
+          ),
+          [
+            "pending:true",
+            "completed:null",
+            ...(finalModel === null ? [] : [`completed:${finalModel}`]),
+            "pending:false",
+          ],
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
