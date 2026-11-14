@@ -35,12 +35,17 @@ import * as Stream from "effect/Stream";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 import * as ProjectService from "./ProjectService.ts";
+
+const isProjectionStoreThreadNotFoundError = Schema.is(
+  ProjectionStore.ProjectionStoreThreadNotFoundError,
+);
 
 const IMPORT_EVENT_PREFIX = "agent-session-import:v2";
 const CLAUDE_SESSION_ID_PATTERN =
@@ -250,7 +255,11 @@ const make = Effect.gen(function* () {
       if (Option.isNone(imported) || imported.value.length === 0) return Effect.succeed([]);
       return orchestrator.getThreadRecords(runtime.threadId, []).pipe(
         Effect.map(({ thread }) => (thread.projectId === input.projectId ? imported.value : [])),
-        Effect.orElseSucceed(() => []),
+        Effect.catch((cause) =>
+          isProjectionStoreThreadNotFoundError(cause.cause)
+            ? Effect.succeed([])
+            : Effect.fail(new AgentSessionScanError({ operation: "read-projects", cause })),
+        ),
       );
     })).flat();
     const outcomes = scanner.recentThreads(project.workspaceRoot, completedSources);

@@ -388,6 +388,49 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
+it.effect("tolerates a missing transcript owner but propagates failed ownership reads", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+    const source = candidate(CODEX_MODEL_SELECTION, "ownership-read");
+    const threadId = importId(source);
+    yield* runtimes.upsert({
+      threadId: ThreadId.make("missing-owner"),
+      providerName: "codex",
+      providerInstanceId: source.source.providerInstanceId,
+      adapterKey: "codex",
+      runtimeMode: "full-access",
+      status: "stopped",
+      lastSeenAt: timestamp,
+      resumeCursor: null,
+      runtimePayload: { importedTranscripts: [source.source] },
+    });
+    const importer = yield* makeImporter([source]);
+    expect(yield* importer.run).toEqual({ importedCount: 1, skippedCount: 0 });
+
+    yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = '{}' WHERE thread_id = ${threadId}`;
+    expect(yield* Effect.flip(importer.run)).toMatchObject({
+      _tag: "AgentSessionScanError",
+      operation: "read-projects",
+      cause: {
+        _tag: "OrchestratorProjectionError",
+        threadId,
+        cause: { _tag: "ProjectionStoreReadError" },
+      },
+    });
+
+    yield* sql`DROP TABLE orchestration_v2_projection_threads`;
+    expect(yield* Effect.flip(importer.run)).toMatchObject({
+      _tag: "AgentSessionScanError",
+      operation: "read-projects",
+      cause: {
+        _tag: "OrchestratorProjectionError",
+        cause: { _tag: "ProjectionStoreReadError" },
+      },
+    });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
 it.effect("rechecks ownership after the import reaches the commit transaction", () =>
   Effect.gen(function* () {
     const enteringTransaction = yield* Deferred.make<void>();
