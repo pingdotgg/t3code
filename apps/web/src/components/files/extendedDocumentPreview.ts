@@ -302,7 +302,7 @@ async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
         ? repeat(node.attrs["table:number-columns-repeated"], TABLE_PREVIEW_MAX_COLUMNS)
         : 1;
   const markup = `<${tag}>${children}</${tag}>`;
-  reserveMarkup(tag.length * 2 + 5 + (count - 1) * markup.length);
+  reserveMarkup(count * markup.length - children.length);
   return markup.repeat(count);
 }
 function repeat(value: string | undefined, max: number) {
