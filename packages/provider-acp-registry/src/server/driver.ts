@@ -16,6 +16,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FiberSet from "effect/FiberSet";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -24,7 +25,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import { AcpRegistryAdapterV2Driver, type AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
+import { createAcpRegistryAdapterV2, type AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -659,13 +660,24 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       environment,
       hostEnvironment,
     );
-    const orchestrationAdapter = yield* AcpRegistryAdapterV2Driver.create({
+    const runInInstanceScope = yield* FiberSet.makeRuntime<never>();
+    const orchestrationAdapter = yield* createAcpRegistryAdapterV2({
       instanceId,
       displayName,
       accentColor,
       environment,
       enabled,
       config,
+      // Z.ai quota errors arrive as generic request errors, so any failed GLM prompt rereads usage.
+      ...(isZaiUsageLimitsInstance(effectiveConfig)
+        ? {
+            onPromptRequestError: () => {
+              runInInstanceScope(
+                (snapshot.refreshUsage ?? Effect.void).pipe(Effect.ignoreCause({ log: true })),
+              );
+            },
+          }
+        : {}),
     }).pipe(
       Effect.mapError(
         (cause) =>
