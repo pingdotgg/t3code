@@ -345,6 +345,7 @@ import {
   ServerUpsertKeybindingResult,
 } from "./server.ts";
 import {
+  HostResourcesInput,
   HostResourcesSnapshot,
   ResourceTelemetryHistory,
   ResourceTelemetryHistoryInput,
@@ -970,7 +971,7 @@ const WsServerGetProcessDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetProcessDia
 });
 
 const WsServerGetHostResourcesRpc = Rpc.make(WS_METHODS.serverGetHostResources, {
-  payload: Schema.Struct({}),
+  payload: HostResourcesInput,
   success: HostResourcesSnapshot,
   error: EnvironmentAuthorizationError,
 });

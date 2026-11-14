@@ -6,14 +6,51 @@ import { DesktopUpdateChannelSchema, DesktopUpdateStateSchema } from "./ipc.ts";
 
 export const RESOURCE_MONITOR_PROTOCOL_VERSION = 3 as const;
 
+export const HostVolumeRole = Schema.Literals(["t3Home", "worktrees"]);
+export type HostVolumeRole = typeof HostVolumeRole.Type;
+
+export const HostVolume = Schema.Struct({
+  mountPoint: Schema.String,
+  name: Schema.String,
+  fileSystem: Schema.String,
+  totalBytes: NonNegativeInt,
+  /** Space the server's user can write, which excludes blocks the filesystem reserves for root. */
+  availableBytes: NonNegativeInt,
+  roles: Schema.Array(HostVolumeRole),
+});
+export type HostVolume = typeof HostVolume.Type;
+
+export const HostStorage = Schema.Struct({
+  sampledAt: NonNegativeInt,
+  volumes: Schema.Array(HostVolume),
+  /** Set when volumes could not be listed; `volumes` then holds only what statfs could read. */
+  unavailableReason: Schema.optionalKey(Schema.String),
+});
+export type HostStorage = typeof HostStorage.Type;
+
+// Fields after totalMemoryBytes are optional so older servers and clients still decode.
 export const HostResourcesSnapshot = Schema.Struct({
   sampledAt: NonNegativeInt,
   cpuUtilization: Schema.NullOr(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }))),
   cpuCount: NonNegativeInt,
   availableMemoryBytes: NonNegativeInt,
   totalMemoryBytes: NonNegativeInt,
+  cpuModel: Schema.optionalKey(Schema.String),
+  loadAverage: Schema.optionalKey(
+    Schema.Struct({ one: Schema.Number, five: Schema.Number, fifteen: Schema.Number }),
+  ),
+  swap: Schema.optionalKey(
+    Schema.Struct({ totalBytes: NonNegativeInt, usedBytes: NonNegativeInt }),
+  ),
+  storage: Schema.optionalKey(HostStorage),
 });
 export type HostResourcesSnapshot = typeof HostResourcesSnapshot.Type;
+
+/** `machine` adds volumes and swap. Servers that predate it ignore the key and omit them. */
+export const HostResourcesInput = Schema.Struct({
+  detail: Schema.optionalKey(Schema.Literals(["load", "machine"])),
+});
+export type HostResourcesInput = typeof HostResourcesInput.Type;
 
 export const ResourceTelemetryIoSemantics = Schema.Literals([
   "storage",
@@ -66,6 +103,7 @@ export const ResourceMonitorCapabilities = Schema.Struct({
   ioBytes: Schema.Boolean,
   processStartTime: Schema.Boolean,
   processTree: Schema.Boolean,
+  hostSystem: Schema.optionalKey(Schema.Boolean),
 });
 export type ResourceMonitorCapabilities = typeof ResourceMonitorCapabilities.Type;
 
@@ -141,6 +179,13 @@ export const ResourceMonitorReadHistoryCommand = Schema.Struct({
 });
 export type ResourceMonitorReadHistoryCommand = typeof ResourceMonitorReadHistoryCommand.Type;
 
+export const ResourceMonitorHostSystemCommand = Schema.Struct({
+  version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
+  type: Schema.Literal("hostSystem"),
+  requestId: TrimmedNonEmptyString,
+});
+export type ResourceMonitorHostSystemCommand = typeof ResourceMonitorHostSystemCommand.Type;
+
 export const ResourceMonitorShutdownCommand = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("shutdown"),
@@ -155,6 +200,7 @@ export const ResourceMonitorCommand = Schema.Union([
   ResourceMonitorSampleNowCommand,
   ResourceMonitorProcessTableCommand,
   ResourceMonitorReadHistoryCommand,
+  ResourceMonitorHostSystemCommand,
   ResourceMonitorShutdownCommand,
 ]);
 export type ResourceMonitorCommand = typeof ResourceMonitorCommand.Type;
@@ -209,6 +255,27 @@ export const ResourceMonitorHistoryChunkEvent = Schema.Struct({
 });
 export type ResourceMonitorHistoryChunkEvent = typeof ResourceMonitorHistoryChunkEvent.Type;
 
+export const ResourceMonitorHostDisk = Schema.Struct({
+  mountPoint: Schema.String,
+  name: Schema.String,
+  fileSystem: Schema.String,
+  totalBytes: NonNegativeInt,
+  availableBytes: NonNegativeInt,
+  removable: Schema.Boolean,
+  readOnly: Schema.Boolean,
+});
+export type ResourceMonitorHostDisk = typeof ResourceMonitorHostDisk.Type;
+
+export const ResourceMonitorHostSystemEvent = Schema.Struct({
+  version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
+  type: Schema.Literal("hostSystem"),
+  requestId: TrimmedNonEmptyString,
+  disks: Schema.Array(ResourceMonitorHostDisk),
+  swapTotalBytes: NonNegativeInt,
+  swapUsedBytes: NonNegativeInt,
+});
+export type ResourceMonitorHostSystemEvent = typeof ResourceMonitorHostSystemEvent.Type;
+
 export const ResourceMonitorErrorEvent = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("error"),
@@ -223,6 +290,7 @@ export const ResourceMonitorEvent = Schema.Union([
   ResourceMonitorSnapshotEvent,
   ResourceMonitorProcessTableEvent,
   ResourceMonitorHistoryChunkEvent,
+  ResourceMonitorHostSystemEvent,
   ResourceMonitorErrorEvent,
 ]);
 export type ResourceMonitorEvent = typeof ResourceMonitorEvent.Type;
