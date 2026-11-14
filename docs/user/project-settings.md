@@ -283,3 +283,33 @@ On mobile, use **Settings → Source control** to change selected environment de
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.
+
+## Group non-Git projects across computers
+
+Assign the same explicit grouping identity to copies of a non-Git project to show them as one project with a choice of computers. Each computer keeps its own directory, project record, and threads. Names and paths alone never establish this relationship. Git projects continue to group by repository identity; the Separate grouping setting keeps all copies apart.
+
+Before grouping copies, [connect each computer's environment to the same client](./remote-access.md). Assigning an identity does not connect the computers.
+
+If `t3` is not available in your terminal, desktop users can [install the bundled command](./install.md#the-t3-command) from **Settings → About**, then open a new terminal.
+
+Generate a lowercase UUID v4 once (for example, `python -c "import uuid; print(uuid.uuid4())"`) and reuse it only for copies of that project:
+
+```sh
+t3 project add /path/to/sdk --grouping-identity <uuid>
+t3 project grouping /path/to/sdk
+t3 project list
+```
+
+Optional: change a copy's identity to move it to another group:
+
+```sh
+t3 project grouping /path/to/sdk --identity <another-uuid>
+```
+
+Optional: remove a copy's explicit identity to stop grouping it with those copies:
+
+```sh
+t3 project grouping /path/to/sdk --clear
+```
+
+With `--grouping-identity`, `project add` also updates an existing registration at that path, preserving its title and threads. Without the flag, adding an existing project still reports a conflict. `project list` returns JSON including the saved identity. Agents can use `t3_project_create` or `t3_project_update` with `groupingIdentity`; omit it to preserve the value or pass `null` to clear it. Read and list tools expose the identity. Update the servers and clients on all computers before assigning identities.

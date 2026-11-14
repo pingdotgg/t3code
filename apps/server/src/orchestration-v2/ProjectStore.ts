@@ -34,6 +34,7 @@ export const ProjectRow = Schema.Struct({
   title: Schema.String,
   hasCustomTitle: Schema.Boolean,
   workspaceRoot: Schema.String,
+  groupingIdentity: Schema.NullOr(Schema.String),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.NullOr(ThreadEnvMode),
   autoPull: Schema.Boolean,
@@ -63,6 +64,7 @@ function toShell(row: ProjectRow): OrchestrationProjectShell {
     title: row.title,
     hasCustomTitle: row.hasCustomTitle,
     workspaceRoot: row.workspaceRoot,
+    groupingIdentity: row.groupingIdentity,
     repositoryIdentity: null,
     defaultModelSelection: row.defaultModelSelection,
     defaultThreadEnvMode: row.defaultThreadEnvMode,
@@ -122,6 +124,7 @@ export const make = Effect.gen(function* () {
         title,
         has_custom_title AS "hasCustomTitle",
         workspace_root AS "workspaceRoot",
+        grouping_identity AS "groupingIdentity",
         default_model_selection_json AS "defaultModelSelection",
         default_thread_env_mode AS "defaultThreadEnvMode",
         auto_pull AS "autoPull",
@@ -155,6 +158,7 @@ export const make = Effect.gen(function* () {
             title,
             has_custom_title,
             workspace_root,
+            grouping_identity,
             default_model_selection_json,
             default_thread_env_mode,
             auto_pull,
@@ -172,6 +176,7 @@ export const make = Effect.gen(function* () {
             ${encoded.title},
             ${encoded.hasCustomTitle},
             ${encoded.workspaceRoot},
+            ${encoded.groupingIdentity},
             ${encoded.defaultModelSelection},
             ${encoded.defaultThreadEnvMode},
             ${encoded.autoPull},
@@ -193,6 +198,7 @@ export const make = Effect.gen(function* () {
             END,
             has_custom_title = MAX(projection_projects.has_custom_title, excluded.has_custom_title),
             workspace_root = excluded.workspace_root,
+            grouping_identity = excluded.grouping_identity,
             default_model_selection_json = excluded.default_model_selection_json,
             default_thread_env_mode = excluded.default_thread_env_mode,
             auto_pull = excluded.auto_pull,
@@ -244,6 +250,7 @@ export const make = Effect.gen(function* () {
           title: payload.title,
           hasCustomTitle: false,
           workspaceRoot: payload.workspaceRoot,
+          groupingIdentity: payload.groupingIdentity ?? null,
           defaultModelSelection: payload.defaultModelSelection,
           defaultThreadEnvMode: payload.defaultThreadEnvMode ?? null,
           autoPull: false,
@@ -270,6 +277,9 @@ export const make = Effect.gen(function* () {
       const payload = event.payload;
       yield* upsertRow({
         ...row,
+        ...(payload.groupingIdentity === undefined
+          ? {}
+          : { groupingIdentity: payload.groupingIdentity }),
         ...(payload.title === undefined ? {} : { title: payload.title, hasCustomTitle: true }),
         ...(payload.workspaceRoot === undefined ? {} : { workspaceRoot: payload.workspaceRoot }),
         ...(payload.defaultModelSelection === undefined

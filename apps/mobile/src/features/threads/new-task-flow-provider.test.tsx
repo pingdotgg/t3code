@@ -67,7 +67,10 @@ vi.mock("../../state/threads", () => ({ olderSettledThreads: {}, threadFamilies:
 vi.mock("../../state/pull-requests", () => ({ composerPullRequests: {} }));
 vi.mock("../../state/olderSettledShelf", () => ({ useOlderSettledCount: () => 0 }));
 vi.mock("../../state/project-grouping", () => ({
-  useMobileProjectGroupingSettings: () => ({ sidebarProjectGroupingMode: "none" }),
+  useMobileProjectGroupingSettings: () => ({
+    sidebarProjectGroupingMode: "repository",
+    sidebarProjectGroupingOverrides: {},
+  }),
 }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.openScratch }));
@@ -134,7 +137,12 @@ function setup() {
   vi.clearAllMocks();
   const registry = AtomRegistry.make();
   mocks.registry.mockReturnValue(registry);
-  const projects = [project("one", "a"), project("one", "b"), project("two", "b")];
+  const groupingIdentity = "39c61a1b-8a64-43a6-9da5-65c15da93d52";
+  const projects = [
+    project("one", "a"),
+    { ...project("one", "b"), groupingIdentity },
+    { ...project("two", "copy"), groupingIdentity },
+  ];
   mocks.projects.mockReturnValue(projects);
   mocks.presentation.mockReturnValue({
     isReady: true,
@@ -290,9 +298,9 @@ it("owns a status stream only while the draft is active, retaining draft choices
   expect(screen.current.selectedProject).toEqual(screen.projects[2]);
   expect(screen.snapshot(draftKey).project).toEqual({
     environmentId: "two",
-    projectId: "b",
+    projectId: "copy",
   });
-  expect(screen.events).toEqual(["start:/a", "start:/b", "start:/b"]);
+  expect(screen.events).toEqual(["start:/a", "start:/b", "start:/copy"]);
   // A late old-project result cannot replace the current environment's checkout.
   await screen.emit("/a", "stale-branch");
   expect(screen.current.currentCheckoutBranchName).toBe("main");
