@@ -1513,6 +1513,89 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
     });
 
+  it.effect("cancels a pending request when Codex withdraws it mid-turn", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "withdrawn-request-thread";
+      const nativeTurnId = "withdrawn-request-turn";
+      const pendingSeen = yield* Deferred.make<void>();
+      const elicitation = (id: number, serverName: string) => ({
+        type: "emit_inbound" as const,
+        label: `${serverName} elicitation`,
+        frame: {
+          id,
+          method: "mcpServer/elicitation/request",
+          params: {
+            threadId: nativeThreadId,
+            turnId: nativeTurnId,
+            serverName,
+            mode: "form",
+            message: `Confirm ${serverName}?`,
+            requestedSchema: { type: "object", properties: {} },
+          },
+        },
+      });
+      const transcript = makeCodexReplayTranscript({
+        scenario: "codex-withdrawn-request",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" }),
+          elicitation(100, "withdrawn"),
+          {
+            type: "emit_inbound",
+            label: "withdraw",
+            frame: {
+              method: "serverRequest/resolved",
+              params: { threadId: nativeThreadId, requestId: 100 },
+            },
+          },
+          elicitation(101, "control"),
+          {
+            type: "expect_outbound",
+            label: "control accepted",
+            frame: { id: 101, result: { action: "accept", content: {} } },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        (event) =>
+          event.type === "runtime_request.updated"
+            ? Deferred.succeed(pendingSeen, undefined)
+            : Effect.void,
+        undefined,
+        undefined,
+        (entry) => (entry.label === "withdraw" ? Deferred.await(pendingSeen) : Effect.void),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("withdrawn-request-attempt"),
+          text: "work",
+        }),
+      );
+      const requests = () =>
+        harness.events.flatMap((event) =>
+          event.type === "runtime_request.updated" ? [event.runtimeRequest] : [],
+        );
+      yield* harness.until(() => new Set(requests().map((request) => request.id)).size >= 2);
+      const [withdrawn, control] = [...new Set(requests().map((request) => request.id))];
+      yield* harness.runtime.respondToRuntimeRequest({ requestId: control!, decision: "accept" });
+
+      assert.equal(requests().findLast((request) => request.id === withdrawn)?.status, "cancelled");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps native image views available to the clients", () =>
     Effect.gen(function* () {
       const nativeThreadId = "image-view-thread";

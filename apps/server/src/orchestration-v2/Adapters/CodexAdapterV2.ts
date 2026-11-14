@@ -4608,6 +4608,37 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           return { node, request, turnItem };
         });
 
+        // Codex withdraws a request with serverRequest/resolved, which interrupts
+        // its handler. Close the request and its card so clients stop asking.
+        const cancelWithdrawnRequest = Effect.fnUntraced(function* (artifacts: {
+          readonly node: OrchestrationV2ExecutionNode;
+          readonly request: OrchestrationV2RuntimeRequest;
+          readonly turnItem: OrchestrationV2TurnItem;
+        }) {
+          const now = yield* DateTime.now;
+          yield* emitProviderEvent({
+            type: "runtime_request.updated",
+            driver: CODEX_PROVIDER,
+            threadId: artifacts.node.threadId,
+            runtimeRequest: { ...artifacts.request, status: "cancelled", resolvedAt: now },
+          });
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver: CODEX_PROVIDER,
+            node: { ...artifacts.node, status: "cancelled", completedAt: now },
+          });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CODEX_PROVIDER,
+            turnItem: {
+              ...artifacts.turnItem,
+              status: "cancelled",
+              completedAt: now,
+              updatedAt: now,
+            },
+          });
+        });
+
         const buildUserInputRequestArtifacts = Effect.fn(
           "CodexAdapterV2.buildUserInputRequestArtifacts",
         )(function* (input: {
@@ -5771,6 +5802,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   return updated;
                 }),
               ),
+              Effect.onInterrupt(() => cancelWithdrawnRequest(artifacts)),
             );
             if (resolved === "acceptForSession" || resolved === "acceptAlways") {
               allowance.add("command");
@@ -5843,6 +5875,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   return updated;
                 }),
               ),
+              Effect.onInterrupt(() => cancelWithdrawnRequest(artifacts)),
             );
             if (resolved === "acceptForSession" || resolved === "acceptAlways") {
               allowance.add("file-change");
@@ -5906,6 +5939,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   return updated;
                 }),
               ),
+              Effect.onInterrupt(() => cancelWithdrawnRequest(artifacts)),
             );
             return permissionsResponseFromDecision({
               decision: resolved,
@@ -5988,6 +6022,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   return updated;
                 }),
               ),
+              Effect.onInterrupt(() => cancelWithdrawnRequest(artifacts)),
             );
             return toMcpElicitationResponse(payload, resolved);
           }).pipe(Effect.orDie),
@@ -6052,6 +6087,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   return updated;
                 }),
               ),
+              Effect.onInterrupt(() => cancelWithdrawnRequest(artifacts)),
             );
             if (resolved === "acceptForSession" || resolved === "acceptAlways") {
               allowance.add("command");
@@ -6120,6 +6156,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   return updated;
                 }),
               ),
+              Effect.onInterrupt(() => cancelWithdrawnRequest(artifacts)),
             );
             if (resolved === "acceptForSession" || resolved === "acceptAlways") {
               allowance.add("file-change");
@@ -6180,6 +6217,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   return updated;
                 }),
               ),
+              Effect.onInterrupt(() => cancelWithdrawnRequest(artifacts)),
             );
             return {
               answers: toCodexUserInputAnswers(resolved, artifacts.nativeQuestionIds),
