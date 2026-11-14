@@ -177,7 +177,7 @@ const seedParentWithTerminalTask = (input: {
   readonly deliveryState: "pending" | "delivered" | "claimed" | "acknowledged" | "disposed";
   readonly completionWake?: "always" | "settled_only";
   readonly deliveryTaskIds?: ReadonlyArray<NodeId>;
-  readonly parentRunStatus?: "running" | "completed";
+  readonly parentRunStatus?: "running" | "completed" | "rolled_back";
   readonly siblingTasks?: ReadonlyArray<{
     readonly id: NodeId;
     readonly deliveryState: "delivered" | "claimed";
@@ -267,7 +267,7 @@ const seedParentWithTerminalTask = (input: {
             status: input.parentRunStatus ?? "running",
             requestedAt: input.now,
             startedAt: input.now,
-            completedAt: input.parentRunStatus === "completed" ? input.now : null,
+            completedAt: (input.parentRunStatus ?? "running") === "running" ? null : input.now,
             checkpointId: null,
             contextHandoffId: null,
             delegatedCompletion: {
@@ -328,6 +328,68 @@ const seedParentWithTerminalTask = (input: {
   });
 
 it.layer(layerTest)("delegated completion delivery repairs", (it) => {
+  it.effect.each([
+    // The delivery run has ended, but the successor delivery is not claimed yet.
+    { name: "reserved", reserved: true, held: ["subagent"], parentRunStatus: "completed" as const },
+    // No delivery will claim it, so it must not hold the parent forever.
+    { name: "unreserved", reserved: false, held: [], parentRunStatus: "completed" as const },
+    // A checkpoint rollback hides the run's items but keeps its cohort open, and a later run settles.
+    { name: "rolled back", reserved: true, held: [], parentRunStatus: "rolled_back" as const },
+  ])(
+    "holds an idle parent on a pending finished task only while $name",
+    ({ name, reserved, held, parentRunStatus }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`thread:wake-handoff-successor-${name}`);
+        const runId = RunId.make(`run:wake-handoff-successor-${name}`);
+        const deliveredTaskId = NodeId.make(`node:wake-handoff-successor-${name}-delivered`);
+        const taskId = NodeId.make(`node:wake-handoff-successor-${name}-pending`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId: ProjectId.make(`project:wake-handoff-successor-${name}`),
+          runId,
+          rootNodeId: NodeId.make(`node:wake-handoff-successor-${name}-root`),
+          taskId,
+          deliveryState: "pending",
+          ...(reserved ? { deliveryTaskIds: [deliveredTaskId] } : {}),
+          siblingTasks: [{ id: deliveredTaskId, deliveryState: "delivered" }],
+          parentRunStatus,
+          completionWake: "always",
+          now,
+        });
+        yield* sink.write({
+          events: [
+            subagentTurnItemEvent({
+              threadId,
+              runId,
+              taskId,
+              childThreadId: null,
+              status: "completed",
+              now,
+            }),
+            ...(parentRunStatus === "rolled_back"
+              ? [
+                  runEvent({
+                    threadId,
+                    runId: RunId.make(`${runId}-later`),
+                    ordinal: 2,
+                    status: "completed",
+                    now,
+                  }),
+                ]
+              : []),
+          ],
+        });
+        const shell = yield* orchestrator.getThreadShell(threadId);
+        assert.equal(shell?.status, "completed");
+        assert.deepEqual(
+          shell?.pendingBackgroundTasks?.map((task) => task.kind),
+          held,
+        );
+      }),
+  );
   it.effect(
     "interrupting a completion wake disposes both cohorts without reviving them on late results",
     () =>
@@ -1396,6 +1458,153 @@ const runEvent = (input: {
   },
 });
 
+const subagentTurnItemEvent = (input: {
+  readonly threadId: ThreadId;
+  readonly runId: RunId;
+  readonly taskId: NodeId;
+  readonly childThreadId: ThreadId | null;
+  readonly status: "running" | "completed";
+  readonly now: DateTime.Utc;
+}) => ({
+  id: EventId.make(`event:${input.taskId}:turn-item:${input.status}`),
+  type: "turn-item.updated" as const,
+  threadId: input.threadId,
+  runId: input.runId,
+  nodeId: input.taskId,
+  driver,
+  occurredAt: input.now,
+  payload: {
+    id: TurnItemId.make(`turn-item:${input.taskId}`),
+    threadId: input.threadId,
+    runId: input.runId,
+    nodeId: input.taskId,
+    providerThreadId: parentProviderThreadId(input.threadId),
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: input.status,
+    title: "Review the diff",
+    startedAt: input.now,
+    completedAt: input.status === "running" ? null : input.now,
+    updatedAt: input.now,
+    type: "subagent" as const,
+    subagentId: input.taskId,
+    origin: "app_owned" as const,
+    driver,
+    providerInstanceId: modelSelection.instanceId,
+    childThreadId: input.childThreadId,
+    prompt: "Review the diff.",
+    result: input.status === "running" ? null : "child finished",
+  },
+});
+
+// A delegated child with a running task on the parent and a running run of its own.
+const delegateChild = (input: {
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly runId: RunId;
+  readonly rootNodeId: NodeId;
+  readonly name: string;
+  readonly turnItem?: boolean;
+  readonly now: DateTime.Utc;
+}) =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const taskId = NodeId.make(`node:${input.name}`);
+    const childThreadId = ThreadId.make(`thread:${input.name}`);
+    const run = runEvent({
+      threadId: childThreadId,
+      runId: RunId.make(`run:${input.name}`),
+      ordinal: 1,
+      status: "running",
+      now: input.now,
+    });
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`event:${input.name}:thread`),
+          type: "thread.created",
+          threadId: childThreadId,
+          occurredAt: input.now,
+          payload: {
+            createdBy: "agent",
+            creationSource: "server",
+            id: childThreadId,
+            projectId: input.projectId,
+            title: input.name,
+            providerInstanceId: modelSelection.instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: input.threadId,
+              relationshipToParent: "subagent",
+              rootThreadId: input.threadId,
+            },
+            forkedFrom: { type: "node", nodeId: taskId },
+            createdAt: input.now,
+            updatedAt: input.now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        },
+        {
+          id: EventId.make(`event:${input.name}:task`),
+          type: "subagent.updated",
+          threadId: input.threadId,
+          runId: input.runId,
+          nodeId: taskId,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          occurredAt: input.now,
+          payload: {
+            id: taskId,
+            threadId: input.threadId,
+            runId: input.runId,
+            parentNodeId: input.rootNodeId,
+            origin: "app_owned",
+            createdBy: "agent",
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            providerThreadId: null,
+            childThreadId,
+            nativeTaskRef: null,
+            prompt: `Run ${input.name}.`,
+            title: null,
+            model: null,
+            completionWake: "always",
+            status: "running",
+            result: null,
+            startedAt: input.now,
+            completedAt: null,
+            updatedAt: input.now,
+          },
+        },
+        ...(input.turnItem === true
+          ? [
+              subagentTurnItemEvent({
+                threadId: input.threadId,
+                runId: input.runId,
+                taskId,
+                childThreadId,
+                status: "running",
+                now: input.now,
+              }),
+            ]
+          : []),
+        run,
+      ],
+    });
+    return { task: { id: taskId }, childThreadId, run: run.payload };
+  });
+
 const seedRestartCancelledChild = (input: {
   readonly parentThreadId: ThreadId;
   readonly projectId: ProjectId;
@@ -2032,6 +2241,102 @@ it.layer(layerContinuationWorkerTest)("interrupted completion wakes", (it) => {
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "subagent follow-ups",
   (it) => {
+    it.effect("keeps an idle parent waiting until each finished task's wake is dispatched", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:wake-handoff-parent");
+        const projectId = ProjectId.make("project:wake-handoff");
+        const runId = RunId.make("run:wake-handoff-parent");
+        const rootNodeId = NodeId.make("node:wake-handoff-parent-root");
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId,
+          runId,
+          rootNodeId,
+          taskId: NodeId.make("node:wake-handoff-seed"),
+          deliveryState: "acknowledged",
+          parentRunStatus: "completed",
+          now,
+        });
+        const roster = Effect.map(orchestrator.getThreadShell(threadId), (shell) =>
+          (
+            shell?.pendingBackgroundTasks?.map((task) =>
+              task.kind === "subagent" ? task.childThreadId : task.kind,
+            ) ?? []
+          ).toSorted(),
+        );
+        const complete = (run: OrchestrationV2Run) =>
+          sink.write({
+            events: [
+              {
+                ...runEvent({
+                  threadId: run.threadId,
+                  runId: run.id,
+                  ordinal: run.ordinal,
+                  status: "completed",
+                  now,
+                }),
+                payload: { ...run, status: "completed" as const, completedAt: now },
+              },
+            ],
+          });
+        // Returns the roster read after the child's result commits and before its wake run
+        // exists, then runs that wake the way the continuation worker does.
+        const finish = Effect.fn(function* (
+          child: Effect.Success<ReturnType<typeof delegateChild>>,
+        ) {
+          yield* complete(child.run);
+          let wake = yield* requests.take;
+          while (wake.threadId !== threadId) wake = yield* requests.take;
+          const delivery = wake.delegatedCompletion!;
+          assert.equal((yield* orchestrator.getThreadShell(threadId))?.status, "completed");
+          const held = yield* roster;
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`command:${delivery.messageId}`),
+            threadId,
+            messageId: delivery.messageId,
+            text: "Delegated task finished.",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            creationSource: "server",
+            delegatedCompletion: {
+              parentRunId: delivery.parentRunId,
+              generation: delivery.generation,
+              taskIds: [child.task.id],
+            },
+          });
+          const wakeRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.userMessageId === delivery.messageId,
+          )!;
+          yield* complete(wakeRun);
+          return held;
+        });
+        const child = (name: string) =>
+          delegateChild({
+            threadId,
+            projectId,
+            runId,
+            rootNodeId,
+            name: `wake-handoff-${name}`,
+            turnItem: true,
+            now,
+          });
+
+        const first = yield* child("first");
+        const second = yield* child("second");
+        assert.deepEqual(yield* finish(first), [first.childThreadId, second.childThreadId]);
+        assert.deepEqual(yield* roster, [second.childThreadId]);
+        // The spawning run already has a newer run, so the hold must key on the open delivery.
+        assert.deepEqual(yield* finish(second), [second.childThreadId]);
+        assert.deepEqual(yield* roster, []);
+      }),
+    );
+
     it.effect("a late unobserved read wakes a pending result without restarting", () =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -5140,89 +5445,14 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
           deliveryState: "acknowledged",
           now,
         });
-        // A delegated child with a running task on the parent and a running run of its own.
         const delegate = (name: string) =>
-          Effect.gen(function* () {
-            const taskId = NodeId.make(`node:late-settle-${key}-${name}`);
-            const childThreadId = ThreadId.make(`thread:late-settle-${key}-${name}`);
-            const run = runEvent({
-              threadId: childThreadId,
-              runId: RunId.make(`run:late-settle-${key}-${name}`),
-              ordinal: 1,
-              status: "running",
-              now,
-            });
-            yield* sink.write({
-              events: [
-                {
-                  id: EventId.make(`event:late-settle-${key}-${name}:thread`),
-                  type: "thread.created",
-                  threadId: childThreadId,
-                  occurredAt: now,
-                  payload: {
-                    createdBy: "agent",
-                    creationSource: "server",
-                    id: childThreadId,
-                    projectId: ProjectId.make(`late-settle-project-${key}`),
-                    title: name,
-                    providerInstanceId: modelSelection.instanceId,
-                    modelSelection,
-                    runtimeMode: "full-access",
-                    interactionMode: "default",
-                    branch: null,
-                    worktreePath: null,
-                    activeProviderThreadId: null,
-                    lineage: {
-                      parentThreadId: threadId,
-                      relationshipToParent: "subagent",
-                      rootThreadId: threadId,
-                    },
-                    forkedFrom: { type: "node", nodeId: taskId },
-                    createdAt: now,
-                    updatedAt: now,
-                    archivedAt: null,
-                    settledOverride: null,
-                    settledAt: null,
-                    lastVisitedAt: null,
-                    deletedAt: null,
-                  },
-                },
-                {
-                  id: EventId.make(`event:late-settle-${key}-${name}:task`),
-                  type: "subagent.updated",
-                  threadId,
-                  runId,
-                  nodeId: taskId,
-                  driver,
-                  providerInstanceId: modelSelection.instanceId,
-                  occurredAt: now,
-                  payload: {
-                    id: taskId,
-                    threadId,
-                    runId,
-                    parentNodeId: rootNodeId,
-                    origin: "app_owned",
-                    createdBy: "agent",
-                    driver,
-                    providerInstanceId: modelSelection.instanceId,
-                    providerThreadId: null,
-                    childThreadId,
-                    nativeTaskRef: null,
-                    prompt: `Run ${name}.`,
-                    title: null,
-                    model: null,
-                    completionWake: "always",
-                    status: "running",
-                    result: null,
-                    startedAt: now,
-                    completedAt: null,
-                    updatedAt: now,
-                  },
-                },
-                run,
-              ],
-            });
-            return { task: { id: taskId }, childThreadId, run: run.payload };
+          delegateChild({
+            threadId,
+            projectId: ProjectId.make(`late-settle-project-${key}`),
+            runId,
+            rootNodeId,
+            name: `late-settle-${key}-${name}`,
+            now,
           });
         const settled = (taskId: NodeId, afterSequence: number) =>
           sink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(

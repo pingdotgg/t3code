@@ -2382,6 +2382,29 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
     [...(yield* store.listAppOwnedChildThreadIds(threadId))],
     [childThreadIds.delivered, childThreadIds["no-delivery"]],
   );
+  // The owed-task hold starts from settled tasks, not from every turn item of the thread.
+  const { statements, tracer } = traceSqlStatements();
+  yield* store.getThreadShell(threadId).pipe(Effect.withTracer(tracer));
+  const shellPendingQuery = statements.find((statement) =>
+    statement.includes("FROM orchestration_v2_projection_subagents task"),
+  );
+  assert.isDefined(shellPendingQuery);
+  const sql = yield* SqlClient.SqlClient;
+  const plan = (yield* sql.unsafe<{ readonly detail: string }>(
+    `EXPLAIN QUERY PLAN ${shellPendingQuery}`,
+  )).flatMap((row) => (row.detail.startsWith("SEARCH ") ? [row.detail] : []));
+  const holdStart = plan.findIndex((detail) => detail.startsWith("SEARCH task "));
+  assert.isAtLeast(holdStart, 0);
+  const [taskLookup, runLookup, itemLookup] = plan.slice(holdStart, holdStart + 3);
+  assert.include(taskLookup, "orchestration_v2_projection_subagents_settled_idx");
+  assert.include(
+    runLookup,
+    "SEARCH r USING INDEX sqlite_autoindex_orchestration_v2_projection_runs_1",
+  );
+  assert.include(
+    itemLookup,
+    "SEARCH i USING INDEX orchestration_v2_projection_turn_items_node_ordinal_idx",
+  );
 });
 
 const backgroundThreadUpdatesKeepTimestamp = Effect.gen(function* () {

@@ -7970,6 +7970,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         AND i.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
         AND (i.run_id IS NULL OR r.status <> 'rolled_back')
         ${threadIds === undefined ? sql`` : sql`AND i.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))`}
+      -- A finished delegate's result commits before its wake run exists, and a delivery run ends
+      -- before the next delivery is claimed, so an owed task holds the parent while its open
+      -- cohort has a delivery reserved. Without an owning instance it holds completion, not
+      -- caller access.
+      UNION ALL
+      SELECT i.thread_id, json_set(i.payload_json, '$.status', 'waiting') AS payload_json,
+        NULL AS owning_provider_instance_id
+      -- Pinned: without stats the planner walks every turn item of the thread instead.
+      FROM orchestration_v2_projection_subagents task
+        INDEXED BY orchestration_v2_projection_subagents_settled_idx
+      CROSS JOIN orchestration_v2_projection_runs r ON r.run_id = task.run_id
+      CROSS JOIN orchestration_v2_projection_turn_items i
+        ON i.node_id = task.subagent_id AND i.thread_id = task.thread_id AND i.type = 'subagent'
+      WHERE task.status IN ('completed', 'interrupted', 'failed', 'cancelled')
+        AND r.status <> 'rolled_back'
+        AND task.completion_delivery_state IN ('claimed', 'pending')
+        AND task.origin = 'app_owned'
+        ${threadIds === undefined ? sql`` : sql`AND task.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))`}
+        AND i.status IN ('completed', 'interrupted', 'failed', 'cancelled')
+        AND json_extract(r.payload_json, '$.delegatedCompletion.disposition') = 'open'
+        AND json_extract(r.payload_json, '$.delegatedCompletion.delivery.messageId') IS NOT NULL
       ${
         activeRunIds.length === 0
           ? sql``
