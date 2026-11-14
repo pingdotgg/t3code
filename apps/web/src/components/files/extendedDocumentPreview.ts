@@ -9,9 +9,10 @@ import type JSZip from "jszip";
 
 import { type OfficeWorkerResult, type NotebookCell } from "./officePreviewProtocol";
 
-const ODS_PREVIEW_MAX_ROWS = 500;
-const ODS_PREVIEW_MAX_COLUMNS = 50;
+const TABLE_PREVIEW_MAX_ROWS = 500;
+const TABLE_PREVIEW_MAX_COLUMNS = 50;
 
+// `text` and `attrs` hold decoded values: escaped text is decoded once, CDATA stays literal.
 type XmlNode = { name: string; attrs: Record<string, string>; children: XmlNode[]; text: string };
 type OrderedXml = { [key: string]: OrderedXml[] | Record<string, string> | string };
 const escape = (value: string) =>
@@ -47,6 +48,7 @@ function parseXml(source: string): XmlNode {
     processEntities: false,
     trimValues: false,
     parseTagValue: false,
+    cdataPropName: "#cdata",
   });
   const ordered = parser.parse(source) as OrderedXml[];
   let count = 0;
@@ -60,6 +62,12 @@ function parseXml(source: string): XmlNode {
       if (++count > 100_000) throw new Error("This document has too much content to preview.");
       const name = Object.keys(item).find((key) => key !== ":@") ?? "#text";
       const value = item[name];
+      if (name === "#cdata") {
+        const literal = Array.isArray(value)
+          ? value.map((part) => part["#text"] ?? "").join("")
+          : "";
+        return { name: "#text", attrs: {}, children: [], text: literal };
+      }
       const attrs = Object.fromEntries(
         Object.entries((item[":@"] ?? {}) as Record<string, string>).map(([key, value]) => [
           key,
@@ -91,7 +99,7 @@ function parseXml(source: string): XmlNode {
           Object.entries(attrs).map(([key, value]) => [expanded(key, true), value]),
         ),
         children: Array.isArray(value) ? convert(value, depth + 1, namespaces) : [],
-        text: typeof value === "string" ? value : "",
+        text: typeof value === "string" ? decodeEntities(value) : "",
       };
     });
   }
@@ -116,7 +124,7 @@ function text(node: XmlNode): string {
   if (node.name === "text:s") return " ".repeat(repeat(node.attrs["text:c"], 100));
   if (node.name === "text:tab") return "\t";
   if (node.name === "text:line-break") return "\n";
-  return node.name === "#text" ? decodeEntities(node.text) : node.children.map(text).join("");
+  return node.name === "#text" ? node.text : node.children.map(text).join("");
 }
 function archivePath(base: string, href: string): string | null {
   if (/^(?:[a-z][a-z\d+.-]*:|\/|\\)/i.test(href)) return null;
@@ -287,13 +295,20 @@ async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
   };
   const tag = tags[node.name];
   if (!tag) return children;
-  reserveMarkup(tag.length * 2 + 5);
-  return `<${tag}>${children}</${tag}>`;
+  const count =
+    tag === "tr"
+      ? repeat(node.attrs["table:number-rows-repeated"], TABLE_PREVIEW_MAX_ROWS)
+      : tag === "td"
+        ? repeat(node.attrs["table:number-columns-repeated"], TABLE_PREVIEW_MAX_COLUMNS)
+        : 1;
+  const markup = `<${tag}>${children}</${tag}>`;
+  reserveMarkup(count * markup.length - children.length);
+  return markup.repeat(count);
 }
 function repeat(value: string | undefined, max: number) {
   const count = Number(value ?? 1);
   if (!Number.isSafeInteger(count) || count < 1)
-    throw new Error("This spreadsheet contains invalid repeated cells.");
+    throw new Error("This document contains invalid repeated content.");
   return Math.min(count, max);
 }
 export async function openDocument(
@@ -329,29 +344,29 @@ export async function openDocument(
               "";
             const count = repeat(
               cell.attrs["table:number-columns-repeated"],
-              ODS_PREVIEW_MAX_COLUMNS + 1,
+              TABLE_PREVIEW_MAX_COLUMNS + 1,
             );
-            if (value && cells.length + count > ODS_PREVIEW_MAX_COLUMNS) truncated = true;
-            for (let i = 0; i < count && cells.length < ODS_PREVIEW_MAX_COLUMNS; i++) {
+            if (value && cells.length + count > TABLE_PREVIEW_MAX_COLUMNS) truncated = true;
+            for (let i = 0; i < count && cells.length < TABLE_PREVIEW_MAX_COLUMNS; i++) {
               if (value.length > 10_000)
                 throw new Error("A spreadsheet cell is too large to preview.");
               cells.push(value);
             }
           }
           while (cells.at(-1) === "") cells.pop();
-          const count = repeat(row.attrs["table:number-rows-repeated"], ODS_PREVIEW_MAX_ROWS + 1);
+          const count = repeat(row.attrs["table:number-rows-repeated"], TABLE_PREVIEW_MAX_ROWS + 1);
           if (!cells.length) {
-            pendingEmptyRows = Math.min(ODS_PREVIEW_MAX_ROWS + 1, pendingEmptyRows + count);
+            pendingEmptyRows = Math.min(TABLE_PREVIEW_MAX_ROWS + 1, pendingEmptyRows + count);
             continue;
           }
-          while (pendingEmptyRows > 0 && rows.length < ODS_PREVIEW_MAX_ROWS) {
+          while (pendingEmptyRows > 0 && rows.length < TABLE_PREVIEW_MAX_ROWS) {
             rows.push([]);
             pendingEmptyRows--;
           }
           pendingEmptyRows = 0;
-          if (rows.length + count > ODS_PREVIEW_MAX_ROWS) truncated = true;
-          if (rows.length >= ODS_PREVIEW_MAX_ROWS) break;
-          for (let i = 0; i < count && rows.length < ODS_PREVIEW_MAX_ROWS; i++) {
+          if (rows.length + count > TABLE_PREVIEW_MAX_ROWS) truncated = true;
+          if (rows.length >= TABLE_PREVIEW_MAX_ROWS) break;
+          for (let i = 0; i < count && rows.length < TABLE_PREVIEW_MAX_ROWS; i++) {
             cellBytes += cells.reduce((size, cell) => size + cell.length, 0);
             if (cellBytes > 8 * 1024 * 1024)
               throw new Error("This spreadsheet has too much text to preview.");
@@ -423,6 +438,14 @@ function notebookText(value: unknown, limit = 256_000): string {
   if (result.length > limit) throw new Error("A notebook cell is too large to preview.");
   return result;
 }
+// IPython traceback frames may omit a final newline or follow it with ANSI SGR sequences.
+function tracebackLines(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  const frames = value.filter((frame): frame is string => typeof frame === "string");
+  return frames.map((frame, index) =>
+    index && !/\n(?:\u001b\[[\d;:]*m)*$/.test(frames[index - 1]!) ? `\n${frame}` : frame,
+  );
+}
 export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   if (bytes.byteLength > 8 * 1024 * 1024)
     throw new Error("Notebook preview limited to files under 8 MB.");
@@ -454,7 +477,9 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
           if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
           return {
             kind: "text" as const,
-            text: notebookText(output.text ?? data["text/plain"] ?? output.traceback),
+            text: notebookText(
+              output.text ?? data["text/plain"] ?? tracebackLines(output.traceback),
+            ),
           };
         })
         .filter((output) => output.text.trim().length > 0),
@@ -565,6 +590,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       const match = /^([a-z]+)(-?\d+)? ?/i.exec(source.slice(i));
       if (!match) {
         if (next === "~") emit("\u00a0");
+        // A backslash before a line break is \par; TextEdit ends paragraphs this way.
+        else if ((next === "\n" || next === "\r") && !state.skip) html += "<br>";
         i++;
         continue;
       }

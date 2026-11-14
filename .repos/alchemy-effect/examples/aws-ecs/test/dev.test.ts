@@ -15,10 +15,9 @@
  *     image without a redeploy
  */
 import { afterAll, expect, test } from "bun:test";
-import { DevCli, fetchOk } from "alchemy-test/DevCli";
-import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { DevCli, fetchOk } from "@alchemy.run/test/DevCli";
 
 const root = path.resolve(import.meta.dirname, "..");
 const STAGE = "dev-cli-test";
@@ -31,41 +30,29 @@ const apiSource = fs.readFileSync(apiPath, "utf8");
 const MARKER = 'service: "orders-api"';
 const MARKER_V2 = 'service: "orders-api-v2"';
 
-// The whole suite needs docker (floci and the service containers).
-const dockerAvailable =
-  spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0;
-
 afterAll(async () => {
   // Always leave the repo tree clean, even on a mid-reload failure.
   fs.writeFileSync(apiPath, apiSource);
 
   await cli.stop();
-  if (!process.env.NO_DESTROY && dockerAvailable) {
+  if (!process.env.NO_DESTROY) {
     cli.destroy({ timeout: 300_000 });
   }
 }, 400_000);
 
-test.skipIf(!dockerAvailable)(
+test(
   "alchemy dev runs the orders app fully locally with hot reload",
   async () => {
     cli.start();
 
     // The first dev deploy builds the Api/SeedTask/Report images and pulls
     // the Web image before printing stack outputs.
-    const url = await cli.pollUntil(
-      "url in stack outputs",
-      () => cli.outputUrl("url"),
-      {
-        tries: 600,
-        delayMs: 1000,
-      },
-    );
-    const apiUrl = await cli.pollUntil("apiUrl in stack outputs", () =>
-      cli.outputUrl("apiUrl"),
-    );
-    const seedUrl = await cli.pollUntil("seedUrl in stack outputs", () =>
-      cli.outputUrl("seedUrl"),
-    );
+    const url = await cli.pollUntil("url in stack outputs", () => cli.outputUrl("url"), {
+      tries: 600,
+      delayMs: 1000,
+    });
+    const apiUrl = await cli.pollUntil("apiUrl in stack outputs", () => cli.outputUrl("apiUrl"));
+    const seedUrl = await cli.pollUntil("seedUrl in stack outputs", () => cli.outputUrl("seedUrl"));
 
     // Dev identity: the emulated ALB's DNS resolves to 127.0.0.1 — no real
     // AWS. The port is whatever the emulator gateway bound; only the URLs
