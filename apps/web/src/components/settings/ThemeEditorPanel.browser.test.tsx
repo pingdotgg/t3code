@@ -79,27 +79,33 @@ async function renderPanel() {
 async function renderBesideSettings() {
   const onSettingsOpenChange = vi.fn();
   const onEditorOpenChange = vi.fn();
-  const screen = await render(
-    <>
-      <Dialog onOpenChange={onSettingsOpenChange} open>
-        <DialogPopup>
-          <DialogTitle>Settings</DialogTitle>
-        </DialogPopup>
-      </Dialog>
-      <ThemeEditorPanel
-        open
-        onOpenChange={onEditorOpenChange}
-        onSaved={() => true}
-        editingTheme={null}
-        initialAppearance="light"
-        restoreTheme={() => {}}
-      />
-    </>,
+  await using stack = new AsyncDisposableStack();
+  stack.use(
+    await render(
+      <>
+        <Dialog onOpenChange={onSettingsOpenChange} open>
+          <DialogPopup>
+            <DialogTitle>Settings</DialogTitle>
+          </DialogPopup>
+        </Dialog>
+        <ThemeEditorPanel
+          open
+          onOpenChange={onEditorOpenChange}
+          onSaved={() => true}
+          editingTheme={null}
+          initialAppearance="light"
+          restoreTheme={() => {}}
+        />
+      </>,
+    ),
   );
+  // Settings moves focus in on a later frame; landing after the test focuses the editor, it steals it.
+  await expect.element(page.getByRole("button", { name: "Close" })).toHaveFocus();
+  const screen = stack.move();
   return {
     onSettingsOpenChange,
     onEditorOpenChange,
-    [Symbol.asyncDispose]: () => screen[Symbol.asyncDispose](),
+    [Symbol.asyncDispose]: () => screen.disposeAsync(),
   };
 }
 
