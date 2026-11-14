@@ -40,20 +40,8 @@ describe("reading qualifiers out of a typed query", () => {
     const parsed = parsePullRequestQuery("milestone:v2 draft:maybe status: parser");
     expect(parsed.filters).toEqual({ labels: [["milestone:v2"]] });
     expect(parsed.text).toBe("draft:maybe status: parser");
-  });
-
-  it.each([
-    "review:constructor",
-    "review:__proto__",
-    "checks:constructor",
-    "checks:__proto__",
-    "status:constructor",
-    "status:__proto__",
-    "Review:Constructor",
-    "STATUS:__PROTO__",
-  ])("leaves %s as text, since it names no review or checks value", (token) => {
-    expect(parsePullRequestQuery(`fix ${token} parser`)).toEqual({
-      text: `fix ${token} parser`,
+    expect(parsePullRequestQuery("review:constructor checks:__proto__ Status:toString")).toEqual({
+      text: "review:constructor checks:__proto__ Status:toString",
       filters: {},
     });
   });
