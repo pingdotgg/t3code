@@ -13678,8 +13678,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       if (command.restoreFiles !== false) {
+        // A baseline has no run. Its node is the root node of the run that materialized it.
         const restoreRun = projection.runs.find((run) =>
-          targetCheckpoint.runId === null ? run.ordinal === 1 : run.id === targetCheckpoint.runId,
+          targetCheckpoint.runId === null
+            ? run.rootNodeId === targetCheckpoint.nodeId
+            : run.id === targetCheckpoint.runId,
         );
         const restoreScope = { cwd: restoreRun?.cwd ?? targetScope.cwd };
         const isolated = yield* isCheckpointRestoreIsolated(projection.thread, restoreScope, {

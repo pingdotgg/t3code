@@ -178,9 +178,11 @@ it.effect.each([
   { order: "cleanup-first", restoreFiles: false, leavesFolder: true },
   { order: "cleanup-first", restoreFiles: true, leavesFolder: true, shared: true },
   { order: "cleanup-first", restoreFiles: true, leavesFolder: true, createFails: true },
+  { order: "cleanup-first", restoreFiles: true, baselineOfLaterRun: true },
 ])("locks rollback with %s", (row) =>
   Effect.gen(function* () {
     const { order, restoreFiles, unmanaged, leavesFolder, shared, createFails } = row;
+    const laterNodeId = NodeId.make("rollback-worktree-later-node");
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const workspaceRoot = yield* fileSystem.realPath(
@@ -215,7 +217,13 @@ it.effect.each([
       },
       providerThread,
       providerSession: undefined,
-      checkpoint: { id: checkpointId, scopeId, status: "ready", appRunOrdinal: 0 },
+      checkpoint: {
+        id: checkpointId,
+        scopeId,
+        status: "ready",
+        appRunOrdinal: 0,
+        ...(row.baselineOfLaterRun ? { runId: null, nodeId: laterNodeId } : {}),
+      },
       scope: { id: scopeId, cwd: worktreePath },
       runsToRollback: [],
       targetAttempt: undefined,
@@ -224,6 +232,18 @@ it.effect.each([
       rootNodes: [],
       providerTurns: [],
     } as unknown as ProjectionStore.ProjectionCheckpointRollbackContext;
+    // The thread's first run started in the project folder, before the thread had this worktree.
+    const runs = row.baselineOfLaterRun
+      ? [
+          { id: RunId.make("rollback-worktree-run-1"), ordinal: 1, cwd: workspaceRoot },
+          {
+            id: RunId.make("rollback-worktree-run-2"),
+            ordinal: 2,
+            rootNodeId: laterNodeId,
+            cwd: worktreePath,
+          },
+        ]
+      : [];
     const testLayer = CheckpointRollbackService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -259,8 +279,9 @@ it.effect.each([
               }),
           }),
           Layer.mock(CheckpointService.CheckpointServiceV2)({
-            restore: () =>
+            restore: ({ scope }) =>
               Effect.gen(function* () {
+                assert.equal(scope.cwd, worktreePath);
                 assert.isTrue(
                   yield* fileSystem.exists(path.join(worktreePath, ".git")).pipe(Effect.orDie),
                 );
@@ -278,7 +299,7 @@ it.effect.each([
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getThread: () => Effect.succeed(projection.thread),
             getCheckpointRollbackContext: () => Effect.succeed(projection),
-            getThreadRecords: () => Effect.succeed({ runs: [] } as never),
+            getThreadRecords: () => Effect.succeed({ runs } as never),
             getShellSnapshot: () =>
               Effect.succeed({
                 schemaVersion: 1,

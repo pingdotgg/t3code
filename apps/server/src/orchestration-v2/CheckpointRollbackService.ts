@@ -230,9 +230,11 @@ export const layer: Layer.Layer<
         ["runs"],
         checkpoint.runId === null ? undefined : { runIds },
       );
-      const runCwd = (target: Pick<OrchestrationV2Checkpoint, "runId">) =>
-        runs.find((run) => (target.runId === null ? run.ordinal === 1 : run.id === target.runId))
-          ?.cwd ?? scope.cwd;
+      // A baseline has no run. Its node is the root node of the run that materialized it.
+      const runCwd = (target: Pick<OrchestrationV2Checkpoint, "runId" | "nodeId">) =>
+        runs.find((run) =>
+          target.runId === null ? run.rootNodeId === target.nodeId : run.id === target.runId,
+        )?.cwd ?? scope.cwd;
       const restoreScope = { ...scope, cwd: runCwd(checkpoint) };
       const restoreFiles = input.restoreFiles !== false;
       const isolated = isCheckpointRestoreIsolated(context.thread, restoreScope, {

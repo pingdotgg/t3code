@@ -2149,9 +2149,15 @@ it.effect.each([
   { firstRun: "moved", cwd: "/baseline-restore/moved-away", admitted: false },
   { firstRun: "same", cwd: process.cwd(), admitted: true },
   { firstRun: "legacy", cwd: undefined, admitted: true },
+  {
+    firstRun: "moved-earlier",
+    cwd: "/baseline-restore/moved-away",
+    laterRun: true,
+    admitted: true,
+  },
 ])(
-  "admits a thread-start file restore by the first run's folder ($firstRun)",
-  ({ firstRun, cwd, admitted }) =>
+  "admits a baseline file restore by the folder of the run that took it ($firstRun)",
+  ({ firstRun, cwd, laterRun, admitted }) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -2161,8 +2167,10 @@ it.effect.each([
       const providerThreadId = ProviderThreadId.make(`provider-thread:${name}`);
       const scopeId = CheckpointScopeId.make(`scope:${name}`);
       const checkpointId = CheckpointId.make(`checkpoint:${name}`);
-      const runId = RunId.make(`run:${name}`);
-      const nodeId = NodeId.make(`node:${name}`);
+      const firstRunId = RunId.make(`run:${name}`);
+      const firstNodeId = NodeId.make(`node:${name}`);
+      const runId = laterRun ? RunId.make(`run:${name}:later`) : firstRunId;
+      const nodeId = laterRun ? NodeId.make(`node:${name}:later`) : firstNodeId;
       const now = yield* DateTime.now;
       yield* projections.apply(threadCreated({ threadId, projectId, worktreePath: process.cwd() }));
       yield* projections.apply({
@@ -2223,16 +2231,30 @@ it.effect.each([
       });
       yield* projections.apply(
         runCreated({
-          id: runId,
+          id: firstRunId,
           threadId,
           ordinal: 1,
           providerInstanceId: instanceId,
           providerThreadId,
-          rootNodeId: nodeId,
+          rootNodeId: firstNodeId,
           cwd,
           occurredAt: now,
         }),
       );
+      if (laterRun) {
+        yield* projections.apply(
+          runCreated({
+            id: runId,
+            threadId,
+            ordinal: 2,
+            providerInstanceId: instanceId,
+            providerThreadId,
+            rootNodeId: nodeId,
+            cwd: process.cwd(),
+            occurredAt: now,
+          }),
+        );
+      }
       const rollback = orchestrator.dispatch({
         type: "checkpoint.rollback",
         commandId: CommandId.make(`rollback-${name}`),
