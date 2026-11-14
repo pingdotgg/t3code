@@ -20925,6 +20925,84 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("wakes the parent with a background subagent's SubagentHandback report", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const pointer = `This agent's report was delivered to you as a message from "agent" (its SubagentHandback call). Read it there; it is not repeated here.`;
+        const launchId = "toolu-handback-background-launch";
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-handback-background"),
+            text: "Delegate this task in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeSubagentTaskStartedFrame({
+            taskId: "agent-handback-background",
+            toolUseId: launchId,
+            uuid: "00000000-0000-4000-8000-000000000a01",
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000a02", result: "Launched." }),
+        );
+        yield* harness.awaitTerminal(1);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "assistant",
+            uuid: "00000000-0000-4000-8000-000000000a03",
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: launchId,
+            message: {
+              id: "handback-message-background",
+              type: "message",
+              role: "assistant",
+              model: "claude-sonnet-4-6",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "toolu-handback-background",
+                  name: "SubagentHandback",
+                  input: { message: "## Report" },
+                },
+              ],
+            },
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeSubagentNotificationFrame({
+            taskId: "agent-handback-background",
+            toolUseId: launchId,
+            summary: pointer,
+            uuid: "00000000-0000-4000-8000-000000000a04",
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000a05", text: "Done." }),
+        );
+        yield* harness.awaitContinuation(1);
+        assert.equal(harness.continuationRequests[0]?.detail, "## Report");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps a foreground fork running past the placeholder result for its own launch", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
