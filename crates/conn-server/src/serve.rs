@@ -282,6 +282,8 @@ pub async fn serve_with_instances(
     println!("providers: {provider_names}");
     // Probes spawn provider CLIs; T3 starts them once the server is ready, too.
     crate::methods::provider::start_status_refresh(&state.deps);
+    // `model-manifest.json`, fetched and cached as the T3 server's provider checks do.
+    crate::model_manifest::start(state_dir.clone(), environment.clone());
     if !is_desktop {
         // One code, valid 24 hours, spent by the first device that pairs.
         match auth.issue_pairing_code(None, auth::STARTUP_PAIRING_CODE_TTL_MS) {

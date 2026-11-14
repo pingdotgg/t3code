@@ -730,6 +730,23 @@ impl Inner {
         }
     }
 
+    /// The branch checked out in the launch's project folder; `None` without a host, a
+    /// project or a branch.
+    async fn project_branch(&self, input: &Value) -> Option<String> {
+        let host = self.host.as_ref()?;
+        let project_id = input["projectId"].as_str()?.to_owned();
+        let root = self
+            .db(move |store| -> Result<Option<String>, String> {
+                let tx = store.tx()?;
+                let project = tx.project(&project_id);
+                tx.rollback();
+                Ok(project?.and_then(|p| p["workspaceRoot"].as_str().map(str::to_owned)))
+            })
+            .await
+            .ok()??;
+        host.current_branch(&root).await
+    }
+
     async fn provision_worktree(
         &self,
         thread_id: &str,
@@ -768,6 +785,11 @@ impl Inner {
             .map_or_else(|| format!("thread:{command_id}"), str::to_owned);
         let strategy = &input["workspaceStrategy"];
         let (branch, worktree_path) = match strategy["type"].as_str() {
+            // `launchBranch`: a project-folder launch that names no branch records the
+            // folder's checkout, as the composer does.
+            Some("root") if !strategy["branch"].is_string() => {
+                (json!(self.project_branch(&input).await), Value::Null)
+            }
             Some("root") => (strategy["branch"].clone(), Value::Null),
             Some("existing_worktree") => {
                 (strategy["branch"].clone(), strategy["worktreePath"].clone())
@@ -994,6 +1016,24 @@ impl Engine for SqliteEngine {
 
     fn launch_thread(&self, input: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
         Box::pin(async move {
+            // `ThreadLaunchService` asks `assertProviderInstanceEnabled` before it makes the
+            // thread, so a refused launch leaves no thread behind.
+            if let Some(host) = &self.inner.host
+                && let (Some(project), Some(instance)) = (
+                    input["projectId"].as_str(),
+                    input["modelSelection"]["instanceId"].as_str(),
+                )
+                && !host.provider_instance_enabled(Some(project), instance)
+            {
+                return Err(EngineError::Rejected(json!({
+                    "_tag": "OrchestrationV2ThreadLaunchError",
+                    "commandId": input["commandId"],
+                    "projectId": input["projectId"],
+                    "message": format!(
+                        "Provider instance \"{instance}\" is disabled for project {project}."
+                    ),
+                })));
+            }
             self.inner
                 .launch(input.clone())
                 .await

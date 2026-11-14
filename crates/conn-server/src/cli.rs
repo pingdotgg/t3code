@@ -14,6 +14,9 @@ use serde_json::{Value, json};
 
 use conn_support::time::iso_from_ms;
 
+#[path = "cli_thread.rs"]
+pub mod thread;
+
 use crate::{
     auth::{
         self, AuthStore, PAIRING_CODE_TTL_MS, PairingRequest, SESSION_TTL_MS, STANDARD_SCOPES,
@@ -32,11 +35,18 @@ usage:
   conn-server auth pairing create [--scopes <list>] [--ttl <ttl>] [--label <label>] [--base-url <url>] [--json]
   conn-server auth pairing list [--json]
   conn-server auth pairing revoke <id>
-  conn-server auth session issue [--scopes <list>] [--ttl <ttl>] [--label <label>] [--subject <s>] [--token-only] [--json]
+  conn-server auth session issue [--scope <scope>]... [--scopes <list>] [--ttl <ttl>] [--label <label>] [--subject <s>] [--token-only] [--json]
   conn-server auth session list [--json]
   conn-server auth session revoke <session-id>
   conn-server project add <path> [--title <title>]
+  conn-server thread list [--project <id or path>] [--json]
+  conn-server thread start <project> <message or -> [--title <t>] [--provider <id> --model <slug>]
+              [--worktree <base-ref> [--branch <name>]] [--wait] [--json]
+  conn-server thread send <thread> <message or -> [--wait] [--json]
+  conn-server thread show <thread> [--messages <n>] [--json]
 
+A repeated --scope, or --scopes <list>, replaces the default scopes. thread --wait exits 1
+when the run fails and 2 when it waits for an answer.
 Every command takes --base-dir (or $T3CODE_HOME, default ~/.t3) or --state-dir.
 --session-idle-timeout (or $CONN_SESSION_IDLE_TIMEOUT): minutes before an idle provider
 session and its process close; 0 keeps them open. Default 30, as the T3 server.
@@ -110,6 +120,10 @@ pub enum Command {
         path: PathBuf,
         title: Option<String>,
     },
+    Thread {
+        state_dir: PathBuf,
+        command: thread::ThreadCommand,
+    },
     Help,
     Version,
 }
@@ -132,6 +146,7 @@ struct Args {
 const SWITCHES: &[&str] = &[
     "--json",
     "--token-only",
+    "--wait",
     "--no-browser",
     "--auto-bootstrap-project-from-cwd",
     "--tailscale-serve",
@@ -194,7 +209,13 @@ impl Args {
         )
     }
 
+    /// A repeated `--scope` (the T3 CLI's flag) or `--scopes <list>`; both replace the
+    /// standard set. Duplicates go; the first place counts.
     fn scopes(&self) -> Result<Vec<String>, String> {
+        let repeated = self.values("--scope");
+        if !repeated.is_empty() {
+            return auth::parse_scopes(&repeated.join(" "));
+        }
         match self.value("--scopes") {
             Some(list) => auth::parse_scopes(&list),
             None => Ok(STANDARD_SCOPES.iter().map(|s| s.to_string()).collect()),
@@ -251,7 +272,14 @@ pub fn parse(raw: Vec<String>) -> Result<Command, String> {
             })
         }
         ["auth", "pairing", "create"] => {
-            args.only(&["--scopes", "--ttl", "--label", "--base-url", "--json"])?;
+            args.only(&[
+                "--scope",
+                "--scopes",
+                "--ttl",
+                "--label",
+                "--base-url",
+                "--json",
+            ])?;
             Ok(Command::PairingCreate {
                 state_dir,
                 scopes: args.scopes()?,
@@ -274,6 +302,7 @@ pub fn parse(raw: Vec<String>) -> Result<Command, String> {
         }
         ["auth", "session", "issue"] => {
             args.only(&[
+                "--scope",
                 "--scopes",
                 "--ttl",
                 "--label",
@@ -312,12 +341,79 @@ pub fn parse(raw: Vec<String>) -> Result<Command, String> {
                 title: args.value("--title"),
             })
         }
+        ["thread", ..] => thread_args(&args, &words, state_dir),
         [] | ["serve" | "start"] | ["serve" | "start", _] => serve_args(&args, state_dir),
-        [cwd] if !matches!(*cwd, "pair" | "auth" | "project") && Path::new(cwd).is_dir() => {
+        [cwd]
+            if !matches!(*cwd, "pair" | "auth" | "project" | "thread")
+                && Path::new(cwd).is_dir() =>
+        {
             serve_args(&args, state_dir)
         }
         _ => Err(format!("unknown command `{}`", words.join(" "))),
     }
+}
+
+/// `thread list|start|send|show`, with the flags `apps/server/src/cli/thread.ts` takes.
+fn thread_args(args: &Args, words: &[&str], state_dir: PathBuf) -> Result<Command, String> {
+    use thread::ThreadCommand;
+    let json = args.has("--json");
+    let wait = args.has("--wait");
+    let command = match words {
+        ["thread", "list"] => {
+            args.only(&["--project", "--json"])?;
+            ThreadCommand::List {
+                project: args.value("--project").unwrap_or_else(|| ".".into()),
+                json,
+            }
+        }
+        ["thread", "start", project, message] => {
+            args.only(&[
+                "--title",
+                "--provider",
+                "--model",
+                "--worktree",
+                "--branch",
+                "--wait",
+                "--json",
+            ])?;
+            ThreadCommand::Start {
+                project: (*project).to_owned(),
+                message: (*message).to_owned(),
+                title: args.value("--title"),
+                provider: args.value("--provider"),
+                model: args.value("--model"),
+                worktree: args.value("--worktree"),
+                branch: args.value("--branch"),
+                wait,
+                json,
+            }
+        }
+        ["thread", "send", thread, message] => {
+            args.only(&["--wait", "--json"])?;
+            ThreadCommand::Send {
+                thread: (*thread).to_owned(),
+                message: (*message).to_owned(),
+                wait,
+                json,
+            }
+        }
+        ["thread", "show", thread] => {
+            args.only(&["--messages", "--json"])?;
+            let messages = match args.value("--messages") {
+                Some(n) => n
+                    .parse()
+                    .map_err(|_| format!("--messages takes a whole number, not `{n}`"))?,
+                None => 10,
+            };
+            ThreadCommand::Show {
+                thread: (*thread).to_owned(),
+                messages,
+                json,
+            }
+        }
+        _ => return Err(format!("unknown command `{}`", words.join(" "))),
+    };
+    Ok(Command::Thread { state_dir, command })
 }
 
 fn serve_args(args: &Args, state_dir: PathBuf) -> Result<Command, String> {
@@ -624,6 +720,9 @@ pub fn explicit_listen_and_home(raw: &[String]) -> (bool, bool) {
 
 /// Runs a command other than `serve`. Returns the exit code.
 pub fn run(command: Command) -> i32 {
+    if let Command::Thread { state_dir, command } = command {
+        return thread::run(&state_dir, command);
+    }
     if matches!(command, Command::AcpMcpBridge) {
         return crate::acp_mcp_bridge::main();
     }
@@ -649,6 +748,12 @@ fn print(text: String) {
     let mut out = io::stdout().lock();
     let _ = out.write_all(text.as_bytes());
     let _ = out.flush();
+}
+
+/// What the T3 CLI's `auth` commands print: the formatted text, whose last line already ends
+/// in a newline, through `Console.log`, which adds one more.
+fn log(text: String) {
+    print(format!("{text}\n"));
 }
 
 fn pretty(value: &Value) -> String {
@@ -688,7 +793,9 @@ fn run_inner(command: Command) -> Result<(), String> {
             conn_contract::contract_commit()
         )),
         Command::Serve(_) => return Err("serve runs from main".into()),
-        Command::AcpMcpBridge => return Err("acp-mcp-bridge runs from run".into()),
+        Command::Thread { .. } | Command::AcpMcpBridge => {
+            return Err("thread and acp-mcp-bridge run from run".into());
+        }
         Command::Pair {
             state_dir,
             scopes,
@@ -740,7 +847,7 @@ fn run_inner(command: Command) -> Result<(), String> {
                 if let Some(url) = &pair_url {
                     body["pairUrl"] = json!(url);
                 }
-                print(pretty(&body));
+                log(pretty(&body));
             } else {
                 let mut lines = vec![
                     format!("Issued client pairing token {}.", issued.id),
@@ -750,7 +857,7 @@ fn run_inner(command: Command) -> Result<(), String> {
                     lines.push(format!("Pair URL: {url}"));
                 }
                 lines.push(format!("Expires at: {}", iso_from_ms(issued.expires_at_ms)));
-                print(format!("{}\n", lines.join("\n")));
+                log(format!("{}\n", lines.join("\n")));
             }
         }
         Command::PairingList { state_dir, json } => {
@@ -786,9 +893,9 @@ fn run_inner(command: Command) -> Result<(), String> {
                         row
                     })
                     .collect();
-                print(pretty(&json!(rows)));
+                log(pretty(&json!(rows)));
             } else if links.is_empty() {
-                print("No active pairing credentials.\n".into());
+                log("No active pairing credentials.\n".into());
             } else {
                 let blocks: Vec<String> = links
                     .iter()
@@ -810,14 +917,14 @@ fn run_inner(command: Command) -> Result<(), String> {
                         )
                     })
                     .collect();
-                print(format!("{}\n", blocks.join("\n\n")));
+                log(format!("{}\n", blocks.join("\n\n")));
             }
         }
         Command::PairingRevoke { state_dir, id } => {
             let revoked = open_auth(&state_dir)?
                 .revoke_pairing_link(&id)
                 .map_err(|e| e.to_string())?;
-            print(if revoked {
+            log(if revoked {
                 format!("Revoked pairing credential {id}.\n")
             } else {
                 format!("No active pairing credential found for {id}.\n")
@@ -840,19 +947,34 @@ fn run_inner(command: Command) -> Result<(), String> {
             let p = &issued.principal;
             let client = issued.client.to_contract();
             if token_only {
-                print(format!("{}\n", issued.token));
+                log(format!("{}\n", issued.token));
             } else if json {
-                print(pretty(&json!({
-                    "sessionId": p.session_id,
-                    "token": issued.token,
-                    "method": "bearer-access-token",
-                    "scopes": p.scopes,
-                    "subject": p.subject,
-                    "client": client,
-                    "expiresAt": iso_from_ms(p.expires_at_ms),
-                })));
+                // `formatIssuedSession`: these keys in this order, the client as stored.
+                #[derive(serde::Serialize)]
+                #[serde(rename_all = "camelCase")]
+                struct Issued<'a> {
+                    session_id: &'a str,
+                    token: &'a str,
+                    method: &'a str,
+                    scopes: &'a [String],
+                    subject: &'a str,
+                    client: &'a conn_contract::AuthClientMetadata,
+                    expires_at: String,
+                }
+                let body = Issued {
+                    session_id: &p.session_id,
+                    token: &issued.token,
+                    method: "bearer-access-token",
+                    scopes: &p.scopes,
+                    subject: &p.subject,
+                    client: &client,
+                    expires_at: iso_from_ms(p.expires_at_ms),
+                };
+                let text = serde_json::to_string_pretty(&body)
+                    .map_err(|e| format!("could not print the session: {e}"))?;
+                log(format!("{text}\n"));
             } else {
-                print(format!(
+                log(format!(
                     "Issued bearer access token {}.\nScopes: {}\nToken: {}\nSubject: {}\nClient: {}\nExpires at: {}\n",
                     p.session_id,
                     p.scopes.join(" "),
@@ -882,9 +1004,9 @@ fn run_inner(command: Command) -> Result<(), String> {
                         })
                     })
                     .collect();
-                print(pretty(&json!(rows)));
+                log(pretty(&json!(rows)));
             } else if sessions.is_empty() {
-                print("No active sessions.\n".into());
+                log("No active sessions.\n".into());
             } else {
                 let blocks: Vec<String> = sessions
                     .iter()
@@ -909,7 +1031,7 @@ fn run_inner(command: Command) -> Result<(), String> {
                         )
                     })
                     .collect();
-                print(format!("{}\n", blocks.join("\n\n")));
+                log(format!("{}\n", blocks.join("\n\n")));
             }
         }
         Command::SessionRevoke { state_dir, id } => {
@@ -917,7 +1039,7 @@ fn run_inner(command: Command) -> Result<(), String> {
                 .revoke_session(None, &id)
                 .map_err(|e| e.to_string())?
                 .unwrap_or(false);
-            print(if revoked {
+            log(if revoked {
                 format!("Revoked session {id}.\n")
             } else {
                 format!("No active session found for {id}.\n")

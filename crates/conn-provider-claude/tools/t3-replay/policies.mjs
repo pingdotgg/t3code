@@ -6,6 +6,7 @@
 //
 //   node policies.mjs <conn monorepo> > policies.json
 
+import "../../../../tools/no-outside-fetch.mjs";
 import * as NodeURL from "node:url";
 import * as NodePath from "node:path";
 

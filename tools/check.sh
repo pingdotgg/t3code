@@ -7,6 +7,9 @@
 # No check calls a model: the server checks use `examples/replay_server` (the engine's fake
 # provider), and `parity.mjs` calls none by default. Every server gets a temp state folder.
 set -u
+# No check reaches the network for the model manifest: every server a check starts inherits
+# this (crates/conn-server/src/model_manifest.rs, the test seam), whatever the shell has.
+export CONN_MODEL_MANIFEST_URL=off
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo" || exit 1
@@ -101,6 +104,8 @@ monorepo_checks=(
   "acp instructions --check"
   "acp conformance"
   "grok probe conformance"
+  "thread-cli-diff"
+  "model-manifest-diff"
 )
 
 if [ -z "${CONN_MONOREPO:-}" ]; then
@@ -169,6 +174,12 @@ else
   run "acp conformance" node crates/conn-provider-acp/tools/conformance.mjs
   # T3's Grok status probe and ours against one stub CLI per scenario (no CLI, no model).
   run "grok probe conformance" node crates/conn-provider-acp/tools/probe-conformance.mjs
+  # Orbit's task-turn commands (`t3 thread`, `t3 auth session`) on the T3 server with its own
+  # CLI and on this server with ours, one stub codex each (about 2 minutes).
+  run "thread-cli-diff" node crates/conn-server/tools/thread-cli-diff.mjs "$release/conn-server"
+  # model-manifest.json: T3's encodeManifestCache against ours, on the bundled manifest.
+  run "model-manifest-diff" \
+    node crates/conn-server/tools/model-manifest-diff.mjs "$release/examples/model_manifest_cache"
 fi
 # orbit-flow needs no monorepo.
 run "orbit-flow (fake provider)" \

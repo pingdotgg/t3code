@@ -27,6 +27,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo, repoRoot } from "../../../tools/monorepo.mjs";
+import { GUARD_IMPORT } from "../../../tools/no-outside-fetch.mjs";
 
 const MONOREPO = monorepo();
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -754,7 +755,8 @@ const testFile = NodePath.join(
 );
 NodeFS.writeFileSync(
   testFile,
-  TEST_SOURCE.replace("__PLAN__", JSON.stringify(NodePath.join(work, "plan.json"))),
+  GUARD_IMPORT +
+    TEST_SOURCE.replace("__PLAN__", JSON.stringify(NodePath.join(work, "plan.json"))),
 );
 let tsStatus;
 try {

@@ -52,7 +52,7 @@ export async function binaryCoverage(binary) {
     program,
     ["--listen", "127.0.0.1:0", "--state-dir", NodePath.join(tmp, "state"), "--project", project],
     // CONN_CLAUDE_STATUS_PROBE=off: no run of this machine's `claude` for the status.
-    { cwd: tmp, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CONN_CLAUDE_STATUS_PROBE: "off" } },
+    { cwd: tmp, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CONN_CLAUDE_STATUS_PROBE: "off", CONN_MODEL_MANIFEST_URL: "off" } },
   );
   try {
     return await new Promise((ok) => {

@@ -187,8 +187,14 @@ pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
             .map_or(DEFAULT_TASK_WAIT_MS, |ms| {
                 (ms.max(1.0) as u64).min(MAX_WAIT_MS)
             });
-        let (_, timed_out) =
-            threads::wait_for_run(cx, &child, None, Duration::from_millis(timeout)).await?;
+        let (_, timed_out, _) = threads::wait_for_run(
+            cx,
+            &child,
+            None,
+            Duration::from_millis(timeout),
+            threads::Until::EndedOrWaiting,
+        )
+        .await?;
         if timed_out {
             cx.dispatch(json!({
                 "type": "delegated_task.wake-policy",

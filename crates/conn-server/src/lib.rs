@@ -12,6 +12,7 @@ pub mod instances;
 pub mod keybindings;
 pub mod limits;
 pub mod methods;
+pub mod model_manifest;
 pub mod routes;
 pub mod scopes;
 pub mod serve;

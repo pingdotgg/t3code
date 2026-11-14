@@ -175,6 +175,13 @@ pub trait EngineHost: Send + Sync {
         )))
     }
 
+    /// The branch checked out in `cwd` (`GitWorkflowService.currentBranch`): `None` when HEAD
+    /// is detached, the folder is no checkout, or git fails. A project-folder launch that
+    /// names no branch records it. The default knows none.
+    fn current_branch(&self, _cwd: &str) -> BoxFuture<'_, Option<String>> {
+        Box::pin(std::future::ready(None))
+    }
+
     /// A thread was archived, deleted or settled; end what it holds open (terminals).
     fn thread_closed(&self, _thread_id: &str, _reason: ThreadClose) {}
 }

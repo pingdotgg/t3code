@@ -63,6 +63,7 @@ fn codex_found_only_on_the_login_shell_path_is_a_provider() {
         .arg(&dir.0)
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
+        .env("CONN_MODEL_MANIFEST_URL", "off")
         .env("SHELL", &shell)
         .env("HOME", &dir.0)
         .stdin(Stdio::null())

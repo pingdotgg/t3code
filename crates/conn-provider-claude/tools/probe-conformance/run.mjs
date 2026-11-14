@@ -29,6 +29,7 @@ import * as NodeURL from "node:url";
 
 import { monorepo, repoRoot } from "../../../../tools/monorepo.mjs";
 import { sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
+import { GUARD_IMPORT } from "../../../../tools/no-outside-fetch.mjs";
 
 const MONOREPO = monorepo();
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -287,7 +288,8 @@ const testFile = NodePath.join(server, "src/provider", `ConnClaudeProbe.${proces
 const tsParentEnv = NodePath.join(work, "ts-parent-env.json");
 NodeFS.writeFileSync(
   testFile,
-  TEST_SOURCE.replace("__PLAN__", JSON.stringify(plan))
+  GUARD_IMPORT +
+    TEST_SOURCE.replace("__PLAN__", JSON.stringify(plan))
     .replace("__BASE_ENV__", JSON.stringify(BASE_ENV))
     .replace("__PARENT_ENV__", JSON.stringify(tsParentEnv)),
 );

@@ -140,6 +140,11 @@ impl EngineHost for Host {
         })
     }
 
+    fn current_branch(&self, cwd: &str) -> BoxFuture<'_, Option<String>> {
+        let cwd = PathBuf::from(cwd);
+        Box::pin(async move { conn_vcs::repo::current_branch(&cwd).await.ok().flatten() })
+    }
+
     fn provision_worktree(
         &self,
         request: WorktreeRequest,

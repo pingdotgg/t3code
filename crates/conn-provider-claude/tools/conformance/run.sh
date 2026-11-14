@@ -117,7 +117,11 @@ fi
 if [ "${CONFORMANCE_SKIP_T3:-}" != "1" ]; then
   echo "== T3 server (ClaudeAdapterV2)"
   trap 'rm -f "$copy"' EXIT
-  cp "$here/claudeConformance.test.ts" "$copy"
+  # T3's code reaches no outside service: the guard is the file's first import.
+  {
+    printf 'import "%s";\n' "$(cd "$here/../../../.." && pwd)/tools/no-outside-fetch.mjs"
+    cat "$here/claudeConformance.test.ts"
+  } >"$copy"
   set +e
   (
     cd "$repo/apps/server"
