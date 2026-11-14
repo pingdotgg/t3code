@@ -24,84 +24,103 @@ import {
   type OrbitSetupViewRow,
   type OrbitSetupViewStage,
 } from "~/orbit/orbitSetupView";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { OrbitInstanceUrlChip } from "../BranchToolbarEnvModeSelector";
 import type { OrbitReadyTimelineInput } from "./MessagesTimeline.logic";
 import { WorkLogRow } from "./WorkLog";
-import { Elapsed, ShimmerOverlay, StageIcon, stageRowClassName } from "./WorktreeSetupCard";
+import { ShimmerOverlay, StageIcon, stageRowClassName } from "./WorktreeSetupCard";
+
+/** A row's status icon, at the right end of the row (today's icons and sizes). */
+function RowStatus({
+  status,
+  small = false,
+}: {
+  status: OrbitSetupViewStage["status"];
+  small?: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        "flex w-6 shrink-0 items-center justify-center",
+        status === "failed" ? "text-destructive-foreground" : "text-icon-muted",
+        small && "[&_svg]:size-3.5",
+        status === "pending" && "opacity-40",
+      )}
+      data-orbit-row-icon
+    >
+      <StageIcon status={status} />
+    </span>
+  );
+}
+
+function RowLabel({
+  label,
+  status,
+  small = false,
+}: {
+  label: string;
+  status: OrbitSetupViewStage["status"];
+  small?: boolean;
+}) {
+  const running = status === "running";
+  return (
+    <span
+      ref={running ? observeVisibleAnimation : undefined}
+      className={cn("relative block truncate", small && "text-xs", stageRowClassName(status))}
+    >
+      {label}
+      {running ? <ShimmerOverlay>{label}</ShimmerOverlay> : null}
+    </span>
+  );
+}
 
 /**
  * Conn: the setup card of a thread started in an Orbit Project, in the look of WorktreeSetupCard.
- * It renders a client-built view, so the worktree wire contract stays as it is.
+ * It renders a client-built view, so the worktree wire contract stays as it is. Every row has its
+ * status icon at the right end and no timing.
  */
-function OrbitStageRow({ stage, live }: { stage: OrbitSetupViewStage; live: boolean }) {
-  const running = stage.status === "running";
+function OrbitStageRow({ stage }: { stage: OrbitSetupViewStage }) {
   return (
     <WorkLogRow
       data-orbit-setup-stage={stage.id}
       data-orbit-setup-status={stage.status}
-      icon={
-        <span className={cn("text-icon-muted", stage.status === "pending" && "opacity-40")}>
-          <StageIcon status={stage.status} />
-        </span>
-      }
       label={
-        <span
-          ref={running ? observeVisibleAnimation : undefined}
-          className={cn("relative block truncate", stageRowClassName(stage.status))}
-        >
-          {stage.label}
-          {running ? <ShimmerOverlay>{stage.label}</ShimmerOverlay> : null}
-        </span>
+        <RowLabel
+          label={stage.label}
+          // "Create Instance" shows the card's failure with its X only; its rows say where.
+          status={stage.id === "create" && stage.status === "failed" ? "done" : stage.status}
+        />
       }
       trailing={
-        stage.status === "pending" ? null : (
-          <>
-            {stage.detail ? (
-              <span className="min-w-0 truncate text-xs text-muted-foreground">{stage.detail}</span>
-            ) : null}
-            <span className="shrink-0 text-xs text-muted-foreground tabular-nums empty:hidden">
-              <Elapsed startedAt={stage.startedAt} endedAt={stage.endedAt} live={live} />
-            </span>
-          </>
-        )
+        <>
+          {stage.detail ? (
+            <span className="min-w-0 truncate text-xs text-muted-foreground">{stage.detail}</span>
+          ) : null}
+          <RowStatus status={stage.status} />
+        </>
       }
     />
   );
 }
 
-/** One of the five rows of Orbit's create steps under "Create Instance". */
-function OrbitCreateRow({ row, live }: { row: OrbitSetupViewRow; live: boolean }) {
-  const running = row.status === "running";
+/** One of the four rows of Orbit's create steps under "Create Instance". */
+function OrbitCreateRow({ row }: { row: OrbitSetupViewRow }) {
   return (
     <WorkLogRow
       data-orbit-create-row={row.id}
       data-orbit-create-status={row.status}
-      icon={
-        <span
-          className={cn(
-            "text-icon-muted [&_svg]:size-3.5",
-            row.status === "pending" && "opacity-40",
-          )}
-        >
-          <StageIcon status={row.status} />
-        </span>
-      }
-      label={
-        <span
-          ref={running ? observeVisibleAnimation : undefined}
-          className={cn("relative block truncate text-xs", stageRowClassName(row.status))}
-        >
-          {row.label}
-          {running ? <ShimmerOverlay>{row.label}</ShimmerOverlay> : null}
-        </span>
-      }
+      label={<RowLabel label={row.label} status={row.status} small />}
       trailing={
-        row.status === "pending" ? null : (
-          <span className="shrink-0 text-xs text-muted-foreground tabular-nums empty:hidden">
-            <Elapsed startedAt={row.startedAt} endedAt={row.endedAt} live={live} />
-          </span>
-        )
+        <>
+          {row.detail ? (
+            <span
+              className="min-w-0 truncate text-xs text-muted-foreground/70"
+              data-orbit-create-row-detail
+            >
+              {row.detail}
+            </span>
+          ) : null}
+          <RowStatus status={row.status} small />
+        </>
       }
     />
   );
@@ -111,7 +130,7 @@ function OrbitCreateRow({ row, live }: { row: OrbitSetupViewRow; live: boolean }
 function OrbitDetailsGrid({ children }: { children: ReactNode }) {
   return (
     <dl
-      className="mt-1 mb-1.5 ml-8 grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground"
+      className="mt-1 mb-1.5 ml-0.5 grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground"
       data-orbit-setup-details
     >
       {children}
@@ -156,7 +175,8 @@ export function OrbitSetupCard({
   onCancel: () => void;
 }) {
   const failed = view.phase === "failed";
-  const live = view.phase === "running";
+  // Details and Cancel show only before the thread opens; in the thread the card follows the address.
+  const live = view.phase === "running" && (view.canCancel || view.cancelling);
   const [detailsOpen, setDetailsOpen] = useState(false);
   return (
     <section aria-label="Instance setup" data-orbit-setup-phase={view.phase}>
@@ -170,11 +190,11 @@ export function OrbitSetupCard({
       <div className={failed ? "pt-1.5" : undefined}>
         {view.stages.map((stage) => (
           <div key={stage.id}>
-            <OrbitStageRow stage={stage} live={live} />
+            <OrbitStageRow stage={stage} />
             {stage.rows ? (
-              <div className="mb-1 ml-[calc(--spacing(3)-0.5px)] border-l border-border pl-2">
+              <div className="mb-1 ml-0.5 border-l border-border pl-3">
                 {stage.rows.map((row) => (
-                  <OrbitCreateRow key={row.id} row={row} live={live} />
+                  <OrbitCreateRow key={row.id} row={row} />
                 ))}
               </div>
             ) : null}
@@ -182,14 +202,14 @@ export function OrbitSetupCard({
         ))}
       </div>
       {failed && view.error ? (
-        <p className="mt-1 ml-8 text-xs break-words text-muted-foreground">{view.error}</p>
+        <p className="mt-1 ml-3.5 text-xs break-words text-muted-foreground">{view.error}</p>
       ) : null}
       {failed && view.errorDetailLine ? (
         <Tooltip>
           <TooltipTrigger
             render={
               <p
-                className="mt-0.5 ml-8 truncate font-mono text-xs text-muted-foreground/70"
+                className="mt-0.5 ml-3.5 truncate font-mono text-xs text-muted-foreground/70"
                 data-orbit-setup-error-detail
               />
             }
@@ -202,11 +222,11 @@ export function OrbitSetupCard({
         </Tooltip>
       ) : null}
       {view.instanceStays ? (
-        <p className="mt-1 ml-8 text-xs text-muted-foreground">{ORBIT_INSTANCE_STAYS_LINE}</p>
+        <p className="mt-1 ml-3.5 text-xs text-muted-foreground">{ORBIT_INSTANCE_STAYS_LINE}</p>
       ) : null}
       {live ? (
         <>
-          <div className="mt-0.5 ml-[calc(--spacing(6)+2px-(--spacing(2)-1px))] flex items-center gap-0.5">
+          <div className="mt-0.5 -ml-1.5 flex items-center gap-0.5">
             <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen((open) => !open)} />
             {view.cancelling ? (
               <span className="px-2 text-xs text-muted-foreground" data-orbit-setup-cancelling>
@@ -231,7 +251,7 @@ export function OrbitSetupCard({
         </>
       ) : null}
       {failed ? (
-        <div className="mt-1 ml-[calc(--spacing(6)+2px-(--spacing(2)-1px))] flex flex-wrap items-center gap-0.5">
+        <div className="mt-1 -ml-1.5 flex flex-wrap items-center gap-0.5">
           {view.canRetry ? (
             <Button type="button" size="xs" variant="ghost-muted" onClick={onRetry}>
               <RotateCcwIcon aria-hidden />
@@ -309,21 +329,10 @@ export function OrbitReadyRow({
       <WorkLogRow
         data-orbit-setup-stage="summary"
         data-orbit-setup-status="done"
-        icon={
-          <span className="text-icon-muted">
-            <StageIcon status="done" />
-          </span>
-        }
         label={<span className={stageRowClassName("done")}>{label}</span>}
-        trailing={
-          view.readyMs === null ? null : (
-            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-              {formatDuration(view.readyMs)}
-            </span>
-          )
-        }
+        trailing={<RowStatus status="done" />}
       />
-      <div className="mt-0.5 ml-[calc(--spacing(6)+2px-(--spacing(2)-1px))] flex items-center">
+      <div className="mt-0.5 -ml-1.5 flex items-center">
         <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen((open) => !open)} />
       </div>
       {detailsOpen ? (
@@ -343,12 +352,12 @@ export function OrbitReadyRow({
         </OrbitDetailsGrid>
       ) : null}
       {view.dependenciesLine ? (
-        <p className="mb-1 ml-8 text-xs text-muted-foreground" data-orbit-dependencies-line>
+        <p className="mb-1 ml-3.5 text-xs text-muted-foreground" data-orbit-dependencies-line>
           {view.dependenciesLine}
         </p>
       ) : null}
       {view.modelFallbackLine ? (
-        <p className="mb-1 ml-8 text-xs text-muted-foreground" data-orbit-model-fallback>
+        <p className="mb-1 ml-3.5 text-xs text-muted-foreground" data-orbit-model-fallback>
           {view.modelFallbackLine}
         </p>
       ) : null}

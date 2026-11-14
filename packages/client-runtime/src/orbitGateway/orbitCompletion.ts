@@ -240,23 +240,13 @@ export async function admitOrbitCompletion(ports: OrbitCompletionPorts): Promise
   );
 }
 
-/**
- * A refused Retry fails one row again, as a refused admission does: the workspace when it runs,
- * else the address. The other row stays as it is.
- */
+/** A refused Retry fails the address row again, as a refused admission does. */
 function failRunningCompletionRows(
   rows: OrbitCreateRows | null,
   now: number,
 ): OrbitCreateRows | null {
-  if (rows == null) return null;
-  const id =
-    rows.workspace?.status === "running"
-      ? "workspace"
-      : rows.address?.status === "running"
-        ? "address"
-        : null;
-  const row = id === null ? undefined : rows[id];
-  return id === null || row === undefined
-    ? rows
-    : { ...rows, [id]: { ...row, status: "failed", finishedAt: now } };
+  const address = rows?.address;
+  return rows == null || address?.status !== "running"
+    ? (rows ?? null)
+    : { ...rows, address: { ...address, status: "failed", finishedAt: now } };
 }

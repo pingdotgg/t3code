@@ -558,7 +558,6 @@ describe("followSavedOrbitCompletion", () => {
     createRows: {
       container: { status: "done", startedAt: 1, finishedAt: 2 },
       address: { status: "running", startedAt: 3, finishedAt: null },
-      workspace: { status: "running", startedAt: 2, finishedAt: null },
       t3: { status: "done", startedAt: 2, finishedAt: 3 },
       register: { status: "done", startedAt: 3, finishedAt: 4 },
     },
@@ -592,7 +591,7 @@ describe("followSavedOrbitCompletion", () => {
     expect(operation).toHaveBeenCalledTimes(1);
     const after = readStored()[0]!;
     expect(orbitCompletionPhase(after)).toBe("succeeded");
-    expect(after.createRows?.workspace?.status).toBe("done");
+    expect(after.createRows?.address?.status).toBe("done");
     expect(orbitCompletionNeedsFollow(after)).toBe(false);
   });
 

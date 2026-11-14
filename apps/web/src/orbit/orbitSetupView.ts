@@ -11,7 +11,6 @@ import {
   ORBIT_SOURCE_HEAD_UNAVAILABLE,
   orbitCompletionPhase,
   orbitCompletionProcessFailureCanRetry,
-  orbitSetupReadyMs,
   orbitSetupStages,
   orbitThreadStartCanRetry,
   orbitThreadStartCreatedInstance,
@@ -34,18 +33,16 @@ export interface OrbitSetupViewStage {
   readonly status: OrbitSetupStageStatus;
   /** "Create Instance": the Node. */
   readonly detail: string | null;
-  /** "Create Instance": Orbit's create steps in five rows, while it runs or where it failed. */
+  /** "Create Instance": its four rows until the address is live, or where the setup failed. */
   readonly rows: readonly OrbitSetupViewRow[] | null;
-  readonly startedAt: string | null;
-  readonly endedAt: string | null;
 }
 
 export interface OrbitSetupViewRow {
   readonly id: OrbitCreateRowId;
   readonly label: string;
   readonly status: OrbitCreateRowStatus;
-  readonly startedAt: string | null;
-  readonly endedAt: string | null;
+  /** "Publish the address": the address, without its scheme. */
+  readonly detail: string | null;
 }
 
 /** The running card's Details: what the start asked for, before Orbit answered. */
@@ -77,8 +74,9 @@ export interface OrbitSetupView {
   /** Cancel waits for Orbit to admit the create, so it can be cancelled. */
   readonly cancelling: boolean;
   /**
-   * Cancel is offered while the start runs, but not once the create ended with a completion:
-   * the way to stop a completion is to remove the Instance.
+   * Details and Cancel show while the start runs before the thread opens. Once the thread is
+   * open, the card only follows the address: no Details, no Cancel (the way to stop a completion
+   * is to remove the Instance).
    */
   readonly canCancel: boolean;
 }
@@ -206,14 +204,13 @@ const STAGE_LABELS: Readonly<Record<OrbitSetupStageId, string>> = {
   agent: "Start agent",
 };
 
-function iso(ms: number | null): string | null {
-  return ms === null ? null : new Date(ms).toISOString();
-}
-
 export function orbitSetupView(
   start: OrbitThreadStart,
   create: OrbitGatewayOperation | null = null,
 ): OrbitSetupView {
+  const completion = orbitCompletionPhase(start);
+  const details = orbitSetupDetails(start);
+  const host = details.url?.replace(/^https?:\/\//, "") ?? null;
   const stages = orbitSetupStages({ start, create }).map((stage): OrbitSetupViewStage => ({
     id: stage.id,
     label: STAGE_LABELS[stage.id],
@@ -224,14 +221,9 @@ export function orbitSetupView(
         id: row.id,
         label: row.label,
         status: row.status,
-        startedAt: iso(row.startedAt),
-        endedAt: iso(row.finishedAt),
+        detail: row.id === "address" ? host : null,
       })) ?? null,
-    startedAt: iso(stage.startedAt),
-    endedAt: iso(stage.finishedAt),
   }));
-  const completion = orbitCompletionPhase(start);
-  const details = orbitSetupDetails(start);
   if (start.error === null && completion === "failed") {
     return { ...orbitCompletionFailedView(start), stages, details };
   }
@@ -259,7 +251,7 @@ export function orbitSetupView(
       start.errorCode !== ORBIT_CONTAINER_PROCESS_INACTIVE,
     details,
     cancelling: phase === "running" && start.cancelRequested === true,
-    canCancel: phase === "running" && completion === "none",
+    canCancel: phase === "running" && start.sentAt == null,
   };
 }
 
@@ -322,8 +314,6 @@ function orbitSetupDetails(start: OrbitThreadStart): OrbitSetupDetails {
 
 /** What the real thread shows above the agent's work once the start handed over. */
 export interface OrbitReadyView {
-  /** "Instance ready", with the setup's time when it is known. */
-  readonly readyMs: number | null;
   readonly instanceName: string;
   readonly nodeName: string;
   readonly url: string | null;
@@ -355,7 +345,6 @@ function checksOutOtherCode(start: OrbitThreadStart): boolean {
 export function orbitReadyView(start: OrbitThreadStart, url: string | null): OrbitReadyView {
   const fallback = start.modelFallback ?? null;
   return {
-    readyMs: orbitSetupReadyMs(start),
     instanceName: start.instanceName,
     nodeName: start.nodeName,
     url,

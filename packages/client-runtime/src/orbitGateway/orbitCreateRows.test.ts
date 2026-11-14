@@ -2,13 +2,15 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { OrbitGatewayOperation, OrbitGatewayOperationStep } from "./client.ts";
 import {
+  ORBIT_CREATE_ROW_IDS,
+  ORBIT_CREATE_ROW_LABELS,
   observeOrbitCompletionRows,
   observeOrbitCreateRows,
-  orbitCompletionFailedRow,
-  orbitCompletionRowOf,
   orbitCreateRowOf,
+  orbitFailedCreateAddressStatus,
   reopenOrbitCompletionRows,
   readSavedOrbitCreateRows,
+  stopRunningOrbitCreateRows,
   type OrbitCreateRows,
 } from "./orbitCreateRows.ts";
 
@@ -42,24 +44,25 @@ function statuses(rows: OrbitCreateRows): string[] {
   return Object.entries(rows).map(([id, row]) => `${id}:${row!.status}`);
 }
 
+describe("the approved rows", () => {
+  it("are the four rows in the approved order, without Copy the workspace", () => {
+    expect(ORBIT_CREATE_ROW_IDS.map((id) => ORBIT_CREATE_ROW_LABELS[id])).toEqual([
+      "Copy the container",
+      "Publish the address",
+      "Start the T3 server",
+      "Register with Orbit",
+    ]);
+  });
+});
+
 describe("orbitCreateRowOf", () => {
   it.each([
+    // Today's create (swamp workflow-operation-instance-create.yaml, create 20511).
     ["input", "container"],
     ["clone-input", "container"],
     ["clone-container", "container"],
-    ["clone-route-csr-1", "address"],
-    ["csr", "address"],
-    ["sign", "address"],
-    ["clone-route", "address"],
-    ["site", "address"],
-    ["records-2", "address"],
-    ["catalog-1", "address"],
-    ["restart-caddy", "address"],
-    ["Install cert, publish the route", "address"],
-    ["Publish private DNS for meetup", "address"],
-    ["Probe the site over TLS", "address"],
-    ["clone-workspace", "workspace"],
-    ["clone-agent", "t3"],
+    ["clone-club-key", "container"],
+    ["clone-workspace", "t3"],
     ["clone-t3", "t3"],
     ["clone-sessions", "register"],
     ["clone-session-copy", "register"],
@@ -68,147 +71,209 @@ describe("orbitCreateRowOf", () => {
     ["clone-private-cleanup", "register"],
     ["cleanup", "register"],
     ["accepted", "register"],
+    // Orbit task group 5063: the Route publication inside the create.
+    ["clone-route-csr", "address"],
+    ["clone-route-csr-0", "address"],
+    ["clone-route-csr-0-1", "address"],
+    ["clone-route", "address"],
+    // Older Gateways.
+    ["clone-agent", "t3"],
+    ["csr", "address"],
+    ["sign", "address"],
+    ["site", "address"],
+    ["records-2", "address"],
+    ["catalog-1", "address"],
+    ["restart-caddy", "address"],
+    ["Install cert, publish the route", "address"],
+    ["Publish private DNS for meetup", "address"],
+    ["Probe the site over TLS", "address"],
+    // Unknown.
+    ["withdraw-route", null],
+    ["stop-container", null],
     ["clone-something-new", null],
     ["constructor", null],
   ])("puts %s in %s", (name, row) => {
     expect(orbitCreateRowOf({ name })).toBe(row);
   });
 
-  it("prefers Orbit's group, and falls back to the name for a group it does not know", () => {
+  it("prefers Orbit's group; the old workspace group is the T3 row", () => {
     expect(orbitCreateRowOf({ name: "clone-container", group: "t3" })).toBe("t3");
-    expect(orbitCreateRowOf({ name: "brand-new", group: "workspace" })).toBe("workspace");
+    expect(orbitCreateRowOf({ name: "brand-new", group: "workspace" })).toBe("t3");
     expect(orbitCreateRowOf({ name: "clone-t3", group: "later" })).toBe("t3");
   });
 });
 
-describe("observeOrbitCreateRows", () => {
-  it("runs the container copy and the address side by side", () => {
+describe("observeOrbitCreateRows while the create runs", () => {
+  it("starts the address with the copy, though today's create has no address step", () => {
     const rows = observeOrbitCreateRows(
       null,
       op("running", [
         step("input", "succeeded"),
+        step("clone-input", "succeeded"),
         step("clone-container", "running"),
-        step("csr", "succeeded"),
-        step("sign", "running"),
         step("clone-workspace", "pending"),
+        step("clone-t3", "pending"),
       ]),
       1_000,
     );
     expect(statuses(rows)).toEqual(["container:running", "address:running"]);
-    expect(rows.container).toEqual({ status: "running", startedAt: 1_000, finishedAt: null });
+  });
+
+  it("keeps the address running through every later row (storyboard 2 and 3)", () => {
+    let rows = observeOrbitCreateRows(null, op("running", [step("clone-container", "running")]), 1);
+    rows = observeOrbitCreateRows(
+      rows,
+      op("running", [
+        step("clone-container", "succeeded"),
+        step("clone-workspace", "running"),
+        step("clone-t3", "running"),
+      ]),
+      2,
+    );
+    expect(statuses(rows)).toEqual(["container:done", "address:running", "t3:running"]);
+    rows = observeOrbitCreateRows(
+      rows,
+      op("running", [
+        step("clone-container", "succeeded"),
+        step("clone-workspace", "succeeded"),
+        step("clone-t3", "succeeded"),
+        step("clone-sessions", "running"),
+      ]),
+      3,
+    );
+    expect(statuses(rows)).toEqual([
+      "container:done",
+      "address:running",
+      "t3:done",
+      "register:running",
+    ]);
+  });
+
+  it("maps the checkout to the T3 row: the T3 row runs until both ended", () => {
+    const rows = observeOrbitCreateRows(
+      null,
+      op("running", [
+        step("clone-container", "succeeded"),
+        step("clone-t3", "succeeded"),
+        step("clone-workspace", "running"),
+      ]),
+      1,
+    );
+    expect(rows.t3?.status).toBe("running");
+  });
+
+  it("keeps the address running when 5063's address steps end before the create does", () => {
+    const rows = observeOrbitCreateRows(
+      null,
+      op("running", [
+        step("clone-container", "succeeded"),
+        step("clone-route-csr-0", "succeeded"),
+        step("clone-route", "succeeded"),
+        step("clone-t3", "running"),
+      ]),
+      1,
+    );
+    expect(statuses(rows)).toEqual(["container:done", "address:running", "t3:running"]);
+  });
+
+  it("fails the address row when a 5063 address step fails", () => {
+    const rows = observeOrbitCreateRows(
+      null,
+      op("running", [step("clone-container", "running"), step("clone-route", "failed")]),
+      1,
+    );
+    expect(rows.address?.status).toBe("failed");
+    expect(rows.container?.status).toBe("running");
   });
 
   it("counts skipped steps as nothing", () => {
     const rows = observeOrbitCreateRows(
       null,
-      op("running", [step("clone-input", "skipped"), step("csr", "running")]),
+      op("running", [step("clone-input", "skipped"), step("clone-club-key", "skipped")]),
       1_000,
     );
-    expect(statuses(rows)).toEqual(["address:running"]);
+    expect(statuses(rows)).toEqual([]);
   });
 
-  it("keeps an unknown running step with the row that ran, never blanking the card", () => {
-    const before = observeOrbitCreateRows(
-      null,
-      op("running", [step("clone-workspace", "running")]),
-      1_000,
-    );
-    const rows = observeOrbitCreateRows(
-      before,
-      op("running", [step("clone-workspace", "succeeded"), step("clone-mystery", "running")]),
-      2_000,
-    );
-    expect(rows.workspace).toEqual({ status: "running", startedAt: 1_000, finishedAt: null });
-    expect(rows.t3).toBeUndefined();
-  });
-
-  it("follows current_step alone, marking earlier phases done", () => {
-    const rows = observeOrbitCreateRows(
-      null,
-      op("running", [], { currentStep: "clone-t3" }),
-      5_000,
-    );
-    expect(statuses(rows)).toEqual([
-      "container:done",
-      "address:done",
-      "workspace:done",
-      "t3:running",
-    ]);
-  });
-
-  it("turns the row of the failed step red", () => {
-    const rows = observeOrbitCreateRows(
-      null,
-      op("failed", [], { failedStep: "clone-sessions", errorCode: "instance.t3_unready" }),
-      9_000,
-    );
-    expect(rows.register).toEqual({ status: "failed", startedAt: 9_000, finishedAt: 9_000 });
-    const listed = observeOrbitCreateRows(
-      null,
-      op("failed", [step("clone-container", "succeeded"), step("clone-workspace", "failed")]),
-      9_000,
-    );
-    expect(statuses(listed)).toEqual(["container:done", "workspace:failed"]);
-  });
-
-  it("puts an unknown failed step on the row that ran", () => {
+  it("keeps an unknown running step with the row that ran: no new row, never the address", () => {
     const before = observeOrbitCreateRows(null, op("running", [step("clone-t3", "running")]), 1);
     const rows = observeOrbitCreateRows(
       before,
-      op("failed", [], { failedStep: "clone-mystery" }),
+      op("running", [step("clone-t3", "succeeded"), step("clone-mystery", "running")]),
       2,
     );
-    expect(rows.t3?.status).toBe("failed");
-  });
-
-  it("times rows from when Conn first saw them, then takes Orbit's times once the create ended", () => {
-    let rows = observeOrbitCreateRows(
-      null,
-      op("running", [step("clone-container", "running")]),
-      1_000,
-    );
-    rows = observeOrbitCreateRows(
-      rows,
-      op("running", [step("clone-container", "succeeded"), step("clone-workspace", "running")]),
-      4_000,
-    );
-    expect(rows.container).toEqual({ status: "done", startedAt: 1_000, finishedAt: 4_000 });
-    expect(rows.workspace).toEqual({ status: "running", startedAt: 4_000, finishedAt: null });
-    // Orbit sends its times only on the ended Operation.
-    const at = (s: number) => `1970-01-01T00:00:0${s}.000Z`;
-    rows = observeOrbitCreateRows(
-      rows,
-      op("succeeded", [
-        step("input", "succeeded", { startedAt: at(1), finishedAt: at(2) }),
-        step("clone-container", "succeeded", { startedAt: at(2), finishedAt: at(3) }),
-        step("clone-workspace", "succeeded", { startedAt: at(3), finishedAt: at(7) }),
-      ]),
-      8_000,
-    );
-    expect(rows.container).toEqual({ status: "done", startedAt: 1_000, finishedAt: 3_000 });
-    expect(rows.workspace).toEqual({ status: "done", startedAt: 3_000, finishedAt: 7_000 });
-    expect(rows.register).toEqual({ status: "done", startedAt: 8_000, finishedAt: 8_000 });
-  });
-
-  it("never moves a row back to pending", () => {
-    const before = observeOrbitCreateRows(null, op("running", [step("site", "running")]), 1);
-    expect(observeOrbitCreateRows(before, op("running", []), 2)).toEqual(before);
-  });
-});
-
-describe("readSavedOrbitCreateRows", () => {
-  it("reads saved rows and drops broken ones", () => {
+    expect(statuses(rows)).toEqual(["address:running", "t3:running"]);
     expect(
-      readSavedOrbitCreateRows({
-        container: { status: "done", startedAt: 1, finishedAt: 2 },
-        address: { status: "weird" },
-        t3: { status: "running", startedAt: "x" },
-      }),
-    ).toEqual({
+      Object.keys(rows).every((id) => (ORBIT_CREATE_ROW_IDS as readonly string[]).includes(id)),
+    ).toBe(true);
+  });
+
+  it("an unknown first step counts for the copy, and an unknown finished step changes nothing", () => {
+    const rows = observeOrbitCreateRows(
+      null,
+      op("running", [step("clone-new-first", "running")]),
+      1,
+    );
+    expect(statuses(rows)).toEqual(["container:running", "address:running"]);
+    const later = observeOrbitCreateRows(
+      rows,
+      op("running", [step("clone-new-first", "succeeded"), step("clone-new-other", "succeeded")]),
+      2,
+    );
+    expect(later).toEqual(rows);
+  });
+
+  it("follows current_step alone: earlier rows done, the address still running", () => {
+    const rows = observeOrbitCreateRows(null, op("running", [], { currentStep: "clone-t3" }), 5);
+    expect(statuses(rows)).toEqual(["container:done", "address:running", "t3:running"]);
+    const unknown = observeOrbitCreateRows(
+      rows,
+      op("running", [], { currentStep: "brand-new" }),
+      6,
+    );
+    expect(statuses(unknown)).toEqual(["container:done", "address:running", "t3:running"]);
+  });
+
+  it("an unknown current_step after a stopped row never runs a done row again", () => {
+    // A Retry after an unnamed failure: the copy is done, the T3 row failed and runs again.
+    const before: OrbitCreateRows = {
       container: { status: "done", startedAt: 1, finishedAt: 2 },
-      t3: { status: "running", startedAt: null, finishedAt: null },
-    });
-    expect(readSavedOrbitCreateRows(undefined)).toBe(null);
+      t3: { status: "failed", startedAt: 2, finishedAt: 3 },
+    };
+    const rows = observeOrbitCreateRows(before, op("running", [], { currentStep: "brand-new" }), 4);
+    expect(rows.container?.status).toBe("done");
+    expect(rows.t3?.status).toBe("running");
+  });
+
+  it("an unknown step after a done row, with nothing running, reopens no row", () => {
+    const before: OrbitCreateRows = {
+      container: { status: "done", startedAt: 1, finishedAt: 2 },
+      address: { status: "running", startedAt: 1, finishedAt: null },
+      t3: { status: "done", startedAt: 2, finishedAt: 3 },
+    };
+    const byCurrent = observeOrbitCreateRows(
+      before,
+      op("running", [], { currentStep: "x-new" }),
+      4,
+    );
+    expect(statuses(byCurrent)).toEqual(["container:done", "address:running", "t3:done"]);
+    const bySteps = observeOrbitCreateRows(before, op("running", [step("x-new", "running")]), 4);
+    expect(statuses(bySteps)).toEqual(["container:done", "address:running", "t3:done"]);
+  });
+
+  it("a resumed create's unknown first step goes to the row that failed, not the copy", () => {
+    const before: OrbitCreateRows = {
+      container: { status: "done", startedAt: 1, finishedAt: 2 },
+      address: { status: "pending", startedAt: 1, finishedAt: null },
+      t3: { status: "failed", startedAt: 2, finishedAt: 3 },
+    };
+    const rows = observeOrbitCreateRows(before, op("running", [step("x-new", "running")]), 4);
+    expect(statuses(rows)).toEqual(["container:done", "address:running", "t3:running"]);
+  });
+
+  it("never moves a row back to pending while the create runs", () => {
+    const before = observeOrbitCreateRows(null, op("running", [step("clone-t3", "running")]), 1);
+    expect(observeOrbitCreateRows(before, op("running", []), 2)).toEqual(before);
   });
 });
 
@@ -232,6 +297,127 @@ function createAtSuccess(extra: Partial<OrbitGatewayOperation> = {}): OrbitGatew
   );
 }
 
+describe("create success", () => {
+  it("with a completion: the address runs on, the other three are done (storyboard 4)", () => {
+    const rows = observeOrbitCreateRows(null, createAtSuccess(), ms(43));
+    expect(statuses(rows)).toEqual([
+      "container:done",
+      "address:running",
+      "t3:done",
+      "register:done",
+    ]);
+  });
+
+  it("with a completion and no Route: the address still waits for the database, Processes and checks", () => {
+    const rows = observeOrbitCreateRows(null, createAtSuccess({ routeId: null }), ms(43));
+    expect(rows.address?.status).toBe("running");
+  });
+
+  it.each(["published", "deferred", "failed"])(
+    "with 5063's route_publication %s: the address follows the completion",
+    (routePublication) => {
+      const rows = observeOrbitCreateRows(
+        null,
+        createAtSuccess({ result: { route_publication: routePublication } }),
+        ms(43),
+      );
+      expect(rows.address?.status).toBe("running");
+    },
+  );
+
+  it("on an older Gateway that names no completion: all four done", () => {
+    const { completionOperationId: _id, routeId: _route, ...older } = createAtSuccess();
+    const rows = observeOrbitCreateRows(null, older, ms(43));
+    expect(statuses(rows)).toEqual(["container:done", "address:done", "t3:done", "register:done"]);
+  });
+});
+
+describe("create failure", () => {
+  it("fails the row of the named step; the address did not start (failures 2, 3, 4)", () => {
+    const running = observeOrbitCreateRows(
+      null,
+      op("running", [step("clone-container", "running")]),
+      1,
+    );
+    expect(running.address?.status).toBe("running");
+    const copy = observeOrbitCreateRows(
+      running,
+      op("failed", [step("clone-container", "failed")], { errorCode: "instance.clone_failed" }),
+      2,
+    );
+    expect(statuses(copy)).toEqual(["container:failed", "address:pending"]);
+    const t3 = observeOrbitCreateRows(
+      running,
+      op("failed", [step("clone-container", "succeeded"), step("clone-t3", "failed")]),
+      2,
+    );
+    expect(statuses(t3)).toEqual(["container:done", "address:pending", "t3:failed"]);
+    const register = observeOrbitCreateRows(
+      running,
+      op("failed", [], { failedStep: "clone-sessions", errorCode: "instance.t3_unready" }),
+      2,
+    );
+    expect(register.register?.status).toBe("failed");
+    expect(register.address?.status).toBe("pending");
+  });
+
+  it("puts an unknown failed step on the row that ran, never on the address", () => {
+    const before = observeOrbitCreateRows(null, op("running", [step("clone-t3", "running")]), 1);
+    const rows = observeOrbitCreateRows(
+      before,
+      op("failed", [], { failedStep: "clone-mystery" }),
+      2,
+    );
+    expect(rows.t3?.status).toBe("failed");
+    expect(rows.address?.status).toBe("pending");
+  });
+
+  it("keeps a failed 5063 address step failed", () => {
+    const rows = observeOrbitCreateRows(
+      null,
+      op("failed", [step("clone-container", "succeeded"), step("clone-route", "failed")]),
+      2,
+    );
+    expect(rows.address?.status).toBe("failed");
+  });
+
+  it("stopRunningOrbitCreateRows: the row that ran fails, the address did not start", () => {
+    const before = observeOrbitCreateRows(null, op("running", [step("clone-t3", "running")]), 1);
+    const stopped = stopRunningOrbitCreateRows(before, 9)!;
+    expect(statuses(stopped)).toEqual(["address:pending", "t3:failed"]);
+    expect(stopped.t3?.finishedAt).toBe(9);
+  });
+
+  it("orbitFailedCreateAddressStatus: today every failed create leaves the address unstarted", () => {
+    for (const routePublication of [null, "published", "deferred", "failed"]) {
+      expect(
+        orbitFailedCreateAddressStatus({
+          createStatus: "failed",
+          routePublication,
+          completionStatus: null,
+        }),
+      ).toBe("pending");
+    }
+  });
+});
+
+describe("readSavedOrbitCreateRows", () => {
+  it("reads saved rows, drops broken ones and the old workspace row", () => {
+    expect(
+      readSavedOrbitCreateRows({
+        container: { status: "done", startedAt: 1, finishedAt: 2 },
+        address: { status: "weird" },
+        workspace: { status: "running", startedAt: 1, finishedAt: null },
+        t3: { status: "running", startedAt: "x" },
+      }),
+    ).toEqual({
+      container: { status: "done", startedAt: 1, finishedAt: 2 },
+      t3: { status: "running", startedAt: null, finishedAt: null },
+    });
+    expect(readSavedOrbitCreateRows(undefined)).toBe(null);
+  });
+});
+
 function completion(
   status: OrbitGatewayOperation["status"],
   steps: readonly OrbitGatewayOperationStep[],
@@ -240,237 +426,124 @@ function completion(
   return op(status, steps, { id: 20512, kind: "instance.complete", ...extra });
 }
 
-describe("create success with a completion (release 2030)", () => {
-  it("leaves the workspace and the address running, the other three done", () => {
-    const rows = observeOrbitCreateRows(null, createAtSuccess(), ms(43));
-    expect(statuses(rows)).toEqual([
-      "container:done",
-      "address:running",
-      "workspace:running",
-      "t3:done",
-      "register:done",
-    ]);
-    // The workspace keeps the start of the create's checkout and has no end yet.
-    expect(rows.workspace).toEqual({ status: "running", startedAt: ms(31), finishedAt: null });
-    expect(rows.address?.finishedAt).toBeNull();
-  });
+/** Completion 20512 (release 2030): every job and step Conn has seen in it. */
+const COMPLETION_STEPS: readonly (readonly [string, string])[] = [
+  ["input", "input"],
+  ["clone-input", "complete"],
+  ["database-snapshot", "complete"],
+  ["server-database", "complete"],
+  ["server-valkey", "complete"],
+  ["database-install", "complete"],
+  ["server-database-check", "complete"],
+  ["server-valkey-check", "complete"],
+  ["clone-fleet", "complete"],
+  ["database-cleanup", "complete"],
+  ["server-database-fill", "complete"],
+  ["clone-services", "complete"],
+  ["clone-check", "complete"],
+  ["route-csr-0", "publication"],
+  ["route-csr-0-0", "publication"],
+  ["route", "publication"],
+  ["csr", "create"],
+  ["sign", "create"],
+  ["site", "create"],
+  ["Install cert, publish site-9-0", "create"],
+  ["Probe the site over TLS-0-0", "create"],
+  ["withdraw_route-0", "withdraw"],
+  ["finish", "result"],
+  ["clone-private-cleanup", "result"],
+  ["withdraw-route", "result"],
+  ["cleanup", "result"],
+  ["accepted", "result"],
+  ["something-new", "other"],
+];
 
-  it("marks the address done when the Project has no Route", () => {
-    const rows = observeOrbitCreateRows(null, createAtSuccess({ routeId: null }), ms(43));
-    expect(rows.address?.status).toBe("done");
-    expect(rows.workspace?.status).toBe("running");
-  });
-
-  it("marks all five done on an older Gateway that names no completion", () => {
-    const { completionOperationId: _id, routeId: _route, ...older } = createAtSuccess();
-    const rows = observeOrbitCreateRows(null, older, ms(43));
-    expect(statuses(rows)).toEqual([
-      "container:done",
-      "address:done",
-      "workspace:done",
-      "t3:done",
-      "register:done",
-    ]);
-  });
-
-  it("maps clone-club-key to the container row", () => {
-    expect(orbitCreateRowOf({ name: "clone-club-key" })).toBe("container");
-  });
-});
-
-describe("orbitCompletionRowOf", () => {
-  it.each([
-    ["input", "input", null],
-    ["clone-input", "complete", "workspace"],
-    ["database-snapshot", "complete", "workspace"],
-    ["server-database", "complete", "workspace"],
-    ["server-valkey", "complete", "workspace"],
-    ["database-install", "complete", "workspace"],
-    ["server-database-check", "complete", "workspace"],
-    ["server-valkey-check", "complete", "workspace"],
-    ["clone-fleet", "complete", "workspace"],
-    ["database-cleanup", "complete", "workspace"],
-    ["server-database-fill", "complete", "workspace"],
-    ["clone-services", "complete", "workspace"],
-    ["clone-check", "complete", "workspace"],
-    ["route-csr-0", "publication", "address"],
-    ["route-csr-0-0", "publication", "address"],
-    ["route", "publication", "address"],
-    // Child workflow steps reuse names that the create maps; under a child job they show nothing.
-    ["input", "create", null],
-    ["cleanup", "create", null],
-    ["site", "create", null],
-    ["csr", "create", null],
-    ["sign", "create", null],
-    ["Make a CSR on the Node-0", "create", null],
-    ["Install cert, publish site-9-0", "create", null],
-    ["Probe the site over TLS-0-0", "create", null],
-    ["Publish private DNS-0-0", "create", null],
-    ["records-0-0", "create", null],
-    ["withdraw_route-0", "withdraw", null],
-    ["finish", "result", null],
-    ["clone-private-cleanup", "result", null],
-    ["withdraw-route", "result", null],
-    ["cleanup", "result", null],
-    ["accepted", "result", null],
-    ["something-new", "other", null],
-  ] as const)("%s in job %s → %s", (name, job, row) => {
-    expect(orbitCompletionRowOf({ name, job })).toBe(row);
-  });
-});
-
-describe("observeOrbitCompletionRows", () => {
+describe("observeOrbitCompletionRows: all of instance.complete is the address row", () => {
   const atCreate = () => observeOrbitCreateRows(null, createAtSuccess(), ms(43));
 
-  it("keeps the other rows and infers no order while the workspace runs", () => {
+  it.each(COMPLETION_STEPS)("a running %s (job %s) keeps only the address running", (name, job) => {
     const rows = observeOrbitCompletionRows(
       atCreate(),
-      completion("running", [
-        step("input", "succeeded", { job: "input", startedAt: T(47), finishedAt: T(48) }),
-        step("clone-input", "succeeded", { job: "complete", startedAt: T(48), finishedAt: T(49) }),
-        step("clone-services", "running", { job: "complete", startedAt: T(49) }),
-        step("csr", "running", { job: "create", startedAt: T(48) }),
-        step("brand-new-step", "failed", { job: "mystery" }),
-      ]),
+      completion("running", [step(name, "running", { job })]),
       ms(50),
     );
     expect(statuses(rows)).toEqual([
       "container:done",
       "address:running",
-      "workspace:running",
       "t3:done",
       "register:done",
     ]);
-    expect(rows.workspace).toEqual({ status: "running", startedAt: ms(31), finishedAt: null });
   });
 
-  it("marks both rows done with the last step's end when the completion succeeded (20512)", () => {
+  it.each(COMPLETION_STEPS)(
+    "a failed %s (job %s) keeps the address running while it runs",
+    (name, job) => {
+      const rows = observeOrbitCompletionRows(
+        atCreate(),
+        completion("running", [step(name, "failed", { job })]),
+        ms(50),
+      );
+      expect(statuses(rows)).toEqual([
+        "container:done",
+        "address:running",
+        "t3:done",
+        "register:done",
+      ]);
+    },
+  );
+
+  it("stays running while a route step is done but database, Processes or checks still run (storyboard 6)", () => {
     const rows = observeOrbitCompletionRows(
       atCreate(),
-      completion(
-        "succeeded",
-        [
-          step("clone-input", "succeeded", {
-            job: "complete",
-            startedAt: T(48),
-            finishedAt: T(49),
-          }),
-          step("route-csr-0-0", "succeeded", {
-            job: "publication",
-            startedAt: T(48),
-            finishedAt: T(51),
-          }),
-          step("clone-services", "succeeded", {
-            job: "complete",
-            startedAt: T(49),
-            finishedAt: T(53),
-          }),
-          step("route", "succeeded", { job: "publication", startedAt: T(51), finishedAt: T(57) }),
-          step("clone-check", "succeeded", {
-            job: "complete",
-            startedAt: T(53),
-            finishedAt: T(54),
-          }),
-          step("finish", "succeeded", { job: "result", startedAt: T(57), finishedAt: T(58) }),
-        ],
-        { pollAfterSeconds: null },
-      ),
+      completion("running", [
+        step("route-csr-0-0", "succeeded", { job: "publication" }),
+        step("route", "succeeded", { job: "publication" }),
+        step("clone-services", "running", { job: "complete" }),
+      ]),
+      ms(50),
+    );
+    expect(rows.address?.status).toBe("running");
+  });
+
+  it("is done only when the completion succeeded (storyboard 7)", () => {
+    const rows = observeOrbitCompletionRows(
+      atCreate(),
+      completion("succeeded", [
+        step("clone-check", "succeeded", { job: "complete", finishedAt: T(54) }),
+        step("route", "succeeded", { job: "publication", finishedAt: T(57) }),
+      ]),
       ms(59),
     );
-    expect(rows.workspace).toEqual({ status: "done", startedAt: ms(31), finishedAt: ms(54) });
-    expect(rows.address?.status).toBe("done");
-    expect(rows.address?.finishedAt).toBe(ms(57));
+    expect(statuses(rows)).toEqual(["container:done", "address:done", "t3:done", "register:done"]);
   });
 
-  it.each([
-    ["database", "workspace"],
-    ["fleet", "workspace"],
-    ["workspace", "workspace"],
-    ["check", "workspace"],
-    ["complete", "workspace"],
-    ["route", "address"],
-  ] as const)("fails the row of phase %s → %s", (phase, row) => {
-    const failed = completion("failed", [], { resultFailedStep: phase, pollAfterSeconds: null });
-    expect(orbitCompletionFailedRow(failed)).toBe(row);
-    const rows = observeOrbitCompletionRows(atCreate(), failed, ms(60));
-    expect(rows[row]?.status).toBe("failed");
-    expect(rows.t3?.status).toBe("done");
-  });
+  it.each(["failed", "cancelled", "interrupted"] as const)(
+    "a completion that ended %s fails the address row, no other row reopens (failure 6)",
+    (status) => {
+      const rows = observeOrbitCompletionRows(
+        atCreate(),
+        completion(status, [], { resultFailedStep: "fleet" }),
+        ms(60),
+      );
+      expect(statuses(rows)).toEqual([
+        "container:done",
+        "address:failed",
+        "t3:done",
+        "register:done",
+      ]);
+    },
+  );
 
-  it("without a phase, fails the row of a failed step, else the workspace", () => {
-    expect(
-      orbitCompletionFailedRow(
-        completion("failed", [step("route-csr-1", "failed", { job: "publication" })]),
-      ),
-    ).toBe("address");
-    expect(orbitCompletionFailedRow(completion("cancelled", []))).toBe("workspace");
-  });
-
-  it("marks the workspace done and the address failed when publication failed", () => {
-    const rows = observeOrbitCompletionRows(
-      atCreate(),
-      completion(
-        "failed",
-        [
-          step("clone-input", "succeeded", {
-            job: "complete",
-            startedAt: T(48),
-            finishedAt: T(49),
-          }),
-          step("clone-check", "succeeded", {
-            job: "complete",
-            startedAt: T(53),
-            finishedAt: T(54),
-          }),
-          step("route", "failed", { job: "publication", startedAt: T(51), finishedAt: T(56) }),
-        ],
-        { resultFailedStep: "route", pollAfterSeconds: null },
-      ),
-      ms(57),
-    );
-    expect(rows.workspace?.status).toBe("done");
-    expect(rows.address).toEqual({ status: "failed", startedAt: ms(43), finishedAt: ms(56) });
-  });
-
-  it("puts a row whose steps never ended back to pending when the completion failed elsewhere", () => {
-    const rows = observeOrbitCompletionRows(
-      atCreate(),
-      completion(
-        "failed",
-        [
-          step("clone-services", "failed", {
-            job: "complete",
-            startedAt: T(49),
-            finishedAt: T(50),
-          }),
-          step("route-csr-0", "running", { job: "publication", startedAt: T(48) }),
-        ],
-        { resultFailedStep: "workspace", pollAfterSeconds: null },
-      ),
-      ms(51),
-    );
-    expect(rows.workspace?.status).toBe("failed");
-    expect(rows.address).toEqual({ status: "pending", startedAt: ms(43), finishedAt: null });
-  });
-
-  it("a Retry runs only the failed row again, and a done row stays done", () => {
-    const failed = observeOrbitCompletionRows(
-      atCreate(),
-      completion(
-        "failed",
-        [
-          step("clone-check", "succeeded", { job: "complete", finishedAt: T(54) }),
-          step("route", "failed", { job: "publication", finishedAt: T(56) }),
-        ],
-        { resultFailedStep: "route" },
-      ),
-      ms(57),
-    );
+  it("a Retry runs the address row again and leaves the others done", () => {
+    const failed = observeOrbitCompletionRows(atCreate(), completion("failed", []), ms(57));
     const reopened = reopenOrbitCompletionRows(failed)!;
-    expect(reopened.address).toEqual({ status: "running", startedAt: ms(43), finishedAt: null });
-    expect(reopened.workspace?.status).toBe("done");
+    expect(statuses(reopened)).toEqual([
+      "container:done",
+      "address:running",
+      "t3:done",
+      "register:done",
+    ]);
     const running = observeOrbitCompletionRows(reopened, completion("queued", []), ms(60));
-    expect(running.workspace?.status).toBe("done");
     expect(running.address?.status).toBe("running");
   });
 });

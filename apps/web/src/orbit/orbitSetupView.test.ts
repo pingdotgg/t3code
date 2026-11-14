@@ -394,9 +394,8 @@ describe("orbitSetupView for branch refusals", () => {
 });
 
 describe("orbitReadyView", () => {
-  it("times the setup from the create to the sent message and builds Conn's ready line", () => {
+  it("builds Conn's ready line, with no setup time", () => {
     expect(orbitReadyView(sent, "https://pricing-page.nckrtl.test")).toEqual({
-      readyMs: 12_000,
       instanceName: "pricing-page",
       nodeName: "beast",
       url: "https://pricing-page.nckrtl.test",
@@ -462,7 +461,6 @@ describe("orbitSetupView with the create's completion (release 2030)", () => {
   const rows = {
     container: { status: "done" as const, startedAt: 1_000, finishedAt: 4_000 },
     address: { status: "running" as const, startedAt: 9_000, finishedAt: null },
-    workspace: { status: "running" as const, startedAt: 3_000, finishedAt: null },
     t3: { status: "done" as const, startedAt: 3_000, finishedAt: 6_000 },
     register: { status: "done" as const, startedAt: 6_000, finishedAt: 9_000 },
   };
@@ -478,36 +476,39 @@ describe("orbitSetupView with the create's completion (release 2030)", () => {
     ...following,
     completionStatus: "failed",
     completionRetryable: true,
-    createRows: { ...rows, workspace: { ...rows.workspace, status: "failed", finishedAt: 14_000 } },
+    createRows: { ...rows, address: { ...rows.address, status: "failed", finishedAt: 14_000 } },
     ...extra,
   });
 
-  it("state 3: the three stages done, the rows under Create Instance, no Cancel", () => {
+  it("storyboard 6: header and address spin, Connect and Start agent done, no Cancel", () => {
     const view = orbitSetupView(following);
     expect(view.phase).toBe("running");
     expect(view.stages.map((stage) => `${stage.id}:${stage.status}`)).toEqual([
-      "create:done",
+      "create:running",
       "connect:done",
       "agent:done",
     ]);
     expect(rowStatuses(following)).toEqual([
       "container:done",
       "address:running",
-      "workspace:running",
       "t3:done",
       "register:done",
     ]);
+    expect(view.stages[0]!.rows?.[1]?.detail).toBe(
+      view.details.url?.replace("https://", "") ?? null,
+    );
     expect(view.canCancel).toBe(false);
     expect(view.canRetry).toBe(false);
   });
 
-  it("before the send, the pending card hides Cancel once the create ended with a completion", () => {
+  it("before the send, the pending card keeps Cancel while the completion runs (storyboard 4, 5)", () => {
     const connecting = {
       ...pairing,
       completionOperationId: 106,
       completionStatus: "queued" as const,
     };
-    expect(orbitSetupView(connecting).canCancel).toBe(false);
+    expect(orbitSetupView(connecting).canCancel).toBe(true);
+    expect(orbitSetupView(connecting).stages[0]!.status).toBe("running");
     expect(orbitSetupView(pairing).canCancel).toBe(true);
     expect(orbitSetupView(creating).canCancel).toBe(true);
   });
@@ -535,8 +536,14 @@ describe("orbitSetupView with the create's completion (release 2030)", () => {
       instanceStays: true,
       canCancel: false,
     });
-    expect(rowStatuses(start)).toContain("workspace:failed");
-    expect(view.stages.map((stage) => stage.status)).toEqual(["done", "done", "done"]);
+    expect(rowStatuses(start)).toEqual([
+      "container:done",
+      "address:failed",
+      "t3:done",
+      "register:done",
+    ]);
+    // failures.html 6: the header fails, Connect and Start agent stay done.
+    expect(view.stages.map((stage) => stage.status)).toEqual(["failed", "done", "done"]);
   });
 
   it("Q2: a code without a Conn message shows only the detail line, or the code alone", () => {

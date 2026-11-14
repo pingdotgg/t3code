@@ -46,7 +46,7 @@ function LiveElapsed({ startedAt }: { startedAt: string }) {
 }
 
 /** A finished duration, or a ticking one while setup is still running. */
-export function Elapsed({
+function Elapsed({
   startedAt,
   endedAt,
   live,

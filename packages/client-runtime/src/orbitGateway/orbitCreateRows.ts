@@ -5,24 +5,18 @@ import {
 } from "./client.ts";
 
 /**
- * Conn: the five rows under "Create Instance" while Orbit creates a clone. Each row covers a group
- * of the create Operation's steps (Operation 18922 on Beast). Rows "container" and "address" run
- * at the same time; the others follow one after another.
+ * Conn: the four rows under "Create Instance" while Orbit creates a clone. "container", "t3" and
+ * "register" cover groups of the create Operation's steps and follow one after another. "address"
+ * starts with the copy and runs until the address is live: the Route, the database copy, the
+ * Processes and the checks, which today all run in the create's `instance.complete`.
  */
-export const ORBIT_CREATE_ROW_IDS = [
-  "container",
-  "address",
-  "workspace",
-  "t3",
-  "register",
-] as const;
+export const ORBIT_CREATE_ROW_IDS = ["container", "address", "t3", "register"] as const;
 export type OrbitCreateRowId = (typeof ORBIT_CREATE_ROW_IDS)[number];
 export type OrbitCreateRowStatus = "pending" | "running" | "done" | "failed";
 
 export const ORBIT_CREATE_ROW_LABELS: Readonly<Record<OrbitCreateRowId, string>> = {
   container: "Copy the container",
   address: "Publish the address",
-  workspace: "Copy the workspace",
   t3: "Start the T3 server",
   register: "Register with Orbit",
 };
@@ -35,14 +29,15 @@ export interface OrbitCreateRowState {
 }
 export type OrbitCreateRows = Readonly<Partial<Record<OrbitCreateRowId, OrbitCreateRowState>>>;
 
-/** Rows that run beside each other share a phase; a later phase means the earlier ones ended. */
-const ROW_PHASE: Readonly<Record<OrbitCreateRowId, number>> = {
-  container: 0,
-  address: 0,
-  workspace: 1,
-  t3: 2,
-  register: 3,
-};
+/** The rows that run one after another; a later one running means the earlier ones ended. */
+const SEQUENTIAL_ROWS = [
+  "container",
+  "t3",
+  "register",
+] as const satisfies readonly OrbitCreateRowId[];
+type SequentialRowId = (typeof SEQUENTIAL_ROWS)[number];
+const ROW_PHASE: Readonly<Record<SequentialRowId, number>> = { container: 0, t3: 1, register: 2 };
+const isSequential = (id: OrbitCreateRowId): id is SequentialRowId => id !== "address";
 
 const STEP_ROWS: Readonly<Record<string, OrbitCreateRowId>> = {
   input: "container",
@@ -51,9 +46,12 @@ const STEP_ROWS: Readonly<Record<string, OrbitCreateRowId>> = {
   "clone-club-key": "container",
   csr: "address",
   sign: "address",
+  // Orbit task group 5063 moves the Route publication into the create under these names.
+  "clone-route-csr": "address",
   "clone-route": "address",
   site: "address",
-  "clone-workspace": "workspace",
+  // The checkout runs beside the T3 start (create 20511).
+  "clone-workspace": "t3",
   "clone-agent": "t3",
   "clone-t3": "t3",
   "clone-sessions": "register",
@@ -67,7 +65,7 @@ const STEP_ROWS: Readonly<Record<string, OrbitCreateRowId>> = {
 
 /** Step name prefixes of the address row: numbered steps and Orbit's step descriptions. */
 const ADDRESS_PREFIXES = [
-  "clone-route-csr-",
+  "clone-route-",
   "records-",
   "catalog-",
   "restart-",
@@ -89,6 +87,8 @@ export function orbitCreateRowOf(step: {
   readonly group?: string | null;
 }): OrbitCreateRowId | null {
   if (isRowId(step.group)) return step.group;
+  // Builds before the merge of the workspace row into the T3 row.
+  if (step.group === "workspace") return "t3";
   if (Object.hasOwn(STEP_ROWS, step.name)) return STEP_ROWS[step.name]!;
   return ADDRESS_PREFIXES.some((prefix) => step.name.startsWith(prefix)) ? "address" : null;
 }
@@ -138,18 +138,23 @@ function readOrbitCreateRows(
 ): Partial<Record<OrbitCreateRowId, RowRead>> {
   const steps: readonly OrbitGatewayOperationStep[] = operation.steps ?? [];
   const running = runningRow(previous);
+  // Where an unknown step belongs: the row that runs, else the one a Retry runs again (it
+  // failed), else the copy when nothing ran yet. After a done row, nowhere: no done row reopens.
+  const resumed = SEQUENTIAL_ROWS.findLast((id) => previous?.[id]?.status === "failed");
+  const seen = SEQUENTIAL_ROWS.some((id) => previous?.[id] !== undefined);
+  const unknownRow: SequentialRowId | null = running ?? resumed ?? (seen ? null : "container");
   const reads: Partial<Record<OrbitCreateRowId, RowRead>> = {};
   if (steps.length > 0) {
     const counted: Partial<Record<OrbitCreateRowId, OrbitGatewayOperationStep[]>> = {};
     const statuses = new Map<OrbitGatewayOperationStep, OrbitCreateRowStatus>();
-    let last: OrbitCreateRowId | null = running;
+    let last: OrbitCreateRowId | null = unknownRow;
     for (const step of steps) {
       const status = stepStatus(step.status);
       if (status === null) continue;
       const known = orbitCreateRowOf(step);
-      const row = known ?? (status === "pending" ? null : (last ?? "container"));
+      const row: OrbitCreateRowId | null = known ?? (status === "pending" ? null : last);
       if (row === null) continue;
-      if (status !== "pending") last = row;
+      if (status !== "pending" && isSequential(row)) last = row;
       // An unknown step that finished says nothing new; one that runs or failed holds its row.
       if (known === null && status === "done") continue;
       (counted[row] ??= []).push(step);
@@ -181,24 +186,35 @@ function readOrbitCreateRows(
     }
   } else if (operation.currentStep) {
     // Orbit's Conn show may send only the current step: earlier phases have ended.
-    const row = orbitCreateRowOf({ name: operation.currentStep }) ?? running;
-    if (row !== null) {
-      for (const id of ORBIT_CREATE_ROW_IDS) {
+    const row = orbitCreateRowOf({ name: operation.currentStep }) ?? unknownRow;
+    if (row !== null && isSequential(row)) {
+      for (const id of SEQUENTIAL_ROWS) {
         if (ROW_PHASE[id] < ROW_PHASE[row]) {
           reads[id] = { status: "done", startedAt: null, finishedAt: null };
         }
       }
-      reads[row] = { status: "running", startedAt: null, finishedAt: null };
+    }
+    if (row !== null) reads[row] = { status: "running", startedAt: null, finishedAt: null };
+  }
+  // The address starts with the copy and runs while the create runs, whatever its own steps say:
+  // its row ends only with the completion (or with a create that has none).
+  const begun = ORBIT_CREATE_ROW_IDS.some(
+    (id) => reads[id] !== undefined && reads[id]!.status !== "pending",
+  );
+  if (!OPERATION_TERMINAL_STATUSES.has(operation.status) && reads.address?.status !== "failed") {
+    if (begun || previous?.address?.status === "running") {
+      reads.address = { startedAt: null, finishedAt: null, ...reads.address, status: "running" };
     }
   }
   const failedName =
     operation.failedStep ?? steps.find((step) => step.status === "failed")?.name ?? null;
   if (operation.status === "succeeded") {
-    const open = completionOpenRows(operation);
+    const completes = typeof operation.completionOperationId === "number";
     for (const id of ORBIT_CREATE_ROW_IDS) {
-      reads[id] = open.has(id)
-        ? { startedAt: reads[id]?.startedAt ?? null, finishedAt: null, status: "running" }
-        : { startedAt: null, finishedAt: null, ...reads[id], status: "done" };
+      reads[id] =
+        id === "address" && completes
+          ? { startedAt: reads[id]?.startedAt ?? null, finishedAt: null, status: "running" }
+          : { startedAt: null, finishedAt: null, ...reads[id], status: "done" };
     }
   } else if (
     (failedName !== null || OPERATION_TERMINAL_STATUSES.has(operation.status)) &&
@@ -207,27 +223,50 @@ function readOrbitCreateRows(
     const failedStep = failedName === null ? null : steps.find((step) => step.name === failedName);
     const row =
       (failedName === null ? null : orbitCreateRowOf(failedStep ?? { name: failedName })) ??
-      ORBIT_CREATE_ROW_IDS.findLast((id) => reads[id]?.status === "running") ??
+      SEQUENTIAL_ROWS.findLast((id) => reads[id]?.status === "running") ??
       running ??
       (failedName === null ? null : "container");
     if (row) reads[row] = { startedAt: null, finishedAt: null, ...reads[row], status: "failed" };
+  }
+  if (
+    OPERATION_TERMINAL_STATUSES.has(operation.status) &&
+    operation.status !== "succeeded" &&
+    reads.address?.status !== "failed"
+  ) {
+    reads.address = {
+      startedAt: null,
+      finishedAt: null,
+      status: orbitFailedCreateAddressStatus({
+        createStatus: operation.status,
+        routePublication: orbitRoutePublication(operation),
+        completionStatus: null,
+      }),
+    };
   }
   return reads;
 }
 
 /**
- * The rows a succeeded create leaves running for its `instance.complete` (Orbit release 2030):
- * the workspace, and the address when the create has a Route. None on older Gateways.
+ * The address row of a failed create, from the create's status, its 5063 `route_publication` and
+ * the completion's status. Today it did not start: only a completion publishes the Route, and
+ * Orbit admits one only after a create succeeded. 5063's values are mapped here only.
  */
-function completionOpenRows(operation: OrbitGatewayOperation): ReadonlySet<OrbitCreateRowId> {
-  if (typeof operation.completionOperationId !== "number") return new Set();
-  return new Set<OrbitCreateRowId>(
-    operation.routeId === null ? ["workspace"] : ["workspace", "address"],
-  );
+export function orbitFailedCreateAddressStatus(_input: {
+  readonly createStatus: string;
+  readonly routePublication: string | null;
+  readonly completionStatus: string | null;
+}): OrbitCreateRowStatus {
+  return "pending";
 }
 
-function runningRow(rows: OrbitCreateRows | null): OrbitCreateRowId | null {
-  return ORBIT_CREATE_ROW_IDS.findLast((id) => rows?.[id]?.status === "running") ?? null;
+/** `result.route_publication` of a create (Orbit task group 5063), or null. */
+function orbitRoutePublication(operation: OrbitGatewayOperation | null): string | null {
+  const value = operation?.result?.route_publication;
+  return typeof value === "string" ? value : null;
+}
+
+function runningRow(rows: OrbitCreateRows | null): SequentialRowId | null {
+  return SEQUENTIAL_ROWS.findLast((id) => rows?.[id]?.status === "running") ?? null;
 }
 
 /**
@@ -254,6 +293,9 @@ export function observeOrbitCreateRows(
         startedAt,
         finishedAt: read.status === "running" ? null : (before?.finishedAt ?? now),
       };
+    } else if (id === "address" && read?.status === "pending" && terminal) {
+      // A failed create whose address did not start (orbitFailedCreateAddressStatus).
+      state = { status: "pending", startedAt: before?.startedAt ?? null, finishedAt: null };
     } else if (terminal && before?.status === "running") {
       // The Operation ended without a word on this row.
       state = {
@@ -274,12 +316,15 @@ export function observeOrbitCreateRows(
   return next;
 }
 
-/** The rows after a create failed where Orbit named no step: the row that ran failed now. */
+/**
+ * The rows after a create failed where Orbit named no step: the row that ran failed now, and the
+ * address row follows `orbitFailedCreateAddressStatus`.
+ */
 export function stopRunningOrbitCreateRows(
   rows: OrbitCreateRows | null,
   now: number,
 ): OrbitCreateRows | null {
-  const id = ORBIT_CREATE_ROW_IDS.findLast((row) => rows?.[row]?.status === "running");
+  const id = SEQUENTIAL_ROWS.findLast((row) => rows?.[row]?.status === "running");
   if (
     rows === null ||
     id === undefined ||
@@ -287,7 +332,25 @@ export function stopRunningOrbitCreateRows(
   ) {
     return null;
   }
-  return { ...rows, [id]: { ...rows[id]!, status: "failed", finishedAt: now } };
+  const address = rows.address;
+  return {
+    ...rows,
+    [id]: { ...rows[id]!, status: "failed", finishedAt: now },
+    ...(address?.status === "running"
+      ? {
+          address: {
+            ...address,
+            // No terminal read on this path, so no route_publication either.
+            status: orbitFailedCreateAddressStatus({
+              createStatus: "failed",
+              routePublication: null,
+              completionStatus: null,
+            }),
+            finishedAt: null,
+          },
+        }
+      : {}),
+  };
 }
 
 /** Saved rows from a stored start of any build; a broken row reads as missing. */
@@ -324,98 +387,43 @@ export function sameOrbitCreateRows(
   });
 }
 
-/** The rows an `instance.complete` sets up; the other three end with the create. */
-const COMPLETION_ROW_IDS = ["workspace", "address"] as const satisfies readonly OrbitCreateRowId[];
-
 /**
- * The row a completion step belongs to, by its job first: child workflows reuse names such as
- * `input`, `csr` and `site`, which count for nothing here. Null for a step the card does not show.
- */
-export function orbitCompletionRowOf(step: {
-  readonly name: string;
-  readonly job: string | null;
-}): OrbitCreateRowId | null {
-  if (step.job === "complete") return "workspace";
-  const name = step.name.replace(/(-\d+)+$/, "");
-  if (step.job === "publication" && (name === "route" || name === "route-csr")) return "address";
-  return null;
-}
-
-/** The row a failed or cancelled completion stopped at: Orbit's phase, a failed step, else the workspace. */
-export function orbitCompletionFailedRow(operation: OrbitGatewayOperation): OrbitCreateRowId {
-  switch (operation.resultFailedStep) {
-    case "database":
-    case "fleet":
-    case "workspace":
-    case "check":
-    case "complete":
-      return "workspace";
-    case "route":
-      return "address";
-  }
-  for (const step of operation.steps ?? []) {
-    const row = step.status === "failed" ? orbitCompletionRowOf(step) : null;
-    if (row !== null) return row;
-  }
-  return "workspace";
-}
-
-/**
- * The workspace and address rows after a read of the create's `instance.complete`; no order is
- * inferred. A row runs until the completion ends, is done when it succeeded or all its steps did,
- * fails per `orbitCompletionFailedRow`, and reads pending if its steps never ended. It keeps its start.
+ * The address row after a read of `instance.complete`, whose every step (known or not) is this
+ * row. It runs until the completion ends: done when it succeeded, failed otherwise. The other
+ * rows ended with the create and never reopen.
  */
 export function observeOrbitCompletionRows(
   previous: OrbitCreateRows | null,
   operation: OrbitGatewayOperation,
   now: number,
 ): OrbitCreateRows {
-  const next: Partial<Record<OrbitCreateRowId, OrbitCreateRowState>> = { ...previous };
-  const terminal = OPERATION_TERMINAL_STATUSES.has(operation.status);
-  const failedRow =
-    terminal && operation.status !== "succeeded" ? orbitCompletionFailedRow(operation) : null;
-  for (const id of COMPLETION_ROW_IDS) {
-    const before = previous?.[id] ?? null;
-    const steps = (operation.steps ?? []).filter(
-      (step) => orbitCompletionRowOf(step) === id && stepStatus(step.status) !== null,
-    );
-    const states = steps.map((step) => stepStatus(step.status));
-    const starts = steps.map((step) => time(step.startedAt)).filter((t) => t !== null);
-    const ends = steps.map((step) => time(step.finishedAt)).filter((t) => t !== null);
-    const lastEnd = ends.length > 0 ? Math.max(...ends) : null;
-    const startedAt = before?.startedAt ?? (starts.length > 0 ? Math.min(...starts) : now);
-    let status: OrbitCreateRowStatus;
-    if (operation.status === "succeeded") status = "done";
-    else if (terminal) {
-      if (id === failedRow) status = "failed";
-      else if (states.length > 0 && states.every((state) => state === "done")) status = "done";
-      // A row with no step in this read keeps its state (a refused admission: spec state 12).
-      else if (before !== null && (states.length === 0 || before.status !== "running")) continue;
-      // The completion ended while this row's steps were unfinished: they did not run.
-      else status = "pending";
-    } else if (states.includes("failed")) status = "failed";
-    // A Retry re-runs the completion: a row that was done stays done until a step of it fails.
-    else if (before?.status === "done") continue;
-    else status = "running";
-    next[id] = {
+  const before = previous?.address ?? null;
+  const steps = (operation.steps ?? []).filter((step) => stepStatus(step.status) !== null);
+  const starts = steps.map((step) => time(step.startedAt)).filter((t) => t !== null);
+  const ends = steps.map((step) => time(step.finishedAt)).filter((t) => t !== null);
+  const lastEnd = ends.length > 0 ? Math.max(...ends) : null;
+  // A failed step while the Operation runs fails nothing yet: Orbit may carry on.
+  const status: OrbitCreateRowStatus =
+    operation.status === "succeeded"
+      ? "done"
+      : OPERATION_TERMINAL_STATUSES.has(operation.status)
+        ? "failed"
+        : "running";
+  return {
+    ...previous,
+    address: {
       status,
-      startedAt,
-      finishedAt:
-        status === "running" || status === "pending"
-          ? null
-          : (lastEnd ?? before?.finishedAt ?? now),
-    };
-  }
-  return next;
+      startedAt: before?.startedAt ?? (starts.length > 0 ? Math.min(...starts) : now),
+      finishedAt: status === "running" ? null : (lastEnd ?? before?.finishedAt ?? now),
+    },
+  };
 }
 
-/** A Retry of the completion: its failed rows run again, the other rows stay as they are. */
+/** A Retry of the completion: the address row runs again, the other rows stay as they are. */
 export function reopenOrbitCompletionRows(rows: OrbitCreateRows | null): OrbitCreateRows | null {
   if (rows === null) return null;
-  const next: Partial<Record<OrbitCreateRowId, OrbitCreateRowState>> = { ...rows };
-  for (const id of COMPLETION_ROW_IDS) {
-    const row = rows[id];
-    if (row?.status === "failed") next[id] = { ...row, status: "running", finishedAt: null };
-  }
-  return next;
+  const address = rows.address;
+  return address?.status === "failed"
+    ? { ...rows, address: { ...address, status: "running", finishedAt: null } }
+    : rows;
 }

@@ -38,7 +38,6 @@ function sentStart(extra: Partial<OrbitThreadStart> = {}): OrbitThreadStart {
     createRows: {
       container: { status: "done", startedAt: 1, finishedAt: 7 },
       address: { status: "running", startedAt: 22, finishedAt: null },
-      workspace: { status: "running", startedAt: 10, finishedAt: null },
       t3: { status: "done", startedAt: 10, finishedAt: 15 },
       register: { status: "done", startedAt: 15, finishedAt: 21 },
     },
@@ -144,7 +143,7 @@ describe("orbitCompletionPhase", () => {
 });
 
 describe("followOrbitCompletion", () => {
-  it("follows to success: both rows done, error and connected untouched", async () => {
+  it("follows to success: the address row done, error and connected untouched", async () => {
     const h = harness(sentStart(), {
       106: [completion(106, "running"), completion(106, "succeeded")],
     });
@@ -154,14 +153,16 @@ describe("followOrbitCompletion", () => {
       error: null,
       connected: true,
     });
-    expect(h.saved()!.createRows?.workspace?.status).toBe("done");
     expect(h.saved()!.createRows?.address?.status).toBe("done");
+    expect(h.saved()!.createRows?.t3?.status).toBe("done");
   });
 
   it.each([
-    ["workspace", "workspace"],
+    ["workspace", "address"],
     ["route", "address"],
-    ["database", "workspace"],
+    ["database", "address"],
+    ["check", "address"],
+    ["something-new", "address"],
   ] as const)(
     "a failure in phase %s fails row %s, keeps connected and leaves error null",
     async (phase, row) => {
@@ -194,9 +195,7 @@ describe("followOrbitCompletion", () => {
     const h = harness(sentStart(), { 106: [refused] });
     expect(await followOrbitCompletion(h.ports)).toBe("ended");
     expect(h.calls).toEqual(["operation 106"]);
-    expect(h.saved()!.createRows?.workspace?.status).toBe("failed");
-    // The address keeps running: the refused completion never reached it.
-    expect(h.saved()!.createRows?.address?.status).toBe("running");
+    expect(h.saved()!.createRows?.address?.status).toBe("failed");
     expect(h.saved()!.completionErrorCode).toBe("instance.complete_unavailable");
   });
 

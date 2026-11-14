@@ -1109,11 +1109,12 @@ describe("runOrbitThreadStart", () => {
     expect(await runOrbitThreadStart(fresh(), slow.ports)).toBe(false);
     const stopped = slow.saves.at(-1)!;
     expect(stopped).toMatchObject({ createOperationId: 100, environmentId: null });
-    // The row that ran turns red with the time the create stopped.
-    expect(stopped.createRows?.workspace).toMatchObject({
+    // The row that ran turns red with the time the create stopped; the address did not start.
+    expect(stopped.createRows?.t3).toMatchObject({
       status: "failed",
       finishedAt: slow.ports.now(),
     });
+    expect(stopped.createRows?.address?.status).toBe("pending");
   });
 
   it("never polls faster than every 0.5 s", async () => {
@@ -1511,7 +1512,6 @@ describe("runOrbitThreadStart with a completion (release 2030)", () => {
       completionStatus: "queued",
     });
     expect(last.sentAt).not.toBeNull();
-    expect(last.createRows?.workspace?.status).toBe("running");
     expect(last.createRows?.address?.status).toBe("running");
     expect(last.createRows?.t3?.status).toBe("done");
   });
