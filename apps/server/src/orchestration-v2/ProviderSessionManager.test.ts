@@ -23,6 +23,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -3746,6 +3747,121 @@ it.effect(
         ),
       );
     }),
+);
+
+const HOST_SLEEP_IDLE_MS = 30 * 60_000;
+
+// Models host sleep starting awakeMs after open and returns the idle deadline (1-based, in awake idle
+// windows) at which the session closed. Where the timer clock counts sleep, the timer fires on resume
+// far past its due time; where it pauses, only wall time jumps.
+const idleDeadlineAcrossHostSleep = (input: {
+  readonly timerCountsSleep: boolean;
+  readonly awakeMs: number;
+  readonly sleepMs: number;
+  readonly pinnedForMs?: number;
+}) =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const closes = yield* Queue.unbounded<string>();
+    const testClock = yield* TestClock.testClockWith(Effect.succeed);
+    let sleptMs = 0;
+    const sleptNanos = () => BigInt(sleptMs) * BigInt(1_000_000);
+    const monotonicSleptNanos = () => (input.timerCountsSleep ? sleptNanos() : BigInt(0));
+    const hostClock: TestClock.TestClock = {
+      ...testClock,
+      currentTimeMillisUnsafe: () => testClock.currentTimeMillisUnsafe() + sleptMs,
+      currentTimeMillis: Effect.sync(() => testClock.currentTimeMillisUnsafe() + sleptMs),
+      currentTimeNanosUnsafe: () => testClock.currentTimeNanosUnsafe() + sleptNanos(),
+      currentTimeNanos: Effect.sync(() => testClock.currentTimeNanosUnsafe() + sleptNanos()),
+      monotonicTimeNanosUnsafe: () => testClock.monotonicTimeNanosUnsafe() + monotonicSleptNanos(),
+      monotonicTimeNanos: Effect.sync(
+        () => testClock.monotonicTimeNanosUnsafe() + monotonicSleptNanos(),
+      ),
+    };
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-host-sleep");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+      yield* TestClock.adjust(input.awakeMs);
+      const untilDeadlineMs = HOST_SLEEP_IDLE_MS - (input.awakeMs % HOST_SLEEP_IDLE_MS);
+      // A counting timer spends part of the sleep reaching its due time, then fires on resume.
+      sleptMs = input.timerCountsSleep ? input.sleepMs - untilDeadlineMs : input.sleepMs;
+      yield* TestClock.adjust(untilDeadlineMs);
+      let deadline = Math.ceil(input.awakeMs / HOST_SLEEP_IDLE_MS);
+      for (let checked = 0; yield* manager.isLive(providerSessionId); checked += 1) {
+        if (checked === 5) return Number.POSITIVE_INFINITY;
+        deadline += 1;
+        yield* TestClock.adjust(HOST_SLEEP_IDLE_MS);
+      }
+      assert.equal(yield* Queue.take(closes), "close");
+      return deadline;
+    });
+
+    return yield* effect.pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          unloads: closes,
+          idleTimeoutMs: HOST_SLEEP_IDLE_MS,
+          ...(input.pinnedForMs === undefined
+            ? {}
+            : { maxIdlePinMs: input.pinnedForMs, hasPendingBackgroundWork: Effect.succeed(true) }),
+        }),
+      ),
+      Effect.provideService(Clock.Clock, hostClock),
+    );
+  });
+
+// regression: #11805 sessions were released right after the computer woke from sleep
+it.effect("ProviderSessionManagerV2 does not count host sleep toward idle or pin budgets", () =>
+  Effect.gen(function* () {
+    for (const { label, expectedDeadline, ...scenario } of [
+      {
+        label: "timer counting sleep",
+        timerCountsSleep: true,
+        awakeMs: 5 * 60_000,
+        sleepMs: 2 * 60 * 60_000,
+        expectedDeadline: 2,
+      },
+      {
+        // Overshoots the deadline by under a minute, so deadline lateness alone misses it.
+        label: "short sleep across the deadline",
+        timerCountsSleep: true,
+        awakeMs: 1_000,
+        sleepMs: HOST_SLEEP_IDLE_MS + 30_000,
+        expectedDeadline: 2,
+      },
+      {
+        label: "timer paused during sleep",
+        timerCountsSleep: false,
+        awakeMs: 5 * 60_000,
+        sleepMs: 2 * 60 * 60_000,
+        expectedDeadline: 1,
+      },
+      {
+        // Pinned at the first deadline, then asleep longer than the whole pin budget.
+        label: "pending work pinned across sleep",
+        timerCountsSleep: false,
+        awakeMs: 35 * 60_000,
+        sleepMs: 8 * 60 * 60_000,
+        pinnedForMs: 2 * HOST_SLEEP_IDLE_MS,
+        expectedDeadline: 3,
+      },
+    ]) {
+      assert.equal(yield* idleDeadlineAcrossHostSleep(scenario), expectedDeadline, label);
+    }
+  }),
 );
 
 it.effect("ProviderSessionManagerV2 releases sessions when provider event streams fail", () =>

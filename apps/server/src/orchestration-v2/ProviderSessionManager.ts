@@ -103,6 +103,22 @@ const WORKING_RUN_STATUSES: ReadonlySet<string> = new Set([
   "running",
   "waiting",
 ]);
+const AWAKE_SLICE_MS = 60 * 1000;
+const SUSPEND_TOLERANCE_MS = 10 * 1000;
+
+// Where the timer clock counts host sleep, a timer fires on wake far past due. Waiting in short slices
+// and dropping any slice that overran its tolerance keeps suspended time out of the count, whatever its
+// length. Where both clocks pause, no slice overruns. Untraced: every provider event re-arms the timer.
+const sleepWhileAwake = Effect.fnUntraced(function* (ms: number): Effect.fn.Return<void> {
+  let remainingMs = ms;
+  while (remainingMs > 0) {
+    const sliceMs = Math.min(remainingMs, AWAKE_SLICE_MS);
+    const startedAtNanos = yield* Clock.monotonicTimeNanos;
+    yield* Effect.sleep(Duration.millis(sliceMs));
+    const elapsedMs = Number((yield* Clock.monotonicTimeNanos) - startedAtNanos) / 1_000_000;
+    if (elapsedMs <= sliceMs + SUSPEND_TOLERANCE_MS) remainingMs -= sliceMs;
+  }
+});
 
 /** Matches planDelegatedCompletionDelivery: true while a delegated task's result still wakes the thread. */
 export const delegatedTaskWillWake = (records: {
@@ -309,7 +325,7 @@ interface LiveSessionEntry {
   readonly idleGeneration: number;
   readonly busyTurns: ReadonlySet<string>;
   readonly idleFiber: Fiber.Fiber<void, never> | null;
-  readonly pinnedSinceMs: number | null;
+  readonly pinnedForMs: number | null;
   readonly idleThreadUnloads: ReadonlyMap<ThreadId, IdleThreadUnload>;
 }
 
@@ -1488,9 +1504,9 @@ export const layerWithOptions = (
               ),
             );
           if (hasPendingWork) {
-            const now = yield* Clock.currentTimeMillis;
-            const pinnedSinceMs = entry.pinnedSinceMs ?? now;
-            if (now - pinnedSinceMs < maxIdlePinMs) {
+            // Counted in awake idle windows, so host sleep does not spend the pin budget.
+            const pinnedForMs = entry.pinnedForMs ?? 0;
+            if (pinnedForMs < maxIdlePinMs) {
               const shouldContinuePin = yield* Ref.modify(sessions, (latest) => {
                 const latestEntry = latest.get(key);
                 if (
@@ -1502,7 +1518,7 @@ export const layerWithOptions = (
                   return [false, latest] as const;
                 }
                 const updated = new Map(latest);
-                updated.set(key, { ...latestEntry, pinnedSinceMs });
+                updated.set(key, { ...latestEntry, pinnedForMs: pinnedForMs + idleTimeoutMs });
                 return [true, updated] as const;
               });
               if (!shouldContinuePin) {
@@ -1510,15 +1526,15 @@ export const layerWithOptions = (
               }
               yield* Effect.logInfo("orchestration-v2.driver-session.idle-release-deferred", {
                 providerSessionId: input.providerSessionId,
-                pinnedForMs: now - pinnedSinceMs,
+                pinnedForMs,
               });
               // Recheck on this fiber; scheduleIdleReleaseInternal would interrupt it and self-deadlock.
-              yield* Effect.sleep(Duration.millis(idleTimeoutMs));
+              yield* sleepWhileAwake(idleTimeoutMs);
               return yield* releaseIfStillIdle(input);
             }
             yield* Effect.logWarning("orchestration-v2.driver-session.idle-release-pin-expired", {
               providerSessionId: input.providerSessionId,
-              pinnedForMs: now - pinnedSinceMs,
+              pinnedForMs,
             });
           }
           // Closing skips the threads' own idle unloads, so archive delivered children first.
@@ -1582,7 +1598,7 @@ export const layerWithOptions = (
 
         yield* cancelIdleFiber(entry.idleFiber);
         const generation = entry.idleGeneration + 1;
-        const idleFiber = yield* Effect.sleep(Duration.millis(idleTimeoutMs)).pipe(
+        const idleFiber = yield* sleepWhileAwake(idleTimeoutMs).pipe(
           Effect.andThen(releaseIfStillIdle({ providerSessionId, generation })),
           Effect.forkIn(layerScope),
         );
@@ -1596,7 +1612,7 @@ export const layerWithOptions = (
             ...latestEntry,
             idleGeneration: generation,
             idleFiber,
-            ...(options?.providerActivity === true ? { pinnedSinceMs: null } : {}),
+            ...(options?.providerActivity === true ? { pinnedForMs: null } : {}),
           });
           return updated;
         });
@@ -1827,7 +1843,7 @@ export const layerWithOptions = (
                 ...entry,
                 busyTurns: new Set(entry.busyTurns).add(turnKey),
                 idleFiber: null,
-                pinnedSinceMs: null,
+                pinnedForMs: null,
               });
               return [{ idleFiber: entry.idleFiber }, updated] as const;
             });
@@ -1935,7 +1951,7 @@ export const layerWithOptions = (
           if (tracked === undefined) return;
           const [threadId, pending] = tracked;
           const generation = pending.generation + 1;
-          const fiber = yield* Effect.sleep(Duration.millis(idleTimeoutMs)).pipe(
+          const fiber = yield* sleepWhileAwake(idleTimeoutMs).pipe(
             Effect.andThen(unloadIdleThread({ providerSessionId, threadId, generation })),
             Effect.forkIn(layerScope),
           );
@@ -2082,7 +2098,7 @@ export const layerWithOptions = (
           );
           // Wait outside the lock so the next attach is not blocked.
           if (outcome === "deferred" && input.archiveOnly !== true) {
-            yield* Effect.sleep(Duration.millis(idleTimeoutMs));
+            yield* sleepWhileAwake(idleTimeoutMs);
             return yield* unloadIdleThread(input);
           }
         },
@@ -3084,7 +3100,7 @@ export const layerWithOptions = (
                 idleGeneration: 0,
                 busyTurns: new Set(),
                 idleFiber: null,
-                pinnedSinceMs: null,
+                pinnedForMs: null,
                 idleThreadUnloads: new Map(),
               };
               yield* Ref.update(sessions, (current) => {
