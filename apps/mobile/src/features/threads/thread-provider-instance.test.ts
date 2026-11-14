@@ -213,8 +213,12 @@ describe("thread list reorder availability", () => {
 
         registry.set(connected, [onlineId]);
 
-        expect(createThreadMovePlanner(plannerInput())(movedId, "down")).toBeNull();
-        expect(computeThreadMoveAvailability(plannerInput()).get(movedId)?.canMoveDown).toBe(false);
+        expect(createThreadMovePlanner(plannerInput())(movedId, "down")).toEqual(
+          section === "active" ? [expect.objectContaining({ id: movedId })] : null,
+        );
+        expect(computeThreadMoveAvailability(plannerInput()).get(movedId)?.canMoveDown).toBe(
+          section === "active",
+        );
         expect(registry.get(environments).pinningEnvironmentIds.has(offlineId)).toBe(true);
         expect(registry.get(environments).settlementEnvironmentIds.has(offlineId)).toBe(true);
         expect(registry.get(environments).providersByEnvironmentId.get(offlineId)).toBe(
@@ -260,7 +264,9 @@ describe("thread list reorder availability", () => {
         );
         expect(updated.pinReorderEnvironmentIds.has(offlineId)).toBe(false);
         expect(updated.activeReorderEnvironmentIds.has(offlineId)).toBe(false);
-        expect(createThreadMovePlanner(plannerInput())(movedId, "down")).toBeNull();
+        expect(createThreadMovePlanner(plannerInput())(movedId, "down")).toEqual(
+          section === "active" ? [expect.objectContaining({ id: movedId })] : null,
+        );
 
         registry.set(
           configs,
@@ -292,8 +298,12 @@ describe("thread list reorder availability", () => {
 
         registry.set(configs, new Map([[onlineId, config]]));
 
-        expect(createThreadMovePlanner(plannerInput())(movedId, "down")).toBeNull();
-        expect(computeThreadMoveAvailability(plannerInput()).get(movedId)?.canMoveDown).toBe(false);
+        expect(createThreadMovePlanner(plannerInput())(movedId, "down")).toEqual(
+          section === "active" ? [expect.objectContaining({ id: movedId })] : null,
+        );
+        expect(computeThreadMoveAvailability(plannerInput()).get(movedId)?.canMoveDown).toBe(
+          section === "active",
+        );
       } finally {
         registry.dispose();
       }

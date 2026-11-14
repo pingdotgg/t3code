@@ -3,8 +3,13 @@ import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-i
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
 import {
+  planPinnedReorder,
+  sortActiveThreadsByOrderKey,
+  sortPinnedThreadsByOrderKey,
+} from "@t3tools/client-runtime/state/thread-sort";
+import {
+  computeThreadMoveAvailability,
   createPendingThreadOrder,
   createThreadMovePlanner,
   threadOrderAfterMove,
@@ -1035,7 +1040,7 @@ describe("mobile move availability", () => {
   );
 
   it.each(["active", "pinned"] as const)(
-    "disables %s moves requiring unsupported keyless materialization",
+    "allows %s moves only on the sortable side of unsupported keyless rows",
     (section) => {
       const ordered = rows(section, [null, null, null]);
       const plan = createThreadMovePlanner({
@@ -1043,8 +1048,33 @@ describe("mobile move availability", () => {
         section,
         reorderableEnvironmentIds: new Set([environmentId]),
       });
-      expect(plan(`${environmentId}:move-0`, "down")).toBeNull();
-      expect(plan(`${environmentId}:move-2`, "up")).toBeNull();
+      const allowed =
+        section === "active"
+          ? plan(`${environmentId}:move-0`, "down")
+          : plan(`${environmentId}:move-2`, "up");
+      expect(allowed?.map(({ id }) => id)).toEqual([
+        `${environmentId}:move-0`,
+        `${environmentId}:move-2`,
+      ]);
+      const assigned = new Map(allowed?.map(({ id, orderKey }) => [id, orderKey]));
+      const updated = ordered.map((row) => ({
+        ...row,
+        ...(section === "active"
+          ? { activeOrderKey: assigned.get(`${row.environmentId}:${row.id}`) ?? row.activeOrderKey }
+          : { pinOrderKey: assigned.get(`${row.environmentId}:${row.id}`) ?? row.pinOrderKey }),
+      }));
+      const sorted =
+        section === "active"
+          ? sortActiveThreadsByOrderKey(updated)
+          : sortPinnedThreadsByOrderKey(updated);
+      expect(sorted.map(({ id }) => id)).toEqual(
+        section === "active" ? ["move-1", "move-0", "move-2"] : ["move-0", "move-2", "move-1"],
+      );
+      expect(
+        section === "active"
+          ? plan(`${environmentId}:move-2`, "up")
+          : plan(`${environmentId}:move-0`, "down"),
+      ).toBeNull();
       const supported = createThreadMovePlanner({
         ordered,
         section,
@@ -1053,6 +1083,21 @@ describe("mobile move availability", () => {
       expect(supported(`${environmentId}:move-0`, "down")).toHaveLength(3);
     },
   );
+
+  it("swaps Active rows below an unsupported keyless row when keyless rows sit above it", () => {
+    const ordered = rows("active", [null, null, null, null]);
+    const input = {
+      ordered,
+      section: "active" as const,
+      reorderableEnvironmentIds: new Set([environmentId]),
+    };
+    const movedId = `${environmentId}:move-3`;
+    expect(createThreadMovePlanner(input)(movedId, "up")?.map(({ id }) => id)).toEqual([
+      movedId,
+      `${environmentId}:move-2`,
+    ]);
+    expect(computeThreadMoveAvailability(input).get(movedId)?.canMoveUp).toBe(true);
+  });
 
   it.each(["active", "pinned"] as const)(
     "reserves snoozed %s keys when moving visible rows",
@@ -1157,7 +1202,7 @@ describe("thread drag destinations", () => {
   });
 });
 
-it("allows a long drop past an old server even when both adjacent moves fail", () => {
+it("allows adjacent and long drops onto the sortable side of an old server", () => {
   const old = EnvironmentId.make("old-server");
   const ordered = [
     makeThread({ id: ThreadId.make("a"), title: "a" }),
@@ -1172,7 +1217,7 @@ it("allows a long drop past an old server even when both adjacent moves fail", (
   });
   const movedId = `${environmentId}:a`;
   expect(planner(movedId, "up")).toBeNull();
-  expect(planner(movedId, "down")).toBeNull();
+  expect(planner(movedId, "down")).toEqual([expect.objectContaining({ id: movedId })]);
   const assignments = planner(movedId, { targetId: `${environmentId}:d`, placement: "after" });
   expect(assignments).toHaveLength(1);
   expect(assignments![0]!.id).toBe(movedId);

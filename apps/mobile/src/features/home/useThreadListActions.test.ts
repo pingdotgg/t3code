@@ -322,7 +322,7 @@ describe("pinned thread operation permissions", () => {
 
 describe("thread reorder connection availability", () => {
   it.each(["active", "pinned"] as const)(
-    "rejects %s materialization involving a cached capable offline neighbor",
+    "gates %s materialization involving a cached capable offline neighbor",
     async (section) => {
       const moved = makeThread({
         pinnedAt: section === "pinned" ? "2026-09-02T00:00:00.000Z" : null,
@@ -340,8 +340,14 @@ describe("thread reorder connection availability", () => {
       state.connectedEnvironmentIds = [primaryEnvironmentId];
 
       const { moveThread } = useThreadListActions();
-      expect(await moveThread(moved, "up")).toBe(false);
-      expect(state.requests).toEqual([]);
+      // Keyless Pinned rows sort last, so a Pinned row can move above one without writing it.
+      expect(await moveThread(moved, "up")).toBe(section === "pinned");
+      expect(state.requests).toEqual(
+        section === "pinned"
+          ? [expect.objectContaining({ environmentId: primaryEnvironmentId })]
+          : [],
+      );
+      if (section === "pinned") return;
 
       state.connectedEnvironmentIds = [primaryEnvironmentId, otherEnvironmentId];
 

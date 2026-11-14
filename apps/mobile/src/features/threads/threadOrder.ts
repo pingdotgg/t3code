@@ -2,7 +2,8 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import {
   generateSpreadPinOrderKeys,
   pinOrderKeyBetween,
-  planPinnedReorder,
+  planWritableReorder,
+  sortableWritableRange,
 } from "@t3tools/client-runtime/state/thread-sort";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -95,15 +96,16 @@ export function createThreadMovePlanner(input: {
       .map(rowId),
   );
   return (movedId: string, direction: ThreadMoveDestination) => {
-    if (!writableIds.has(movedId)) return null;
     const nextIds = threadOrderAfterMove(orderedIds, movedId, direction);
     if (nextIds === null) return null;
-    const assignments = planPinnedReorder({ orderedIds: nextIds, keysById, movedId });
-    return assignments === null ||
-      assignments.length === 0 ||
-      assignments.some((assignment) => !writableIds.has(assignment.id))
-      ? null
-      : assignments;
+    const assignments = planWritableReorder({
+      orderedIds: nextIds,
+      keysById,
+      writableIds,
+      movedId,
+      section: input.section,
+    });
+    return assignments === null || assignments.length === 0 ? null : assignments;
   };
 }
 
@@ -127,13 +129,6 @@ export function computeThreadMoveAvailability(input: {
     for (const row of rows) result.set(rowId(row), { canMoveUp: false, canMoveDown: false });
     return result;
   }
-  const orderedIds: string[] = [];
-  const indexById = new Map<string, number>();
-  for (const row of rows) {
-    const id = rowId(row);
-    indexById.set(id, orderedIds.length);
-    orderedIds.push(id);
-  }
   const keysById = new Map<string, string | null>();
   const writableIds = new Set<string>();
   for (const row of input.allThreads ?? input.ordered) {
@@ -141,6 +136,16 @@ export function computeThreadMoveAvailability(input: {
     keysById.set(id, rowOrder(row, input.section).key);
     if (input.reorderableEnvironmentIds.has(row.environmentId)) writableIds.add(id);
   }
+  const rowIds = rows.map(rowId);
+  const { start, end } = sortableWritableRange(rowIds, keysById, writableIds, input.section);
+  const orderedIds = rowIds.slice(start, end);
+  const indexById = new Map(orderedIds.map((id, index) => [id, index]));
+  // Only the row beside the boundary can enter the sortable range in one step; plan it directly.
+  const entryIndex = input.section === "active" ? start - 2 : end + 1;
+  const entryId = rowIds[entryIndex];
+  const entryAvailable =
+    entryId !== undefined &&
+    createThreadMovePlanner(input)(entryId, input.section === "active" ? "down" : "up") !== null;
   const reservedKeys = new Set<string>();
   keysById.forEach((key, id) => {
     if (key != null && !indexById.has(id)) reservedKeys.add(key);
@@ -193,7 +198,15 @@ export function computeThreadMoveAvailability(input: {
     }
     const index = indexById.get(movedId);
     if (index === undefined) {
-      result.set(movedId, denied);
+      result.set(
+        movedId,
+        movedId === entryId
+          ? {
+              canMoveUp: input.section === "pinned" && entryAvailable,
+              canMoveDown: input.section === "active" && entryAvailable,
+            }
+          : denied,
+      );
       continue;
     }
     const adjacentAvailable = (towardUp: boolean): boolean => {

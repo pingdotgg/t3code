@@ -71,11 +71,12 @@ function referenceAvailability(
   ordered: readonly OrderRow[],
   allThreads: readonly OrderRow[],
   writable: ReadonlySet<EnvironmentId>,
+  section: "pinned" | "active" = "pinned",
 ) {
   const planner = createThreadMovePlanner({
     ordered,
     allThreads,
-    section: "pinned",
+    section,
     reorderableEnvironmentIds: writable,
   });
   const answers = new Map<string, { canMoveUp: boolean; canMoveDown: boolean }>();
@@ -89,21 +90,21 @@ function referenceAvailability(
   return answers;
 }
 
-function randomCase(rng: () => number) {
+function randomCase(rng: () => number, pinned: boolean) {
   const rowCount = 1 + Math.floor(rng() * 9);
   const rows: OrderRow[] = [];
   for (let index = 0; index < rowCount; index += 1) {
     const environment = rng() < 0.75 ? "env-w" : "env-x";
     const key = KEY_POOL[Math.floor(rng() * KEY_POOL.length)] ?? null;
     const id = rng() < 0.4 ? `t:${index}` : `t${index}`;
-    rows.push(makeRow(id, environment, key, true));
+    rows.push(makeRow(id, environment, key, pinned));
   }
   const hidden: OrderRow[] = [];
   const hiddenCount = Math.floor(rng() * 4);
   for (let index = 0; index < hiddenCount; index += 1) {
     const key = KEY_POOL[Math.floor(rng() * KEY_POOL.length)] ?? null;
     const id = rng() < 0.4 ? `h:${index}` : `h${index}`;
-    hidden.push(makeRow(id, rng() < 0.75 ? "env-w" : "env-x", key, true));
+    hidden.push(makeRow(id, rng() < 0.75 ? "env-w" : "env-x", key, pinned));
   }
   return { ordered: rows, allThreads: [...rows, ...hidden] };
 }
@@ -112,23 +113,28 @@ const WRITABLE = new Set<EnvironmentId>(["env-w" as EnvironmentId]);
 
 describe("computeThreadMoveAvailability matches the reference planner", () => {
   it("agrees across randomized sections (keys, holes, non-writable rows, hidden keys)", () => {
-    for (let seed = 1; seed <= 4_000; seed += 1) {
-      const rng = makeRng(seed);
-      const { ordered, allThreads } = randomCase(rng);
-      const batch = computeThreadMoveAvailability({
-        ordered,
-        allThreads,
-        section: "pinned",
-        reorderableEnvironmentIds: WRITABLE,
-      });
-      const reference = referenceAvailability(ordered, allThreads, WRITABLE);
-      for (const [id, answer] of reference) {
-        expect(
-          batch.get(id) ?? { canMoveUp: false, canMoveDown: false },
-          `seed ${seed} row ${id} ordered=${ordered
-            .map((row) => `${row.id}:${row.pinOrderKey ?? "-"}:${row.environmentId}`)
-            .join(",")}`,
-        ).toEqual(answer);
+    for (const section of ["pinned", "active"] as const) {
+      for (let seed = 1; seed <= 4_000; seed += 1) {
+        const rng = makeRng(seed);
+        const { ordered, allThreads } = randomCase(rng, section === "pinned");
+        const batch = computeThreadMoveAvailability({
+          ordered,
+          allThreads,
+          section,
+          reorderableEnvironmentIds: WRITABLE,
+        });
+        const reference = referenceAvailability(ordered, allThreads, WRITABLE, section);
+        for (const [id, answer] of reference) {
+          expect(
+            batch.get(id) ?? { canMoveUp: false, canMoveDown: false },
+            `${section} seed ${seed} row ${id} ordered=${ordered
+              .map(
+                (row) =>
+                  `${row.id}:${row.pinOrderKey ?? row.activeOrderKey ?? "-"}:${row.environmentId}`,
+              )
+              .join(",")}`,
+          ).toEqual(answer);
+        }
       }
     }
   });

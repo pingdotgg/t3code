@@ -278,6 +278,41 @@ export function planPinnedReorder(input: {
   });
 }
 
+/** Rows a client cannot write and that have no key are frozen. Keyless Active rows sort
+    before keyed rows and keyless Pinned rows after them, so only rows past the last frozen
+    Active row or before the first frozen Pinned row can be given a lasting position. */
+export function sortableWritableRange(
+  orderedIds: readonly string[],
+  keysById: ReadonlyMap<string, string | null | undefined>,
+  writableIds: ReadonlySet<string>,
+  section: "pinned" | "active",
+): { readonly start: number; readonly end: number } {
+  const isFrozen = (id: string) => !writableIds.has(id) && keysById.get(id) == null;
+  if (section === "active") {
+    return { start: orderedIds.findLastIndex(isFrozen) + 1, end: orderedIds.length };
+  }
+  const firstFrozen = orderedIds.findIndex(isFrozen);
+  return { start: 0, end: firstFrozen === -1 ? orderedIds.length : firstFrozen };
+}
+
+/** planPinnedReorder for a client that writes only `writableIds`; null when the move needs a
+    write it cannot make. */
+export function planWritableReorder(input: {
+  readonly orderedIds: readonly string[];
+  readonly keysById: ReadonlyMap<string, string | null | undefined>;
+  readonly writableIds: ReadonlySet<string>;
+  readonly movedId: string;
+  readonly section: "pinned" | "active";
+}): ReadonlyArray<{ readonly id: string; readonly orderKey: string }> | null {
+  const { orderedIds, keysById, writableIds, movedId } = input;
+  if (!writableIds.has(movedId)) return null;
+  const { start, end } = sortableWritableRange(orderedIds, keysById, writableIds, input.section);
+  const sortableIds = orderedIds.slice(start, end);
+  if (!sortableIds.includes(movedId)) return null;
+  const assignments = planPinnedReorder({ orderedIds: sortableIds, keysById, movedId });
+  return assignments.every(({ id }) => writableIds.has(id)) ? assignments : null;
+}
+
 export function sortPinnedThreadsByOrderKey<
   T extends {
     readonly id: string;
