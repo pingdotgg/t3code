@@ -189,3 +189,7 @@ export function WorkLogDetails({
     </div>
   );
 }
+
+/** A command's output inside an opened row, in a `WorkLogDetails` panel. */
+export const WORK_LOG_OUTPUT_CLASS_NAME =
+  "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-muted-foreground text-(length:--font-size-code,var(--text-2xs)) leading-relaxed select-text";

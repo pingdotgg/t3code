@@ -513,7 +513,13 @@ function runFirstAttemptStartedAt(
 export type TimelineLatestRun = Pick<
   ThreadRunSummary,
   "runId" | "status" | "startedAt" | "completedAt" | "turnEnded"
->;
+> &
+  Partial<Pick<ThreadRunSummary, "requestedAt" | "preparedWorktree">>;
+
+/** A run that prepared a worktree worked from its send: setup is part of its turn. */
+function preparedRunStartedAt(run: TimelineLatestRun | null | undefined): string | null {
+  return run?.preparedWorktree === true ? (run.requestedAt ?? null) : null;
+}
 
 const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
@@ -544,7 +550,6 @@ type MessagesTimelineRowContent =
       id: string;
       createdAt: string | null;
       snapshot: WorktreeSetupSnapshot;
-      embedded: boolean;
     }
   | {
       kind: "work";
@@ -1426,8 +1431,11 @@ function deriveTurnFolds(input: {
       input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
         ? computeElapsedMs(
             minIsoTimestamp(
-              runFirstAttemptStartedAt(input.timelineEntries, runId),
-              input.latestRun.startedAt,
+              minIsoTimestamp(
+                runFirstAttemptStartedAt(input.timelineEntries, runId),
+                input.latestRun.startedAt,
+              ),
+              preparedRunStartedAt(input.latestRun),
             ) ?? input.latestRun.startedAt,
             input.latestRun.completedAt,
           )
@@ -1842,8 +1850,11 @@ export function deriveMessagesTimelineRows(input: {
   }
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const activeTurnStartedAt = minIsoTimestamp(
-    input.activeTurnStartedAt ?? null,
-    runFirstAttemptStartedAt(timelineEntries, unsettledRunId),
+    minIsoTimestamp(
+      input.activeTurnStartedAt ?? null,
+      runFirstAttemptStartedAt(timelineEntries, unsettledRunId),
+    ),
+    input.latestRun?.completedAt === null ? preparedRunStartedAt(input.latestRun) : null,
   );
   const revertTurnCountByUserMessageId = input.supportsConversationRollback
     ? deriveRevertTurnCountByUserMessageId({
@@ -2565,52 +2576,39 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
-  const setupHandedOff =
-    input.worktreeSetup !== null &&
-    input.worktreeSetup !== undefined &&
-    worktreeSetupAgentStarted(input.worktreeSetup) &&
-    input.latestRun?.startedAt != null;
-  const setupOwnsWorkingSlot =
-    !setupHandedOff &&
-    (input.worktreeSetup?.phase === "running" || input.worktreeSetup?.phase === "done");
-  if (input.worktreeSetup && (!setupHandedOff || input.worktreeSetup.phase !== "running")) {
-    const setupRow = {
-      kind: "worktree-setup",
-      id: WORKTREE_SETUP_ROW_ID,
-      createdAt: input.worktreeSetup.startedAt,
-      snapshot: input.worktreeSetup,
-      embedded: setupHandedOff,
-    } as const;
-    const firstUserRowIndex = nextRows.findIndex(
-      (row) => row.kind === "message" && row.message.role === "user",
-    );
-    const workingRowIndex = setupOwnsWorkingSlot
-      ? nextRows.findIndex((row) => row.kind === "working")
-      : -1;
-    if (workingRowIndex >= 0) {
-      nextRows.splice(workingRowIndex + 1, 0, setupRow);
-    } else {
-      const insertAt = firstUserRowIndex >= 0 ? firstUserRowIndex + 1 : nextRows.length;
-      nextRows.splice(
-        insertAt,
-        0,
-        ...(setupOwnsWorkingSlot
-          ? [
-              {
-                kind: "working",
-                id: "working-indicator-row",
-                createdAt: input.worktreeSetup.startedAt,
-              } as const,
-              setupRow,
-            ]
-          : [setupRow]),
-      );
-    }
-  }
-
   const hasWorkingRow = nextRows.some((row) => row.kind === "working");
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === timelineEntries.length) {
     appendWorkingRow();
+  }
+
+  const setup = input.worktreeSetup ?? null;
+  const setupHandedOff =
+    setup !== null && worktreeSetupAgentStarted(setup) && input.latestRun?.startedAt != null;
+  // A running or finished setup belongs to its turn, and the working row draws its stages.
+  const setupInTurn = setup !== null && (setup.phase === "running" || setup.phase === "done");
+  const setupOwnsWorkingSlot = setupInTurn && !setupHandedOff;
+  const setupDrawnByWorkingRow = setupInTurn && nextRows.some((row) => row.kind === "working");
+  if (setup !== null && !setupDrawnByWorkingRow) {
+    const firstUserRowIndex = nextRows.findIndex(
+      (row) => row.kind === "message" && row.message.role === "user",
+    );
+    // A setup that ended the run keeps its stages above the run's outcome.
+    nextRows.splice(
+      firstUserRowIndex >= 0 ? firstUserRowIndex + 1 : nextRows.length,
+      0,
+      setupOwnsWorkingSlot
+        ? {
+            kind: "working",
+            id: "working-indicator-row",
+            createdAt: activeTurnStartedAt ?? setup.startedAt,
+          }
+        : {
+            kind: "worktree-setup",
+            id: WORKTREE_SETUP_ROW_ID,
+            createdAt: setup.startedAt,
+            snapshot: setup,
+          },
+    );
   }
   if (
     input.isWorking &&
@@ -3591,7 +3589,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return a.createdAt === bt.createdAt && a.groupId === bt.groupId && a.expanded === bt.expanded;
     }
     case "worktree-setup":
-      return a.snapshot === (b as typeof a).snapshot && a.embedded === (b as typeof a).embedded;
+      return a.snapshot === (b as typeof a).snapshot;
 
     case "assistant-meta": {
       const bm = b as typeof a;

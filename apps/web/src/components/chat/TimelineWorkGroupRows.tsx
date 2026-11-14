@@ -20,6 +20,7 @@ import {
   WORKING_BAR_CLASS_NAME,
   WorkFoldCaret,
   WorkFoldToggle,
+  WorkingBarChip,
   WorkingBarControl,
   useCarriedTextFade,
 } from "./TimelineRowParts";
@@ -39,11 +40,7 @@ import {
 } from "./TimelineWorkEntryRow";
 import { formatWorkingTimer, formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
 import { WorkLogButton, WorkLogList, WorkLogRow, WorkLogTarget, WorkLogVerb } from "./WorkLog";
-import {
-  type WorktreeSetupSnapshot,
-  type ToolActivityIcon,
-  type OrchestrationV2TurnItem,
-} from "@t3tools/contracts";
+import { type ToolActivityIcon, type OrchestrationV2TurnItem } from "@t3tools/contracts";
 import { liveThoughtLine } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import { observeResize } from "~/lib/observeResize";
@@ -66,6 +63,7 @@ import ChatMarkdown from "../ChatMarkdown";
 import {
   Minimize2Icon,
   XIcon,
+  LaptopIcon,
   BellIcon,
   ActivityIcon,
   TerminalIcon,
@@ -88,9 +86,8 @@ import {
   type WorkingWindow,
   type WorkingWindowItem,
 } from "./MessagesTimeline.logic";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Spinner } from "../ui/spinner";
-import { WorktreeSetupCard } from "./WorktreeSetupCard";
+import { WorktreeSetupRows } from "./WorktreeSetupCard";
+import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
@@ -347,10 +344,9 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   const {
     isCompacting,
     isPreparingWorktree,
-    backgroundWorktreeSetup,
+    worktreeSetup,
     pendingRequest,
     providerStartingLabel,
-    worktreeSetupCardOwnsHeader,
   } = use(TimelineRowActivityCtx);
   const window = row.window;
   const [fit, onOverflowChange] = useReducer(
@@ -358,21 +354,19 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
       current.overflows === overflows ? current : { overflows, fade: current.fade || !overflows },
     { overflows: false, fade: false },
   );
-  if (worktreeSetupCardOwnsHeader) return null;
+  // A turn that prepares a worktree keeps one "Working for" line from send to the agent's answer.
+  const setupTurn = isPreparingWorktree || worktreeSetup !== null;
   if (
     window?.compactCommand &&
     window.items.length === 0 &&
     !window.stopping &&
     !pendingRequest &&
-    !isPreparingWorktree &&
-    !backgroundWorktreeSetup
+    !setupTurn
   )
     return null;
   const compacting =
     row.compacting !== undefined || isCompacting || workingWindowHasActiveCompaction(window);
-  const label = isPreparingWorktree ? (
-    "Setting up worktree…"
-  ) : window?.stopping ? (
+  const label = window?.stopping ? (
     "Stopping…"
   ) : pendingRequest && row.createdAt ? (
     // The clock stops while the turn waits on the user.
@@ -388,7 +382,7 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
         "Compacting…"
       )}
     </span>
-  ) : providerStartingLabel ? (
+  ) : providerStartingLabel && !setupTurn ? (
     // Until the provider opens a turn, the run is still launching it.
     providerStartingLabel
   ) : row.createdAt ? (
@@ -401,6 +395,16 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   const historyOpen = window?.historyOpen ?? false;
   const foldable =
     window !== undefined && (historyOpen || (fit.overflows && window.items.length > 0));
+  const setupLive = worktreeSetup?.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup);
+  const terminalId = worktreeSetup?.setupScript?.terminalId ?? null;
+  const openTerminal = ctx.onOpenWorktreeSetupTerminal;
+  const setupRows = worktreeSetup ? (
+    <WorktreeSetupRows
+      snapshot={worktreeSetup}
+      startingLabel={providerStartingLabel}
+      onOpenTerminal={openTerminal && terminalId ? () => openTerminal(terminalId) : null}
+    />
+  ) : null;
   return (
     <div>
       <div className={WORKING_BAR_CLASS_NAME}>
@@ -415,60 +419,40 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
             if (window) ctx.onToggleWorkingHistory(window.key);
           }}
         >
-          <span
-            ref={isPreparingWorktree ? observeVisibleAnimation : undefined}
-            className="relative shrink-0 overflow-hidden whitespace-nowrap"
-          >
-            {label}
-            {isPreparingWorktree ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
-          </span>
+          <span className="relative shrink-0 overflow-hidden whitespace-nowrap">{label}</span>
         </WorkFoldToggle>
         {/* One trailing group: two auto margins would split the free space and center the chip. */}
         <div className="ms-auto flex min-w-0 items-center justify-end gap-2">
-          {backgroundWorktreeSetup ? (
-            <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
+          {setupLive && ctx.onWorktreeSetupWorkLocally ? (
+            <WorkingBarChip
+              icon={<LaptopIcon aria-hidden className="size-3 shrink-0" />}
+              onClick={ctx.onWorktreeSetupWorkLocally}
+            >
+              Work locally
+            </WorkingBarChip>
+          ) : null}
+          {setupLive && ctx.onCancelWorktreeSetup ? (
+            <WorkingBarChip
+              icon={<XIcon aria-hidden className="size-3 shrink-0" />}
+              onClick={ctx.onCancelWorktreeSetup}
+            >
+              Cancel
+            </WorkingBarChip>
           ) : null}
           {window ? <WorkingBarSlot window={window} pendingRequest={pendingRequest} /> : null}
         </div>
       </div>
       {window ? (
-        <WorkingWindowView window={window} itemKey={row.id} onOverflowChange={onOverflowChange} />
+        <WorkingWindowView
+          window={window}
+          itemKey={row.id}
+          leading={setupRows}
+          onOverflowChange={onOverflowChange}
+        />
+      ) : setupRows ? (
+        <div className="flex min-w-0 flex-col gap-1 pt-2">{setupRows}</div>
       ) : null}
     </div>
-  );
-}
-
-function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
-  const ctx = use(TimelineRowCtx);
-  const terminalId = snapshot.setupScript?.terminalId ?? null;
-  const openTerminal = ctx.onOpenWorktreeSetupTerminal;
-  const onOpenTerminal = openTerminal && terminalId ? () => openTerminal(terminalId) : null;
-  const scriptName = snapshot.setupScript?.name ?? "Setup script";
-  return (
-    <Popover>
-      <PopoverTrigger
-        render={
-          <Button
-            variant="ghost-muted"
-            size="micro"
-            className="min-w-0 shrink-0"
-            aria-label={`Background setup is still running: ${scriptName}. Show setup progress.`}
-          />
-        }
-      >
-        <Spinner className="size-3 shrink-0" />
-        <span className="truncate">Background setup</span>
-      </PopoverTrigger>
-      <PopoverPopup side="bottom" align="end" width="lg" padding="compact">
-        <WorktreeSetupCard
-          snapshot={snapshot}
-          embedded
-          onCancel={null}
-          onWorkLocally={null}
-          onOpenTerminal={onOpenTerminal}
-        />
-      </PopoverPopup>
-    </Popover>
   );
 }
 
@@ -935,10 +919,13 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
 function WorkingWindowView({
   window,
   itemKey,
+  leading,
   onOverflowChange,
 }: {
   window: WorkingWindow;
   itemKey: string;
+  /** Rows the turn shows before its first item, such as its worktree setup. */
+  leading: ReactNode;
   onOverflowChange: (overflows: boolean) => void;
 }) {
   const ctx = use(TimelineRowCtx);
@@ -1033,7 +1020,7 @@ function WorkingWindowView({
     !isCompacting &&
     !isPreparingWorktree &&
     !workingWindowHasActiveCompaction(window);
-  if (shown.length === 0 && !showThinking) return null;
+  if (shown.length === 0 && !showThinking && !leading) return null;
   return (
     <WorkGroupViewCtx value={groupView}>
       <div
@@ -1054,11 +1041,13 @@ function WorkingWindowView({
             key={window.key}
             items={window.items}
             itemKey={itemKey}
+            leading={leading}
             showThinking={showThinking}
             onOverflowChange={onOverflowChange}
           />
         ) : (
           <>
+            {leading}
             {history ? window.items.slice(0, headEnd).map(renderItem) : null}
             {unmounted > 0 ? (
               <div
@@ -1082,11 +1071,13 @@ function WorkingWindowView({
 function CollapsedWorkingWindow({
   items,
   itemKey,
+  leading,
   showThinking,
   onOverflowChange,
 }: {
   items: WorkingWindow["items"];
   itemKey: string;
+  leading: ReactNode;
   showThinking: boolean;
   onOverflowChange: (overflows: boolean) => void;
 }) {
@@ -1170,6 +1161,7 @@ function CollapsedWorkingWindow({
         }}
       >
         <div ref={contentRef} className="flex min-w-0 flex-col gap-1">
+          {leading}
           {start > 0 ? (
             <div
               ref={spacerRef}

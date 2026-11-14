@@ -118,7 +118,6 @@ import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 import { type AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { type AssistantCitationRequest } from "./AssistantCitationSource";
 import { useAssistantCitationTarget } from "./useAssistantCitationTarget";
-import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveCitationPhase, type CitedHistory } from "./citationProcedure";
 import {
   resolveTimelineIsAtEnd,
@@ -141,7 +140,7 @@ import {
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
 import { TooltipScrollDismissArea } from "../ui/tooltip";
-import { WorktreeSetupCard } from "./WorktreeSetupCard";
+import { WorktreeSetupRows } from "./WorktreeSetupCard";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
@@ -1295,26 +1294,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
         (row.kind === "context-compaction" && row.active) ||
         (row.kind === "working" && row.compacting),
     );
-  const backgroundWorktreeSetup =
-    worktreeSetup !== null &&
-    worktreeSetup.phase === "running" &&
-    worktreeSetupAgentStarted(worktreeSetup) &&
-    latestRun?.startedAt != null
-      ? worktreeSetup
-      : null;
-  const worktreeSetupCardOwnsHeader =
-    isPreparingWorktree && worktreeSetup?.phase === "running" && backgroundWorktreeSetup === null;
   const activityState: TimelineRowActivityState = {
     isWorking,
     isCompacting: compactionAwaitingRow,
     isRevertingCheckpoint,
-    backgroundWorktreeSetup,
+    worktreeSetup:
+      worktreeSetup?.phase === "running" || worktreeSetup?.phase === "done" ? worktreeSetup : null,
     turnEnded: latestRun?.turnEnded === true,
     activeTurnStartedAt,
     awaitingUser: awaitingUser !== null,
     isPreparingWorktree,
     providerStartingLabel,
-    worktreeSetupCardOwnsHeader,
     latestRunId: latestRun?.runId ?? null,
     pendingRequest: isWorking ? pendingRequest : null,
     usageLimit,
@@ -1956,16 +1946,10 @@ function WorktreeSetupTimelineRow({
   const ctx = use(TimelineRowCtx);
   const terminalId = row.snapshot.setupScript?.terminalId ?? null;
   const openTerminal = ctx.onOpenWorktreeSetupTerminal;
-  const onOpenTerminal = openTerminal && terminalId ? () => openTerminal(terminalId) : null;
   return (
-    <WorktreeSetupCard
+    <WorktreeSetupRows
       snapshot={row.snapshot}
-      embedded={row.embedded}
-      onCancel={row.embedded ? null : ctx.onCancelWorktreeSetup}
-      onWorkLocally={
-        !row.embedded && row.snapshot.phase === "running" ? ctx.onWorktreeSetupWorkLocally : null
-      }
-      onOpenTerminal={onOpenTerminal}
+      onOpenTerminal={openTerminal && terminalId ? () => openTerminal(terminalId) : null}
     />
   );
 }
