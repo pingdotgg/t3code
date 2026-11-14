@@ -104,9 +104,15 @@ export const make = Effect.gen(function* () {
   const verifyAccount = Effect.fn("CodeCommit.verifyAccount")(function* (
     cwd: string,
     accountId: string,
+    region?: string,
   ) {
     const config = yield* AwsConfig;
-    const raw = yield* executeRaw({ cwd, args: ["sts", "get-caller-identity"], ...config });
+    const raw = yield* executeRaw({
+      cwd,
+      args: ["sts", "get-caller-identity"],
+      ...config,
+      region: region ?? config.region,
+    });
     const caller = yield* decodeCallerAccount(raw);
     if (caller.Account !== accountId)
       return yield* new CodeCommitError({
@@ -151,7 +157,7 @@ export const make = Effect.gen(function* () {
       args[1] === "evaluate-pull-request-approval-rules"
     )
       return yield* executeRaw(input);
-    if (config.accountId) yield* verifyAccount(cwd, config.accountId);
+    if (config.accountId) yield* verifyAccount(cwd, config.accountId, input.region);
     yield* Cache.invalidateAll(cache);
     return yield* executeRaw(input).pipe(Effect.ensuring(Cache.invalidateAll(cache)));
   });

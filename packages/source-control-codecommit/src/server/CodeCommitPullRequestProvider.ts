@@ -614,7 +614,11 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const caller = yield* identity(input);
           const config = yield* cli.configuration;
-          return { caller, config: { ...config, accountId: caller.Account } };
+          const remote = yield* remoteOf({ ...input, repository: "v1/repos/identity" });
+          return {
+            caller,
+            config: { ...config, region: remote.region, accountId: caller.Account },
+          };
         }),
       ).pipe(
         Effect.flatMap(({ caller, config }) =>

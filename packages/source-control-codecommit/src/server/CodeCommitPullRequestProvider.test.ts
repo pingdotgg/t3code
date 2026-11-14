@@ -466,31 +466,33 @@ it.effect(
   },
 );
 
-it.effect(
-  "holds the verified account and profile throughout a routed read and preserves consumer errors",
-  () => {
+it.effect.each(["us-east-1", "us-gov-west-1"] as const)(
+  "holds the verified account and profile throughout routed reads and writes in %s",
+  (region) => {
+    const routedRef = { ...ref, host: `git-codecommit.${region}.amazonaws.com` };
     const profiles: string[] = [];
     return Effect.gen(function* () {
       const api = yield* Provider.make;
       const hostSettings = yield* TestSourceControlHost.TestSourceControlHostSettings;
       const run = () =>
-        api.withVerifiedCredential!(ref, (identity) =>
+        api.withVerifiedCredential!(routedRef, (identity) =>
           Effect.gen(function* () {
             assert.strictEqual(identity.accountId, "123456789012");
             assert.strictEqual(identity.viewer, fixture("7").pullRequest.authorArn);
             yield* hostSettings.update({
               sourceControlHosts: { "aws-codecommit": { profile: "changed", region: "us-east-1" } },
             });
-            yield* api.getChangeRequestSummary!({ ...ref, number: 7 });
+            yield* api.getChangeRequestSummary!({ ...routedRef, number: 7 });
+            yield* api.comment({ ...routedRef, number: 7, body: "Update" });
             return identity.credentialFingerprint;
           }),
         );
       const before = yield* run();
-      assert.deepStrictEqual(profiles, ["original", "original", "original"]);
+      assert.deepStrictEqual([...new Set(profiles)], ["original"]);
       const after = yield* run();
       assert.notStrictEqual(before, after);
       const error = yield* Effect.result(
-        api.withVerifiedCredential!(ref, () => Effect.fail("consumer-error")),
+        api.withVerifiedCredential!(routedRef, () => Effect.fail("consumer-error")),
       );
       assert.deepStrictEqual(error, Result.fail("consumer-error"));
     }).pipe(
@@ -502,6 +504,7 @@ it.effect(
           },
           process: {
             run: ({ args }) => {
+              assert.strictEqual(args[args.indexOf("--region") + 1], region);
               profiles.push(args[args.indexOf("--profile") + 1]!);
               return Effect.succeed(
                 TestSourceControlHost.processOutput(
