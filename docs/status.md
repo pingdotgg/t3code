@@ -316,9 +316,12 @@ The check is the one to trust; several review findings did not hold.
 - `main`: verified. All 27 checks pass on macOS (2026-11-14, with the ACP provider, scheduled
   tasks and annotations). The last Linux pass (all tests, 20 runs on the gnu target and 5 on
   musl, 2026-11-14) is older than those merges.
-- Open: the `interrupt` scenario of `claude conformance` failed once under load on
-  2026-11-14. The T3 adapter closes the Claude query after an interrupt; our provider does
-  not, and the check's reference depends on timing. Branch `t3/claude-interrupt-match-t3`.
+- Fixed on 2026-11-14: the T3 adapter closes the Claude query after an interrupt, and the next
+  turn resumes in a new CLI process. Our provider kept the process, and the check's reference
+  depended on timing. Both are corrected (`claude conformance`: `interrupt` with 2 CLI starts,
+  `interrupt_twice` with 3). Open: the T3 server also closes an idle Claude query on a Stop
+  with no running turn; and it runs one effect per thread at a time, which our engine does
+  not do for Codex and ACP.
 - In the Conn repository there are local branches only (`rust/*`, `spike/rust-*`,
   `split/conn-server*`), with the same history under `native/conn-server`. They were never
   pushed. They change nothing under `apps/` or `packages/`.
