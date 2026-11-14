@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
+import { makeFakeWslHost } from "../testUtils/fakeWsl.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as KnownWorkspaces from "./KnownWorkspaces.ts";
@@ -94,6 +95,14 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
     .makeDirectory(path.dirname(absolutePath), { recursive: true })
     .pipe(Effect.orDie);
   yield* fileSystem.writeFileString(absolutePath, contents).pipe(Effect.orDie);
+});
+
+const makeWslHost = Effect.gen(function* () {
+  const { mountRoot, underWsl } = yield* makeFakeWslHost;
+  const service = yield* underWsl(
+    WorkspaceFileSystem.make.pipe(Effect.provide(layerKnownWorkspacesTest)),
+  );
+  return { mountRoot, service, underWsl };
 });
 
 it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
@@ -181,6 +190,31 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(statted).toEqual([]);
       }),
     );
+
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      "reports a Windows drive path under WSL as the file it maps to",
+      () =>
+        Effect.gen(function* () {
+          const { mountRoot, service, underWsl } = yield* makeWslHost;
+          yield* writeTextFile(mountRoot, "c/Users/me/Documents/notes.md", "# Notes\n");
+
+          const { entries } = yield* underWsl(
+            service.getMetadata({
+              paths: [
+                "C:\\Users\\me\\Documents\\notes.md",
+                "C:/Users/me/Documents/notes.md",
+                "C:/Users/me/Documents/notes\u0000.md",
+              ],
+            }),
+          );
+
+          expect(entries).toEqual([
+            { kind: "file", byteLength: 8 },
+            { kind: "file", byteLength: 8 },
+            null,
+          ]);
+        }),
+    );
   });
 
   describe("readFile", () => {
@@ -201,6 +235,18 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           byteLength: 26,
           truncated: false,
         });
+
+        const bomContents = "\uFEFFexport const answer = 42;\n";
+        yield* writeTextFile(cwd, "bom.ts", bomContents);
+        const bomRead = yield* workspaceFileSystem.readFile({ cwd, relativePath: "bom.ts" });
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "bom.ts",
+          contents: bomRead.contents.replace("42", "43"),
+        });
+        const fs = yield* FileSystem.FileSystem;
+        const saved = yield* fs.readFile(`${cwd}/bom.ts`);
+        expect([...saved]).toEqual([...new TextEncoder().encode(bomContents.replace("42", "43"))]);
 
         yield* writeTextFile(cwd, "report.txt", "ordinary file");
         for (const relativePath of whitespaceFilePaths) {
@@ -274,25 +320,27 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
-    it.effect("reads ~/ paths from the server home outside the workspace", () =>
-      Effect.gen(function* () {
-        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-        const cwd = yield* makeTempDir;
-        const home = yield* makeTempDir;
-        yield* writeTextFile(home, ".claude/CLAUDE.md", "# Notes\n");
-        yield* writeTextFile(cwd, "~/.claude/CLAUDE.md", "Workspace decoy\n");
+    it.effect.each(["~/.claude/CLAUDE.md", "~\\.claude/CLAUDE.md"])(
+      "reads %s from the server home outside the workspace",
+      (relativePath) =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const cwd = yield* makeTempDir;
+          const home = yield* makeTempDir;
+          yield* writeTextFile(home, ".claude/CLAUDE.md", "# Notes\n");
+          yield* writeTextFile(cwd, "~/.claude/CLAUDE.md", "Workspace decoy\n");
 
-        const result = yield* workspaceFileSystem
-          .readFile({ cwd, relativePath: "~/.claude/CLAUDE.md" })
-          .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+          const result = yield* workspaceFileSystem
+            .readFile({ cwd, relativePath })
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
 
-        expect(result).toEqual({
-          relativePath: "~/.claude/CLAUDE.md",
-          contents: "# Notes\n",
-          byteLength: 8,
-          truncated: false,
-        });
-      }),
+          expect(result).toEqual({
+            relativePath,
+            contents: "# Notes\n",
+            byteLength: 8,
+            truncated: false,
+          });
+        }),
     );
 
     it.effect("does not read server state files", () =>
@@ -348,6 +396,24 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           expect((yield* workspaceFileSystem.getMetadata({ paths: [fifoPath] })).entries).toEqual([
             { kind: "other" },
           ]);
+        }),
+    );
+
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      "reads a Windows drive path under WSL from where wslpath mounts it",
+      () =>
+        Effect.gen(function* () {
+          const { mountRoot, service, underWsl } = yield* makeWslHost;
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(mountRoot, "c/Users/me/Documents/notes.md", "# Notes\n");
+
+          for (const relativePath of [
+            "C:\\Users\\me\\Documents\\notes.md",
+            "C:/Users/me/Documents/notes.md",
+          ]) {
+            const result = yield* underWsl(service.readFile({ cwd, relativePath }));
+            expect(result).toMatchObject({ contents: "# Notes\n", truncated: false });
+          }
         }),
     );
 
@@ -478,14 +544,17 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
-    it.effect("rejects binary files without leaking their contents into the error", () =>
+    it.effect.each([
+      { name: "a NUL byte", bytes: [0x61, 0, 0x62] },
+      { name: "invalid UTF-8", bytes: [0x63, 0x61, 0x66, 0xe9] },
+    ])("rejects files with $name without leaking their contents", ({ bytes }) =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         const absolutePath = path.join(cwd, "asset.bin");
-        yield* fileSystem.writeFile(absolutePath, Uint8Array.from([0x61, 0, 0x62]));
+        yield* fileSystem.writeFile(absolutePath, Uint8Array.from(bytes));
 
         const error = yield* workspaceFileSystem
           .readFile({ cwd, relativePath: "asset.bin" })
