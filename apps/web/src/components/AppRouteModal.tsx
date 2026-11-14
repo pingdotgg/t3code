@@ -53,8 +53,9 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
               "--app-modal-sm-top": `max(1.5rem, ${nativeTitlebarHeight}px)`,
             } as CSSProperties
           }
-          // Electron drag regions ignore z-index, so without no-drag a click over a header drag strip never reaches the page.
-          className="fixed inset-0 z-50 flex items-center justify-center sm:p-6 sm:pt-(--app-modal-sm-top) lg:p-10 [-webkit-app-region:no-drag]"
+          // Electron hit-tests drag regions under the backdrop regardless of z-index; without
+          // this, presses above the modal move the window instead of dismissing it.
+          className="fixed inset-0 z-50 flex items-center justify-center [-webkit-app-region:no-drag] sm:p-6 sm:pt-(--app-modal-sm-top) lg:p-10"
           onPointerDown={(event) => {
             backdropPressRef.current = event.target === event.currentTarget;
           }}
