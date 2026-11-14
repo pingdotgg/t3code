@@ -170,6 +170,7 @@ const MODEL_LIST_ESTIMATED_ITEM_SIZE = 32;
 // Rendered heights in `--spacing` units. Chrome is the search box and list padding, plus a 1px border.
 const ROW_UNITS = 8;
 const ROW_SEPARATOR_UNITS = 0.5;
+const LIST_PADDING_UNITS = 5;
 const LIST_CHROME_UNITS = 15.5;
 
 function ModelListSeparator() {
@@ -259,11 +260,13 @@ function ModelPickerList({
   itemKeys,
   extraData,
   renderItem,
+  fitRows,
 }: {
   listRef: RefObject<LegendListRef | null>;
   itemKeys: ReadonlyArray<string>;
   extraData: unknown;
   renderItem: (props: { item: string; index: number }) => ReactNode;
+  fitRows: boolean | undefined;
 }) {
   const [showTopScrollFade, setShowTopScrollFade] = useState(false);
   const [showBottomScrollFade, setShowBottomScrollFade] = useState(false);
@@ -280,7 +283,15 @@ function ModelPickerList({
       className={cn(
         "relative min-h-0 overflow-hidden pr-px",
         itemKeys.length > 0 ? "flex-1" : "h-0",
+        fitRows && "[--row-units:9] sm:[--row-units:8]",
       )}
+      style={
+        fitRows && itemKeys.length > 0
+          ? {
+              flexBasis: `calc(var(--spacing) * (${itemKeys.length} * var(--row-units) + ${(itemKeys.length - 1) * ROW_SEPARATOR_UNITS} + ${LIST_PADDING_UNITS}))`,
+            }
+          : undefined
+      }
     >
       <ComboboxListVirtualized>
         <LegendList<string>
@@ -298,7 +309,8 @@ function ModelPickerList({
           onScroll={updateScrollFades}
           onReady={updateScrollFades}
           className={cn(
-            "scrollbar-gutter-stable h-full overflow-x-hidden overscroll-y-contain py-1.5 [&::-webkit-scrollbar-track]:my-2",
+            "scrollbar-gutter-stable h-full overflow-x-hidden py-1.5 [&::-webkit-scrollbar-track]:my-2",
+            !fitRows && "overscroll-y-contain",
             getVirtualizedScrollFadeClassName({
               top: showTopScrollFade,
               bottom: showBottomScrollFade,
@@ -348,7 +360,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   docked?: boolean;
   /** Right at the end of the search text moves into the popup's effort column. */
   onFocusEffort?: () => void;
-  /** Closes the list column, inside the popup's fixed height. */
+  /** Closes the list column. */
   listFooter?: ReactNode;
 }) {
   const {
@@ -462,6 +474,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const focusSearchInput = () => {
     searchInputRef.current?.focus({ preventScroll: true });
+    searchInputRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
   };
 
   const handleSelectInstance = (instanceId: ProviderInstanceId | "favorites") => {
@@ -843,9 +856,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         ref={pickerContentRef}
         className={cn(
           "relative flex w-screen max-w-90 flex-row overflow-hidden",
-          props.docked ? "max-sm:h-56 max-sm:w-full max-sm:max-w-none" : "max-h-86.5",
+          props.docked ? "max-sm:max-h-56 max-sm:w-full max-sm:max-w-none" : "max-h-86.5",
         )}
-        // Docked, the popup sets the height; a minimum here would overflow short windows.
+        // Docked, the list sets the height; a minimum here would overflow short windows.
         style={
           props.docked
             ? undefined
@@ -859,6 +872,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       >
         {showSidebar && (
           <ModelPickerSidebar
+            docked={props.docked ?? false}
             selectedInstanceId={selectedInstanceId}
             onSelectInstance={handleSelectInstance}
             onFocusSearch={focusSearchInput}
@@ -919,7 +933,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         >
           <div
             className={cn(
-              "flex min-h-0 flex-1 flex-col overflow-hidden bg-muted/40",
+              "flex min-h-0 flex-1 flex-col overflow-hidden",
+              !props.docked && "bg-muted/40",
               showSidebar && "border-l border-border/70",
             )}
           >
@@ -1012,6 +1027,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             />
 
             <ModelPickerList
+              fitRows={props.docked}
               listRef={modelListRef}
               itemKeys={filteredItemKeys}
               extraData={modelListExtraData}
