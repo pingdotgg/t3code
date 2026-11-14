@@ -6,6 +6,7 @@ import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../test/render";
 import { registerModelPickerContent } from "../modelPickerVisibility";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { setRecentThreadSwitcherOpen } from "./recentThreads/recentThreadVisitsStore";
 import {
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
   useSnoozeWakeClock,
@@ -114,7 +115,7 @@ describe("useThreadJumpHintsVisible", () => {
     await expect.element(output).toHaveTextContent("hidden");
   });
 
-  it("returns when the model picker closes while the modifier is still held", async () => {
+  it("returns when the model picker or recent threads switcher closes while the modifier is still held", async () => {
     const keybindings = compileResolvedKeybindingsConfig([
       { key: "mod+1", command: "thread.jump.1", when: "!modelPickerOpen" },
     ]);
@@ -135,6 +136,10 @@ describe("useThreadJumpHintsVisible", () => {
     });
     await expect.element(output).toHaveTextContent("hidden");
     await act(() => unregisterModelPicker());
+    await expect.element(output).toHaveTextContent("shown");
+    await act(() => setRecentThreadSwitcherOpen(true));
+    await expect.element(output).toHaveTextContent("hidden");
+    await act(() => setRecentThreadSwitcherOpen(false));
     await expect.element(output).toHaveTextContent("shown");
     await userEvent.keyboard(`{/${modifier}}`);
   });

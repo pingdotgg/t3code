@@ -84,6 +84,7 @@ The last matching rule in `keybindings.json` wins, even across different command
 - `thread.regenerateTitle`: Regenerates the focused thread's title (unbound by default).
 - `thread.undo` (`mod+z`): Undoes recent sidebar actions (unpin, settle, snooze, archive, discard draft) within 5 seconds, including consecutive actions of the same kind.
 - `navigation.back` (`mod+[`) / `navigation.forward` (`mod+]`): Moves through visited pages.
+- `thread.recent.next` (`ctrl+tab`) / `thread.recent.previous` (`ctrl+shift+tab`): Switches between recently used threads in this window. A quick press returns to the previous thread; hold Ctrl to see the list, press Tab to move, and release to open (Escape cancels). On by default in the desktop app only, because browsers reserve `Ctrl+Tab`; in a browser, bind another Ctrl shortcut. A binding without Ctrl switches straight to the previous thread.
 - `chat.new` / `chat.newLocal` / `chat.newWithoutProject` (`mod+alt+n`): Start new threads using your [new-thread defaults](./thread-sidebar.md#start-a-thread) or [without a project](./thread-sidebar.md#start-without-a-project).
 
 ## Reserved and platform shortcuts
