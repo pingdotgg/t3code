@@ -1,4 +1,4 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -34,14 +34,10 @@ export default class Api extends GCP.Function<Api>()(
           return HttpServerResponse.text("ok");
         }
 
-        if (
-          request.method === "POST" &&
-          segments.length === 1 &&
-          segments[0] === "jobs"
-        ) {
-          const body = (yield* request.json.pipe(
-            Effect.orElseSucceed(() => ({})),
-          )) as { payload?: unknown };
+        if (request.method === "POST" && segments.length === 1 && segments[0] === "jobs") {
+          const body = (yield* request.json.pipe(Effect.orElseSucceed(() => ({})))) as {
+            payload?: unknown;
+          };
           if (typeof body.payload !== "string") {
             return yield* HttpServerResponse.json(
               { error: "payload must be a string" },
@@ -63,38 +59,23 @@ export default class Api extends GCP.Function<Api>()(
             })
             .pipe(Effect.orDie);
 
-          return yield* HttpServerResponse.json(
-            { id: job.id, status: "pending" },
-            { status: 202 },
-          );
+          return yield* HttpServerResponse.json({ id: job.id, status: "pending" }, { status: 202 });
         }
 
-        if (
-          request.method === "GET" &&
-          segments.length === 2 &&
-          segments[0] === "jobs"
-        ) {
+        if (request.method === "GET" && segments.length === 2 && segments[0] === "jobs") {
           const id = segments[1]!;
           const result = yield* results.get(resultPath(id)).pipe(Effect.orDie);
           // No document yet means the job is queued or in flight. The API
           // keeps no record of submissions, so an unknown id also reads
           // as pending.
           if (result === undefined) {
-            return yield* HttpServerResponse.json(
-              { id, status: "pending" },
-              { status: 202 },
-            );
+            return yield* HttpServerResponse.json({ id, status: "pending" }, { status: 202 });
           }
           return yield* HttpServerResponse.json({ id, ...result.fields });
         }
 
-        return yield* HttpServerResponse.json(
-          { error: "not found" },
-          { status: 404 },
-        );
+        return yield* HttpServerResponse.json({ error: "not found" }, { status: 404 });
       }),
     };
-  }).pipe(
-    Effect.provide([GCP.PubSub.WriteTopicHttp, GCP.Firestore.ReadDatabaseHttp]),
-  ),
+  }).pipe(Effect.provide([GCP.PubSub.WriteTopicHttp, GCP.Firestore.ReadDatabaseHttp])),
 ) {}

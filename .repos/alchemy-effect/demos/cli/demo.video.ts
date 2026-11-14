@@ -1,3 +1,14 @@
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
+import path from "node:path";
 /**
  * Scripted terminal demo of the Alchemy CLI, recorded with tcut
  * (https://github.com/AmanVarshney01/tcut).
@@ -35,18 +46,7 @@
  * `alchemy dev` never returns on its own — the script drives it like a user
  * would (edit a file, watch the reload) and then sends Ctrl+C.
  */
-import { defineVideo } from "tcut";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { defineVideo } from "termcut";
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const realHome = path.join(os.homedir(), ".alchemy");
@@ -113,10 +113,7 @@ const writeCredentialEnvFile = () => {
   let accountId = env("CLOUDFLARE_ACCOUNT_ID");
   if (!token || !accountId) {
     const stored = JSON.parse(
-      readFileSync(
-        path.join(realHome, "profiles", "testing", "cloudflare.json"),
-        "utf8",
-      ),
+      readFileSync(path.join(realHome, "profiles", "testing", "cloudflare.json"), "utf8"),
     ).values as Record<string, string>;
     if (stored.credentialType !== "apiToken") {
       throw new Error(
@@ -129,11 +126,9 @@ const writeCredentialEnvFile = () => {
   // The account id is also how the script picks the account if the OAuth
   // login can see more than one; it is public enough (the dashboard prints it).
   process.env.CLOUDFLARE_ACCOUNT_ID = accountId;
-  writeFileSync(
-    envFile,
-    `CLOUDFLARE_API_TOKEN=${token}\nCLOUDFLARE_ACCOUNT_ID=${accountId}\n`,
-    { mode: 0o600 },
-  );
+  writeFileSync(envFile, `CLOUDFLARE_API_TOKEN=${token}\nCLOUDFLARE_ACCOUNT_ID=${accountId}\n`, {
+    mode: 0o600,
+  });
   return { token, accountId };
 };
 
@@ -150,17 +145,14 @@ const deployedVisitsNamespace = () => {
   if (stage === undefined) {
     throw new Error(`no live stage under ${stackDir}`);
   }
-  const state = JSON.parse(
-    readFileSync(path.join(stackDir, stage, "Visits.json"), "utf8"),
-  ) as { attr: { title: string; namespaceId: string; accountId: string } };
+  const state = JSON.parse(readFileSync(path.join(stackDir, stage, "Visits.json"), "utf8")) as {
+    attr: { title: string; namespaceId: string; accountId: string };
+  };
   return state.attr;
 };
 
 /** Direct Cloudflare API access to one KV namespace, bypassing alchemy. */
-const kvNamespaceApi = (
-  credentials: { token: string; accountId: string },
-  namespaceId: string,
-) => {
+const kvNamespaceApi = (credentials: { token: string; accountId: string }, namespaceId: string) => {
   const call = async (init: RequestInit) => {
     const response = await fetch(
       `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/storage/kv/namespaces/${namespaceId}`,
@@ -187,8 +179,7 @@ const kvNamespaceApi = (
      * around the dashboard would do. This is the drift the demo detects and
      * repairs.
      */
-    rename: (title: string) =>
-      call({ method: "PUT", body: JSON.stringify({ title }) }),
+    rename: (title: string) => call({ method: "PUT", body: JSON.stringify({ title }) }),
   };
 };
 
@@ -373,9 +364,7 @@ export default defineVideo(
       await t.type("alchemy profile");
       await t.enter();
       await t.wait(/e edit/, { scope: "screen" });
-      await caption(
-        "A fresh machine: one empty profile, no providers connected yet",
-      );
+      await caption("A fresh machine: one empty profile, no providers connected yet");
       await t.sleep("2.5s");
 
       // Nothing is connected yet — add Cloudflare from the edit screen.
@@ -410,20 +399,15 @@ export default defineVideo(
         throw new Error(`${error.message}\n--- screen ---\n${t.screen()}`);
       });
       await t.sleep("2s");
-      await caption(
-        "Sign in and authorize — the grant is handed back to the CLI",
-      );
+      await caption("Sign in and authorize — the grant is handed back to the CLI");
       await t.browser.goto(oauthUrl);
       await t.focus("browser");
       const consentPage = /Select account\(s\)|Authorize/i;
-      await t.browser.waitFor(
-        new RegExp(`Sign in to Cloudflare|${consentPage.source}`, "i"),
-        { timeout: "60s" },
-      );
+      await t.browser.waitFor(new RegExp(`Sign in to Cloudflare|${consentPage.source}`, "i"), {
+        timeout: "60s",
+      });
       const pageText = async () =>
-        String(
-          await t.browser.evaluate("document.body.innerText").catch(() => ""),
-        );
+        String(await t.browser.evaluate("document.body.innerText").catch(() => ""));
       if (/Sign in to Cloudflare/i.test(await pageText())) {
         if (login.email && login.password) {
           // The form is React-controlled and re-renders while it hydrates and
@@ -433,27 +417,19 @@ export default defineVideo(
           for (let attempt = 1; attempt <= 3; attempt++) {
             await t.sleep("1.5s");
             for (let i = 0; i < 10; i++) {
-              await t.browser.evaluate(
-                signInScript(login.email, login.password),
-              );
+              await t.browser.evaluate(signInScript(login.email, login.password));
               await t.sleep("400ms");
               if (
-                (await t.browser.evaluate(
-                  signInFilledScript(login.email, login.password),
-                )) === true
+                (await t.browser.evaluate(signInFilledScript(login.email, login.password))) === true
               )
                 break;
             }
             let turnstile = false;
             for (let i = 0; i < 60 && !turnstile; i++) {
-              turnstile =
-                (await t.browser.evaluate(turnstileReadyScript)) === true;
+              turnstile = (await t.browser.evaluate(turnstileReadyScript)) === true;
               if (!turnstile) await t.sleep("500ms");
             }
-            if (!turnstile)
-              console.error(
-                "turnstile token never appeared; submitting anyway",
-              );
+            if (!turnstile) console.error("turnstile token never appeared; submitting anyway");
             await t.sleep("500ms");
             await t.browser.click('[data-testid="login-submit-button"]');
             let rejected = false;
@@ -464,8 +440,7 @@ export default defineVideo(
                 rejected = true;
                 break;
               }
-              if (text.trim() !== "" && !/Sign in to Cloudflare/i.test(text))
-                break;
+              if (text.trim() !== "" && !/Sign in to Cloudflare/i.test(text)) break;
             }
             if (!rejected) break;
             console.error(
@@ -504,12 +479,9 @@ export default defineVideo(
       );
       if (/Couldn't connect to your local/i.test(await pageText())) {
         await t.browser.click("#relay-local");
-        await t.browser.waitFor(
-          /Authentication Complete|Authentication Error/i,
-          {
-            timeout: "60s",
-          },
-        );
+        await t.browser.waitFor(/Authentication Complete|Authentication Error/i, {
+          timeout: "60s",
+        });
       }
       await t.sleep("2s");
       await t.focus("terminal");
@@ -519,14 +491,11 @@ export default defineVideo(
         scope: "screen",
       });
       if (/Select a Cloudflare account/.test(t.screen())) {
-        await caption(
-          "The login can see several accounts — pick the one this profile is for",
-        );
+        await caption("The login can see several accounts — pick the one this profile is for");
         await t.sleep("1.5s");
         // Arrow down to the configured account (the focused row starts with
         // ❯) instead of typing into the filter; the first row is the default.
-        const wanted =
-          env("CLOUDFLARE_ACCOUNT_NAME") ?? process.env.CLOUDFLARE_ACCOUNT_ID;
+        const wanted = env("CLOUDFLARE_ACCOUNT_NAME") ?? process.env.CLOUDFLARE_ACCOUNT_ID;
         const focused = () =>
           t
             .screen()
@@ -550,16 +519,11 @@ export default defineVideo(
       await t.sleep("1s");
 
       // ── 2. Launch alchemy dev ────────────────────────────────────────────
-      await slide(
-        "Launch alchemy dev",
-        "local emulation · plan view · live reload",
-      );
+      await slide("Launch alchemy dev", "local emulation · plan view · live reload");
       await t.type("alchemy dev");
       await t.enter();
       await t.wait(STARTED, { scope: "screen" });
-      await caption(
-        "The Worker, KV and R2 all run locally — the widget shows the stack's outputs",
-      );
+      await caption("The Worker, KV and R2 all run locally — the widget shows the stack's outputs");
       await t.sleep("2s");
 
       // The widget opens on the stack's output; ←/→ flips it to the plan
@@ -643,10 +607,7 @@ export default defineVideo(
       await t.sleep("1s");
 
       // ── 3. Deploy to the cloud ───────────────────────────────────────────
-      await slide(
-        "Deploy to the cloud",
-        "alchemy deploy · review the plan · confirm",
-      );
+      await slide("Deploy to the cloud", "alchemy deploy · review the plan · confirm");
       await t.type("alchemy deploy");
       await t.enter();
       await t.wait(/Deploy\?/, { scope: "screen" });
@@ -655,19 +616,13 @@ export default defineVideo(
       );
       await t.sleep("3.5s");
       await t.enter();
-      await caption(
-        "Creating the Worker, the KV namespace and the R2 bucket for real",
-      );
+      await caption("Creating the Worker, the KV namespace and the R2 bucket for real");
       await t.wait();
       await t.expect(/Stack deployed/, { scope: "scrollback" });
-      await caption(
-        "Deployed — the outputs are the live workers.dev URL and the bucket name",
-      );
+      await caption("Deployed — the outputs are the live workers.dev URL and the bucket name");
       await t.sleep("2.5s");
 
-      const url = t
-        .scrollback()
-        .match(/https:\/\/[a-z0-9.-]+\.workers\.dev/)?.[0];
+      const url = t.scrollback().match(/https:\/\/[a-z0-9.-]+\.workers\.dev/)?.[0];
       if (url === undefined) {
         throw new Error("deployed URL not found in the terminal output");
       }
@@ -693,22 +648,16 @@ export default defineVideo(
         "Detect and repair drift",
         "alchemy drift · a namespace renamed in the dashboard",
       );
-      await caption(
-        "Meanwhile, someone renamed the KV namespace in the Cloudflare dashboard…",
-      );
+      await caption("Meanwhile, someone renamed the KV namespace in the Cloudflare dashboard…");
       await t.sleep("2.5s");
       await t.type("alchemy drift");
       await t.enter();
       await t.wait(/Drift detected/, { scope: "screen" });
       await t.expect(/renamed-in-the-dashboard/, { scope: "screen" });
-      await caption(
-        "drift re-reads the cloud and diffs it against the stack: the title changed",
-      );
+      await caption("drift re-reads the cloud and diffs it against the stack: the title changed");
       await t.sleep("4s");
       // Cancel is preselected; ← moves to Repair.
-      await caption(
-        "Repair puts the resource back the way the code declares it",
-      );
+      await caption("Repair puts the resource back the way the code declares it");
       await t.left();
       await t.sleep("1s");
       await t.enter();
@@ -726,9 +675,7 @@ export default defineVideo(
       await t.type("alchemy destroy");
       await t.enter();
       await t.wait(/Destroy\?/, { scope: "screen" });
-      await caption(
-        "destroy shows everything it is about to delete before asking",
-      );
+      await caption("destroy shows everything it is about to delete before asking");
       await t.sleep("2.5s");
       await t.type("y");
       await caption("Deleting the Worker, the KV namespace and the R2 bucket");
