@@ -232,8 +232,10 @@ async function uploadFileBytes(
       signal,
       ...(onProgress
         ? {
+            // Native events carry Int64 counts, which expo-modules-jsi delivers as BigInt despite the `number` type.
             onProgress: ({ bytesSent, totalBytes }) => {
-              if (totalBytes > 0) onProgress(bytesSent / totalBytes);
+              const total = Number(totalBytes);
+              if (total > 0) onProgress(Number(bytesSent) / total);
             },
           }
         : {}),
