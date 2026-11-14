@@ -18,7 +18,11 @@ export function useMarkdownImageSource(props: {
   readonly threadId: ThreadId | null;
   readonly workspaceRoot: string | null;
   readonly captured?: boolean;
-}): MarkdownImageSourceResolver {
+}): (
+  image: Parameters<MarkdownImageSourceResolver>[0],
+  /** Replaces the workspace root for one image: a feed row that ran in another folder. */
+  root?: string,
+) => ReturnType<MarkdownImageSourceResolver> {
   const { environmentId, threadId, workspaceRoot, captured } = props;
   const connection = usePreparedConnection(environmentId);
   const environment = useEnvironmentPresentation(environmentId);
@@ -33,10 +37,10 @@ export function useMarkdownImageSource(props: {
   const httpBaseUrl = Option.isSome(connection) ? connection.value.httpBaseUrl : null;
   const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   return useCallback(
-    async (image) => {
+    async (image, root) => {
       const media = resolveMobileMarkdownMediaSource(image.href, {
         threadId: threadId ?? undefined,
-        workspaceRoot,
+        workspaceRoot: root ?? workspaceRoot,
         imageEmbed: true,
       });
       if (media?.access === "direct") return { uri: normalizeNativeMarkdownUrl(media.uri) };

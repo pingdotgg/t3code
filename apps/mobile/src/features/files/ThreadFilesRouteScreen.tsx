@@ -776,10 +776,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       );
       return;
     }
+    // A link in a row that ran in another folder opens this screen with that folder; keep it.
+    const routeCwd = firstRouteParam(params.cwd);
     const destination = {
       environmentId: String(environmentId),
       threadId: String(threadId),
       path: segments,
+      ...(routeCwd === null ? {} : { cwd: routeCwd }),
     };
     if (directoryPath !== null) navigation.dispatch(StackActions.push("ThreadFile", destination));
     else navigation.navigate("ThreadFile", destination);
