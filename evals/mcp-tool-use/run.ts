@@ -326,7 +326,7 @@ export const McpToolUseCase = Schema.Struct({
      * Canned tool results by bare name, T3 or native. `"default"` uses the runner's result. For a
      * device tool, a T3 `DeviceError` (`{"_tag": ..., "cause": null}`) fails it inside T3; for a
      * preview tool, a `PreviewAutomationError` fails it with that error's message. A
-     * `{"$sequence": [...]}` mock answers its nth call with the nth result, then repeats the last.
+     * `$sequence` or `$byArg` mock varies its result per call (see `nextMock`).
      */
     mocks: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
     /** Regexes on one part of a shell command. A match wins over the shell simulator. */
@@ -928,8 +928,21 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
   };
 };
 
-/** A `{"$sequence": [...]}` mock answers its nth call with the nth result, then repeats the last. */
-const nextMock = (sample: Sample, name: string, mock: unknown) => {
+/**
+ * A `{"$sequence": [...]}` mock answers its nth call with the nth result, then repeats the last.
+ * A `{"$byArg": "<key>", "results": {...}}` mock answers by that argument's value; `""` is the
+ * result when the argument is missing.
+ */
+const nextMock = (
+  sample: Sample,
+  name: string,
+  mock: unknown,
+  input: Readonly<Record<string, unknown>>,
+) => {
+  if (isRecord(mock) && typeof mock.$byArg === "string" && isRecord(mock.results)) {
+    const value = input[mock.$byArg];
+    return mock.results[typeof value === "string" ? value : ""];
+  }
   if (!isRecord(mock) || !Array.isArray(mock.$sequence) || mock.$sequence.length === 0) return mock;
   const n = sample.mockCalls.get(name) ?? 0;
   sample.mockCalls.set(name, n + 1);
@@ -1668,7 +1681,7 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   if (isPageTool(name) && typeof input.path === "string" && !input.path.startsWith("/")) {
     return failed(`${input.path} is not a readable HTML document. Pass an absolute path.`);
   }
-  const mock = nextMock(sample, name, testCase.setup.mocks?.[name]);
+  const mock = nextMock(sample, name, testCase.setup.mocks?.[name], input);
   if (isT3Name(call.name) && PREVIEW_TOOLS.has(name)) {
     if (testCase.setup.world?.browserAgentAccess === false)
       return failed(
