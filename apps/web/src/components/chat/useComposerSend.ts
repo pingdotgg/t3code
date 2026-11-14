@@ -1426,14 +1426,16 @@ export function useComposerSend(input: ComposerSendInput) {
 
     if (failure !== null) {
       const failureError = squashAtomCommandFailure(failure);
+      // An unanswered launch whose thread already arrived keeps the draft promoted to it, and its
+      // composer content now lives under that thread; one that has not arrived restores the
+      // draft, which promotes again if the thread lands.
+      const launchedThreadRef = scopeThreadRef(environmentId, threadIdForSend);
+      const launchedThreadArrived =
+        isLocalDraftThread &&
+        isThreadLaunchUnanswered(failureError) &&
+        appAtomRegistry.get(environmentThreadShells.threadShellAtom(launchedThreadRef)) !== null;
+      const recoveryTarget = launchedThreadArrived ? launchedThreadRef : composerDraftTarget;
       if (isLocalDraftThread && draftId && draftThread) {
-        // An unanswered launch whose thread already arrived keeps the draft promoted to it; one
-        // that has not arrived restores the draft, which promotes again if the thread lands.
-        const launchedThreadArrived =
-          isThreadLaunchUnanswered(failureError) &&
-          appAtomRegistry.get(
-            environmentThreadShells.threadShellAtom(scopeThreadRef(environmentId, threadIdForSend)),
-          ) !== null;
         if (!launchedThreadArrived) {
           restoreFailedDraftThread(
             draftId,
@@ -1441,7 +1443,7 @@ export function useComposerSend(input: ComposerSendInput) {
             wasBootstrapThreadDeleted(failureError) ? newThreadId() : threadIdForSend,
           );
         }
-        clearBackgroundDraftSubmissionByRef(scopeThreadRef(environmentId, threadIdForSend));
+        clearBackgroundDraftSubmissionByRef(launchedThreadRef);
       }
       // Only an acknowledged send replaces its optimistic row, so a failed one leaves here.
       setOptimisticUserMessages((existing) => {
@@ -1452,7 +1454,7 @@ export function useComposerSend(input: ComposerSendInput) {
       optimisticBlobPreviews.release(optimisticMessage);
       if (
         composerDraftHasUserContent(
-          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+          useComposerDraftStore.getState().getComposerDraft(recoveryTarget),
         )
       ) {
         // A draft typed meanwhile keeps the composer, so the failed text stays reachable here.
@@ -1478,7 +1480,7 @@ export function useComposerSend(input: ComposerSendInput) {
           );
         }
       } else {
-        const retryComposerImages = restoreComposerDraft(composerDraftTarget, sendSnapshot);
+        const retryComposerImages = restoreComposerDraft(recoveryTarget, sendSnapshot);
         if (currentRouteThreadKeyRef.current === routeThreadKey) {
           promptRef.current = sendSnapshot.draftText;
           composerImagesRef.current = retryComposerImages;
