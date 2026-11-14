@@ -5,10 +5,13 @@ import type {
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import {
+  resolveProviderLimitPool,
   resolveProviderUsageLimits,
+  displayLimitWindows,
   elapsedShare,
   formatDuration,
   type LimitPace,
+  type LimitPoolWindow,
   limitsNotice,
   paceOf,
   remainingPercent,
@@ -61,10 +64,21 @@ export function ThreadDetailsUsage({
     providerInstanceId !== null
       ? resolveProviderUsageLimits(providerInstanceId, providers, sources)
       : undefined;
-  const notice = limits ? limitsNotice(limits) : "This provider has not reported usage limits.";
+  const ownNotice = limits ? limitsNotice(limits) : "This provider has not reported usage limits.";
+  const pool =
+    providerInstanceId !== null && ownNotice !== null
+      ? resolveProviderLimitPool(providerInstanceId, providers, sources, now)
+      : undefined;
+  const rows = pool
+    ? displayLimitWindows(pool).map((pooled) => ({
+        window: pooledWindow(pooled, now),
+        accounts: pooled.members.length,
+      }))
+    : (limits?.windows ?? []).map((window) => ({ window, accounts: 1 }));
+  const notice = pool ? null : ownNotice;
   return (
     <ThreadDetailsSection title="Usage limits" variant="usage">
-      {notice || !limits?.windows.length ? (
+      {notice || !rows.length ? (
         <UsageRow
           label="Limits"
           icon={<TimerIcon />}
@@ -80,13 +94,13 @@ export function ThreadDetailsUsage({
             {
               "--usage-trailing": `${Math.max(
                 0,
-                ...limits.windows.map((window) => resetLabel(window, now)?.length ?? 0),
+                ...rows.map(({ window }) => resetLabel(window, now)?.length ?? 0),
               )}ch`,
             } as CSSProperties
           }
         >
-          {limits.windows.map((window) => (
-            <LimitRow key={window.id} window={window} now={now} />
+          {rows.map(({ window, accounts }) => (
+            <LimitRow key={window.id} window={window} now={now} pooledAccounts={accounts} />
           ))}
         </div>
       )}
@@ -206,6 +220,17 @@ export function ThreadDetailsContext({
   );
 }
 
+/** A pool's row: the share left across its accounts, and the next of their resets. */
+function pooledWindow(pooled: LimitPoolWindow, now: number): ServerProviderUsageWindow {
+  return {
+    id: pooled.id,
+    kind: pooled.kind,
+    label: pooled.label,
+    usedPercent: pooled.usedPercent,
+    resetsAt: pooled.resets.find((reset) => reset.at > now)?.member.window.resetsAt,
+  };
+}
+
 function resetLabel(window: ServerProviderUsageWindow, now: number): string | null {
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
   const remainingMs = resetsAt - now;
@@ -222,9 +247,11 @@ function isWeeklyWindow(window: ServerProviderUsageWindow): boolean {
 function LimitRow({
   window,
   now,
+  pooledAccounts,
 }: {
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
+  readonly pooledAccounts: number;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const left = remainingPercent(window);
@@ -255,13 +282,16 @@ function LimitRow({
           </span>
           {window.resetsAt && remainingMs > 0 ? (
             <span>
-              <span className="block">Resets in {formatDuration(remainingMs)}</span>
+              <span className="block">
+                {pooledAccounts > 1 ? "Next reset in" : "Resets in"} {formatDuration(remainingMs)}
+              </span>
               <span className="block">
                 {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
               </span>
             </span>
           ) : null}
           {pace ? <span>{PACE_LABEL[pace]}</span> : null}
+          {pooledAccounts > 1 ? <span>Across {pooledAccounts} accounts</span> : null}
         </>
       }
     />

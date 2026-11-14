@@ -13,6 +13,7 @@ import {
   displayLimitWindows,
   cursorUsageWindowDetails,
   collectProviderUsageLimits,
+  resolveProviderLimitPool,
   resolveProviderUsageLimits,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -111,7 +112,54 @@ describe("selected provider usage limits", () => {
           [{ ...source, accounts: [account] }],
         ),
       ).toEqual(native.usageLimits);
+      expect(
+        resolveProviderLimitPool(
+          native.instanceId,
+          [native],
+          [{ ...source, accounts: [account] }],
+          now,
+        ),
+      ).toBeUndefined();
     }
+  });
+
+  it("pools the linked accounts of its driver for a provider with no login of its own", () => {
+    const endpoint = provider({
+      auth: { status: "authenticated", type: "customEndpoint", workspaceId: "work" },
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [],
+        unavailable: { reason: "unsupported" },
+      },
+    });
+    const account = (id: string, usedPercent: number, driver = endpoint.driver) => ({
+      id,
+      driver,
+      email: `${id}@example.com`,
+      usageLimits: { ...limits, windows: [{ ...window, usedPercent }] },
+    });
+    const pool = resolveProviderLimitPool(
+      endpoint.instanceId,
+      [endpoint],
+      [
+        {
+          ...source,
+          accounts: [
+            account("one", 40),
+            account("two", 80),
+            account("other-driver", 0, ProviderDriverKind.make("claudeAgent")),
+          ],
+        },
+      ],
+      now,
+    );
+    expect(pool?.accounts.map((member) => member.email)).toEqual([
+      "one@example.com",
+      "two@example.com",
+    ]);
+    expect(pool?.windows.map((pooled) => [pooled.label, pooled.remainingPercent])).toEqual([
+      ["Session", 40],
+    ]);
   });
 
   it("keeps genuine failures when no matching source reports limits", () => {
