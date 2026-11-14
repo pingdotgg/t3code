@@ -21,6 +21,7 @@ import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as ExternalLauncher from "./externalLauncher.ts";
+import { WindowsVerbatimSpawn } from "./windowsVerbatimSpawn.ts";
 
 // Windows drive letters break mocked POSIX PATH splitting; these tests also require /bin/sh stubs.
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
@@ -390,6 +391,73 @@ it.effect.skipIf(windowsHost)(
         "$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media\\clip|draft.mp4' + '\"') }",
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+const STOCK_FOLDER_VERB =
+  "\r\nHKEY_CLASSES_ROOT\\Directory\\shell\r\n    (Default)    REG_SZ    none\r\n\r\n";
+
+it.effect.each([
+  ["selects the file with Explorer on stock Windows", { stdout: STOCK_FOLDER_VERB }, true],
+  [
+    "keeps the PowerShell reveal for a replacement file manager",
+    { stdout: "    (Default)    REG_SZ    open\r\n" },
+    false,
+  ],
+  ["keeps the PowerShell reveal when the registry lookup fails", { exitCode: 1 }, false],
+] as const)("%s", ([, registry, native]) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    yield* fileSystem.writeFileString(path.join(binDir, "explorer.EXE"), "");
+    const spawned: ChildProcess.StandardCommand[] = [];
+    const verbatim: Array<readonly [string, ReadonlyArray<string>]> = [];
+    const exit = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      return yield* launcher
+        .launchEditor({
+          editor: "file-manager",
+          cwd: "C:/Users/t3/my project/a,b.ts",
+          reveal: true,
+        })
+        .pipe(Effect.exit);
+    }).pipe(
+      Effect.provideService(WindowsVerbatimSpawn, (command, args) =>
+        Effect.sync(() => verbatim.push([command, args])),
+      ),
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD", SYSTEMROOT: "C:\\Windows" },
+          onSpawn: (command) => spawned.push(command),
+          spawnResult: (command) => (command.command.endsWith("reg.exe") ? registry : undefined),
+        }),
+      ),
+    );
+
+    assert.deepEqual(
+      spawned.map((command) => command.command),
+      ["C:\\Windows\\System32\\reg.exe"],
+    );
+    if (native) {
+      assert.isTrue(Exit.isSuccess(exit));
+      assert.deepEqual(verbatim, [
+        ["C:\\Windows\\explorer.exe", ['/select,"C:\\Users\\t3\\my project\\a,b.ts"']],
+      ]);
+    } else {
+      assert.deepEqual(verbatim, []);
+      // The PowerShell launch is reached; this host has no powershell.exe to run it.
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) {
+        const error = Cause.squash(exit.cause);
+        assert.instanceOf(error, ExternalLauncher.ExternalLauncherCommandNotFoundError);
+        assert.equal(
+          (error as ExternalLauncher.ExternalLauncherCommandNotFoundError).command,
+          "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        );
+      }
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 for (const wsl of [false, true]) {

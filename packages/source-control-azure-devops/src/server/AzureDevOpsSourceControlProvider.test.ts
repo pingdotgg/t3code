@@ -92,7 +92,7 @@ it.effect("names the remote's repository when reading the default branch", () =>
     }
   }).pipe(
     Effect.provide(
-      Layer.merge(AzureDevOpsCli.layer.pipe(Layer.provide(support)), unusedPullRequests),
+      Layer.merge(AzureDevOpsCli.layer.pipe(Layer.provideMerge(support)), unusedPullRequests),
     ),
   );
 });
@@ -111,7 +111,81 @@ it.effect(
       );
     }).pipe(
       Effect.provide(
-        Layer.merge(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}), unusedPullRequests),
+        Layer.mergeAll(
+          Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
+          TestSourceControlHost.layer(),
+          unusedPullRequests,
+        ),
       ),
     ),
 );
+
+it.effect.each([
+  [
+    "creates a missing branch from the fetched head",
+    [],
+    ["fetchRemoteBranch:upstream/feature/x->feature/x"],
+  ],
+  ["fetches without resetting an existing branch", ["feature/x"], ["fetchRemoteTrackingBranch"]],
+] as const)("checks a pull request out with git and %s", ([, localBranches, fetches]) => {
+  const calls: Array<string> = [];
+  return Effect.gen(function* () {
+    const provider = yield* AzureDevOpsSourceControlProvider.make;
+    yield* provider.checkoutChangeRequest({
+      cwd: "/repo",
+      reference: "42",
+      context: {
+        provider: {
+          kind: SourceControlProviderKind.make("azure-devops"),
+          name: "Azure DevOps",
+          baseUrl: "https://dev.azure.com",
+        },
+        remoteName: "upstream",
+        remoteUrl: "https://dev.azure.com/acme/project/_git/repo",
+      },
+    });
+    assert.deepStrictEqual(calls, [...fetches, "switchRef:feature/x"]);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
+          getPullRequest: () =>
+            Effect.succeed({
+              number: 42,
+              title: "Change",
+              url: "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",
+              baseRefName: "main",
+              headRefName: "feature/x",
+              state: "open",
+              isCrossRepository: false,
+              closedAt: null,
+              mergedAt: null,
+              updatedAt: Option.none(),
+              location: null,
+              revision: "",
+            }),
+        }),
+        unusedPullRequests,
+        TestSourceControlHost.layer({
+          git: {
+            listLocalBranchNames: () => Effect.succeed([...localBranches]),
+            fetchRemoteBranch: (input) => {
+              calls.push(
+                `fetchRemoteBranch:${input.remoteName}/${input.remoteBranch}->${input.localBranch}`,
+              );
+              return Effect.void;
+            },
+            fetchRemoteTrackingBranch: () => {
+              calls.push("fetchRemoteTrackingBranch");
+              return Effect.void;
+            },
+            switchRef: (input) => {
+              calls.push(`switchRef:${input.refName}`);
+              return Effect.succeed({ refName: input.refName });
+            },
+          },
+        }),
+      ),
+    ),
+  );
+});
