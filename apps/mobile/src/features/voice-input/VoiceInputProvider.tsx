@@ -13,14 +13,14 @@ import {
   preferredMicrophoneInput,
   rememberMicrophones,
 } from "../../lib/microphonePriority";
-import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
+import {
+  getLocalVoiceTranscriber,
+  type LocalVoiceTranscriber,
+} from "../../native/voiceTranscription";
 import { createVoiceRecorder } from "../../native/voiceRecorder";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
-import {
-  voiceInputBlocksSubmission,
-  type VoiceTranscriber,
-} from "@t3tools/client-runtime/voice-input";
+import { voiceInputBlocksSubmission } from "@t3tools/client-runtime/voice-input";
 import { createLazyVoiceRecorder } from "./lazyVoiceRecorder";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 import { VoiceInputSession } from "./voiceInputSession";
@@ -57,7 +57,7 @@ export const deviceMicrophoneOrder = (saved?: ReadonlyArray<MicrophoneEntry>) =>
 
 /** "checking" until the first availability probe settles; re-probed on foreground. */
 export const localVoiceTranscriberAtom = makePermissionStatusAtom<
-  VoiceTranscriber | null | "checking"
+  LocalVoiceTranscriber | null | "checking"
 >({
   label: "mobile:voice-input:transcriber",
   initial: "checking",

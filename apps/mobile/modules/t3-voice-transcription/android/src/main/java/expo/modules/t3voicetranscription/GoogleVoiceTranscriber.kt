@@ -31,20 +31,26 @@ private val recognitionModes = listOf(
   SpeechRecognizerOptions.Mode.MODE_BASIC
 )
 
-internal suspend fun isGoogleVoiceTranscriptionSupported(
+internal data class GoogleVoiceSupport(val mode: Int, val downloaded: Boolean)
+
+/** The mode `prepareGoogleVoiceTranscription` would pick, without downloading its model. */
+internal suspend fun probeGoogleVoiceTranscription(
   createClient: (Int) -> GoogleSpeechClient
-): Boolean {
+): GoogleVoiceSupport? {
   for (mode in recognitionModes) {
-    createClient(mode).use { client ->
-      when (checkModelSupport(client)) {
-        FeatureStatus.AVAILABLE,
-        FeatureStatus.DOWNLOADABLE,
-        FeatureStatus.DOWNLOADING -> return true
-      }
+    val status = createClient(mode).use { checkModelSupport(it) }
+    if (status in supportedStatuses) {
+      return GoogleVoiceSupport(mode, downloaded = status == FeatureStatus.AVAILABLE)
     }
   }
-  return false
+  return null
 }
+
+private val supportedStatuses = setOf(
+  FeatureStatus.AVAILABLE,
+  FeatureStatus.DOWNLOADABLE,
+  FeatureStatus.DOWNLOADING
+)
 
 internal suspend fun prepareGoogleVoiceTranscription(
   createClient: (Int) -> GoogleSpeechClient

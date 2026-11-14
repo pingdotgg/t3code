@@ -2,7 +2,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { getRecordingPermissionsAsync, requestRecordingPermissionsAsync } from "expo-audio";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Linking, Platform, useWindowDimensions, View } from "react-native";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -33,6 +33,7 @@ import { LocalModelChoice } from "./VoiceModelSection";
 import { CloudVoiceChoice } from "./CloudVoiceSection";
 import type { VoiceGrant } from "../voice-input/voiceGrantStorage";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { getLocalVoiceTranscriber, type LocalVoiceEngine } from "../../native/voiceTranscription";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
@@ -113,6 +114,17 @@ const UNAVAILABLE_EXPLANATION =
   Platform.OS === "android"
     ? "Dictation on this device needs Android 12 or later and Google speech services that support your language. Your keyboard’s voice typing is separate."
     : "Dictation on this device needs iOS 26 or later, a supported device, and a supported language. Your keyboard’s dictation is separate.";
+
+const LOCAL_ENGINE_EXPLANATION =
+  Platform.OS === "android"
+    ? "Basic is Google’s standard speech model. Advanced uses Gemini Nano on supported phones and is usually more accurate. Your keyboard’s voice typing is separate."
+    : "Your keyboard’s dictation is separate.";
+
+function localEngineLabel(engine: LocalVoiceEngine) {
+  if (engine.kind === "apple") return "Apple on-device speech";
+  const language = engine.downloaded ? engine.language : "Downloads on first use";
+  return `Google on-device speech · ${engine.advanced ? "Advanced" : "Basic"} · ${language}`;
+}
 
 function saveDestination(id: EnvironmentId | null) {
   try {
@@ -205,6 +217,15 @@ function EnvironmentMethodSection({
 
 export function SettingsVoiceRouteScreen() {
   const transcriber = useAtomValue(localVoiceTranscriberAtom);
+  const setTranscriber = useAtomSet(localVoiceTranscriberAtom);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- dictation can download a model, so re-probe the native engine without a "checking" flash
+  useEffect(() => {
+    void getLocalVoiceTranscriber()
+      .catch(() => null)
+      .then(setTranscriber);
+  }, [setTranscriber]);
+  const localEngine =
+    transcriber === null || transcriber === "checking" ? null : transcriber.engine;
   const grant = useAtomValue(voiceGrantAtom);
   const { environments, isReady } = useEnvironments();
   const grantEnvironment = grant
@@ -276,10 +297,23 @@ export function SettingsVoiceRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SettingsSection title="Transcribe on">
+        <SettingsSection
+          title="Transcribe on"
+          footer={localEngine ? LOCAL_ENGINE_EXPLANATION : undefined}
+        >
           <ListChoiceRow
             label="This device"
+            accessibilityLabel={
+              localEngine ? `This device, ${localEngineLabel(localEngine)}` : undefined
+            }
             description="Audio stays on this device and is transcribed here."
+            meta={
+              localEngine ? (
+                <Text textRole="footnote" className="text-foreground">
+                  {localEngineLabel(localEngine)}
+                </Text>
+              ) : undefined
+            }
             selected={!grant && !sheetEnvironment}
             onPress={() => {
               setCloudSheet(null);
