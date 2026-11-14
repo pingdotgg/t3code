@@ -31,6 +31,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
@@ -130,6 +131,8 @@ function makeTestAdapter(input: {
   };
   readonly backgroundTasksEndWithProcess?: true;
   readonly backgroundWork?: Ref.Ref<boolean>;
+  /** Ends `backgroundWork` and reports the offered thread's roster, as an idle session does. */
+  readonly backgroundWorkEnded?: Queue.Queue<OrchestrationV2ProviderThread>;
   readonly closedSessions?: Ref.Ref<ReadonlyArray<string>>;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
@@ -144,6 +147,22 @@ function makeTestAdapter(input: {
           const closedSessions = input.closedSessions;
           yield* Effect.addFinalizer(() =>
             Ref.update(closedSessions, (ids) => [...ids, sessionInput.providerSessionId]),
+          );
+        }
+        if (input.backgroundWorkEnded !== undefined && input.backgroundWork !== undefined) {
+          const backgroundWork = input.backgroundWork;
+          yield* Queue.take(input.backgroundWorkEnded).pipe(
+            Effect.tap(() => Ref.set(backgroundWork, false)),
+            Effect.flatMap((providerThread) =>
+              PubSub.publish(events, {
+                type: "provider_thread.updated",
+                driver: input.driver,
+                providerThread: { ...providerThread, pendingBackgroundTasks: [] },
+                sessionScoped: true,
+              }),
+            ),
+            Effect.forever,
+            Effect.forkScoped,
           );
         }
         const now = yield* DateTime.now;
@@ -2798,7 +2817,7 @@ describe("orchestration v2 provider switching", () => {
       { background: false, queued: false, sharedHistory: false },
     ],
     [
-      "refuses the hand-off while the previous instance still runs background work",
+      "keeps a busy previous session running when a direct send hands off",
       { background: true, queued: false, sharedHistory: false },
     ],
     [
@@ -2806,14 +2825,19 @@ describe("orchestration v2 provider switching", () => {
       { background: true, queued: true, sharedHistory: false },
     ],
     [
-      "holds a queued account switch while the replaced session still runs background work",
+      "starts a queued account switch once the replaced session's background work ends",
       { background: true, queued: true, sharedHistory: true },
+    ],
+    [
+      "queues a direct account switch until the replaced session's background work ends",
+      { background: true, queued: false, sharedHistory: true },
     ],
   ] as const)("%s", ([, { background, queued, sharedHistory }]) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("handoff-releases-session");
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
       const backgroundWork = yield* Ref.make(background);
+      const backgroundWorkEnded = yield* Queue.unbounded<OrchestrationV2ProviderThread>();
       const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
       const firstStarted = yield* Deferred.make<void>();
       const releaseFirst = yield* Deferred.make<void>();
@@ -2830,6 +2854,7 @@ describe("orchestration v2 provider switching", () => {
           responseByRunOrdinal: { 1: "First account complete" },
           capturedTurns,
           backgroundWork,
+          backgroundWorkEnded,
           closedSessions,
           ...(queued ? { holdFirstTurn: firstStarted, releaseFirstTurn: releaseFirst } : {}),
         }),
@@ -2900,58 +2925,37 @@ describe("orchestration v2 provider switching", () => {
           worktreePath: cwd,
         });
         yield* send(1, CLAUDE_MODEL_SELECTION);
-
-        if (queued) {
-          yield* Deferred.await(firstStarted);
-          yield* send(2, secondSelection);
-          const queuedRunId = (yield* orchestrator.getThreadProjection(handoffThreadId)).runs[1]
-            ?.id;
-          assert.isDefined(queuedRunId);
-          yield* Deferred.succeed(releaseFirst, undefined);
-          yield* orchestrator.streamStoredEvents.pipe(
+        const runCompleted = (ordinal: number) =>
+          orchestrator.streamStoredEvents.pipe(
             Stream.filter(
               ({ event }) =>
                 event.type === "run.updated" &&
-                event.runId === queuedRunId &&
-                (event.payload.queueHeld === true || event.payload.status === "completed"),
+                event.payload.ordinal === ordinal &&
+                event.payload.status === "completed",
             ),
             Stream.runHead,
           );
-          yield* worker.drain();
-          const afterQueue = yield* orchestrator.getThreadProjection(handoffThreadId);
-          const firstSession = afterQueue.providerSessions.find(
+        // The account switch resumes the busy session's native thread, so it waits in the
+        // queue without a hold and starts by itself once that session reports its work ended.
+        const expectSwitchAfterBackgroundWork = Effect.gen(function* () {
+          const waiting = yield* orchestrator.getThreadProjection(handoffThreadId);
+          const firstSession = waiting.providerSessions.find(
             (session) => session.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
           );
-          // Detaching would end the background agents, so the busy session must stay up.
-          assert.deepEqual(yield* Ref.get(closedSessions), []);
-          assert.equal(firstSession?.status, "ready");
-          if (!sharedHistory) {
-            assert.deepEqual(
-              afterQueue.runs.map((run) => [run.providerInstanceId, run.status]),
-              [
-                [CLAUDE_MODEL_SELECTION.instanceId, "completed"],
-                [secondSelection.instanceId, "completed"],
-              ],
-            );
-            return;
-          }
-          // Resuming the native thread beside the busy session would fork its history.
           assert.deepEqual(
-            afterQueue.runs.map((run) => [run.status, run.queueHeld === true]),
+            waiting.runs.map((run) => [run.status, run.queueHeld === true]),
             [
               ["completed", false],
-              ["queued", true],
+              ["queued", false],
             ],
           );
           assert.lengthOf(yield* Ref.get(capturedTurns), 1);
-          yield* Ref.set(backgroundWork, false);
-          yield* orchestrator.dispatch({
-            type: "queue.resume",
-            commandId: CommandId.make("command:handoff-releases-session:resume"),
-            threadId: handoffThreadId,
-          });
+          assert.deepEqual(yield* Ref.get(closedSessions), []);
+          assert.equal(firstSession?.status, "ready");
+          yield* Queue.offer(backgroundWorkEnded, waiting.providerThreads[0]!);
+          yield* runCompleted(2);
           yield* worker.drain();
-          const resumed = yield* waitForIdle(handoffThreadId);
+          const resumed = yield* orchestrator.getThreadProjection(handoffThreadId);
           assert.deepEqual(
             resumed.runs.map((run) => [run.providerInstanceId, run.status]),
             [
@@ -2960,6 +2964,29 @@ describe("orchestration v2 provider switching", () => {
             ],
           );
           assert.deepEqual(yield* Ref.get(closedSessions), [firstSession!.id]);
+        });
+
+        if (queued) {
+          yield* Deferred.await(firstStarted);
+          yield* send(2, secondSelection);
+          yield* Deferred.succeed(releaseFirst, undefined);
+          yield* runCompleted(sharedHistory ? 1 : 2);
+          yield* worker.drain();
+          if (sharedHistory) return yield* expectSwitchAfterBackgroundWork;
+          const afterQueue = yield* orchestrator.getThreadProjection(handoffThreadId);
+          const firstSession = afterQueue.providerSessions.find(
+            (session) => session.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
+          );
+          // Detaching would end the background agents, so the busy session must stay up.
+          assert.deepEqual(yield* Ref.get(closedSessions), []);
+          assert.equal(firstSession?.status, "ready");
+          assert.deepEqual(
+            afterQueue.runs.map((run) => [run.providerInstanceId, run.status]),
+            [
+              [CLAUDE_MODEL_SELECTION.instanceId, "completed"],
+              [secondSelection.instanceId, "completed"],
+            ],
+          );
           return;
         }
 
@@ -2969,26 +2996,13 @@ describe("orchestration v2 provider switching", () => {
           (session) => session.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
         );
         assert.equal(firstSession?.status, "ready");
-
-        if (background) {
-          // Native subagents live only in the adapter's roster, so the projection's
-          // pendingBackgroundTasks stays empty while the probe still reports work.
-          assert.deepEqual(afterFirst.providerThreads[0]?.pendingBackgroundTasks ?? [], []);
-          const refused = yield* send(2, secondSelection, ":refused").pipe(Effect.flip);
-          assert.include(String(refused.cause), "still running background agents or commands");
-          const unchanged = yield* orchestrator.getThreadProjection(handoffThreadId);
-          assert.lengthOf(unchanged.runs, 1);
-          assert.deepEqual(yield* Ref.get(closedSessions), []);
-          assert.equal(unchanged.thread.providerInstanceId, CLAUDE_MODEL_SELECTION.instanceId);
-          assert.deepEqual(
-            unchanged.providerSessions.map((session) => [session.id, session.status]),
-            [[firstSession!.id, "ready"]],
-          );
-          yield* Ref.set(backgroundWork, false);
-        }
+        // Native subagents live only in the adapter's roster, so the projection's
+        // pendingBackgroundTasks stays empty while the probe still reports work.
+        assert.deepEqual(afterFirst.providerThreads[0]?.pendingBackgroundTasks ?? [], []);
 
         yield* send(2, secondSelection);
         yield* worker.drain();
+        if (sharedHistory) return yield* expectSwitchAfterBackgroundWork;
         const afterSecond = yield* waitForIdle(handoffThreadId);
         yield* worker.drain();
         const projection = yield* orchestrator.getThreadProjection(handoffThreadId);
@@ -3001,12 +3015,15 @@ describe("orchestration v2 provider switching", () => {
           ],
         );
         assert.lengthOf(afterSecond.contextHandoffs, 1);
+        // The detached event alone hides the session; the runtime must also close. A busy
+        // session keeps its background work instead.
         assert.deepEqual(
           projection.providerSessions.map((session) => session.providerInstanceId),
-          [secondSelection.instanceId],
+          background
+            ? [CLAUDE_MODEL_SELECTION.instanceId, secondSelection.instanceId]
+            : [secondSelection.instanceId],
         );
-        // The detached event alone hides the session; the runtime must also close.
-        assert.deepEqual(yield* Ref.get(closedSessions), [firstSession!.id]);
+        assert.deepEqual(yield* Ref.get(closedSessions), background ? [] : [firstSession!.id]);
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(

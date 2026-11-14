@@ -69,6 +69,7 @@ import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimi
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { resolveBufferedProviderContinuation } from "./bufferedProviderContinuation.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
@@ -762,15 +763,24 @@ const make = Effect.gen(function* () {
               ),
             );
       case "message.dispatch":
-        return orchestrator.getThreadRecords(command.threadId, []).pipe(
-          Effect.flatMap((projection) =>
-            assertProviderInstanceEnabled({
-              projectId: projection.thread.projectId,
-              commandId: command.commandId,
-              instanceId: (command.modelSelection ?? projection.thread.modelSelection).instanceId,
-            }),
-          ),
-        );
+        return orchestrator
+          .getThreadRecords(
+            command.threadId,
+            command.continuationProviderThreadId === undefined ? [] : ["providerThreads", "runs"],
+          )
+          .pipe(
+            Effect.flatMap((projection) =>
+              assertProviderInstanceEnabled({
+                projectId: projection.thread.projectId,
+                commandId: command.commandId,
+                instanceId: (
+                  resolveBufferedProviderContinuation(projection, command)?.modelSelection ??
+                  command.modelSelection ??
+                  projection.thread.modelSelection
+                ).instanceId,
+              }),
+            ),
+          );
       case "delegated_task.request":
         return orchestrator.getThreadRecords(command.parentThreadId, []).pipe(
           Effect.flatMap((parent) =>

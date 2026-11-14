@@ -82,6 +82,7 @@ import {
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
+import { resolveBufferedProviderContinuation } from "./bufferedProviderContinuation.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
@@ -2317,6 +2318,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return true;
   });
 
+  // In memory: the sessions these queues wait on do not outlive the server either.
+  const queuesWaitingOnBackgroundWork = new Set<ThreadId>();
   const startNextQueuedRun = Effect.fn("Orchestrator.startNextQueuedRun")(
     function* (
       threadId: ThreadId,
@@ -2527,8 +2530,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const activeProviderThread = dispatchProviderThread(projection, queuedMessage, freshContext);
       const contextBoundary = freshContext ? ordinal : contextBoundaryOrdinal(projection);
       // A run queued before a fresh run started is bound to the conversation that run left behind.
+      // Buffered output can only drain on the session that holds it.
+      const bufferedContinuation = isBufferedProviderNotification(queuedMessage);
       const followsLatestContext =
         !freshContext &&
+        !bufferedContinuation &&
         (followsCurrent || providerThreadPredatesBoundary(storedProviderThread, contextBoundary));
       const targetProviderThread = followsLatestContext
         ? activeProviderThread?.providerInstanceId === queuedRun.providerInstanceId &&
@@ -2565,10 +2571,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         createdAt: now,
         updatedAt: now,
       };
-      const selectionChanged = !modelSelectionsEqual(
-        projection.thread.modelSelection,
-        queuedRun.modelSelection,
-      );
+      const selectionChanged =
+        !bufferedContinuation &&
+        !modelSelectionsEqual(projection.thread.modelSelection, queuedRun.modelSelection);
       // The picker may already have moved ahead of the native conversation.
       const switchFromActiveProvider =
         followsCurrent &&
@@ -2613,13 +2618,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(freshContext ? sessionsReleasedByFreshContext(projection, activeProviderThread) : []),
       ]);
       const busySessionIds = new Set<ProviderSessionId>();
+      // Registered before the probe: work that settles while it runs must still retry this start.
+      queuesWaitingOnBackgroundWork.add(threadId);
       for (const session of releasableSessions) {
         if (yield* sessionHasBackgroundWork(session, projection.providerThreads)) {
           busySessionIds.add(session.id);
         }
       }
-      // Nobody waits on a queued start to refuse it. A handoff runs in its own session, so a
-      // busy one stays up; a restart resumes the busy session's native thread, so wait instead.
+      // A handoff runs in its own session, so a busy one stays up. A restart resumes the busy
+      // session's native thread, so it waits without a hold and starts when that work settles.
       // A fresh run resumes nothing, so it never waits.
       if (
         busySessionIds.size > 0 &&
@@ -2627,23 +2634,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         switchPlan?.transition.type === "restart_and_resume"
       ) {
         yield* Effect.logInfo(
-          "Holding the queue: the replaced provider session still runs background work",
+          "The queue waits: the replaced provider session still runs background work",
           { threadId, runId: queuedRun.id, providerSessionIds: Array.from(busySessionIds) },
-        );
-        yield* writeSystemEvents(
-          projection.runs
-            .filter((run) => run.status === "queued")
-            .map((run) => ({
-              type: "run.updated" as const,
-              threadId,
-              runId: run.id,
-              providerInstanceId: run.providerInstanceId,
-              occurredAt: now,
-              payload: { ...run, queueHeld: true },
-            })),
         );
         return;
       }
+      queuesWaitingOnBackgroundWork.delete(threadId);
       const sessionsToDetach = releasableSessions.filter(
         (session) => !busySessionIds.has(session.id),
       );
@@ -6909,7 +6905,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
       projection = applyToProjection(projection, event);
     }
-    let modelSelection = command.modelSelection ?? projection.thread.modelSelection;
+    // A session kept across a hand-off still replies; its reply must not move the user's pick.
+    const continuation = resolveBufferedProviderContinuation(projection, command);
+    let modelSelection =
+      continuation?.modelSelection ?? command.modelSelection ?? projection.thread.modelSelection;
     let dispatchMode = resolveMessageDispatchIntent(
       projection,
       command.dispatchMode,
@@ -7260,11 +7259,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return;
     }
 
-    const activeProviderThread = dispatchProviderThread(
-      projection,
-      { ...command, delegatedCompletion },
-      freshContext,
-    );
+    const activeProviderThread =
+      continuation?.providerThread ??
+      dispatchProviderThread(projection, { ...command, delegatedCompletion }, freshContext);
     const activeRun = projection.runs.find(isActiveRun);
     // Messages after failed or stopped worktree setup must wait for a worktree,
     // rather than start in the project checkout.
@@ -7277,12 +7274,66 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
-    const queueBehindRun = activeRun ?? worktreeMissingRun;
-    const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
       dispatchMode.type === "start_immediately" ||
       dispatchMode.type === "queue_after_active";
+    const queuesBehindRun = (activeRun ?? worktreeMissingRun) !== undefined && startsOrQueuesRun;
+    const isProviderSwitch =
+      activeProviderThread !== undefined &&
+      activeProviderThread.providerInstanceId !== modelSelection.instanceId;
+    // Account overlays share native history. Selection commands may already
+    // have updated the app thread, so classify against the native thread's owner.
+    // A send that queues behind a run is planned when its run starts.
+    const providerSwitchPlan =
+      isProviderSwitch && !queuesBehindRun
+        ? yield* providerSwitchService
+            .plan({
+              projection: {
+                ...projection,
+                thread: {
+                  ...projection.thread,
+                  modelSelection: {
+                    ...projection.thread.modelSelection,
+                    instanceId: activeProviderThread.providerInstanceId,
+                  },
+                },
+              },
+              targetModelSelection: modelSelection,
+            })
+            .pipe(mapDispatchError(command))
+        : null;
+    const canResumeAcrossInstances =
+      !freshContext &&
+      isProviderSwitch &&
+      activeProviderThread.nativeThreadRef !== null &&
+      providerSwitchPlan?.transition.type === "restart_and_resume";
+    const releasableSessions = queuesBehindRun
+      ? []
+      : uniqueSessions([
+          ...projection.providerSessions.filter(
+            (session) =>
+              providerSwitchPlan?.releaseProviderSessionIds.includes(session.id) &&
+              session.status !== "stopped" &&
+              session.status !== "error",
+          ),
+          ...(freshContext ? sessionsReleasedByFreshContext(projection, activeProviderThread) : []),
+        ]);
+    // Same rules as a queued start: a hand-off or fresh session runs beside a busy session and
+    // leaves it up; an account switch resumes that session's native thread, so it waits in the queue.
+    const sessionsToDetach: Array<OrchestrationV2ProviderSession> = [];
+    for (const session of releasableSessions) {
+      if (!(yield* sessionHasBackgroundWork(session, projection.providerThreads))) {
+        sessionsToDetach.push(session);
+      }
+    }
+    const waitsForBackgroundWork =
+      canResumeAcrossInstances && sessionsToDetach.length < releasableSessions.length;
+    const queueBehindRun =
+      activeRun ??
+      worktreeMissingRun ??
+      (waitsForBackgroundWork ? (latestRun ?? undefined) : undefined);
+    const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const shouldQueue = queueBehindRun !== undefined && startsOrQueuesRun;
     // An explicit pick queued ahead reaches the thread only when its run starts. A goal or
     // restart command that stops the active run goes first, so nothing queued applies before it.
@@ -7698,8 +7749,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     const now = yield* DateTime.now;
     if (
-      !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
-      projection.thread.providerInstanceId !== modelSelection.instanceId
+      continuation === undefined &&
+      (!modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
+        projection.thread.providerInstanceId !== modelSelection.instanceId)
     ) {
       yield* emit(
         events,
@@ -7739,58 +7791,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.historyOrigin === "v1_import" && contextBoundary === 0
         ? yield* readHandoffItems(command.threadId, [null])
         : [];
-    const isProviderSwitch =
-      activeProviderThread !== undefined &&
-      activeProviderThread.providerInstanceId !== modelSelection.instanceId;
-    // Account overlays share native history. Selection commands may already
-    // have updated the app thread, so classify against the native thread's owner.
-    const providerSwitchPlan = isProviderSwitch
-      ? yield* providerSwitchService
-          .plan({
-            projection: {
-              ...projection,
-              thread: {
-                ...projection.thread,
-                modelSelection: {
-                  ...projection.thread.modelSelection,
-                  instanceId: activeProviderThread.providerInstanceId,
-                },
-              },
-            },
-            targetModelSelection: modelSelection,
-          })
-          .pipe(mapDispatchError(command))
-      : null;
-    const canResumeAcrossInstances =
-      !freshContext &&
-      isProviderSwitch &&
-      activeProviderThread.nativeThreadRef !== null &&
-      providerSwitchPlan?.transition.type === "restart_and_resume";
-    const releasableSessions = uniqueSessions([
-      ...projection.providerSessions.filter(
-        (session) =>
-          providerSwitchPlan?.releaseProviderSessionIds.includes(session.id) &&
-          session.status !== "stopped" &&
-          session.status !== "error",
-      ),
-      ...(freshContext ? sessionsReleasedByFreshContext(projection, activeProviderThread) : []),
-    ]);
-    const sessionsToDetach: Array<OrchestrationV2ProviderSession> = [];
-    for (const detaching of releasableSessions) {
-      if (yield* sessionHasBackgroundWork(detaching, projection.providerThreads)) {
-        // A schedule has nobody to wait or press Stop; like a queued fresh start, leave it running.
-        if (freshContext && command.scheduledTaskId !== undefined) continue;
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: freshContext
-            ? "The current session is still running background agents or commands, and a fresh session would end them. Wait for them to finish, or press Stop, then send the message again."
-            : "The previous provider is still running background agents or commands, and switching would end them. Wait for them to finish, or press Stop, then send the message again.",
-        });
-      }
-      sessionsToDetach.push(detaching);
-    }
-
     if (
       pendingForkTransfer === undefined &&
       pendingMergeBackTransfer === undefined &&
@@ -15367,11 +15367,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       command.type === "queue.resume" ||
       command.type === "queued-run.start" ||
+      // A send can queue with no run ahead of it: an account switch waiting on background work.
+      (command.type === "message.dispatch" &&
+        committed.storedEvents.some(
+          ({ event }) => event.type === "run.created" && event.payload.status === "queued",
+        )) ||
       (command.type === "thread.runtime-mode.set" && runtimeModeCeiling !== undefined)
     ) {
       yield* mapDispatchError(command)(
         startNextQueuedRun(command.threadId, {
-          userStarted: command.type !== "thread.runtime-mode.set",
+          userStarted: command.type === "queue.resume" || command.type === "queued-run.start",
           ...(command.type === "queued-run.start" ? { queuedRunId: command.runId } : {}),
         }),
       );
@@ -15629,12 +15634,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return providerThreadsWithBackgroundWork.delete(event.payload.id);
   };
   yield* Stream.merge(
-    eventSink.stream({
-      afterSequence: terminalEventsAfterSequence,
-      eventType: "provider-thread.updated",
-    }),
-    eventSink.stream({ afterSequence: terminalEventsAfterSequence, eventType: "subagent.updated" }),
+    Stream.merge(
+      eventSink.stream({
+        afterSequence: terminalEventsAfterSequence,
+        eventType: "provider-thread.updated",
+      }),
+      eventSink.stream({
+        afterSequence: terminalEventsAfterSequence,
+        eventType: "subagent.updated",
+      }),
+    ),
+    // A Codex tool that outlives its turn settles with a node update alone.
+    eventSink
+      .stream({ afterSequence: terminalEventsAfterSequence, eventType: "node.updated" })
+      .pipe(Stream.filter(({ event }) => queuesWaitingOnBackgroundWork.has(event.threadId))),
   ).pipe(
+    // The probe decides whether the work ended; these events are only when to ask again.
+    Stream.tap(({ event }) =>
+      queuesWaitingOnBackgroundWork.has(event.threadId) &&
+      (event.type !== "node.updated" ||
+        (event.payload.kind === "tool_call" && !isOrchestrationV2WorkActive(event.payload.status)))
+        ? threadDispatch.withLock(event.threadId, startNextQueuedRun(event.threadId)).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to start a queue that waited on background work", {
+                threadId: event.threadId,
+                cause,
+              }),
+            ),
+          )
+        : Effect.void,
+    ),
     Stream.filter(settlesChildWork),
     Stream.runForEach((stored) =>
       Effect.gen(function* () {

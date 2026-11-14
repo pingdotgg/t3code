@@ -13403,7 +13403,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 return true;
               }
             }
-            return false;
+            // Only a live process can still deliver a notification or the wake turn that follows it.
+            const live = yield* Ref.get(queryContext);
+            if (live === null || live.stopping) {
+              return false;
+            }
+            // The roster can empty before task_notification, and the notification before its wake turn.
+            return (
+              taskIdSetForNativeThread(
+                yield* Ref.get(wakeEligibleBackgroundTasksByNativeThread),
+                live.nativeThreadId,
+              ).size > 0 ||
+              (buffers
+                .get(live.nativeThreadId)
+                ?.messages.some(
+                  (message) => message.type === "system" && message.subtype === "task_notification",
+                ) ??
+                false)
+            );
           }),
           // Untraced: the run's event stream calls this once per provider event.
           hasPendingBackgroundWorkForThread: Effect.fnUntraced(function* (providerThread, options) {
