@@ -1200,8 +1200,16 @@ function deriveTurnFolds(input: {
     const isLatestInterruptedTurn =
       input.latestRun?.runId === runId && input.latestRun.status === "interrupted";
     // A turn cut short by a steer leaves trailing work entries behind its
-    // terminal message — take whichever ended last.
-    const lastEntryEnd = timelineEntryEnd(lastEntry);
+    // terminal message — take whichever ended last. A subagent card after it was
+    // spawned by background work once the turn settled, so it adds no turn time.
+    const lastTurnEntry =
+      group.entries.findLast(
+        (entry, index) =>
+          index <= terminalEntryIndex ||
+          entry.kind !== "event" ||
+          entry.projectedItem.item.type !== "subagent",
+      ) ?? lastEntry;
+    const lastEntryEnd = timelineEntryEnd(lastTurnEntry);
     const elapsedMs =
       input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
         ? computeElapsedMs(input.latestRun.startedAt, input.latestRun.completedAt)
