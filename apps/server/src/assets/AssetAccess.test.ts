@@ -263,6 +263,8 @@ describe("AssetAccess", () => {
         expect(yield* resolveAsset(token, "sibling.png")).toBeNull();
         expect(yield* resolveAsset(token, `../${name}`)).toBeNull();
         expect(yield* resolveAsset(`${token}tampered`, name)).toBeNull();
+        expect(yield* resolveAsset(`${token}.extra`, name)).toBeNull();
+        expect(yield* resolveAsset(`${token}.`, name)).toBeNull();
       }
     }).pipe(Effect.provide(layerTest)),
   );
