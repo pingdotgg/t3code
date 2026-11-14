@@ -637,10 +637,12 @@ const make = Effect.gen(function* () {
         .getTurnItem({ threadId: thread.id, itemId: id })
         .pipe(Effect.mapError(() => unavailable))) ??
       // A fork shows its source's earlier items, which stay in the source thread.
-      (yield* orchestrator.getTimelinePage(thread.id, { itemId: id, limit: 1 }).pipe(
-        Effect.map((page) => page.items[0]?.item ?? null),
-        Effect.mapError(() => unavailable),
-      ));
+      (thread.forkedFrom === null
+        ? null
+        : yield* orchestrator.getTimelinePage(thread.id, { itemId: id, limit: 1 }).pipe(
+            Effect.map((page) => page.items[0]?.item ?? null),
+            Effect.mapError(() => unavailable),
+          ));
     return item === null ? yield* unavailable : { thread, item };
   });
 
