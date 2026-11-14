@@ -38,6 +38,7 @@ import {
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { useAccessEnvironment } from "./useAccessEnvironment";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import { EnvironmentMachineSummary } from "./EnvironmentMachineSummary";
 import { ManagedByOrganization } from "../ManagedPolicy";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { searchableSetting } from "./settingsSearch";
@@ -1242,6 +1243,9 @@ function ConnectionsSettingsContent({
               <div className="px-3 py-2 sm:px-4">
                 <ManagedByOrganization policy={accessServerConfig.managedPolicy} />
               </div>
+            ) : null}
+            {accessEnvironment?.connection.phase === "connected" ? (
+              <EnvironmentMachineSummary environmentId={accessEnvironmentId} layout="row" />
             ) : null}
             {canManageLocalBackend ? (
               <SettingsRow

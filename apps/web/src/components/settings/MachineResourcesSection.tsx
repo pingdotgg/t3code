@@ -1,15 +1,20 @@
 import {
+  machineCpuDetail,
+  machineGpuMemory,
+  machineGpuState,
   machineMemoryUsedShare,
+  machineStorageState,
   machineVolumeLabel,
   machineVolumeTone,
   machineVolumeUsedShare,
   type MachineVolumeTone,
 } from "@t3tools/client-runtime/machine-resources";
-import type { EnvironmentId, HostResourcesSnapshot, HostVolume } from "@t3tools/contracts";
+import type { EnvironmentId, HostGpu, HostResourcesSnapshot, HostVolume } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import {
   AlertTriangleIcon,
   CpuIcon,
+  GpuIcon,
   HardDriveIcon,
   MemoryStickIcon,
   MonitorIcon,
@@ -19,7 +24,6 @@ import { formatBytes } from "../../lib/formatBytes";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { machineCpuDetail, machineStorageState } from "./MachineResourcesSection.logic";
 import { SettingsSection } from "./settingsLayout";
 
 const ROLE_LABELS: Record<HostVolume["roles"][number], string> = {
@@ -72,6 +76,108 @@ function MachineStat({
       {detail ? (
         <div className="mt-1.5 truncate text-3xs text-muted-foreground/60">{detail}</div>
       ) : null}
+    </div>
+  );
+}
+
+function CoreStrip({ cores }: { cores: HostResourcesSnapshot["cpuCoreUtilization"] }) {
+  if (cores === undefined) {
+    return (
+      <div className="mt-1.5 text-3xs text-muted-foreground/60">
+        Per-core load not reported by this server
+      </div>
+    );
+  }
+  return (
+    <div
+      className="mt-2 flex h-5 items-end gap-px"
+      role="img"
+      aria-label={`Per-core load: ${cores.map(formatPercent).join(", ")}`}
+    >
+      {cores.map((share, index) => (
+        <div
+          // oxlint-disable-next-line react/no-array-index-key -- a core's only identity is its position
+          key={index}
+          className="flex h-full min-w-px flex-1 items-end overflow-hidden rounded-xs bg-muted"
+        >
+          <div
+            className="w-full bg-foreground/55"
+            style={{ height: `${Math.round(share * 100)}%` }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function GpuRow({ gpu }: { gpu: HostGpu }) {
+  const memory = machineGpuMemory(gpu);
+  return (
+    <li className="flex flex-col gap-2 px-4 py-3 sm:px-5">
+      <div className="flex min-w-0 items-baseline justify-between gap-3">
+        <span className="truncate text-xs font-medium text-foreground">{gpu.name}</span>
+        <span className="shrink-0 font-mono text-xs tabular-nums text-foreground">
+          {gpu.utilization === undefined
+            ? "Load unavailable"
+            : `${formatPercent(gpu.utilization)} busy`}
+        </span>
+      </div>
+      {gpu.utilization === undefined ? null : <UsageBar share={gpu.utilization} />}
+      {memory.kind === "unreported" ? null : (
+        <div className="flex justify-between text-3xs text-muted-foreground/60">
+          {memory.kind === "dedicated" ? (
+            <>
+              <span>
+                {memory.usedBytes === undefined
+                  ? "VRAM in use not reported"
+                  : `${formatBytes(memory.usedBytes)} VRAM used`}
+              </span>
+              <span>{formatBytes(memory.totalBytes)} total</span>
+            </>
+          ) : (
+            <>
+              <span>{formatBytes(memory.usedBytes)} in use</span>
+              <span>Unified memory</span>
+            </>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
+function GpuSection({ snapshot }: { snapshot: HostResourcesSnapshot }) {
+  const state = machineGpuState(snapshot);
+  return (
+    <div className="border-t border-border/60">
+      <div className="flex items-center gap-2 px-4 pt-3 text-3xs font-semibold uppercase tracking-widest text-muted-foreground/70 sm:px-5">
+        <GpuIcon className="size-3.5 text-muted-foreground/55" />
+        GPU
+      </div>
+      {state.kind === "unsupported" ? (
+        <p className="px-4 py-3 text-xs text-muted-foreground sm:px-5">
+          GPUs are not reported by this server. Update it to see them.
+        </p>
+      ) : state.kind === "empty" ? (
+        <p className="px-4 py-3 text-xs text-muted-foreground sm:px-5">
+          {state.notice ?? "No GPU found."}
+        </p>
+      ) : (
+        <>
+          {state.notice ? (
+            <p className="flex items-start gap-1.5 px-4 pt-2 text-3xs text-muted-foreground sm:px-5">
+              <AlertTriangleIcon className="mt-px size-3 shrink-0 text-warning" />
+              {state.notice}
+            </p>
+          ) : null}
+          <ul className="divide-y divide-border/45">
+            {state.gpus.map((gpu, index) => (
+              // oxlint-disable-next-line react/no-array-index-key -- identical GPUs share a name
+              <GpuRow key={`${index}:${gpu.name}`} gpu={gpu} />
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   );
 }
@@ -148,6 +254,7 @@ function MachineResourcesView({
           detail={machineCpuDetail(snapshot)}
         >
           {snapshot.cpuUtilization === null ? null : <UsageBar share={snapshot.cpuUtilization} />}
+          <CoreStrip cores={snapshot.cpuCoreUtilization} />
         </MachineStat>
         <MachineStat
           icon={<MemoryStickIcon className="size-3.5" />}
@@ -165,6 +272,7 @@ function MachineResourcesView({
           <UsageBar share={memoryShare} />
         </MachineStat>
       </div>
+      <GpuSection snapshot={snapshot} />
       <div className="border-t border-border/60">
         <div className="flex items-center gap-2 px-4 pt-3 text-3xs font-semibold uppercase tracking-widest text-muted-foreground/70 sm:px-5">
           <HardDriveIcon className="size-3.5 text-muted-foreground/55" />
@@ -200,7 +308,7 @@ function MachineResourcesView({
   );
 }
 
-/** Whole-machine CPU, memory and disks of the selected environment's host. Polls while mounted. */
+/** Whole-machine CPU, memory, GPU and disks of the selected environment's host. Polls while mounted. */
 export function MachineResourcesSection({ environmentId }: { environmentId: EnvironmentId }) {
   const { data, error } = useEnvironmentQuery(
     serverEnvironment.machineResources({ environmentId, input: {} }),
