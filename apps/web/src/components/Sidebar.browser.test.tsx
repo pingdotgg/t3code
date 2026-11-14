@@ -351,3 +351,56 @@ describe("sidebar settled pagination", () => {
     expect(screen.container.querySelectorAll("[data-thread-item]")).toHaveLength(loadedRows);
   });
 });
+
+describe("sidebar pinned shelf", () => {
+  it("folds pins behind the Pinned header and keeps the open thread", async () => {
+    using stack = new DisposableStack();
+    stack.defer(() => localStorage.removeItem("t3code:sidebar:pinned-expanded"));
+    const activeProject = project("active");
+    const threads = [1, 2, 3].map((index) =>
+      makeThreadFixture({
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+        id: ThreadId.make(`thread-${index}`),
+        title: `Thread ${index}`,
+        pinnedAt: index < 3 ? "2026-01-01T00:00:00.000Z" : null,
+      }),
+    );
+    const routeThreadRef: ScopedThreadRef = {
+      environmentId: activeProject.environmentId,
+      threadId: threads[0]!.id,
+    };
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue(threads);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: routeThreadRef });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef,
+    });
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    const shelf = screen.getByTestId("sidebar-pinned-shelf-toggle");
+    await expect.element(shelf).toHaveAttribute("aria-expanded", "true");
+    await expect.element(screen.getByText("Thread 2").first()).toBeInTheDocument();
+
+    await userEvent.click(shelf);
+    await expect.element(shelf).toHaveAttribute("aria-expanded", "false");
+    await expect.element(screen.getByText("Thread 2").first()).not.toBeInTheDocument();
+    await expect.element(screen.getByText("Thread 1").first()).toBeInTheDocument();
+    await expect.element(screen.getByText("Thread 3").first()).toBeInTheDocument();
+
+    await userEvent.click(shelf);
+    await expect.element(screen.getByText("Thread 2").first()).toBeInTheDocument();
+  });
+});
