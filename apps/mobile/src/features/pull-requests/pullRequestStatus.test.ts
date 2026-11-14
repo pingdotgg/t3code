@@ -59,6 +59,7 @@ describe("mobile overview review status", () => {
       },
     );
     expect(result.title).toBe("Awaiting review");
+    expect(result.reviews.map((review) => review.outdated)).toEqual([true]);
   });
 
   it("keeps an approval when a later review only comments, and normalizes provider spelling", () => {
