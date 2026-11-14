@@ -235,6 +235,56 @@ it("shows a lineage thread's full title in its tooltip", async () => {
   );
 });
 
+it.each([true, false])(
+  "keeps Disconnect for a thread with only side chats (Side chats shown: %s)",
+  async (showSideChats) => {
+    setup();
+    state.commandSucceeds = true;
+    state.projection = {
+      ...(state.projection as Record<string, unknown>),
+      thread: {
+        id: threadId,
+        title: "Main",
+        activeProviderThreadId: null,
+        lineage: {},
+        forkedFrom: null,
+      },
+    };
+    state.relatedShells = [
+      {
+        id: "side",
+        title: "Side question",
+        lineage: {
+          parentThreadId: threadId,
+          relationshipToParent: "fork",
+          rootThreadId: threadId,
+          sideChat: true,
+        },
+      },
+    ];
+    await using screen = await render(
+      <ToastProvider timeout={0}>
+        <ThreadRelationshipsPanel
+          environmentId={environmentId}
+          threadId={threadId}
+          showLineage
+          showSideChats={showSideChats}
+        />
+      </ToastProvider>,
+    );
+
+    const [shown, hidden] = showSideChats ? ["Side chats", "Lineage"] : ["Lineage", "Side chats"];
+    await expect.element(screen.getByRole("region", { name: hidden })).not.toBeInTheDocument();
+    await screen
+      .getByRole("region", { name: shown })
+      .getByRole("button", { name: "More thread actions" })
+      .click();
+    await expect
+      .element(page.getByRole("menuitem", { name: "Disconnect agent session" }))
+      .toBeVisible();
+  },
+);
+
 it("shows a side chat's full title in its tooltip", async () => {
   setup();
   const longTitle = "Side chat question with a title that the side chat row truncates";
