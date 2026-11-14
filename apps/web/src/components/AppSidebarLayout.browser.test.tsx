@@ -17,7 +17,7 @@ vi.mock(import("../state/server"), async (original) => {
 vi.mock(import("./Sidebar"), () => ({ default: (() => null) as never }));
 // Pane routing is outside this shell shortcut test.
 vi.mock(import("../layout/WorkspacePlane"), () => ({
-  WorkspacePlane: ({ children }: { children: ReactNode }) => children,
+  WorkspacePlane: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
 import { AppSidebarLayout } from "./AppSidebarLayout";
