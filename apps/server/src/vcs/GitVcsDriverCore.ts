@@ -631,11 +631,6 @@ export function isNonRepositoryGitStderr(stderr: string): boolean {
   const normalized = stderr.toLowerCase();
   return NON_REPOSITORY_STDERR_PHRASES.some((phrase) => normalized.includes(phrase));
 }
-// Unknown spellings count as hidden so their untracked files are still found by a full scan.
-const UNTRACKED_FILES_SHOWN_CONFIG_VALUES = new Set(["normal", "all", "true", "yes", "on", "1"]);
-function untrackedFilesHiddenByConfig(value: string | null): boolean {
-  return value !== null && !UNTRACKED_FILES_SHOWN_CONFIG_VALUES.has(value.toLowerCase());
-}
 function isUnbornHeadStderr(stderr: string): boolean {
   const normalized = stderr.toLowerCase();
   return (
@@ -3778,14 +3773,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         detail: remembered.detail,
       });
     }
-    // Empty status means no untracked files unless config hides them; then scan the whole tree.
+    // Status always lists untracked files, so no roots means there are none to scan.
     const untracked =
-      roots.length === 0 &&
-      !untrackedFilesHiddenByConfig(
-        yield* readConfigValue(cwd, "status.showUntrackedFiles").pipe(
-          Effect.orElseSucceed(() => "no"),
-        ),
-      )
+      roots.length === 0
         ? { env: undefined, omitted: false }
         : yield* prepareUntrackedReviewIndexOrReason(cwd, pathspecs, undefined, false);
     if ("unavailable" in untracked) {
