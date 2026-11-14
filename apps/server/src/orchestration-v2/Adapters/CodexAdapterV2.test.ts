@@ -3267,10 +3267,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const transcript = makeCodexReplayTranscript({
           scenario: "native-compaction",
           entries: [
-            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "unused" }).slice(
-              0,
-              5,
-            ),
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "unused" }).slice(0, 5),
             {
               type: "expect_outbound",
               label: "compact",

@@ -1051,9 +1051,13 @@ function WorkingWindowView({
     };
   }, [open, head]);
   const { workGroupViewState, onToggleWorkEntry, onWorkEntryContentReady } = ctx;
+  const viewedImages = useWorkGroupViewedImages(
+    window.items.flatMap((item) => (item.kind === "work" ? [item.entry] : [])),
+  );
   // Entries opened in the history keep their state, and toggling one keeps the bar in place.
   const groupView = (() => ({
     state: workGroupViewState,
+    viewedImages,
     onToggleEntry: (collapsed: boolean, entryId: string) =>
       onToggleWorkEntry("working-indicator-row", collapsed, entryId),
     onContentReady: (entryId: string) =>
