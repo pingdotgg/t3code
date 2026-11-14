@@ -233,8 +233,15 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     };
     let addr = or_exit(listener.local_addr(), "cannot read the listening address");
     let runtime = RuntimeState::new(&addr.ip().to_string(), addr.port(), conn_support::uuid_v4());
-    if let Err(error) = runtime.publish(&state_dir) {
-        eprintln!("conn-server: could not write server-runtime.json: {error}");
+    // The write and its fsync run on a blocking thread, as all file work here does.
+    let published = {
+        let (runtime, state_dir) = (runtime.clone(), state_dir.clone());
+        tokio::task::spawn_blocking(move || runtime.publish(&state_dir)).await
+    };
+    match published {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => eprintln!("conn-server: could not write server-runtime.json: {error}"),
+        Err(error) => eprintln!("conn-server: could not write server-runtime.json: {error}"),
     }
     if let Some(mcp) = &state.deps.mcp {
         mcp.set_listen_address(addr);
@@ -279,7 +286,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     // started outlives the server.
     terminals.shutdown().await;
     engine.shutdown().await;
-    runtime.clear(&state_dir);
+    let _ = tokio::task::spawn_blocking(move || runtime.clear(&state_dir)).await;
 }
 
 /// A start-up step that failed: print why and exit with status 1 instead of a panic.
