@@ -268,6 +268,7 @@ export interface ThreadDetailScreenProps {
   readonly activePendingUserInputAnswers: Record<string, string | ReadonlyArray<string>> | null;
   readonly respondingUserInputId: RuntimeRequestId | null;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
+  readonly connectionAwaitingApproval?: boolean;
   readonly threadSyncStatus?: EnvironmentThreadStatus;
   readonly historyControls?: ThreadFeedHistoryControls;
   readonly activeThreadBusy: boolean;
@@ -765,6 +766,7 @@ function ThreadDetailBody(
     const connectionStatus = connectionFloatingStatus({
       connectionError: connectionRetrying ? retryConnectionError : props.connectionError,
       connectionState: props.connectionStateLabel,
+      connectionAwaitingApproval: props.connectionAwaitingApproval === true,
       environmentLabel: props.environmentLabel,
       onReconnect: props.onReconnectEnvironment,
     });
@@ -829,7 +831,11 @@ function ThreadDetailBody(
       return { kind: "compacting" };
     }
     if (props.activeWorkStartedAt !== null && contentPresentationKind === "ready") {
-      return { kind: "working", startedAt: props.activeWorkStartedAt };
+      return {
+        kind: "working",
+        environmentId: props.environmentId,
+        startedAt: props.activeWorkStartedAt,
+      };
     }
     if (pendingBackgroundWork !== null && contentPresentationKind === "ready") {
       return {
@@ -1063,11 +1069,16 @@ function ThreadDetailBody(
       windowHeight: screenAreaHeight,
       keyboardHeight: keyboardStickyEnabled ? -keyboardTranslation.value : 0,
       navigationHeaderHeight,
-      composerOverlapHeight: composerBottomInset,
+      // An in-flow question shares the room above it with the floating control.
+      composerOverlapHeight:
+        composerBottomInset +
+        (questionInFlow && showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0),
     }),
   );
+  // A question pads itself clear of the bottom inset, below the card's own height limit.
+  const questionBottomInset = activeUserInputRequestId !== null ? composerBottomInset : 0;
   const composerPanelsHeightStyle = useAnimatedStyle(() => ({
-    maxHeight: pendingUserInputMaxHeight.value,
+    maxHeight: pendingUserInputMaxHeight.value + questionBottomInset,
     flexGrow: 0,
   }));
   // Questions overlay the composer on iOS; an approval sits above it, so it gives up its height.
