@@ -9,7 +9,13 @@ import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, View } from "react-native";
 import { Image } from "expo-image";
 import { AppText } from "../../components/ui/AppText";
-import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { pullRequestMediaResource } from "@t3tools/client-runtime/pull-request-markdown";
+import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+import * as Option from "effect/Option";
+import { assetEnvironment, useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { usePreparedConnection } from "../../state/session";
+import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
+import type { MarkdownImageSourceResolver } from "../../native/SelectableMarkdownText.types";
 import { assetImageCacheKey } from "../../lib/assetImageSource";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import { VideoAttachmentTile } from "../../components/VideoAttachmentTile";
@@ -37,6 +43,27 @@ export function usePullRequestMediaUrl(url: string) {
     unavailable: resource !== null && asset._tag === "Failure",
     source,
     resolvePlaybackUri: resource ? async () => (await refresh()) ?? null : undefined,
+  };
+}
+
+/** For images the native renderer draws itself, such as one wrapped in a link. */
+export function usePullRequestImageSource(
+  resolveUrl: (href: string) => string,
+): MarkdownImageSourceResolver {
+  const context = useContext(PullRequestMediaContext);
+  const connection = usePreparedConnection(context?.environmentId ?? null);
+  const httpBaseUrl = Option.isSome(connection) ? connection.value.httpBaseUrl : null;
+  const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
+  return async (image) => {
+    const url = resolveUrl(image.href);
+    const resource = context && pullRequestMediaResource(url, context.cwd, context.repository);
+    if (!resource) return { uri: url };
+    if (httpBaseUrl === null) throw new Error("Pull request image is unavailable");
+    const result = await createUrl({ environmentId: context.environmentId, input: { resource } });
+    const uri =
+      result._tag === "Success" ? resolveAssetUrl(httpBaseUrl, result.value.relativeUrl) : null;
+    if (uri === null) throw new Error("Could not authorize pull request image");
+    return { uri };
   };
 }
 
