@@ -172,7 +172,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                   });
               }}
               onInstanceModelChange={(instanceId, model) =>
-                setModel(pickModelSelection(selection, instanceId, model))
+                setModel(pickModelSelection(mixedModel ? null : selection, instanceId, model))
               }
             />
             {!mixedModel && !presentation.providerNote && !effortDisabledReason && activeEntry ? (
@@ -290,7 +290,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 }
                 updateSettings({
                   fallbackModelSelection: pickModelSelection(
-                    settings.fallbackModelSelection,
+                    mixedFallback ? null : settings.fallbackModelSelection,
                     instanceId,
                     model,
                   ),

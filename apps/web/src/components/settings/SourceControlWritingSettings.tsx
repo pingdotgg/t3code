@@ -366,7 +366,7 @@ export function SourceControlWritingSettingsSection() {
                         }
                         updateSettings({
                           reviewGuideModelSelection: pickModelSelection(
-                            reviewGuideSelection,
+                            mixedReviewGuideModel ? null : reviewGuideSelection,
                             instanceId,
                             model,
                           ),
@@ -569,7 +569,7 @@ export function SourceControlWritingSettingsSection() {
                       }
                       updateSettings({
                         sourceControlWriterModelSelection: pickModelSelection(
-                          activeSelection,
+                          mixedWriterModel ? null : activeSelection,
                           instanceId,
                           model,
                         ),
