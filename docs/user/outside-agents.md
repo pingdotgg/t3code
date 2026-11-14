@@ -80,6 +80,22 @@ policy. Approving without a code starts at **Read only**:
   threads in every project. A thread it starts or steers cannot run with more
   permissions than the mode you chose.
 
+## What outside agents can call
+
+Some tools only work for an agent running inside a T3 thread, because they act
+as that thread: subagents, secret requests, rendered HTML, the browser preview,
+devices, and worktree handoff. They still appear in an outside agent's tool
+list, but calling one returns an error saying it needs an agent running inside
+T3 Code.
+
+- To hand off work, start a thread with `t3_thread_launch`, then follow it with
+  `t3_thread_wait` or `t3_thread_read`, instead of `create_threads` or
+  `delegate_task`.
+- Tools that default to the caller's own project or thread need an explicit
+  `projectId` or `threadId`.
+- To list threads across projects, call `t3_thread_list` with
+  `allProjects: true`, or use `t3_thread_search`.
+
 ## Claude Code
 
 ```sh
@@ -131,11 +147,11 @@ t3 thread show "$id"
 t3 thread list
 ```
 
-`.` means the project that contains the current folder; a project id also
-works. A new thread uses the project's default model and permission mode, and
-runs in the project folder unless you pass `--worktree <base-branch>`. `send`
-never interrupts: a busy thread gets the message as its next turn. Pass `-` as
-the message to read it from stdin.
+`.` means the project that contains the current folder, or a git worktree of
+its repository; a project id also works. A new thread uses the project's
+default model and permission mode, and runs in the project folder unless you
+pass `--worktree <base-branch>`. `send` never interrupts: a busy thread gets
+the message as its next turn. Pass `-` as the message to read it from stdin.
 
 `--wait` prints the agent's reply. It exits 1 when the run fails or stops, and
 2 when the agent waits for an answer you give in the app. Add `--json` for a

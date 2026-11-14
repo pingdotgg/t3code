@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   collectAssistantCitations,
@@ -6,6 +6,7 @@ import {
 } from "@t3tools/shared/assistantCitations";
 
 import { removeLocalStorageItem } from "./hooks/useLocalStorage";
+import { createMemoryStorage } from "./lib/storage";
 
 import {
   MAX_STASH_ENTRIES,
@@ -235,6 +236,33 @@ describe("promptStashStore", () => {
       }),
     );
     expect(usePromptStashStore.getState().entries).toEqual([]);
+  });
+
+  // regression: #35010 stashing in one tab erased what another tab stashed after it loaded
+  it("keeps an entry another tab stashed after this tab loaded", async () => {
+    const sharedStorage = createMemoryStorage();
+    vi.stubGlobal("localStorage", sharedStorage);
+    vi.stubGlobal("window", new EventTarget());
+    vi.resetModules();
+    try {
+      const thisTab = await import("./promptStashStore");
+      sharedStorage.setItem(
+        PROMPT_STASH_STORAGE_KEY,
+        JSON.stringify({ version: 2, state: { entries: [makeEntry({ id: "other-tab" })] } }),
+      );
+      window.dispatchEvent(Object.assign(new Event("storage"), { key: PROMPT_STASH_STORAGE_KEY }));
+
+      thisTab.usePromptStashStore.getState().stashEntry(makeEntry({ id: "this-tab" }));
+
+      const saved = JSON.parse(sharedStorage.getItem(PROMPT_STASH_STORAGE_KEY) as string);
+      expect(saved.state.entries.map((entry: PromptStashEntry) => entry.id)).toEqual([
+        "this-tab",
+        "other-tab",
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
   });
 });
 
