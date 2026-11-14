@@ -55,11 +55,11 @@ const hostPlatform = NodeOS.platform();
 const parentPid = process.ppid;
 const parentWatchIntervalMs = 1_000;
 
-NodeChildProcess.execFileSync(
-  process.execPath,
-  [NodePath.join(desktopDir, "scripts/build-browser-secret.mjs")],
-  { stdio: "inherit" },
-);
+for (const script of ["build-browser-secret.mjs", "build-backend-launcher.mjs"]) {
+  NodeChildProcess.execFileSync(process.execPath, [NodePath.join(desktopDir, "scripts", script)], {
+    stdio: "inherit",
+  });
+}
 
 await waitForResources({
   baseDir: desktopDir,

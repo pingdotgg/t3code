@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -231,12 +232,6 @@ describe("DesktopBackendConfiguration", () => {
         const first = yield* configuration.resolvePrimary;
         const second = yield* configuration.resolvePrimary;
 
-        assert.equal(first.executablePath, process.execPath);
-        assert.deepEqual(first.args.slice(0, 3), [
-          "--require",
-          environment.compileCachePath,
-          environment.backendEntryPath,
-        ]);
         assert.equal(first.entryPath, environment.backendEntryPath);
         assert.equal(first.cwd, environment.backendCwd);
         assert.equal(first.captureOutput, true);
@@ -271,6 +266,153 @@ describe("DesktopBackendConfiguration", () => {
         );
       }),
     ),
+  );
+
+  it.effect(
+    "resolvePrimary starts the macOS backend as the app's Helper through the launcher",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cases = [
+          {
+            name: "packaged Nightly",
+            platform: "darwin",
+            isPackaged: true,
+            appName: "T3 Code (Nightly)",
+            launcher: "resources/backend-launcher/t3-backend-launcher",
+            helperExists: true,
+            launcherExists: true,
+          },
+          {
+            name: "development Electron",
+            platform: "darwin",
+            isPackaged: false,
+            appName: "Electron",
+            launcher: "repo/native/backend-launcher/build/t3-backend-launcher",
+            helperExists: true,
+            launcherExists: true,
+          },
+          {
+            name: "launcher missing",
+            platform: "darwin",
+            isPackaged: true,
+            appName: "T3 Code (Beta)",
+            launcher: "resources/backend-launcher/t3-backend-launcher",
+            helperExists: true,
+            launcherExists: false,
+          },
+          {
+            name: "Helper missing",
+            platform: "darwin",
+            isPackaged: true,
+            appName: "T3 Code (Beta)",
+            launcher: "resources/backend-launcher/t3-backend-launcher",
+            helperExists: false,
+            launcherExists: true,
+          },
+          {
+            name: "Helper probe fails",
+            platform: "darwin",
+            isPackaged: true,
+            appName: "T3 Code (Beta)",
+            launcher: "resources/backend-launcher/t3-backend-launcher",
+            helperExists: true,
+            launcherExists: true,
+            helperCheckFails: true,
+          },
+          {
+            name: "Linux",
+            platform: "linux",
+            isPackaged: true,
+            appName: "T3 Code",
+            launcher: null,
+            helperExists: true,
+            launcherExists: true,
+          },
+        ] as const;
+
+        for (const testCase of cases) {
+          const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-desktop-backend-config-test-",
+          });
+          const contentsPath = path.join(baseDir, `${testCase.appName}.app/Contents`);
+          const executablePath = path.join(contentsPath, "MacOS", testCase.appName);
+          const helperPath = path.join(
+            contentsPath,
+            "Frameworks",
+            `${testCase.appName} Helper.app/Contents/MacOS/${testCase.appName} Helper`,
+          );
+          const launcherPath =
+            testCase.launcher === null ? null : path.join(baseDir, testCase.launcher);
+          const resources = [
+            ...(testCase.helperExists ? [helperPath] : []),
+            ...(testCase.launcherExists && launcherPath !== null ? [launcherPath] : []),
+          ];
+          for (const resource of resources) {
+            yield* fileSystem.makeDirectory(path.dirname(resource), { recursive: true });
+            yield* fileSystem.writeFileString(resource, "");
+          }
+          const helperCheckFails = "helperCheckFails" in testCase;
+          const resourceFileSystem = FileSystem.FileSystem.of({
+            ...fileSystem,
+            exists: (candidate) =>
+              helperCheckFails && candidate === helperPath
+                ? Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "PermissionDenied",
+                      module: "FileSystem",
+                      method: "exists",
+                      pathOrDescriptor: candidate,
+                    }),
+                  )
+                : fileSystem.exists(candidate),
+          });
+          const { config, environment } = yield* Effect.gen(function* () {
+            const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+            return {
+              config: yield* configuration.resolvePrimary,
+              environment: yield* DesktopEnvironment.DesktopEnvironment,
+            };
+          }).pipe(
+            Effect.provideService(HostProcess.ExecutablePath, executablePath),
+            Effect.provide(
+              layerBackendConfiguration().pipe(
+                Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, resourceFileSystem)),
+                Layer.provideMerge(layerServerExposure),
+                Layer.provideMerge(DesktopAppSettings.layerTest()),
+                Layer.provideMerge(DesktopWslEnvironment.layerTest()),
+                Layer.provideMerge(DesktopWslServerTree.layerTest()),
+                Layer.provideMerge(
+                  layerEnvironment(baseDir, {
+                    dirname: path.join(baseDir, "repo/apps/desktop/src"),
+                    platform: testCase.platform,
+                    isPackaged: testCase.isPackaged,
+                    resourcesPath: path.join(baseDir, "resources"),
+                  }),
+                ),
+              ),
+            ),
+          );
+
+          const backendArgs = [
+            ...(testCase.isPackaged ? ["--require", environment.compileCachePath] : []),
+            environment.backendEntryPath,
+            "--bootstrap-fd",
+            "3",
+          ];
+          assert.deepEqual(
+            [config.executablePath, ...config.args],
+            testCase.launcher === null ||
+              !testCase.helperExists ||
+              !testCase.launcherExists ||
+              helperCheckFails
+              ? [executablePath, ...backendArgs]
+              : [launcherPath, helperPath, ...backendArgs],
+            testCase.name,
+          );
+        }
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("resolvePrimary starts from server.asar without materializing the WSL tree", () =>

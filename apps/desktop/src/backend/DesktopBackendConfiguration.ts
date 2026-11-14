@@ -203,6 +203,40 @@ const resolveResourceMonitorPath = Effect.fn(
   return Option.none<string>();
 });
 
+// Agent commands inherit the desktop app's macOS responsibility and privacy identity.
+// The launcher makes the accessory Helper responsible for the backend's descendants,
+// keeping the PID and descriptors the backend manager owns.
+const resolveBackendExecutable = Effect.fn("desktop.backendConfiguration.resolveBackendExecutable")(
+  function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const executablePath = yield* HostProcess.ExecutablePath;
+    if (environment.platform !== "darwin") {
+      return { executablePath, leadingArgs: [] as ReadonlyArray<string> };
+    }
+    const { path } = environment;
+    // Electron and electron-builder name the generic helper after the main executable.
+    const executableName = path.basename(executablePath);
+    const helperPath = path.join(
+      path.dirname(executablePath),
+      "../Frameworks",
+      `${executableName} Helper.app/Contents/MacOS/${executableName} Helper`,
+    );
+    const launcherPath = environment.isPackaged
+      ? path.join(environment.resourcesPath, "backend-launcher", "t3-backend-launcher")
+      : path.join(environment.rootDir, "native/backend-launcher/build/t3-backend-launcher");
+    const fileSystem = yield* FileSystem.FileSystem;
+    const exists = (candidate: string) =>
+      fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+    if (!(yield* exists(launcherPath)) || !(yield* exists(helperPath))) {
+      yield* Effect.logWarning(
+        "macOS backend launcher or Helper is unavailable; processes the backend starts will be attributed to T3 Code.",
+      );
+      return { executablePath, leadingArgs: [] as ReadonlyArray<string> };
+    }
+    return { executablePath: launcherPath, leadingArgs: [helperPath] };
+  },
+);
+
 const readPersistedBackendObservabilitySettings = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -520,6 +554,10 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       readonly resourceMonitorPath: Option.Option<string>;
       readonly cliPath: Option.Option<string>;
       readonly shellEnvironmentPrepared: boolean;
+      readonly backendExecutable: {
+        readonly executablePath: string;
+        readonly leadingArgs: ReadonlyArray<string>;
+      };
       readonly desktopAppUpdate: boolean;
     },
   ): Effect.fn.Return<
@@ -555,9 +593,10 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
     };
 
     return {
-      executablePath: process.execPath,
+      executablePath: input.backendExecutable.executablePath,
       // Packaged builds have a separate cache; --require prevents cache settings leaking to provider subprocesses.
       args: [
+        ...input.backendExecutable.leadingArgs,
         ...(environment.isPackaged ? ["--require", environment.compileCachePath] : []),
         environment.backendEntryPath,
         "--bootstrap-fd",
@@ -835,11 +874,16 @@ export const make = Effect.gen(function* () {
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
     const shellEnvironmentPrepared = yield* shellEnvironment.installIntoProcess;
+    const backendExecutable = yield* resolveBackendExecutable().pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+    );
     return yield* resolvePrimaryStartConfig({
       ...shared,
       resourceMonitorPath,
       cliPath,
       shellEnvironmentPrepared,
+      backendExecutable,
       desktopAppUpdate: yield* Ref.get(desktopState.canInstallUpdates),
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),

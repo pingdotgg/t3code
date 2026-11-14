@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { createPackageWithOptions, extractFile } from "@electron/asar";
+import Plist from "plist";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
@@ -68,6 +69,7 @@ import {
   WSL_RUNTIME_ARCHIVE_NAME,
   wslRuntimeArchiveStem,
 } from "./build-desktop-artifact.ts";
+import afterPackMacos from "./after-pack-macos.ts";
 import {
   ReleasePackageManifestError,
   releasePackageFiles,
@@ -1596,6 +1598,45 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.notInclude(entitlements, "keychain-access-groups");
     assert.notInclude(entitlements, "com.apple.developer.web-browser.public-key-credential");
   });
+
+  it.effect("copies the app's privacy strings into the macOS backend Helper", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const appOutDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-after-pack-" });
+        const contents = path.join(appOutDir, "T3 Code (Nightly).app/Contents");
+        const helperPlistPath = path.join(
+          contents,
+          "Frameworks/T3 Code (Nightly) Helper.app/Contents/Info.plist",
+        );
+        yield* fs.makeDirectory(path.dirname(helperPlistPath), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(contents, "Info.plist"),
+          Plist.build({
+            CFBundleExecutable: "T3 Code (Nightly)",
+            CFBundleIdentifier: "com.t3tools.t3code",
+            NSCameraUsageDescription: "camera",
+            NSLocalNetworkUsageDescription: "network",
+          }),
+        );
+        yield* fs.writeFileString(
+          helperPlistPath,
+          Plist.build({ CFBundleIdentifier: "com.t3tools.t3code.helper", LSUIElement: true }),
+        );
+        // ia32 never matches the host, so the shared server-cache hook takes its skip path.
+        yield* Effect.promise(() =>
+          afterPackMacos({ appOutDir, electronPlatformName: "darwin", arch: 0, packager: {} }),
+        );
+        assert.deepStrictEqual(Plist.parse(yield* fs.readFileString(helperPlistPath)), {
+          CFBundleIdentifier: "com.t3tools.t3code.helper",
+          LSUIElement: true,
+          NSCameraUsageDescription: "camera",
+          NSLocalNetworkUsageDescription: "network",
+        });
+      }),
+    ),
+  );
 
   it("grants in-app browser passkey entitlements only when the provisioning profile does", () => {
     const configuration = { appId: "com.t3tools.t3code", teamId: "ABC1234567" };

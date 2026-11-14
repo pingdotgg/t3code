@@ -28,6 +28,7 @@
       "entry": [
         // These fixture scripts are injected into a browser page by path.
         "fixtures/*/*.js",
+        "after-pack-macos.ts",
         "knip-schemas.ts",
         "linux-after-pack.ts",
         "mobile-behavior/run.ts",
@@ -80,6 +81,8 @@
       // Electron loads these bundles by filename rather than importing them.
       "entry": [
         "gnome-extension/extension.js!",
+        // Dev launch scripts and desktop packaging run this by path.
+        "scripts/build-backend-launcher.mjs",
         "src/electron/WindowsForegroundFocusWorker.ts!",
         "src/snapShot/GlobalShiftShortcutWorker.ts!",
         "src/snapShot/RegionSnapShotWorker.ts!",
