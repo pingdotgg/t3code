@@ -53,11 +53,22 @@ export function mergeCursorFetch(
     record.timestampMs >= range.sinceMs && record.timestampMs <= range.untilMs;
   const previous = cache?.records ?? [];
   const added = fetched.filter(inRange);
-  const replacedKeys = new Set(previous.filter(inRange).map((record) => record.dedupeKey));
+  const replacedKeys = new Set<string | null>();
+  let pruned = false;
+  for (const record of previous) {
+    if (inRange(record)) replacedKeys.add(record.dedupeKey);
+    else if (record.timestampMs < retentionStartMs) pruned = true;
+  }
   const changed =
     cache === undefined ||
+    pruned ||
     replacedKeys.size !== added.length ||
     added.some((record) => !replacedKeys.has(record.dedupeKey));
+  const records = !changed
+    ? previous
+    : previous
+        .filter((record) => !inRange(record) && record.timestampMs >= retentionStartMs)
+        .concat(added);
   return {
     changed,
     cache: {
@@ -65,17 +76,14 @@ export function mergeCursorFetch(
       sinceMs: retentionStartMs,
       untilMs: range.untilMs,
       fetchedAtMs: nowMs,
-      records: [
-        ...previous.filter((record) => !inRange(record) && record.timestampMs >= retentionStartMs),
-        ...added,
-      ],
+      records,
     } satisfies CursorAccountCache,
   };
 }
 
 /** Versioned files isolate caches for different server versions sharing a state directory. */
-export const CURSOR_ACCOUNT_CACHE_FILE_NAME = "usage-cursor-account-cache-v1.json";
-const CURSOR_ACCOUNT_CACHE_VERSION = 1;
+export const CURSOR_ACCOUNT_CACHE_FILE_NAME = "usage-cursor-account-cache-v2.json";
+const CURSOR_ACCOUNT_CACHE_VERSION = 2;
 
 type SerializedRecord = readonly [
   timestampMs: number,
