@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { CursorProviderCapabilitiesV2 } from "@t3tools/provider-cursor/testing";
+import { makeGrokAcpAdapterFlavor } from "@t3tools/provider-grok/testing";
 import * as CommandPolicy from "./CommandPolicy.ts";
 
 const commandId = CommandId.make("command-policy-test");
@@ -211,6 +212,28 @@ it("queues a steer for a provider that cannot steer either way", () => {
   );
 });
 
+// regression: #27014 a Grok follow-up cancels the foreground tool the user wanted to finish
+it("does not steer a Grok follow-up by interrupting its running turn", () => {
+  const grok = makeGrokAcpAdapterFlavor(
+    { makeRuntime: () => Effect.never } as unknown as Parameters<
+      typeof makeGrokAcpAdapterFlavor
+    >[0],
+    "/home/ada",
+  ).capabilities;
+  const projection = dispatchProjection(grok);
+  for (const deliveryIntent of ["auto", "steer"] as const) {
+    const mode = CommandPolicy.resolveMessageDispatchIntent(
+      projection,
+      { type: "start_immediately" },
+      deliveryIntent,
+    );
+    assert.isFalse(
+      mode.type === "steer_active" && !grok.turns.supportsActiveSteering,
+      `${deliveryIntent} follow-up resolved to ${mode.type} by interrupt-restart`,
+    );
+  }
+});
+
 it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) => {
   const projection = dispatchProjection(baseCapabilities);
   const maintenance = {
@@ -247,6 +270,19 @@ it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) =
 const layer = it.layer(CommandPolicy.layer);
 
 layer("CommandPolicyV2", (it) => {
+  it.effect("steers a live Cursor turn in place", () =>
+    Effect.gen(function* () {
+      const policy = yield* CommandPolicy.CommandPolicyV2;
+      const result = yield* policy.decideSteeringExecution({
+        commandId,
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("cursor"),
+        capabilities: CursorProviderCapabilitiesV2,
+      });
+      assert.equal(result, "active_steering");
+    }),
+  );
+
   it.effect("falls back to portable context when Cursor cannot fork natively", () =>
     Effect.gen(function* () {
       const policy = yield* CommandPolicy.CommandPolicyV2;

@@ -239,6 +239,48 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect("evicts unread raw notifications while a slow reader handles an earlier one", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const handled = yield* Queue.unbounded<number>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onNotification: (notification) =>
+          Queue.offer(handled, decodeIndex(notification.params).index).pipe(Effect.asVoid),
+      });
+      const send = (index: number, textLength: number) =>
+        Queue.offer(input, largeNotification(index, textLength)).pipe(
+          Effect.andThen(Queue.take(handled)),
+        );
+
+      yield* send(1, 6 * MIB);
+      yield* send(2, 6 * MIB);
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const reader = yield* transport.incoming.pipe(
+        Stream.map((notification) => decodeIndex(notification.params).index),
+        Stream.tap((index) =>
+          index === 1
+            ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))
+            : Effect.void,
+        ),
+        Stream.take(4),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(entered);
+
+      // Notification 2 is still unread, so 3 and 4 push it past the budget.
+      yield* send(3, 6 * MIB);
+      yield* send(4, 6 * MIB);
+      yield* send(5, 1);
+      yield* Deferred.succeed(release, undefined);
+
+      assert.deepEqual(yield* Fiber.join(reader), [1, 3, 4, 5]);
+    }),
+  );
+
   it.effect("delivers every raw notification to a reader that keeps up, then ends", () =>
     Effect.gen(function* () {
       const { stdio, input } = yield* makeInMemoryStdio();
@@ -649,6 +691,125 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         method: "x/private",
         requestId: 1,
         operation: "receive-response",
+      });
+    }),
+  );
+
+  it.effect("preserves application error data in outgoing extension responses", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const acknowledged = yield* Deferred.make<string>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onExtRequest: () =>
+          Effect.fail(AcpError.AcpRequestError.invalidParams("bad input", { field: "name" })),
+        onOutgoingResponse: (requestId) =>
+          Deferred.succeed(acknowledged, requestId).pipe(Effect.asVoid),
+      });
+
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          encodeUnknownJsonString({
+            jsonrpc: "2.0",
+            id: "peer-1",
+            method: "x/test",
+            params: {},
+          }) + "\n",
+        ),
+      );
+
+      assert.deepEqual(JSON.parse(yield* Queue.take(output)), {
+        jsonrpc: "2.0",
+        id: "peer-1",
+        error: { code: -32602, message: "bad input", data: { field: "name" } },
+      });
+      assert.equal(yield* Deferred.await(acknowledged), "peer-1");
+    }),
+  );
+
+  it.effect("completes a batch with successful and failed extension responses", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const acknowledgements = yield* Queue.unbounded<string>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onExtRequest: (method) =>
+          method === "x/success"
+            ? Effect.succeed({ ok: true })
+            : Effect.fail(AcpError.AcpRequestError.invalidParams("bad input", { field: "name" })),
+        onOutgoingResponse: (requestId) => Queue.offer(acknowledgements, requestId),
+      });
+
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          encodeUnknownJsonString([
+            { jsonrpc: "2.0", id: 0, method: "x/success", params: {} },
+            { jsonrpc: "2.0", id: "peer-1", method: "x/failure", params: {} },
+          ]) + "\n",
+        ),
+      );
+
+      assert.deepEqual(JSON.parse(yield* Queue.take(output)), [
+        { jsonrpc: "2.0", id: 0, result: { ok: true } },
+        {
+          jsonrpc: "2.0",
+          id: "peer-1",
+          error: { code: -32602, message: "bad input", data: { field: "name" } },
+        },
+      ]);
+      assert.equal(yield* Queue.take(acknowledgements), "peer-1");
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "typed failure",
+      cause: [{ _tag: "Fail", error: { code: -32602, message: "bad input", data: null } }],
+      error: { code: -32602, message: "bad input", data: null },
+    },
+    {
+      name: "typed failure with interruption",
+      cause: [
+        { _tag: "Fail", error: { code: -32602, message: "bad input", data: { field: "name" } } },
+        { _tag: "Interrupt", fiberId: null },
+      ],
+      error: { code: -32602, message: "bad input", data: { field: "name" } },
+    },
+    {
+      name: "defect",
+      cause: [{ _tag: "Die", defect: "private defect" }],
+      error: { code: -32603, message: "Internal error" },
+    },
+    {
+      name: "failure with a defect",
+      cause: [
+        { _tag: "Fail", error: { code: -32602, message: "bad input" } },
+        { _tag: "Die", defect: "private defect" },
+      ],
+      error: { code: -32603, message: "Internal error" },
+    },
+  ] as const)("emits a standard ACP error for a core $name", ({ cause, error }) =>
+    Effect.gen(function* () {
+      const { stdio, output } = yield* makeInMemoryStdio();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+      });
+
+      yield* transport.serverProtocol.send(0, {
+        _tag: "Exit",
+        requestId: 0,
+        exit: { _tag: "Failure", cause },
+      });
+
+      assert.deepEqual(JSON.parse(yield* Queue.take(output)), {
+        jsonrpc: "2.0",
+        id: 0,
+        error,
       });
     }),
   );

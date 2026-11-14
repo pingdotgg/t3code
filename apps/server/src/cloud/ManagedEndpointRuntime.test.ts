@@ -30,6 +30,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as RelayClientLedger from "./RelayClientLedger.ts";
 
 const layerRelayClientAvailable = Layer.succeed(
   RelayClient.RelayClient,
@@ -74,6 +75,7 @@ const runtimeDependencies = (
     Layer.succeed(HttpClient.HttpClient, httpClient),
     relayClientLayer,
     secretStoreLayer,
+    RelayClientLedger.layerTest,
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-managed-endpoint-" }),
   ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
@@ -430,6 +432,51 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
+  it.effect("still owns a relay client when activation is interrupted while recording it", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeTransportSpawner();
+      const recording = yield* Deferred.make<void>();
+      const recorded = yield* Deferred.make<void>();
+      const ledger = Layer.succeed(
+        RelayClientLedger.RelayClientLedger,
+        RelayClientLedger.RelayClientLedger.of({
+          track: () =>
+            Deferred.succeed(recording, undefined).pipe(
+              Effect.andThen(Deferred.await(recorded)),
+              Effect.as(Effect.void),
+            ),
+        }),
+      );
+      const context = yield* Layer.build(
+        ManagedEndpointRuntime.layer.pipe(
+          Layer.provide(Layer.merge(runtimeDependencies(fixture.spawner), ledger)),
+        ),
+      );
+      const runtime = yield* Effect.service(
+        ManagedEndpointRuntime.CloudManagedEndpointRuntime,
+      ).pipe(Effect.provide(context));
+
+      const activation = yield* Effect.forkChild(runtime.applyConfig(tunnelConfig));
+      yield* Deferred.await(recording);
+      const interrupting = yield* Effect.forkChild(Fiber.interrupt(activation), {
+        startImmediately: true,
+      });
+      yield* Deferred.succeed(recorded, undefined);
+      yield* Fiber.join(interrupting);
+
+      // The handed-over connector is supervised: its exit starts a replacement.
+      expect(yield* Queue.take(fixture.started)).toBe(0);
+      yield* Deferred.succeed(fixture.exits[0]!, ChildProcessSpawner.ExitCode(1));
+      expect(yield* Queue.take(fixture.started)).toBe(1);
+
+      yield* runtime.applyConfig(null);
+      expect(fixture.killed).toEqual([800, 801]);
+    }).pipe(
+      Effect.provideService(HostProcess.Environment, {}),
+      Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+    ),
+  );
+
   it.effect("preserves an explicit transport choice despite repeated QUIC stalls", () =>
     Effect.gen(function* () {
       const fixture = yield* makeTransportSpawner({ transport: "quic" });
@@ -514,6 +561,57 @@ describe("CloudManagedEndpointRuntime", () => {
           expect(next.spawned[1]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
         }).pipe(Effect.scoped);
       }),
+  );
+
+  it.effect("remembers an HTTP/2 fallback the relay client made on its own", () =>
+    Effect.gen(function* () {
+      const context = yield* Layer.build(
+        ServerSecretStore.layer.pipe(
+          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-transport-test-" })),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      );
+      const secretStoreLayer = Layer.succeed(
+        ServerSecretStore.ServerSecretStore,
+        context.pipe(Context.get(ServerSecretStore.ServerSecretStore)),
+      );
+      const start = (spawner: ReturnType<typeof ChildProcessSpawner.make>) =>
+        buildCloudManagedEndpointRuntime(
+          spawner,
+          layerRelayClientAvailable,
+          unusedHttpClient,
+          secretStoreLayer,
+        );
+      const registered = (protocol: string) =>
+        `2026-11-10T01:43:17Z INF Registered tunnel connection connIndex=0 connection=c1 event=0 ip=198.41.192.7 location=fra08 protocol=${protocol}\n`;
+
+      yield* Effect.gen(function* () {
+        const fixture = yield* makeTransportSpawner();
+        const runtime = yield* start(fixture.spawner);
+        yield* runtime.applyConfig(tunnelConfig);
+        yield* fixture.emit(0, registered("quic"));
+        yield* Stream.runHead(runtime.tunnelConnected);
+      }).pipe(Effect.scoped);
+      yield* Effect.gen(function* () {
+        const fixture = yield* makeTransportSpawner();
+        const runtime = yield* start(fixture.spawner);
+        yield* runtime.applyConfig(tunnelConfig);
+        expect(fixture.spawned[0]!.args).not.toContain("--protocol");
+        // cloudflared, started with `auto`, gave up on QUIC itself.
+        yield* fixture.emit(0, registered("http2"));
+        yield* Stream.runHead(runtime.tunnelConnected);
+        // The connector already runs on HTTP/2, so it is not restarted.
+        expect(fixture.spawned).toHaveLength(1);
+        expect(fixture.killed).toEqual([]);
+      }).pipe(Effect.scoped);
+
+      yield* Effect.gen(function* () {
+        const fixture = yield* makeTransportSpawner();
+        const runtime = yield* start(fixture.spawner);
+        yield* runtime.applyConfig(tunnelConfig);
+        expect(fixture.spawned[0]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+      }).pipe(Effect.scoped);
+    }),
   );
 
   it.effect(
