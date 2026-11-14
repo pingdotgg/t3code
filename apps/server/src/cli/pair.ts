@@ -324,17 +324,15 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       if (Option.isNone(state)) {
         continue;
       }
-      // Another machine's server is not a local target, whatever its pid looks like here.
-      if (isRuntimeStateFromAnotherMachine(state.value)) {
-        foreignServer ??= { hostname: state.value.hostname ?? "unknown", statePath };
-        continue;
-      }
       // A dead server's port may be reused; do not mint tokens in its old database for another server.
-      if (!isProcessAlive(state.value.pid)) {
-        continue;
-      }
-      const probed = yield* probeEnvironmentDescriptor(state.value.origin);
-      if (probed._tag !== "descriptor") {
+      const probed = isProcessAlive(state.value.pid)
+        ? yield* probeEnvironmentDescriptor(state.value.origin)
+        : undefined;
+      if (probed?._tag !== "descriptor") {
+        // Hostnames can change under a running server (DHCP), so a foreign one only names the error.
+        if (isRuntimeStateFromAnotherMachine(state.value)) {
+          foreignServer ??= { hostname: state.value.hostname ?? "unknown", statePath };
+        }
         continue;
       }
       return {
