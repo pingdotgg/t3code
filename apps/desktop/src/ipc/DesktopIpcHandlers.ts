@@ -3,6 +3,8 @@ import * as Effect from "effect/Effect";
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
 import { installNotificationBadge } from "./methods/notificationBadge.ts";
+import * as ThreadNotificationsIpc from "./methods/threadNotifications.ts";
+import * as DesktopThreadNotifications from "../app/DesktopThreadNotifications.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
 import { getConnectionCatalog, setConnectionCatalog } from "./methods/connectionCatalog.ts";
 import {
@@ -89,6 +91,10 @@ import {
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
   yield* installNotificationBadge();
+  yield* (yield* DesktopThreadNotifications.DesktopThreadNotifications).register;
+  yield* ipc.handle(ThreadNotificationsIpc.show);
+  yield* ipc.handle(ThreadNotificationsIpc.close);
+  yield* ipc.handle(ThreadNotificationsIpc.setReady);
   yield* PreviewIpc.installPreviewEventForwarding();
 
   yield* ipc.handle(AppActivationIpc.setReady);

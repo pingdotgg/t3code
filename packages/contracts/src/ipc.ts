@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
 import { SnapShotSource } from "./chatAttachment.ts";
-import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 import type {
   BrowserImportResult,
@@ -1050,6 +1050,21 @@ export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
+export const DesktopThreadNotificationTarget = Schema.Struct({
+  id: Schema.String.check(Schema.isUUID(4)),
+  environmentId: EnvironmentId.check(Schema.isMaxLength(512)),
+  threadId: ThreadId.check(Schema.isMaxLength(512)),
+});
+export type DesktopThreadNotificationTarget = typeof DesktopThreadNotificationTarget.Type;
+
+export const DesktopThreadNotification = Schema.Struct({
+  ...DesktopThreadNotificationTarget.fields,
+  tag: Schema.String.check(Schema.isPattern(/^[a-f0-9]{16}$/)),
+  title: Schema.String.check(Schema.isMaxLength(128)),
+  body: Schema.String.check(Schema.isMaxLength(1024)),
+});
+export type DesktopThreadNotification = typeof DesktopThreadNotification.Type;
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getRelayTelemetryEnabled: () => boolean;
@@ -1057,6 +1072,12 @@ export interface DesktopBridge {
   getClientPlatform: () => string;
   setNotificationBadge: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear: (listener: () => void) => () => void;
+  showThreadNotification?: (notification: DesktopThreadNotification) => Promise<boolean>;
+  closeThreadNotification?: (id: string | null) => Promise<void>;
+  setThreadNotificationReady?: (ready: boolean) => Promise<void>;
+  onThreadNotificationActivated?: (
+    listener: (target: DesktopThreadNotificationTarget) => void,
+  ) => () => void;
   onTrackpadScrollBegin: (listener: () => void) => () => void;
   onTrackpadScrollEnd: (listener: () => void) => () => void;
   /**

@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
-import { isWindowsPlatform } from "../lib/utils";
+import { isWindowsPlatform, randomUUID } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
@@ -66,14 +66,34 @@ export function startThreadNotifications(
 ): () => void {
   const pending = new Map<
     string,
-    { environmentId: EnvironmentId; threadId: ThreadId; notification: Notification }
+    {
+      environmentId: EnvironmentId;
+      threadId: ThreadId;
+      notification: Pick<Notification, "tag" | "close">;
+    }
   >();
   const watched = new Map<EnvironmentId, WatchedEnvironment>();
+  const bridge = window.desktopBridge;
+  const nativeNotifications =
+    bridge?.getClientPlatform() === "win32" &&
+    bridge.showThreadNotification &&
+    bridge.closeThreadNotification &&
+    bridge.setThreadNotificationReady &&
+    bridge.onThreadNotificationActivated
+      ? bridge
+      : null;
+  const stopNativeActivations = nativeNotifications?.onThreadNotificationActivated?.((target) => {
+    void router.navigate({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: target.environmentId, threadId: target.threadId },
+    });
+  });
+  void nativeNotifications?.setThreadNotificationReady?.(true).catch(() => undefined);
 
   const trackNotification = (
     environmentId: EnvironmentId,
     threadId: ThreadId,
-    notification: Notification,
+    notification: Pick<Notification, "tag" | "close">,
   ) => {
     pending.get(notification.tag)?.notification.close();
     pending.set(notification.tag, { environmentId, threadId, notification });
@@ -124,6 +144,7 @@ export function startThreadNotifications(
   const clearPending = () => {
     for (const { notification } of pending.values()) notification.close();
     pending.clear();
+    void nativeNotifications?.closeThreadNotification?.(null).catch(() => undefined);
     setNotificationBadge(0);
   };
 
@@ -201,32 +222,66 @@ export function startThreadNotifications(
     }
     if (
       !hasDesktopNotifications(mode) ||
-      (document.visibilityState === "visible" && document.hasFocus()) ||
-      typeof Notification === "undefined" ||
-      Notification.permission !== "granted"
+      (document.visibilityState === "visible" && document.hasFocus())
     )
       return;
-    try {
-      const notification = new Notification(title, {
-        body: thread.title,
-        tag: threadNotificationTag(environmentId, thread.id),
-        silent: true,
-        // Windows drops clicks after a toast moves into Notification Center.
-        requireInteraction: kind === "completion" && isWindowsPlatform(navigator.platform),
-      });
-      trackNotification(environmentId, thread.id, notification);
-      notification.addEventListener("click", () => {
-        notification.close();
-        window.focus();
-        void window.desktopBridge?.revealWindow().catch(() => undefined);
-        void router.navigate({
-          to: "/$environmentId/$threadId",
-          params: { environmentId, threadId: thread.id },
+    const presentBrowserNotification = () => {
+      if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+      try {
+        const notification = new Notification(title, {
+          body: thread.title,
+          tag: threadNotificationTag(environmentId, thread.id),
+          silent: true,
+          // Windows drops clicks after a toast moves into Notification Center.
+          requireInteraction: kind === "completion" && isWindowsPlatform(navigator.platform),
         });
-      });
-    } catch {
-      // Some browsers expose Notification but reject desktop presentation.
+        trackNotification(environmentId, thread.id, notification);
+        notification.addEventListener("click", () => {
+          notification.close();
+          window.focus();
+          void window.desktopBridge?.revealWindow().catch(() => undefined);
+          void router.navigate({
+            to: "/$environmentId/$threadId",
+            params: { environmentId, threadId: thread.id },
+          });
+        });
+      } catch {
+        // Some browsers expose Notification but reject desktop presentation.
+      }
+    };
+    if (nativeNotifications) {
+      const id = randomUUID();
+      const tag = threadNotificationTag(environmentId, thread.id);
+      const notification = {
+        tag,
+        close: () => {
+          void nativeNotifications.closeThreadNotification?.(id).catch(() => undefined);
+        },
+      };
+      trackNotification(environmentId, thread.id, notification);
+      const fallback = () => {
+        if (pending.get(tag)?.notification !== notification) return;
+        presentBrowserNotification();
+        if (pending.get(tag)?.notification !== notification) return;
+        pending.delete(tag);
+        setNotificationBadge(pending.size);
+      };
+      void nativeNotifications
+        .showThreadNotification?.({
+          id,
+          tag,
+          environmentId,
+          threadId: thread.id,
+          title,
+          body: thread.title.slice(0, 1024),
+        })
+        .then((shown) => {
+          if (!shown) fallback();
+        })
+        .catch(fallback);
+      return;
     }
+    presentBrowserNotification();
   };
 
   const observeThreads = (
@@ -435,6 +490,8 @@ export function startThreadNotifications(
   onSettings();
 
   return () => {
+    stopNativeActivations?.();
+    void nativeNotifications?.setThreadNotificationReady?.(false).catch(() => undefined);
     unsubscribeSettings();
     unsubscribeEnvironmentIds();
     for (const unsubscribe of unsubscribeHidden) unsubscribe();
