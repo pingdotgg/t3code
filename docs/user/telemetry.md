@@ -34,6 +34,16 @@ The web app in a browser, including one the `t3` CLI opens, does not read these 
 variables. When its build has relay tracing configured, it sends its own connection traces even
 if the server has opted out. The browser app has no relay tracing toggle.
 
+## Local resource monitoring
+
+To stop the native resource monitor, set `T3CODE_RESOURCE_MONITOR_ENABLED=false` in the server's
+environment before starting it. Remove the variable or set it to `true` and restart to re-enable
+monitoring. It is enabled by default. This also takes precedence over a custom resource-monitor path.
+
+Native process resource readings become unavailable while the monitor is disabled. Terminal
+subprocess discovery keeps its existing fallback, which can still run PowerShell on Windows.
+This setting is separate from product event collection controlled by `T3CODE_TELEMETRY_ENABLED`.
+
 ## Mobile app diagnostics
 
 When the iOS or Android app crashes or hits an error, it sends a report to T3 Code: the error

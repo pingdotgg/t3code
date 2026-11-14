@@ -87,6 +87,7 @@ const liveProcess = Effect.acquireRelease(
 
 it.layer(NodeServices.layer)("cli config resolution", (it) => {
   const defaultObservabilityConfig = {
+    resourceMonitorEnabled: true,
     traceMinLevel: "Info",
     traceTimingEnabled: true,
     traceBatchWindowMs: 1_000,
@@ -120,6 +121,45 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         }),
     );
   });
+
+  it.effect("configures native monitoring from the environment without changing the default", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-monitor-config-" });
+      for (const enabled of [undefined, "true", "false"] as const) {
+        const resolved = yield* resolveServerConfig(
+          {
+            mode: Option.none(),
+            port: Option.some(0),
+            host: Option.none(),
+            baseDir: Option.some(baseDir),
+            cwd: Option.none(),
+            devUrl: Option.none(),
+            noBrowser: Option.none(),
+            bootstrapFd: Option.none(),
+            autoBootstrapProjectFromCwd: Option.none(),
+            logWebSocketEvents: Option.none(),
+            tailscaleServeEnabled: Option.none(),
+            tailscaleServePort: Option.none(),
+            lan: Option.none(),
+          },
+          Option.none(),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: enabled === undefined ? {} : { T3CODE_RESOURCE_MONITOR_ENABLED: enabled },
+                }),
+              ),
+              NetService.layer,
+            ),
+          ),
+        );
+        expect(resolved.resourceMonitorEnabled).toBe(enabled !== "false");
+      }
+    }),
+  );
 
   it.effect("keeps stale records and supervised startup out of the manual launch preflight", () =>
     Effect.gen(function* () {

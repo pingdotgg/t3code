@@ -731,6 +731,8 @@ describe("DesktopBackendConfiguration", () => {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
         const config = yield* configuration.resolveWsl({ port: 5050, distro: null });
 
+        assert.equal(config.env.T3CODE_RESOURCE_MONITOR_ENABLED, "false");
+        assert.include((config.env.WSLENV ?? "").split(":"), "T3CODE_RESOURCE_MONITOR_ENABLED");
         assert.equal(config.env.OTEL_SDK_DISABLED, "true");
         assert.include((config.env.WSLENV ?? "").split(":"), "OTEL_SDK_DISABLED");
         assert.equal(config.env.T3CODE_TELEMETRY_ENABLED, "false");
@@ -754,6 +756,7 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
         Effect.provideService(HostProcess.Environment, {
+          T3CODE_RESOURCE_MONITOR_ENABLED: "false",
           OTEL_SDK_DISABLED: "true",
           T3CODE_TELEMETRY_ENABLED: "false",
           OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=staging",

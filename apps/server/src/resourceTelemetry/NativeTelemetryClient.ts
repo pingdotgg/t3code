@@ -368,7 +368,16 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
   const random = yield* SecureRandom.SecureRandom;
   const config = yield* ServerConfig.ServerConfig;
   const initializedAt = yield* DateTime.now;
-  const state = yield* Ref.make(initialState);
+  const disabled = config.resourceMonitorEnabled === false;
+  const state = yield* Ref.make<ClientState>(
+    disabled
+      ? {
+          ...initialState,
+          status: "unavailable",
+          lastError: Option.some("Native resource monitoring is disabled by server configuration."),
+        }
+      : initialState,
+  );
   const collectionControl = yield* Ref.make<CollectionControl>({
     hostPower: {
       source: "unknown",
@@ -707,6 +716,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
   );
 
   yield* Effect.gen(function* () {
+    if (disabled) return;
     let failures: ReadonlyArray<number> = [];
     let restartAttempt = 0;
 
@@ -1050,7 +1060,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     processTable,
     retry: Ref.get(state).pipe(
       Effect.flatMap((current) =>
-        !canRequestNativeTelemetryRetry(current.status, Option.isSome(current.handle))
+        disabled || !canRequestNativeTelemetryRetry(current.status, Option.isSome(current.handle))
           ? Effect.succeed(false)
           : Queue.offer(retryQueue, undefined).pipe(Effect.as(true)),
       ),

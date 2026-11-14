@@ -1,16 +1,25 @@
 import type { HostPowerSnapshot } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
+import * as Scheduler from "effect/Scheduler";
+import * as Option from "effect/Option";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   commitCollectionControlUpdate,
   synchronizeCollectionControlOnStart,
 } from "./NativeTelemetryClient.ts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as ServerConfig from "../config.ts";
+import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
+import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
 
 const basePower: HostPowerSnapshot = {
   source: "electron-main",
@@ -137,4 +146,58 @@ describe("commitCollectionControlUpdate", () => {
       expect(yield* Ref.get(applied)).toEqual(yield* Ref.get(desired));
     }),
   );
+});
+
+describe("disabled native monitor", () => {
+  it.effect("does not resolve or spawn the monitor and refuses retries", () => {
+    const scheduler = new Scheduler.MixedScheduler("sync");
+    const dispatcher = scheduler.makeDispatcher();
+    return Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawn = vi.fn(() => Effect.die("disabled monitor must not spawn"));
+      const resolve = vi.fn(() => Effect.die("disabled monitor must not resolve a path"));
+      yield* Effect.gen(function* () {
+        const client = yield* NativeTelemetryClient.make().pipe(
+          Effect.provideService(
+            ResourceMonitorBinary.ResourceMonitorBinary,
+            ResourceMonitorBinary.ResourceMonitorBinary.of({ resolve: Effect.suspend(resolve) }),
+          ),
+        );
+        const health = yield* client.health;
+        expect(health.status).toBe("unavailable");
+        expect(Option.getOrNull(health.lastError)).toBe(
+          "Native resource monitoring is disabled by server configuration.",
+        );
+        for (const request of [
+          client.processTable.pipe(Effect.asVoid),
+          client.sampleNow.pipe(Effect.asVoid),
+          client.readHistory(1000).pipe(Effect.asVoid),
+          client.capabilities.pipe(Effect.asVoid),
+        ]) {
+          const error = yield* Effect.flip(request);
+          expect(error._tag).toBe("NativeTelemetryUnavailable");
+        }
+        expect(yield* client.retry).toBe(false);
+        dispatcher.flush();
+        expect(resolve).not.toHaveBeenCalled();
+        expect(spawn).not.toHaveBeenCalled();
+      }).pipe(
+        Effect.provideService(ServerConfig.ServerConfig, {
+          ...config,
+          resourceMonitorEnabled: false,
+        }),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, { ...spawner, spawn }),
+      );
+    }).pipe(
+      Effect.provideService(Scheduler.Scheduler, {
+        executionMode: scheduler.executionMode,
+        makeDispatcher: () => dispatcher,
+        shouldYield: (fiber) => scheduler.shouldYield(fiber),
+      }),
+      Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-monitor-client-" })),
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    );
+  });
 });
