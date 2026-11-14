@@ -19,6 +19,8 @@ describe("themeCssValueFetches", () => {
     ["background-image", 'url("\u00a0data:/../../probe")', true],
     ["background-image", 'url("data:image/png;base64,AA")', false],
     ["background-image", `url("${SVG_WITH_OWN_GRADIENT}")`, false],
+    // The url( sits inside a string, so the address after that string is a real remote url().
+    ["content", `"url('data:" url("https://evil.example/a") "'"`, true],
     ["filter", 'url("#blur")', false],
     ["background-image", "var(--pattern)", false],
     ["color", "red", false],
