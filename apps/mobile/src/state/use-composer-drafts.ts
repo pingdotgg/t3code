@@ -121,6 +121,19 @@ export function removeComposerPendingMedia(draftKey: string, ids: ReadonlyArray<
   );
 }
 
+/** Picked attachments whose placeholder the user removed while processing are released, not added. */
+export function keepPendingComposerMedia(
+  draftKey: string,
+  attachments: ReadonlyArray<DraftComposerAttachment>,
+): ReadonlyArray<DraftComposerAttachment> {
+  const pending = appAtomRegistry.get(composerPendingMediaAtom)[draftKey] ?? [];
+  const kept = attachments.filter(({ id }) => pending.some((placeholder) => placeholder.id === id));
+  scheduleUnusedComposerAttachmentCleanup(
+    attachments.filter((attachment) => !kept.includes(attachment)),
+  );
+  return kept;
+}
+
 /** A draft can't be sent while context is importing or picked media is still processing. */
 export function composerDraftBusy(draftKey: string): boolean {
   return (

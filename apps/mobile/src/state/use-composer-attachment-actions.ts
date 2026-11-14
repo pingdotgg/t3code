@@ -17,13 +17,11 @@ import {
   captureComposerDraftInsertion,
   countComposerDraftAttachmentsAfterSelection,
   getComposerDraftSnapshot,
-  composerPendingMediaAtom,
-  scheduleUnusedComposerAttachmentCleanup,
   addComposerPendingMedia,
+  keepPendingComposerMedia,
   removeComposerPendingMedia,
   type ComposerDraftInsertion,
 } from "./use-composer-drafts";
-import { appAtomRegistry } from "./atom-registry";
 import { startComposerDraftOperation } from "./composerDraftOperations";
 
 export function useComposerAttachmentActions(props: {
@@ -78,17 +76,11 @@ export function useComposerAttachmentActions(props: {
         },
       })
         .then(async (result) => {
-          // Every attachment has a placeholder; one the user removed is no longer pending.
           // append writes the draft before its first await, so no removal lands in between.
-          const pending = appAtomRegistry.get(composerPendingMediaAtom)[key] ?? [];
-          const kept = result.attachments.filter(({ id }) => pending.some((p) => p.id === id));
-          scheduleUnusedComposerAttachmentCleanup(
-            result.attachments.filter((attachment) => !kept.includes(attachment)),
-          );
           report(
             "Could not attach photo or video",
             result.error,
-            await append(key, signal, kept, insertion),
+            await append(key, signal, keepPendingComposerMedia(key, result.attachments), insertion),
           );
         })
         .finally(() => removeComposerPendingMedia(key, placeholderIds));
