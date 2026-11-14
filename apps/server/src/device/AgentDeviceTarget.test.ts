@@ -372,6 +372,13 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
           yield* Effect.promise(() => launch(flow, { T3_TEST_SESSIONS: held("t3-b") })),
         ).toEqual([...flow, ...selected]);
       }
+      // agent-device runs on the last of a repeated selector, so that is the one checked.
+      const repeated = ["batch", "--serial", "unused", "--serial", "emulator-5554"];
+      yield* Effect.promise(() =>
+        expect(launch(repeated, { T3_TEST_SESSIONS: held("t3-a") })).rejects.toThrow(
+          "Error (DEVICE_IN_USE)",
+        ),
+      );
       // A flow sent to another daemon is checked against that daemon's sessions.
       const elsewhere = ["batch", "--steps-file", "/s.json", "--daemon-base-url", "http://b:1"];
       expect(

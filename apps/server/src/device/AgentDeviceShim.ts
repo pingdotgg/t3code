@@ -239,7 +239,8 @@ if (!existsSync(entry)) {
   console.error(${JSON.stringify(STALE_RUNTIME)});
   process.exit(1);
 }
-const valueOf = flag => { const inline = options.find(arg => arg.startsWith(flag + "=")); if (inline) return inline.slice(flag.length + 1); const index = options.indexOf(flag); return index >= 0 ? options[index + 1] : undefined; };
+// agent-device keeps the last of a repeated flag.
+const valueOf = flag => { let value; for (let index = 0; index < options.length; index++) { if (options[index].startsWith(flag + "=")) value = options[index].slice(flag.length + 1); else if (options[index] === flag) value = options[++index]; } return value; };
 const endpoint = () => { try { const url = new URL(valueOf("--daemon-base-url") ?? JSON.parse(readFileSync(valueOf("--config"), "utf8")).daemonBaseUrl); return ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && url.port ? url : undefined; } catch { return undefined; } };
 const local = informational || refused.has(name) ? undefined : endpoint();
 if (local) {
