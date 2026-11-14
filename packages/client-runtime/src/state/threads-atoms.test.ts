@@ -287,6 +287,9 @@ describe("createEnvironmentThreadStateAtoms", () => {
       expect(currentThread(h.registry, h.stateAtom)).toBe(before);
       const next = yield* Queue.take(h.subscriptions);
       expect(next.afterSequence).toBe(8);
+      expect(h.registry.get(h.stateAtom).resuming).toBe(true);
+      yield* Queue.offer(next.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.resuming === false);
       expect(h.counts()).toEqual({ httpLoads: 0, diskLoads: 1, opened: 2, active: 1 });
       remount();
       yield* Deferred.await(next.closed);

@@ -271,6 +271,66 @@ describe("timelineVisibleTurnItemsAtom", () => {
   });
 });
 
+describe("behindShellAtom", () => {
+  const ref = { environmentId: EnvironmentId.make("environment-1"), threadId: v2ThreadId };
+  const state = (
+    projection: OrchestrationV2ThreadProjection,
+    status: "cached" | "live",
+    resuming?: boolean,
+  ) =>
+    AsyncResult.success({
+      ...EMPTY_ENVIRONMENT_THREAD_STATE,
+      data: Option.some(projection),
+      status,
+      ...(resuming === undefined ? {} : { resuming }),
+    });
+
+  it("marks a saved copy the shell shows is behind until the thread catches up", () => {
+    const sourceAtom = Atom.make(state(v2Projection, "cached"));
+    const shellAtom = Atom.make<{ readonly updatedAt: string } | null>({
+      updatedAt: "2026-06-20T00:05:00.000Z",
+    });
+    const details = createEnvironmentThreadDetailAtoms(
+      () => sourceAtom,
+      () => shellAtom,
+    );
+    const registry = AtomRegistry.make();
+    registry.mount(details.behindShellAtom(ref));
+
+    // The old copy stays visible; it is only marked.
+    expect(registry.get(details.threadAtom(ref))?.projection).toBe(v2Projection);
+    expect(registry.get(details.behindShellAtom(ref))).toBe(true);
+
+    const caughtUp = { ...v2Projection, updatedAt: DateTime.makeUnsafe("2026-06-20T00:05:00Z") };
+    registry.set(sourceAtom, state(caughtUp, "cached"));
+    expect(registry.get(details.behindShellAtom(ref))).toBe(false);
+
+    // A live thread is not marked when the shell moves first.
+    registry.set(sourceAtom, state(caughtUp, "live"));
+    registry.set(shellAtom, { updatedAt: "2026-06-20T00:06:00.000Z" });
+    expect(registry.get(details.behindShellAtom(ref))).toBe(false);
+    registry.dispose();
+  });
+
+  it("marks a warm resume that is live but behind until the server confirms it", () => {
+    const sourceAtom = Atom.make(state(v2Projection, "live", true));
+    const shellAtom = Atom.make<{ readonly updatedAt: string } | null>(null);
+    const details = createEnvironmentThreadDetailAtoms(
+      () => sourceAtom,
+      () => shellAtom,
+    );
+    const registry = AtomRegistry.make();
+    expect(registry.get(details.behindShellAtom(ref))).toBe(false);
+    registry.set(shellAtom, { updatedAt: "2026-06-20T00:05:00.000Z" });
+    expect(registry.get(details.behindShellAtom(ref))).toBe(true);
+
+    // Confirmed caught up, even if a skipped event left updatedAt short.
+    registry.set(sourceAtom, state(v2Projection, "live", false));
+    expect(registry.get(details.behindShellAtom(ref))).toBe(false);
+    registry.dispose();
+  });
+});
+
 it("only compares replaced entries in a streamed reducer delta", () => {
   const size = 100;
   let slotReads = 0;

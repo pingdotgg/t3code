@@ -107,3 +107,17 @@ export function useSelectedThreadPendingRequests() {
       : environmentThreadDetails.pendingRequestsAtom(selectedThreadDetailRef),
   );
 }
+
+const NOT_BEHIND_ATOM = Atom.make(false).pipe(Atom.withLabel("mobile-thread-behind-shell:empty"));
+
+/** True while the shown copy is older than the thread's latest activity. */
+export function useThreadBehindShell(target: ThreadDetailTarget): boolean {
+  return useAtomValue(
+    target.environmentId === null || target.threadId === null
+      ? NOT_BEHIND_ATOM
+      : environmentThreadDetails.behindShellAtom({
+          environmentId: target.environmentId,
+          threadId: target.threadId,
+        }),
+  );
+}

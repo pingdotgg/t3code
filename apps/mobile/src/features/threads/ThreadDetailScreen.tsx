@@ -270,6 +270,7 @@ export interface ThreadDetailScreenProps {
   readonly connectionStateLabel: EnvironmentConnectionPhase;
   readonly connectionAwaitingApproval?: boolean;
   readonly threadSyncStatus?: EnvironmentThreadStatus;
+  readonly threadBehind?: boolean;
   readonly historyControls?: ThreadFeedHistoryControls;
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
@@ -569,6 +570,8 @@ function ThreadDetailBody(
   const composerKeyboardOffset = composerBottomInset;
   const contentPresentationKind = props.contentPresentation.kind;
   const realThreadSyncLabel = (() => {
+    // A warm resume stays live while it catches up; its faded feed still syncs.
+    if (props.threadBehind === true) return "Syncing messages...";
     switch (props.threadSyncStatus) {
       case "empty":
       case "cached":
@@ -1503,6 +1506,7 @@ function ThreadDetailBody(
                       : handleEditPendingMessage
                   }
                   contentPresentation={props.contentPresentation}
+                  behind={props.threadBehind === true}
                   threadTitle={props.selectedThread.title}
                   latestRun={props.activityRun}
                   activeWorkStartedAt={props.activeWorkStartedAt}

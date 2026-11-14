@@ -320,6 +320,8 @@ interface MessagesTimelineProps {
   hideEmptyPlaceholder?: boolean;
   /** Composer space to center the empty state against; held steady through collapse. */
   emptyPlaceholderInset: number;
+  /** Fades the rows: they are an older copy that the thread is still catching up from. */
+  behind?: boolean;
   topFadeEnabled?: boolean;
   historyControls?: MessagesTimelineHistoryControls | undefined;
   findExpanded?: boolean;
@@ -416,6 +418,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onFooterGrow,
   hideEmptyPlaceholder = false,
   emptyPlaceholderInset,
+  behind = false,
   topFadeEnabled = false,
   historyControls,
 }: MessagesTimelineProps) {
@@ -1347,7 +1350,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const renderItem = ({ item }: { item: MessagesTimelineRow }) => (
     <TimelineRowCtx value={sharedState}>
       <div
-        className="messages-timeline-row-frame"
+        className={cn(
+          "messages-timeline-row-frame transition-opacity delay-150 motion-reduce:duration-0",
+          behind && "opacity-50",
+        )}
         onPlayCapture={(event) => onAudioPlaybackChange(item.id, event)}
         onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
         onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
@@ -1364,7 +1370,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       </div>
     </TimelineRowCtx>
   );
-  const listExtraData = { identity: listIdentityKey, rowCount: rows.length, sharedState };
+  const listExtraData = { identity: listIdentityKey, rowCount: rows.length, sharedState, behind };
   const timelineListFooter = (
     <TimelineListFooter
       composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment}

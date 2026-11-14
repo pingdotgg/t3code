@@ -67,7 +67,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
+import { useSelectedThreadDetailState, useThreadBehindShell } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
 import {
@@ -372,6 +372,10 @@ function ThreadRouteContent(
     AuthTerminalOperateScope,
   );
   const selectedThreadDetailState = props.selectedThreadDetailState;
+  const threadBehind = useThreadBehindShell({
+    environmentId: selectedThreadDetailRef?.environmentId ?? null,
+    threadId: selectedThreadDetailRef?.threadId ?? null,
+  });
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const startSideChat = useStartSideChat();
@@ -1044,6 +1048,7 @@ function ThreadRouteContent(
           connectionStateLabel={routeConnectionState}
           connectionAwaitingApproval={routeEnvironmentRuntime?.connectionAwaitingApproval === true}
           threadSyncStatus={selectedThreadDetailState.status}
+          threadBehind={threadBehind}
           historyControls={historyControls}
           activeThreadBusy={composer.activeThreadBusy}
           canStopThread={awaitingBootstrapTurn || composer.interruptibleRunId !== null}

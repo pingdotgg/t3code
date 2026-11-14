@@ -2,9 +2,14 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { type ComponentProps, useLayoutEffect } from "react";
 import { useIncrementalTimelineEntries } from "../../hooks/useIncrementalTimelineEntries";
 import type { TimelineEntriesInput, TimelineEntry } from "../../session-logic";
-import { useTimelineVisibleTurnItems } from "../../state/entities";
+import {
+  readThreadDetailUpdatedAt,
+  useThreadShellNewerThan,
+  useTimelineVisibleTurnItems,
+} from "../../state/entities";
 import {
   peekRememberedThreadTimeline,
+  peekRememberedThreadTimelineUpdatedAt,
   rememberReadyThreadTimeline,
   resolveThreadSwitchTimeline,
   timelineHasEphemeralPreviewUrls,
@@ -24,6 +29,7 @@ export function ThreadTimeline({
   activeThreadKey,
   syncing,
   detailLoading,
+  detailBehind,
   ...timelineProps
 }: Omit<ComponentProps<typeof MessagesTimeline>, "timelineEntries"> & {
   /** Null until the thread's detail may load; see resolveThreadDetailRef. */
@@ -34,6 +40,8 @@ export function ThreadTimeline({
   activeThreadKey: string | null;
   syncing: boolean;
   detailLoading: boolean;
+  /** The detail is older than the thread's latest activity; see behindShellAtom. */
+  detailBehind: boolean;
 }) {
   const visibleTurnItems = useTimelineVisibleTurnItems(threadDetailRef);
   const serverEntries = useIncrementalTimelineEntries(activeThreadKey, {
@@ -47,12 +55,25 @@ export function ThreadTimeline({
     nextEntries: entries,
     rememberedForActive: peekRememberedThreadTimeline<typeof entries>(activeThreadKey),
   });
+  // Remembered entries are only painted while the detail loads, so they are compared
+  // with the shell themselves. Old rows stay visible, faded so they do not read as the latest.
+  const rememberedBehind = useThreadShellNewerThan(
+    entries.length > 0 ? null : threadDetailRef,
+    peekRememberedThreadTimelineUpdatedAt(activeThreadKey),
+  );
+  const behind =
+    entries.length > 0 ? detailBehind : displayedEntries.length > 0 && rememberedBehind;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stores the committed ready timeline in the module-level cache used during thread switches
   useLayoutEffect(() => {
     if (detailLoading || entries.length === 0 || timelineHasEphemeralPreviewUrls(entries)) {
       return;
     }
-    rememberReadyThreadTimeline({ threadKey: activeThreadKey, entries });
-  }, [activeThreadKey, detailLoading, entries]);
-  return <MessagesTimeline {...timelineProps} timelineEntries={displayedEntries} />;
+    const updatedAt = threadDetailRef === null ? null : readThreadDetailUpdatedAt(threadDetailRef);
+    rememberReadyThreadTimeline({
+      threadKey: activeThreadKey,
+      entries,
+      ...(updatedAt === null ? {} : { updatedAt }),
+    });
+  }, [activeThreadKey, detailLoading, entries, threadDetailRef]);
+  return <MessagesTimeline {...timelineProps} behind={behind} timelineEntries={displayedEntries} />;
 }

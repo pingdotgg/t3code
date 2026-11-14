@@ -14,6 +14,11 @@ export interface EnvironmentThreadState {
    * disconnect path.
    */
   readonly history: ThreadHistoryMeta;
+  /**
+   * A warm resume keeps its live status so returning does not flash sync
+   * progress. Until the server confirms it caught up, its data may be behind.
+   */
+  readonly resuming?: boolean;
   /** The last server sequence `data` reflects, so readers can tell a write has landed without searching paged-out history. */
   readonly sequence: number;
 }

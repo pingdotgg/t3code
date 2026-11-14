@@ -329,6 +329,8 @@ export function resolveDraftHeroState(input: {
 export type HeldThreadTimeline<T extends readonly unknown[]> = {
   threadKey: string | null;
   entries: T;
+  /** Epoch ms of the projection these entries came from. */
+  updatedAt?: number;
 };
 
 const MAX_REMEMBERED_THREAD_TIMELINES = 16;
@@ -369,6 +371,10 @@ export function peekRememberedThreadTimeline<T extends readonly unknown[]>(
     return null;
   }
   return (rememberedThreadTimelines.get(threadKey)?.entries as T | undefined) ?? null;
+}
+
+export function peekRememberedThreadTimelineUpdatedAt(threadKey: string | null): number | null {
+  return threadKey === null ? null : (rememberedThreadTimelines.get(threadKey)?.updatedAt ?? null);
 }
 
 export function resetHeldThreadTimeline(): void {

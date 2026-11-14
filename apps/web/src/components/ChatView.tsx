@@ -273,6 +273,7 @@ import {
   useThreadLastVisitedAt,
   useQuietThreadVisibleTurnItems,
   useThreadStatus,
+  useThreadBehindShell,
   useThreadHistory,
   useQuietThreadShell,
   useThreadCheckpointSummaries,
@@ -541,8 +542,13 @@ export default function ChatView(props: ChatViewProps) {
     status: threadStatus,
   });
   const threadDetailLoading = threadSyncPhase === "loading";
+  // A warm resume stays live while it catches up; its faded timeline still syncs.
+  const threadBehindShell = useThreadBehindShell(routeThreadDetailRef);
   // Held back briefly, so a quick sync does not flash a status line at the end of the timeline.
-  const delayedThreadSyncPhase = useDelayedStatus(routeThreadKey, threadSyncPhase);
+  const delayedThreadSyncPhase = useDelayedStatus(
+    routeThreadKey,
+    threadSyncPhase ?? (threadBehindShell ? "syncing" : null),
+  );
   const activeProviderThread = serverProjection?.providerThreads.find(
     (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
   );
@@ -3441,6 +3447,7 @@ export default function ChatView(props: ChatViewProps) {
                   activeThreadKey={activeThreadKey}
                   syncing={threadSyncPhase !== null}
                   detailLoading={threadDetailLoading}
+                  detailBehind={threadBehindShell}
                   citationRequest={citationRequest}
                   citationHistory={citationHistory}
                   onCiteAssistantText={citeAssistantTextStable}

@@ -333,6 +333,8 @@ export interface ThreadFeedProps {
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly contentPresentation: ThreadContentPresentation;
+  /** Fades the rows: they are an older copy that the thread is still catching up from. */
+  readonly behind?: boolean;
   readonly latestRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
   readonly runlessWorkActive?: boolean;
@@ -3823,7 +3825,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             column resize would re-wrap them first, and the list would place the taller or shorter
             rows at their old offsets until their measurements came back. */}
         <View
-          className="flex-1"
+          className={props.behind === true ? "flex-1 opacity-50" : "flex-1"}
           style={splitLayout && viewportWidth > 0 ? { width: viewportWidth } : undefined}
         >
           {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
