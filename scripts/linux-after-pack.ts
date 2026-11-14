@@ -29,7 +29,11 @@ export default async function afterPack(context: AfterPackContext): Promise<void
       throw new Error("Linux deb target must configure its dependencies before afterPack");
     }
     // FPM snapshots config when targets are created; update the target's resolved options.
-    target.options.depends = [...target.options.depends, `libc6 (>= ${minimum})`];
+    // Targets are shared across arches, so replace any entry an earlier arch added.
+    target.options.depends = [
+      ...target.options.depends.filter((dependency) => !dependency.startsWith("libc6 ")),
+      `libc6 (>= ${minimum})`,
+    ];
   }
 }
 
