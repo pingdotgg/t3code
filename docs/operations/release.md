@@ -707,6 +707,41 @@ Checklist:
    - release job uploads expected files
 5. Smoke test downloaded artifacts.
 
+## Optional release webhook for fork automation
+
+Fork maintainers can use a release event to wake an agent and start integrating
+upstream changes as soon as the GitHub Release and its attached builds are public.
+This avoids relying on a fork's scheduled polling workflow. It does not merge code
+or replace the fork's CI and review policy.
+
+Maintainers can opt in by setting repository variable `RELEASE_WEBHOOK_ENABLED`
+to `true` and repository secrets `RELEASE_WEBHOOK_URL` (an HTTPS receiver) and
+`RELEASE_WEBHOOK_SECRET` (a shared signing key). There is no default endpoint.
+The receiver can forward events to subscribed fork agents; this workflow does not
+implement public subscriptions or register arbitrary fork URLs. Native GitHub
+release webhooks remain an alternative for repository administrators.
+
+Stable and nightly releases send a JSON POST after the GitHub publication job
+succeeds; preview builds are excluded. This does not wait for npm or web deployment.
+The versioned payload contains `schema_version: 1`, `event: "release.published"`,
+`repository`, `channel`, `tag`, `commit_sha`, `release_id`, `release_url`, and
+`published_at`. `commit_sha` identifies the commit built, including stable releases
+that promote an older nightly.
+
+Verify `X-Hub-Signature-256` as `sha256=<HMAC-SHA256 of the raw request body>` with
+the shared key before accepting an event. `X-T3-Event` is `release.published` and
+`X-T3-Delivery` is `<owner>/<repo>:release:<release_id>`. Deduplicate by delivery ID;
+retries and workflow reruns may repeat it. These are custom workflow notifications,
+not native GitHub webhook deliveries. Agents should independently verify the
+published tag and commit through GitHub before fetching and integrating changes.
+
+Requests time out after ten seconds. Transient network errors, HTTP 429, and 5xx
+responses receive up to three attempts; other HTTP errors are not retried.
+Redirects are refused. A failed notification is visible in the optional job but
+does not fail or undo publication. Rerun that job to retry; durable delivery and
+subscriber management belong to the receiver. Set the variable to `false` to stop
+notifications.
+
 ## 5) Troubleshooting
 
 - macOS build unsigned when expected signed:

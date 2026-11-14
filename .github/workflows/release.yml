@@ -1115,6 +1115,48 @@ jobs:
           echo "::error::The first nightly in releases.atom is not $RELEASE_TAG. Nightly installs older than 0.1.10-nightly.20261112.4603 cannot reach it, and neither can later builds that do not read the pointer when the feed names an older nightly. A preview from a branch not rebased onto main is the usual cause. See docs/operations/release.md#update-feed."
           exit 1
 
+  notify_release:
+    name: Notify release subscribers
+    needs: [preflight, release]
+    if: >-
+      !cancelled() && needs.release.result == 'success' &&
+      needs.preflight.outputs.release_channel != 'preview' &&
+      vars.RELEASE_WEBHOOK_ENABLED == 'true'
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      # Stable may build an older nightly. Load notification code from the
+      # workflow commit, independently of the commit being released.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - name: Notify release subscribers
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          RELEASE_WEBHOOK_URL: ${{ secrets.RELEASE_WEBHOOK_URL }}
+          RELEASE_WEBHOOK_SECRET: ${{ secrets.RELEASE_WEBHOOK_SECRET }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          RELEASE_SHA: ${{ needs.preflight.outputs.ref }}
+          RELEASE_CHANNEL: ${{ needs.preflight.outputs.release_channel }}
+        with:
+          script: |
+            const { notifyRelease } = require('./.github/scripts/notify-release-webhook.cjs');
+            const result = await notifyRelease({
+              github,
+              repo: context.repo,
+              tag: process.env.RELEASE_TAG,
+              sha: process.env.RELEASE_SHA,
+              channel: process.env.RELEASE_CHANNEL,
+              url: process.env.RELEASE_WEBHOOK_URL,
+              secret: process.env.RELEASE_WEBHOOK_SECRET,
+            });
+            core.info(`Release webhook: ${result.status}`);
+
   # The `t3` npm package is a launcher that downloads this version's CLI
   # archive from the GitHub Release, so it publishes only once that release
   # exists. A preview release stays a draft, whose files are not public, so
