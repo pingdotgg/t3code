@@ -21,6 +21,14 @@ function imageEmbed(path: string): string {
   return `![](<${escaped}>)`;
 }
 
+// CommonMark HTML blocks 2-5 end only at their marker, never at a blank line.
+const markerHtmlBlocks = [
+  [/^ {0,3}<!--/, "-->"],
+  [/^ {0,3}<\?/, "?>"],
+  [/^ {0,3}<!\[CDATA\[/, "]]>"],
+  [/^ {0,3}<![a-z]/i, ">"],
+] as const;
+
 // An unclosed fence or raw HTML block swallows the rest of the reply. Only a root-level block
 // can swallow appended embeds; nested ones end with their container.
 function unclosedBlockEnd(text: string): string | undefined {
@@ -31,7 +39,8 @@ function unclosedBlockEnd(text: string): string | undefined {
     if (tag !== undefined) {
       return /<\/(?:script|pre|style|textarea)>/i.test(source) ? undefined : `</${tag}>`;
     }
-    return /^ {0,3}<!--/.test(source) && !source.includes("-->") ? "-->" : undefined;
+    const end = markerHtmlBlocks.find(([start]) => start.test(source))?.[1];
+    return end !== undefined && !source.includes(end) ? end : undefined;
   }
   if (last?.type !== "code") return undefined;
   const fence = /^ {0,3}(`{3,}|~{3,})/.exec(source)?.[1];

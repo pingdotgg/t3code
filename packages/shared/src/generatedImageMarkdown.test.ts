@@ -60,6 +60,31 @@ it.each([
     expected: "<pre>\nlog\n</pre>\n\n![](</tmp/a.png>)",
   },
   {
+    name: "an unclosed trailing XML declaration is closed first",
+    text: '<?xml version="1.0"\nimage draft',
+    saved: ["/tmp/a.png"],
+    expected: '<?xml version="1.0"\nimage draft\n?>\n\n![](</tmp/a.png>)',
+  },
+  {
+    name: "an unclosed trailing CDATA section is closed first",
+    text: "<![CDATA[\nimage draft",
+    saved: ["/tmp/a.png"],
+    expected: "<![CDATA[\nimage draft\n]]>\n\n![](</tmp/a.png>)",
+  },
+  {
+    name: "an unclosed trailing DOCTYPE is closed first",
+    text: "<!DOCTYPE html\nimage draft",
+    saved: ["/tmp/a.png"],
+    expected: "<!DOCTYPE html\nimage draft\n>\n\n![](</tmp/a.png>)",
+  },
+  {
+    name: "closed XML blocks and fenced XML need no closer",
+    text: '```xml\n<?xml version="1.0"\n```\n<?xml version="1.0"?>\n<![CDATA[x]]>\n<!DOCTYPE html>',
+    saved: ["/tmp/a.png"],
+    expected:
+      '```xml\n<?xml version="1.0"\n```\n<?xml version="1.0"?>\n<![CDATA[x]]>\n<!DOCTYPE html>\n\n![](</tmp/a.png>)',
+  },
+  {
     name: "Windows, UNC and reserved characters keep their path",
     text: "",
     saved: [
