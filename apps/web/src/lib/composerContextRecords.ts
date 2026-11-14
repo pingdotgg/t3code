@@ -48,6 +48,7 @@ import {
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
 const PREVIEW_LABEL_MAX_CHARS = 48;
+const RESPONSE_LABEL_MAX_CHARS = 64;
 
 // Truncate selections to wire bounds before persistence to avoid send-time encoding failures.
 const TRUNCATION_MARKER = "\n… truncated …";
@@ -178,6 +179,13 @@ export function responseContextReference(record: ResponseContextRecord): Compose
   return { kind: "response", contextId: record.contextId, label: record.label };
 }
 
+function responseContextLabel(text: string): string {
+  const last = text.charCodeAt(RESPONSE_LABEL_MAX_CHARS - 1);
+  const end =
+    last >= 0xd800 && last <= 0xdbff ? RESPONSE_LABEL_MAX_CHARS - 1 : RESPONSE_LABEL_MAX_CHARS;
+  return sanitizeComposerContextLabel(text.slice(0, end), "response");
+}
+
 /** One record per response, so replying to it again reuses the same reference. */
 export function responseContextRecord(
   input: Pick<ResponseContextRecord, "citation" | "itemId"> & {
@@ -192,7 +200,7 @@ export function responseContextRecord(
     version: 1,
     kind: "response",
     contextId: toKindScopedComposerContextId("response", input.citation.messageId),
-    label: sanitizeComposerContextLabel(input.citation.text.slice(0, 64), "response"),
+    label: responseContextLabel(input.citation.text),
     citation: input.citation,
     itemId: input.itemId,
     ...(input.subagents.length > 0

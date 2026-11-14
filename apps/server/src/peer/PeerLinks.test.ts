@@ -565,6 +565,37 @@ it.effect("a linked peer that is renamed shows its new name", () =>
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect(
+  "a link forgotten while it resolves says it is not linked, not that it lost its credential",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const b = yield* serveB(box);
+        const beforeGet = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+        const racing = Layer.effect(
+          ServerSecretStore.ServerSecretStore,
+          Effect.map(ServerSecretStore.make, (store) =>
+            ServerSecretStore.ServerSecretStore.of({
+              ...store,
+              get: (name) =>
+                Ref.getAndSet(beforeGet, Effect.void).pipe(
+                  Effect.flatten,
+                  Effect.andThen(store.get(name)),
+                ),
+            }),
+          ),
+        );
+        const a = yield* makeA(laptop, racing);
+        const pairing = yield* b.auth.issuePairingCredential();
+        yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+
+        yield* Ref.set(beforeGet, Effect.orDie(Effect.asVoid(a.links.unlink(box.environmentId))));
+        const forgotten = yield* probe(a).pipe(Effect.flip);
+        expect(forgotten.message).toContain("not linked to");
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("tells the agent to link again once the peer revokes the link or it expires", () =>
   Effect.scoped(
     Effect.gen(function* () {

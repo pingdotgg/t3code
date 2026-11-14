@@ -9,9 +9,34 @@ import {
   type PullRequestListResult,
   type PullRequestSummary,
 } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+const listAnswers = vi.hoisted(() => new Map<string, unknown>());
+
+vi.mock("@effect/atom-react", async (importOriginal) => {
+  const { AtomRegistry } = await import("effect/reactivity");
+  const registry = AtomRegistry.make();
+  return {
+    ...(await importOriginal<typeof import("@effect/atom-react")>()),
+    useAtomValue: (atom: Atom.Atom<unknown>) => registry.get(atom),
+  };
+});
+vi.mock("@t3tools/client-runtime/state/pull-requests", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@t3tools/client-runtime/state/pull-requests")>();
+  return {
+    ...actual,
+    createPullRequestEnvironmentAtoms: (
+      ...args: Parameters<typeof actual.createPullRequestEnvironmentAtoms>
+    ) => ({
+      ...actual.createPullRequestEnvironmentAtoms(...args),
+      list: ({ environmentId }: { readonly environmentId: string }) =>
+        listAnswers.get(environmentId),
+    }),
+  };
+});
 
 import {
   newestPullRequestObservation,
@@ -25,6 +50,7 @@ import {
   restoredPullRequestList,
   threadPullRequestLinkToSummary,
   observeFailedPullRequestList,
+  usePullRequestList,
 } from "./pullRequests";
 
 it("observes both typed list failures without changing their status or replaying cached timestamps", () => {
@@ -132,8 +158,12 @@ describe("pull request summary cache", () => {
     const edited = summary({ title: "Accepted title" });
     expect(newestPullRequestSummary(summary(), edited)).toBe(edited);
     const loaded = summary();
-    expect(newestDisplayedPullRequestSummary(loaded, false, edited)).toBe(loaded);
-    expect(newestDisplayedPullRequestSummary(summary(), true, edited)).toBe(edited);
+    expect(newestDisplayedPullRequestSummary(loaded, false, edited, loaded, [])).toBe(loaded);
+    expect(newestDisplayedPullRequestSummary(summary(), true, edited, loaded, [])).toBe(edited);
+    const titleEdit = { reference: loaded, title: "Pending title" };
+    expect(newestDisplayedPullRequestSummary(loaded, true, null, loaded, [titleEdit])?.title).toBe(
+      "Pending title",
+    );
   });
 
   it("reuses saved thread state while detail is stale and lets newer detail replace it", () => {
@@ -494,6 +524,31 @@ describe("pull request list answers across a reload", () => {
         remote,
       ]);
     }
+  });
+
+  it("names the environment whose list failed while the others' rows still show", () => {
+    listAnswers.set(local, Atom.make(AsyncResult.success(answer([listEntry(1)]))));
+    listAnswers.set(
+      remote,
+      Atom.make(
+        AsyncResult.failure(
+          Cause.fail(
+            new Error("Relay could not reach the environment endpoint (endpoint_request_failed)."),
+          ),
+        ),
+      ),
+    );
+
+    const view = usePullRequestList([
+      { environmentId: local, input },
+      { environmentId: remote, input },
+    ]);
+
+    expect(view.data?.entries.map((row) => [row.environmentId, row.number])).toEqual([[local, 1]]);
+    expect(view.error).toEqual({
+      environmentId: remote,
+      message: "Relay could not reach the environment endpoint (endpoint_request_failed).",
+    });
   });
 
   it("removes the composite snapshots it replaced", () => {
