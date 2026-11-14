@@ -453,6 +453,7 @@ process.on("SIGTERM", () => {});
 const quit = () => { fs.writeFileSync(${JSON.stringify(exitRecord)}, "asked to close"); process.exit(0); };
 const reply = (message) => fs.writeSync(4, JSON.stringify(message) + "\\0");
 const results = {
+  "Target.createBrowserContext": { browserContextId: "context" },
   "Target.createTarget": { targetId: "page" },
   "Target.attachToTarget": { sessionId: "session" },
   "Runtime.evaluate": { result: { value: 100 } },
@@ -621,6 +622,6 @@ fs.createReadStream(null, { fd: 3 }).on("end", quit).on("data", (chunk) => {
       }).pipe(Effect.provide(layerHtmlRender(executable)));
       expect(requests).toEqual([]);
       expect(datagrams).toEqual([]);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
