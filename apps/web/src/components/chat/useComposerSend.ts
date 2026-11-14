@@ -1548,6 +1548,10 @@ export function useComposerSend(input: ComposerSendInput) {
     submissionIntent = "foreground",
     directAnnotation,
   ) => {
+    // Enter on an open question answers it, which a send in flight must not hold back.
+    if (activePendingProgress && !directAnnotation) {
+      return sendComposerDraft(e, dispatchMode, submissionIntent);
+    }
     const queued =
       queuedSubmitRef.current?.routeThreadKey === routeThreadKey ? queuedSubmitRef.current : null;
     const behind = directAnnotation
