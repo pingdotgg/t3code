@@ -8918,6 +8918,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     { status: 503, cooldown: "999999999999999999999999h", seconds: 0 },
     { status: 503, cooldown: "4m 6s", seconds: 0, errorType: "overloaded_error" },
     { status: 401, cooldown: "4m 6s", seconds: 0 },
+    { status: 429, cooldown: "1h2m3s", seconds: 3723, proxy: true, sdkResetSeconds: 60 },
+    { status: 429, cooldown: "1h2m3s", seconds: 7200, proxy: true, sdkResetSeconds: 7200 },
+    { status: 429, cooldown: "1h2m3s", seconds: 0, proxy: true, sdkResetSeconds: null },
+    {
+      status: 429,
+      cooldown: "nested 1h",
+      seconds: 0,
+      proxy: true,
+      result:
+        "API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (last error: rate_limit_error (reset after 1h))",
+    },
+    {
+      status: 429,
+      cooldown: "outer cooldown",
+      seconds: 60,
+      proxy: true,
+      result:
+        "API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (reset after 1m) (last error: All credentials for model upstream are cooling down (reset after 1h))",
+    },
   ])("recovers wrapped gateway limits with status $status and cooldown $cooldown", (input) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
@@ -8933,13 +8952,35 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       yield* Queue.offerAll(harness.sdkMessages, [
+        ...(input.sdkResetSeconds !== undefined
+          ? [
+              claudeSdkFrame({
+                type: "rate_limit_event",
+                rate_limit_info: {
+                  status: "rejected",
+                  rateLimitType: "five_hour",
+                  ...(input.sdkResetSeconds === null
+                    ? {}
+                    : {
+                        resetsAt: DateTime.toEpochMillis(now) / 1000 + input.sdkResetSeconds,
+                      }),
+                },
+                uuid: "00000000-0000-4000-8000-000000000651",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            ]
+          : []),
         makeAssistantErrorFrame({
           uuid: "00000000-0000-4000-8000-000000000652",
-          error: "server_error",
+          error: input.proxy ? "rate_limit" : "server_error",
         }),
         makeResultFrame({
           uuid: "00000000-0000-4000-8000-000000000653",
-          result: `API Error: ${input.status} [claude/claude-opus-5-5] [429]: {"type":"error","error":{"type":"${input.errorType ?? "rate_limit_error"}","message":"Please try again later."}} (reset after ${input.cooldown}).`,
+          result:
+            input.result ??
+            (input.proxy
+              ? `API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (reset after ${input.cooldown}) (last error: rate_limit_error: Please try again later.)`
+              : `API Error: ${input.status} [claude/claude-opus-5-5] [429]: {"type":"error","error":{"type":"${input.errorType ?? "rate_limit_error"}","message":"Please try again later."}} (reset after ${input.cooldown}).`),
           terminalReason: "api_error",
           isError: true,
           apiErrorStatus: input.status,
@@ -8948,7 +8989,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const terminal = yield* Queue.take(harness.terminalReceipts);
       assert.equal(terminal.status, "failed");
       if (terminal.status !== "failed") return;
-      assert.equal(terminal.failure.class, input.seconds > 0 ? "usage_limit" : "provider_error");
+      assert.equal(
+        terminal.failure.class,
+        input.seconds > 0 || input.proxy ? "usage_limit" : "provider_error",
+      );
       if (input.seconds > 0) {
         assert.equal(terminal.failure.retryable, true);
         assert.equal(
@@ -8958,7 +9002,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         );
       } else {
-        assert.isUndefined(terminal.failure.resetAt);
+        assert.equal(terminal.failure.resetAt, input.proxy ? null : undefined);
       }
     }).pipe(
       Effect.provide(
@@ -17889,6 +17933,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* harness.awaitContinuation(1);
 
         yield* Queue.shutdown(harness.sdkMessages);
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.nativeTaskRef?.nativeId === OUTER_TASK_ID &&
+              event.subagent.status === "completed",
+          ),
+        );
         yield* yieldTicks(50);
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -19043,12 +19095,36 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("records only explicit effort for nested subagents", () =>
-    Effect.gen(function* () {
+  it.effect("records explicit effort, else the effort a subagent's transcript reports", () => {
+    const UNSPECIFIED_TOOL_USE_ID = "toolu-effort-nested-unspecified";
+    const firstRead = Deferred.makeUnsafe<void>();
+    return Effect.gen(function* () {
       const OUTER_TOOL_USE_ID = "toolu-effort-outer";
-      const UNSPECIFIED_TOOL_USE_ID = "toolu-effort-nested-unspecified";
       const OVERRIDING_TOOL_USE_ID = "toolu-effort-nested-overriding";
-      const harness = yield* makeWakeHarness;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const configDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-claude-effort-",
+      });
+      // Claude names the folder after the resolved cwd, here as if /workspace were a symlink.
+      const subagentsDir = NodePath.join(
+        configDir,
+        "projects",
+        "-private-workspace",
+        WAKE_NATIVE_SESSION,
+        "subagents",
+      );
+      yield* fileSystem.makeDirectory(subagentsDir, { recursive: true });
+      const transcriptPath = NodePath.join(
+        subagentsDir,
+        `agent-task-${UNSPECIFIED_TOOL_USE_ID}.jsonl`,
+      );
+      yield* fileSystem.writeFileString(
+        transcriptPath,
+        `{"type":"user","uuid":"effort-line-0","message":{"role":"user","content":"Check one thing."}}\n`,
+      );
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: { CLAUDE_CONFIG_DIR: configDir },
+      });
       const now = yield* DateTime.now;
       const parentSelection = {
         instanceId: CLAUDE_TEST_MODEL_SELECTION.instanceId,
@@ -19118,6 +19194,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
         taskStarted(UNSPECIFIED_TOOL_USE_ID, "00000000-0000-4000-8000-000000000224"),
         taskStarted(OVERRIDING_TOOL_USE_ID, "00000000-0000-4000-8000-000000000225"),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_notification",
+          task_id: `task-${UNSPECIFIED_TOOL_USE_ID}`,
+          tool_use_id: UNSPECIFIED_TOOL_USE_ID,
+          status: "completed",
+          output_file: "/tmp/claude-replay/tasks/unspecified.output",
+          summary: "OK",
+          uuid: "00000000-0000-4000-8000-000000000227",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeSubagentToolResultFrame({
+          parentToolUseId: OUTER_TOOL_USE_ID,
+          uuid: "00000000-0000-4000-8000-000000000228",
+          toolUseId: UNSPECIFIED_TOOL_USE_ID,
+        }),
         makeResultFrame({
           uuid: "00000000-0000-4000-8000-000000000226",
           result: "Spawned the subagents.",
@@ -19125,7 +19217,27 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ]) {
         yield* Queue.offer(harness.sdkMessages, frame);
       }
+      // The settled subagent's reply lands after the first lookup, beyond one read's cap.
+      yield* Deferred.await(firstRead);
+      NodeFS.appendFileSync(
+        transcriptPath,
+        `${"x".repeat(512 * 1024 + 1)}\n{"type":"assistant","effort":"low","uuid":"effort-line-1","message":{"role":"assistant","id":"msg_effort_child","content":[{"type":"text","text":"OK"}]}}\n`,
+      );
+      yield* TestClock.adjust(500);
       yield* Queue.take(harness.terminalReceipts);
+      // A run can stop reading events once its subagents settle, so the settle carries the effort.
+      const settle = harness.events.find(
+        (event) =>
+          event.type === "subagent.updated" &&
+          event.subagent.status === "completed" &&
+          event.subagent.nativeTaskRef?.nativeId === `task-${UNSPECIFIED_TOOL_USE_ID}`,
+      );
+      assert.equal(
+        settle?.type === "subagent.updated"
+          ? getModelSelectionStringOptionValue(settle.subagent.modelSelection, "effort")
+          : null,
+        "low",
+      );
 
       const efforts = new Map(
         harness.events.flatMap((event) =>
@@ -19141,7 +19253,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       assert.deepEqual(Object.fromEntries(efforts), {
         [`task-${OUTER_TOOL_USE_ID}`]: "low",
-        [`task-${UNSPECIFIED_TOOL_USE_ID}`]: undefined,
+        [`task-${UNSPECIFIED_TOOL_USE_ID}`]: "low",
         [`task-${OVERRIDING_TOOL_USE_ID}`]: "max",
       });
       const childEfforts = harness.events.flatMap((event) =>
@@ -19151,6 +19263,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       assert.deepEqual(childEfforts, ["low", undefined, "max"]);
     }).pipe(
+      Effect.provideService(WorkflowAgentTranscriptReadObserver, (read) =>
+        read.agentId === `task-${UNSPECIFIED_TOOL_USE_ID}`
+          ? Deferred.succeed(firstRead, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      ),
       Effect.provide(
         Layer.mergeAll(
           IdAllocator.layer,
@@ -19159,8 +19276,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           NodeCrypto.layer,
         ),
       ),
-    ),
-  );
+    );
+  });
 
   it.effect.each([
     {

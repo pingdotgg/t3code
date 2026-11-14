@@ -1520,6 +1520,33 @@ describe("SSH launch during desktop update", () => {
     }),
   );
 
+  it.effect.each([false, true])(
+    "waits for a boot service between two servers (archive: %s)",
+    (archive) =>
+      Effect.gen(function* () {
+        const script = yield* archive
+          ? captureLauncherFor({ archiveVersion: "1.2.3" })
+          : captureLauncher;
+        const result = runLauncher(script, { archive, serviceServing: true, readyAt: 5_000 });
+        assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
+        assert.equal(result.now, 5_000);
+        assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+      }),
+  );
+
+  it.effect("fails without starting a second server when the home's owner never answers", () =>
+    Effect.gen(function* () {
+      const result = runLauncher(yield* captureLauncher, {
+        serviceServing: true,
+        allowFailure: true,
+      });
+      assert.equal(result.status, 1);
+      assert.include(result.stderr, "no second server was started");
+      assert.equal(result.now, 60_000);
+      assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+    }),
+  );
+
   it.effect("starts immediately without a marker", () =>
     Effect.gen(function* () {
       const result = runLauncher(yield* captureLauncher, {});
