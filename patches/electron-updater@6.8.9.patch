@@ -1,8 +1,143 @@
 diff --git a/out/electronHttpExecutor.js b/out/electronHttpExecutor.js
-index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..c298ffe7808c421c29e16f1e2ba8510f0cd31142 100644
+index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..be9823826c29855e73326984962df7cb5432edb5 100644
 --- a/out/electronHttpExecutor.js
 +++ b/out/electronHttpExecutor.js
-@@ -61,6 +61,35 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
+@@ -3,7 +3,21 @@ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.ElectronHttpExecutor = exports.NET_SESSION_NAME = void 0;
+ exports.getNetSession = getNetSession;
+ const builder_util_runtime_1 = require("builder-util-runtime");
++const fs_1 = require("fs");
++const stream_1 = require("stream");
+ exports.NET_SESSION_NAME = "electron-updater";
++// A stall on a slow link is retried, resuming from the bytes already in the file.
++const DOWNLOAD_STALL_RETRIES = 3;
++function isDownloadStall(error) {
++    return error != null && (error.message === "Request timed out" || error.message === "net::ERR_TIMED_OUT");
++}
++function createDigest(options) {
++    const sha512 = options.sha512;
++    if (sha512 != null) {
++        return new builder_util_runtime_1.DigestTransform(sha512, "sha512", sha512.length === 128 && !sha512.includes("+") && !sha512.includes("Z") && !sha512.includes("=") ? "hex" : "base64");
++    }
++    return options.sha2 == null ? null : new builder_util_runtime_1.DigestTransform(options.sha2, "sha256", "hex");
++}
+ function getNetSession() {
+     return require("electron").session.fromPartition(exports.NET_SESSION_NAME, {
+         cache: false,
+@@ -16,26 +30,104 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
+         this.cachedSession = null;
+     }
+     async download(url, destination, options) {
+-        return await options.cancellationToken.createPromise((resolve, reject, onCancel) => {
++        for (let attempt = 0;; attempt++) {
++            const offset = attempt === 0 ? 0 : await fs_1.promises.stat(destination).then(it => it.size, () => 0);
++            try {
++                return await this.downloadFrom(url, destination, options, offset);
++            }
++            catch (e) {
++                if (attempt >= DOWNLOAD_STALL_RETRIES || !isDownloadStall(e)) {
++                    throw e;
++                }
++            }
++            await options.cancellationToken.createPromise((resolve, reject, onCancel) => {
++                const timer = setTimeout(resolve, 2000 * 2 ** attempt);
++                onCancel(() => clearTimeout(timer));
++            });
++        }
++    }
++    // Appends from `offset` when the server answers the Range with 206, then checks the digest over
++    // the whole file so the bytes from earlier attempts are verified too. A 200 starts over.
++    downloadFrom(url, destination, options, offset) {
++        return options.cancellationToken.createPromise((resolve, reject, onCancel) => {
+             const requestOptions = {
+-                headers: options.headers || undefined,
++                headers: offset > 0 ? { ...options.headers, Range: `bytes=${offset}-` } : options.headers || undefined,
+                 redirect: "manual",
+             };
+             (0, builder_util_runtime_1.configureRequestUrl)(url, requestOptions);
+             (0, builder_util_runtime_1.configureRequestOptions)(requestOptions);
++            let fileOut = null;
++            let upstream = null;
++            let settled = false;
++            const callback = error => {
++                if (settled) {
++                    return;
++                }
++                settled = true;
++                const settle = () => (error == null ? resolve(destination) : reject(error));
++                if (fileOut == null || fileOut.closed) {
++                    settle();
++                    return;
++                }
++                // Let the bytes already handed to the file land, so a retry resumes after them.
++                fileOut.once("close", settle);
++                upstream.unpipe(fileOut);
++                if (!fileOut.destroyed && !fileOut.writableEnded) {
++                    fileOut.end();
++                }
++            };
+             this.doDownload(requestOptions, {
+                 destination,
+                 options,
+                 onCancel,
+-                callback: error => {
+-                    if (error == null) {
+-                        resolve(destination);
++                callback,
++                responseHandler: response => {
++                    const resumed = offset > 0 && response.statusCode === 206;
++                    const contentRange = (0, builder_util_runtime_1.safeGetHeader)(response, "content-range");
++                    if (resumed && (contentRange == null || !contentRange.startsWith(`bytes ${offset}-`))) {
++                        callback(new Error(`Cannot resume download at byte ${offset}, got Content-Range ${contentRange}`));
++                        return;
++                    }
++                    const sha2Header = (0, builder_util_runtime_1.safeGetHeader)(response, "X-Checksum-Sha2");
++                    if (sha2Header != null && options.sha2 != null && sha2Header !== options.sha2) {
++                        callback(new Error(`checksum mismatch: expected ${options.sha2} but got ${sha2Header} (X-Checksum-Sha2 header)`));
++                        return;
++                    }
++                    const streams = [];
++                    const contentLength = (0, builder_util_runtime_1.safeGetHeader)(response, "content-length");
++                    if (options.onProgress != null && contentLength != null) {
++                        const progress = new builder_util_runtime_1.ProgressCallbackTransform((resumed ? offset : 0) + parseInt(contentLength, 10), options.cancellationToken, options.onProgress);
++                        progress.transferred = resumed ? offset : 0;
++                        streams.push(progress);
++                    }
++                    const digest = resumed ? null : createDigest(options);
++                    if (digest != null) {
++                        streams.push(digest);
+                     }
+-                    else {
+-                        reject(error);
++                    fileOut = (0, fs_1.createWriteStream)(destination, { flags: resumed ? "a" : "w" });
++                    upstream = response;
++                    for (const stream of streams) {
++                        stream.on("error", callback);
++                        upstream = upstream.pipe(stream);
+                     }
++                    fileOut.on("error", callback);
++                    upstream.pipe(fileOut);
++                    fileOut.on("finish", () => {
++                        if (settled) {
++                            return;
++                        }
++                        fileOut.once("close", () => {
++                            const fileDigest = resumed ? createDigest(options) : null;
++                            if (fileDigest == null) {
++                                callback(null);
++                                return;
++                            }
++                            stream_1.promises
++                                .pipeline((0, fs_1.createReadStream)(destination), fileDigest, new stream_1.Writable({ write: (chunk, encoding, next) => next() }))
++                                .then(() => callback(null), callback);
++                        });
++                    });
+                 },
+-                responseHandler: null,
+             }, 0);
+         });
+     }
+@@ -61,6 +153,35 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
          }
          return request;
      }

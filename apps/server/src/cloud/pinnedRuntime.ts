@@ -126,13 +126,15 @@ const DOWNLOAD_RETRY = { times: 3, schedule: Schedule.exponential("2 seconds") }
 const isTransientDownloadFailure = (
   error: HttpClientError.HttpClientError | Cause.TimeoutError,
 ): boolean => {
-  // No answer or a stall means the host cannot reach the release source; retrying only delays that.
-  if (error._tag === "TimeoutError") return false;
+  // A slow link stalls past the bound and then recovers; the retry resumes from the bytes held.
+  if (error._tag === "TimeoutError") return true;
   // Body bytes are read raw, so a DecodeError is a body that failed after the host answered.
   if (error.reason._tag === "DecodeError") return true;
   const status = error.response?.status;
   return status !== undefined && (status >= 500 || status === 429 || status === 408);
 };
+
+const CONTENT_RANGE = /^bytes (\d+)-\d+\/(\d+|\*)$/;
 
 const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(function* (
   httpClient: HttpClient.HttpClient,
@@ -140,29 +142,60 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
   step: string,
   onProgress?: (progress: PinnedRuntimeProgress) => void,
 ) {
+  // Bytes from earlier attempts outlive the retry so a stalled download resumes with Range.
+  let chunks: Array<Uint8Array> = [];
+  let received = 0;
   // Bound stalls while holding the install lock, but allow transfers that keep
   // receiving bytes to finish regardless of their total duration.
-  return yield* httpClient.execute(HttpClientRequest.get(url)).pipe(
+  return yield* Effect.suspend(() =>
+    httpClient.execute(
+      received > 0
+        ? HttpClientRequest.get(url).pipe(
+            HttpClientRequest.setHeader("range", `bytes=${received}-`),
+          )
+        : HttpClientRequest.get(url),
+    ),
+  ).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.timeout(PINNED_RUNTIME_DOWNLOAD_STALL_TIMEOUT),
     Effect.flatMap(
       Effect.fn(function* (response) {
-        const length = Number(response.headers["content-length"]);
+        const contentRange =
+          response.status === 206
+            ? CONTENT_RANGE.exec(response.headers["content-range"] ?? "")
+            : null;
+        if (response.status === 206 && Number(contentRange?.[1]) !== received) {
+          chunks = [];
+          received = 0;
+          return yield* new HttpClientError.HttpClientError({
+            reason: new HttpClientError.DecodeError({
+              request: response.request,
+              response,
+              description: "partial content does not resume the bytes already received",
+            }),
+          });
+        }
+        if (contentRange === null) {
+          chunks = [];
+          received = 0;
+        }
+        const length = Number(
+          contentRange === null ? response.headers["content-length"] : contentRange[2],
+        );
         const total = Number.isFinite(length) && length > 0 ? length : undefined;
-        let received = 0;
         onProgress?.({ stage: "download", received, total });
-        const chunks = yield* response.stream.pipe(
+        yield* response.stream.pipe(
           Stream.timeoutOrElse({
             duration: PINNED_RUNTIME_DOWNLOAD_STALL_TIMEOUT,
             orElse: () => Stream.fail(new Cause.TimeoutError()),
           }),
-          Stream.tap((chunk) =>
+          Stream.runForEach((chunk) =>
             Effect.sync(() => {
+              chunks.push(chunk);
               received += chunk.byteLength;
               onProgress?.({ stage: "download", received, total });
             }),
           ),
-          Stream.runCollect,
         );
         if (total === undefined && received > 0) {
           onProgress?.({ stage: "download", received, total: received });
