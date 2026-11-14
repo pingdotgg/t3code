@@ -4,6 +4,9 @@
 # `git submodule update --init`. Floci is a large Java tree used only to
 # build the local AWS emulator, so it is skipped unless requested:
 # `git submodule update --init --checkout -- submodules/floci`.
+# tcut is our fork of the terminal recorder used for the videos and
+# presentations under `demos/`; fetch it the same way:
+# `git submodule update --init --checkout -- submodules/tcut`.
 [submodule "distilled"]
 	path = submodules/distilled
 	url = https://github.com/alchemy-run/distilled.git
@@ -13,3 +16,7 @@
 	shallow = true
 	update = none
 	ignore = all
+[submodule "tcut"]
+	path = submodules/tcut
+	url = https://github.com/alchemy-run/tcut.git
+	update = none

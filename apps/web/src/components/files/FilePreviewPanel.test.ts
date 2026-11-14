@@ -10,7 +10,6 @@ import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
   resolveFilePreviewPath,
-  setMarkdownTaskChecked,
   shouldShowFileExplorer,
   workspaceAssetResource,
 } from "./filePreviewMode";
@@ -73,21 +72,6 @@ describe("isMarkdownPreviewFile", () => {
     expect(isMarkdownPreviewFile("docs/guide.MARKDOWN")).toBe(true);
     expect(isMarkdownPreviewFile("docs/guide.mdown")).toBe(true);
     expect(isMarkdownPreviewFile("docs/guide.mkd")).toBe(true);
-  });
-});
-
-describe("setMarkdownTaskChecked", () => {
-  const markdown = "- [ ] First\n- [x] Second\n";
-
-  it("checks and unchecks the task marker at the supplied offset", () => {
-    expect(setMarkdownTaskChecked(markdown, 2, true)).toBe("- [x] First\n- [x] Second\n");
-    expect(setMarkdownTaskChecked(markdown, 14, false)).toBe("- [ ] First\n- [ ] Second\n");
-    expect(setMarkdownTaskChecked("1. [X] Ordered\n", 3, false)).toBe("1. [ ] Ordered\n");
-  });
-
-  it("leaves the document unchanged for a stale or invalid marker offset", () => {
-    expect(setMarkdownTaskChecked(markdown, 0, true)).toBe(markdown);
-    expect(setMarkdownTaskChecked(markdown, 200, true)).toBe(markdown);
   });
 });
 
@@ -189,6 +173,24 @@ describe("document preview contents", () => {
     expect(html).not.toContain("https:");
   });
 
+  it("treats a backslash before a line break as a paragraph break, as TextEdit writes them", () => {
+    const html = (rtf: string) => {
+      const result = openRtf(bytes(rtf));
+      if (result.type !== "document") throw new Error("Expected document");
+      return result.pages.map((page) => page.html);
+    };
+    const textEdit = String.raw`{\rtf1\ansi{\fonttbl\f0\fswiss Helvetica;}
+\pard\f0\fs24 \cf0 First\
+Second\
+\
+Third}`;
+    const expected = html(
+      String.raw`{\rtf1\ansi{\fonttbl\f0\fswiss Helvetica;}\pard\f0\fs24 \cf0 First\par Second\par \par Third}`,
+    );
+    expect(html(textEdit)).toEqual(expected);
+    expect(html(textEdit.replaceAll("\n", "\r\n"))).toEqual(expected);
+  });
+
   it("preserves rich text page breaks and formatting without splitting hidden destinations", () => {
     const result = openRtf(
       bytes(String.raw`{\rtf1\b First\page Second\b0{\*\unknown \page hidden}\page Third\page}`),
@@ -219,12 +221,12 @@ describe("document preview contents", () => {
   it("resolves scoped ODF namespaces and explicit spreadsheet whitespace", async () => {
     const archive = new JSZip().file(
       "content.xml",
-      '<o:document-content xmlns:o="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:t="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><o:body><o:spreadsheet><t:table t:name="Accounts &amp; names"><t:table-row><t:table-cell><p xmlns="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:x="urn:oasis:names:tc:opendocument:xmlns:text:1.0">Account<s/>Name<s x:c="3"/>A<tab/>B<line-break/>C</p></t:table-cell></t:table-row></t:table></o:spreadsheet></o:body></o:document-content>',
+      '<o:document-content xmlns:o="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:t="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><o:body><o:spreadsheet><t:table t:name="Accounts &amp; names"><t:table-row><t:table-cell><p xmlns="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:x="urn:oasis:names:tc:opendocument:xmlns:text:1.0">Account<s/>Name<s x:c="3"/>A<tab/>B<line-break/>C &amp; <![CDATA[&amp;]]></p></t:table-cell></t:table-row></t:table></o:spreadsheet></o:body></o:document-content>',
     );
     const result = await openDocument(archive, "ods");
     if (result.type !== "ods") throw new Error("Expected workbook");
     expect(result.sheets[0]!.name).toBe("Accounts & names");
-    expect(result.sheets[0]!.rows[0]).toEqual(["Account Name   A\tB\nC"]);
+    expect(result.sheets[0]!.rows[0]).toEqual(["Account Name   A\tB\nC & &amp;"]);
   });
 
   it("stops repeated slide images before encoding beyond the output budget", async () => {
@@ -294,6 +296,64 @@ describe("document preview contents", () => {
         },
       ],
     });
+    // IPython traceback frames can omit trailing newlines or place ANSI resets after them.
+    const failed = openNotebook(
+      bytes(
+        JSON.stringify({
+          nbformat: 4,
+          cells: [
+            {
+              cell_type: "code",
+              source: "fail()",
+              outputs: [
+                {
+                  output_type: "error",
+                  traceback: [
+                    "-----",
+                    "ValueError    Traceback (most recent call last)",
+                    "Cell In[1], line 4\n----> 4 fail()\n",
+                    "Cell In[1], line 2, in fail()\n----> 2     raise ValueError()\n",
+                    "ValueError: preview proof",
+                  ],
+                },
+                {
+                  output_type: "error",
+                  traceback: [
+                    "Traceback (most recent call last):\n",
+                    "  Cell In[2], line 5\n    fail()\n",
+                    "ValueError: preview proof\n",
+                  ],
+                },
+                {
+                  output_type: "error",
+                  traceback: [
+                    "\u001b[31mTraceback (most recent call last):\n\u001b[0m",
+                    "\u001b[32mCell In[3], line 1\n----> 1 fail()\n\u001b[0m\u001b[39m",
+                    "\u001b[31mValueError: preview proof\u001b[0m",
+                    "final entry",
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    if (failed.type !== "notebook") throw new Error("Expected notebook");
+    expect(failed.cells[0]!.outputs).toEqual([
+      {
+        kind: "text",
+        text: "-----\nValueError    Traceback (most recent call last)\nCell In[1], line 4\n----> 4 fail()\nCell In[1], line 2, in fail()\n----> 2     raise ValueError()\nValueError: preview proof",
+      },
+      {
+        kind: "text",
+        text: "Traceback (most recent call last):\n  Cell In[2], line 5\n    fail()\nValueError: preview proof\n",
+      },
+      {
+        kind: "text",
+        text: "\u001b[31mTraceback (most recent call last):\n\u001b[0m\u001b[32mCell In[3], line 1\n----> 1 fail()\n\u001b[0m\u001b[39m\u001b[31mValueError: preview proof\u001b[0m\nfinal entry",
+      },
+    ]);
     expect(() => openNotebook(bytes('{"nbformat":3,"cells":[]}'))).toThrow("version 4");
     expect(() =>
       openNotebook(
@@ -379,7 +439,7 @@ describe("document preview contents", () => {
       )
       .file(
         "Book/two&&&.xhtml",
-        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><img src="cover.png" alt="&copy; &NotEqualTilde;"/></body></html>',
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><pre><![CDATA[Use &amp; and &lt; literally]]></pre><img src="cover.png" alt="&copy; &NotEqualTilde;"/></body></html>',
       )
       .file(
         "Book/cover.png",
@@ -393,6 +453,7 @@ describe("document preview contents", () => {
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages.map((page) => page.title)).toEqual(["Second", "First"]);
     expect(result.pages[0]!.html).toContain("A\u00a0B © — ≂̸ &amp;lt;");
+    expect(result.pages[0]!.html).toContain("<pre>Use &amp;amp; and &amp;lt; literally</pre>");
     expect(result.pages[0]!.html).toContain('alt="© ≂̸"');
     expect(result.pages[1]!.html).toContain('src="data:image/png;base64,');
     expect(result.pages[1]!.html).not.toMatch(/https:|script|alert/);
