@@ -51,7 +51,9 @@ with its state and what it needs from outside the server.
   running, or until a change wakes it. It never polls. It sleeps at most 10 minutes before it
   reads the wall clock again, so a clock change or a host that slept is seen (the T3 server's
   due hint ages out after the same). Due tasks run one after another, oldest first, as T3's
-  `runDueTasks`.
+  `runDueTasks`. After a pass that left a due task as it was (its row could not be
+  saved, for example on a full disk), the timer waits at least 5 s, the T3 server's poll
+  interval, and logs the failure once while it repeats.
 - **Idle cost:** with no tasks, the timer waits on a `Notify` and never wakes. With tasks, it
   wakes at each due time and at most every 10 minutes. Memory: the task list (about 1 KiB a
   task) and one parked task. Not measured as process memory.

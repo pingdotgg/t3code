@@ -68,6 +68,9 @@ pub const MAX_TASKS: usize = 500;
 /// The longest the timer sleeps before it reads the wall clock again, so a clock change or a
 /// host that slept is seen within this time (the T3 server's due hint ages out after the same).
 const MAX_SLEEP: Duration = Duration::from_secs(10 * 60);
+/// The shortest wait after a timer pass that left a due task where it was (its row could not
+/// be saved, for example on a full disk): the T3 server's poll interval (`Scheduler.ts`).
+const STALLED_RETRY: Duration = Duration::from_secs(5);
 /// `RUN_OUTCOME_WAIT_MS`: how long a run's outcome is followed after its message went out.
 pub const RUN_OUTCOME_WAIT: Duration = Duration::from_secs(24 * 60 * 60);
 const FILE_NAME: &str = "scheduled-tasks.json";
@@ -806,7 +809,7 @@ impl ScheduledTasks {
             }
         }
         let started_iso = format_iso(started);
-        self.mark_running(&active.id, &started_iso).await?;
+        self.mark_running(&active.id, &started_iso, trigger).await?;
         // From here a dropped run records its failure, as T3's `onError` does.
         let mut stuck = StuckRun {
             service: Some(self.clone()),
@@ -918,7 +921,12 @@ impl ScheduledTasks {
         }
     }
 
-    async fn mark_running(&self, id: &str, started_iso: &str) -> Result<(), TaskError> {
+    async fn mark_running(
+        &self,
+        id: &str,
+        started_iso: &str,
+        trigger: Trigger,
+    ) -> Result<(), TaskError> {
         let mut tasks = self.inner.tasks.lock().await;
         let mut next_tasks = tasks.clone();
         let Some(task) = next_tasks.iter_mut().find(|t| t.id == id) else {
@@ -928,12 +936,17 @@ impl ScheduledTasks {
         task.last_run_at = Some(started_iso.to_owned());
         task.last_run_status = ScheduledTaskRunStatus::Running;
         task.last_run_error = None;
-        self.save(
-            &next_tasks,
-            "Could not mark schedule task as running.",
-            Some(id),
-        )
-        .await?;
+        if let Err(error) = self.persist(&next_tasks).await {
+            let message = "Could not mark schedule task as running.";
+            return Err(match trigger {
+                Trigger::Manual => {
+                    eprintln!("scheduled tasks: {message} {error}");
+                    TaskError::new(message, Some(id))
+                }
+                // The timer logs it with its cause, once while it repeats.
+                Trigger::Scheduled => TaskError::new(format!("{message} {error}"), Some(id)),
+            });
+        }
         *tasks = next_tasks;
         drop(tasks);
         self.notify_changed();
@@ -1152,8 +1165,9 @@ impl ScheduledTasks {
     }
 
     /// `runDueTasks`: due tasks one after another, oldest due first. A fixed time more than
-    /// ten minutes late was missed (the server was off) and moves to its next slot.
-    async fn run_due(&self) {
+    /// ten minutes late was missed (the server was off) and moves to its next slot. Returns the
+    /// pass's failures and whether a due row is still as it was read (it could not be saved).
+    async fn run_due(&self) -> TimerPass {
         let now = self.now();
         let mut due: Vec<(i64, ScheduledTask)> = self
             .inner
@@ -1168,26 +1182,49 @@ impl ScheduledTasks {
             })
             .collect();
         due.sort_by(|(a, x), (b, y)| a.cmp(b).then(x.id.cmp(&y.id)));
-        for (at, task) in due {
-            if is_missed_fixed_time_run(&task.schedule, at, now) {
+        let mut pass = TimerPass::default();
+        for (at, task) in &due {
+            if is_missed_fixed_time_run(&task.schedule, *at, now) {
                 self.reschedule_missed(
-                    &task,
+                    task,
                     now,
                     Some("Missed a scheduled run because the server was not running at that time."),
                 )
                 .await;
-            } else if let Err(error) = self.run_task(task, Trigger::Scheduled).await {
-                eprintln!("scheduled tasks: a scheduled run failed: {error}");
+            } else if let Err(error) = self.run_task(task.clone(), Trigger::Scheduled).await {
+                pass.failures.push(error.message);
             }
         }
+        let tasks = self.inner.tasks.lock().await;
+        pass.stalled = due.iter().any(|(_, seen)| {
+            tasks.iter().any(|t| {
+                t.id == seen.id
+                    && t.enabled
+                    && t.last_run_status != ScheduledTaskRunStatus::Running
+                    && t.next_run_at == seen.next_run_at
+                    && t.last_run_at == seen.last_run_at
+            })
+        });
+        pass
     }
 
-    /// The timer: sleeps until the earliest next run or a change, then runs what is due.
+    /// The timer: sleeps until the earliest next run or a change, then runs what is due. After
+    /// a pass that left a due row where it was, it waits at least [`STALLED_RETRY`].
     async fn run_timer(&self) {
+        let mut log = TimerLog::default();
         loop {
-            self.run_due().await;
+            let pass = self.run_due().await;
+            for line in log.report(&pass) {
+                eprintln!("scheduled tasks: {line}");
+            }
             let wait = self.next_due().await.map(|at| {
-                Duration::from_millis(u64::try_from(at - self.now()).unwrap_or(0)).min(MAX_SLEEP)
+                let wait = Duration::from_millis(u64::try_from(at - self.now()).unwrap_or(0))
+                    .min(MAX_SLEEP);
+                if pass.stalled {
+                    wait.max(STALLED_RETRY)
+                } else {
+                    wait
+                }
             });
             match wait {
                 Some(wait) => {
@@ -1231,6 +1268,47 @@ fn resolve_thread_mode(
 /// What a run that stops without an end records: T3's text for an interrupt-only cause
 /// (`Cause.squash`).
 pub const INTERRUPTED_RUN: &str = "All fibers interrupted without error";
+
+/// What one timer pass left behind.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct TimerPass {
+    /// The failures of the pass's runs, in order.
+    failures: Vec<String>,
+    /// A due row is still as the pass read it.
+    stalled: bool,
+}
+
+/// The timer's log: a failure is logged when the pass's failures change, not on every pass.
+#[derive(Debug, Default)]
+struct TimerLog {
+    last: TimerPass,
+}
+
+impl TimerLog {
+    /// The lines to log for this pass.
+    fn report(&mut self, pass: &TimerPass) -> Vec<String> {
+        let mut lines = Vec::new();
+        if pass.failures != self.last.failures {
+            lines.extend(
+                pass.failures
+                    .iter()
+                    .map(|error| format!("a scheduled run failed: {error}")),
+            );
+        }
+        if pass.stalled != self.last.stalled {
+            lines.push(if pass.stalled {
+                format!(
+                    "a due task could not be moved on; trying again every {} s",
+                    STALLED_RETRY.as_secs()
+                )
+            } else {
+                "due tasks move on again".to_owned()
+            });
+        }
+        self.last = pass.clone();
+        lines
+    }
+}
 
 /// Armed while a run is marked running and has not recorded its end. Dropped armed (the
 /// caller of `runNow` stopped waiting), it records the run as failed.

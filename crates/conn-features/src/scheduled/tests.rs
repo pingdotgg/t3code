@@ -1357,3 +1357,90 @@ async fn the_store_survives_a_restart_and_runs_use_t3_ids() {
     let decoded: Vec<ScheduledTask> = from_json(stored["tasks"].clone()).expect("contract rows");
     assert_eq!(decoded.len(), 1);
 }
+
+/// Finding 3: a due bound task whose thread holds a queued copy, while the store cannot be
+/// written. `reschedule_missed` cannot save, so the row stays due; the timer then waits
+/// `STALLED_RETRY` (T3's poll interval) instead of looping with a zero wait.
+#[tokio::test(start_paused = true)]
+async fn the_timer_waits_when_a_due_task_cannot_be_saved() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let env = Env::new("stalled-timer", "2026-07-01T09:00:00.000Z");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = calls.clone();
+    let fake = Fake {
+        queued: Box::new(move |_, _| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            true
+        }),
+        shell: Box::new(|_| shell("project-spin")),
+        ..Fake::default()
+    };
+    let service = env.start(fake, "UTC", true).await;
+    upsert(
+        &service,
+        json!({"id": "task:spin", "projectId": "project-spin", "threadId": "thread:spin"}),
+    )
+    .await;
+    std::fs::set_permissions(&env.dir, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    async fn spin(millis: u64) {
+        let real = std::time::Instant::now();
+        while real.elapsed() < Duration::from_millis(millis) {
+            tokio::task::yield_now().await;
+        }
+    }
+    tokio::time::advance(Duration::from_secs(61)).await;
+    spin(300).await;
+    let at_once = calls.load(Ordering::SeqCst);
+    for _ in 0..12 {
+        tokio::time::advance(Duration::from_secs(5)).await;
+        spin(30).await;
+    }
+    let after_a_minute = calls.load(Ordering::SeqCst);
+    std::fs::set_permissions(&env.dir, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    assert_eq!(at_once, 1, "one pass while no time passes");
+    assert!(
+        (12..=14).contains(&after_a_minute),
+        "one pass every 5 s: {after_a_minute}"
+    );
+    drop(service);
+}
+
+/// Finding 3: a scheduled run whose row cannot be marked running leaves the pass stalled and
+/// reports the cause; the timer's log says so once, not on every pass.
+#[tokio::test(start_paused = true)]
+async fn a_failed_scheduled_save_is_logged_once_per_state() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = Env::new("stalled-log", "2026-07-01T09:00:00.000Z");
+    let service = env.start(Fake::default(), "UTC", false).await;
+    upsert(
+        &service,
+        json!({"id": "task:log", "projectId": "project:test", "threadId": null,
+               "threadMode": "new_thread"}),
+    )
+    .await;
+    std::fs::set_permissions(&env.dir, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    tokio::time::advance(Duration::from_secs(61)).await;
+    let mut log = super::TimerLog::default();
+    let first = service.run_due().await;
+    let second = service.run_due().await;
+    std::fs::set_permissions(&env.dir, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    assert!(first.stalled, "the row is still due");
+    assert_eq!(first, second);
+    let [failure] = first.failures.as_slice() else {
+        panic!("one failure: {first:?}");
+    };
+    assert!(
+        failure.starts_with("Could not mark schedule task as running. "),
+        "{failure}"
+    );
+    assert_eq!(log.report(&first).len(), 2, "the failure and the stall");
+    assert!(log.report(&second).is_empty(), "nothing new");
+    let third = service.run_due().await;
+    assert!(
+        !third.stalled,
+        "the row moves once the store can be written"
+    );
+    assert_eq!(log.report(&third), ["due tasks move on again"]);
+    drop(service);
+}
