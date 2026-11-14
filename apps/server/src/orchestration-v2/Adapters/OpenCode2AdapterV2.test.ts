@@ -4898,7 +4898,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           "session.tool.success",
           {
             ...tool,
-            content: [{ type: "text", text: '"done"' }],
+            // The script returns the first page and discards the second.
+            content: [{ type: "text", text: JSON.stringify({ htmlRender: references[0] }) }],
             metadata: {
               toolCalls: [
                 { tool: "search", status: "completed", input: { query: "html" } },
