@@ -1,15 +1,26 @@
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   normalizeProviderAccentColor,
   providerAccentForegroundColor,
   providerInstanceInitials,
+  resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "./providerInstanceDisplay.ts";
 
 const codex = ProviderDriverKind.make("codex");
 const acpRegistry = ProviderDriverKind.make("acpRegistry");
+
+describe("resolveProviderInstanceDisplayName", () => {
+  it("shows the configured name, else the driver label, like provider settings", () => {
+    const instanceId = ProviderInstanceId.make("codex_pool");
+    expect(
+      resolveProviderInstanceDisplayName({ instanceId, driver: codex, displayName: "Codex" }),
+    ).toBe("Codex");
+    expect(resolveProviderInstanceDisplayName({ instanceId, driver: codex })).toBe("Codex");
+  });
+});
 
 describe("providerInstanceInitials", () => {
   it("treats punctuation as a word break but keeps apostrophes between letters", () => {

@@ -1,5 +1,4 @@
 import {
-  defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
   type ProviderDriverKind,
   type ServerProvider,
@@ -16,14 +15,12 @@ function humanizeSlug(slug: string): string {
 export function resolveProviderInstanceDisplayName(
   snapshot: Pick<ServerProvider, "instanceId" | "driver" | "displayName">,
 ): string {
-  const trimmedSnapshotName = snapshot.displayName?.trim();
-  const kindLabel = PROVIDER_DISPLAY_NAMES[snapshot.driver] ?? humanizeSlug(snapshot.driver);
-  if (trimmedSnapshotName && trimmedSnapshotName !== kindLabel) return trimmedSnapshotName;
-  if (snapshot.instanceId !== defaultInstanceIdForDriver(snapshot.driver)) {
-    const humanized = humanizeSlug(snapshot.instanceId);
-    if (humanized.length > 0) return humanized;
-  }
-  return trimmedSnapshotName || kindLabel;
+  // Must match the provider settings label so the picker and settings agree.
+  return (
+    snapshot.displayName?.trim() ||
+    PROVIDER_DISPLAY_NAMES[snapshot.driver] ||
+    humanizeSlug(snapshot.driver)
+  );
 }
 
 export function providerInstanceInitials(label: string): string {
