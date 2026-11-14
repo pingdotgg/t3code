@@ -12,12 +12,15 @@ import {
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
+import { discoverCopilotSkills, isCopilotAcpSettings } from "./copilotSkills.ts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import type * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import type * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -214,14 +217,13 @@ export function normalizeAcpRegistryLiveConfiguration(
   };
 }
 
-const emptyAcpRegistryAvailableCommands = (): AcpRegistryAvailableCommands => ({
-  slashCommands: [],
-  skills: [],
-});
-
 export function normalizeAcpRegistryCommands(
   commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+  knownSkills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "path" | "scope" | "description">>,
 ): AcpRegistryAvailableCommands {
+  const knownByName = new Map(
+    (knownSkills ?? []).map((skill) => [skill.name.toLowerCase(), skill] as const),
+  );
   const seen = new Set<string>();
   const slashCommands: Array<ServerProviderSlashCommand> = [];
   const skills: Array<ServerProviderSkill> = [];
@@ -233,6 +235,8 @@ export function normalizeAcpRegistryCommands(
     seen.add(key);
     const description = boundedText(command.description, MAX_DESCRIPTION_LENGTH);
     const hint = command.input ? boundedText(command.input.hint, MAX_DESCRIPTION_LENGTH) : "";
+    // Copilot advertises skills without a `$` prefix. Match those names to discovered skills.
+    const knownSkill = name.startsWith("$") ? undefined : knownByName.get(key);
     if (name.startsWith("$")) {
       const skillName = boundedOpaqueValue(name.slice(1), MAX_ID_LENGTH);
       if (skillName === undefined) continue;
@@ -241,6 +245,16 @@ export function normalizeAcpRegistryCommands(
         ...(description ? { description } : {}),
         path: `acp://skill/${encodeURIComponent(skillName)}`,
         scope: "agent",
+        enabled: true,
+      });
+    } else if (knownSkill) {
+      skills.push({
+        name,
+        ...(description || knownSkill.description
+          ? { description: description || knownSkill.description }
+          : {}),
+        path: knownSkill.path,
+        ...(knownSkill.scope ? { scope: knownSkill.scope } : {}),
         enabled: true,
       });
     } else {
@@ -330,6 +344,8 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
     | AcpRegistrySupport.AcpRegistryCatalog
     | ChildProcessSpawner.ChildProcessSpawner
     | SecureRandom.SecureRandom
+    | FileSystem.FileSystem
+    | Path.Path
   > {
     const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
     const probeTimeoutMs = resolveProviderProbeTimeoutMs(
@@ -384,9 +400,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
         Effect.provide(runtimeContext),
       );
-      const commandsRef = yield* Ref.make<AcpRegistryAvailableCommands>(
-        emptyAcpRegistryAvailableCommands(),
-      );
+      const commandsRef = yield* Ref.make<ReadonlyArray<EffectAcpSchema.AvailableCommand>>([]);
       const commandsAdvertised = yield* Deferred.make<void>();
       yield* runtime.handleElicitation((request) =>
         Effect.gen(function* () {
@@ -420,7 +434,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;
         return update.sessionUpdate === "available_commands_update"
-          ? Ref.set(commandsRef, normalizeAcpRegistryCommands(update.availableCommands)).pipe(
+          ? Ref.set(commandsRef, update.availableCommands).pipe(
               Effect.andThen(Deferred.succeed(commandsAdvertised, undefined)),
               Effect.asVoid,
             )
@@ -445,7 +459,14 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       yield* Deferred.await(commandsAdvertised).pipe(
         Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
       );
-      return { resolved, started, commands: yield* Ref.get(commandsRef) };
+      const knownSkills = isCopilotAcpSettings(input.settings)
+        ? yield* discoverCopilotSkills(undefined, input.environment)
+        : [];
+      return {
+        resolved,
+        started,
+        commands: normalizeAcpRegistryCommands(yield* Ref.get(commandsRef), knownSkills),
+      };
     }).pipe(
       Effect.scoped,
       Effect.timeoutOrElse({
