@@ -583,12 +583,17 @@ const make = Effect.gen(function* () {
     requestUrl: string,
     allowNonLoopbackRequestHost = false,
   ) {
+    const address = httpServer.address;
     if (
       !isSupportedLinkProviderKind(request) ||
       !isAllowedEndpointOrigin({
         origin: request.origin,
         requestUrl,
         allowNonLoopbackRequestHost,
+        serverHost:
+          typeof address === "string" || !("port" in address)
+            ? ""
+            : loopbackUrlHostForAddress(address),
       })
     ) {
       return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });

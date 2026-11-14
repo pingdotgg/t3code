@@ -117,6 +117,22 @@ export const isPrivateNetworkHost = (host: string): boolean => {
   );
 };
 
+/**
+ * Where a T3 Connect managed tunnel may forward: loopback, or the private-network IP a specific
+ * `--host` binds. Never a name or public address, which would let the tunnel front another site.
+ */
+export const isManagedTunnelOriginHost = (host: string): boolean => {
+  const normalized = normalizeHostname(host);
+  if (normalized === "localhost") return true;
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/u.test(normalized)) {
+    const parts = parseIpv4Address(normalized);
+    return parts !== null && parts[0] !== 0 && isPrivateIpv4Address(parts);
+  }
+  return (
+    normalized !== "::" && parseIpv6Address(normalized) !== null && isPrivateNetworkHost(normalized)
+  );
+};
+
 // Includes private TLDs from RFC 6762 Appendix G.
 const PRIVATE_FAVICON_TLDS = [
   ".alt",

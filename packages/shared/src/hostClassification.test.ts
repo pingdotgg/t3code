@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isPublicFaviconHost } from "./hostClassification.ts";
+import { isManagedTunnelOriginHost, isPublicFaviconHost } from "./hostClassification.ts";
 
 describe("isPublicFaviconHost", () => {
   it("treats public hosts as public", () => {
@@ -107,5 +107,26 @@ describe("isPublicFaviconHost", () => {
   it("rejects malformed IPv4 text as a public host", () => {
     expect(isPublicFaviconHost("10.0.0.999")).toBe(true);
     expect(isPublicFaviconHost("10.0.0")).toBe(true);
+  });
+});
+
+describe("isManagedTunnelOriginHost", () => {
+  it.each([
+    ["127.0.0.1", true],
+    ["[::1]", true],
+    ["localhost", true],
+    ["192.168.1.42", true],
+    ["100.101.102.103", true],
+    ["[fd7a:115c:a1e0::1]", true],
+    ["203.0.113.7", false],
+    ["0.0.0.0", false],
+    ["::", false],
+    ["10.0.0.0x1", false],
+    ["127.0x1.0.1", false],
+    ["127.0.0.2", true],
+    ["myhost", false],
+    ["example.local", false],
+  ])("%s -> %s", (host, allowed) => {
+    expect(isManagedTunnelOriginHost(host)).toBe(allowed);
   });
 });
