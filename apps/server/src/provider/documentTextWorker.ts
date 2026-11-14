@@ -49,7 +49,8 @@ function collapseOdfWhitespace(paragraph: XmlNode) {
   const visit = (node: XmlNode) => {
     for (const [index, child] of node.children.entries()) {
       if (typeof child !== "string") {
-        if (child.spaceCount === undefined && !["tab", "line-break"].includes(child.name))
+        if (HIDDEN.has(child.name)) continue;
+        if (child.spaceCount === undefined && !["tab", "line-break", "p", "h"].includes(child.name))
           visit(child);
         else {
           afterSpace = false;
