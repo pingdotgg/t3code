@@ -179,7 +179,7 @@ it("cancels a new citation while dictation makes the composer read-only", async 
   );
   await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
 
-  await page.getByRole("button", { name: "Cancel" }).click();
+  await userEvent.keyboard("{Escape}");
 
   await expect.element(page.getByLabelText("Comment on selected text")).not.toBeInTheDocument();
   expect(screen.container.querySelector("output")?.dataset.prompt).toBe("See ");
