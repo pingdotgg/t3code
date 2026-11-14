@@ -84,7 +84,10 @@ import {
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
-import { resolveDraftProjectSelection } from "./new-task-project-selection";
+import {
+  resolveDraftProjectSelection,
+  resolveRouteDraftProject,
+} from "./new-task-project-selection";
 import {
   resolveNewTaskBranchLabel,
   resolveNewTaskWorkspaceLabel,
@@ -271,6 +274,7 @@ export function NewTaskDraftScreen(props: {
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isReturningToProjectPicker, setIsReturningToProjectPicker] = useState(false);
   const incomingShare = props.incomingShareId ? getShare(props.incomingShareId) : null;
+  const hasPendingShare = Boolean(incomingShare);
   const requestedInitialProjectAvailable = Boolean(
     props.initialProjectRef?.environmentId &&
     props.initialProjectRef.projectId &&
@@ -419,13 +423,14 @@ export function NewTaskDraftScreen(props: {
     const initialEnvironmentId = props.initialProjectRef?.environmentId;
     const initialProjectId = props.initialProjectRef?.projectId;
     if (initialEnvironmentId && initialProjectId) {
-      const directProject =
-        projects.find(
-          (project) =>
-            project.environmentId === initialEnvironmentId && project.id === initialProjectId,
-        ) ?? null;
+      const routeProject = resolveRouteDraftProject(
+        { environmentId: initialEnvironmentId, projectId: initialProjectId },
+        projects,
+        hasPendingShare,
+      );
 
-      if (directProject) {
+      if (routeProject.kind === "select") {
+        const directProject = routeProject.project;
         // Apply the route project once or picker changes would immediately revert.
         const directProjectKey = `${directProject.environmentId}:${directProject.id}`;
         if (appliedInitialProjectKeyRef.current === directProjectKey) {
@@ -461,7 +466,7 @@ export function NewTaskDraftScreen(props: {
         return;
       }
 
-      if (projects.length > 0) {
+      if (routeProject.kind === "pick") {
         // oxlint-disable-next-line react/set-state-in-effect -- Route-driven project resolution starts the return-to-picker flow when no project matches.
         setIsReturningToProjectPicker(true);
       }
@@ -506,6 +511,7 @@ export function NewTaskDraftScreen(props: {
     props.incomingShareId,
     props.draftId,
     navigation,
+    hasPendingShare,
     selectedProject,
     selectedProjectKey,
     setProject,

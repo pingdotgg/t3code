@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   EMPTY_INCOMING_SHARE_PRESENTATION_STATE,
+  incomingShareDraftRouteParams,
   transitionIncomingSharePresentation,
 } from "./incoming-share-presentation";
 
@@ -50,5 +51,18 @@ describe("incoming share presentation", () => {
         pendingShareId: "share-1",
       }).shareIdToPresent,
     ).toBe("share-1");
+  });
+
+  it("opens a reserved share in its reserved project draft", () => {
+    expect(
+      incomingShareDraftRouteParams({
+        id: "share-1",
+        destination: { environmentId: "env-1", projectId: "project-b" },
+      }),
+    ).toEqual({ incomingShareId: "share-1", environmentId: "env-1", projectId: "project-b" });
+
+    expect(incomingShareDraftRouteParams({ id: "share-2" })).toEqual({
+      incomingShareId: "share-2",
+    });
   });
 });
