@@ -102,7 +102,12 @@ export function goalNowItem(input: {
       presentation.usage === null
         ? presentation.title
         : `${presentation.title} · ${presentation.usage}`,
-    description: presentation.objective,
+    description: (
+      <Tooltip>
+        <TooltipTrigger render={<span tabIndex={0} />}>{presentation.objective}</TooltipTrigger>
+        <TooltipPopup>{presentation.objective}</TooltipPopup>
+      </Tooltip>
+    ),
     // Clear stops goal work; Resume would stop unrelated work, so it waits.
     actions: (
       <>
