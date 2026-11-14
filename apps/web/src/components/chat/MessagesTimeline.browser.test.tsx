@@ -42,7 +42,6 @@ import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../../lib/workspaceFocus";
-import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { ComposerApprovalPanel } from "./ComposerApprovalPanel";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
 import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "../../test-fixtures";
