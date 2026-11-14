@@ -15,7 +15,6 @@ import {
   useEffectEvent,
   useImperativeHandle,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type Ref,
@@ -295,6 +294,7 @@ function PreviewStreamDocumentView({
     onControl?.(null);
   });
   // The stream lives exactly as long as this view.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the bootstrap timeout and stops the WebView stream when this view unmounts
   useLayoutEffect(() => {
     active.current = true;
     const view = webView.current;
@@ -307,13 +307,10 @@ function PreviewStreamDocumentView({
       streamEnded();
     };
   }, []);
-  const source = useMemo(
-    () => ({
-      html: previewStreamDocument(configuration, previewStreamScript),
-      baseUrl: Platform.OS === "android" ? "https://localhost/" : "file:///",
-    }),
-    [configuration],
-  );
+  const source = {
+    html: previewStreamDocument(configuration, previewStreamScript),
+    baseUrl: Platform.OS === "android" ? "https://localhost/" : "file:///",
+  };
   useImperativeHandle(ref, () => ({
     command,
     paste,
@@ -408,7 +405,7 @@ function PreviewStreamDocumentView({
                 onPictureInPicture?.(message, message.detail);
                 return;
               case "status":
-                clearBootstrapTimer();
+                if (message.status !== "connecting") clearBootstrapTimer();
                 if (message.status === "error") {
                   fail(message.detail ?? "Browser stream failed.");
                   return;

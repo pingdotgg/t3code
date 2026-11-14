@@ -1,6 +1,12 @@
 import * as Dialog from "../../components/ui/Dialog";
-import { AuthRelayWriteScope } from "@t3tools/contracts";
+import {
+  AuthRelayWriteScope,
+  managedCapabilityDenial,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { serverEnvironment } from "../../state/server";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAuth } from "@clerk/expo";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
@@ -8,8 +14,8 @@ import * as Notifications from "expo-notifications";
 import { useNavigation } from "@react-navigation/native";
 import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/reactivity";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { AppState, Linking, Platform } from "react-native";
+import { useRef, useState, useSyncExternalStore } from "react";
+import { Linking, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -28,12 +34,14 @@ import {
 import { setLiveActivityUpdatesEnabled } from "../agent-awareness/liveActivityPreferences";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
 import {
+  agentAwarenessNotificationsReady,
   getAgentAwarenessRegistrationStatus,
   refreshAgentAwarenessRegistration,
   subscribeAgentAwarenessRegistrationStatus,
 } from "../agent-awareness/remoteRegistration";
 import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
+import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
 import { runtime } from "../../lib/runtime";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -43,8 +51,54 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
 
+/**
+ * A policy that turns Connect off refuses relay links and preferences, which would fail the
+ * whole batch, so those environments are skipped like ones this session cannot configure.
+ */
+function canLinkEnvironmentToConnect(environmentId: EnvironmentId) {
+  const policy = appAtomRegistry.get(
+    serverEnvironment.configValueAtom(environmentId),
+  )?.managedPolicy;
+  return (
+    readEnvironmentScope(environmentId, AuthRelayWriteScope) &&
+    managedCapabilityDenial(policy, "connect") === undefined
+  );
+}
+
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
+
+const notificationStatusAtom = makePermissionStatusAtom<NotificationStatus>({
+  label: "mobile:notification-permission",
+  initial: "checking",
+  read: async () => {
+    if (Platform.OS !== "ios" && Platform.OS !== "android") return "unsupported";
+    const result = await settlePromise(() => Notifications.getPermissionsAsync());
+    if (result._tag === "Failure") {
+      reportAtomCommandResult(result, { label: "notification permission refresh" });
+      return "disabled";
+    }
+    return result.value.granted ? "enabled" : "disabled";
+  },
+});
+
+type LiveActivityBasis = {
+  readonly isLoaded: boolean;
+  readonly isSignedIn: boolean | undefined;
+  readonly preferencesResult: unknown;
+};
+
+function liveActivityStatusFrom(
+  isLoaded: boolean,
+  isSignedIn: boolean | undefined,
+  preferencesResult: AsyncResult.AsyncResult<{ readonly liveActivitiesEnabled?: boolean }, unknown>,
+): LiveActivityStatus {
+  if (!isLoaded) return "checking";
+  if (!isSignedIn) return "signed-out";
+  if (AsyncResult.isFailure(preferencesResult)) return "enabled";
+  if (!AsyncResult.isSuccess(preferencesResult)) return "checking";
+  return preferencesResult.value.liveActivitiesEnabled === false ? "disabled" : "enabled";
+}
 
 function useDeviceRegistered(): boolean {
   const status = useSyncExternalStore(
@@ -53,6 +107,14 @@ function useDeviceRegistered(): boolean {
     () => "unknown" as const,
   );
   return status === "registered";
+}
+
+function useNotificationsReady(): boolean {
+  return useSyncExternalStore(
+    subscribeAgentAwarenessRegistrationStatus,
+    agentAwarenessNotificationsReady,
+    () => false,
+  );
 }
 
 export function SettingsNotificationsRouteScreen() {
@@ -87,10 +149,27 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   const navigation = useNavigation();
   const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { savedConnectionsById } = useSavedRemoteConnections();
-  const [notificationStatus, setNotificationStatus] = useState<NotificationStatus>("checking");
-  const [liveActivityStatus, setLiveActivityStatus] = useState<LiveActivityStatus>("checking");
+  const notificationStatus = useAtomValue(notificationStatusAtom);
+  const setNotificationStatus = useAtomSet(notificationStatusAtom);
+  // A write in progress or a failed one shows its own status until the auth or
+  // preference state it was based on changes.
+  const [liveActivityOverride, setLiveActivityOverride] = useState<{
+    readonly status: LiveActivityStatus;
+    readonly basis: LiveActivityBasis;
+  } | null>(null);
+  const liveActivityBasis: LiveActivityBasis = { isLoaded, isSignedIn, preferencesResult };
+  const liveActivityStatus =
+    liveActivityOverride !== null &&
+    liveActivityOverride.basis.isLoaded === isLoaded &&
+    liveActivityOverride.basis.isSignedIn === isSignedIn &&
+    liveActivityOverride.basis.preferencesResult === preferencesResult
+      ? liveActivityOverride.status
+      : liveActivityStatusFrom(isLoaded, isSignedIn, preferencesResult);
+  const setLiveActivityStatus = (status: LiveActivityStatus) =>
+    setLiveActivityOverride({ status, basis: liveActivityBasis });
   const liveActivityWriteInFlight = useRef(false);
   const deviceRegistered = useDeviceRegistered();
+  const notificationsReady = useNotificationsReady();
   const liveActivitiesPreferenceEnabled = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value.liveActivitiesEnabled !== false
     : true;
@@ -100,53 +179,6 @@ function ConfiguredSettingsNotificationsRouteScreen() {
 
   const connections = Object.values(savedConnectionsById);
   const environmentCount = connections.length;
-
-  const refreshNotifications = async () => {
-    if (Platform.OS !== "ios" && Platform.OS !== "android") {
-      setNotificationStatus("unsupported");
-      return;
-    }
-    const result = await settlePromise(() => Notifications.getPermissionsAsync());
-    if (result._tag === "Failure") {
-      reportAtomCommandResult(result, { label: "notification permission refresh" });
-      setNotificationStatus("disabled");
-      return;
-    }
-    setNotificationStatus(result.value.granted ? "enabled" : "disabled");
-  };
-
-  useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- Reads native notification permission on mount and on every foreground.
-    void refreshNotifications();
-    const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") void refreshNotifications();
-    });
-    return () => subscription.remove();
-  }, [refreshNotifications]);
-
-  useEffect(() => {
-    if (!isLoaded) {
-      // oxlint-disable-next-line react/set-state-in-effect -- Live Activity status shows checking until stored preferences load.
-      setLiveActivityStatus("checking");
-      return;
-    }
-    if (!isSignedIn) {
-      setLiveActivityStatus("signed-out");
-      return;
-    }
-    if (!AsyncResult.isSuccess(preferencesResult)) {
-      if (AsyncResult.isFailure(preferencesResult)) {
-        reportAtomCommandResult(preferencesResult, { label: "live activity preference load" });
-        setLiveActivityStatus("enabled");
-      } else {
-        setLiveActivityStatus("checking");
-      }
-      return;
-    }
-    setLiveActivityStatus(
-      preferencesResult.value.liveActivitiesEnabled === false ? "disabled" : "enabled",
-    );
-  }, [isLoaded, isSignedIn, preferencesResult]);
 
   const requestNotifications = async () => {
     const result = await settleAsyncResult(() =>
@@ -170,9 +202,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     }
     if (result.value.type === "granted") {
       setNotificationStatus("enabled");
-      if (getAgentAwarenessRegistrationStatus() === "registered") {
-        Dialog.alert("Notifications enabled", "Agent notifications are enabled for this device.");
-      } else {
+      if (!agentAwarenessNotificationsReady()) {
         Dialog.alert(
           "Couldn't finish enabling notifications",
           "Notification access was granted, but this device could not be registered with T3 Connect. Notifications will start once registration succeeds.",
@@ -270,8 +300,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     const updateResult = await settleAsyncResult(() =>
       runtime.runPromiseExit(
         setLiveActivityUpdatesEnabled({
-          canConfigureEnvironment: (environmentId) =>
-            readEnvironmentScope(environmentId, AuthRelayWriteScope),
+          canConfigureEnvironment: canLinkEnvironmentToConnect,
           enabled: true,
           previousEnabled: liveActivitiesPreferenceEnabled,
           clerkToken: tokenResult.value,
@@ -349,8 +378,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     const updateResult = await settleAsyncResult(() =>
       runtime.runPromiseExit(
         setLiveActivityUpdatesEnabled({
-          canConfigureEnvironment: (environmentId) =>
-            readEnvironmentScope(environmentId, AuthRelayWriteScope),
+          canConfigureEnvironment: canLinkEnvironmentToConnect,
           enabled: false,
           previousEnabled: liveActivitiesPreferenceEnabled,
           clerkToken: token,
@@ -414,7 +442,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
             }
             subtitle={agentAwarenessSubtitle}
             value={
-              agentAwarenessPushAvailable && notificationStatus === "enabled" && deviceRegistered
+              agentAwarenessPushAvailable && notificationStatus === "enabled" && notificationsReady
             }
             onValueChange={handleDeviceNotificationsChange}
           />

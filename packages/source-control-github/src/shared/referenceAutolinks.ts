@@ -3,7 +3,7 @@ import type { ReferenceAutolink } from "@t3tools/source-control-core/shared/defi
 // GitHub's autolinked references: `#12`, `repo#12` and `owner/repo#12`; a SHA of 7 to 40
 // characters, optionally `repo@` or `owner/repo@` qualified; `@user` and `@org/team`.
 const REFERENCE =
-  /(?<![\w/\\])(?:([\w.-]+\/[\w.-]+|[\w-]+)?#([1-9]\d*)|(?:([\w.-]+\/[\w.-]+|[\w-]+)@)?([a-f\d]{7,40})(?![\w])|@([a-z\d](?:[a-z\d-]*[a-z\d])?(?:\/[a-z\d][a-z\d-]*)?))(?![\w])/giu;
+  /(?<![\w./\\-])(?:([\w.-]+\/[\w.-]+|[\w-]+)?#([1-9]\d*)|(?:([\w.-]+\/[\w.-]+|[\w-]+)@)?([a-f\d]{7,40})(?![\w])|@([a-z\d](?:[a-z\d-]*[a-z\d])?(?:\/[a-z\d][a-z\d-]*)?))(?![\w])/giu;
 const CANDIDATE = /[#@]|\b[a-f\d]{7,40}\b/iu;
 const SHORT_SHA_LENGTH = 7;
 

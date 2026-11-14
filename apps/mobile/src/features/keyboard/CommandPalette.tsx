@@ -1,3 +1,5 @@
+import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
+import { useAtomValue } from "@effect/atom-react";
 import { uuidv4 } from "../../lib/uuid";
 import { useNavigation } from "@react-navigation/native";
 import {
@@ -7,7 +9,7 @@ import {
   type EnvironmentThreadSearchMatch,
   type ShownOrder,
 } from "@t3tools/client-runtime/state/thread-search";
-import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
+import { isListedThreadLineage, THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import {
   foldSearchQuery,
   PALETTE_MESSAGE_LIMIT,
@@ -16,9 +18,8 @@ import {
   pickedQuery,
   threadRecentUse,
 } from "@t3tools/shared/paletteSearch";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  FlatList,
   KeyboardAvoidingView,
   Modal,
   Pressable,
@@ -41,15 +42,25 @@ import { deriveBottomControlInsets } from "../../lib/reserved-regions";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
-import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
+import {
+  useProjects,
+  useServerConfigs,
+  useThreadShell,
+  useVisibleThreadShells,
+} from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { serverEnvironment } from "../../state/server";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
+import { pickTriageEnvironment } from "../triage/triageTarget";
+import { useStartTriage } from "../triage/useStartTriage";
+import { useNewTaskFlow } from "../threads/new-task-flow-provider";
+import { useActiveNewTask } from "../../state/active-new-task";
 import {
   filterCommandPaletteItems,
   nextPaletteIndex,
@@ -60,8 +71,8 @@ import { parseActiveThreadPath, type HardwareKeyboardCommand } from "./hardwareK
 import { threadJumpIndex } from "./threadKeyboardShortcuts";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { openSettings } from "../settings/settings-navigation";
-import { useSelectWorkspaceTab } from "../workspace/useSelectWorkspaceTab";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceTab } from "../layout/workspace/useSelectWorkspaceTab";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 
 const PALETTE_COMMANDS: ReadonlyArray<HardwareKeyboardCommand> = [
   "commandPalette",
@@ -215,8 +226,8 @@ export function CommandPalette(props: {
   const selectDetail = useSelectWorkspaceDetail();
   const runCommand = props.onCommand;
   const projects = useProjects();
-  const threads = useThreadShells();
-  const activeThreadRef = useMemo(() => parseActiveThreadPath(props.pathname), [props.pathname]);
+  const threads = useVisibleThreadShells();
+  const activeThreadRef = parseActiveThreadPath(props.pathname);
   const activeThread = useThreadShell(activeThreadRef);
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const environments = useWorkspaceEnvironments();
@@ -229,7 +240,7 @@ export function CommandPalette(props: {
   const pendingAction = useRef<(() => void) | null>(null);
   const closing = useRef(false);
   const inputRef = useRef<TextInputInstance>(null);
-  const listRef = useRef<FlatList<CommandPaletteResult>>(null);
+  const listRef = useRef<LegendListRef>(null);
   const { width, height } = useWindowDimensions();
   // The palette floats above every column, so it keeps itself inside the window's side insets
   // and to one side of a book fold.
@@ -256,14 +267,26 @@ export function CommandPalette(props: {
     query.startsWith(">") ? "" : query,
     environmentLabels === undefined ? {} : { environmentLabels },
   );
-  const contentMatchByKey = useMemo(
-    () =>
-      new Map(
-        search.matches
-          .filter((match) => match.source === "user" || match.source === "assistant")
-          .map((match) => [scopedThreadKey(match.environmentId, match.threadId), match]),
-      ),
-    [search.matches],
+  const serverConfigs = useServerConfigs();
+  const startTriage = useStartTriage();
+  const newTaskFlow = useNewTaskFlow();
+  const draftEnvironmentId =
+    useActiveNewTask() === null ? null : (newTaskFlow.selectedProject?.environmentId ?? null);
+  const triageEnvironmentId = pickTriageEnvironment({
+    // The route names the machine even before the thread shell loads.
+    onScreen: activeThreadRef?.environmentId ?? draftEnvironmentId,
+    connected: searchEnvironmentIds,
+    supportsTriage: (environmentId) =>
+      serverConfigs.get(environmentId)?.environment.capabilities.triage === true,
+  });
+  const canTriage =
+    useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
+    triageEnvironmentId !== null &&
+    serverConfigs.get(triageEnvironmentId)?.environment.capabilities.triage === true;
+  const contentMatchByKey = new Map(
+    search.matches
+      .filter((match) => match.source === "user" || match.source === "assistant")
+      .map((match) => [scopedThreadKey(match.environmentId, match.threadId), match]),
   );
   const items = useMemo(() => {
     const actions: CommandPaletteItem[] = [
@@ -324,6 +347,17 @@ export function CommandPalette(props: {
         run: () => openSettings(navigation, "SettingsArchive"),
       },
     ];
+    if (canTriage) {
+      actions.push({
+        key: "triage",
+        kind: "action",
+        title: "Triage an issue",
+        // Mobile has no triage hero, so name the machine before it starts.
+        detail: `On ${savedConnectionsById[triageEnvironmentId]?.environmentLabel ?? "this machine"}`,
+        searchTerms: ["triage", "bug", "issue", "report", "broken", "debug", "help", "support"],
+        run: () => void startTriage(triageEnvironmentId),
+      });
+    }
     const projectByKey = new Map(
       projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
     );
@@ -355,7 +389,7 @@ export function CommandPalette(props: {
         ["files", "Go to file", ["open", "files", "browse", "search"]],
         ["terminal", "Open terminal", ["shell", "console"]],
         ["review", "Review changes", ["diff", "git", "pull request"]],
-        ["copyThreadReference", "Copy PR link or thread ID", ["reference", "clipboard"]],
+        ["copyThreadReference", "Copy PR link or thread", ["reference", "clipboard"]],
       ] as const;
       actions.push(
         ...threadActions.map(([command, title, searchTerms]) => ({
@@ -367,7 +401,11 @@ export function CommandPalette(props: {
         })),
       );
     }
-    const projectItems: CommandPaletteItem[] = projects.map((project) => ({
+    const openProjects = projects.filter((project) => project.archivedAt == null);
+    const projectItems: CommandPaletteItem[] = [
+      ...openProjects.filter((project) => project.pinnedAt != null),
+      ...openProjects.filter((project) => project.pinnedAt == null),
+    ].map((project) => ({
       key: `project:${scopedProjectKey(project.environmentId, project.id)}`,
       kind: "project",
       project,
@@ -388,10 +426,7 @@ export function CommandPalette(props: {
         }),
     }));
     const threadItems: CommandPaletteItem[] = threads
-      .filter(
-        (thread) =>
-          thread.archivedAt === null && thread.lineage.relationshipToParent !== "subagent",
-      )
+      .filter((thread) => thread.archivedAt === null && isListedThreadLineage(thread.lineage))
       .map((thread) => {
         const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));
         const environment =
@@ -430,12 +465,15 @@ export function CommandPalette(props: {
     activeThread,
     activeThreadRef,
     environments.length,
+    canTriage,
     navigation,
     projects,
     runCommand,
     savedConnectionsById,
     selectDetail,
+    startTriage,
     threads,
+    triageEnvironmentId,
   ]);
   const rankedMessageKeys = useMemo(() => {
     const subjectByKey = new Map(
@@ -507,6 +545,7 @@ export function CommandPalette(props: {
   // The native list follows the highlighted row. Key presses move it, but so do
   // live thread updates and late message matches that reorder or drop the
   // selected row under a kept selection, so no single handler owns the scroll.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the native list to the highlighted row, which key presses and live result updates both move
   useEffect(() => {
     if (selectedIndex === 0) {
       // Centering before the list measures its height scrolls half the first row out of view.
@@ -518,7 +557,7 @@ export function CommandPalette(props: {
 
   const dismissed = useRef(false);
   const dismissFallback = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleDismissed = useCallback(() => {
+  const handleDismissed = () => {
     if (dismissFallback.current !== null) clearTimeout(dismissFallback.current);
     dismissFallback.current = null;
     if (dismissed.current) return;
@@ -526,7 +565,8 @@ export function CommandPalette(props: {
     // Present navigation sheets only after UIKit has dismissed this modal.
     props.onClose();
     pendingAction.current?.();
-  }, [props]);
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the dismiss fallback timer on unmount
   useEffect(
     () => () => {
       if (dismissFallback.current !== null) clearTimeout(dismissFallback.current);
@@ -623,22 +663,23 @@ export function CommandPalette(props: {
                   />
                 </View>
               </View>
-              <FlatList
+              {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- The palette is a modal with no navigation header to register with. */}
+              <LegendList
                 ref={listRef}
                 data={results}
-                extraData={selectedKey}
+                extraData={{
+                  selectedKey,
+                  firstMessageIndex,
+                  contentMatchByKey,
+                  query: search.query,
+                }}
                 keyboardShouldPersistTaps="handled"
                 keyExtractor={(item) => item.key}
-                getItemLayout={(_, index) => ({
-                  length: ROW_HEIGHT + (index === firstMessageIndex ? SECTION_LABEL_HEIGHT : 0),
-                  offset:
-                    ROW_HEIGHT * index +
-                    (firstMessageIndex !== -1 && index > firstMessageIndex
-                      ? SECTION_LABEL_HEIGHT
-                      : 0),
-                  index,
-                })}
-                contentContainerClassName="pb-2"
+                getFixedItemSize={(_, index) =>
+                  ROW_HEIGHT + (index === firstMessageIndex ? SECTION_LABEL_HEIGHT : 0)
+                }
+                recycleItems
+                contentContainerStyle={{ paddingBottom: 8 }}
                 ListEmptyComponent={
                   <Text className="p-5 text-center text-foreground-muted">
                     {search.isPending ? "Searching…" : "No results"}

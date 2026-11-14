@@ -1,11 +1,11 @@
 import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 
 import { mediaFileRevision, openMediaFile } from "./MediaFile.ts";
 
@@ -29,12 +29,11 @@ export class WorkspacePreviewRevisions extends Context.Service<
 const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const directories = yield* Cache.make({
     capacity: 64,
     lookup: (_key: string) =>
-      crypto.randomUUIDv4().pipe(
-        Effect.orDie,
+      random.uuidV4().pipe(
         Effect.map((generation) => ({
           generation,
           version: 0,

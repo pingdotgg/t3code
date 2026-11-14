@@ -59,20 +59,13 @@ it.layer(layer)("PreviewManager", (it) => {
     }),
   );
 
-  it.effect("keeps the tab's profile across navigation and status reports", () =>
+  it.effect("keeps the tab's profile across status reports", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();
       const manager = yield* PreviewManager.PreviewManager;
 
       const opened = yield* manager.open({ threadId, profileId: "work" });
       expect(opened.profileId).toBe("work");
-
-      const navigated = yield* manager.navigate({
-        threadId,
-        tabId: opened.tabId,
-        url: "localhost:5173",
-      });
-      expect(navigated.profileId).toBe("work");
 
       yield* manager.reportStatus({
         threadId,
@@ -86,6 +79,18 @@ it.layer(layer)("PreviewManager", (it) => {
     }),
   );
 
+  it.effect("opens a server tab with the requested zoom and appearance", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const rendering = { zoomFactor: 0.8, colorScheme: "dark" } as const;
+
+      const opened = yield* manager.open({ threadId, runtime: "server", ...rendering });
+
+      expect(opened).toMatchObject(rendering);
+    }),
+  );
+
   it.effect("reissues presentation requests without replaying them on navigation", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();
@@ -96,10 +101,6 @@ it.layer(layer)("PreviewManager", (it) => {
       const first = (yield* manager.list({ threadId })).sessions[0];
       expect(first?.reveal).toBe(true);
       expect(first?.revealRequest?.force).toBe(true);
-      const refused = yield* manager
-        .navigate({ threadId, tabId: opened.tabId, url: "localhost:5173" })
-        .pipe(Effect.flip);
-      expect(refused._tag).toBe("PreviewControlRequiredError");
       yield* manager.reportStatus({
         threadId,
         tabId: opened.tabId,
@@ -131,10 +132,12 @@ it.layer(layer)("PreviewManager", (it) => {
       const before = yield* manager.list({ threadId });
 
       const opened = yield* manager.open({ threadId, url: "http://localhost:5173" });
-      yield* manager.navigate({
+      yield* manager.reportStatus({
         threadId,
         tabId: opened.tabId,
-        url: "http://localhost:5173/ready",
+        navStatus: { _tag: "Success", url: "http://localhost:5173/ready", title: "Ready" },
+        canGoBack: true,
+        canGoForward: false,
       });
 
       const events = yield* collector.drain;
@@ -163,13 +166,6 @@ it.layer(layer)("PreviewManager", (it) => {
       });
       expect(resized.viewport).toEqual({ _tag: "freeform", width: 1024, height: 768 });
 
-      const navigated = yield* manager.navigate({
-        threadId,
-        tabId: opened.tabId,
-        url: "http://localhost:5173/resized",
-      });
-      expect(navigated.viewport).toEqual(resized.viewport);
-
       yield* manager.reportStatus({
         threadId,
         tabId: opened.tabId,
@@ -181,12 +177,7 @@ it.layer(layer)("PreviewManager", (it) => {
       expect(listed.sessions[0]?.viewport).toEqual(resized.viewport);
 
       const events = yield* collector.drain;
-      expect(events.map((event) => event.type)).toEqual([
-        "opened",
-        "resized",
-        "navigated",
-        "navigated",
-      ]);
+      expect(events.map((event) => event.type)).toEqual(["opened", "resized", "navigated"]);
     }),
   );
 
