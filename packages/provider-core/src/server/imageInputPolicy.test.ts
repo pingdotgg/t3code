@@ -18,6 +18,8 @@ describe("modelImageInputSupport", () => {
     [{ capabilities: { input: { image: true } } }, true],
     [{ input: ["text"] }, false],
     [{ input: ["text", "image"] }, true],
+    [{ input: ["text", "image/png"] }, true],
+    [{ capabilities: { modalities: { input: ["text", "image/jpeg"] } } }, true],
     [{ modalities: { input: ["text"] } }, false],
     [{ modalities: { input: ["text", "image"] } }, true],
     [{}, undefined],
