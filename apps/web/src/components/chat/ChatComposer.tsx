@@ -1844,6 +1844,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
   const { blocksSubmission: voiceInputActive, submitAfterDictation } = speechInput;
+  const voiceControlsOpen = speechInput.available && speechInput.state.phase !== "idle";
   // A compact footer gives the dictation capsule the whole row beside the send button.
   const dictationTakesFooter = isComposerFooterCompact && speechInput.state.phase !== "idle";
   const submissionTarget = activePendingProgress ? "pending-user-input" : "provider-turn";
@@ -3707,16 +3708,35 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2"
                 >
-                  <div
-                    ref={attachExpandedComposerControls}
-                    data-chat-composer-controls="footer"
-                    data-chat-composer-footer-controls="true"
-                    className={cn(
-                      "relative flex min-w-0 flex-1 items-center justify-end gap-0.5",
-                      dictationTakesFooter && "hidden",
-                    )}
-                  >
-                    {composerControls}
+                  <div className="relative flex min-w-0 flex-1 items-center">
+                    <div
+                      ref={attachExpandedComposerControls}
+                      data-chat-composer-controls="footer"
+                      data-chat-composer-footer-controls="true"
+                      className={cn(
+                        "relative flex min-w-0 flex-1 items-center justify-end gap-0.5 transition-[opacity,visibility] duration-150 ease-out",
+                        voiceControlsOpen && "invisible opacity-0",
+                      )}
+                    >
+                      {composerControls}
+                    </div>
+                    {/* Outside the measured controls so the timer's text changes never re-measure them. */}
+                    {voiceControlsOpen ? (
+                      <div className="absolute inset-0 flex items-center justify-end transition-[opacity,translate] duration-200 ease-(--ease-drawer) starting:translate-x-2 starting:opacity-0 motion-reduce:starting:translate-x-0">
+                        <ComposerSpeechRecordingPill
+                          state={speechInput.state}
+                          progress={null}
+                          finishShortcutLabel={dictationShortcutLabel}
+                          cancelShortcutLabel="Esc"
+                          level={speechInput.level}
+                          disabled={dictationDisabled}
+                          onStart={() => void speechInput.start()}
+                          onStop={() => void speechInput.stop()}
+                          onCancel={() => speechInput.cancel()}
+                          onSkipPostProcessing={() => speechInput.skipPostProcessing()}
+                        />
+                      </div>
+                    ) : null}
                   </div>
                   <ComposerFooterPrimaryActions
                     // Stop state belongs to one thread; the composer stays mounted across threads.
@@ -3763,26 +3783,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onToggleKeepFullHistory={props.onToggleKeepFullHistory}
                   >
                     {speechInput.available ? (
-                      <>
-                        <ComposerSpeechRecordingPill
-                          state={speechInput.state}
-                          progress={null}
-                          finishShortcutLabel={dictationShortcutLabel}
-                          cancelShortcutLabel="Esc"
-                          level={speechInput.level}
-                          disabled={dictationDisabled}
-                          onStart={() => void speechInput.start()}
-                          onStop={() => void speechInput.stop()}
-                          onCancel={() => speechInput.cancel()}
-                          onSkipPostProcessing={() => speechInput.skipPostProcessing()}
-                        />
-                        <ComposerSpeechButton
-                          state={speechInput.state}
-                          shortcutLabel={dictationShortcutLabel}
-                          disabled={dictationDisabled}
-                          onStart={() => void speechInput.start()}
-                        />
-                      </>
+                      <ComposerSpeechButton
+                        state={speechInput.state}
+                        shortcutLabel={dictationShortcutLabel}
+                        disabled={dictationDisabled}
+                        onStart={() => void speechInput.start()}
+                      />
                     ) : null}
                     <VoiceInputSetup
                       environmentId={speechInput.transcriptionEnvironmentId}
