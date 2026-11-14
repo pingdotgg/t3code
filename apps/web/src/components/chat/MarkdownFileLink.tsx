@@ -221,28 +221,19 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
             }),
           ])
         : value.then((text) => navigator.clipboard.writeText(text));
-    void Promise.all([write, value]).then(
-      ([, text]) => {
-        toastManager.add({
-          type: "success",
-          title: `${title} copied`,
-          description: text,
-        });
-      },
-      (error) => {
-        reportMarkdownActionFailure(
-          { operation: "copy-file-path", target: targetPath, copyTarget: title },
-          error,
-        );
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: `Failed to copy ${title.toLowerCase()}`,
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      },
-    );
+    void Promise.all([write, value]).catch((error) => {
+      reportMarkdownActionFailure(
+        { operation: "copy-file-path", target: targetPath, copyTarget: title },
+        error,
+      );
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Failed to copy ${title.toLowerCase()}`,
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    });
   };
 
   const showFileContextMenu = async (
