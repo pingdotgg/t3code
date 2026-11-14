@@ -191,6 +191,12 @@ Claude quotas. Tap it to open **Usage → Limits**; on Android this works while 
 the background, otherwise open the app from the launcher. On iOS, use **Edit Widget** to choose
 Session, Weekly, or both for each provider. Reopen T3 to refresh expired readings.
 
+## Start a task from Control Center
+
+On iOS 18 or later, open Control Center and choose **Add a Control**.
+Find T3 Code and add **Start a task**. Tap the control to open the project chooser for a new task.
+Add **Open T3 Code** to open the app without starting a task.
+
 ## Keyboard shortcuts
 
 On web and desktop, open Usage from the command palette. While on Usage,
