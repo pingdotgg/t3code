@@ -34,6 +34,9 @@ const { derivePendingBackgroundWork } = await load(
 const { deriveThreadCheckpointSummaries, checkpointFileTotals } = await load(
   "packages/client-runtime/src/state/threadCheckpoints.ts",
 );
+const { resolveMergeBackTargetThreadId, deriveThreadRelationshipGraph } = await load(
+  "packages/client-runtime/src/state/threadRelationships.ts",
+);
 const { boundedSnapshotProjection } = await load(
   "packages/shared/src/orchestrationV2BoundedSnapshot.ts",
 );
@@ -333,6 +336,38 @@ check("checkpoints: each turn's changed files, then a rewind", () => {
   assert.deepEqual(
     items.map((item) => item.files.map((f) => f.path)),
     [["a.txt"], ["b.txt"]],
+  );
+});
+
+// 12. A fork of the first turn: its lineage, its native fork, and the client's graph.
+check("fork: lineage, a native fork, and the relationship graph", () => {
+  const { projection, status } = followThread(exported.forkItems);
+  assert.equal(status, "live");
+  assert.equal(projection.thread.lineage.relationshipToParent, "fork");
+  assert.equal(projection.thread.forkedFrom.type, "run");
+  assert.equal(projection.thread.forkedFrom.runId, "run:thread-cp:1");
+  assert.equal(resolveMergeBackTargetThreadId(projection), "thread-cp");
+  assert.deepEqual(
+    projection.runs.map((run) => run.status),
+    ["completed"],
+  );
+  const [transfer] = projection.contextTransfers;
+  assert.equal(transfer.type, "fork");
+  assert.equal(transfer.status, "consumed");
+  assert.equal(transfer.resolution.strategy, "native_fork");
+  const shells = Schema.decodeUnknownSync(
+    Schema.toCodecJson(Schema.Array(contracts.OrchestrationV2ThreadShell)),
+  )(exported.checkpointShellThreads);
+  const graph = deriveThreadRelationshipGraph({ threads: shells, projection });
+  const edges = [...(Array.isArray(graph.edges) ? graph.edges : graph.edges.values())];
+  assert.ok(
+    edges.some(
+      (edge) =>
+        edge.kind === "fork" &&
+        edge.sourceThreadId === "thread-cp" &&
+        edge.targetThreadId === "thread-cp-fork",
+    ),
+    `a fork edge: ${JSON.stringify(edges.map((e) => [e.kind, e.sourceThreadId, e.targetThreadId]))}`,
   );
 });
 

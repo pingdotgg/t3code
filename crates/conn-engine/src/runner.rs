@@ -116,6 +116,8 @@ struct TurnContext {
     message: Value,
     cwd: Option<String>,
     provider_thread: Option<Value>,
+    /// The source to fork natively, on a fork's first turn.
+    fork: Option<crate::fork::NativeFork>,
 }
 
 enum StartError {
@@ -379,19 +381,24 @@ impl Inner {
                                 )
                             }),
                     };
+                    let fork = match provider_thread {
+                        Some(_) => None,
+                        None => crate::fork::native_fork_input(&tx, &tid)?,
+                    };
                     Ok(Some(TurnContext {
                         thread,
                         run,
                         message,
                         cwd,
                         provider_thread,
+                        fork,
                     }))
                 })();
                 tx.rollback();
                 context
             })
             .await?;
-        let Some(context) = context else {
+        let Some(mut context) = context else {
             return Err(StartError::Abandoned);
         };
         if context.run["status"] != "starting" {
@@ -440,30 +447,45 @@ impl Inner {
 
         live.touch();
         let known = lock(&live.state).provider_thread.clone();
-        let provider_thread = match (known, context.provider_thread) {
-            (Some(provider_thread), _) => provider_thread,
-            (None, Some(stored)) => live
-                .session
-                .resume_thread(ResumeThreadInput {
-                    provider_thread: from_json(stored).map_err(|e| e.to_string())?,
-                    thread_id: Some(thread_id.into()),
-                    model_selection: Some(model_selection.clone()),
-                    runtime_policy: Some(runtime_policy.clone()),
-                })
-                .await
-                .map_err(|e| e.to_string())?,
-            (None, None) => live
-                .session
-                .ensure_thread(EnsureThreadInput {
-                    thread_id: thread_id.into(),
-                    title: context.thread["title"].as_str().map(str::to_owned),
-                    model_selection: model_selection.clone(),
-                    runtime_policy: runtime_policy.clone(),
-                    existing_provider_thread: None,
-                })
-                .await
-                .map_err(|e| e.to_string())?,
-        };
+        let provider_thread =
+            match (known, context.provider_thread) {
+                (Some(provider_thread), _) => provider_thread,
+                (None, Some(stored)) => live
+                    .session
+                    .resume_thread(ResumeThreadInput {
+                        provider_thread: from_json(stored).map_err(|e| e.to_string())?,
+                        thread_id: Some(thread_id.into()),
+                        model_selection: Some(model_selection.clone()),
+                        runtime_policy: Some(runtime_policy.clone()),
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?,
+                // A fork's first turn: the provider forks the source's native thread.
+                (None, None) if context.fork.is_some() => {
+                    let fork = context.fork.as_mut().map(|f| {
+                        f.input.model_selection = Some(model_selection.clone());
+                        f.input.runtime_policy = Some(runtime_policy.clone());
+                        f.input.clone()
+                    });
+                    match fork {
+                        Some(input) => live.session.fork_thread(input).await.map_err(|e| {
+                            StartError::Failed(format!("The native fork failed: {e}"))
+                        })?,
+                        None => return Err(StartError::Abandoned),
+                    }
+                }
+                (None, None) => live
+                    .session
+                    .ensure_thread(EnsureThreadInput {
+                        thread_id: thread_id.into(),
+                        title: context.thread["title"].as_str().map(str::to_owned),
+                        model_selection: model_selection.clone(),
+                        runtime_policy: runtime_policy.clone(),
+                        existing_provider_thread: None,
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?,
+            };
         let root = context.run["rootNodeId"]
             .as_str()
             .unwrap_or_default()
@@ -495,6 +517,7 @@ impl Inner {
             attempt_id.clone(),
             root.clone(),
         );
+        let fork_transfer = context.fork.as_ref().map(|f| f.transfer.clone());
         let checkpoint_cwd = self
             .checkpoints
             .as_ref()
@@ -521,6 +544,16 @@ impl Inner {
                         "provider-thread.updated",
                         provider_thread_json.clone(),
                     ))?;
+                }
+                if let Some(transfer) = &fork_transfer {
+                    tx.append(
+                        Draft::new(
+                            &tid,
+                            "context-transfer.updated",
+                            crate::fork::consumed(transfer, &provider_thread_json, &run, &now),
+                        )
+                        .run(Some(&rid)),
+                    )?;
                 }
                 if let Some(mut thread) = tx.thread(&tid)?
                     && thread["activeProviderThreadId"] != pt_id

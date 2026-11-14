@@ -21,7 +21,7 @@ decode is a defect, not a broken client.
 
 ## dispatchCommand
 
-42 of the 56 command types are handled. The other 14 answer `OrchestrationV2DispatchCommandError`
+43 of the 56 command types are handled. The other 13 answer `OrchestrationV2DispatchCommandError`
 with a reason the client shows (`commands::refusal`).
 
 | Handled                                                                                                                                                             | Refused, and why                                                                             |
@@ -32,7 +32,7 @@ with a reason the client shows (`commands::refusal`).
 | `thread.settle`, `auto-settle`, `unsettle`, `snooze`, `unsnooze`, `auto-settle.set`, `pin`, `unpin`, `pin.reorder`, `active.reorder`, `tag.set`                     | `thread.pull-request-link.sync`, `.pull-request.watch`, `.pull-request.sync`: no PR watching |
 | `thread.pull-request.link`, `.unlink`                                                                                                                               | `thread.guest-share.close`, `thread.guest-message.dismiss`: no guest sharing                 |
 | `thread.runtime-mode.set`, `interaction-mode.set`, `model-selection.set`, `provider.switch`, `provider-session.detach`                                              | `notification.delivery.accept`, `subagent.stop`, `thread.created.record`                     |
-| `delegated_task.request`, `.wake-policy`, `.completion-delivery.acknowledge`, `.dispose`, `checkpoint.rollback`                                                                            |                                                                                              |
+| `delegated_task.request`, `.wake-policy`, `.completion-delivery.acknowledge`, `.dispose`, `checkpoint.rollback`, `thread.fork`                                                                            |                                                                                              |
 
 ## The refused commands: a map
 
@@ -74,6 +74,12 @@ all 23 are.
   checkpoints and the `rolled_back` runs and nodes at once. A failure commits none of that and
   sets `rollbackFailure` with T3's client message. T3 retries the effect up to 5 times; this
   server tries once.
+- **Fork** (`src/fork.rs`). `thread.fork` makes the fork thread and a pending `fork` transfer
+  (`ThreadForkService.plan`). Its first turn forks the source's native thread from the source
+  run's turn (`Session::fork_thread`) and consumes the transfer (`native_fork`). T3's portable
+  path (a `full_thread_summary` handoff when the fork cannot be native, or after a failed
+  native fork) is not built: such a message is refused, and a failed native fork fails the
+  turn.
 
 - **Busy thread.** While a run is active, a message queues (`queue_after_active`, or any start)
   or steers (`steer_active`, or the client's `deliveryIntent` steer). A steer before the

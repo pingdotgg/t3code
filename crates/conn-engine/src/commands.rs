@@ -119,6 +119,7 @@ pub(crate) fn handler(command_type: &str) -> Option<Handler> {
         "thread.title.regeneration.complete" => thread_title_regeneration_complete,
         "delegated_task.request" => crate::families::delegated_task_request,
         "checkpoint.rollback" => crate::rollback::checkpoint_rollback,
+        "thread.fork" => crate::fork::thread_fork,
         "delegated_task.wake-policy" => crate::families::wake_policy,
         "delegated_task.completion-delivery.acknowledge"
         | "delegated_task.completion-delivery.dispose" => crate::families::completion_delivery,
@@ -130,7 +131,6 @@ pub(crate) fn handler(command_type: &str) -> Option<Handler> {
 pub(crate) fn refusal(command_type: &str) -> &'static str {
     match command_type {
         "thread.merge_back" => "Conn Server cannot merge a fork back yet.",
-        "thread.fork" => "Conn Server cannot fork a thread yet.",
         "prepared-run.release"
         | "prepared-run.progress"
         | "prepared-run.fail"
@@ -347,6 +347,13 @@ fn delivery(tx: &Tx<'_>, c: &MessageDispatch) -> Result<(Delivery, Option<Value>
 fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: MessageDispatch = decode(command)?;
     let thread = live_thread(tx, &c.thread_id)?;
+    crate::fork::ensure_native_fork(
+        tx,
+        &c.thread_id,
+        thread["modelSelection"]["instanceId"]
+            .as_str()
+            .unwrap_or_default(),
+    )?;
     if !matches!(
         c.dispatch_mode.kind.as_str(),
         "start_immediately"

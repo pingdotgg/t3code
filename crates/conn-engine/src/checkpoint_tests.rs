@@ -695,3 +695,127 @@ async fn rollback_refuses_a_busy_or_unknown_target() {
         to_json(&error)
     );
 }
+
+// ---------------------------------------------------------------------------------------
+// Fork
+
+fn refused<T, E: serde::Serialize>(result: Result<T, EngineError<E>>) -> String {
+    match result {
+        Err(EngineError::Rejected(e)) => to_json(&e)["message"].as_str().unwrap().to_owned(),
+        _ => panic!("expected a refusal"),
+    }
+}
+
+fn fork(command: &str, source_point: Value) -> Value {
+    json!({
+        "type": "thread.fork", "commandId": command, "sourceThreadId": "t1",
+        "targetThreadId": "t2", "sourcePoint": source_point,
+        "createdBy": "user", "creationSource": "web",
+    })
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_fork_starts_from_the_source_run_with_a_native_fork() {
+    let db = TempDb::new("fork");
+    let repo = Repo::new("fork");
+    let (engine, provider) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c1"),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    dispatch(
+        &engine,
+        fork("f1", json!({"type": "run", "runId": "run:t1:1"})),
+    )
+    .await;
+    let fork_view = projection(&engine, "t2").await;
+    let thread = &fork_view["thread"];
+    assert_eq!(thread["title"], "New thread fork", "{thread}");
+    assert_eq!(
+        thread["lineage"],
+        json!({"parentThreadId": "t1", "relationshipToParent": "fork", "rootThreadId": "t1"}),
+        "lineage"
+    );
+    assert_eq!(
+        thread["forkedFrom"],
+        json!({"type": "run", "threadId": "t1", "runId": "run:t1:1"}),
+        "forkedFrom"
+    );
+    assert!(thread["activeProviderThreadId"].is_null(), "{thread}");
+    let transfer = &fork_view["contextTransfers"][0];
+    assert_eq!(transfer["type"], "fork", "{transfer}");
+    assert_eq!(transfer["status"], "pending", "{transfer}");
+    assert_eq!(transfer["sourcePoint"]["runId"], "run:t1:1", "{transfer}");
+    assert!(
+        transfer["id"]
+            .as_str()
+            .unwrap()
+            .starts_with("context-transfer:type:fork:source-thread:t1:target-thread:t2:"),
+        "{transfer}"
+    );
+
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t2"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    let mut first = message("t2", "f2", "go on");
+    first["threadId"] = json!("t2");
+    dispatch(&engine, first).await;
+    until_run_ends(&mut stream).await;
+    let fork_view = projection(&engine, "t2").await;
+    assert_eq!(
+        *provider.forks.lock().unwrap(),
+        ["t2 turn:run:t1:1"],
+        "the provider forked from the source run's turn"
+    );
+    assert_eq!(
+        fork_view["runs"][0]["status"], "completed",
+        "{}",
+        fork_view["runs"]
+    );
+    assert_eq!(
+        fork_view["thread"]["activeProviderThreadId"], "provider-thread:t2",
+        "the forked native thread"
+    );
+    let transfer = &fork_view["contextTransfers"][0];
+    assert_eq!(transfer["status"], "consumed", "{transfer}");
+    assert_eq!(transfer["targetRunId"], "run:t2:1", "{transfer}");
+    assert_eq!(
+        transfer["resolution"]["strategy"], "native_fork",
+        "{transfer}"
+    );
+    assert_eq!(
+        transfer["resolution"]["providerThreadRef"]["nativeId"], "native-fork-t2",
+        "{transfer}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_fork_refuses_a_missing_source_or_a_taken_target() {
+    let db = TempDb::new("fork-refuse");
+    let repo = Repo::new("fork-refuse");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c1"),
+        &["write a.txt one"],
+    )
+    .await;
+    let missing = engine
+        .dispatch(from_json(fork("f1", json!({"type": "run", "runId": "run:t1:9"}))).unwrap())
+        .await;
+    assert!(
+        refused(missing).contains("No stable source run was found for fork source run."),
+        "unknown run"
+    );
+    dispatch(&engine, create_in(&repo, "t2", "c2")).await;
+    let taken = engine
+        .dispatch(from_json(fork("f2", json!({"type": "latest_stable"}))).unwrap())
+        .await;
+    assert!(refused(taken).contains("t2"), "the target exists");
+}

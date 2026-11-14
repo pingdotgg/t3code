@@ -65,8 +65,9 @@ fn scratch_repo(dir: &std::path::Path) -> String {
         .into_owned()
 }
 
-/// Two turns that write files, on an engine that takes checkpoints. Returns the thread's items.
-async fn checkpoint_scenario(dir: &std::path::Path) -> Vec<Value> {
+/// Two turns that write files on an engine that takes checkpoints, a rewind, and a fork of the
+/// first turn with one message. Returns the source's items, the fork's items and the shell rows.
+async fn checkpoint_scenario(dir: &std::path::Path) -> (Vec<Value>, Vec<Value>, Value) {
     let root = scratch_repo(dir);
     let mut config = EngineConfig::new(dir.join("checkpoints.sqlite"));
     config.projects = vec![ProjectConfig {
@@ -141,7 +142,46 @@ async fn checkpoint_scenario(dir: &std::path::Path) -> Vec<Value> {
     })
     .await;
     read(&mut follow, &mut items, |_| false).await;
-    items
+
+    // A fork of the first turn, then its first message: a native fork.
+    engine
+        .dispatch(
+            from_json(json!({
+                "type": "thread.fork", "commandId": "cp-fork", "sourceThreadId": "thread-cp",
+                "targetThreadId": "thread-cp-fork", "sourcePoint": {"type": "latest_stable"},
+                "createdBy": "user", "creationSource": "web",
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let mut fork_items = vec![];
+    let mut fork = engine
+        .subscribe_thread(
+            from_json(json!({"threadId": "thread-cp-fork", "requestCompletionMarker": true}))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut fork, &mut fork_items, |item| {
+        item["kind"] == "synchronized"
+    })
+    .await;
+    engine
+        .dispatch(
+            from_json(json!({
+                "type": "message.dispatch", "commandId": "cp-fork-1", "threadId": "thread-cp-fork",
+                "messageId": "message:cp-fork-1", "text": "go on", "attachments": [],
+                "dispatchMode": {"type": "start_immediately"}, "createdBy": "user", "creationSource": "web",
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut fork, &mut fork_items, run_ended).await;
+    read(&mut fork, &mut fork_items, |_| false).await;
+    let shell = engine.shell_snapshot().await.unwrap();
+    (items, fork_items, shell["threads"].clone())
 }
 
 /// Reads items until `done` holds for one, or the stream is quiet for 300 ms.
@@ -455,10 +495,12 @@ async fn main() {
     })
     .await;
 
-    let checkpoint_items = checkpoint_scenario(&dir).await;
+    let (checkpoint_items, fork_items, checkpoint_shell) = checkpoint_scenario(&dir).await;
 
     let export = json!({
         "checkpointItems": checkpoint_items,
+        "forkItems": fork_items,
+        "checkpointShellThreads": checkpoint_shell,
         "shellItems": shell_items,
         "launch": launch,
         "threadHttp": thread_http,
