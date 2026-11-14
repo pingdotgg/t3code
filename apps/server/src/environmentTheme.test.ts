@@ -294,6 +294,20 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     );
   });
 
+  it.effect("switches back to the stock theme after selecting another", () => {
+    const selected: Array<{ readonly theme?: string; readonly appearance?: string }> = [];
+    return withEnvironmentThemes(
+      {},
+      Effect.gen(function* () {
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        yield* themes.apply({ themeId: "agent-look", theme: NIGHTFALL_THEME });
+        yield* themes.apply({ themeId: "t3-code" });
+        assert.deepEqual(selected, [{ theme: "agent-look" }, { theme: "" }]);
+      }),
+      selected,
+    );
+  });
+
   it.effect("keeps the served theme when an update does not fit the size limit", () => {
     const large = (name: string): EnvironmentThemeFile => ({
       ...NIGHTFALL_THEME,
