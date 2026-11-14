@@ -4499,20 +4499,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     yield* Cache.invalidate(repositoryPathsCache, repositoryPathsCacheKey);
   });
 
-  const headHasCommit = (cwd: string) =>
-    executeGit(
-      "GitVcsDriver.listRefs.headCommit",
-      cwd,
-      ["rev-parse", "--verify", "--quiet", "HEAD"],
-      {
-        timeoutMs: 5_000,
-        allowNonZeroExit: true,
-      },
-    ).pipe(
-      Effect.map((result) => result.exitCode === 0),
-      Effect.orElseSucceed(() => false),
-    );
-
   const listRefs: GitVcsDriver.GitVcsDriver["Service"]["listRefs"] = Effect.fn("listRefs")(
     function* (input) {
       const repositoryPaths = yield* resolveRepositoryPaths(input.cwd, input.refresh === true).pipe(
@@ -4543,12 +4529,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { concurrency: 2 },
       );
       const { worktreeRoot } = repositoryPaths;
-      // A branch created outside T3 Code after the snapshot is listed until the next refresh.
-      // An unborn HEAD names a branch that does not exist yet, so it needs a commit to count.
+      // The snapshot misses a branch created outside T3 Code until it refreshes. An unborn HEAD
+      // names a branch with no ref yet, so the ref must exist before it is listed.
       const currentBranchUnlisted =
         currentBranch !== null && !snapshot.localBranches.some((ref) => ref.name === currentBranch);
       const unlistedCurrentBranch: ReadonlyArray<VcsRef> =
-        currentBranchUnlisted && (yield* headHasCommit(input.cwd))
+        currentBranchUnlisted &&
+        (yield* branchExists(input.cwd, currentBranch).pipe(Effect.orElseSucceed(() => false)))
           ? [
               {
                 name: currentBranch,
