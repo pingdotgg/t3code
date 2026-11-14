@@ -9,6 +9,9 @@ import type * as DateTime from "effect/DateTime";
 
 import {
   TrimmedNonEmptyString,
+  VcsProcessExitError,
+  VcsProcessOutputLimitError,
+  VcsProcessTimeoutError,
   type SourceControlRepositoryVisibility,
   type VcsError,
   type VcsProcessExitFailureKind,
@@ -22,6 +25,10 @@ import {
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
+const isVcsProcessTimeoutError = Schema.is(VcsProcessTimeoutError);
+const isVcsProcessOutputLimitError = Schema.is(VcsProcessOutputLimitError);
 
 const gitLabCliExecutionErrorContext = {
   operation: Schema.Literal("execute"),
@@ -119,6 +126,19 @@ export class GitLabCliCommandError extends Schema.TaggedError<GitLabCliCommandEr
   gitLabCliExecutionErrorContext,
 ) {
   get detail(): string {
+    const cause = this.cause;
+    if (isVcsProcessExitError(cause) && cause.failureKind === "not-found") {
+      return cause.detail;
+    }
+    if (isVcsProcessExitError(cause) && cause.detail.startsWith(GITLAB_API_DETAIL_PREFIX)) {
+      return `GitLab CLI command failed: ${cause.detail}`;
+    }
+    if (isVcsProcessTimeoutError(cause)) {
+      return `GitLab CLI timed out after ${cause.timeoutMs}ms.`;
+    }
+    if (isVcsProcessOutputLimitError(cause)) {
+      return `GitLab CLI ${cause.stream} exceeded ${cause.maxBytes} bytes.`;
+    }
     return "GitLab CLI command failed.";
   }
 
@@ -426,6 +446,15 @@ const classifyGlabFailure = (stderr: string): VcsProcessExitFailureKind | null =
   return null;
 };
 
+const GITLAB_API_DETAIL_PREFIX = "GitLab returned ";
+// glab ends an API failure with `<status> {message: <GitLab's reply>}`, after the request URL.
+const GITLAB_API_MESSAGE = /\b([45]\d\d) \{message: (.{1,300}?)\}(?=\.?(?: |$))/;
+
+const glabFailureDetail = (stderr: string): string | null => {
+  const match = GITLAB_API_MESSAGE.exec(stderr.replace(/\s+/g, " ").trim());
+  return match === null ? null : `${GITLAB_API_DETAIL_PREFIX}${match[1]}: ${match[2]}`;
+};
+
 /** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
@@ -433,6 +462,7 @@ export const make = Effect.gen(function* () {
   const run = (
     input: Parameters<GitLabCli["Service"]["execute"]>[0],
     mapError: (error: VcsError) => GitLabCliError,
+    notFoundDetail?: string,
   ) =>
     process
       .run({
@@ -443,7 +473,8 @@ export const make = Effect.gen(function* () {
         // glab may otherwise prefer a different checkout remote.
         ...(input.host === undefined ? {} : { env: { GITLAB_HOST: input.host } }),
         classifyFailure: classifyGlabFailure,
-        notFoundDetail: "Merge request not found.",
+        failureDetail: glabFailureDetail,
+        notFoundDetail: notFoundDetail ?? "GitLab project or resource not found.",
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
         ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
@@ -463,16 +494,19 @@ export const make = Effect.gen(function* () {
     readonly reference: string;
     readonly args: ReadonlyArray<string>;
   }) =>
-    run(input, (error) =>
-      GitLabMergeRequestNotFoundError.fromVcsError(
-        {
-          operation: "execute",
-          command: "glab",
-          cwd: input.cwd,
-          reference: input.reference,
-        },
-        error,
-      ),
+    run(
+      input,
+      (error) =>
+        GitLabMergeRequestNotFoundError.fromVcsError(
+          {
+            operation: "execute",
+            command: "glab",
+            cwd: input.cwd,
+            reference: input.reference,
+          },
+          error,
+        ),
+      "Merge request not found.",
     );
 
   return GitLabCli.of({

@@ -220,6 +220,62 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  it.effect("names a not-found failure instead of the generic command failure", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessExitError({
+            operation: "GitLabCli.execute",
+            command: "glab",
+            cwd: "/repo",
+            exitCode: 1,
+            detail: "Merge request not found.",
+            failureKind: "not-found",
+          }),
+        ),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const error = yield* glab
+        .listMergeRequests({ cwd: "/repo", headSelector: "main", state: "open" })
+        .pipe(Effect.flip);
+
+      assert.notStrictEqual(error.detail, "GitLab CLI command failed.");
+      assert.match(error.message, /not found/i);
+    }),
+  );
+
+  it.effect("shows GitLab's API message from glab's stderr without the request URL", () =>
+    Effect.gen(function* () {
+      const stderr = [
+        "Failed to create merge request.",
+        "   ERROR  ",
+        "  Post https://gitlab.com/api/v4/projects/group%2Fproject/merge_requests: 409 {message:",
+        "  [Another open merge request already exists for this source branch: !7]}.",
+      ].join("\n");
+      mockedRun.mockImplementationOnce((input) =>
+        Effect.fail(
+          new VcsProcessExitError({
+            operation: "GitLabCli.execute",
+            command: "glab",
+            cwd: "/repo",
+            exitCode: 1,
+            detail: input.failureDetail?.(stderr) ?? "Process exited with a non-zero status.",
+            failureKind: "command-failed",
+          }),
+        ),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const error = yield* glab.execute({ cwd: "/repo", args: ["mr", "create"] }).pipe(Effect.flip);
+
+      assert.strictEqual(
+        error.detail,
+        "GitLab CLI command failed: GitLab returned 409: [Another open merge request already exists for this source branch: !7]",
+      );
+    }),
+  );
+
   it.effect("preserves rate-limit failures as a distinct error", () =>
     Effect.gen(function* () {
       const cause = new VcsProcessExitError({

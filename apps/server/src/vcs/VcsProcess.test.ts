@@ -518,6 +518,11 @@ describe("VcsProcess.run", () => {
           notFoundDetail: "Merge request not found.",
         }),
       ).toMatchObject({ failureKind: "not-found", detail: "Merge request not found." });
+      expect(
+        yield* fail({
+          failureDetail: (stderr) => (stderr.includes("404") ? "Project gone." : null),
+        }),
+      ).toMatchObject({ failureKind: "command-failed", detail: "Project gone." });
     }).pipe(provideLive),
   );
 
