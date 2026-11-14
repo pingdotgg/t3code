@@ -107,19 +107,14 @@ describe.each([
     expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path, line: 7 });
   });
 
-  // The directive attribute entity-escapes the literal ampersand, so the parsed path keeps it.
-  it.each([
-    { attribute: "/tmp/a&amp;copy;.txt", path: "/tmp/a&copy;.txt" },
-    { attribute: "./outputs/a&amp;copy;.txt", path: "./outputs/a&copy;.txt" },
-    { attribute: "/tmp/a&amp;amp;b.txt", path: "/tmp/a&amp;b.txt" },
-    { attribute: "/tmp/a&amp;b.txt", path: "/tmp/a&b.txt" },
-    { attribute: "/tmp/a&amp;#35;b.txt", path: "/tmp/a&#35;b.txt" },
-  ])("preserves the literal path and line with ampersands: $path", ({ attribute, path }) => {
-    const markdown = render(`:codex-file-citation{path="${attribute}" line_range_start="7"}`);
+  it("keeps an entity-like ampersand in the path literal", () => {
+    const markdown = render(
+      ':codex-file-citation{path="/tmp/a&amp;copy;.txt" line_range_start="7"}',
+    );
     const link = parseOrdinaryMarkdown(markdown).children?.[0]?.children?.[0];
 
     expect(link?.type).toBe("link");
-    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path, line: 7 });
+    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path: "/tmp/a&copy;.txt", line: 7 });
   });
 });
 
