@@ -1118,6 +1118,38 @@ it.effect("answers 2026-07-28 discovery and keeps 2025-06-18 as the initialize f
         expect.arrayContaining([expect.objectContaining({ name: "probe" })]),
       );
 
+      // The Go MCP SDK sends this without request metadata, though 2026-07-28 does not define it.
+      const rootsChanged = (
+        client: HttpClient.HttpClient,
+        message: object = {},
+        headers: Record<string, string> = {},
+      ) =>
+        client.post("/mcp", {
+          headers: {
+            accept: "application/json, text/event-stream",
+            "mcp-method": "notifications/roots/list_changed",
+            "mcp-protocol-version": "2026-07-28",
+            ...headers,
+          },
+          body: HttpBody.text(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              method: "notifications/roots/list_changed",
+              params: {},
+              ...message,
+            }),
+            "application/json",
+          ),
+        });
+      const acknowledged = yield* rootsChanged(httpClient);
+      expect(acknowledged.status).toBe(202);
+      expect(yield* acknowledged.text).toBe("");
+      expect((yield* rootsChanged(yield* HttpClient.HttpClient)).status).toBe(401);
+      expect((yield* rootsChanged(httpClient, { id: 7 })).status).toBe(400);
+      expect((yield* rootsChanged(httpClient, {}, { origin: "https://example.com" })).status).toBe(
+        403,
+      );
+
       const initializeResponse = yield* httpClient.post("/mcp", {
         headers: { accept: "application/json, text/event-stream" },
         body: HttpBody.text(
