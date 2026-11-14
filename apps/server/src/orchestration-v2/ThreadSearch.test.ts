@@ -983,7 +983,12 @@ it.effect.each([true, false])(
         projections.apply,
         { discard: true },
       );
-      if (!indexed) yield* sql`DROP TABLE orchestration_v2_message_search`;
+      if (!indexed) {
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_update`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_delete`;
+        yield* sql`DROP TABLE orchestration_v2_message_search`;
+      }
       const threadIds = (query: string) =>
         search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
       for (const query of ["gannet's", "部署 gannet's"]) {
