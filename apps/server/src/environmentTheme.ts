@@ -501,12 +501,13 @@ const make = Effect.gen(function* () {
               known,
             });
           }
-          yield* setBackground;
-          return yield* select;
+          yield* select;
+          return yield* setBackground;
         }
         const revert = yield* publish(themeId, theme);
-        yield* setBackground.pipe(Effect.tapError(() => revert));
         yield* select.pipe(Effect.tapError(() => revert));
+        // After selection, so a refused selection leaves the background as it was.
+        yield* setBackground;
       }),
     );
   });

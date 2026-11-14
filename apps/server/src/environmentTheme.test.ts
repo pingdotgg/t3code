@@ -177,14 +177,23 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
 
   it.effect("puts the previous theme back when the new one cannot be selected", () =>
     withEnvironmentThemes(
-      { [`${REFUSED_THEME_ID}.json`]: encodeThemeFile(NIGHTFALL_THEME) },
+      {
+        [`${REFUSED_THEME_ID}.json`]: encodeThemeFile(NIGHTFALL_THEME),
+        [`${REFUSED_THEME_ID}.png`]: "image",
+      },
       Effect.gen(function* () {
         const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        const before = yield* themes.current;
         const refused = yield* themes
-          .apply({ themeId: REFUSED_THEME_ID, theme: { ...NIGHTFALL_THEME, name: "Changed" } })
+          .apply({
+            themeId: REFUSED_THEME_ID,
+            theme: { ...NIGHTFALL_THEME, name: "Changed" },
+            background: null,
+          })
           .pipe(Effect.flip);
         assert.strictEqual(refused._tag, "EnvironmentThemeNotSelectedError");
-        assert.deepEqual(yield* themes.current, [{ id: REFUSED_THEME_ID, ...NIGHTFALL_THEME }]);
+        assert.deepEqual(yield* themes.current, before);
+        assert.isDefined(before[0]?.background);
       }),
     ),
   );
