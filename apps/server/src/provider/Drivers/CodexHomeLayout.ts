@@ -1,4 +1,5 @@
 import { ProviderDriverKind, type CodexSettings } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -31,8 +32,15 @@ const KNOWN_SHARED_DIRECTORIES = [
 
 // auth.lock guards the shadow home's private auth.json.
 const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "auth.lock", "models_cache.json"]);
+const SHADOW_CONFLICTS_DIRECTORY = ".t3-shadow-conflicts";
 // Finder maintains metadata separately for each directory, including shadow homes.
-const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp", ".DS_Store"]);
+const SHADOW_LOCAL_ENTRY_NAMES = new Set([
+  "log",
+  "memories",
+  "tmp",
+  ".DS_Store",
+  SHADOW_CONFLICTS_DIRECTORY,
+]);
 // Shadow homes may create local runtime locks first; replace them with shared links because they guard shared state.
 const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set([
   "mcp-oauth-locks",
@@ -80,7 +88,14 @@ export class CodexShadowHomeFileSystemError extends Schema.TaggedError<CodexShad
   "CodexShadowHomeFileSystemError",
   {
     ...CodexShadowHomeContext,
-    operation: Schema.Literals(["readLink", "makeDirectory", "readDirectory", "remove", "symlink"]),
+    operation: Schema.Literals([
+      "readLink",
+      "makeDirectory",
+      "readDirectory",
+      "remove",
+      "rename",
+      "symlink",
+    ]),
     path: Schema.String,
     targetPath: Schema.optional(Schema.String),
     entryName: Schema.optional(Schema.String),
@@ -102,20 +117,6 @@ export class CodexShadowHomePathConflictError extends Schema.TaggedError<CodexSh
   }
 }
 
-export class CodexShadowHomeEntryConflictError extends Schema.TaggedError<CodexShadowHomeEntryConflictError>()(
-  "CodexShadowHomeEntryConflictError",
-  {
-    ...CodexShadowHomeContext,
-    entryName: Schema.String,
-    linkPath: Schema.String,
-    targetPath: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `Cannot create Codex shadow home entry '${this.entryName}' because '${this.linkPath}' already exists and is not a symlink.`;
-  }
-}
-
 export class CodexShadowHomePrivateEntrySymlinkError extends Schema.TaggedError<CodexShadowHomePrivateEntrySymlinkError>()(
   "CodexShadowHomePrivateEntrySymlinkError",
   {
@@ -132,7 +133,6 @@ export class CodexShadowHomePrivateEntrySymlinkError extends Schema.TaggedError<
 export const CodexShadowHomeError = Schema.Union([
   CodexShadowHomeFileSystemError,
   CodexShadowHomePathConflictError,
-  CodexShadowHomeEntryConflictError,
   CodexShadowHomePrivateEntrySymlinkError,
 ]);
 export type CodexShadowHomeError = typeof CodexShadowHomeError.Type;
@@ -219,15 +219,178 @@ const removePrivateSymlink = Effect.fn("CodexHomeLayout.removePrivateSymlink")(f
   }
 });
 
+const SQLITE_SIDECAR_SUFFIXES = ["-wal", "-shm", "-journal"] as const;
+
+function sqliteBaseName(entryName: string): string | undefined {
+  const suffix = SQLITE_SIDECAR_SUFFIXES.find((candidate) => entryName.endsWith(candidate));
+  const baseName = suffix === undefined ? entryName : entryName.slice(0, -suffix.length);
+  return baseName.endsWith(".sqlite") ? baseName : undefined;
+}
+
+// Sidecars go first, so the base is the last thing to leave the shadow home.
+function conflictGroupMembers(entryName: string): ReadonlyArray<string> {
+  const baseName = sqliteBaseName(entryName);
+  if (baseName === undefined) return [entryName];
+  return [...SQLITE_SIDECAR_SUFFIXES.map((suffix) => baseName + suffix), baseName];
+}
+
+type ResolveConflictGroup = (
+  entryName: string,
+) => Effect.Effect<boolean, CodexShadowHomeError, Path.Path>;
+
+// A SQLite base and its sidecars are one unit: move every real copy aside and link what the
+// shared home has, or restore all of it, so a base never pairs with another database's journal.
+const replaceConflictGroup = Effect.fn("CodexHomeLayout.replaceConflictGroup")(function* (input: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly sharedHomePath: string;
+  readonly effectiveHomePath: string;
+  readonly entryName: string;
+  readonly sharedEntryNames: ReadonlySet<string>;
+  readonly backupDirectory: Effect.Effect<string, PlatformError.PlatformError>;
+}): Effect.fn.Return<boolean, CodexShadowHomeError, Path.Path> {
+  const path = yield* Path.Path;
+  const inspected = yield* Effect.forEach(conflictGroupMembers(input.entryName), (name) =>
+    readLinkState({
+      ...input,
+      entryName: name,
+      linkPath: path.join(input.effectiveHomePath, name),
+    }).pipe(Effect.map((state) => ({ name, state }))),
+  ).pipe(Effect.result);
+  if (inspected._tag === "Failure") {
+    yield* Effect.logWarning(
+      `Could not inspect Codex shadow home entry '${input.entryName}'; it stays local until a later setup.`,
+      { entryName: input.entryName, cause: inspected.failure },
+    );
+    return false;
+  }
+  const members = inspected.success;
+  const conflicts = members.filter((member) => member.state._tag === "NotSymlink");
+  if (conflicts.length === 0) return true;
+  const baseName = sqliteBaseName(input.entryName);
+  const baseIsLocalOnly =
+    baseName !== undefined &&
+    !input.sharedEntryNames.has(baseName) &&
+    conflicts.some((member) => member.name === baseName);
+  if (baseIsLocalOnly) return false;
+
+  const moved: Array<{
+    readonly name: string;
+    readonly path: string;
+    readonly backupPath: string;
+  }> = [];
+  const linked: Array<string> = [];
+  const replace = Effect.gen(function* () {
+    for (const { name } of conflicts) {
+      const memberPath = path.join(input.effectiveHomePath, name);
+      const backupPath = path.join(yield* input.backupDirectory, name);
+      yield* input.fileSystem.rename(memberPath, backupPath);
+      moved.push({ name, path: memberPath, backupPath });
+    }
+    for (const { name, state } of members) {
+      if (state._tag === "Symlink" || !input.sharedEntryNames.has(name)) continue;
+      const link = path.join(input.effectiveHomePath, name);
+      yield* input.fileSystem.symlink(path.join(input.sharedHomePath, name), link);
+      linked.push(link);
+    }
+  });
+  const fileSystemError = (
+    operation: "remove" | "rename",
+    failedPath: string,
+    cause: PlatformError.PlatformError,
+    entryName?: string,
+    targetPath?: string,
+  ) =>
+    new CodexShadowHomeFileSystemError({
+      sharedHomePath: input.sharedHomePath,
+      effectiveHomePath: input.effectiveHomePath,
+      operation,
+      path: failedPath,
+      ...(targetPath === undefined ? {} : { targetPath }),
+      ...(entryName === undefined ? {} : { entryName }),
+      cause,
+    });
+  const restore = Effect.gen(function* () {
+    const failures: Array<CodexShadowHomeFileSystemError> = [];
+    for (const link of [...linked].reverse()) {
+      yield* input.fileSystem
+        .remove(link)
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.sync(() => failures.push(fileSystemError("remove", link, cause))),
+          ),
+        );
+    }
+    for (const entry of [...moved].reverse()) {
+      yield* input.fileSystem
+        .rename(entry.backupPath, entry.path)
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.sync(() =>
+              failures.push(
+                fileSystemError("rename", entry.backupPath, cause, entry.name, entry.path),
+              ),
+            ),
+          ),
+        );
+    }
+    return failures;
+  });
+
+  // Interrupting between moves would skip the restore and split the family.
+  return yield* replace.pipe(
+    Effect.andThen(
+      Effect.forEach(
+        moved,
+        (entry) =>
+          Effect.logWarning(
+            `Moved Codex shadow home entry '${entry.name}' to '${entry.backupPath}' so the shared copy can be linked.`,
+            { entryName: entry.name, path: entry.path, backupPath: entry.backupPath },
+          ),
+        { discard: true },
+      ),
+    ),
+    Effect.as(true),
+    Effect.catch((cause) =>
+      Effect.gen(function* () {
+        const restoreFailures = yield* restore;
+        const annotations = {
+          entryName: input.entryName,
+          path: path.join(input.effectiveHomePath, input.entryName),
+          cause,
+        };
+        // A half-restored SQLite family is unsafe to open, so stop instead of starting Codex on it.
+        if (restoreFailures.length > 0) {
+          yield* Effect.logError(
+            `Could not restore Codex shadow home entry '${input.entryName}' after a failed replacement.`,
+            { ...annotations, restoreFailures },
+          );
+          return yield* restoreFailures[0]!;
+        }
+        yield* Effect.logWarning(
+          `Could not replace Codex shadow home entry '${input.entryName}' with a shared link; it stays local until a later setup.`,
+          annotations,
+        );
+        return false;
+      }),
+    ),
+    Effect.uninterruptible,
+  );
+});
+
 const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (input: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly sharedHomePath: string;
   readonly effectiveHomePath: string;
   readonly entryName: string;
+  readonly resolveConflictGroup: ResolveConflictGroup;
 }): Effect.fn.Return<void, CodexShadowHomeError, Path.Path> {
   const path = yield* Path.Path;
   const target = path.join(input.sharedHomePath, input.entryName);
   const link = path.join(input.effectiveHomePath, input.entryName);
+  // Resolve a SQLite family before linking any member of it.
+  if (sqliteBaseName(input.entryName) !== undefined) {
+    if (!(yield* input.resolveConflictGroup(input.entryName))) return;
+  }
   const state = yield* readLinkState({
     ...input,
     linkPath: link,
@@ -250,13 +413,8 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
 
   if (state._tag === "NotSymlink") {
     if (!REPLACEABLE_SHARED_RUNTIME_ENTRIES.has(input.entryName)) {
-      return yield* new CodexShadowHomeEntryConflictError({
-        sharedHomePath: input.sharedHomePath,
-        effectiveHomePath: input.effectiveHomePath,
-        entryName: input.entryName,
-        linkPath: link,
-        targetPath: target,
-      });
+      yield* input.resolveConflictGroup(input.entryName);
+      return;
     }
 
     if (input.entryName === "thread-writer-locks") {
@@ -400,6 +558,33 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
         }),
     }),
   );
+  // Created only when a conflict needs it; the random suffix keeps runs from colliding.
+  const backupDirectory = yield* Effect.cached(
+    Effect.gen(function* () {
+      const conflictsPath = path.join(effectiveHomePath, SHADOW_CONFLICTS_DIRECTORY);
+      yield* fileSystem.makeDirectory(conflictsPath, { recursive: true });
+      const timestamp = DateTime.formatIso(yield* DateTime.now).replace(/[:.]/g, "-");
+      return yield* fileSystem.makeTempDirectory({
+        directory: conflictsPath,
+        prefix: `${timestamp}-`,
+      });
+    }),
+  );
+  const sharedEntryNameSet = new Set(sharedEntryNames);
+  const conflictGroupOutcomes = new Map<string, boolean>();
+  const resolveConflictGroup: ResolveConflictGroup = (entryName) => {
+    const groupKey = sqliteBaseName(entryName) ?? entryName;
+    const outcome = conflictGroupOutcomes.get(groupKey);
+    if (outcome !== undefined) return Effect.succeed(outcome);
+    return replaceConflictGroup({
+      fileSystem,
+      sharedHomePath: layout.sharedHomePath,
+      effectiveHomePath,
+      entryName,
+      sharedEntryNames: sharedEntryNameSet,
+      backupDirectory,
+    }).pipe(Effect.tap((result) => Effect.sync(() => conflictGroupOutcomes.set(groupKey, result))));
+  };
   const entries = new Set<string>(KNOWN_SHARED_DIRECTORIES);
   for (const entryName of sharedEntryNames) {
     if (!PRIVATE_ENTRY_NAMES.has(entryName) && !SHADOW_LOCAL_ENTRY_NAMES.has(entryName)) {
@@ -432,6 +617,7 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
         sharedHomePath: layout.sharedHomePath,
         effectiveHomePath,
         entryName,
+        resolveConflictGroup,
       });
     },
     { discard: true },
