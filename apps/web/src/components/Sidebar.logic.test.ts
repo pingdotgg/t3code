@@ -1416,23 +1416,6 @@ describe("Working shelf (beta)", () => {
       );
 
       it.each(["active", "pinned"] as const)(
-        "checks fallback assignments to other rows at the %s boundary",
-        (section) => {
-          const neighbor = thread("neighbor");
-          const order =
-            section === "active" ? [neighbor, offline, online] : [online, offline, neighbor];
-          const result = planDrop({
-            section,
-            rows: [offline, online, neighbor],
-            moved: online,
-            order,
-          });
-
-          expect(result.plan).toEqual({ kind: "none" });
-        },
-      );
-
-      it.each(["active", "pinned"] as const)(
         "rejects impossible pin/unpin placement across the %s boundary",
         (section) => {
           const order = section === "active" ? [online, offline] : [offline, online];

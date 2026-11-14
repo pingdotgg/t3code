@@ -2,8 +2,8 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import {
   generateSpreadPinOrderKeys,
   pinOrderKeyBetween,
-  crossesFrozenKeyless,
   planWritableReorder,
+  sortableWritableRange,
 } from "@t3tools/client-runtime/state/thread-sort";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -136,29 +136,21 @@ export function computeThreadMoveAvailability(input: {
     keysById.set(id, rowOrder(row, input.section).key);
     if (input.reorderableEnvironmentIds.has(row.environmentId)) writableIds.add(id);
   }
-  // Slots are the rows the planner rewrites; frozen keyless rows drop out of them.
-  const visibleIds = new Set<string>();
-  const slotIds: string[] = [];
-  const slotByIndex: number[] = [];
-  const frozenBefore: number[] = [];
-  let frozenTotal = 0;
-  for (const row of rows) {
-    const id = rowId(row);
-    visibleIds.add(id);
-    if (!writableIds.has(id) && keysById.get(id) == null) {
-      slotByIndex.push(-1);
-      frozenTotal += 1;
-      continue;
-    }
-    slotByIndex.push(slotIds.length);
-    slotIds.push(id);
-    frozenBefore.push(frozenTotal);
-  }
-  const crosses = (before: number) => crossesFrozenKeyless(input.section, before, frozenTotal);
+  const rowIds = rows.map(rowId);
+  const { start, end } = sortableWritableRange(rowIds, keysById, writableIds, input.section);
+  const orderedIds = rowIds.slice(start, end);
+  const indexById = new Map(orderedIds.map((id, index) => [id, index]));
+  // Only the row beside the boundary can enter the sortable range in one step; plan it directly.
+  const entryIndex = input.section === "active" ? start - 2 : end + 1;
+  const entryId = rowIds[entryIndex];
+  const entryAvailable =
+    entryId !== undefined &&
+    createThreadMovePlanner(input)(entryId, input.section === "active" ? "down" : "up") !== null;
   const reservedKeys = new Set<string>();
   keysById.forEach((key, id) => {
-    if (key != null && !visibleIds.has(id)) reservedKeys.add(key);
+    if (key != null && !indexById.has(id)) reservedKeys.add(key);
   });
+  // Swaps affect at most two positions; precomputed totals allow constant-size availability checks.
   const midpoints = new Map<string, string | null>();
   const fastPathKey = (beforeKey: string | null, afterKey: string | null): string | null => {
     const memoKey = `${beforeKey ?? ""}\u0000${afterKey ?? ""}`;
@@ -169,69 +161,68 @@ export function computeThreadMoveAvailability(input: {
     midpoints.set(memoKey, key);
     return key;
   };
-  const spreadKeys = generateSpreadPinOrderKeys(slotIds.length + reservedKeys.size)
+  const spreadKeys = generateSpreadPinOrderKeys(orderedIds.length + reservedKeys.size)
     .filter((key) => !reservedKeys.has(key))
-    .slice(0, slotIds.length);
-  const currentKeys = slotIds.map((id) => keysById.get(id) ?? null);
-  const writableSlot = slotIds.map((id) => writableIds.has(id));
-  const crossingSlot = frozenBefore.map(crosses);
-  // A move changes at most two slots, so each check adjusts the baseline rewrite totals.
-  type RewriteTally = { writes: number; unwritable: number; crossing: number };
-  const tally = (
-    totals: RewriteTally,
-    row: number,
-    slot: number,
-    sign: 1 | -1,
-    crossing = crossingSlot[slot]!,
-  ) => {
-    if (currentKeys[row] === spreadKeys[slot]) return;
-    totals.writes += sign;
-    if (!writableSlot[row]) totals.unwritable += sign;
-    if (crossing) totals.crossing += sign;
-  };
-  const baseline: RewriteTally = { writes: 0, unwritable: 0, crossing: 0 };
-  for (let slot = 0; slot < slotIds.length; slot += 1) {
-    tally(baseline, slot, slot, 1);
+    .slice(0, orderedIds.length);
+  const currentKeys = orderedIds.map((id) => keysById.get(id) ?? null);
+  const writableRow = orderedIds.map((id) => writableIds.has(id));
+  let baselineWrites = 0;
+  let baselineUnwritableWrites = 0;
+  for (let position = 0; position < orderedIds.length; position += 1) {
+    if (currentKeys[position] === spreadKeys[position]) continue;
+    baselineWrites += 1;
+    if (!writableRow[position]) baselineUnwritableWrites += 1;
   }
-  for (let index = 0; index < rows.length; index += 1) {
-    const movedId = rowId(rows[index]!);
-    const slot = slotByIndex[index]!;
-    if (!writableIds.has(movedId) || slot < 0) {
-      result.set(movedId, { canMoveUp: false, canMoveDown: false });
+  const rewriteViable = (index: number): boolean => {
+    let writes = baselineWrites;
+    let unwritableWrites = baselineUnwritableWrites;
+    for (const position of [index, index + 1]) {
+      const other = position === index ? index + 1 : index;
+      if (currentKeys[position] !== spreadKeys[position]) {
+        writes -= 1;
+        if (!writableRow[position]) unwritableWrites -= 1;
+      }
+      if (currentKeys[other] !== spreadKeys[position]) {
+        writes += 1;
+        if (!writableRow[other]) unwritableWrites += 1;
+      }
+    }
+    return writes > 0 && unwritableWrites === 0;
+  };
+  for (const row of rows) {
+    const movedId = rowId(row);
+    const denied = { canMoveUp: false, canMoveDown: false };
+    if (!writableIds.has(movedId)) {
+      result.set(movedId, denied);
+      continue;
+    }
+    const index = indexById.get(movedId);
+    if (index === undefined) {
+      result.set(
+        movedId,
+        movedId === entryId
+          ? {
+              canMoveUp: input.section === "pinned" && entryAvailable,
+              canMoveDown: input.section === "active" && entryAvailable,
+            }
+          : denied,
+      );
       continue;
     }
     const adjacentAvailable = (towardUp: boolean): boolean => {
-      const neighbor = index + (towardUp ? -1 : 1);
-      if (neighbor < 0 || neighbor >= rows.length) return false;
-      const neighborSlot = slotByIndex[neighbor]!;
-      const totals = { ...baseline };
-      let movedCrossing = crossingSlot[slot]!;
-      let beforeSlot = slot - 1;
-      let afterSlot = slot + 1;
-      if (neighborSlot < 0) {
-        // Passing a frozen row keeps the slot order and moves the row to its other side.
-        movedCrossing = crosses(frozenBefore[slot]! + (towardUp ? -1 : 1));
-        tally(totals, slot, slot, -1);
-        tally(totals, slot, slot, 1, movedCrossing);
-      } else {
-        const low = Math.min(slot, neighborSlot);
-        tally(totals, low, low, -1);
-        tally(totals, low + 1, low + 1, -1);
-        tally(totals, low + 1, low, 1);
-        tally(totals, low, low + 1, 1);
-        beforeSlot = towardUp ? slot - 2 : slot + 1;
-        afterSlot = beforeSlot + 1;
-      }
-      const beforeId = slotIds[beforeSlot] ?? null;
-      const afterId = slotIds[afterSlot] ?? null;
+      const shifted = index + (towardUp ? -1 : 1);
+      if (shifted < 0 || shifted >= orderedIds.length) return false;
+      const beforeIndex = towardUp ? index - 2 : index + 1;
+      const afterIndex = towardUp ? index - 1 : index + 2;
+      const beforeId = beforeIndex < 0 ? null : (orderedIds[beforeIndex] ?? null);
+      const afterId = afterIndex >= orderedIds.length ? null : (orderedIds[afterIndex] ?? null);
       const beforeKey = beforeId === null ? null : (keysById.get(beforeId) ?? null);
       const afterKey = afterId === null ? null : (keysById.get(afterId) ?? null);
       if ((beforeId === null || beforeKey != null) && (afterId === null || afterKey != null)) {
-        if (fastPathKey(beforeKey, afterKey) !== null) return !movedCrossing;
+        const key = fastPathKey(beforeKey, afterKey);
+        if (key !== null) return true;
       }
-      return (
-        !movedCrossing && totals.writes > 0 && totals.unwritable === 0 && totals.crossing === 0
-      );
+      return rewriteViable(Math.min(index, shifted));
     };
     result.set(movedId, {
       canMoveUp: adjacentAvailable(true),

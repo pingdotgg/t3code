@@ -9,6 +9,7 @@ import {
   sortPinnedThreadsByOrderKey,
 } from "@t3tools/client-runtime/state/thread-sort";
 import {
+  computeThreadMoveAvailability,
   createPendingThreadOrder,
   createThreadMovePlanner,
   threadOrderAfterMove,
@@ -1082,6 +1083,21 @@ describe("mobile move availability", () => {
       expect(supported(`${environmentId}:move-0`, "down")).toHaveLength(3);
     },
   );
+
+  it("swaps Active rows below an unsupported keyless row when keyless rows sit above it", () => {
+    const ordered = rows("active", [null, null, null, null]);
+    const input = {
+      ordered,
+      section: "active" as const,
+      reorderableEnvironmentIds: new Set([environmentId]),
+    };
+    const movedId = `${environmentId}:move-3`;
+    expect(createThreadMovePlanner(input)(movedId, "up")?.map(({ id }) => id)).toEqual([
+      movedId,
+      `${environmentId}:move-2`,
+    ]);
+    expect(computeThreadMoveAvailability(input).get(movedId)?.canMoveUp).toBe(true);
+  });
 
   it.each(["active", "pinned"] as const)(
     "reserves snoozed %s keys when moving visible rows",
