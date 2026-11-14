@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-14T12:00:00Z",
+  "updatedAt": "2026-11-14T16:30:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -829,7 +829,7 @@
           "aliases": ["fable", "fable-5.2", "claude-fable-5.2"],
           "status": "current",
           "profile": "fable-5-2",
-          "adapter": { "claudeCode": { "minVersion": "2.1.290" } }
+          "adapter": { "claudeCode": { "minVersion": "2.1.321" } }
         },
         {
           "slug": "claude-fable-5-1",
