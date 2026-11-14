@@ -203,6 +203,7 @@ const fakeServiceUnit = (
 it.layer(NodeServices.layer)("service state persistence", (it) => {
   it.effect.each([
     "startup",
+    "log write fails",
     "home probe error",
     "database probe error",
     "pending update",
@@ -270,6 +271,7 @@ setInterval(() => {}, 1_000);
           activeVersion: "1.0.0",
           ...([
             "startup",
+            "log write fails",
             "home probe error",
             "database probe error",
             "update handoff",
@@ -281,6 +283,7 @@ setInterval(() => {}, 1_000);
       );
       let low = [
         "startup",
+        "log write fails",
         "home probe error",
         "database probe error",
         "pending update",
@@ -314,7 +317,12 @@ setInterval(() => {}, 1_000);
             return { ...stats, bavail: low ? 0 : 1024 ** 4, bsize: 1 };
           });
           const log = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
-            if (String(chunk).includes("Waiting for free space")) blocked.resolve();
+            if (String(chunk).includes("Waiting for free space")) {
+              blocked.resolve();
+              if (scenario === "log write fails") {
+                throw Object.assign(new Error("no space left"), { code: "ENOSPC" });
+              }
+            }
             return true;
           });
           spawnHook.current = (child) =>
@@ -385,6 +393,7 @@ setInterval(() => {}, 1_000);
         state.update?.status,
         {
           startup: undefined,
+          "log write fails": undefined,
           "home probe error": undefined,
           "database probe error": undefined,
           "pending update": "committed",

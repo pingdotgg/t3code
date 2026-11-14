@@ -931,9 +931,12 @@ export class Launcher {
     return terminateChild(child, signal, this.#stopChildOverIpc);
   }
 
+  // Diagnostics are best-effort: a full log filesystem must not stop the launcher waiting for space.
   #log(line: string): void {
-    if (this.#output === undefined) process.stderr.write(line);
-    else NodeFS.writeSync(this.#output, line);
+    try {
+      if (this.#output === undefined) process.stderr.write(line);
+      else NodeFS.writeSync(this.#output, line);
+    } catch {}
   }
 
   #enqueue(transition: () => Promise<void>): void {
@@ -1499,6 +1502,8 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const windows = process.platform === "win32";
   let logTimer: NodeJS.Timeout | undefined;
+  // A failed stderr write (ENOSPC on a redirected log) is emitted asynchronously; without a listener it is fatal.
+  process.stderr.on("error", () => undefined);
   try {
     // What the service manager started the launcher with. It locates the unit; service.env
     // changes only what the server gets.
