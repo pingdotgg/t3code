@@ -5,6 +5,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodeSqlite from "node:sqlite";
+import * as NodeZlib from "node:zlib";
 import { describe, expect, it } from "@effect/vitest";
 import {
   AgentSessionImportSource,
@@ -173,6 +174,21 @@ const writeTranscript = Effect.fn("AgentSessionScanner.test.writeTranscript")(fu
   const seconds = input.mtimeMs / 1000;
   yield* fileSystem.utimes(input.filePath, seconds, seconds);
 });
+
+const writeCompressedTranscript = Effect.fn("AgentSessionScanner.test.writeCompressedTranscript")(
+  function* (input: {
+    readonly filePath: string;
+    readonly contents: string;
+    readonly mtimeMs: number;
+  }) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fileSystem.makeDirectory(path.dirname(input.filePath), { recursive: true });
+    yield* fileSystem.writeFile(input.filePath, NodeZlib.zstdCompressSync(input.contents));
+    const seconds = input.mtimeMs / 1000;
+    yield* fileSystem.utimes(input.filePath, seconds, seconds);
+  },
+);
 
 const claudeSessionLine = (cwd: string) =>
   `${JSON.stringify({ type: "user", cwd, sessionId: "s1" })}\n${JSON.stringify({ type: "assistant" })}\n`;
@@ -1088,6 +1104,70 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         }),
     );
 
+    it.effect("imports a checkout's sessions from the linked worktrees the scan counts", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const repo = yield* makeTempDir("t3code-workspace-repo-");
+        yield* fileSystem.makeDirectory(path.join(repo, ".git"));
+        yield* fileSystem.writeFileString(path.join(repo, ".git", "config"), "[core]\n");
+        const worktreeGitDir = path.join(repo, ".git", "worktrees", "feature");
+        yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
+        yield* fileSystem.writeFileString(
+          path.join(worktreeGitDir, "HEAD"),
+          "ref: refs/heads/feature\n",
+        );
+        const worktree = path.join(repo, ".claude", "worktrees", "feature");
+        yield* fileSystem.makeDirectory(worktree, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(worktree, ".git"),
+          `gitdir: ${worktreeGitDir}\n`,
+        );
+
+        for (const [index, [cwd, sessionId]] of [
+          [repo, "at-root"],
+          [worktree, "in-worktree"],
+        ].entries()) {
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", `-slug-${index}`, `${sessionId}.jsonl`),
+            contents: `${JSON.stringify({
+              type: "user",
+              cwd,
+              sessionId,
+              message: { role: "user", content: "Fix the project" },
+            })}\n${JSON.stringify({
+              type: "assistant",
+              sessionId,
+              message: { role: "assistant", content: [{ type: "text", text: "Done" }] },
+            })}\n`,
+            mtimeMs: nowMs - (index + 1) * 60 * 60 * 1000,
+          });
+        }
+
+        const input = { claudeHomePath, codexHomePath };
+        const { candidates } = yield* runScan(input);
+        expect(candidates.map(({ path, threadCount }) => ({ path, threadCount }))).toEqual([
+          { path: repo, threadCount: 2 },
+        ]);
+        const outcomes = yield* runRecentThreadOutcomes({ ...input, workspaceRoot: repo });
+        expect(
+          outcomes.flatMap((outcome) =>
+            outcome._tag === "Importable"
+              ? [{ sessionId: outcome.thread.providerSessionId, worktree: outcome.worktree }]
+              : [],
+          ),
+        ).toEqual([
+          { sessionId: "at-root", worktree: null },
+          { sessionId: "in-worktree", worktree: { path: worktree, branch: "feature" } },
+        ]);
+      }),
+    );
+
     it.effect("excludes sandboxes under the configured worktrees dir without .t3 in the path", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -1249,9 +1329,95 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         ]);
       }),
     );
+    it.effect("discovers projects whose Codex rollouts are zstd-compressed", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        yield* writeCompressedTranscript({
+          filePath: path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "05",
+            "03",
+            "rollout-2026-05-03T00-00-00-019a5f00-0000-7000-8000-00000000000b.jsonl.zst",
+          ),
+          contents: codexRolloutLine(workspace),
+          mtimeMs: Date.parse("2026-05-03T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(result.candidates.map(({ path, threadCount }) => ({ path, threadCount }))).toEqual([
+          { path: workspace, threadCount: 1 },
+        ]);
+      }),
+    );
   });
 
   describe("recentThreads", () => {
+    it.effect("imports Codex conversations stored only as zstd-compressed rollouts", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        yield* writeCompressedTranscript({
+          filePath: path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "08",
+            "20",
+            "rollout-2026-08-20T10-00-00-019a5f00-0000-7000-8000-00000000000c.jsonl.zst",
+          ),
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: "019a5f00-0000-7000-8000-00000000000c", cwd: workspace },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              timestamp: "2026-08-20T10:00:00.000Z",
+              payload: { type: "user_message", message: "Compressed prompt" },
+            }),
+            encodeTranscriptRecord({
+              type: "response_item",
+              timestamp: "2026-08-20T10:01:00.000Z",
+              payload: {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "Compressed answer" }],
+              },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs - 4 * 24 * 60 * 60 * 1000,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(
+          threads.map((thread) => ({
+            id: thread.providerSessionId,
+            messages: thread.messages.map((message) => message.text),
+          })),
+        ).toEqual([
+          {
+            id: "019a5f00-0000-7000-8000-00000000000c",
+            messages: ["Compressed prompt", "Compressed answer"],
+          },
+        ]);
+      }),
+    );
+
     it.effect("imports recent Claude, Codex, and Pi sessions for the selected project only", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

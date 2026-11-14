@@ -181,6 +181,7 @@ describe("CursorAgentSdkRunner", () => {
       });
       assert.equal(session.agentId, agent.agentId);
       assert.deepStrictEqual(yield* session.listMessages, []);
+      assert.strictEqual(yield* session.readContextUsage!, undefined);
       yield* session.close;
     }).pipe(Effect.provide(NodeServices.layer)),
   );
