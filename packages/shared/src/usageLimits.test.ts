@@ -23,6 +23,7 @@ import {
   exhaustedUsageWindow,
   paceOf,
   paceRemainingPercent,
+  resetCreditChoices,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
@@ -702,44 +703,62 @@ describe("pools", () => {
     ]);
   });
 
-  it("joins a report without a workspace to the only workspace signed in with its email", () => {
+  it("joins a Claude hub report to a login only in the organization both verified", () => {
     const native = provider({
       driver: claude,
       auth: { status: "authenticated", email: "same@example.com", workspaceId: "org-a" },
-      usageLimits: { checkedAt, windows: [window] },
+      usageLimits: {
+        checkedAt,
+        windows: [window],
+        resetCredits: { availableCount: 1, nextCreditId: "grant-a" },
+      },
     });
-    const hubAccount = {
+    // The hub read is newer; without a verified organization it may be another workspace's login.
+    const hubAccount = (workspaceId?: string) => ({
       id: "claude.json",
       driver: claude,
       email: "same@example.com",
-      usageLimits: { checkedAt, windows: [window] },
-    };
-    const withOther = (other: ServerProvider) =>
-      new Map([
-        [
-          EnvironmentId.make("env-a"),
-          {
-            ...laptop,
-            serverConfig: {
-              providers: [native, other],
-              usageLimitSources: [{ ...source, accounts: [hubAccount] }],
-            },
-          },
-        ],
-      ]);
-    const unrelated = provider({ instanceId: ProviderInstanceId.make("codex-2") });
-    expect(collectLimitAccounts(withOther(unrelated)).map((account) => account.key)).toEqual([
-      "env-a:codex",
-    ]);
-    const unreadable = provider({
-      ...native,
-      instanceId: ProviderInstanceId.make("team"),
-      auth: { ...native.auth, workspaceId: "org-b" },
-      usageLimits: { checkedAt, windows: [], unavailable: { reason: "probeFailed" } },
+      ...(workspaceId ? { workspaceId } : {}),
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [{ ...window, usedPercent: 90 }],
+        ...(workspaceId ? { resetCredits: { availableCount: 1, nextCreditId: "grant-hub" } } : {}),
+      },
     });
-    expect(collectLimitAccounts(withOther(unreadable)).map((account) => account.key)).toEqual([
-      "env-a:codex",
-      "hub:claude.json",
+    const rows = (account: ReturnType<typeof hubAccount>) =>
+      collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            {
+              ...laptop,
+              serverConfig: {
+                providers: [native],
+                usageLimitSources: [{ ...source, accounts: [account] }],
+              },
+            },
+          ],
+        ]),
+      ).map((account) => [
+        account.key,
+        account.limits.windows[0]?.usedPercent,
+        account.redeem?.input ?? null,
+      ]);
+    expect(rows(hubAccount())).toEqual([
+      ["env-a:codex", 40, { instanceId: native.instanceId }],
+      ["hub:claude.json", 90, null],
+    ]);
+    expect(rows(hubAccount("org-a"))).toEqual([
+      [
+        "env-a:codex",
+        90,
+        {
+          sourceId: source.id,
+          accountId: "claude.json",
+          creditId: "grant-hub",
+          workspaceId: "org-a",
+        },
+      ],
     ]);
   });
 
@@ -1606,6 +1625,52 @@ describe("/usage-limits", () => {
     ]);
     expect(mixed[2]).toBe(unrelated);
     expect(mixed[3]).toBe(disabled);
+  });
+});
+
+describe("resetCreditChoices", () => {
+  it("offers each kind of hub reset under its own grant, naming the organization it is spent in", () => {
+    const hub = {
+      sourceId: UsageLimitSourceId.make("hub"),
+      accountId: "claude.json",
+      creditId: "full-reset-2611",
+      workspaceId: "org-a",
+    };
+    const option = (creditId: string, label: string) => ({
+      creditId,
+      label,
+      description: `${label}.`,
+      availableCount: 1,
+    });
+    const choices = resetCreditChoices(
+      {
+        availableCount: 2,
+        nextCreditId: "full-reset-2611",
+        options: [
+          option("full-reset-2611", "Weekly reset"),
+          option("launch-2610-fable", "Fable reset"),
+        ],
+      },
+      hub,
+      now,
+    );
+    expect(choices.map((choice) => choice.input)).toEqual([
+      hub,
+      { ...hub, creditId: "launch-2610-fable" },
+    ]);
+    // The same email can hold the same grant in another organization.
+    expect(choices.map(({ summary, confirmDescription }) => [summary, confirmDescription])).toEqual(
+      [
+        [
+          "Weekly reset · Organization org-a · 1 left",
+          "Weekly reset in organization org-a: Weekly reset. This cannot be undone.",
+        ],
+        [
+          "Fable reset · Organization org-a · 1 left",
+          "Fable reset in organization org-a: Fable reset. This cannot be undone.",
+        ],
+      ],
+    );
   });
 });
 

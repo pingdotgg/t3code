@@ -177,8 +177,11 @@ To see pooled accounts, open **Settings → Providers → Usage providers → Ad
 environment that will connect to the hub and enter its URL and management key.
 
 The hub's Codex, Claude, xAI (shown as Grok) and Antigravity accounts appear under **Usage → Limits**;
-accounts for other providers are not read. Codex accounts show banked reset credits; select an
-account and choose **Use reset** to redeem one. No hub plugin is required.
+accounts for other providers are not read. Codex and Claude accounts show banked reset credits; select
+an account to redeem one from its details, on any server platform. No hub plugin is required.
+When the hub cannot read a Claude account's organization, the account gets its own row and offers
+no resets. A Claude reset is refused if the hub account has moved to another organization since
+Limits showed it; refresh Limits to see the current account.
 
 This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same

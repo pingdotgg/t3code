@@ -1,7 +1,9 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
@@ -46,6 +48,13 @@ const RequestBody = Schema.Struct({
 type RequestBody = typeof RequestBody.Type;
 const decodeRequest = Schema.decodeUnknownSync(Schema.fromJsonString(RequestBody));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeClaim = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({ program: Schema.String, grant_id: Schema.String, request_id: Schema.String }),
+  ),
+);
+
+type Upstream = { status: number; body: unknown; header?: unknown };
 
 function fixture(
   options: {
@@ -58,13 +67,13 @@ function fixture(
       project_id?: string;
       id_token?: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
     }>;
-    upstream?: (request: RequestBody) => { status: number; body: unknown };
+    upstream?: (request: RequestBody) => Upstream | Effect.Effect<Upstream, never, never>;
     cooldownStatus?: number;
   } = {},
 ) {
   const requests: Array<{ path: string; body?: RequestBody }> = [];
   const http = HttpClient.make((request) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       expect(request.headers.authorization).toBe("Bearer management-secret");
       const path = new URL(request.url).pathname;
       const body =
@@ -84,7 +93,8 @@ function fixture(
         );
       expect(path).toMatch(/\/v0\/management\/api-call$/);
       expect(body?.header?.Authorization).toBe("Bearer $TOKEN$");
-      const upstream = options.upstream?.(body!) ?? {
+      const answer = options.upstream?.(body!);
+      const upstream = (Effect.isEffect(answer) ? yield* answer : answer) ?? {
         status: 200,
         body: body?.url?.endsWith("/consume")
           ? { code: "reset" }
@@ -110,7 +120,11 @@ function fixture(
       };
       return HttpClientResponse.fromWeb(
         request,
-        Response.json({ status_code: upstream.status, body: encodeJson(upstream.body) }),
+        Response.json({
+          status_code: upstream.status,
+          body: encodeJson(upstream.body),
+          ...("header" in upstream ? { header: upstream.header } : {}),
+        }),
       );
     }),
   );
@@ -346,7 +360,7 @@ describe("CLIProxyAPI built-in management API", () => {
         accounts: [{ ...accounts[0]!, provider: "claude" }],
         // The usage endpoint answers 429 to requests without a Claude Code user agent.
         upstream: (request) => ({
-          status: request.header?.["User-Agent"]?.startsWith("claude-code/") ? 200 : 429,
+          status: request.header?.["User-Agent"]?.startsWith("claude-cli/") ? 200 : 429,
           body: {
             five_hour: { utilization: 10, resets_at: null },
             seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
@@ -370,6 +384,253 @@ describe("CLIProxyAPI built-in management API", () => {
         ["seven_day", 50],
         ["seven_day_fable", 80],
       ]);
+    }),
+  );
+
+  it.effect(
+    "names each Claude account by the organization its usage answer names, offering grants only there",
+    () =>
+      Effect.gen(function* () {
+        // Shaped like a hub answer of 12 Nov 2026: a weekly and a Fable grant, plus one not usable yet.
+        const grants = {
+          eligible: true,
+          next_grant_id: "full-reset-2611",
+          grants: [
+            {
+              id: "full-reset-2611",
+              resets_left: 1,
+              usable_now: true,
+              clears: ["seven_day", "seven_day_overage_included"],
+              type: "weekly",
+              gives_back_weekly: false,
+              ends_at: "2099-12-10T22:00:00+00:00",
+            },
+            {
+              id: "launch-2610-fable",
+              resets_left: 1,
+              usable_now: true,
+              clears: ["seven_day_overage_included"],
+              type: "full",
+              gives_back_weekly: true,
+              ends_at: "2099-03-09T07:59:00+00:00",
+            },
+            { id: "blocked-grant", resets_left: 1, usable_now: false, blocking: ["seven_day"] },
+          ],
+        };
+        // As the hub relays Go's http.Header: canonical names and arrays of values.
+        const organizationHeaders: Record<string, unknown> = {
+          a: { "Anthropic-Organization-Id": ["org-a"], "Content-Type": ["application/json"] },
+          c: { "anthropic-organization-id": "org-c" },
+          d: { "Anthropic-Organization-Id": ["org-d"] },
+          e: { "Anthropic-Organization-Id": ["org-a", "org-e"] },
+        };
+        const test = fixture({
+          accounts: ["a", "b", "c", "d", "e"].map((auth_index) => ({
+            id: `${auth_index}.json`,
+            auth_index,
+            provider: "claude",
+            email: `${auth_index}@example.com`,
+          })),
+          upstream: (request) =>
+            // The hub swapped every login to org-b after the usage answers.
+            request.url?.endsWith("/api/oauth/profile")
+              ? { status: 200, body: { organization: { uuid: "org-b" } } }
+              : {
+                  status: 200,
+                  header: organizationHeaders[request.auth_index],
+                  body: {
+                    seven_day: { utilization: 90, resets_at: null },
+                    ...(request.auth_index === "d"
+                      ? {}
+                      : {
+                          cedar_ember:
+                            request.auth_index === "c" ? { eligible: true, grants: "?" } : grants,
+                        }),
+                  },
+                },
+        });
+        const [first, unnamed, malformed, withoutGrants, ambiguous] =
+          yield* (yield* test.api).readAccounts(config);
+        // Its organization is what joins an account to the same login elsewhere, grants or not.
+        expect(withoutGrants?.workspaceId).toBe("org-d");
+        expect(withoutGrants?.usageLimits.resetCredits).toBeUndefined();
+        expect(malformed?.workspaceId).toBe("org-c");
+        expect(first?.workspaceId).toBe("org-a");
+        expect(first?.usageLimits.resetCredits).toMatchObject({
+          availableCount: 2,
+          nextCreditId: "full-reset-2611",
+        });
+        expect(
+          first?.usageLimits.resetCredits?.options?.map(({ creditId, label, availableCount }) => [
+            creditId,
+            label,
+            availableCount,
+          ]),
+        ).toEqual([
+          ["full-reset-2611", "Weekly reset", 1],
+          ["launch-2610-fable", "Fable reset", 1],
+        ]);
+        for (const account of [unnamed, ambiguous]) {
+          expect(account?.workspaceId).toBeUndefined();
+        }
+        for (const account of [unnamed, malformed, ambiguous]) {
+          expect(account?.usageLimits.resetCredits).toBeUndefined();
+          expect(account?.usageLimits.windows.map((window) => window.usedPercent)).toEqual([90]);
+        }
+        expect(test.requests.some((request) => request.body?.url?.includes("/profile"))).toBe(
+          false,
+        );
+        expect(test.requests[1]?.body?.url).toBe(
+          "https://api.anthropic.com/api/oauth/usage?cedar_ember=1",
+        );
+      }),
+  );
+
+  it.effect(
+    "claims the chosen Claude grant for that account's organization, one request id per claim",
+    () =>
+      Effect.gen(function* () {
+        // The first claim may have applied though its answer was lost, and refusing its retry
+        // doesn't settle it: only an answer frees the account for its next use.
+        const statuses = [503, 429, 200, 200];
+        const test = fixture({
+          accounts: [
+            { ...accounts[0]!, provider: "claude" },
+            { ...accounts[1]!, provider: "claude" },
+          ],
+          upstream: (request) =>
+            request.url?.endsWith("/api/oauth/profile")
+              ? { status: 200, body: { organization: { uuid: `org-${request.auth_index}` } } }
+              : { status: statuses.shift() ?? 200, body: { result: "reset" } },
+        });
+        const api = yield* test.api;
+        const claim = api.consume(config, "second.json", "launch-2610-fable", "org-b");
+        expect((yield* claim.pipe(Effect.result))._tag).toBe("Failure");
+        expect((yield* claim.pipe(Effect.result))._tag).toBe("Failure");
+        expect(yield* claim).toEqual({ outcome: "reset" });
+        expect(yield* claim).toEqual({ outcome: "reset" });
+        const sent = test.requests.filter((request) => request.body?.url?.includes("/reset_rate"));
+        expect(sent.map((request) => request.body?.url)).toEqual(
+          Array(4).fill("https://api.anthropic.com/api/organizations/org-b/reset_rate_limits"),
+        );
+        const bodies = sent.map((request) => decodeClaim(request.body?.data));
+        expect(bodies.map(({ program, grant_id }) => [program, grant_id])).toEqual(
+          Array(4).fill(["cedar_ember", "launch-2610-fable"]),
+        );
+        const [lost, refused, answered, next] = bodies.map((body) => body.request_id);
+        expect([refused, answered]).toEqual([lost, lost]);
+        expect(next).not.toBe(lost);
+        expect(
+          test.requests
+            .filter((request) => request.path.endsWith("/reset-quota"))
+            .map((request) => request.body?.auth_index),
+        ).toEqual(["b", "b"]);
+      }),
+  );
+
+  it.effect("never reuses an unanswered Claude claim's id for another grant or organization", () =>
+    Effect.gen(function* () {
+      let organization = "org-1";
+      const statuses = [503];
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: (request) =>
+          request.url?.endsWith("/api/oauth/profile")
+            ? { status: 200, body: { organization: { uuid: organization } } }
+            : { status: statuses.shift() ?? 200, body: { result: "reset" } },
+      });
+      const api = yield* test.api;
+      const claim = (grant: string) => api.consume(config, "first.json", grant, organization);
+      expect((yield* claim("full-reset-2611").pipe(Effect.result))._tag).toBe("Failure");
+      yield* claim("launch-2610-fable");
+      organization = "org-2";
+      yield* claim("full-reset-2611");
+      organization = "org-1";
+      yield* claim("full-reset-2611");
+      const [weekly, fable, otherOrganization, weeklyRetry] = test.requests
+        .filter((request) => request.body?.url?.includes("/reset_rate"))
+        .map((request) => decodeClaim(request.body?.data).request_id);
+      expect(fable).not.toBe(weekly);
+      expect(otherOrganization).not.toBe(weekly);
+      expect(weeklyRetry).toBe(weekly);
+    }),
+  );
+
+  it.effect("claims a Claude grant only in the organization it was shown under, even queued", () =>
+    Effect.gen(function* () {
+      let organization = "org-a";
+      const posted = yield* Deferred.make<void>();
+      const answer = yield* Deferred.make<Upstream>();
+      const claims: Array<{ signedIn: string; url: string | undefined; requestId: string }> = [];
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: (request) => {
+          if (request.url?.endsWith("/api/oauth/profile")) {
+            return { status: 200, body: { organization: { uuid: organization } } };
+          }
+          const { request_id } = decodeClaim(request.data);
+          claims.push({ signedIn: organization, url: request.url, requestId: request_id });
+          return claims.length === 1
+            ? Deferred.succeed(posted, undefined).pipe(Effect.andThen(Deferred.await(answer)))
+            : { status: 200, body: { result: "reset" } };
+        },
+      });
+      const api = yield* test.api;
+      const claim = (workspaceId?: string) =>
+        api.consume(config, "first.json", "full-reset-2611", workspaceId).pipe(Effect.result);
+      const unanswered = yield* claim("org-a").pipe(Effect.forkChild);
+      yield* Deferred.await(posted);
+      // The hub's login moves to another organization while the shown grant's claim waits.
+      organization = "org-b";
+      const queued = yield* claim("org-a").pipe(Effect.forkChild);
+      yield* Deferred.succeed(answer, { status: 503, body: {} });
+      const results = [yield* Fiber.join(unanswered), yield* Fiber.join(queued), yield* claim()];
+      organization = "org-a";
+      const retry = yield* claim("org-a");
+
+      const sentTo = "https://api.anthropic.com/api/organizations/org-a/reset_rate_limits";
+      const first = { signedIn: "org-a", url: sentTo, requestId: claims[0]?.requestId };
+      expect(claims).toEqual([first, first]);
+      expect(results.map((result) => result._tag)).toEqual(["Failure", "Failure", "Failure"]);
+      expect(results[1]).toMatchObject({
+        failure: { detail: expect.stringContaining("Claude login changed") },
+      });
+      expect(retry).toMatchObject({ _tag: "Success", success: { outcome: "reset" } });
+    }),
+  );
+
+  it.effect("never takes a Claude answer for another organization as the shown grant's reset", () =>
+    Effect.gen(function* () {
+      const answeredFor = ["org-b", "org-a"];
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: (request) =>
+          request.url?.endsWith("/api/oauth/profile")
+            ? { status: 200, body: { organization: { uuid: "org-a" } } }
+            : {
+                status: 200,
+                header: { "Anthropic-Organization-Id": [answeredFor.shift()] },
+                body: { result: "reset" },
+              },
+      });
+      const api = yield* test.api;
+      const claim = api
+        .consume(config, "first.json", "full-reset-2611", "org-a")
+        .pipe(Effect.result);
+      const answers = [yield* claim, yield* claim];
+
+      const sent = test.requests
+        .filter((request) => request.body?.url?.includes("/reset_rate"))
+        .map((request) => [request.body?.url, decodeClaim(request.body?.data).request_id]);
+      const toOrgA = [
+        "https://api.anthropic.com/api/organizations/org-a/reset_rate_limits",
+        sent[0]?.[1],
+      ];
+      expect(sent).toEqual([toOrgA, toOrgA]);
+      expect(answers.map((answer) => answer._tag)).toEqual(["Failure", "Success"]);
+      expect(test.requests.filter((request) => request.path.endsWith("/reset-quota"))).toHaveLength(
+        1,
+      );
     }),
   );
 

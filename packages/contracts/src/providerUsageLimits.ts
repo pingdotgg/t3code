@@ -101,6 +101,8 @@ export const UsageLimitSourceConsumeResetCreditInput = Schema.Struct({
   sourceId: UsageLimitSourceId,
   accountId: TrimmedNonEmptyString,
   creditId: TrimmedNonEmptyString,
+  /** The workspace the credit was shown under; a Claude claim refuses any other organization. */
+  workspaceId: Schema.optional(TrimmedNonEmptyString),
 });
 export type UsageLimitSourceConsumeResetCreditInput =
   typeof UsageLimitSourceConsumeResetCreditInput.Type;

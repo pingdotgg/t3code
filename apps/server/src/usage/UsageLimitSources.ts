@@ -150,6 +150,7 @@ export const make = Effect.gen(function* () {
       { url: config.url, managementKey },
       input.accountId,
       input.creditId,
+      input.workspaceId,
     );
     const snapshot = yield* readSource(input.sourceId, config);
     const previous = yield* Ref.get(stateRef);

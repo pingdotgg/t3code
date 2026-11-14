@@ -246,11 +246,18 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
     const known = workspaces.get(key);
     if (!known) return key;
-    return known.size === 1 ? `${key}:${[...known][0]}` : null;
+    // Claude spends grants in an organization, so an unverified one never borrows a known one.
+    return known.size === 1 && report.driver !== "claudeAgent" ? `${key}:${[...known][0]}` : null;
   };
 }
 
 const hubAccountName = (account: { readonly id: string }) => account.id.replace(/\.json$/i, "");
+
+// A Claude grant is claimed only in the organization it was shown under.
+const claudeHubOrganization = (account: AccountReport) =>
+  account.driver === "claudeAgent" && account.workspaceId
+    ? { workspaceId: account.workspaceId }
+    : {};
 
 export interface LimitAccount {
   readonly key: string;
@@ -395,6 +402,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
                   sourceId: source.id,
                   accountId: account.id,
                   creditId: account.usageLimits.resetCredits.nextCreditId,
+                  ...claudeHubOrganization(account),
                 },
               }
             : null,
@@ -763,14 +771,18 @@ export function resetCreditChoices(
   compact = false,
 ): ReadonlyArray<ResetCreditChoice> {
   const expiresIn = (at: string | undefined) => (at ? formatDuration(Date.parse(at) - now) : null);
-  if (credits.options && "instanceId" in input) {
+  // One email can hold the same grant in several organizations.
+  const organization = "workspaceId" in input ? input.workspaceId : undefined;
+  const scope = organization ? ` · Organization ${organization}` : "";
+  const inOrganization = organization ? ` in organization ${organization}` : "";
+  if (credits.options) {
     return credits.options.map((option) => {
       const expires = expiresIn(option.expiresAt);
       return {
         key: option.creditId,
-        summary: `${option.label} · ${option.availableCount} left${expires ? ` · expires in ${expires}` : ""}`,
+        summary: `${option.label}${scope} · ${option.availableCount} left${expires ? ` · expires in ${expires}` : ""}`,
         actionLabel: "Use",
-        confirmDescription: `${option.label}: ${option.description} This cannot be undone.`,
+        confirmDescription: `${option.label}${inOrganization}: ${option.description} This cannot be undone.`,
         availableCount: option.availableCount,
         input: { ...input, creditId: option.creditId },
       };
@@ -785,11 +797,10 @@ export function resetCreditChoices(
         count === 0
           ? "No reset credits banked"
           : compact
-            ? `${count} banked${expires ? ` · expires in ${expires}` : ""}`
-            : `${count} ${count === 1 ? "reset credit" : "reset credits"} banked${expires ? ` · next expires in ${expires}` : ""}`,
+            ? `${count} banked${scope}${expires ? ` · expires in ${expires}` : ""}`
+            : `${count} ${count === 1 ? "reset credit" : "reset credits"} banked${scope}${expires ? ` · next expires in ${expires}` : ""}`,
       actionLabel: "Use reset",
-      confirmDescription:
-        "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
+      confirmDescription: `This redeems one credit on your account${inOrganization} and clears the current rate-limit windows. It cannot be undone.`,
       availableCount: count,
       input,
     },
@@ -967,6 +978,7 @@ export function collectProviderUsageLimits(
               sourceId: hubCredits.source.id,
               accountId: hubCredits.account.id,
               creditId: hubCreditId,
+              ...claudeHubOrganization(hubCredits.account),
             }
           : { instanceId: credits?.provider.instanceId ?? provider.instanceId },
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
@@ -991,6 +1003,7 @@ export function collectProviderUsageLimits(
                 sourceId: source.id,
                 accountId: account.id,
                 creditId: account.usageLimits.resetCredits.nextCreditId,
+                ...claudeHubOrganization(account),
               },
             }
           : {}),
