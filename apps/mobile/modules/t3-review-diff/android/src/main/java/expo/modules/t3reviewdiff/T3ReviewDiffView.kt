@@ -47,7 +47,8 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private var contentResetKey = ""
 
   @Volatile private var rowsDecodeGeneration = 0
-  private var tokensDecodeGeneration = 0
+
+  @Volatile private var tokensDecodeGeneration = 0
   private val payloadDecodeExecutor = Executors.newSingleThreadExecutor()
   private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
   private val minimumFlingVelocity = ViewConfiguration.get(context).scaledMinimumFlingVelocity
@@ -203,6 +204,11 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     tokensDecodeGeneration += 1
     val generation = tokensDecodeGeneration
     payloadDecodeExecutor.execute {
+      if (generation != tokensDecodeGeneration ||
+        Thread.currentThread().isInterrupted
+      ) {
+        return@execute
+      }
       val decodedTokens = parseTokensObject(value)
       post {
         if (generation != tokensDecodeGeneration) return@post
@@ -1123,7 +1129,8 @@ private class DiffCanvasView(context: Context) : View(context) {
   }
 
   private fun maxHeaderPathOffset(fileId: String): Int {
-    val row = rows.firstOrNull { it.kind == "file" && it.resolvedFileId == fileId } ?: return 0
+    val rowIndex = fileHeaderIndices.firstOrNull { rows[it].resolvedFileId == fileId } ?: return 0
+    val row = rows[rowIndex]
     val top = 0
     val bottom = rowHeight(row)
     val iconRect = drawing.fileHeaderIconRect(top, bottom, style)
