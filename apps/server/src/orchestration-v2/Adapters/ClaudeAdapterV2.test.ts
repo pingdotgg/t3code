@@ -3815,6 +3815,50 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
 
+    it.effect("a native /rename retitles the thread without renaming it back", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions();
+        yield* startTurn(harness, "First title", 1);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "session_title_changed",
+            title: "Native title",
+            uuid: "title-changed-1",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait({
+          ...makeResultFrame({
+            uuid: "title-result-1",
+            result: "Session renamed to: Native title",
+            numTurns: 0,
+          }),
+          local_command: "rename",
+        } as SDKMessage);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "app_thread.created" ? [event.appThread.title] : [],
+          ),
+          ["Native title"],
+        );
+
+        yield* startTurn(harness, "Native title", 2);
+        assert.deepEqual(harness.renameCalls, []);
+        yield* finishTurn(harness, 2);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
     it.effect("renames a resumed session whose stored title is stale", () =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarnessWithOptions();
