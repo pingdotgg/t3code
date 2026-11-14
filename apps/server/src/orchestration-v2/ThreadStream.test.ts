@@ -1,7 +1,6 @@
 import {
   ContextHandoffId,
   ContextTransferId,
-  EventId,
   OrchestrationV2ThreadStreamItem,
   ProviderThreadId,
   RunId,
@@ -17,22 +16,10 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 
-import {
-  buildBoundedThreadStreamSnapshot,
-  decideThreadResume,
-  isThreadReplayRawPayloadSafe,
-  threadReplayEncodedBytes,
-  THREAD_RESUME_MAX_RAW_PAYLOAD_BYTES,
-  THREAD_RESUME_MAX_REPLAY_ENCODED_BYTES,
-  THREAD_RESUME_MAX_REPLAY_EVENTS,
-} from "./ThreadStream.ts";
-import { projectDomainEventForWire } from "./WireProjection.ts";
+import { buildBoundedThreadStreamSnapshot } from "./ThreadStream.ts";
 
 const NOW = DateTime.makeUnsafe("2026-09-08T00:00:00.000Z");
 const THREAD_ID = ThreadId.make("thread-stream-test");
-const LARGE_PROJECTABLE_OUTPUT_BYTES = 10 * 1_048_576;
-const LARGE_PROJECTABLE_RAW_PAYLOAD_BYTES = 10_486_214;
-const MAX_PROJECTED_DYNAMIC_REPLAY_BYTES = 2_048;
 
 function timelineProjection(itemCount: number): OrchestrationV2ThreadProjection {
   const visibleTurnItems: OrchestrationV2ProjectedTurnItem[] = Array.from(
@@ -115,44 +102,7 @@ function timelineProjection(itemCount: number): OrchestrationV2ThreadProjection 
   } as unknown as OrchestrationV2ThreadProjection;
 }
 
-describe("decideThreadResume", () => {
-  it("replays when the event count is within the bound", () => {
-    expect(
-      decideThreadResume({
-        afterSequence: 10,
-        highWater: 20_000,
-        replayEventCount: THREAD_RESUME_MAX_REPLAY_EVENTS,
-        replayEncodedBytes: THREAD_RESUME_MAX_REPLAY_ENCODED_BYTES,
-      }),
-    ).toEqual({
-      mode: "replay",
-      afterSequence: 10,
-      throughSequence: 20_000,
-    });
-  });
-
-  it("falls back to a snapshot when encoded replay bytes exceed the bound", () => {
-    expect(
-      decideThreadResume({
-        afterSequence: 10,
-        highWater: 11,
-        replayEventCount: 1,
-        replayEncodedBytes: THREAD_RESUME_MAX_REPLAY_ENCODED_BYTES + 1,
-      }),
-    ).toEqual({ mode: "snapshot" });
-  });
-
-  it("falls back to a snapshot when the client cursor is ahead of the store", () => {
-    expect(
-      decideThreadResume({
-        afterSequence: 50,
-        highWater: 40,
-        replayEventCount: 0,
-        replayEncodedBytes: 0,
-      }),
-    ).toEqual({ mode: "snapshot" });
-  });
-
+describe("buildBoundedThreadStreamSnapshot", () => {
   it("builds socket fallback snapshots with a bounded timeline and history cursor", () => {
     const projection = timelineProjection(80);
     // A delivered side chat digest stays "ready", which bounded snapshots keep.
@@ -186,62 +136,6 @@ describe("decideThreadResume", () => {
     expect(snapshot.historyCursor).not.toBeNull();
     expect(snapshot.hasMoreHistory).toBe(true);
     expect(snapshot.latestLocalTurnOrdinal).toBe(80);
-  });
-
-  it("rejects a 10 MiB raw replay even when its projected form fits the wire budget", () => {
-    const item = {
-      id: TurnItemId.make("large-dynamic-tool"),
-      type: "dynamic_tool",
-      threadId: THREAD_ID,
-      runId: null,
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: 1,
-      status: "completed",
-      title: "Large result",
-      toolName: "mcp__test__large_result",
-      input: { query: "small" },
-      output: { text: "x".repeat(LARGE_PROJECTABLE_OUTPUT_BYTES) },
-      startedAt: NOW,
-      completedAt: NOW,
-      updatedAt: NOW,
-    } satisfies OrchestrationV2TurnItem;
-    const event = {
-      id: EventId.make("large-dynamic-tool-event"),
-      type: "turn-item.updated" as const,
-      threadId: THREAD_ID,
-      occurredAt: NOW,
-      payload: item,
-    };
-    const rawReplay = [{ kind: "event" as const, sequence: 10, event }];
-    const projectedReplay = [
-      {
-        kind: "event" as const,
-        sequence: 10,
-        event: projectDomainEventForWire(event),
-      },
-    ];
-
-    const rawPayloadBytes = Buffer.byteLength(JSON.stringify(event.payload), "utf8");
-    expect(rawPayloadBytes).toBe(LARGE_PROJECTABLE_RAW_PAYLOAD_BYTES);
-    expect(rawPayloadBytes).toBeGreaterThan(THREAD_RESUME_MAX_RAW_PAYLOAD_BYTES);
-    expect(isThreadReplayRawPayloadSafe(rawPayloadBytes)).toBe(false);
-    expect(threadReplayEncodedBytes(rawReplay)).toBeGreaterThan(
-      THREAD_RESUME_MAX_REPLAY_ENCODED_BYTES,
-    );
-    const projectedBytes = threadReplayEncodedBytes(projectedReplay);
-    expect(projectedBytes).toBeLessThanOrEqual(MAX_PROJECTED_DYNAMIC_REPLAY_BYTES);
-    expect(
-      decideThreadResume({
-        afterSequence: 9,
-        highWater: 10,
-        replayEventCount: projectedReplay.length,
-        replayEncodedBytes: projectedBytes,
-      }),
-    ).toEqual({ mode: "replay", afterSequence: 9, throughSequence: 10 });
   });
 });
 

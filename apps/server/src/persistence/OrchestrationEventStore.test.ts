@@ -111,7 +111,7 @@ layer("OrchestrationEventStore", (it) => {
       const id = NodeId.make("node:subagent-prompt");
       const driver = ProviderDriverKind.make("claudeAgent");
       const providerInstanceId = ProviderInstanceId.make("claudeAgent");
-      const prompt = "Audit the repository. ".repeat(200);
+      const prompt = 'Audit "repo"\n漢字 '.repeat(9_000);
       const subagent = (index: number, progress: string, nextPrompt = prompt) =>
         ({
           id: EventId.make(`event:subagent-prompt:subagent:${index}`),
@@ -183,14 +183,14 @@ layer("OrchestrationEventStore", (it) => {
         subagent(3, "Retrying", "Audit again."),
         item(3, "Retrying", "Audit again."),
       ];
-      yield* store.appendAgentEvents({ events });
+      const appended = yield* store.appendAgentEvents({ events });
 
       const stored = yield* sql<{ readonly payload_json: string }>`
         SELECT payload_json FROM orchestration_events
         WHERE stream_id = ${threadId} ORDER BY sequence ASC
       `;
       assert.deepEqual(
-        stored.map((row) => row.payload_json.includes(prompt)),
+        stored.map((row) => row.payload_json.includes(JSON.stringify(prompt).slice(1, -1))),
         [true, true, false, false, false, false, false, false],
       );
       const replayed = yield* store
@@ -200,18 +200,33 @@ layer("OrchestrationEventStore", (it) => {
         replayed.map((entry) => entry.event),
         events,
       );
-      const stats = yield* store.getAgentReplayStats({
-        threadId,
-        afterSequence,
-        throughSequence: yield* store.latestApplicationSequence,
-        maxEvents: events.length,
-      });
-      assert.isAbove(stats.rawPayloadBytes, prompt.length * 6);
       const applicationStats = yield* store.getReplayStats({
         afterSequence,
         throughSequence: yield* store.latestApplicationSequence,
       });
       assert.isAbove(applicationStats.rawPayloadBytes, prompt.length * 6);
+      const paged = yield* store
+        .readAgentEvents({ threadId, afterSequence, maxPageBytes: 256 * 1024 })
+        .pipe(Stream.runCollect);
+      assert.deepEqual(
+        paged.map((entry) => entry.event),
+        events,
+      );
+      // The first two updates here reference prompts in earlier anchor rows.
+      // Sizing must stop before touching a later page's malformed payload.
+      yield* sql`UPDATE orchestration_events SET payload_json = '{' WHERE sequence = ${appended[4]!.sequence}`;
+      const firstPage = yield* store
+        .readAgentEvents({
+          threadId,
+          afterSequence: appended[1]!.sequence,
+          throughSequence: appended[4]!.sequence,
+          maxPageBytes: 256 * 1024,
+        })
+        .pipe(Stream.take(1), Stream.runCollect);
+      assert.deepEqual(
+        firstPage.map((entry) => entry.event),
+        [events[2]!],
+      );
     }),
   );
 
@@ -392,7 +407,7 @@ layer("OrchestrationEventStore", (it) => {
       );
     }),
   );
-  it.effect("measures only a bounded thread replay before decoding its payloads", () =>
+  it.effect("measures replay payloads before decoding them", () =>
     Effect.gen(function* () {
       const store = yield* OrchestrationEventStore.OrchestrationEventStore;
       const sql = yield* SqlClient.SqlClient;
@@ -420,7 +435,7 @@ layer("OrchestrationEventStore", (it) => {
         `;
         return rows[0]!.sequence;
       });
-      const first = yield* insert({
+      yield* insert({
         id: "measured-replay-1",
         payload: unicodePayload,
         type: "thread.created",
@@ -432,28 +447,6 @@ layer("OrchestrationEventStore", (it) => {
       });
       yield* insert({ id: "measured-legacy", payload: oversizedPayload, version: 1 });
       const head = yield* insert({ id: "measured-replay-02", payload: oversizedPayload });
-      const later = yield* insert({ id: "measured-replay-003", payload: "{}" });
-      const range = { threadId, afterSequence: baseline, throughSequence: head, maxEvents: 128 };
-      assert.deepEqual(yield* store.getAgentReplayStats(range), {
-        eventCount: 2,
-        rawPayloadBytes: Buffer.byteLength(unicodePayload) + Buffer.byteLength(oversizedPayload),
-        hasCreateEvent: true,
-      });
-      assert.deepEqual(yield* store.getAgentReplayStats({ ...range, afterSequence: first }), {
-        eventCount: 1,
-        rawPayloadBytes: Buffer.byteLength(oversizedPayload),
-        hasCreateEvent: false,
-      });
-      assert.equal(
-        (yield* store.getAgentReplayStats({ ...range, throughSequence: later, maxEvents: 1 }))
-          .eventCount,
-        2,
-      );
-      assert.deepEqual(yield* store.getAgentReplayStats({ ...range, afterSequence: later }), {
-        eventCount: 0,
-        rawPayloadBytes: 0,
-        hasCreateEvent: false,
-      });
       assert.deepEqual(
         yield* store.getReplayStats({ afterSequence: baseline, throughSequence: head }),
         {
