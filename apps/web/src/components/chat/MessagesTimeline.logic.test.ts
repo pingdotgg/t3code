@@ -5989,8 +5989,8 @@ describe("parent run waiting on foreground subagents", () => {
   };
 
   it("names the running children while the open run has done nothing since launching them", () => {
-    expect(liveRow([])).toEqual({ ...thinking, label: "Waiting on 2 subagents" });
-    expect(liveRow([], "hideAll")).toEqual({ ...thinking, label: "Waiting on 2 subagents" });
+    expect(liveRow([])).toEqual({ ...thinking, label: "Waiting on subagents" });
+    expect(liveRow([], "hideAll")).toEqual({ ...thinking, label: "Waiting on subagents" });
   });
 
   it("keeps Thinking when a hidden newer parent command follows the children", () => {

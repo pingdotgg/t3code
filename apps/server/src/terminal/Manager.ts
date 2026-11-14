@@ -1489,7 +1489,11 @@ function sanitizeTerminalHistoryChunk(
           cursor += 1;
         }
         if (cursor >= input.length) {
-          return { visibleText, pendingControlSequence: prefix + input.slice(index), commandExitCode };
+          return {
+            visibleText,
+            pendingControlSequence: prefix + input.slice(index),
+            commandExitCode,
+          };
         }
         continue;
       }
@@ -1506,7 +1510,11 @@ function sanitizeTerminalHistoryChunk(
           nextCodePoint === 0x5d,
         );
         if (stringEnd === null) {
-          return { visibleText, pendingControlSequence: prefix + input.slice(index), commandExitCode };
+          return {
+            visibleText,
+            pendingControlSequence: prefix + input.slice(index),
+            commandExitCode,
+          };
         }
         const { end, c1 } = stringEnd;
         const content = stripStringTerminator(

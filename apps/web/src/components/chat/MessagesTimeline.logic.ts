@@ -2,10 +2,7 @@ import * as DateTime from "effect/DateTime";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
-import {
-  isLiveSubagentTurnItem,
-  waitingOnSubagentsLabel,
-} from "@t3tools/client-runtime/state/subagentRuntime";
+import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
 import { claudeResumeCompactionAge } from "@t3tools/shared/claudeCompaction";
@@ -2687,7 +2684,8 @@ export function deriveMessagesTimelineRows(input: {
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
         createdAt: input.activeTurnStartedAt ?? null,
-        ...(waitingOn > 0 ? { label: waitingOnSubagentsLabel(waitingOn) } : {}),
+        // The working line never counts or names subagents.
+        ...(waitingOn > 0 ? { label: "Waiting on subagents" } : {}),
       });
     }
   }
