@@ -14429,8 +14429,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         cause === "a late cleanup after a runtime restart"
           ? undefined
           : path.join(second, "prompt.md");
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
       const reading = yield* Deferred.make<void>();
+      const settingsRead = yield* Deferred.make<void>();
       const gate = yield* Deferred.make<void>();
+      let appendReadStarted = false;
+      const heldRead = (filePath: string, reached: Deferred.Deferred<void>) =>
+        fileSystem.readFile(filePath).pipe(
+          Effect.exit,
+          Effect.tap(() => Deferred.succeed(reached, undefined)),
+          Effect.tap(() => Deferred.await(gate)),
+          Effect.flatten,
+        );
       if (gatedRead !== undefined)
         yield* fileSystem.writeFileString(gatedRead, "Prompt sentinel\n");
       let closes = 0;
@@ -14442,6 +14452,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const harness = yield* makeWakeHarnessWithOptions({
         settings: {
           ...DEFAULT_CLAUDE_SETTINGS,
+          homePath: home,
           launchArgs: cause === "background work" ? "" : "--append-system-prompt-file prompt.md",
         },
         freshQueueOnReopen: true,
@@ -14470,13 +14481,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           FileSystem.FileSystem,
           FileSystem.make({
             ...fileSystem,
-            readFile: (filePath) =>
-              filePath === gatedRead
-                ? fileSystem.readFile(filePath).pipe(
-                    Effect.tap(() => Deferred.succeed(reading, undefined)),
-                    Effect.tap(() => Deferred.await(gate)),
-                  )
-                : fileSystem.readFile(filePath),
+            readFile: (filePath) => {
+              if (filePath === gatedRead) {
+                appendReadStarted = true;
+                return heldRead(filePath, reading);
+              }
+              // The launch settings resolve beside the append file. Their last read is the user tier.
+              return appendReadStarted && filePath === path.join(home, "settings.json")
+                ? heldRead(filePath, settingsRead)
+                : fileSystem.readFile(filePath);
+            },
           }),
         ),
       );
@@ -14540,12 +14554,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Deferred.await(handlingLimit);
         const started = yield* Effect.forkScoped(harness.runtime.startTurn(turn(2, second, true)));
         yield* Deferred.await(reading);
-        // Released from a fork, the continuation runs inline from its last read until it suspends.
+        yield* Deferred.await(settingsRead);
+        // Both launch reads wait at the gate. Released from a fork, the replacement runs inline to the close.
         const closesWhileHandling = yield* Effect.forkScoped(
           Deferred.succeed(gate, undefined).pipe(Effect.map(() => closes)),
         );
-        assert.equal(yield* Fiber.join(closesWhileHandling), 0);
+        const closedWhileHandling = yield* Fiber.join(closesWhileHandling);
         yield* Deferred.succeed(releaseLimit, undefined);
+        assert.equal(closedWhileHandling, 0);
         yield* Fiber.join(limited);
         yield* Fiber.join(started);
         assert.equal(harness.getOpenedOptions()?.cwd, second);
