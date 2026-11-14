@@ -70,6 +70,8 @@ const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
 const failLoadSessionAfterConfigReplay =
   process.env.T3_ACP_FAIL_LOAD_SESSION_AFTER_CONFIG_REPLAY === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
+// Replays, then answers `session/load` only once `_test/finish-load` arrives.
+const holdLoadSessionResponse = process.env.T3_ACP_HOLD_LOAD_SESSION_RESPONSE === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 // JSON for the `data` of an "Internal error" response to `session/new`, as
 // Antigravity sends when its runtime cannot reach its local harness.
@@ -499,6 +501,7 @@ const program = Effect.gen(function* () {
   const agent = yield* EffectAcpAgent.AcpAgent;
   const nativeCancelRequested = yield* Deferred.make<void>();
   const nativeCancelRelease = yield* Deferred.make<void>();
+  const loadResponseRelease = yield* Deferred.make<void>();
   const publishAntigravityCommands = (targetSessionId: string) =>
     agent.client.sessionUpdate({
       sessionId: targetSessionId,
@@ -718,7 +721,7 @@ const program = Effect.gen(function* () {
           "Mock load session failure after config replay",
         );
       }
-      if (emitLoadReplay) {
+      if (emitLoadReplay || holdLoadSessionResponse) {
         emitLoadReplayNotifications(requestedSessionId);
       }
       yield* agent.client.sessionUpdate({
@@ -729,8 +732,13 @@ const program = Effect.gen(function* () {
           content: { type: "text", text: "replay" },
         },
       });
+      // Built before the wait, like an agent whose response predates later selections.
+      const loadedConfigOptions = configOptions();
+      if (holdLoadSessionResponse) {
+        yield* Deferred.await(loadResponseRelease);
+      }
       return {
-        configOptions: configOptions(),
+        configOptions: loadedConfigOptions,
       };
     }),
   );
@@ -1916,6 +1924,9 @@ const program = Effect.gen(function* () {
         inherited: process.env.T3_ACP_RUNTIME_AMBIENT === "sentinel",
         explicit: process.env.T3_ACP_RUNTIME_EXPLICIT === "kept",
       });
+    }
+    if (method === "_test/finish-load") {
+      return Deferred.succeed(loadResponseRelease, undefined).pipe(Effect.as({}));
     }
     if (method === "_test/finish-cancel") {
       return Deferred.succeed(nativeCancelRelease, undefined).pipe(Effect.as({}));

@@ -13,6 +13,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
@@ -1146,6 +1147,47 @@ describe("AcpSessionRuntime", () => {
           cwd: process.cwd(),
           resumeSessionId: "mock-session-1",
           clientInfo: { name: "t3-test", version: "0.0.0" },
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+  );
+
+  it.live("adopts a session/load response that arrives after replay idle", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const provisional = yield* runtime.start();
+      assert.deepEqual(yield* runtime.getConfigOptions, []);
+
+      yield* runtime.request("_test/finish-load", {});
+      const adopted = yield* runtime.getEvents().pipe(
+        Stream.filter((event) => event._tag === "SessionSetupAdopted"),
+        Stream.runHead,
+      );
+
+      assert.deepEqual(
+        (yield* runtime.getConfigOptions).map((option) => option.id),
+        ["mode", "model"],
+      );
+      assert.equal((yield* runtime.getModeState)?.currentModeId, "ask");
+      const started = yield* runtime.start();
+      assert.notStrictEqual(started.sessionSetupResult, provisional.sessionSetupResult);
+      assert.isTrue(
+        Option.isSome(adopted) &&
+          adopted.value._tag === "SessionSetupAdopted" &&
+          adopted.value.started === started,
+      );
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          ...mockRuntimeOptions,
+          spawn: {
+            ...mockRuntimeOptions.spawn,
+            env: { T3_ACP_HOLD_LOAD_SESSION_RESPONSE: "1" },
+          },
+          resumeSessionId: "mock-session-1",
+          sessionLoadReplayIdleGap: 0,
         }),
       ),
       Effect.scoped,
