@@ -143,6 +143,7 @@ function summarizeThreadRun(
       : turnStatus === "pending" || turnStatus === "running"
         ? {}
         : { turnEnded: true }),
+    ...(run.workspacePreparation?.type === "worktree" ? { preparedWorktree: true as const } : {}),
     ...(run.sourcePlanRef === undefined ? {} : { sourcePlanRef: run.sourcePlanRef }),
   };
 }
