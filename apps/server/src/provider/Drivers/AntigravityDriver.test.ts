@@ -22,6 +22,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
+import { resolveAntigravityReleaseAsset } from "../antigravityRelease.ts";
 import {
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
   resolveAntigravityInstanceDirectories,
@@ -37,6 +38,7 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 
 const hostPlatform = HostProcess.Platform.defaultValue();
 const windowsHost = hostPlatform === "win32";
+const hostArch = HostProcess.Architecture.defaultValue();
 const decodeRequest = Schema.decodeEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -465,6 +467,28 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(h.releases).toEqual([h.first.version, h.signedOut.version]);
         yield* h.assertClosed;
       }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "flags a managed runtime older than the bundled release as behind latest",
+    () =>
+      Effect.gen(function* () {
+        const bundled = resolveAntigravityReleaseAsset(hostPlatform, hostArch);
+        if (!bundled) return;
+        const h = yield* makeHarness();
+        // Older releases recorded the version with the executable's name prefix.
+        for (const version of ["1.3.0", "agy_acp_server_1.1.1"]) {
+          h.controls.selected = { ...(yield* h.makeExecutable(version)), version };
+          yield* h.refresh();
+          const snapshot = yield* h.instance.snapshot.getSnapshot;
+          expect(snapshot.versionAdvisory).toMatchObject({
+            status: "behind_latest",
+            currentVersion: version,
+            latestVersion: bundled.version,
+          });
+        }
+        yield* h.assertClosed;
+      }).pipe(Effect.scoped),
   );
 
   it.effect.skipIf(windowsHost)("keeps the previous catalog when executable resolution fails", () =>

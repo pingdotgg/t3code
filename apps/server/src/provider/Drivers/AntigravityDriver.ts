@@ -32,6 +32,7 @@ import {
 } from "../../textGeneration/AntigravityTextGeneration.ts";
 import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
+import { resolveAntigravityReleaseAsset } from "../antigravityRelease.ts";
 import * as AntigravityUsage from "./AntigravityUsage.ts";
 import {
   antigravityAuthConfigIssue,
@@ -52,6 +53,10 @@ import {
 } from "../acp/AntigravityAcpSupport.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
+import {
+  createProviderVersionAdvisory,
+  makeManualOnlyProviderMaintenanceCapabilities,
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   removeAntigravitySessionFiles,
   retireAntigravityRuntimeTempDirs,
@@ -192,9 +197,34 @@ export const AntigravityDriver: ProviderDriver<
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
+    const bundledVersion =
+      resolveAntigravityReleaseAsset(yield* HostProcess.Platform, yield* HostProcess.Architecture)
+        ?.version ?? null;
+    // Only a managed runtime can move to the bundled release; custom executables stay as chosen.
+    let latestVersion: string | null = null;
+    const maintenanceCapabilities = {
+      ...makeManualOnlyProviderMaintenanceCapabilities({ provider: DRIVER, packageName: null }),
+      // Older releases recorded versions like "agy_acp_server_1.1.1"; any non-bundled one is outdated.
+      compareVersions: (current: string, latest: string) => (current === latest ? 0 : -1),
+    };
     const classifyModels = (draft: ServerProviderDraft) =>
       currentCatalog.pipe(
-        Effect.map((catalog) => stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog))),
+        Effect.map((catalog) =>
+          stampIdentity({
+            ...ModelCatalog.applyModelCatalog(draft, catalog),
+            versionAdvisory: {
+              ...createProviderVersionAdvisory({
+                driver: DRIVER,
+                currentVersion: draft.version,
+                latestVersion: draft.installed ? latestVersion : null,
+                checkedAt: draft.checkedAt,
+                maintenanceCapabilities,
+              }),
+              // The manual-update text points at another installer; T3 Code owns this runtime.
+              message: null,
+            },
+          }),
+        ),
       );
 
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
@@ -398,6 +428,11 @@ export const AntigravityDriver: ProviderDriver<
         });
       }
       const executable = yield* installation.resolve(settings.binaryPath, processEnvironment).pipe(
+        Effect.tapError(() =>
+          Effect.sync(() => {
+            latestVersion = null;
+          }),
+        ),
         Effect.mapError(
           (cause) =>
             new ProviderSetupError({
@@ -408,6 +443,7 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
+      latestVersion = executable.source === "managed" ? bundledVersion : null;
       return {
         protocolVersion: 1,
         agentCapabilities: {
