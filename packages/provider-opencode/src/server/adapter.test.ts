@@ -1486,6 +1486,7 @@ describe("OpenCodeAdapterV2", () => {
     { state: "settled", end: "owned-exit" },
     { state: "settled", end: "failed-stream" },
     { state: "settled", end: "sequential" },
+    { state: "settled", end: "sequential-buffered" },
     { state: "settled", end: "idle-only" },
     { state: "settled", end: "error-only" },
     { state: "settled", end: "routing-stalled" },
@@ -2424,27 +2425,32 @@ describe("OpenCodeAdapterV2", () => {
         yield* push(status("idle"));
         yield* push({ type: "session.idle", properties: { sessionID: root } });
         if (foreground !== null) yield* Fiber.join(foreground);
-        if (end === "sequential") {
+        if (end === "sequential" || end === "sequential-buffered") {
+          const secondResult = Effect.gen(function* () {
+            yield* push(user("msg_second_background_result"));
+            yield* push(status("busy"));
+            yield* push({
+              type: "message.part.updated",
+              properties: {
+                sessionID: root,
+                time: 4,
+                part: {
+                  id: "prt_second_wake",
+                  sessionID: root,
+                  messageID: "msg_second_wake_assistant",
+                  type: "text",
+                  text: "SECOND_WAKE_OK",
+                  time: { start: 4, end: 5 },
+                },
+              },
+            });
+            yield* push(status("idle"));
+          });
+          // Both results can settle before the first continuation is admitted.
+          if (end === "sequential-buffered") yield* secondResult;
           yield* harness.startTurn("", undefined, undefined, false, "wake-one", {});
           yield* awaitTerminal;
-          yield* push(user("msg_second_background_result"));
-          yield* push(status("busy"));
-          yield* push({
-            type: "message.part.updated",
-            properties: {
-              sessionID: root,
-              time: 4,
-              part: {
-                id: "prt_second_wake",
-                sessionID: root,
-                messageID: "msg_second_wake_assistant",
-                type: "text",
-                text: "SECOND_WAKE_OK",
-                time: { start: 4, end: 5 },
-              },
-            },
-          });
-          yield* push(status("idle"));
+          if (end === "sequential") yield* secondResult;
           assert.equal(offers.length, 2, "completed sequential wakes each offer once");
           yield* harness.startTurn("", undefined, undefined, false, "wake-two", {});
           const events = yield* harness.runtime.events.pipe(

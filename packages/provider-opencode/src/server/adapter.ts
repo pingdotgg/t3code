@@ -3847,10 +3847,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                           }
                         }
                       }
+                      // Work held after this turn settles is a later result; it starts its own wake.
                       yield* Effect.forEach(wake?.events ?? [], (event) =>
-                        routeEvent(event, continuation ? undefined : sessionId).pipe(
-                          Effect.timeout("10 seconds"),
-                        ),
+                        (state.activeTurn === turn
+                          ? routeEvent(event, continuation ? undefined : sessionId)
+                          : acceptEvent(event)
+                        ).pipe(Effect.timeout("10 seconds")),
                       ).pipe(
                         Effect.onError(() =>
                           Effect.gen(function* () {
