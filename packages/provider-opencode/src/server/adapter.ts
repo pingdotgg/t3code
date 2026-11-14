@@ -726,11 +726,13 @@ function permissionRuleEquals(
 /**
  * Children inherit only deny/external-directory rules; restore parent policy while retaining agent restrictions.
  * `previousParentRules` are the parent rules already written into `childRules`.
+ * `childToolDenies` are OpenCode's child-only denies, which it omits when an inherited rule matches.
  */
 export function openCodeChildPermissionRules(
   runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   childRules: PermissionRuleset,
   previousParentRules: PermissionRuleset = [],
+  childToolDenies: PermissionRuleset = [],
 ): PermissionRuleset {
   const parentRules = openCodePermissionRules(runtimePolicy);
   const inheritedRules = [
@@ -741,7 +743,8 @@ export function openCodeChildPermissionRules(
   ];
   const childSpecificRules = childRules.filter(
     (childRule, index) =>
-      !inheritedRules.some((inheritedRule) => permissionRuleEquals(childRule, inheritedRule)) &&
+      (childToolDenies.some((deny) => permissionRuleEquals(childRule, deny)) ||
+        !inheritedRules.some((inheritedRule) => permissionRuleEquals(childRule, inheritedRule))) &&
       !childRules.slice(index + 1).some((laterRule) => permissionRuleEquals(childRule, laterRule)),
   );
   return [...parentRules, ...childSpecificRules];
@@ -1084,6 +1087,20 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               }),
             ),
           );
+
+        // OpenCode adds a child deny per configured primary tool; without the config, keep no extra denies.
+        const childToolDenies = yield* Effect.cached(
+          sdkCall("config.get", {}, () => client.config.get()).pipe(
+            Effect.map((response): PermissionRuleset =>
+              (response.data?.experimental?.primary_tools ?? []).map((permission) => ({
+                permission,
+                pattern: "*",
+                action: "deny",
+              })),
+            ),
+            Effect.orElseSucceed((): PermissionRuleset => []),
+          ),
+        );
 
         const abortDescendants = Effect.fn("OpencodeAdapter.abortDescendants")(function* (
           rootId: string,
@@ -1457,6 +1474,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               turn.runtimePolicy,
               nativeChildSession.permission ?? [],
               inheritedPermission,
+              yield* childToolDenies,
             );
             yield* sdkCall(
               "session.update",
@@ -2943,7 +2961,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             const permission =
               target.parentSubagent === null
                 ? parentRules
-                : openCodeChildPermissionRules(policy, previous, target.inheritedPermission);
+                : openCodeChildPermissionRules(
+                    policy,
+                    previous,
+                    target.inheritedPermission,
+                    yield* childToolDenies,
+                  );
             if (
               permission.length > previous.length ||
               !permission.every((rule, index) =>

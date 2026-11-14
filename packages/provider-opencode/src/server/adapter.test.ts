@@ -674,7 +674,11 @@ describe("OpenCodeAdapterV2", () => {
         const fullAccess = runtimePolicy("full-access");
         const inherited = openCodePermissionRules(runtimePolicy("approval-required"));
         const taskDeny = { permission: "task", pattern: "*", action: "deny" as const };
-        const agentDeny = { permission: "bash", pattern: "rm *", action: "deny" as const };
+        const agentDeny = {
+          permission: "codesearch",
+          pattern: "secret/*",
+          action: "deny" as const,
+        };
         const childTaskRule = nested ? { ...taskDeny, action: "allow" as const } : taskDeny;
         const nativePermissions = new Map([
           [root, inherited],
@@ -690,6 +694,8 @@ describe("OpenCodeAdapterV2", () => {
           ],
         ]);
         const harness = yield* makeOpenCodeRuntimeHarness("appended-child-policy", root, {
+          // OpenCode omits the child's bash deny because the inherited supervised seed matches it.
+          config: { get: async () => ({ data: { experimental: { primary_tools: ["bash"] } } }) },
           event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
           session: {
             create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
@@ -757,6 +763,7 @@ describe("OpenCodeAdapterV2", () => {
         assert.equal(permissionAction(permission, "webfetch"), "allow");
         assert.equal(permissionAction(permission, "edit"), "allow");
         assert.equal(permissionAction(permission, "task"), nested ? "allow" : "deny");
+        assert.equal(permissionAction(permission, "bash"), "deny");
         assert.deepEqual(permission.at(-1), agentDeny);
         for (const policy of [
           fullAccess,
@@ -775,6 +782,7 @@ describe("OpenCodeAdapterV2", () => {
             policy.runtimeMode === "full-access" ? "allow" : "ask",
           );
           assert.equal(permissionAction(updated, "task"), nested ? "allow" : "deny");
+          assert.equal(permissionAction(updated, "bash"), "deny");
           assert.deepEqual(updated.at(-1), agentDeny);
         }
         const ruleCount = nativePermissions.get(child)!.length;
