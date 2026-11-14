@@ -35,6 +35,7 @@ jobs:
       rust: ${{ steps.detect.outputs.rust }}
       release_smoke: ${{ steps.detect.outputs.release_smoke }}
       mobile_native: ${{ steps.detect.outputs.mobile_native }}
+      desktop_preview: ${{ steps.detect.outputs.desktop_preview }}
     steps:
       # Only the package manifests the script reads to build the dependency graph.
       # Depth 2 brings the base commit the change is diffed against.
@@ -617,6 +618,38 @@ jobs:
       - name: Lint mobile native sources
         run: vp run lint:mobile
 
+  # Unit tests mock Electron, so only a real one with a real window manager can
+  # prove agent preview tabs still paint while the app window is hidden.
+  desktop_preview:
+    name: Desktop Background Preview
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.desktop_preview != 'false' }}
+    runs-on: blacksmith-6vcpu-macos-27
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/desktop
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Verify background preview tabs paint
+        run: node apps/desktop/scripts/verify-background-preview.mjs
+
   release_smoke:
     permissions:
       contents: read
@@ -662,6 +695,7 @@ jobs:
         test_server,
         rust,
         mobile_native_static_analysis,
+        desktop_preview,
         release_smoke,
       ]
     runs-on: blacksmith-2vcpu-ubuntu-2404

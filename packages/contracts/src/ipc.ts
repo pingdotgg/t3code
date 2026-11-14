@@ -959,12 +959,30 @@ export const DesktopPreviewCreateTabInputSchema = Schema.Struct({
   serverTab: Schema.optional(
     Schema.Struct({ threadId: TrimmedNonEmptyString, tabId: TrimmedNonEmptyString }),
   ),
+  /**
+   * Host the tab in a never-shown window instead of a panel `<webview>`. Main
+   * derives the partition from these, as it does for webview config.
+   */
+  background: Schema.optional(
+    Schema.Struct({
+      environmentId: EnvironmentId,
+      profileId: Schema.optional(BrowserProfileId),
+      url: Schema.optional(Schema.String),
+    }),
+  ),
 });
 
 export interface DesktopPreviewTabDefaults {
   readonly zoomFactor?: number | undefined;
   readonly colorScheme?: DesktopPreviewColorScheme | undefined;
   readonly serverTab?: { readonly threadId: string; readonly tabId: string } | undefined;
+  readonly background?:
+    | {
+        readonly environmentId: EnvironmentId;
+        readonly profileId?: string | undefined;
+        readonly url?: string | undefined;
+      }
+    | undefined;
 }
 
 export const DesktopPreviewRegisterWebviewInputSchema = Schema.Struct({
@@ -1149,6 +1167,8 @@ export interface DesktopBridge {
   onSnapShotEvent: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
   onQuitShortcut: (listener: (event: QuitShortcutHintEvent) => void) => () => void;
   getWindowFullscreenState: () => boolean;
+  /** Whether the app window is on screen: not hidden and not minimized. */
+  getWindowShown: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getWindowZoomFactor: () => number;
   getUpdateState: () => Promise<DesktopUpdateState>;

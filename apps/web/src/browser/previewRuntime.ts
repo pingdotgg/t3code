@@ -41,10 +41,16 @@ export function usePreviewAvailable(environmentId: EnvironmentId | null): boolea
   return isPreviewSupportedInRuntime() || serverBrowser;
 }
 
-export function rendersServerTabNatively(
+type RuntimeSnapshot = Pick<
+  PreviewSessionSnapshot,
+  "threadId" | "tabId" | "runtime" | "headless" | "automationOwner"
+>;
+
+/** The desktop app hosts this server tab, in a panel `<webview>` or a background window. */
+function desktopHostsServerTab(
   environmentId: EnvironmentId,
   primaryEnvironmentId: EnvironmentId | null,
-  snapshot: Pick<PreviewSessionSnapshot, "runtime" | "headless"> | null | undefined,
+  snapshot: RuntimeSnapshot | null | undefined,
 ): boolean {
   return (
     isElectron &&
@@ -55,9 +61,48 @@ export function rendersServerTabNatively(
   );
 }
 
+// Fixed when a tab first appears: Electron cannot move a page between a window and a
+// `<webview>`, so changing hosts later would reload it and lose the agent's live page.
+const backgroundHostedTabs = new Map<string, boolean>();
+
+/**
+ * A panel `<webview>` created while the app window is hidden or minimized never paints, so an
+ * agent tab that appears then runs in a never-shown desktop window and the panel streams it.
+ */
+export function hostsServerTabInBackground(
+  environmentId: EnvironmentId,
+  primaryEnvironmentId: EnvironmentId | null,
+  snapshot: RuntimeSnapshot | null | undefined,
+): boolean {
+  if (
+    !snapshot ||
+    snapshot.automationOwner === undefined ||
+    !desktopHostsServerTab(environmentId, primaryEnvironmentId, snapshot)
+  ) {
+    return false;
+  }
+  const key = `${environmentId}\u0000${snapshot.threadId}\u0000${snapshot.tabId}`;
+  const decided = backgroundHostedTabs.get(key);
+  if (decided !== undefined) return decided;
+  const background = window.desktopBridge?.getWindowShown?.() === false;
+  backgroundHostedTabs.set(key, background);
+  return background;
+}
+
+export function rendersServerTabNatively(
+  environmentId: EnvironmentId,
+  primaryEnvironmentId: EnvironmentId | null,
+  snapshot: RuntimeSnapshot | null | undefined,
+): boolean {
+  return (
+    desktopHostsServerTab(environmentId, primaryEnvironmentId, snapshot) &&
+    !hostsServerTabInBackground(environmentId, primaryEnvironmentId, snapshot)
+  );
+}
+
 export function useRendersServerTabNatively(
   environmentId: EnvironmentId,
-  snapshot: Pick<PreviewSessionSnapshot, "runtime" | "headless"> | null | undefined,
+  snapshot: RuntimeSnapshot | null | undefined,
 ): boolean {
   return rendersServerTabNatively(environmentId, useAtomValue(primaryEnvironmentIdAtom), snapshot);
 }

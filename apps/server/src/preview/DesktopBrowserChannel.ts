@@ -45,6 +45,8 @@ export class DesktopBrowserChannel extends Context.Service<
     readonly detached: Stream.Stream<DesktopTabKey>;
     readonly attached: Stream.Stream<DesktopTabKey>;
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
+    /** The tab lives in a never-shown desktop window, so no panel sizes it. */
+    readonly isBackground: (key: DesktopTabKey) => boolean;
     /** Whether a desktop window draws the tab on screen, which no streamed viewer counts. */
     readonly isShown: (key: DesktopTabKey) => boolean;
     /** A load failure the desktop saw, possibly before the server connected to the tab. */
@@ -64,7 +66,8 @@ const make = Effect.gen(function* () {
   const inputFd = config.desktopBrowserFd;
   const controlFd = config.desktopBrowserControlFd;
   const changes = yield* PubSub.unbounded<{ key: DesktopTabKey; attached: boolean }>();
-  const attachedTabs = new Set<string>();
+  /** Attached tab ids, mapped to whether each is hosted in the background. */
+  const attachedTabs = new Map<string, boolean>();
   // Missing reports protect desktop tabs until the renderer explicitly marks them hidden.
   const shownTabs = new Map<string, boolean>();
   const loadFailures = new Map<string, PreviewAutomationLoadError>();
@@ -91,6 +94,7 @@ const make = Effect.gen(function* () {
       pointer: Effect.fn("DesktopBrowserChannel.pointer")(function () {
         return Effect.void;
       }),
+      isBackground: () => false,
       isShown: () => false,
       loadFailure: () => undefined,
     });
@@ -129,7 +133,7 @@ const make = Effect.gen(function* () {
           return queue ? Queue.offer(queue, event.message).pipe(Effect.asVoid) : Effect.void;
         }
         case "attached":
-          attachedTabs.add(id);
+          attachedTabs.set(id, event.background === true);
           return PubSub.publish(changes, { key, attached: true });
         case "loadFailed":
           loadFailures.set(id, {
@@ -252,6 +256,7 @@ const make = Effect.gen(function* () {
     isAttached: Effect.fn("DesktopBrowserChannel.isAttached")(function (key) {
       return Effect.sync(() => attachedTabs.has(keyOf(key)));
     }),
+    isBackground: (key) => attachedTabs.get(keyOf(key)) === true,
     isShown: (key) => shownTabs.get(keyOf(key)) ?? true,
     loadFailure: (key) => loadFailures.get(keyOf(key)),
     endpoint,

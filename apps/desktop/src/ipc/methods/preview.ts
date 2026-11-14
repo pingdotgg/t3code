@@ -84,9 +84,25 @@ const createTab = DesktopIpc.makeIpcMethod({
     zoomFactor,
     colorScheme,
     serverTab,
+    background,
   }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.createTab(tabId, { zoomFactor, colorScheme, serverTab });
+    if (background === undefined) {
+      yield* manager.createTab(tabId, { zoomFactor, colorScheme, serverTab });
+      return;
+    }
+    const { scope, persistent, namespace } = resolvePartitionScope(
+      background.environmentId,
+      background.profileId,
+    );
+    // Loading the session installs its UA rewrite and permission handlers.
+    yield* manager.getBrowserSession(scope, persistent, namespace);
+    const partition = yield* manager.getBrowserPartition(scope, persistent, namespace);
+    yield* manager.createTab(
+      tabId,
+      { zoomFactor, colorScheme, serverTab },
+      { partition, url: background.url },
+    );
   }),
 });
 

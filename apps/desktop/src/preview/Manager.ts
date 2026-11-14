@@ -69,8 +69,11 @@ import {
   PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL,
   PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
 } from "../ipc/channels.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
+import { PASSKEY_BRIDGE_ARGUMENT } from "./GuestProtocol.ts";
+import { backgroundTabWindowOptions } from "./BackgroundTabWindow.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
@@ -121,6 +124,12 @@ export interface PreviewTabState {
   favicon?: DesktopPreviewFavicon;
   serverTab?: { readonly threadId: string; readonly tabId: string };
   updatedAt: string;
+}
+
+/** An agent tab's never-shown window: the main-process-derived partition it browses with. */
+export interface PreviewBackgroundTab {
+  readonly partition: string;
+  readonly url?: string | undefined;
 }
 
 const ZOOM_LEVELS: ReadonlyArray<number> = [
@@ -559,6 +568,7 @@ const isPreviewInputSignal = (value: unknown): value is PreviewInputSignal => {
 const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function* (
   artifactDirectory: string,
   pictureInPicturePreloadPath: string,
+  guestPreloadPath: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
@@ -569,6 +579,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
   const browserSession = yield* BrowserSession.BrowserSession;
   const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
+  const electronWindow = yield* ElectronWindow.ElectronWindow;
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
@@ -1707,6 +1718,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           if (currentMainWindow !== window) return;
           currentMainWindow = undefined;
           frameCaptureWindowOpen = false;
+          // Off macOS the app quits once its last window closes, which a
+          // background tab would otherwise hold open.
+          if (hostPlatform !== "darwin") {
+            for (const tabId of backgroundWindows.keys()) closeBackgroundWindow(tabId);
+          }
           mainWindowCleanupFiber = runFork(
             Effect.all([closeAllPictureInPicture(), stopAllRecordings()], {
               concurrency: "unbounded",
@@ -1765,11 +1781,74 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     return result.state;
   });
 
+  /** Agent tabs' never-shown windows; see backgroundTabWindowOptions. */
+  const backgroundWindows = new Map<string, BrowserWindow>();
+
+  const openBackgroundWindow = Effect.fn("PreviewManager.openBackgroundWindow")(function* (
+    tabId: string,
+    background: PreviewBackgroundTab,
+  ) {
+    // Auxiliary, so activating the app never picks it as the main window.
+    const window = yield* electronWindow
+      .create(
+        backgroundTabWindowOptions({
+          partition: background.partition,
+          preload: guestPreloadPath,
+          passkeyBridgeArgument: passkeys.bridgeEnabled ? PASSKEY_BRIDGE_ARGUMENT : undefined,
+        }),
+        { auxiliary: true },
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PreviewOperationError({ operation: "backgroundWindow.create", tabId, cause }),
+        ),
+      );
+    backgroundWindows.set(tabId, window);
+    const wc = window.webContents;
+    window.once("closed", () => {
+      if (backgroundWindows.get(tabId) === window) backgroundWindows.delete(tabId);
+    });
+    // A panel guest is remounted by the renderer after a crash; nothing else
+    // would bring this one back.
+    wc.on("render-process-gone", () => {
+      if (!wc.isDestroyed()) wc.reload();
+    });
+    yield* prepareWebview(wc);
+    yield* registerWebviewUnlocked(tabId, wc.id, tabLifecycleGenerations.get(tabId));
+    // A navigation that arrived during setup is newer; registration already loads it.
+    const navStatus = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.navStatus;
+    if (background.url !== undefined && navStatus?.kind !== "Loading") {
+      runFork(
+        attemptPromise({ operation: "backgroundWindow.load", tabId, webContentsId: wc.id }, () =>
+          wc.loadURL(background.url!),
+        ).pipe(Effect.ignore),
+      );
+    }
+  });
+
+  const closeBackgroundWindow = (tabId: string) => {
+    const window = backgroundWindows.get(tabId);
+    backgroundWindows.delete(tabId);
+    if (window && !window.isDestroyed()) window.destroy();
+  };
+
   const createTab = Effect.fn("PreviewManager.createTab")(function* (
     tabId: string,
     defaults?: DesktopPreviewTabDefaults,
+    background?: PreviewBackgroundTab,
   ) {
-    return yield* withTabLifecycleLock(tabId, createTabUnlocked(tabId, defaults));
+    return yield* withTabLifecycleLock(
+      tabId,
+      Effect.gen(function* () {
+        const state = yield* createTabUnlocked(tabId, defaults);
+        if (background === undefined || backgroundWindows.has(tabId)) return state;
+        yield* openBackgroundWindow(tabId, background).pipe(
+          Effect.onError(() => Effect.sync(() => closeBackgroundWindow(tabId))),
+        );
+        return (yield* SynchronizedRef.get(tabsRef)).get(tabId) ?? state;
+      }),
+    );
   });
 
   const closeTabUnlocked = Effect.fn("PreviewManager.closeTabUnlocked")(function* (tabId: string) {
@@ -1809,6 +1888,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         { concurrency: 2, discard: true },
       );
     }
+    closeBackgroundWindow(tabId);
     const updatedAt = yield* currentIso;
     const closed: PreviewTabState = {
       ...closedTab,
@@ -1861,11 +1941,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     const wc = webContents.fromId(webContentsId);
     const mainWindow = yield* Ref.get(mainWindowRef);
+    const ownBackgroundWindow = backgroundWindows.get(tabId)?.webContents === wc;
     if (
       !wc ||
       wc.isDestroyed() ||
-      wc.getType() !== "webview" ||
-      (Option.isSome(mainWindow) && wc.hostWebContents !== mainWindow.value.webContents)
+      (!ownBackgroundWindow &&
+        (wc.getType() !== "webview" ||
+          (Option.isSome(mainWindow) && wc.hostWebContents !== mainWindow.value.webContents)))
     ) {
       return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId });
     }
@@ -2003,7 +2085,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const expectedGeneration = tabLifecycleGenerations.get(tabId);
     return yield* withTabLifecycleLock(
       tabId,
-      registerWebviewUnlocked(tabId, webContentsId, expectedGeneration),
+      registerWebviewUnlocked(tabId, webContentsId, expectedGeneration).pipe(
+        // A reloaded renderer may host a background tab in a panel webview instead.
+        Effect.tap(() => Effect.sync(() => closeBackgroundWindow(tabId))),
+      ),
     );
   });
 
@@ -2528,11 +2613,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         return;
       }
       if (afterAttach.serverTab) {
-        browserHost.attach(afterAttach.serverTab, {
-          webContents: wc,
-          debugger: control.debugger,
-          cookiesCleared: () => runPromise(browserSession.cookiesCleared(wc.session)),
-        });
+        browserHost.attach(
+          afterAttach.serverTab,
+          {
+            webContents: wc,
+            debugger: control.debugger,
+            cookiesCleared: () => runPromise(browserSession.cookiesCleared(wc.session)),
+          },
+          backgroundWindows.get(tabId)?.webContents === wc,
+        );
         // CDP cannot recover a failure that happened before it attached.
         const { navStatus } = afterAttach;
         if (navStatus.kind === "LoadFailed") {
@@ -3773,6 +3862,7 @@ export class PreviewManager extends Context.Service<
     readonly createTab: (
       tabId: string,
       defaults?: DesktopPreviewTabDefaults,
+      background?: PreviewBackgroundTab,
     ) => Effect.Effect<PreviewTabState, PreviewManagerError>;
     readonly closeTab: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly registerWebview: (
@@ -3931,6 +4021,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   const operations = yield* makeNativeOperations(
     environment.browserArtifactsDir,
     environment.path.join(environment.dirname, "preview-pip-preload.cjs"),
+    environment.path.join(environment.dirname, "preview-pick-preload.cjs"),
   );
 
   return PreviewManager.of({

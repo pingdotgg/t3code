@@ -349,7 +349,12 @@ interface ServerTab {
 
   readonly isolatedContext: boolean;
 
-  readonly desktop: { readonly close: () => Promise<void> } | null;
+  /**
+   * A desktop-rendered page. `background` pages live in a never-shown window,
+   * so the server sizes them like headless pages; the others follow the
+   * panel's `<webview>`.
+   */
+  readonly desktop: { readonly close: () => Promise<void>; readonly background: boolean } | null;
   readonly profileId: string | undefined;
   readonly openerTabId: string | undefined;
 
@@ -644,9 +649,11 @@ const make = Effect.gen(function* () {
         }
       : null;
 
+  const inPanel = (tab: ServerTab) => tab.desktop !== null && !tab.desktop.background;
+
   const updateFileChooserInterception = (tab: ServerTab) => {
     // Only agents and streamed controllers can answer intercepted uploads; native desktop views use the OS picker.
-    const intercept = !tab.desktop || tab.agentOperating || tab.control.controller !== null;
+    const intercept = !inPanel(tab) || tab.agentOperating || tab.control.controller !== null;
     if (intercept === tab.fileChooserIntercepted) return;
     tab.fileChooserIntercepted = intercept;
     if (intercept) tab.page.on("filechooser", tab.onFileChooser);
@@ -784,7 +791,7 @@ const make = Effect.gen(function* () {
 
   const layoutSize = async (tab: ServerTab) => {
     // A dialog blocks page script; its close measures again.
-    if (tab.desktop) {
+    if (inPanel(tab)) {
       return tab.dialog
         ? tab.desktopViewport
         : ((await measureDesktopViewport(tab)) ?? tab.desktopViewport);
@@ -807,13 +814,10 @@ const make = Effect.gen(function* () {
   };
 
   const applyZoom = async (tab: ServerTab) => {
-    if (tab.desktop) return;
+    if (inPanel(tab)) return;
     const size = tab.page.viewportSize();
     if (!size) return;
-    if (tab.zoomFactor === 1) {
-      await tab.page.setViewportSize(size);
-      return;
-    }
+    // Playwright skips a size it already set, so 100% must replace the zoomed override itself.
     const layout = (await layoutSize(tab))!;
     await tab.cdp.send("Emulation.setDeviceMetricsOverride", {
       width: layout.width,
@@ -832,7 +836,7 @@ const make = Effect.gen(function* () {
   const applySetting = async (tab: ServerTab, setting: PreviewViewportSetting) => {
     tab.setting = setting;
 
-    if (tab.desktop) return;
+    if (inPanel(tab)) return;
     const size =
       fixedViewportSize(setting) ??
       [...tab.viewers]
@@ -852,7 +856,7 @@ const make = Effect.gen(function* () {
       await tab.page.emulateMedia({ colorScheme: colorScheme === "system" ? null : colorScheme });
     }
     const zoomFactor = snapshot.zoomFactor ?? 1;
-    if (zoomFactor !== tab.zoomFactor && !tab.desktop) {
+    if (zoomFactor !== tab.zoomFactor && !inPanel(tab)) {
       tab.zoomFactor = zoomFactor;
       await applyZoom(tab);
       await broadcastViewport(tab);
@@ -949,6 +953,10 @@ const make = Effect.gen(function* () {
       const connected = await contexts.connectDesktopPage(endpoint);
       return {
         page: connected.page,
+        background: desktopChannel.isBackground({
+          threadId: snapshot.threadId,
+          tabId: snapshot.tabId,
+        }),
         close: async () => {
           await connected.browser.close().catch(constVoid);
           await runPromise(Scope.close(scope, Exit.void));
@@ -1049,7 +1057,7 @@ const make = Effect.gen(function* () {
           .catch(constVoid);
       },
       isolatedContext,
-      desktop: desktop === null ? null : { close: desktop.close },
+      desktop: desktop === null ? null : { close: desktop.close, background: desktop.background },
       profileId: snapshot.profileId,
       openerTabId: adopted?.openerTabId,
       downloads: [],
@@ -1087,7 +1095,7 @@ const make = Effect.gen(function* () {
       captureLock: Promise.resolve(),
       capturing: 0,
     };
-    if (!desktop) {
+    if (!inPanel(tab)) {
       await page.setViewportSize(fixedViewportSize(tab.setting) ?? UNATTACHED_FILL_VIEWPORT);
     }
     await applyRendering(tab, snapshot);
@@ -1656,7 +1664,7 @@ const make = Effect.gen(function* () {
 
   // The desktop draws its tabs in its own webview, so they never get a streamed viewer.
   const isVisible = (tab: ServerTab) =>
-    tab.viewers.size > 0 || (tab.desktop !== null && desktopChannel.isShown(tab));
+    tab.viewers.size > 0 || (inPanel(tab) && desktopChannel.isShown(tab));
 
   const idleAgentTabs = () => {
     const cutoff = Date.now() - AGENT_TAB_IDLE_MS;
@@ -1724,10 +1732,10 @@ const make = Effect.gen(function* () {
     );
   }, Effect.uninterruptible);
 
-  // Desktop browsing bypasses streamed viewers and server input tracking,
-  // so these idle signals only apply to headless tabs.
+  // Panel browsing bypasses streamed viewers and server input tracking,
+  // so these idle signals only apply to tabs the panel does not render.
   const closeIdleAgentTabs = () => {
-    for (const tab of idleAgentTabs()) if (tab.desktop === null) dropTab(tab, true);
+    for (const tab of idleAgentTabs()) if (!inPanel(tab)) dropTab(tab, true);
   };
 
   const latestThreadTab = (threadId: string, agentSessionId?: string) => {
@@ -1953,7 +1961,7 @@ const make = Effect.gen(function* () {
     const statusUrl = loadError?.url ?? (url === "about:blank" ? null : url);
     const [viewport, title] = await Promise.all([
       // A late measurement still lands in desktopViewport for the next status.
-      tab.desktop
+      inPanel(tab)
         ? withinStatusDeadline(desktopStatusViewport(tab), () => tab.desktopViewport)
         : tab.page.viewportSize(),
       statusUrl === null || tab.dialog
@@ -2276,12 +2284,12 @@ const make = Effect.gen(function* () {
     async ({ x, y }, phase) => {
       const encoder = tab.recording?.encoder;
 
-      if (tab.viewers.size === 0 && !encoder && !tab.desktop) return;
+      if (tab.viewers.size === 0 && !encoder && !inPanel(tab)) return;
       const show = (next: "move" | "click") => {
         const sequence = ++pointerSequence;
         for (const viewer of tab.viewers)
           viewer.push({ _tag: "pointer", phase: next, x, y, sequence });
-        if (tab.desktop)
+        if (inPanel(tab))
           runFork(
             desktopChannel.pointer(
               { threadId: tab.threadId, tabId: tab.tabId },
@@ -2504,7 +2512,7 @@ const make = Effect.gen(function* () {
                 }),
               );
               // Only an explicit show is sure to reach a client; desktop tabs are visible without a viewer.
-              if (reveal === true && tab.viewers.size === 0 && tab.desktop === null)
+              if (reveal === true && tab.viewers.size === 0 && !inPanel(tab))
                 shown = awaitViewer(
                   tab,
                   Math.min(REVEAL_VIEWER_WAIT_MS, deadlineMs - performance.now()),
@@ -2652,7 +2660,7 @@ const make = Effect.gen(function* () {
           manager.resize({ threadId: tab.threadId, tabId: tab.tabId, viewport: setting }),
         );
         await applySetting(tab, setting);
-        if (!tab.desktop) {
+        if (!inPanel(tab)) {
           return {
             tabId: tab.tabId,
             setting,
@@ -2804,7 +2812,7 @@ const make = Effect.gen(function* () {
       }
       if (event.type === "resized") {
         // Desktop tabs only record the setting, so status need not wait behind an agent action.
-        if (tab.desktop) tab.setting = event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT;
+        if (inPanel(tab)) tab.setting = event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT;
         await tab.control
           .system(async () => {
             if (
@@ -2943,10 +2951,11 @@ const make = Effect.gen(function* () {
         const height = Math.min(Math.round(num(message.height)), 2160);
         if (width < 100 || height < 100) return;
         viewer.requestedSize = { width, height, order: ++viewerResizeOrder };
-        if (tab.setting._tag !== "fill" || tab.desktop) return;
+        if (tab.setting._tag !== "fill" || inPanel(tab)) return;
         const current = tab.page.viewportSize();
         if (current?.width === width && current.height === height) return;
         await tab.page.setViewportSize({ width, height });
+        await applyZoom(tab);
         await broadcastViewport(tab);
         return;
       }

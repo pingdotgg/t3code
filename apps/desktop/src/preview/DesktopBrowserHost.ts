@@ -51,6 +51,7 @@ const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000$
 interface AttachedTab {
   readonly key: DesktopBrowserTabKey;
   readonly debuggee: DesktopBrowserTabDebugger;
+  readonly background: boolean;
   relay: CdpRelayConnection | null;
   screenshotTurn: object | null;
   /** Each keeps the guest painting while whoever queued it still waits, and focused while `held`. */
@@ -97,7 +98,12 @@ export class DesktopBrowserHost extends Context.Service<
   {
     readonly events: Stream.Stream<Uint8Array>;
     readonly handleCommandLine: (line: string) => Effect.Effect<void>;
-    readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
+    /** `background` tabs live in a never-shown window that no panel sizes. */
+    readonly attach: (
+      key: DesktopBrowserTabKey,
+      debuggee: DesktopBrowserTabDebugger,
+      background?: boolean,
+    ) => void;
     readonly detach: (key: DesktopBrowserTabKey) => void;
     readonly loadFailed: (key: DesktopBrowserTabKey, failure: PreviewAutomationLoadError) => void;
     readonly setShown: (key: DesktopBrowserTabKey, shown: boolean | undefined) => void;
@@ -485,13 +491,18 @@ export const make = Effect.gen(function* () {
     if (announced) emit({ type: "detached", ...key });
   };
 
-  const attach = (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => {
+  const attach = (
+    key: DesktopBrowserTabKey,
+    debuggee: DesktopBrowserTabDebugger,
+    background = false,
+  ) => {
     const id = keyOf(key);
     if (tabs.get(id)?.debuggee.webContents === debuggee.webContents) return;
     detach(key);
     const tab: AttachedTab = {
       key,
       debuggee,
+      background,
       relay: null,
       screenshotTurn: null,
       waitingScreenshots: [],
@@ -529,7 +540,7 @@ export const make = Effect.gen(function* () {
     debuggee.debugger.on("message", tab.onMessage);
     debuggee.webContents.on("did-navigate", tab.onNewDocument);
     const announce = () => {
-      emit({ type: "attached", ...key });
+      emit({ type: "attached", ...key, ...(background ? { background } : {}) });
       const shown = shownTabs.get(id);
       if (shown !== undefined) emit({ type: "shown", ...key, shown });
     };
@@ -631,7 +642,11 @@ export const make = Effect.gen(function* () {
         // Announced once its first page is up.
         if (tab.stopWaiting !== null) return Effect.void;
         const shown = shownTabs.get(keyOf(tab.key));
-        return PubSub.publish(outbox, { type: "attached", ...tab.key }).pipe(
+        return PubSub.publish(outbox, {
+          type: "attached",
+          ...tab.key,
+          ...(tab.background ? { background: true } : {}),
+        }).pipe(
           Effect.andThen(
             shown !== undefined
               ? PubSub.publish(outbox, { type: "shown", ...tab.key, shown })

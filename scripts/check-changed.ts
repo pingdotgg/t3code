@@ -563,6 +563,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     build: outputs.build,
     rust: outputs.rust,
     "mobile native lint": outputs.mobile_native,
+    "desktop background preview": outputs.desktop_preview,
     "release smoke": outputs.release_smoke,
   }).flatMap(([job, runs]) => (runs ? [job] : []));
   if (ciOnly.length > 0) summary.push(`  CI also runs: ${ciOnly.join(", ")}`);
