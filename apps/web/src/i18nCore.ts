@@ -14,6 +14,8 @@ import enPullRequest from "../locales/en/pullRequest.json";
 import zhHansPullRequest from "../locales/zh-Hans/pullRequest.json";
 import enRightPanel from "../locales/en/rightPanel.json";
 import zhHansRightPanel from "../locales/zh-Hans/rightPanel.json";
+import enFiles from "../locales/en/files.json";
+import zhHansFiles from "../locales/zh-Hans/files.json";
 import { type UiLocale } from "@t3tools/contracts/settings";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
@@ -33,6 +35,7 @@ declare module "i18next" {
       terminal: typeof enTerminal;
       pullRequest: typeof enPullRequest;
       rightPanel: typeof enRightPanel;
+      files: typeof enFiles;
     };
   }
 }
@@ -75,6 +78,7 @@ if (!i18next.isInitialized) {
         terminal: enTerminal,
         pullRequest: enPullRequest,
         rightPanel: enRightPanel,
+        files: enFiles,
       },
       "zh-Hans": {
         settings: zhHansSettings,
@@ -85,6 +89,7 @@ if (!i18next.isInitialized) {
         terminal: zhHansTerminal,
         pullRequest: zhHansPullRequest,
         rightPanel: zhHansRightPanel,
+        files: zhHansFiles,
       },
     },
     // Locale files are bundled per language, so nothing is fetched at runtime.
