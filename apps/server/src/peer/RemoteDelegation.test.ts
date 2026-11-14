@@ -2655,6 +2655,7 @@ it.effect.each([
   "older-running",
   "lost-response",
   "promoted",
+  "promoted-by-older-peer",
 ] as const)("cancelling a queued follow-up task there when its run is $0", (outcome) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -2762,7 +2763,7 @@ it.effect.each([
         });
       }
       const beforeCancel = yield* box_.orchestrator.getThreadProjection(remoteId);
-      if (outcome === "promoted") {
+      if (outcome === "promoted" || outcome === "promoted-by-older-peer") {
         const now = yield* DateTime.now;
         const busyRun = beforeCancel.runs.find((run) => run.id === busySent.runId)!;
         const providerThread = beforeCancel.providerThreads.find(
@@ -2842,7 +2843,19 @@ it.effect.each([
           ).recentRuns.find((run) => run.runId === queuedRun.id),
         ).toMatchObject({ promotedToRunId: busySent.runId });
       }
-      if (outcome !== "cancelled" && outcome !== "older" && outcome !== "promoted") {
+      if (outcome === "promoted-by-older-peer") {
+        // A peer without promotion reporting reads this run as cancelled and unstarted, nothing more.
+        yield* Ref.set(thread.real, {
+          ...box_.threads,
+          getMessagesById: () => Effect.succeed(new Map()),
+        });
+      }
+      if (
+        outcome !== "cancelled" &&
+        outcome !== "older" &&
+        outcome !== "promoted" &&
+        outcome !== "promoted-by-older-peer"
+      ) {
         yield* Ref.set(thread.real, {
           ...box_.threads,
           // The laptop reads the exact run there with a 1ms wait, which TestClock never ends.
@@ -2928,7 +2941,12 @@ it.effect.each([
           taskId: queuedTask.id,
           clientRequestId: "cancel-recovered",
         });
-      } else if (outcome === "running" || outcome === "older-running" || outcome === "promoted") {
+      } else if (
+        outcome === "running" ||
+        outcome === "older-running" ||
+        outcome === "promoted" ||
+        outcome === "promoted-by-older-peer"
+      ) {
         expect(yield* Ref.get(thread.stops)).toEqual(["thread.stop", "delegated-tasks"]);
         return;
       }

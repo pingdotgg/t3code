@@ -3243,11 +3243,11 @@ const make = Effect.gen(function* () {
               .getMessagesById(input.threadId, cancelledMessageIds)
               .pipe(Effect.mapError(threadManagementFailure));
       const recentRuns = visibleRuns.map((run) => {
-        const promotedToRunId = cancelledMessages?.get(run.userMessageId)?.runId;
-        return {
-          ...threadRun(target, run),
-          ...(promotedToRunId == null || promotedToRunId === run.id ? {} : { promotedToRunId }),
-        };
+        const message = cancelledMessages?.get(run.userMessageId);
+        if (message === undefined) return threadRun(target, run);
+        const promotedToRunId =
+          message.runId == null || message.runId === run.id ? null : message.runId;
+        return { ...threadRun(target, run), promotedToRunId };
       });
       const { items, start } = timelineItemsWithinBudget(
         { thread, recentRuns, nextPosition: null, hasMore: false, earlierPosition: null },

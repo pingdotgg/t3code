@@ -598,11 +598,14 @@ const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => undefined),
           );
 
-  /** A run there that ended without starting and was not promoted into another run. */
+  /**
+   * A run there that ended without starting and that the peer says was not promoted. An older
+   * peer omits `promotedToRunId`, which proves nothing.
+   */
   const endedUnstarted = (run: OrchestratorMcpThreadRun | undefined) =>
     run !== undefined &&
     run.startedAt === null &&
-    run.promotedToRunId === undefined &&
+    run.promotedToRunId === null &&
     isTerminal(run.status);
 
   /**
