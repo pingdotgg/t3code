@@ -137,6 +137,32 @@ describe("Azure DevOps repository keys", () => {
     }
   });
 
+  it.each([
+    "git@ssh.dev.azure.com:v3/acme/platform/tool.git",
+    "https://dev.azure.com/acme/platform/_git/tool.git",
+  ])("preserves a literal .git in an Azure repository name: %s", (remoteUrl) => {
+    const canonicalKey = registry.repositoryKeyFromRemote(remoteUrl);
+    expect(canonicalKey).toBe("dev.azure.com/acme/platform/_git/tool.git");
+    const identity: ChangeRequestProjectIdentity = {
+      canonicalKey,
+      locator: { source: "git-remote", remoteName: "origin", remoteUrl },
+    };
+    const link = parse("https://dev.azure.com/acme/platform/_git/tool.git/pullrequest/7")!;
+    expect(definition.isChangeRequestInRepository(identity, link)).toBe(true);
+    expect(
+      definition.isChangeRequestInRepository(identity, {
+        ...link,
+        repository: "acme/platform/_git/tool",
+      }),
+    ).toBe(false);
+  });
+
+  it("still drops .git from other hosts' repository keys", () => {
+    expect(registry.repositoryKeyFromRemote("git@github.com:acme/tool.git")).toBe(
+      "github.com/acme/tool",
+    );
+  });
+
   it("keeps the organization in the host for the legacy visualstudio.com remotes", () => {
     for (const remote of [
       "T3Tools@vs-ssh.visualstudio.com:v3/T3Tools/Platform/T3Code",
