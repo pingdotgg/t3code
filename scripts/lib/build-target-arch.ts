@@ -33,8 +33,7 @@ const resolveHostProcessArch = Effect.fn("resolveHostProcessArch")(function* () 
   if (processArch === "x64") {
     if (platform !== "win32") return "x64";
 
-    // On Windows-on-Arm, x64 Node/Bun can run under emulation while the host
-    // still reports ARM64 via the processor environment variables.
+    // Emulated x64 Node/Bun can run on Windows ARM64; use host processor variables.
     const env = yield* WindowsProcessorArchitectureConfig;
     return (
       normalizeWindowsArch(optionToUndefined(env.processorArchitectureW6432)) ??
