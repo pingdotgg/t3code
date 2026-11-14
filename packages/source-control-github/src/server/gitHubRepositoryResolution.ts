@@ -1,4 +1,4 @@
-import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
+import { normalizeGitRemoteUrl, parseGitRemoteRepository } from "@t3tools/shared/git";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
 import { definition } from "../shared/definition.ts";
@@ -21,7 +21,10 @@ export function parseFetchRemotes(
     .map((match) => ({ name: match[1]!, url: match[2]! }));
 }
 
-/** gh priority: marked default, upstream/github/origin, sole remote. Null if ambiguous. */
+/**
+ * gh priority: marked default, upstream/github/origin, sole remote. Null if ambiguous.
+ * Hostless remotes, such as local paths, are skipped as gh skips them.
+ */
 export function selectGitHubBaseRepository(input: {
   readonly remotes: string;
   readonly resolved: string;
@@ -30,6 +33,10 @@ export function selectGitHubBaseRepository(input: {
   const host = input.host.toLowerCase();
   const repositories = new Map<string, { readonly owner: string; readonly name: string }>();
   for (const remote of parseFetchRemotes(input.remotes)) {
+    // A userless SCP remote (`github.com:me/web`) has no host for parseGitRemoteHost, but gh reads one.
+    if (parseGitRemoteRepository(remote.url) === null && parseGitRemoteHost(remote.url) === null) {
+      continue;
+    }
     const [normalizedHost, owner, name, ...rest] = normalizeGitRemoteUrl(remote.url).split("/");
     const remoteHost =
       normalizedHost && isSshRemoteUrl(remote.url)
