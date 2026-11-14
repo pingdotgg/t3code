@@ -11,6 +11,7 @@ import {
   DesktopPreviewRecordingSaveInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
+  DesktopPreviewAnswerDialogInputSchema,
   DesktopPreviewSetAudioMutedInputSchema,
   DesktopPreviewSetShownInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
@@ -223,6 +224,15 @@ const setAudioMuted = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.setAudioMuted")(function* ({ tabId, audioMuted }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.setAudioMuted(tabId, audioMuted);
+  }),
+});
+const answerDialog = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_ANSWER_DIALOG_CHANNEL,
+  payload: DesktopPreviewAnswerDialogInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.answerDialog")(function* ({ tabId, accept, promptText }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.answerDialog(tabId, accept, promptText);
   }),
 });
 const setShown = DesktopIpc.makeIpcMethod({
@@ -487,6 +497,7 @@ export const methods = [
   setColorScheme,
   setZoomFactor,
   setAudioMuted,
+  answerDialog,
   setShown,
   openDevTools,
   clearCookies,

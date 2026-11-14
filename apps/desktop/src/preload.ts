@@ -403,6 +403,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL, { tabId, colorScheme }),
     setAudioMuted: (tabId, audioMuted) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_AUDIO_MUTED_CHANNEL, { tabId, audioMuted }),
+    answerDialog: (tabId, accept, promptText) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_ANSWER_DIALOG_CHANNEL, {
+        tabId,
+        accept,
+        ...(promptText === undefined ? {} : { promptText }),
+      }),
     findInPage: (tabId, text, { forward, newSession }) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_FIND_IN_PAGE_CHANNEL, {
         tabId,

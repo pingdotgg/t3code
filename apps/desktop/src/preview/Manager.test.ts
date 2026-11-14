@@ -338,6 +338,7 @@ const makeTestPreviewWebContents = (
     navigationHistory: { canGoBack: () => false, canGoForward: () => false },
     setIgnoreMenuShortcuts: vi.fn(),
     setWindowOpenHandler: vi.fn(),
+    listeners: () => [],
     debugger: {
       isAttached: () => false,
       attach: vi.fn(),
@@ -501,6 +502,7 @@ const makeFaviconWebContents = (options?: {
     focusedFrame: {} as object | null,
     setIgnoreMenuShortcuts: vi.fn(),
     setWindowOpenHandler: vi.fn(),
+    listeners: () => [],
     executeJavaScriptInIsolatedWorld,
     debugger: {
       isAttached: () => false,
@@ -1250,6 +1252,7 @@ describe("PreviewManager", () => {
           navigationHistory: { canGoBack: () => false, canGoForward: () => false },
           setIgnoreMenuShortcuts: vi.fn(),
           setWindowOpenHandler: vi.fn(),
+          listeners: () => [],
           debugger: {
             isAttached: () => false,
             attach: vi.fn(),
@@ -1357,6 +1360,7 @@ describe("PreviewManager", () => {
           navigationHistory: { canGoBack: () => false, canGoForward: () => false },
           setIgnoreMenuShortcuts: vi.fn(),
           setWindowOpenHandler: vi.fn(),
+          listeners: () => [],
           get debugger() {
             if (destroyed) throw new Error("Object has been destroyed");
             return wcDebugger;
@@ -1629,6 +1633,7 @@ describe("PreviewManager", () => {
       navigationHistory: { canGoBack: () => false, canGoForward: () => false },
       setIgnoreMenuShortcuts: vi.fn(),
       setWindowOpenHandler: vi.fn(),
+      listeners: () => [],
       debugger: {
         isAttached: () => attach.mock.calls.length > detach.mock.calls.length + chromiumDetaches,
         attach,
@@ -1709,12 +1714,19 @@ describe("PreviewManager", () => {
 
   const makeAudioWebContents = (id: number) => {
     const listeners = new Map<string, (...args: never[]) => void>();
+    let debuggerMessage: ((...args: ReadonlyArray<unknown>) => void) | undefined;
     const setAudioMuted = vi.fn();
     let audible = false;
     let audibleAfterFirstRead = false;
     let audibleReads = 0;
     return {
       setAudioMuted,
+      emit: (event: string, ...args: ReadonlyArray<unknown>) => {
+        (listeners.get(event) as ((...args: ReadonlyArray<unknown>) => void) | undefined)?.(
+          ...args,
+        );
+      },
+      emitDebuggerMessage: (method: string) => debuggerMessage?.({}, method, {}, ""),
       emitAudioState: (next: boolean) => {
         audible = next;
         listeners.get("audio-state-changed")?.({ audible: next } as never);
@@ -1746,16 +1758,22 @@ describe("PreviewManager", () => {
         off: vi.fn((event: string) => {
           listeners.delete(event);
         }),
+        once: vi.fn((event: string, listener: (...args: never[]) => void) => {
+          listeners.set(event, listener);
+        }),
         ipc: { on: vi.fn(), off: vi.fn() },
         send: webviewSend,
         navigationHistory: { canGoBack: () => false, canGoForward: () => false },
         setIgnoreMenuShortcuts: vi.fn(),
         setWindowOpenHandler: vi.fn(),
+        listeners: () => [],
         debugger: {
           isAttached: () => false,
           attach: vi.fn(),
           sendCommand: vi.fn(async () => undefined),
-          on: vi.fn(),
+          on: vi.fn((event: string, listener: (...args: ReadonlyArray<unknown>) => void) => {
+            if (event === "message") debuggerMessage = listener;
+          }),
           off: vi.fn(),
         },
       } as never,
@@ -1782,6 +1800,77 @@ describe("PreviewManager", () => {
         expect(states.at(-1)?.audible).toBe(true);
       }),
     ),
+  );
+
+  effectIt.effect(
+    "holds a page dialog on its tab until it is answered or the guest goes away",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const guest = makeAudioWebContents(42);
+          fromId.mockReturnValue(guest.wc);
+          const states: PreviewManager.PreviewTabState[] = [];
+          const answer = vi.fn();
+          const dialogInfo = {
+            dialogType: "confirm",
+            messageText: "Delete it?",
+            defaultPromptText: "",
+          };
+
+          yield* manager.subscribeStateChanges((_tabId, state) =>
+            Effect.sync(() => {
+              states.push(state);
+            }),
+          );
+          yield* manager.createTab("tab_dialog");
+          yield* manager.registerWebview("tab_dialog", 42);
+          yield* Effect.yieldNow;
+
+          guest.emit("-run-dialog", dialogInfo, answer);
+          yield* Effect.yieldNow;
+          expect(states.at(-1)?.dialog).toEqual({
+            type: "confirm",
+            message: "Delete it?",
+            defaultValue: "",
+          });
+          expect(answer).not.toHaveBeenCalled();
+
+          yield* manager.answerDialog("tab_dialog", true, undefined);
+          yield* Effect.yieldNow;
+          expect(answer).toHaveBeenCalledExactlyOnceWith(true, "");
+          expect(states.at(-1)?.dialog).toBeUndefined();
+
+          const answeredByAgent = vi.fn();
+          guest.emit("-run-dialog", dialogInfo, answeredByAgent);
+          yield* Effect.yieldNow;
+          guest.emitDebuggerMessage("Page.javascriptDialogClosed");
+          yield* Effect.yieldNow;
+          expect(states.at(-1)?.dialog).toBeUndefined();
+          yield* manager.answerDialog("tab_dialog", true, undefined);
+          expect(answeredByAgent).not.toHaveBeenCalled();
+
+          guest.emit("-run-dialog", dialogInfo, vi.fn());
+          yield* Effect.yieldNow;
+          const replacement = makeAudioWebContents(43);
+          fromId.mockReturnValue(replacement.wc);
+          yield* manager.registerWebview("tab_dialog", 43);
+          yield* Effect.yieldNow;
+          expect(states.at(-1)?.dialog).toBeUndefined();
+
+          const doomed = makeAudioWebContents(44);
+          fromId.mockReturnValue(doomed.wc);
+          yield* manager.createTab("tab_dialog_destroyed");
+          yield* manager.prepareWebview(doomed.wc);
+          yield* manager.registerWebview("tab_dialog_destroyed", 44);
+          yield* Effect.yieldNow;
+          doomed.emit("-run-dialog", dialogInfo, vi.fn());
+          yield* Effect.yieldNow;
+          expect(states.at(-1)?.dialog).toBeDefined();
+          doomed.emit("destroyed");
+          yield* Effect.yieldNow;
+          expect(states.at(-1)?.dialog).toBeUndefined();
+        }),
+      ),
   );
 
   effectIt.effect("ignores audio state from a replaced guest", () =>
@@ -2699,6 +2788,7 @@ describe("PreviewManager", () => {
             navigationHistory: { canGoBack: () => false, canGoForward: () => false },
             setIgnoreMenuShortcuts: vi.fn(),
             setWindowOpenHandler: vi.fn(),
+            listeners: () => [],
             debugger: {
               isAttached: () => false,
               attach: vi.fn(),
@@ -3301,6 +3391,7 @@ describe("PreviewManager", () => {
           navigationHistory: { canGoBack: () => false, canGoForward: () => false },
           setIgnoreMenuShortcuts: vi.fn(),
           setWindowOpenHandler: vi.fn(),
+          listeners: () => [],
           debugger: {
             isAttached: () => false,
             attach: vi.fn(),
