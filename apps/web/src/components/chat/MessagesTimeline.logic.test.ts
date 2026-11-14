@@ -33,6 +33,7 @@ import {
   liveAnswerPreview,
   deriveMessagesTimelineRowsWithState,
   resolveAssistantMessageCopyState,
+  resolveTimelineMinimapMarkIndices,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
@@ -5144,5 +5145,45 @@ describe("subagent continued by a later turn", () => {
       `turn-fold:${run2}`,
       "closing-2",
     ]);
+  });
+});
+
+describe("resolveTimelineMinimapMarkIndices", () => {
+  const railHeightPx = 512;
+  const itemCount = 600;
+
+  function expectSeparated(indices: ReadonlyArray<number>, exempt: ReadonlySet<number>) {
+    for (let slot = 1; slot < indices.length; slot += 1) {
+      const previous = indices[slot - 1]!;
+      const index = indices[slot]!;
+      expect(index).toBeGreaterThan(previous);
+      if (exempt.has(previous) && exempt.has(index)) continue;
+      expect(((index - previous) / (itemCount - 1)) * railHeightPx).toBeGreaterThanOrEqual(
+        6 - 1e-6,
+      );
+    }
+  }
+
+  it("draws every mark while they stay at least 6px apart", () => {
+    expect(resolveTimelineMinimapMarkIndices({ itemCount: 75, railHeightPx })).toHaveLength(75);
+  });
+
+  it("thins a capped rail so marks stay separate and both ends stay drawn", () => {
+    const indices = resolveTimelineMinimapMarkIndices({ itemCount, railHeightPx });
+    expect(indices.length).toBeLessThan(itemCount);
+    expect(indices[0]).toBe(0);
+    expect(indices.at(-1)).toBe(itemCount - 1);
+    expectSeparated(indices, new Set());
+  });
+
+  it("keeps the hovered and current marks and clears marks crowding them", () => {
+    const pins = [3, 42, 43, 596];
+    const indices = resolveTimelineMinimapMarkIndices({
+      itemCount,
+      railHeightPx,
+      pinnedIndices: [null, -1, 1.5, itemCount, ...pins],
+    });
+    expect(indices).toEqual(expect.arrayContaining([0, ...pins, itemCount - 1]));
+    expectSeparated(indices, new Set([0, itemCount - 1, ...pins]));
   });
 });
