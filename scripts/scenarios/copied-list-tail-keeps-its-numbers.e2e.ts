@@ -46,9 +46,9 @@ test(
     await pasteTailFrom("Verify");
 
     // The composer parses the pasted Markdown, so the copied numbers become each list's start.
-    const [fromUser, fromAssistant] = [0, 1].map((index) =>
-      browser.locator('[role="textbox"] ol').nth(index),
-    );
+    const pastedLists = browser.locator('[role="textbox"] ol');
+    const fromUser = pastedLists.first();
+    const fromAssistant = pastedLists.nth(1);
     await expect(fromUser).toHaveText(/Configure\s*Deploy/);
     await expect(fromAssistant).toHaveText(/Verify\s*Ship/);
     await app.screenshot("pasted");

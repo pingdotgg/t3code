@@ -49,7 +49,8 @@ adds one fixture for what e2e cannot know about T3 Code:
 State is created through the app's own CLI, so it is real events and works on a base commit
 whose schema differs. New threads default to the replay agent's `showcase` recording: type a
 message and send it. To play something else, add a recording to the
-[replay agent](development.md#replay-provider).
+[replay agent](development.md#replay-provider). Scenarios run that agent from your checkout, so a
+recording added with a fix also plays on the base it is proven against.
 
 Write one test per file: a proof runs the file and needs exactly one test in it.
 
@@ -146,7 +147,7 @@ Each side's result is also written as it ends, to `scripts/.e2e/prove/base.json`
 It runs the scenario on one target: iOS when the file imports `t3-mobile.ts`, web otherwise.
 `--target web` or `--target ios` overrides that.
 
-The scenario and e2e always come from your checkout. Only the app comes from the commit under
+The scenario, its replay recordings and e2e always come from your checkout. Only the app comes from the commit under
 test: a temporary worktree beside your checkout, installed with `vp i` and removed afterwards (one
 left by a run that was killed is replaced). A
 commit that is your clean `HEAD` runs in place. So a new scenario can prove a fix against a base
