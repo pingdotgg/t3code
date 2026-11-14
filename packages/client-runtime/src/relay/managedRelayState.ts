@@ -224,7 +224,19 @@ export const deregisterManagedRelayEnvironment = Effect.fn(
     "deregistering an environment",
   );
   const relay = yield* ManagedRelay.ManagedRelayClient;
-  yield* relay.unlinkEnvironment({ clerkToken, environmentId: input.environmentId });
+  return yield* relay.unlinkEnvironment({ clerkToken, environmentId: input.environmentId }).pipe(
+    Effect.map(() => ({ cleanup: "complete" as const })),
+    Effect.catch((cause) =>
+      relay.listEnvironments({ clerkToken }).pipe(
+        Effect.mapError(() => cause),
+        Effect.flatMap((environments) =>
+          environments.some((environment) => environment.environmentId === input.environmentId)
+            ? Effect.fail(cause)
+            : Effect.succeed({ cleanup: "unconfirmed" as const, cause }),
+        ),
+      ),
+    ),
+  );
 });
 
 /** Returns the T3 Chat page URL where the signed-in user confirms the link. */

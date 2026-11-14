@@ -146,6 +146,78 @@ describe("createManagedRelayQueryManager", () => {
     }),
   );
 
+  it.effect("reconciles a failed deregistration without hiding unconfirmed cleanup", () =>
+    Effect.gen(function* () {
+      setSession();
+      const failure = new ManagedRelay.ManagedRelayRequestFailedError({
+        action: "unlink relay environment",
+        cause: new Error("tunnel cleanup failed"),
+        status: 500,
+      });
+      const verificationFailure = new ManagedRelay.ManagedRelayRequestFailedError({
+        action: "list relay-managed environments",
+        cause: new Error("listing unavailable"),
+        status: 503,
+      });
+      for (const state of ["revoked", "linked", "unavailable"] as const) {
+        const result = yield* deregisterManagedRelayEnvironment(registry, {
+          accountId: "account-1",
+          environmentId: environment.environmentId,
+        }).pipe(
+          Effect.provideService(
+            ManagedRelay.ManagedRelayClient,
+            createClient({
+              unlinkEnvironment: () => Effect.fail(failure),
+              listEnvironments: () =>
+                state === "unavailable"
+                  ? Effect.fail(verificationFailure)
+                  : Effect.succeed(state === "linked" ? [environment] : []),
+            }),
+          ),
+          Effect.match({
+            onFailure: (error) => ({ error }),
+            onSuccess: (value) => ({ value }),
+          }),
+        );
+        expect(result).toEqual(
+          state === "revoked"
+            ? { value: { cleanup: "unconfirmed", cause: failure } }
+            : { error: failure },
+        );
+      }
+    }),
+  );
+
+  it.effect("can finish cleanup after a failed unlink has already revoked the link", () =>
+    Effect.gen(function* () {
+      setSession();
+      let linked = true;
+      let cleanupPending = true;
+      const failure = new ManagedRelay.ManagedRelayRequestFailedError({
+        action: "unlink relay environment",
+        cause: new Error("tunnel has active connections"),
+        status: 500,
+      });
+      const client = createClient({
+        unlinkEnvironment: () =>
+          Effect.suspend(() => {
+            const wasLinked = linked;
+            linked = false;
+            return cleanupPending ? Effect.fail(failure) : Effect.succeed({ ok: wasLinked });
+          }),
+        listEnvironments: () => Effect.sync(() => (linked ? [environment] : [])),
+      });
+      const deregister = deregisterManagedRelayEnvironment(registry, {
+        accountId: "account-1",
+        environmentId: environment.environmentId,
+      }).pipe(Effect.provideService(ManagedRelay.ManagedRelayClient, client));
+
+      expect(yield* deregister).toEqual({ cleanup: "unconfirmed", cause: failure });
+      cleanupPending = false;
+      expect(yield* deregister).toEqual({ cleanup: "complete" });
+    }),
+  );
+
   it.effect("rejects deregistration after the account changes", () =>
     Effect.gen(function* () {
       const unlinkEnvironment = vi.fn(() => Effect.succeed({ ok: true }));
