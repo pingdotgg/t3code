@@ -321,7 +321,7 @@ async fn shutdown_signal(watch_parent: bool) -> &'static str {
             if !watch_parent {
                 return std::future::pending().await;
             }
-            let mut tick = tokio::time::interval(Duration::from_secs(2));
+            let mut tick = crate::http::check_every(Duration::from_secs(2));
             loop {
                 tick.tick().await;
                 if std::os::unix::process::parent_id() != parent {
