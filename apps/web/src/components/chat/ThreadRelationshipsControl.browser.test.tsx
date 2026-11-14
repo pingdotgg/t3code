@@ -478,8 +478,7 @@ it.each([1, 18])("continues scrolling the panel past a list of %i subagents", as
     .getByTestId("panel")
     .element()
     .querySelector<HTMLElement>("[data-slot=scroll-area-viewport]")!;
-  list.scrollTop = list.scrollHeight;
-  if (count > 6) expect(list.scrollTop).toBeGreaterThan(0);
+  expect(list.scrollHeight).toBe(list.clientHeight);
   viewport.scrollTop = 0;
   await userEvent.wheel(list, { delta: { y: 300 } });
   await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
