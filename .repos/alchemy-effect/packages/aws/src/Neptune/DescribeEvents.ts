@@ -1,0 +1,36 @@
+import type * as neptune from "@distilled.cloud/aws/neptune";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for the `DescribeEvents` operation (IAM action
+ * `rds:DescribeEvents`).
+ *
+ * Lists recent events (failovers, maintenance, snapshots, parameter changes)
+ * for the account's Neptune clusters and instances — the audit trail for
+ * operational tooling. Provide the implementation with
+ * `Effect.provide(AWS.Neptune.DescribeEventsHttp)`.
+ * ### Monitoring Clusters
+ * **Example:** List a Cluster's Recent Events
+ * ```typescript
+ * const describeEvents = yield* AWS.Neptune.DescribeEvents();
+ *
+ * const page = yield* describeEvents({
+ *   SourceIdentifier: clusterId,
+ *   SourceType: "db-cluster",
+ * });
+ * const messages = page.Events?.map((e) => e.Message);
+ * ```
+ *
+ * @binding
+ */
+export interface DescribeEvents extends Binding.Service<
+  DescribeEvents,
+  "AWS.Neptune.DescribeEvents",
+  () => Effect.Effect<
+    (
+      request?: neptune.DescribeEventsMessage,
+    ) => Effect.Effect<neptune.EventsMessage, neptune.DescribeEventsError>
+  >
+> {}
+export const DescribeEvents = Binding.Service<DescribeEvents>("AWS.Neptune.DescribeEvents");
