@@ -10832,6 +10832,17 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert.lengthOf(after.runs, 3);
         assert.equal(after.runs[1]?.status, "queued");
         assert.equal(after.runs[2]?.status, "starting");
+        assert.equal(after.runs[2]?.manualContinuationOfRunId, source.id);
+        const resumeMessage = after.messages.find(
+          (message) => message.id === resume("first").messageId,
+        );
+        assert.equal(resumeMessage?.text, "");
+        assert.equal(resumeMessage?.notification?.summary, "Resumed thread");
+        assert.isFalse(
+          after.turnItems.some(
+            (item) => item.runId === after.runs[2]?.id && item.type === "user_message",
+          ),
+        );
         assert.equal(
           (yield* orchestrator.dispatch(resume("second")).pipe(Effect.exit))._tag,
           "Failure",

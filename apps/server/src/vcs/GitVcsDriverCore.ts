@@ -194,6 +194,7 @@ interface GitRepositoryPaths {
 }
 
 interface GitRefsSnapshot {
+  readonly defaultBranch: string | null;
   readonly localBranches: ReadonlyArray<VcsRef>;
   readonly remoteBranches: ReadonlyArray<VcsRef>;
   readonly hasPrimaryRemote: boolean;
@@ -4387,6 +4388,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : left.ref.name.localeCompare(right.ref.name);
 
     return {
+      defaultBranch,
       localBranches: localBranches.toSorted(byRecencyThenName).map(({ ref }) => ref),
       remoteBranches: remoteBranches.toSorted(byRecencyThenName).map(({ ref }) => ref),
       hasPrimaryRemote: remoteNames.length > 0,
@@ -4527,7 +4529,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { concurrency: 2 },
       );
       const { worktreeRoot } = repositoryPaths;
-      const localBranches = snapshot.localBranches.map((ref) => {
+      // The snapshot misses a branch created outside T3 Code until it refreshes. An unborn HEAD
+      // names a branch with no ref yet, so the ref must exist before it is listed.
+      const currentBranchUnlisted =
+        currentBranch !== null && !snapshot.localBranches.some((ref) => ref.name === currentBranch);
+      const unlistedCurrentBranch: ReadonlyArray<VcsRef> =
+        currentBranchUnlisted &&
+        (yield* branchExists(input.cwd, currentBranch).pipe(Effect.orElseSucceed(() => false)))
+          ? [
+              {
+                name: currentBranch,
+                current: true,
+                isRemote: false,
+                isDefault: currentBranch === snapshot.defaultBranch,
+                worktreePath: worktreeRoot,
+              },
+            ]
+          : [];
+      const listedBranches = snapshot.localBranches.map((ref) => {
         const current = ref.name === currentBranch;
         return {
           ...ref,
@@ -4542,6 +4561,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           current,
         };
       });
+      const localBranches = [...unlistedCurrentBranch, ...listedBranches];
       const combinedBranches = input.includeMatchingRemoteRefs
         ? [...localBranches, ...snapshot.remoteBranches]
         : dedupeRemoteBranchesWithLocalMatches([...localBranches, ...snapshot.remoteBranches]);
@@ -5181,19 +5201,51 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ]);
     });
 
-  const setBranchUpstream: GitVcsDriver.GitVcsDriver["Service"]["setBranchUpstream"] = (input) =>
-    executeGitWithStableDiagnostics(
-      "GitVcsDriver.setBranchUpstream",
-      input.cwd,
-      [
+  const setBranchUpstream: GitVcsDriver.GitVcsDriver["Service"]["setBranchUpstream"] = Effect.fn(
+    "setBranchUpstream",
+  )(
+    function* (input) {
+      const args = [
         "branch",
         "--set-upstream-to",
-        `${input.remoteName}/${input.remoteBranch}`,
+        `refs/remotes/${input.remoteName}/${input.remoteBranch}`,
         "--",
         input.branch,
-      ],
-      { writesSharedConfig: true },
-    ).pipe(retryWhileConfigLocked, Effect.asVoid);
+      ];
+      const result = yield* executeGitWithStableDiagnostics(
+        "GitVcsDriver.setBranchUpstream",
+        input.cwd,
+        args,
+        { allowNonZeroExit: true },
+      );
+      if (result.exitCode === 0) return;
+      // Git requires a configured fetch mapping even when the tracking ref already exists. The
+      // mapping is a glob because an exact source fails every later fetch once the branch is deleted.
+      if (
+        /^fatal: cannot set up tracking information; starting point '.+' is not a branch$/m.test(
+          result.stderr,
+        )
+      ) {
+        yield* executeGitWithStableDiagnostics(
+          "GitVcsDriver.setBranchUpstream.addFetchMapping",
+          input.cwd,
+          [
+            "config",
+            "--add",
+            `remote.${input.remoteName}.fetch`,
+            `+refs/heads/${input.remoteBranch}*:refs/remotes/${input.remoteName}/${input.remoteBranch}*`,
+          ],
+        ).pipe(retryWhileConfigLocked);
+      }
+      yield* executeGitWithStableDiagnostics(
+        "GitVcsDriver.setBranchUpstream",
+        input.cwd,
+        args,
+      ).pipe(retryWhileConfigLocked);
+    },
+    // Keep mapping detection and both writes under the same lock across sibling worktrees.
+    (effect, input) => withSharedConfigLock(input.cwd, effect),
+  );
 
   /**
    * Unlinks links under `target` without following them and removes the

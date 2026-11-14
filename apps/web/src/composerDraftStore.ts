@@ -1235,6 +1235,26 @@ function legacyToModelSelectionByProvider(
   return result;
 }
 
+// Static aliases are shared across instances; exact custom slugs and catalog aliases are not.
+function composerModelIdentity(
+  input: {
+    providers: ReadonlyArray<ServerProvider>;
+    settings: UnifiedSettings;
+    selectedProvider: ProviderDriverKind;
+  },
+  instanceId: ProviderInstanceId,
+  model: string | undefined,
+) {
+  const isCustom =
+    input.providers
+      .find((provider) => provider.instanceId === instanceId)
+      ?.models.some((entry) => entry.slug === model && entry.isCustom) ||
+    readInstanceCustomModels(input.settings, instanceId, input.selectedProvider).some(
+      (entry) => entry.slug === model,
+    );
+  return isCustom ? model : normalizeModelSlug(model, input.selectedProvider);
+}
+
 export function deriveEffectiveComposerModelState(input: {
   draft:
     | Pick<
@@ -1254,8 +1274,8 @@ export function deriveEffectiveComposerModelState(input: {
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
   const draft = draftModelSelectionApplies(input.draft, input.threadStarted) ? input.draft : null;
-  const baseModelCandidate =
-    input.threadModelSelection?.model ?? input.projectModelSelection?.model ?? null;
+  const baseSelection = input.threadModelSelection ?? input.projectModelSelection;
+  const baseModelCandidate = baseSelection?.model ?? null;
   const preserveThreadModel =
     input.selectedInstanceId !== null &&
     input.selectedInstanceId !== undefined &&
@@ -1309,12 +1329,21 @@ export function deriveEffectiveComposerModelState(input: {
         activeSelection.model,
       ))
     : baseModel;
+  // Base options belong to the base model, so a draft pick of another model gets none of them.
+  const draftPicksOtherModel =
+    !!activeSelection?.model &&
+    composerModelIdentity(input, activeSelectionInstanceId, activeSelection.model) !==
+      composerModelIdentity(
+        input,
+        baseSelection?.instanceId ?? activeSelectionInstanceId,
+        baseSelection?.model,
+      );
   // Draft options win; otherwise an existing thread's options, even none, outrank the project's.
   // Selections stay with them, so a fallback instance can check which model the options belong to.
   const optionSelections =
     [
       draft?.modelSelectionByProvider,
-      selectionsByInstance(input.threadModelSelection ?? input.projectModelSelection),
+      draftPicksOtherModel ? null : selectionsByInstance(baseSelection),
     ].find((selections) => modelSelectionByProviderToOptions(selections) !== null) ?? null;
   const modelOptions = modelSelectionByProviderToOptions(optionSelections);
 
@@ -1359,21 +1388,10 @@ function withFallbackInstanceOptions(input: {
     (provider) => provider.instanceId === requestedInstanceId,
   );
   const requestedModel = input.optionSelections?.[requestedInstanceId]?.model;
-  // Static aliases are shared across instances; exact custom slugs and catalog aliases are not.
-  const modelIdentity = (instanceId: ProviderInstanceId, model: string | undefined) => {
-    const isCustom =
-      input.providers
-        .find((provider) => provider.instanceId === instanceId)
-        ?.models.some((entry) => entry.slug === model && entry.isCustom) ||
-      readInstanceCustomModels(input.settings, instanceId, input.selectedProvider).some(
-        (entry) => entry.slug === model,
-      );
-    return isCustom ? model : normalizeModelSlug(model, input.selectedProvider);
-  };
   const sameModel =
     requestedModel === input.selectedModel ||
-    modelIdentity(requestedInstanceId, requestedModel) ===
-      modelIdentity(selectedInstanceId, input.selectedModel);
+    composerModelIdentity(input, requestedInstanceId, requestedModel) ===
+      composerModelIdentity(input, selectedInstanceId, input.selectedModel);
   if (!requestedOptions || requestedProvider?.driver !== input.selectedProvider || !sameModel) {
     return modelOptions;
   }
