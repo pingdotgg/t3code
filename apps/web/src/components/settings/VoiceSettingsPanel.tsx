@@ -122,6 +122,7 @@ import { toastManager } from "../ui/toast";
 import { MicrophoneOrderList } from "./MicrophoneOrderList";
 import { MicrophoneTest } from "./MicrophoneTest";
 import { CloudVoiceConfiguration } from "./CloudVoiceConfiguration";
+import { KeybindingCommandControl } from "./KeybindingsSettings";
 import { ModelBenchmarks, orderSpeechLanguages } from "./SpeechModelComparison";
 import { languageLabel, SpeechLanguageSelect } from "./SpeechLanguageSelect";
 import { filterSpeechModels, type SpeechModelSort } from "./speechModelBrowser";
@@ -1324,29 +1325,32 @@ export function VoiceSettingsPanel() {
           title="Dictation shortcut"
           description={`${SHORTCUT_MODES[settings.voiceShortcutMode].hint}.`}
           control={
-            <Select
-              value={settings.voiceShortcutMode}
-              onValueChange={(value) => {
-                if (value)
-                  void updateClientSettings({ voiceShortcutMode: value as VoiceShortcutMode });
-              }}
-            >
-              <SelectTrigger size="sm" aria-label="Dictation shortcut mode">
-                <SelectValue>{SHORTCUT_MODES[settings.voiceShortcutMode].label}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {(Object.keys(SHORTCUT_MODES) as VoiceShortcutMode[]).map((mode) => (
-                  <SelectItem key={mode} value={mode}>
-                    <span className="flex flex-col">
-                      {SHORTCUT_MODES[mode].label}
-                      <span className="text-xs text-muted-foreground">
-                        {SHORTCUT_MODES[mode].hint}
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 @min-[32rem]/settings-row:flex-nowrap">
+              <KeybindingCommandControl command="composer.dictation" />
+              <Select
+                value={settings.voiceShortcutMode}
+                onValueChange={(value) => {
+                  if (value)
+                    void updateClientSettings({ voiceShortcutMode: value as VoiceShortcutMode });
+                }}
+              >
+                <SelectTrigger size="sm" aria-label="Dictation shortcut mode">
+                  <SelectValue>{SHORTCUT_MODES[settings.voiceShortcutMode].label}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {(Object.keys(SHORTCUT_MODES) as VoiceShortcutMode[]).map((mode) => (
+                    <SelectItem key={mode} value={mode}>
+                      <span className="flex flex-col">
+                        {SHORTCUT_MODES[mode].label}
+                        <span className="text-xs text-muted-foreground">
+                          {SHORTCUT_MODES[mode].hint}
+                        </span>
                       </span>
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </div>
           }
         />
       </SettingsSection>

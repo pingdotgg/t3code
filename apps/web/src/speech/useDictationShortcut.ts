@@ -123,6 +123,8 @@ export function useDictationShortcut(input: ShortcutInput) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!ownsShortcut(id.current)) return;
       if (event.isComposing || event.keyCode === 229) return;
+      if (event.target instanceof HTMLElement && event.target.closest("[data-keybinding-capture]"))
+        return;
       const { speech } = current.current;
       if (event.defaultPrevented || isCommandPaletteOpen()) return;
       if (

@@ -29,8 +29,8 @@ function Probe({
   return null;
 }
 
-const press = (repeat = false) =>
-  window.dispatchEvent(
+const press = (repeat = false, target: EventTarget = window) =>
+  target.dispatchEvent(
     new KeyboardEvent("keydown", {
       key: "D",
       code: "KeyD",
@@ -38,6 +38,7 @@ const press = (repeat = false) =>
       metaKey: /Mac/i.test(navigator.platform),
       shiftKey: true,
       cancelable: true,
+      bubbles: true,
       repeat,
     }),
   );
@@ -57,6 +58,27 @@ it("leaves the browser shortcut alone when dictation is off", async () => {
   await using _screen = await render(<Probe speech={speech} />);
   expect(press()).toBe(true);
   expect(speech.start).not.toHaveBeenCalled();
+});
+
+it("leaves shortcut recording keys and Escape to the recorder", async () => {
+  const speech = actions(true);
+  await using screen = await render(
+    <>
+      <Probe speech={speech} />
+      <input aria-label="Record shortcut" data-keybinding-capture="" />
+    </>,
+  );
+  const field = screen.getByRole("textbox", { name: "Record shortcut" }).element();
+  expect(press(false, field)).toBe(true);
+  expect(speech.start).not.toHaveBeenCalled();
+  await screen.rerender(
+    <>
+      <Probe speech={{ ...speech, state: { ...speech.state, phase: "recording" } }} />
+      <input aria-label="Record shortcut" data-keybinding-capture="" />
+    </>,
+  );
+  field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  expect(speech.cancel).not.toHaveBeenCalled();
 });
 
 it("stops on a new press when the OS omitted keyup, but ignores autorepeat", async () => {
