@@ -96,28 +96,37 @@ function TimelineComment({
   const state = normalizedReviewState(comment.reviewState);
   const approved = state === "APPROVED";
   const changes = state === "CHANGES_REQUESTED";
+  const author = comment.author?.login ?? "Unknown author";
+  const action = approved ? "approved" : changes ? "requested changes" : "commented";
   return (
     <TimelineEvent
       icon={approved ? "checkmark" : changes ? "doc.text" : "text.bubble"}
       tone={approved ? "success" : changes ? "danger" : undefined}
     >
-      <View className="flex-row items-center gap-2">
-        <PullRequestAvatar actor={comment.author} size={22} />
-        <View className="min-w-0 flex-1">
-          <Text className="text-sm">
-            <Text className="font-t3-medium">{comment.author?.login ?? "Unknown author"}</Text>
-            <Text className="text-foreground-muted">
-              {approved ? " approved" : changes ? " requested changes" : " commented"}
+      <View
+        accessible
+        accessibilityRole="header"
+        accessibilityLabel={`${author} ${action}, ${relativeTime(comment.createdAt)} ago${comment.path ? `, ${comment.path}` : ""}`}
+        className="gap-2"
+      >
+        <View className="flex-row items-center gap-2">
+          <PullRequestAvatar actor={comment.author} size={22} />
+          <View className="min-w-0 flex-1">
+            <Text className="text-sm">
+              <Text className="font-t3-medium">{author}</Text>
+              <Text className="text-foreground-muted"> {action}</Text>
             </Text>
+          </View>
+          <Text className="text-2xs text-foreground-tertiary">
+            {relativeTime(comment.createdAt)}
           </Text>
         </View>
-        <Text className="text-2xs text-foreground-tertiary">{relativeTime(comment.createdAt)}</Text>
+        {comment.path ? (
+          <Text className="font-mono text-2xs text-foreground-muted" numberOfLines={2}>
+            {comment.path}
+          </Text>
+        ) : null}
       </View>
-      {comment.path ? (
-        <Text className="font-mono text-2xs text-foreground-muted" numberOfLines={2}>
-          {comment.path}
-        </Text>
-      ) : null}
       {preview.trim() || content.attachments.length ? (
         <View
           className={
@@ -249,7 +258,12 @@ export function pullRequestTimelineRows(
       date: thread.comments[0]?.createdAt ?? "",
       content: (
         <TimelineEvent icon="text.bubble" tone={thread.isResolved ? "success" : undefined}>
-          <View className="flex-row items-center gap-2">
+          <View
+            accessible
+            accessibilityRole="header"
+            accessibilityLabel={`${thread.comments[0]?.author?.login ?? "Unknown author"} started a discussion${thread.comments[0] ? `, ${relativeTime(thread.comments[0].createdAt)} ago` : ""}`}
+            className="flex-row items-center gap-2"
+          >
             <PullRequestAvatar actor={thread.comments[0]?.author ?? null} size={22} />
             <Text className="flex-1 text-sm">
               <Text className="font-t3-medium">
