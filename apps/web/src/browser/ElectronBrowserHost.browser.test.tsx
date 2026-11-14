@@ -160,4 +160,20 @@ describe("ElectronBrowserHost", () => {
     expect(after).toHaveLength(2);
     expect(after.every((node, index) => node.isSameNode(before[index]!))).toBe(true);
   });
+
+  it("hides an inactive guest on macOS instead of keeping it paintable", async () => {
+    using _state = setup();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    reconcilePreviewServerSessions(threadRef, {
+      sessions: [snapshot("tab_1", "2026-01-01T00:00:01.000Z")],
+      serverEpoch: "server-a",
+      revision: 1,
+    });
+    await using screen = await renderHost();
+
+    const wrapper = screen.container.querySelector<HTMLElement>("[data-preview-viewport]");
+    expect(wrapper).not.toBeNull();
+    expect(wrapper?.dataset.previewRendering).toBe("suspended");
+    expect(wrapper?.style.visibility).toBe("hidden");
+  });
 });

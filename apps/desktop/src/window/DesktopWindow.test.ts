@@ -757,6 +757,81 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("keeps preview guests on Chromium's background throttling", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.ensureMain;
+        const attach = fakeWindow.webContentsListeners.get("will-attach-webview");
+        if (!attach) {
+          return yield* Effect.die("will-attach-webview listener was not registered");
+        }
+
+        const previewEvent = { preventDefault: vi.fn() };
+        const previewPreferences: Record<string, unknown> = {};
+        attach(previewEvent, previewPreferences, { partition: "persist:t3code-preview-test" });
+        assert.equal(previewEvent.preventDefault.mock.calls.length, 0);
+        // A parked preview keeps its timers while the app is on screen.
+        assert.strictEqual(previewPreferences.backgroundThrottling, false);
+        assert.strictEqual(previewPreferences.sandbox, true);
+
+        const refused = { preventDefault: vi.fn() };
+        const otherPreferences: Record<string, unknown> = {};
+        attach(refused, otherPreferences, { partition: "persist:default" });
+        assert.equal(refused.preventDefault.mock.calls.length, 1);
+        assert.isUndefined(otherPreferences.backgroundThrottling);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("throttles preview guests while the app is hidden", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.ensureMain;
+        const attached = fakeWindow.webContentsListeners.get("did-attach-webview");
+        if (!attached) {
+          return yield* Effect.die("did-attach-webview listener was not registered");
+        }
+        const guest = {
+          isDestroyed: vi.fn(() => false),
+          setBackgroundThrottling: vi.fn(),
+          once: vi.fn(),
+          on: vi.fn(),
+        };
+        attached({}, guest);
+
+        const hide = fakeWindow.windowListeners.get("hide");
+        const show = fakeWindow.windowListeners.get("show");
+        if (!hide || !show) {
+          return yield* Effect.die("the window did not register its visibility listeners");
+        }
+        hide();
+        assert.deepEqual(guest.setBackgroundThrottling.mock.calls, [[true]]);
+        show();
+        assert.deepEqual(guest.setBackgroundThrottling.mock.calls, [[true], [false]]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   // Chromium hands the main window's zoom level down to embedded preview
   // guests, so every app zoom has to put the preview browser back at its own
   // zoom or zooming the UI drags the previewed page with it.

@@ -615,7 +615,7 @@ export interface DesktopPreviewTabState {
   /** Chromium reports playback even when audioMuted is true. */
   audible: boolean;
   controller: "human" | "agent" | "none";
-  /** A screenshot or stream of the guest is pending, so the client keeps it painting while hidden. */
+  /** A screenshot, stream, or agent command needs the guest, so the client keeps it painting while hidden. */
   capturing: boolean;
   favicon?: DesktopPreviewFavicon;
   updatedAt: string;

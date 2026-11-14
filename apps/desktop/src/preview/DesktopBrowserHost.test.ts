@@ -746,6 +746,36 @@ describe("DesktopBrowserHost", () => {
     }),
   );
 
+  it.effect("keeps painting while the agent's turn is using the tab", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const painting = yield* watchPainting(host);
+      const turn = (active: boolean) =>
+        host.handleCommandLine(encodeJson({ type: "turn", threadId: key.threadId, active }));
+
+      yield* turn(true);
+      // Playwright's actionability check waits for the page's next frame.
+      yield* command(host, 1, "Runtime.callFunctionOn");
+      yield* settle;
+      expect(painting).toEqual([true]);
+
+      yield* turn(false);
+      yield* settle;
+      expect(painting).toEqual([true, false]);
+
+      // Outside a turn the guest paints until the agent goes idle.
+      yield* command(host, 2, "Input.dispatchMouseEvent");
+      yield* settle;
+      expect(painting).toEqual([true, false, true]);
+      debuggee.release();
+      yield* settle;
+      yield* TestClock.adjust("1 minute");
+      expect(painting).toEqual([true, false, true, false]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("lets a guest throttle when Chromium refuses a viewer's screencast", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
