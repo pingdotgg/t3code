@@ -29,6 +29,8 @@ Credential fields in Settings, such as provider environment variables and creden
 control tokens, usage limit keys, and device host tokens, show a source picker next to the field.
 Pick **Value** to save the credential itself, or pick a secret provider and enter a reference such
 as `op://vault/item/field`. Copy the reference from 1Password with **Copy Secret Reference**.
+Select the check button next to a reference to read it now. If it reads, providers that use it
+start using the new value.
 
 T3 Code reads the secret when it needs it, for example when a provider starts. Change the
 credential in 1Password and refresh to use the new value.
