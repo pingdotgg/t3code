@@ -28,6 +28,7 @@ const namespacePrefixes: Record<string, string> = {
   "urn:oasis:names:tc:opendocument:xmlns:table:1.0": "table",
   "urn:oasis:names:tc:opendocument:xmlns:text:1.0": "text",
   "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0": "draw",
+  "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0": "presentation",
   "http://www.w3.org/1999/xlink": "xlink",
   "http://www.w3.org/1999/xhtml": "",
   "http://www.idpf.org/2007/opf": "",
@@ -275,6 +276,7 @@ async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
   if (
     [
       "office:annotation",
+      "presentation:notes",
       "text:tracked-changes",
       "office:scripts",
       "draw:object",
