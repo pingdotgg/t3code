@@ -99,6 +99,7 @@ function* text(node: XmlNode): Generator<string, void> {
   if (HIDDEN.has(node.name)) return;
   if (["tab", "cell"].includes(node.name)) yield "\t";
   else if (["br", "line-break", "cr"].includes(node.name)) yield "\n";
+  else if (node.name === "noBreakHyphen") yield "\u2011";
   else if (node.spaceCount !== undefined) {
     yield " ".repeat(Math.min(MAX_OUTPUT, node.spaceCount));
     if (node.spaceCount > MAX_OUTPUT) throw new Truncation("Space repeat limit");
