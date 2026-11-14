@@ -53,6 +53,13 @@ const STUB_BROWSER_DEFAULTS = {
   profiles: BUILT_IN_BROWSER_PROFILES,
   profileId: DEFAULT_BROWSER_PROFILE_ID,
 };
+const LOAD_FAILED = {
+  _tag: "LoadFailed",
+  url: "http://example.com/",
+  title: "",
+  code: -102,
+  description: "ERR_CONNECTION_REFUSED",
+} as const;
 
 // The desktop bridge only exists inside Electron; the view reads it once at import.
 vi.mock(import("./previewBridge"), async (original) => ({
@@ -107,9 +114,11 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
     desktopByTabId: {
       "tab-1": {
         hasWebContents: true,
-        navStatus: mocks.idleDesktopOverlay
-          ? { _tag: "Idle" }
-          : { _tag: "Success", url: "http://example.com/", title: "Example" },
+        navStatus: mocks.loadFailed
+          ? LOAD_FAILED
+          : mocks.idleDesktopOverlay
+            ? { _tag: "Idle" }
+            : { _tag: "Success", url: "http://example.com/", title: "Example" },
         canGoBack: false,
         canGoForward: false,
         loading: mocks.loading,
@@ -142,13 +151,7 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
               tabId: "tab-1",
               runtime: mocks.nativeServerTab || mocks.streamedServerTab ? "server" : "desktop",
               navStatus: mocks.loadFailed
-                ? {
-                    _tag: "LoadFailed",
-                    url: "http://example.com/",
-                    title: "",
-                    code: -102,
-                    description: "ERR_CONNECTION_REFUSED",
-                  }
+                ? LOAD_FAILED
                 : { _tag: "Success", url: "http://example.com/", title: "Example" },
               canGoBack: false,
               canGoForward: false,
