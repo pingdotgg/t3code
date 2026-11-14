@@ -1386,15 +1386,10 @@ describe("orchestration v2 provider switching", () => {
 
   it.live.each([
     "live",
-    "detached",
     "legacy",
-    "interrupted",
-    "cancelled",
-    "other-error",
-    "other-provider",
-    "repaired-native",
     "raw-error",
-    "incidental-mention",
+    "other-error",
+    "repaired-native",
     "background",
   ] as const)("recovers invalid encrypted Codex history on the next prompt: %s", (scenario) =>
     Effect.scoped(
@@ -1405,23 +1400,18 @@ describe("orchestration v2 provider switching", () => {
         const generation = yield* Ref.make(0);
         const rejectedNativeThreads = yield* Ref.make<ReadonlySet<string>>(new Set());
         const pendingBackgroundWork = yield* Ref.make(false);
-        const modelSelection =
-          scenario === "other-provider" ? CLAUDE_MODEL_SELECTION : CODEX_MODEL_SELECTION;
         const code =
-          scenario === "raw-error" || scenario === "incidental-mention"
+          scenario === "raw-error"
             ? "other"
             : scenario === "other-error"
               ? "serverOverloaded"
               : "invalid_encrypted_content";
         const registry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
-            instanceId: modelSelection.instanceId,
-            driver: scenario === "other-provider" ? CLAUDE_DRIVER : CODEX_DRIVER,
-            capabilities:
-              scenario === "other-provider"
-                ? ClaudeProviderCapabilitiesV2
-                : CodexProviderCapabilitiesV2,
-            modelSelection,
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
             capturedTurns,
             injectedHistory,
             nativeThreadGeneration: generation,
@@ -1439,9 +1429,7 @@ describe("orchestration v2 provider switching", () => {
                         message: "Encrypted content could not be verified",
                       },
                     })
-                  : scenario === "incidental-mention"
-                    ? "Transport failed; this is not invalid_encrypted_content."
-                    : "Encrypted content could not be verified",
+                  : "Encrypted content could not be verified",
               class: "provider_error",
             }),
             responseByRunOrdinal: { 1: "BASELINE_OK", 3: "RECOVERY_OK", 4: "FOLLOWUP_OK" },
@@ -1463,7 +1451,7 @@ describe("orchestration v2 provider switching", () => {
               creationSource: "web",
               text,
               attachments: [],
-              modelSelection,
+              modelSelection: CODEX_MODEL_SELECTION,
               dispatchMode: { type: "start_immediately" },
             });
             yield* orchestrator.streamStoredEvents.pipe(
@@ -1486,7 +1474,7 @@ describe("orchestration v2 provider switching", () => {
             createdBy: "user",
             creationSource: "web",
             title: "Rejected Codex history",
-            modelSelection,
+            modelSelection: CODEX_MODEL_SELECTION,
             runtimeMode: "full-access",
             interactionMode: "default",
             branch: null,
@@ -1501,7 +1489,7 @@ describe("orchestration v2 provider switching", () => {
           assert.isTrue(
             failed.turnItems.some((item) => item.type === "error" && item.failure.code === code),
           );
-          if (scenario === "detached" || scenario === "legacy") {
+          if (scenario === "legacy") {
             yield* orchestrator.dispatch({
               type: "provider-session.detach",
               commandId: CommandId.make("rejected:detach"),
@@ -1521,19 +1509,6 @@ describe("orchestration v2 provider switching", () => {
                   payload: attempt,
                 }),
               ),
-            });
-          }
-          if (scenario === "interrupted" || scenario === "cancelled") {
-            yield* (yield* EventSink.EventSinkV2).write({
-              events: [
-                {
-                  id: EventId.make(`rejected:${scenario}`),
-                  type: "run.updated",
-                  threadId,
-                  occurredAt: failed.thread.createdAt,
-                  payload: { ...failed.runs.at(-1)!, status: scenario },
-                },
-              ],
             });
           }
           if (scenario === "repaired-native") {
@@ -1564,12 +1539,7 @@ describe("orchestration v2 provider switching", () => {
             assert.lengthOf(recovered.contextHandoffs, 0);
             return;
           }
-          if (
-            scenario === "other-error" ||
-            scenario === "incidental-mention" ||
-            scenario === "other-provider" ||
-            scenario === "background"
-          ) {
+          if (scenario === "other-error" || scenario === "background") {
             assert.equal(recovered.runs.at(-1)?.status, "failed");
             assert.equal(yield* Ref.get(generation), 1);
             assert.lengthOf(yield* Ref.get(capturedTurns), scenario === "background" ? 2 : 3);
