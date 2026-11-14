@@ -32,6 +32,8 @@ export function AssistantSelectionToolbar({
   const [selection, setSelection] = useState<{
     citation: AssistantCitation;
     position: SelectionActionPoint;
+    /** Set when Cite opens above the released line; the fallback top when that has no room. */
+    belowY: number | null;
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
   const toolbarRef = useRef<HTMLButtonElement>(null);
@@ -44,7 +46,14 @@ export function AssistantSelectionToolbar({
     if (!toolbar || !selection) return;
     const rect = toolbar.getBoundingClientRect();
     toolbar.style.left = `${Math.max(8, Math.min(selection.position.x, window.innerWidth - rect.width - 8))}px`;
-    toolbar.style.top = `${Math.max(8, Math.min(selection.position.y, window.innerHeight - rect.height - 8))}px`;
+    const { position, belowY } = selection;
+    const top =
+      belowY === null
+        ? position.y
+        : position.y - rect.height >= 8
+          ? position.y - rect.height
+          : belowY;
+    toolbar.style.top = `${Math.max(8, Math.min(top, window.innerHeight - rect.height - 8))}px`;
   }, [selection]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to document selectionchange and keydown to track text selections in the viewport
@@ -112,15 +121,16 @@ export function AssistantSelectionToolbar({
         return;
       }
       const rects = captured.range.getClientRects();
-      const pointerOnText =
-        pointer !== null &&
-        Array.from(rects).some(
-          (line) =>
-            pointer.x >= line.left - 8 &&
-            pointer.x <= line.right + 8 &&
-            pointer.y >= line.top - 8 &&
-            pointer.y <= line.bottom + 8,
-        );
+      const pointerLine =
+        pointer === null
+          ? undefined
+          : Array.from(rects).find(
+              (line) =>
+                pointer.x >= line.left - 8 &&
+                pointer.x <= line.right + 8 &&
+                pointer.y >= line.top - 8 &&
+                pointer.y <= line.bottom + 8,
+            );
       setSelection({
         sourceAnchor: { source: captured.source, range: captured.range, viewport },
         citation: {
@@ -132,9 +142,14 @@ export function AssistantSelectionToolbar({
         position: resolveSelectionActionPosition({
           bounds: viewportRect,
           selectionRect: rects.item(rects.length - 1) ?? rect,
-          pointer: pointerOnText ? pointer : null,
+          // Cite's bottom edge sits above the released line, clear of clicks beside the pointer.
+          pointer:
+            pointer && pointerLine
+              ? { x: pointer.x, y: Math.min(pointer.y, pointerLine.top) - 4 }
+              : null,
           viewport: { width: window.innerWidth, height: window.innerHeight },
         }),
+        belowY: pointer && pointerLine ? Math.max(pointer.y, pointerLine.bottom) + 4 : null,
       });
     };
     const actions = observeSelectionActions({
