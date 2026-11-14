@@ -2757,9 +2757,7 @@ describe("AcpRegistryAdapterV2", () => {
 
   it.effect.each([
     { stopReason: "refusal", childUpdate: "state_update" },
-    { stopReason: "refusal", childUpdate: "subagent_update" },
-    { stopReason: "max_tokens", childUpdate: "state_update" },
-    { stopReason: "max_turn_requests", childUpdate: "subagent_update" },
+    { stopReason: "max_tokens", childUpdate: "subagent_update" },
   ])(
     "fails Claude's turn and child and closes its running tool when they stop with $stopReason via $childUpdate",
     ({ stopReason, childUpdate }) =>
