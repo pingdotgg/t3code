@@ -577,7 +577,12 @@ export const layer: Layer.Layer<
                   },
             providerThreadUpdate: {
               ...providerThread,
-              status: providerThread.nativeThreadRef === null ? "not_loaded" : "idle",
+              status:
+                providerThread.status === "error"
+                  ? "error"
+                  : providerThread.nativeThreadRef === null
+                    ? "not_loaded"
+                    : "idle",
               updatedAt: now,
             },
           });
@@ -1014,6 +1019,13 @@ export const layer: Layer.Layer<
             type: "provider_resume_fallback",
           });
           const createdAt = yield* DateTime.now;
+          const history = yield* projectionStore.getTurnStartHistory(input.threadId);
+          // Turn-start context carries only this run's turn items; the boundary needs the thread's.
+          const boundary = ContextHandoffService.contextBoundaryOrdinal({
+            runs: projection.runs,
+            turnItems: history,
+          });
+          const from = Math.max(1, boundary);
           const handoff = yield* contextHandoffService.prepareProviderHandoff({
             threadId: projection.thread.id,
             targetRunId: run.id,
@@ -1022,15 +1034,18 @@ export const layer: Layer.Layer<
             toProviderThreadId: providerThread.id,
             fromProviderInstanceId: providerThread.providerInstanceId,
             toProviderInstanceId: run.providerInstanceId,
-            coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
+            coveredRunOrdinals: { from, to: Math.max(from, run.ordinal - 1) },
             strategy: "full_thread_summary",
             runs: projection.runs,
-            items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
-              (item) =>
-                item.runId === null ||
-                projection.runs.some(
-                  (source) => source.id === item.runId && source.ordinal < run.ordinal,
-                ),
+            items: history.filter((item) =>
+              item.runId === null
+                ? boundary === 0
+                : projection.runs.some(
+                    (source) =>
+                      source.id === item.runId &&
+                      source.ordinal >= from &&
+                      source.ordinal < run.ordinal,
+                  ),
             ),
             createdAt,
           });

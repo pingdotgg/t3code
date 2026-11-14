@@ -119,6 +119,8 @@ import {
 import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
 import {
   ContextHandoffServiceV2,
+  contextBoundaryOrdinal,
+  isScheduledFreshRun,
   readForkHistoryItems,
   readInheritedHandoffItems,
   visibleConversationItems,
@@ -1343,42 +1345,6 @@ function appendContextHandoffId(
   handoffId: OrchestrationV2ContextHandoff["id"] | null,
 ): OrchestrationV2ProviderThread["handoffIds"] {
   return handoffId === null ? handoffIds : Array.from(new Set([...handoffIds, handoffId]));
-}
-
-/** A fresh-session schedule run starts a side conversation; the thread's own one continues past it. */
-function isScheduledFreshRun(
-  run: Pick<OrchestrationV2Run, "freshContext" | "userMessageId">,
-  turnItems: OrchestrationV2ThreadProjection["turnItems"],
-): boolean {
-  // Turn items, unlike messages, are not narrowed to the runs since the latest compaction.
-  return (
-    run.freshContext === true &&
-    turnItems.some(
-      (item) =>
-        item.type === "user_message" &&
-        item.messageId === run.userMessageId &&
-        item.scheduledTaskId !== undefined,
-    )
-  );
-}
-
-/** Ordinal of the latest started fresh-context run. Runs before it never reach a provider again. */
-function contextBoundaryOrdinal(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems">,
-): number {
-  let boundary = 0;
-  for (const run of projection.runs) {
-    if (
-      run.freshContext === true &&
-      run.status !== "queued" &&
-      !cancelledBeforeStart(run) &&
-      run.ordinal > boundary &&
-      !isScheduledFreshRun(run, projection.turnItems)
-    ) {
-      boundary = run.ordinal;
-    }
-  }
-  return boundary;
 }
 
 /** The provider thread a message continues: the active one, unless a fresh-session schedule run started it. */
@@ -2690,6 +2656,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const deliveryProviderThread = canResumeAcrossInstances
         ? {
             ...queuedProviderThread,
+            status: activeProviderThread.status,
             nativeThreadRef: activeProviderThread.nativeThreadRef,
             nativeConversationHeadRef: activeProviderThread.nativeConversationHeadRef,
             nativeMetadata: activeProviderThread.nativeMetadata,
@@ -2878,7 +2845,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const providerThread: OrchestrationV2ProviderThread = {
         ...deliveryProviderThread,
         providerSessionId,
-        status: "not_loaded",
+        status: deliveryProviderThread.status === "error" ? "error" : "not_loaded",
         firstRunOrdinal: queuedProviderThread.firstRunOrdinal ?? ordinal,
         lastRunOrdinal: ordinal,
         handoffIds: appendContextHandoffId(
@@ -8585,7 +8552,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : null;
     const providerThread: OrchestrationV2ProviderThread = {
       ...ensuredProviderThread,
-      status: "active",
+      status: ensuredProviderThread.status === "error" ? "error" : "active",
       firstRunOrdinal: ensuredProviderThread.firstRunOrdinal ?? ordinal,
       lastRunOrdinal: ordinal,
       handoffIds: [

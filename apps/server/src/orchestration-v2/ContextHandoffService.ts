@@ -26,6 +26,7 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
+import { cancelledBeforeStart } from "./RestartBackgroundNote.ts";
 
 export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandoffPrepareError>()(
   "ContextHandoffPrepareError",
@@ -114,6 +115,42 @@ function compactText(text: string, maxLength = 240): string {
   const end = maxLength - 3;
   const last = compacted.charCodeAt(end - 1);
   return `${compacted.slice(0, last >= 0xd800 && last <= 0xdbff ? end - 1 : end)}...`;
+}
+
+/** A fresh-session schedule run starts a side conversation; the thread's own one continues past it. */
+export function isScheduledFreshRun(
+  run: Pick<OrchestrationV2Run, "freshContext" | "userMessageId">,
+  turnItems: OrchestrationV2ThreadProjection["turnItems"],
+): boolean {
+  // Turn items, unlike messages, are not narrowed to the runs since the latest compaction.
+  return (
+    run.freshContext === true &&
+    turnItems.some(
+      (item) =>
+        item.type === "user_message" &&
+        item.messageId === run.userMessageId &&
+        item.scheduledTaskId !== undefined,
+    )
+  );
+}
+
+/** Ordinal of the latest started fresh-context run. Runs before it never reach a provider again. */
+export function contextBoundaryOrdinal(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems">,
+): number {
+  let boundary = 0;
+  for (const run of projection.runs) {
+    if (
+      run.freshContext === true &&
+      run.status !== "queued" &&
+      !cancelledBeforeStart(run) &&
+      run.ordinal > boundary &&
+      !isScheduledFreshRun(run, projection.turnItems)
+    ) {
+      boundary = run.ordinal;
+    }
+  }
+  return boundary;
 }
 
 export function visibleDeltaRunOrdinals(
