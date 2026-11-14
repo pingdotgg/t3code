@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import { run } from "./shell.ts";
 import { runPromise, test, WEB } from "./t3.ts";
 
-const utf16 = (text: string) => Buffer.from(`﻿${text}`, "utf16le");
+const utf16 = (text: string) => Buffer.from(`\ufeff${text}`, "utf16le");
 
 test(
   "The commit dialog refuses a merge whose UTF-16 file still has conflict markers",

@@ -2709,7 +2709,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           if (markerLines.size === 0) continue;
           emptyTree ??= yield* readEmptyTreeHash(cwd);
           // --check numbers lines after working-tree-encoding and clean filters; a diff from the
-          // empty tree prints that same view of the file.
+          // empty tree prints that same view of the file. Read it in full, as the raw read did.
           const fileDiff = yield* runGitStdoutWithOptions(
             "GitVcsDriver.commit.conflictMarkers",
             cwd,
@@ -2725,7 +2725,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               "--",
               `:(top,literal)${file}`,
             ],
-            { ...(env ? { env } : {}), maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+            { ...(env ? { env } : {}), maxOutputBytes: Number.POSITIVE_INFINITY },
           ).pipe(
             Effect.mapError(
               (cause) =>

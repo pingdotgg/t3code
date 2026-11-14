@@ -7403,9 +7403,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       { location: "nested", conflict: true, encoding: "utf8" },
       { location: "worktree", conflict: true, encoding: "utf8" },
       { location: "root", conflict: true, encoding: "utf16le" },
+      { location: "root", conflict: true, encoding: "utf16le", markerSize: 10 },
+      { location: "root", conflict: true, encoding: "utf16le", large: true },
     ])(
-      "rejects selected-file merge commits without mutation ($location, conflict: $conflict, $encoding)",
-      ({ location, conflict, encoding }) =>
+      "rejects selected-file merge commits without mutation ($location, conflict: $conflict, $encoding, marker size: $markerSize, large: $large)",
+      ({ location, conflict, encoding, markerSize, large }) =>
         Effect.gen(function* () {
           let cwd = yield* makeTmpDir();
           const { initialBranch } = yield* initRepoWithCommit(cwd);
@@ -7420,7 +7422,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             yield* writeTextFile(
               cwd,
               ".gitattributes",
-              "README.md text working-tree-encoding=UTF-16\n",
+              `README.md text working-tree-encoding=UTF-16${markerSize ? ` conflict-marker-size=${markerSize}` : ""}\n`,
             );
             yield* writeReadme("base\n");
             yield* git(cwd, ["add", "."]);
@@ -7486,6 +7488,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), mainHead);
           assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), unmerged);
 
+          const resolvedText = `Heading\n=======\n\nresolved${large ? "x".repeat(17 * 1024 * 1024) : ""}\n`;
           if (conflict) {
             const unresolved = yield* driver
               .commit(commitCwd, "Unresolved merge", "", { stage: {} })
@@ -7494,8 +7497,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), mainHead);
             assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), unmerged);
             // A lone "=======" is a heading underline, not a conflict boundary.
-            yield* writeReadme("Heading\n=======\n\nresolved\n");
-            assert.isNotNull(yield* driver.prepareCommitContext(commitCwd));
+            yield* writeReadme(resolvedText);
+            assert.isNotNull(
+              yield* driver.prepareCommitContext(commitCwd, undefined, { includePatch: false }),
+            );
           }
           yield* driver.commit(commitCwd, "Finish merge", "", { stage: {} });
           assert.equal(
@@ -7505,7 +7510,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.isFalse(NodeFS.existsSync(path.join(gitDir, "MERGE_HEAD")));
           assert.equal(yield* git(cwd, ["show", "HEAD:feature.txt"]), "feature");
           assert.equal(yield* git(cwd, ["show", "HEAD:unrelated.txt"]), "unrelated");
-          if (conflict)
+          if (large) {
+            assert.equal(
+              yield* git(cwd, ["cat-file", "-s", "HEAD:README.md"]),
+              String(Buffer.byteLength(resolvedText)),
+            );
+          } else if (conflict)
             assert.equal(
               yield* git(cwd, ["show", "HEAD:README.md"]),
               "Heading\n=======\n\nresolved",
