@@ -219,12 +219,10 @@ The check is the one to trust; several review findings did not hold.
 
 ## Branches
 
-- `main`: verified. All checks pass on macOS.
-- `parked/rust-hygiene-step-1`: one finished commit (the generator writes one reasoned `allow`
-  at the top of the generated file) and one commit marked `WIP (not proven)`.
-- `parked/linux-pass`: the first Linux pass. Its four proven commits are merged into `main`.
-  Its `memory-flow.mjs` commit was finished in the second pass, which made the
-  `README.md` memory table with it.
+- `main`: verified. All 24 checks pass on macOS, and all tests pass on Linux (20 runs on the
+  gnu target and 5 on musl, on 2026-11-14).
+- `parked/rust-hygiene-step-1`: an early start of the lint step, from before the pin moved.
+  The lint step is being redone on the current `main`; delete this branch when that is merged.
 - In the Conn repository there are local branches only (`rust/*`, `spike/rust-*`,
   `split/conn-server*`), with the same history under `native/conn-server`. They were never
   pushed. They change nothing under `apps/` or `packages/`.
