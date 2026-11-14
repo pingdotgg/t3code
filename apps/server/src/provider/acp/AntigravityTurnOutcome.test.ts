@@ -208,4 +208,67 @@ describe("watchAntigravityPromptOutcome", () => {
       });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("detects corrupted checkpoint errors and quarantines the database", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profileDirectory = yield* fs.makeTempDirectoryScoped();
+      const sessionId = "a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d";
+      const conversations = path.join(profileDirectory, "antigravity-acp", "conversations");
+      yield* fs.makeDirectory(conversations, { recursive: true });
+      const dbPath = path.join(conversations, `${sessionId}.db`);
+
+      const database = new NodeSqlite.DatabaseSync(dbPath);
+      try {
+        database.exec(
+          "CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB)",
+        );
+      } finally {
+        database.close();
+      }
+
+      const check = yield* watchAntigravityPromptOutcome(profileDirectory, sessionId);
+
+      const checkpointCorruptPayload = errorPayload(
+        "agent executor error: could not find doneCh for checkpoint",
+      );
+      const corruptDb = new NodeSqlite.DatabaseSync(dbPath);
+      try {
+        corruptDb
+          .prepare("INSERT INTO steps (idx, step_type, step_payload) VALUES (?, ?, ?)")
+          .run(0, ERROR_MESSAGE, checkpointCorruptPayload);
+      } finally {
+        corruptDb.close();
+      }
+
+      const blocked = `${dbPath}.corrupt-0`;
+      yield* fs.makeDirectory(blocked);
+      const walPath = `${dbPath}-wal`;
+      yield* fs.writeFileString(walPath, "fixture wal");
+      const failed = yield* check({ stopReason: "end_turn" });
+      assert.equal(failed?.retryable, false);
+      assert.isTrue(yield* fs.exists(dbPath));
+      assert.isTrue(yield* fs.exists(walPath));
+      yield* fs.remove(blocked, { recursive: true });
+      yield* fs.remove(walPath);
+
+      const failure = yield* check({ stopReason: "end_turn" });
+      assert.deepEqual(failure, {
+        class: "provider_error",
+        message:
+          "Antigravity session checkpoint was corrupted and has been quarantined. The session will restart.",
+        code: "SESSION_CORRUPTED",
+        retryable: true,
+      });
+
+      // The original .db file should be quarantined (moved)
+      const originalExists = yield* fs.exists(dbPath);
+      assert.isFalse(originalExists);
+
+      const files = yield* fs.readDirectory(conversations);
+      const quarantined = files.find((f) => f.startsWith(`${sessionId}.db.corrupt-`));
+      assert.isDefined(quarantined);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 });

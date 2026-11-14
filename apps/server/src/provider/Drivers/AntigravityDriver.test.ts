@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  EnvironmentId,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
@@ -82,6 +83,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       /** `data` of the agent's "Internal error" response to `session/new`. */
       readonly newSessionErrorData?: unknown;
       readonly initialMode?: string;
+      readonly httpMcp?: boolean;
     } = {},
   ) {
     const directory = path.join(root, name);
@@ -105,6 +107,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         ...(options.initialMode === undefined
           ? []
           : [`export T3_ACP_INITIAL_MODE=${shellQuote(options.initialMode)}`]),
+        ...(options.httpMcp ? ["export T3_ACP_MCP_HTTP=1"] : []),
         `exec ${shellQuote(nodePath)} ${shellQuote(mockAgentPath)} "$@"`,
         "",
       ].join("\n"),
@@ -142,6 +145,10 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     credentialKeys: ReadonlyArray<string>;
     geminiApiKey: string | undefined;
     tempDirectory: string | undefined;
+    threadId: string | undefined;
+    mcpEndpoint: string | undefined;
+    mcpAuthorization: string | undefined;
+    mcpNode: string | undefined;
     handle: ChildProcessSpawner.ChildProcessHandle;
   }> = [];
 
@@ -200,6 +207,10 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         geminiApiKey: env("GEMINI_API_KEY"),
         tempDirectory:
           environment.ANTIGRAVITY_HARNESS_PATH === undefined ? undefined : env("TMPDIR"),
+        threadId: env("T3CODE_THREAD_ID"),
+        mcpEndpoint: env("T3_ACP_MCP_ENDPOINT"),
+        mcpAuthorization: env("T3_ACP_MCP_AUTHORIZATION"),
+        mcpNode: env("T3_ACP_MCP_NODE"),
         handle,
       });
       return handle;
@@ -577,6 +588,64 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         );
         expect(yield* fs.exists(directories.runtimeTemp)).toBe(false);
         expect(yield* fs.exists(legacyRoot)).toBe(false);
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "forwards thread MCP environment and defers MCP tools for Antigravity sessions",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        h.controls.selected = yield* h.makeExecutable("runtime http mcp", { httpMcp: true });
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-mcp-" });
+        const threadId = ThreadId.make("thread-antigravity-mcp-env");
+        const providerSessionId = ProviderSessionId.make("provider-session-antigravity-mcp-env");
+        const endpoint = "http://127.0.0.1:43210/mcp";
+        const authorizationHeader = "Bearer test-mcp-token";
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("env-test"),
+          threadId,
+          providerSessionId,
+          providerInstanceId: h.instance.instanceId,
+          endpoint,
+          authorizationHeader,
+          browserToolsAvailable: false,
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
+        const session = yield* h.instance.orchestrationAdapter.openSession({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+
+        const launch = h.launches.at(-1);
+        expect(launch?.threadId).toBe(threadId);
+        expect(launch?.mcpEndpoint).toBe(endpoint);
+        expect(launch?.mcpAuthorization).toBe(authorizationHeader);
+        expect(launch?.mcpNode).toBeTruthy();
+
+        const newSessionRequest = (yield* h.readRequests).findLast(
+          (request) => request.method === "session/new",
+        );
+        expect(newSessionRequest?.params?.mcpServers).toEqual([
+          {
+            type: "http",
+            name: "t3-code",
+            url: endpoint,
+            headers: [
+              { name: "Authorization", value: authorizationHeader },
+              { name: "t3-tool-exposure", value: "deferred" },
+            ],
+          },
+        ]);
       }),
   );
 });

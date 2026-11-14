@@ -212,6 +212,8 @@ export function makeAntigravityAcpAdapterFlavor(
     supportsNativeGoals: options.supportsNativeGoals ?? Effect.succeed(false),
     // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.
     mcpOverHttp: true,
+    // Keep initial tools/list under Antigravity ACP's ~40 KB eager schema cap via tool_search.
+    deferMcpTools: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
     buildAttachmentPrompt: ({
@@ -281,6 +283,7 @@ export function makeAntigravityAcpAdapterFlavor(
     // 1.4.5 returns the root trajectory's Gemini usageMetadata delta; 1.4.1 returns none.
     reportsPerTurnPromptUsage: true,
     geminiPromptUsage: true,
+    enablePostSettleContinuation: true,
     ...(profileDirectory === undefined
       ? {}
       : {
