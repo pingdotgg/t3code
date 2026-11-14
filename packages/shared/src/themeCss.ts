@@ -67,7 +67,7 @@ export const THEME_GUIDE = [
   "",
   "CSS: `css` applies after the app's styles. Use `.dark` or `:root:not(.dark)` for one appearance.",
   "It cannot load files: no @import, no image-set(), and url() only with data: or #id.",
-  "A background image must be embedded as a data: address. `css` holds 20,000 characters, so keep the image near 10 KB.",
+  'For a background image, give `t3_theme_set` its file path as `backgroundImage`. CSS shows it with `var(--theme-background-image)`, such as `[data-workspace-area="conversation"] { background: var(--theme-background-image) center / cover no-repeat; }`. Do not embed images in `css`: it holds 20,000 characters.',
   "The app's own rules can be more specific. If a rule has no effect, add !important.",
   "It cannot reach the terminal text, the file tree, or diff internals. Use color roles for those.",
   "Native scrollbars take `::-webkit-scrollbar` and `::-webkit-scrollbar-thumb`.",

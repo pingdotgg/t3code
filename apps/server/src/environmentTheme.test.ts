@@ -177,14 +177,23 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
 
   it.effect("puts the previous theme back when the new one cannot be selected", () =>
     withEnvironmentThemes(
-      { [`${REFUSED_THEME_ID}.json`]: encodeThemeFile(NIGHTFALL_THEME) },
+      {
+        [`${REFUSED_THEME_ID}.json`]: encodeThemeFile(NIGHTFALL_THEME),
+        [`${REFUSED_THEME_ID}.png`]: "image",
+      },
       Effect.gen(function* () {
         const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        const before = yield* themes.current;
         const refused = yield* themes
-          .apply({ themeId: REFUSED_THEME_ID, theme: { ...NIGHTFALL_THEME, name: "Changed" } })
+          .apply({
+            themeId: REFUSED_THEME_ID,
+            theme: { ...NIGHTFALL_THEME, name: "Changed" },
+            background: null,
+          })
           .pipe(Effect.flip);
         assert.strictEqual(refused._tag, "EnvironmentThemeNotSelectedError");
-        assert.deepEqual(yield* themes.current, [{ id: REFUSED_THEME_ID, ...NIGHTFALL_THEME }]);
+        assert.deepEqual(yield* themes.current, before);
+        assert.isDefined(before[0]?.background);
       }),
     ),
   );
@@ -293,6 +302,66 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
       selected,
     );
   });
+
+  it.effect("copies a background image beside a theme, refuses other files, and removes it", () =>
+    withEnvironmentThemes(
+      { "look.json": encodeThemeFile(NIGHTFALL_THEME) },
+      Effect.gen(function* () {
+        const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        const outside = path.join(environmentThemesDir, "..");
+        const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+        const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 4, 5, 6]);
+        yield* fs.writeFile(path.join(outside, "wallpaper.png"), png);
+        yield* fs.writeFile(path.join(outside, "wallpaper.jpeg"), jpeg);
+        yield* fs.writeFileString(path.join(outside, "secret.png"), "not an image");
+        const background = (themeId: string) =>
+          Effect.map(
+            themes.current,
+            (served) => served.find(({ id }) => id === themeId)?.background,
+          );
+
+        yield* themes.apply({ themeId: "look", background: path.join(outside, "wallpaper.png") });
+        assert.deepEqual(yield* fs.readFile(path.join(environmentThemesDir, "look.png")), png);
+        const first = yield* background("look");
+        assert.isDefined(first);
+
+        const notImage = yield* themes
+          .apply({ themeId: "look", background: path.join(outside, "secret.png") })
+          .pipe(Effect.flip);
+        assert.match(notImage.message, /not a JPEG, PNG, or WebP/);
+        const builtIn = yield* themes
+          .apply({ themeId: "grove", background: path.join(outside, "wallpaper.png") })
+          .pipe(Effect.flip);
+        assert.match(builtIn.message, /built in/);
+        const relative = yield* themes
+          .apply({ themeId: "look", background: "wallpaper.png" })
+          .pipe(Effect.flip);
+        assert.match(relative.message, /absolute path/);
+        assert.strictEqual(yield* background("look"), first);
+
+        // The bytes pick the extension, and the replaced file cannot shadow the new one.
+        yield* themes.apply({ themeId: "look", background: path.join(outside, "wallpaper.jpeg") });
+        assert.deepEqual(yield* fs.readFile(path.join(environmentThemesDir, "look.jpg")), jpeg);
+        assert.isFalse(yield* fs.exists(path.join(environmentThemesDir, "look.png")));
+        assert.notStrictEqual(yield* background("look"), first);
+
+        yield* themes.apply({ themeId: "look", background: null });
+        assert.isFalse(yield* fs.exists(path.join(environmentThemesDir, "look.jpg")));
+        assert.isUndefined(yield* background("look"));
+
+        if (symlinksSupported) {
+          yield* fs.symlink(
+            path.join(outside, "wallpaper.png"),
+            path.join(environmentThemesDir, "look.png"),
+          );
+          assert.isUndefined(yield* background("look"));
+        }
+      }),
+    ),
+  );
 
   it.effect("keeps the served theme when an update does not fit the size limit", () => {
     const large = (name: string): EnvironmentThemeFile => ({

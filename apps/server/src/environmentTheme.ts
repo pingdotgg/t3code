@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - the guarded file read needs open
 // flags (O_NOFOLLOW, O_NONBLOCK) the FileSystem service does not expose.
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import {
   type DefaultAppearancePreference,
@@ -10,6 +11,7 @@ import {
   EnvironmentThemeId,
   environmentThemeFileHasColors,
 } from "@t3tools/contracts";
+import { isNetworkPath } from "@t3tools/shared/path";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { themeCssLoadsRemoteFiles } from "@t3tools/shared/themeCss";
 import { BUILT_IN_THEME_IDS, UNPUBLISHABLE_THEME_IDS } from "@t3tools/shared/themePalettes";
@@ -32,6 +34,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "./config.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import { fileHeaderMimeType } from "./workspace/fileHeaderMimeType.ts";
 
 const decodeEnvironmentThemeFileJsonExit = Schema.decodeUnknownExit(
   Schema.fromJsonString(EnvironmentThemeFile),
@@ -47,6 +50,15 @@ const MAX_THEME_FILES = 32;
 /** Shared with publishing so it cannot accept files the watcher skips. */
 export const MAX_THEME_FILE_BYTES = 32 * 1024;
 const MAX_THEME_TOTAL_BYTES = 192 * 1024;
+
+/** A theme's background is `<id>.<extension>` beside `<id>.json`; earlier extensions win. */
+const THEME_BACKGROUND_EXTENSIONS = ["webp", "png", "jpg", "jpeg"] as const;
+const THEME_BACKGROUND_EXTENSION_BY_TYPE: Readonly<Record<string, string>> = {
+  "image/webp": "webp",
+  "image/png": "png",
+  "image/jpeg": "jpg",
+};
+const MAX_THEME_BACKGROUND_BYTES = 16 * 1024 * 1024;
 
 interface PublishedThemes {
   readonly seq: number;
@@ -106,7 +118,7 @@ export class EnvironmentThemeService extends Context.Service<
     /**
      * Makes `themeId` the environment theme and `appearance` its mode, so connected clients
      * switch to them. With `theme`, first publishes that file under the id, replacing one already
-     * there.
+     * there. `background` copies the image at that path beside the theme; null removes it.
      */
     readonly apply: (
       input:
@@ -114,6 +126,7 @@ export class EnvironmentThemeService extends Context.Service<
             readonly themeId: string;
             readonly theme?: EnvironmentThemeFile | undefined;
             readonly appearance?: Exclude<DefaultAppearancePreference, ""> | undefined;
+            readonly background?: string | null | undefined;
           }
         | { readonly appearance: Exclude<DefaultAppearancePreference, ""> },
     ) => Effect.Effect<void, EnvironmentThemeRefusedError | EnvironmentThemeNotSelectedError>;
@@ -169,6 +182,35 @@ export const readThemeFileGuarded = (filePath: string, maxBytes: number): string
   }
 };
 
+/**
+ * The background image published beside `themeId`, if any. Symlinks and oversized files are
+ * skipped. `entries` lets a directory scan skip lookups for names it did not list.
+ */
+export function findThemeBackground(
+  themesDir: string,
+  themeId: string,
+  entries?: ReadonlySet<string>,
+): { readonly path: string; readonly revision: string } | null {
+  for (const extension of THEME_BACKGROUND_EXTENSIONS) {
+    const name = `${themeId}.${extension}`;
+    if (entries !== undefined && !entries.has(name)) continue;
+    // Native separators: the asset route refuses a path that differs from its canonical form.
+    const filePath = NodePath.join(themesDir, name);
+    let info: NodeFS.BigIntStats;
+    try {
+      info = NodeFS.lstatSync(filePath, { bigint: true });
+    } catch {
+      continue;
+    }
+    if (!info.isFile() || info.size > MAX_THEME_BACKGROUND_BYTES) continue;
+    return {
+      path: filePath,
+      revision: [info.ino, info.size, info.mtimeNs].map((part) => part.toString(36)).join("-"),
+    };
+  }
+  return null;
+}
+
 export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
   const fs = yield* FileSystem.FileSystem;
   const entries = yield* fs
@@ -176,6 +218,7 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
     .pipe(Effect.orElseSucceed((): Array<string> => []));
 
   const themes: Array<EnvironmentTheme> = [];
+  const entryNames = new Set(entries);
   let examined = 0;
   let totalBytes = 0;
   for (const entry of entries.toSorted()) {
@@ -228,7 +271,8 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
       break;
     }
 
-    themes.push({ id, ...file });
+    const background = findThemeBackground(themesDir, id, entryNames);
+    themes.push({ id, ...file, ...(background ? { background: background.revision } : {}) });
   }
   return themes;
 });
@@ -353,14 +397,78 @@ const make = Effect.gen(function* () {
     return yield* new EnvironmentThemeRefusedError({ themeId, problem: NOT_PUBLISHED });
   });
 
+  /** Reads and checks a background before anything is written, so a bad path changes nothing. */
+  const readBackground = Effect.fnUntraced(function* (themeId: string, sourcePath: string) {
+    const refuse = (problem: string) => new EnvironmentThemeRefusedError({ themeId, problem });
+    const unreadable = () => refuse(`has a background image that could not be read: ${sourcePath}`);
+    if (!NodePath.isAbsolute(sourcePath) || isNetworkPath(sourcePath)) {
+      return yield* refuse("needs an absolute path to a background image on this machine.");
+    }
+    const info = yield* fs.stat(sourcePath).pipe(Effect.mapError(unreadable));
+    if (info.type !== "File") return yield* unreadable();
+    const tooLarge = refuse(
+      `has a background image larger than ${MAX_THEME_BACKGROUND_BYTES / 1024 / 1024} MB.`,
+    );
+    if (info.size > MAX_THEME_BACKGROUND_BYTES) return yield* tooLarge;
+    const bytes = yield* fs.readFile(sourcePath).pipe(Effect.mapError(unreadable));
+    if (bytes.byteLength > MAX_THEME_BACKGROUND_BYTES) return yield* tooLarge;
+    // The bytes decide the type, so only a real image can be served from the themes directory.
+    const extension = THEME_BACKGROUND_EXTENSION_BY_TYPE[fileHeaderMimeType(bytes) ?? ""];
+    if (extension === undefined) {
+      return yield* refuse("has a background image that is not a JPEG, PNG, or WebP file.");
+    }
+    return { bytes, extension };
+  });
+
+  /** Replaces the theme's background, or removes it for null. Callers hold `publishSemaphore`. */
+  const writeBackground = Effect.fnUntraced(function* (
+    themeId: string,
+    image: { readonly bytes: Uint8Array; readonly extension: string } | null,
+  ) {
+    const destination = image && `${environmentThemesDir}/${themeId}.${image.extension}`;
+    const write = Effect.gen(function* () {
+      if (image && destination) {
+        const staging = `${destination}.staging-${process.pid}`;
+        yield* fs.remove(staging, { force: true }).pipe(
+          Effect.andThen(fs.writeFile(staging, image.bytes, { flag: "wx" })),
+          Effect.andThen(fs.rename(staging, destination)),
+          Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore)),
+        );
+      }
+      // Another extension left behind could take precedence over the new image.
+      for (const extension of THEME_BACKGROUND_EXTENSIONS) {
+        const filePath = `${environmentThemesDir}/${themeId}.${extension}`;
+        if (filePath !== destination) yield* fs.remove(filePath, { force: true });
+      }
+    });
+    yield* write.pipe(
+      Effect.mapError(
+        (cause) =>
+          new EnvironmentThemeRefusedError({
+            themeId,
+            problem: "background image could not be saved in the themes directory.",
+            cause,
+          }),
+      ),
+    );
+    yield* refresh;
+  });
+
   const apply: EnvironmentThemeService["Service"]["apply"] = Effect.fn(
     "EnvironmentThemeService.apply",
   )(function* (input) {
     const themeId = "themeId" in input ? input.themeId : undefined;
     const theme = "theme" in input ? input.theme : undefined;
+    const background = "background" in input ? input.background : undefined;
     const { appearance } = input;
     if (themeId !== undefined && !isEnvironmentThemeId(themeId)) {
       return yield* new EnvironmentThemeRefusedError({ themeId, problem: INVALID_ID });
+    }
+    if (themeId !== undefined && background !== undefined && UNPUBLISHABLE_THEME_IDS.has(themeId)) {
+      return yield* new EnvironmentThemeRefusedError({
+        themeId,
+        problem: "is built in, so it cannot have a background image. Publish a theme first.",
+      });
     }
     // Timestamps make clients apply a set again when its value did not change. Theme and
     // appearance have one each, so setting one does not undo a later local choice of the other.
@@ -380,6 +488,10 @@ const make = Effect.gen(function* () {
     yield* publishSemaphore.withPermits(1)(
       Effect.gen(function* () {
         if (themeId === undefined) return yield* select;
+        const image =
+          typeof background === "string" ? yield* readBackground(themeId, background) : null;
+        const setBackground =
+          background === undefined ? Effect.void : writeBackground(themeId, image);
         if (theme === undefined) {
           const known = [...BUILT_IN_THEME_IDS, ...(yield* refresh).themes.map(({ id }) => id)];
           if (!known.includes(themeId)) {
@@ -389,10 +501,13 @@ const make = Effect.gen(function* () {
               known,
             });
           }
-          return yield* select;
+          yield* select;
+          return yield* setBackground;
         }
         const revert = yield* publish(themeId, theme);
         yield* select.pipe(Effect.tapError(() => revert));
+        // After selection, so a refused selection leaves the background as it was.
+        yield* setBackground;
       }),
     );
   });

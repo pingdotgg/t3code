@@ -41,6 +41,7 @@ const ThemeReadTool = Tool.make("t3_theme_read", {
         id: EnvironmentThemeId,
         name: Schema.String,
         hasCss: Schema.Boolean,
+        hasBackground: Schema.Boolean,
       }),
     ),
     theme: Schema.optionalKey(EnvironmentThemeFile),
@@ -57,6 +58,12 @@ const ThemeSetTool = Tool.make("t3_theme_set", {
   parameters: Schema.Struct({
     themeId: Schema.optionalKey(EnvironmentThemeId),
     theme: Schema.optionalKey(EnvironmentThemeFile),
+    backgroundImage: Schema.optionalKey(
+      Schema.NullOr(Schema.String).annotate({
+        description:
+          "Absolute path of a JPEG, PNG, or WebP file on this machine, up to 16 MB. It is copied beside the theme. null removes it. Needs `themeId` of a theme that is not built in.",
+      }),
+    ),
     appearance: Schema.optionalKey(Appearance),
   }),
   success: Schema.Struct({
