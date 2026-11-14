@@ -191,7 +191,38 @@ it.effect.each(["snapshot", "mutation"] as const)(
       assert.equal(snapshotRequests, 2);
       assert.equal(mutations, 1);
       assert.deepEqual((yield* readProjects(baseDir)).projects, []);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("does not send a token to whatever took over a dead server's port", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-dead-project-cli-" });
+    const baseDir = NodePath.join(root, "state");
+    const workspaceRoot = NodePath.join(root, "workspace");
+    yield* fs.makeDirectory(workspaceRoot);
+    const state = yield* makePersistedServerRuntimeState({
+      config: { host: "127.0.0.1", devUrl: undefined },
+      port: 3_773,
+    });
+    yield* persistServerRuntimeState({
+      path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+      // Above Linux's PID ceiling, as in pair.test.ts: no process can hold it.
+      state: { ...state, pid: 4_194_305 },
+    });
+    let requests = 0;
+    const fetch: typeof globalThis.fetch = async () => {
+      requests++;
+      return Response.json({ projects: [], updatedAt: "2026-01-01T00:00:00.000Z" });
+    };
+
+    yield* runCli(["project", "add", workspaceRoot, "--base-dir", baseDir]).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+    );
+
+    assert.equal(requests, 0);
+    assert.equal((yield* readProjects(baseDir)).projects[0]?.workspaceRoot, workspaceRoot);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 const makeProjectLookupFixture = Effect.fn("ProjectCliTest.makeProjectLookupFixture")(function* () {
@@ -389,23 +420,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   "project lookup with unavailable workspaces",
   (it) => {
-    it.effect.each(["id", "stored path"] as const)(
-      "removes an empty project by %s after its directory is gone",
-      (identifier) =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
-          yield* fs.rename(workspaceRoot, `${workspaceRoot}-removed`);
-          yield* runCli([
-            "project",
-            "remove",
-            identifier === "id" ? project.id : workspaceRoot,
-            "--base-dir",
-            baseDir,
-          ]);
-          assert.deepEqual((yield* readProjects(baseDir)).projects, []);
-          assert.isFalse(yield* fs.exists(workspaceRoot));
-        }),
+    it.effect.each([
+      "id",
+      "stored path",
+      "relative path",
+      "path with a trailing separator",
+    ] as const)("removes an empty project by %s after its directory is gone", (identifier) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
+        yield* fs.rename(workspaceRoot, `${workspaceRoot}-removed`);
+        const target = {
+          id: project.id,
+          "stored path": workspaceRoot,
+          "relative path": NodePath.relative(process.cwd(), workspaceRoot),
+          "path with a trailing separator": `${workspaceRoot}${NodePath.sep}`,
+        }[identifier];
+        yield* runCli(["project", "remove", target, "--base-dir", baseDir]);
+        assert.deepEqual((yield* readProjects(baseDir)).projects, []);
+        assert.isFalse(yield* fs.exists(workspaceRoot));
+      }),
     );
 
     it.effect("does not resolve another environment's project ID in an empty database", () =>
