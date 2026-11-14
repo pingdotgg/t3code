@@ -1878,7 +1878,9 @@ const make = Effect.gen(function* () {
   ): Effect.fn.Return<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure> {
     const status: OrchestratorMcpDelegateTaskResult["status"] =
       task.result === null
-        ? "running"
+        ? (yield* remoteDelegation.runStatus(scope, task)) === "starting"
+          ? "starting"
+          : "running"
         : task.status === "completed" ||
             task.status === "failed" ||
             task.status === "cancelled" ||
