@@ -245,7 +245,7 @@ describe("CursorAdapterV2", () => {
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         );
-        assert.isTrue(sentWithMcpOverride);
+        assert.isFalse(sentWithMcpOverride);
         const rows = events.filter((event) => event.type === "subagent.updated");
         assert.equal(rows[0]?.subagent.status, "running");
         assert.equal(rows[0]?.subagent.model, model ?? null);
@@ -734,17 +734,20 @@ describe("CursorAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-device-" });
       const sentMessages: Array<string> = [];
+      const sentMcpOverrides: Array<boolean> = [];
+      let opens = 0;
+      let openedMcpServers: ReturnType<typeof cursorMcpServers>;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-device-thread");
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      const setDeviceAccess = (device: boolean) =>
+      const setDeviceAccess = (device: boolean, token = "synthetic-cursor-token") =>
         mcpSessions.set({
           environmentId: EnvironmentId.make("cursor-device-environment"),
           threadId,
           providerSessionId: "cursor-device-session",
           providerInstanceId: instanceId,
           endpoint: "http://127.0.0.1:43123/mcp",
-          authorizationHeader: "Bearer synthetic-cursor-token",
+          authorizationHeader: `Bearer ${token}`,
           browserToolsAvailable: true,
           capabilities: new Set(device ? ["device"] : []),
         });
@@ -760,13 +763,16 @@ describe("CursorAdapterV2", () => {
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
           assertComplete: Effect.void,
-          open: () =>
-            Effect.succeed({
+          open: (input) => {
+            opens += 1;
+            openedMcpServers = input.options.mcpServers;
+            return Effect.succeed({
               agentId: "native-cursor-device",
               listMessages: Effect.succeed([]),
               close: Effect.void,
               send: (input) =>
                 Effect.sync(() => {
+                  sentMcpOverrides.push(Object.hasOwn(input.options ?? {}, "mcpServers"));
                   sentMessages.push(
                     typeof input.message === "string" ? input.message : input.message.text,
                   );
@@ -784,7 +790,8 @@ describe("CursorAdapterV2", () => {
                     cancel: Effect.void,
                   };
                 }),
-            }),
+            });
+          },
         }),
         Effect.provide(TestProviderHost.layer({ cwd: workspace })),
       );
@@ -873,6 +880,14 @@ describe("CursorAdapterV2", () => {
       yield* setDeviceAccess(true);
       assert.deepEqual(yield* send(), told(false, true), "device access turned on later");
       assert.deepEqual(yield* send(), told(false, false));
+      const opensBeforeRotation = opens;
+      yield* setDeviceAccess(true, "rotated-cursor-token");
+      const rotated = yield* mcpSessions.read(threadId);
+      yield* send();
+      yield* send();
+      assert.equal(opens, opensBeforeRotation + 1, "a rotated MCP token reopens the agent once");
+      assert.deepEqual(openedMcpServers, cursorMcpServers(rotated));
+      assert.notInclude(sentMcpOverrides, true);
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -2328,6 +2343,7 @@ describe("CursorAdapterV2", () => {
           cwd,
         });
         let openedWith: CursorAgentSdk.CursorAgentSdkOpenInput["options"] | undefined;
+        let opens = 0;
         const sentWith: Array<Record<string, unknown> | undefined> = [];
         const adapter = yield* makeCursorAdapterV2({
           instanceId,
@@ -2342,6 +2358,7 @@ describe("CursorAdapterV2", () => {
             assertComplete: Effect.void,
             open: (input) =>
               Effect.sync(() => {
+                opens += 1;
                 openedWith = input.options;
                 return {
                   agentId: "native-cursor-mcp",
@@ -2369,13 +2386,13 @@ describe("CursorAdapterV2", () => {
             Effect.provideService(HostProcess.Environment, {}),
           );
         const now = yield* DateTime.now;
-        const sendTurn = (ordinal: number) =>
+        const sendTurn = (ordinal: number, policy = runtimePolicy) =>
           runtime
             .startTurn({
               threadId,
               providerThread,
               modelSelection,
-              runtimePolicy,
+              runtimePolicy: policy,
               runId: RunId.make(`cursor-mcp-run-${ordinal}`),
               runOrdinal: ordinal,
               providerTurnOrdinal: ordinal,
@@ -2431,31 +2448,68 @@ describe("CursorAdapterV2", () => {
           },
           "cwd-only": { command: "node", args: ["server.mjs"], cwd: projectRoot },
         };
-        // The agent is created with T3's server only; the resolved servers go with each turn.
-        assert.deepEqual(openedWith?.mcpServers, t3Servers);
+        // The agent opens with the resolved servers and T3's, and keeps them while they are unchanged.
+        assert.deepEqual(openedWith?.mcpServers, { ...expectedServers, ...t3Servers });
         yield* sendTurn(1);
-        assert.deepEqual(sentWith[0], { ...expectedServers, ...t3Servers });
+        assert.equal(opens, 1, "an unchanged mcp.json keeps the open agent");
+        // The SDK loads the servers that are not inline from the files, so editing those reopens it.
+        yield* fileSystem.writeFileString(
+          path.join(home, ".cursor", "mcp.json"),
+          JSON.stringify({ mcpServers: { docs: { url: "https://docs.example/v2" } } }),
+        );
+        yield* sendTurn(2);
+        yield* fileSystem.writeFileString(
+          path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
+          JSON.stringify(["off", "plain"]),
+        );
+        yield* sendTurn(3);
+        assert.deepEqual(openedWith?.mcpServers, { ...expectedServers, ...t3Servers });
+        assert.equal(opens, 3, "edits to servers the files define reopen the agent");
         // A server switched off between turns stays off on the next one.
         yield* fileSystem.writeFileString(
           path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
           JSON.stringify(["off", "repro"]),
         );
-        yield* sendTurn(2);
+        yield* sendTurn(4);
         const { repro: _disabled, ...stillEnabled } = expectedServers;
-        assert.deepEqual(sentWith[1], { ...stillEnabled, ...t3Servers });
+        assert.deepEqual(openedWith?.mcpServers, { ...stillEnabled, ...t3Servers });
         // Unreadable disabled state starts none of the overrides, and the turn still goes out.
         yield* fileSystem.writeFileString(
           path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
           "[",
         );
-        yield* sendTurn(3);
-        assert.deepEqual(sentWith[2], t3Servers);
+        yield* sendTurn(5);
+        assert.deepEqual(openedWith?.mcpServers, t3Servers);
+        assert.equal(opens, 5, "each change to the servers or files reopens the agent once");
+        // Without a cwd the SDK works in the server's directory, and still reads the user mcp.json.
+        const noCwdPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: null,
+        });
+        yield* sendTurn(6, noCwdPolicy);
+        yield* sendTurn(7, noCwdPolicy);
+        assert.equal(
+          opens,
+          6,
+          "an agent without a cwd reopens for the files it reads, then stays open",
+        );
+        yield* fileSystem.writeFileString(
+          path.join(home, ".cursor", "mcp.json"),
+          JSON.stringify({ mcpServers: { docs: { url: "https://docs.example/v3" } } }),
+        );
+        yield* sendTurn(8, noCwdPolicy);
+        assert.equal(opens, 7, "an edited mcp.json reopens an agent without a cwd");
+        assert.deepEqual(
+          sentWith,
+          Array.from({ length: 8 }, () => undefined),
+        );
         yield* fileSystem.writeFileString(
           path.join(workspace, ".cursor", "mcp.json"),
           JSON.stringify({ mcpServers: { plain: { command: "node", args: ["server.mjs"] } } }),
         );
         yield* fileSystem.remove(path.join(home, ".cursor", "mcp.json"));
-        assert.deepEqual(yield* loadServers(), {});
+        assert.deepEqual((yield* loadServers()).servers, {});
       }).pipe(
         Effect.scoped,
         Effect.provide(
