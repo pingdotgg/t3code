@@ -9,18 +9,14 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 
 // True when a loaded ancestor's listing no longer holds the folder on the way to `path`.
-function isDetached(
-  listings: ReadonlyMap<string, readonly ProjectEntry[]>,
-  listedDirectories: ReadonlySet<string>,
-  path: string,
-) {
+function isDetached(listings: ReadonlyMap<string, readonly ProjectEntry[]>, path: string) {
   if (path === "") return false;
   const segments = path.split("/");
-  return segments.some(
-    (_, depth) =>
-      listings.has(segments.slice(0, depth).join("/")) &&
-      !listedDirectories.has(segments.slice(0, depth + 1).join("/")),
-  );
+  return segments.some((_, depth) => {
+    const child = segments.slice(0, depth + 1).join("/");
+    const listing = listings.get(segments.slice(0, depth).join("/"));
+    return listing?.some((entry) => entry.kind === "directory" && entry.path === child) === false;
+  });
 }
 
 export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
@@ -70,14 +66,7 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
                 entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))) === directoryPath,
             ),
           );
-          const listedDirectories = new Set(
-            [...next.values()].flatMap((listing) =>
-              listing.filter((entry) => entry.kind === "directory").map((entry) => entry.path),
-            ),
-          );
-          const removed = [...requested.current].filter((path) =>
-            isDetached(next, listedDirectories, path),
-          );
+          const removed = [...requested.current].filter((path) => isDetached(next, path));
           for (const path of removed) {
             next.delete(path);
             loaded.current.delete(path);
