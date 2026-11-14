@@ -7,6 +7,7 @@ import { useTheme } from "../hooks/useTheme";
 import { useLayoutPane } from "../layout/layoutPaneContext";
 import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
+import { holdEndCornerWhileSliding } from "../motion/paneMotion";
 
 /**
  * A tab in the notch (pen N1JIfM): 28px, r8, 10px sides, 7px from the icon to
@@ -195,13 +196,19 @@ export function PaneNotch({
     <>
       <span
         aria-hidden
+        ref={side === "right" ? holdEndCornerWhileSliding : undefined}
         data-pane-notch-corner={side === "left" ? "" : side}
         data-sidebar-slide-stay={side === "left" ? "" : undefined}
       />
       {side === "left" ? (
         <>
           <span aria-hidden data-pane-bar-corner="start" data-sidebar-slide-stay="" />
-          <span aria-hidden data-pane-bar-corner="end" data-sidebar-slide-track="end" />
+          <span
+            aria-hidden
+            ref={holdEndCornerWhileSliding}
+            data-pane-bar-corner="end"
+            data-sidebar-slide-track="end"
+          />
         </>
       ) : null}
       <div
