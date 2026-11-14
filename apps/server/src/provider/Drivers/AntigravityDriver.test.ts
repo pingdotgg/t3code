@@ -82,6 +82,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       /** `data` of the agent's "Internal error" response to `session/new`. */
       readonly newSessionErrorData?: unknown;
       readonly initialMode?: string;
+      readonly nativeAuto?: boolean;
     } = {},
   ) {
     const directory = path.join(root, name);
@@ -102,6 +103,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
           : [
               `export T3_ACP_NEW_SESSION_ERROR_DATA=${shellQuote(JSON.stringify(options.newSessionErrorData))}`,
             ]),
+        ...(options.nativeAuto ? ["export T3_ACP_NATIVE_AUTO=1"] : []),
         ...(options.initialMode === undefined
           ? []
           : [`export T3_ACP_INITIAL_MODE=${shellQuote(options.initialMode)}`]),
@@ -407,7 +409,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           ...(yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" })),
           harnessPath: null,
         };
-        for (const runtimeMode of ["full-access", "auto-accept-edits"] as const) {
+        for (const runtimeMode of ["full-access", "auto-accept-edits", "auto"] as const) {
           const requestsBefore = (yield* h.readRequests).length;
           const cliThreadId = ThreadId.make(`thread-antigravity-cli-${runtimeMode}`);
           const cliPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -444,6 +446,36 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
               .map((request) => request.params?.value),
           ).toEqual(["default"]);
         }
+
+        h.controls.selected = {
+          ...(yield* h.makeExecutable("runtime native auto", { nativeAuto: true })),
+          harnessPath: null,
+        };
+        yield* h.refresh();
+        expect((yield* h.instance.snapshot.getSnapshot).supportedRuntimeModes).toContain("auto");
+        const autoThread = ThreadId.make("thread-native-auto");
+        const autoPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "auto",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const beforeAuto = (yield* h.readRequests).length;
+        yield* h.instance.orchestrationAdapter.openSession({
+          threadId: autoThread,
+          providerSessionId: ProviderSessionId.make("provider-session-native-auto"),
+          modelSelection,
+          runtimePolicy: autoPolicy,
+        });
+        expect(
+          (yield* h.readRequests)
+            .slice(beforeAuto)
+            .filter(
+              (request) =>
+                request.method === "session/set_config_option" &&
+                request.params?.configId === "mode",
+            )
+            .map((request) => request.params?.value),
+        ).toEqual(["auto"]);
       }),
   );
 

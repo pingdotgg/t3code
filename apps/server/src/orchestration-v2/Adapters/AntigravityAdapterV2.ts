@@ -18,6 +18,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
+import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityAppendsSystemPrompt,
@@ -260,6 +261,11 @@ export function makeAntigravityAcpAdapterFlavor(
           allowedRoots: antigravityClientFileRoots(cwd),
           request,
         }),
+    },
+    // Native Auto has already reviewed these requests and still requires the user's decision.
+    permissionDisposition: (policy, request) => {
+      const disposition = acpPermissionDisposition(policy, request);
+      return policy.runtimeMode === "auto" && disposition !== "deny" ? "ask" : disposition;
     },
     approvalOptions: antigravityApprovalOptions,
     extractPermissionQuestion: (request) => {

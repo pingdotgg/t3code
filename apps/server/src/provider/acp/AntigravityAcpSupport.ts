@@ -178,6 +178,7 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
     case "auto-accept-edits":
       return "auto_edit";
     case "auto":
+      return "auto";
     case "approval-required":
       return "default";
   }
@@ -199,6 +200,8 @@ export function antigravityRuntimeModeForSessionMode(modeId: string): RuntimeMod
       return "full-access";
     case "auto_edit":
       return "auto-accept-edits";
+    case "auto":
+      return "auto";
     case "default":
       return "approval-required";
     default:

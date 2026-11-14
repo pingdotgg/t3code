@@ -24,6 +24,7 @@ import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { parseSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
 import { acpProviderOptionDescriptors } from "@t3tools/provider-acp/server/sessionConfig";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
@@ -187,7 +188,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       presentation: {
         displayName: "Antigravity",
         showInteractionModeToggle: false,
-        // No automatic review, so Auto falls back to Supervised instead of approving everything.
+        // Until a session advertises native Auto, fall back to Supervised.
         supportedRuntimeModes: ["approval-required", "auto-accept-edits", "full-access"],
       },
       enabled: settings.enabled,
@@ -395,6 +396,11 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             label: options.auth?.label ?? "Google account",
           },
           checkedAt: updatedAt,
+          supportedRuntimeModes: parseSessionModeState(
+            started.sessionSetupResult,
+          )?.availableModes.some((mode) => mode.id === "auto")
+            ? ["approval-required", "auto-accept-edits", "auto", "full-access"]
+            : ["approval-required", "auto-accept-edits", "full-access"],
           models: buildAntigravityModelsFromSession(started.sessionSetupResult, thinkingLevels),
           supportsTextGeneration,
           ...(cwd
