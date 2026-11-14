@@ -18,6 +18,7 @@ const makeTarget = (
   userAgent: () => "Electron",
   serverPath,
   setDownloadDirectory,
+  receivesScreencast: () => true,
 });
 
 const makeRelay = (target: CdpRelayTarget, write: (raw: string) => void) =>
