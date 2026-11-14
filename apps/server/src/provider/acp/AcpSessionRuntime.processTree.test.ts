@@ -2,6 +2,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeEvents from "node:events";
 
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -813,13 +814,88 @@ describe("terminatePosixOwnedProcessTree", () => {
     }),
   );
 
+  it.live.runIf(HostProcess.Platform.defaultValue() === "darwin")(
+    "terminates Darwin descendants in separate sessions before independent cleanup",
+    () =>
+      Effect.gen(function* () {
+        const controller = AcpSessionRuntime.makePosixProcessTreeController("darwin");
+        const captured = new Map<number, AcpSessionRuntime.AcpPosixProcessIdentity>();
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            for (const old of [...captured.values()].reverse()) {
+              const current = controller.identity(old.pid);
+              if (current?.startTime === old.startTime && current.state !== "Z") {
+                try {
+                  process.kill(old.pid, "SIGKILL");
+                } catch (error) {
+                  if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) {
+                    throw error;
+                  }
+                }
+              }
+            }
+          }),
+        );
+        const root = NodeChildProcess.spawn(
+          process.execPath,
+          [
+            "-e",
+            `const {spawn}=require("node:child_process");
+             const child=spawn("/bin/sleep",["60"],{detached:true,stdio:"ignore"});
+             child.on("spawn",()=>console.log(child.pid));
+             process.stdin.on("end",()=>{
+               if(child.exitCode!==null||child.signalCode!==null)process.exit(0);
+               child.once("exit",()=>process.exit(0));
+               child.kill("SIGKILL");
+             });
+             process.stdin.resume();`,
+          ],
+          { detached: true, stdio: ["pipe", "pipe", "pipe"] },
+        );
+        const rootExit = NodeEvents.EventEmitter.once(root, "exit");
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(async () => {
+            root.stdin.end();
+            await rootExit;
+          }),
+        );
+        const rootIdentity = controller.identity(root.pid!);
+        expect(rootIdentity).toBeDefined();
+        captured.set(root.pid!, rootIdentity!);
+        const [chunk] = yield* Effect.promise(() =>
+          NodeEvents.EventEmitter.once(root.stdout, "data"),
+        );
+        const childPid = Number(String(chunk).trim());
+        const child = controller.identity(childPid);
+        expect(child).toBeDefined();
+        captured.set(childPid, child!);
+        expect(child!.ppid).toBe(root.pid);
+        expect(child!.pgid).toBe(childPid);
+        expect(child!.sid).toBe(childPid);
+        expect(controller.childPidsOf(root.pid!)).toContain(childPid);
+        expect(controller.snapshot()).toEqual(expect.arrayContaining([rootIdentity, child]));
+        yield* AcpSessionRuntime.terminatePosixOwnedProcessTree({
+          controller,
+          grace: 0,
+          rootPid: root.pid!,
+        });
+        for (const old of captured.values()) {
+          const current = controller.identity(old.pid);
+          expect(current?.startTime !== old.startTime || current.state === "Z").toBe(true);
+        }
+        const [code, signal] = yield* Effect.promise(() => rootExit);
+        expect(code).toBeNull();
+        expect(signal).toBe("SIGTERM");
+      }).pipe(Effect.scoped),
+  );
+
   it("fails closed where a stable POSIX identity provider is unavailable", () => {
     try {
-      AcpSessionRuntime.makePosixProcessTreeController("darwin");
-      throw new Error("Expected Darwin process ownership to fail closed");
+      AcpSessionRuntime.makePosixProcessTreeController("freebsd");
+      throw new Error("Expected FreeBSD process ownership to fail closed");
     } catch (error) {
       expect(error).toMatchObject({
-        detail: "Detached ACP descendant ownership is unsupported on darwin",
+        detail: "Detached ACP descendant ownership is unsupported on freebsd",
       });
     }
   });

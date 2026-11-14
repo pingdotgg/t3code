@@ -34,6 +34,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./stderr.ts";
+import { makeDarwinProcessTreeController } from "./darwinProcessTree.ts";
 import {
   collectSessionConfigOptionValues,
   decideToolCallUpdateEmission,
@@ -748,6 +749,7 @@ export function makePosixProcessTreeController(
   platform: NodeJS.Platform,
 ): AcpPosixProcessTreeController {
   if (platform === "linux") return makeLinuxProcessTreeController();
+  if (platform === "darwin") return makeDarwinProcessTreeController();
   throw new AcpProcessGroupTerminationError({
     detail: `Detached ACP descendant ownership is unsupported on ${platform}`,
   });

@@ -12,6 +12,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -23,6 +24,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -31,7 +33,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
-import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
 import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
@@ -843,7 +845,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
 /** The agent reports one tool, answers end_turn, and the user optionally presses Stop after. */
 const endTurnAfterTool = (
   tool: Extract<EffectAcpSchema.SessionNotification["update"], { sessionUpdate: "tool_call" }>,
-  options: { readonly stopAfterReply: boolean },
+  options: { readonly stopAfterReply: boolean; readonly detachedCommand?: boolean },
 ) =>
   Effect.gen(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -851,6 +853,67 @@ const endTurnAfterTool = (
     const crypto = yield* SecureRandom.SecureRandom;
     const mockAgentPath = yield* path.fromFileUrl(
       new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+    );
+    const fs = yield* FileSystem.FileSystem;
+    const scratch = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-stop-" });
+    const receiptPath = path.join(scratch, "processes.json");
+    const controller = options.detachedCommand
+      ? AcpSessionRuntime.makePosixProcessTreeController("linux")
+      : undefined;
+    const decodeReceipt = Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          processes: Schema.NonEmptyArray(
+            Schema.Struct({
+              pid: Schema.Int,
+              ppid: Schema.Int,
+              pgid: Schema.Int,
+              sid: Schema.Int,
+              startTime: Schema.String,
+            }),
+          ),
+        }),
+      ),
+    );
+    const readReceipt = () =>
+      fs.readFileString(receiptPath).pipe(
+        Effect.flatMap(decodeReceipt),
+        Effect.map((receipt) => receipt.processes),
+      );
+    const executing = (owned: { readonly pid: number; readonly startTime: string }) => {
+      const current = controller?.identity(owned.pid);
+      return (
+        current?.startTime === owned.startTime && current.state !== "Z" && current.state !== "X"
+      );
+    };
+    // Cleanup uses captured identities even if Stop loses the parent chain or setup fails.
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* () {
+        if (controller === undefined || !(yield* fs.exists(receiptPath))) return;
+        const processes = yield* readReceipt();
+        const owned = processes.map((entry) => ({
+          ...entry,
+          executable: undefined,
+          parentExecutable: undefined,
+          parentStartTime: processes.find((parent) => parent.pid === entry.ppid)?.startTime ?? "",
+        }));
+        let signals = 0;
+        yield* AcpSessionRuntime.terminatePosixOwnedProcessTree({
+          controller: {
+            ...controller,
+            signalProcess: (pid, signal) => {
+              signals += 1;
+              controller.signalProcess(pid, signal);
+            },
+          },
+          rootPid: processes[0].pid,
+          root: { value: owned[0], captureAttempted: true },
+          ledger: new Map(owned.map((entry) => [`${entry.pid}:${entry.startTime}`, entry])),
+          grace: 0,
+        });
+        assert.isFalse(processes.some(executing), "Fixture cleanup retained a captured process");
+        yield* Effect.logInfo("DETACHED_CLEANUP", { signals, survivors: [] });
+      }).pipe(Effect.orDie),
     );
     type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
     let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
@@ -864,11 +927,16 @@ const endTurnAfterTool = (
         makeAntigravityAcpRuntime({
           ...input,
           childProcessSpawner,
+          // Keep the regression on the /proc path even on hosts with cgroup delegation.
+          ...(options.detachedCommand ? { linuxCgroupController: null } : {}),
           spawn: {
             command: process.execPath,
             args: [mockAgentPath],
             cwd: input.cwd,
-            env: { T3_ACP_ANTIGRAVITY: "1" },
+            env: {
+              T3_ACP_ANTIGRAVITY: "1",
+              ...(options.detachedCommand ? { T3_ACP_DETACHED_COMMAND_RECEIPT: receiptPath } : {}),
+            },
           },
         }).pipe(
           Effect.provideService(SecureRandom.SecureRandom, crypto),
@@ -878,19 +946,22 @@ const endTurnAfterTool = (
               Effect.sync(() => {
                 sessionUpdate = handler;
               }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
-            prompt: () =>
-              Effect.gen(function* () {
-                if (sessionUpdate === undefined) {
-                  return yield* Effect.die("the adapter must handle session updates");
-                }
-                yield* sessionUpdate(
-                  normalizeAntigravitySessionUpdate({
-                    sessionId: "mock-session-1",
-                    update: tool,
-                  }),
-                );
-                return { stopReason: "end_turn" as const };
-              }).pipe(Effect.ensuring(Deferred.succeed(promptReturned, undefined))),
+            prompt: (payload, promptOptions) =>
+              (options.detachedCommand
+                ? runtime.prompt(payload, promptOptions)
+                : Effect.gen(function* () {
+                    if (sessionUpdate === undefined) {
+                      return yield* Effect.die("the adapter must handle session updates");
+                    }
+                    yield* sessionUpdate(
+                      normalizeAntigravitySessionUpdate({
+                        sessionId: "mock-session-1",
+                        update: tool,
+                      }),
+                    );
+                    return { stopReason: "end_turn" as const };
+                  })
+              ).pipe(Effect.ensuring(Deferred.succeed(promptReturned, undefined))),
           })),
         ),
       withProcess: (_stop, task) => task,
@@ -975,6 +1046,16 @@ const endTurnAfterTool = (
       }
     }
     yield* Deferred.await(promptReturned);
+    const processes = options.detachedCommand ? yield* readReceipt() : [];
+    if (options.detachedCommand) {
+      assert.equal(processes.length, 3);
+      const [shell, command, sleep] = processes;
+      assert.equal(command!.ppid, shell!.pid);
+      assert.equal(sleep!.ppid, command!.pid);
+      assert.equal(shell!.pgid, shell!.pid);
+      assert.isTrue(processes.every(executing), "Readiness must include executing children");
+      yield* Effect.logInfo("DETACHED_BEFORE_STOP", { processes });
+    }
     if (options.stopAfterReply) {
       yield* session.interruptTurn({ providerThread, providerTurnId, requestRuntimeRestart: true });
     }
@@ -990,11 +1071,17 @@ const endTurnAfterTool = (
       }
       if (event.type === "turn.terminal") terminalStatus = event.status;
     }
+    if (options.detachedCommand) {
+      const survivors = processes.filter(executing);
+      yield* Effect.logInfo("DETACHED_AFTER_STOP", { survivors, itemStatus, terminalStatus });
+      assert.deepEqual(survivors, [], "Stop left a captured command process alive");
+      assert.equal(terminalStatus, "interrupted");
+    }
     return { itemStatus, terminalStatus };
   }).pipe(Effect.provide(layerSession), Effect.scoped);
 
 describe("AntigravityAdapterV2 running commands", () => {
-  it.effect("does not mark a command completed while it is still running at end_turn", () =>
+  it.live("does not mark a command completed while it is still running at end_turn", () =>
     Effect.gen(function* () {
       const result = yield* endTurnAfterTool(
         {
@@ -1005,7 +1092,7 @@ describe("AntigravityAdapterV2 running commands", () => {
           status: "in_progress",
           rawInput: { CommandLine: "tail -f app.log" },
         },
-        { stopAfterReply: true },
+        { stopAfterReply: true, detachedCommand: (yield* HostProcess.Platform) === "linux" },
       );
       // It never reported finishing, so it must not be shown as completed.
       assert.notEqual(result.itemStatus, "completed");

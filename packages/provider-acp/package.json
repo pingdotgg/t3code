@@ -49,7 +49,8 @@
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "diff": "8.0.3",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "koffi": "3.3.6"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
