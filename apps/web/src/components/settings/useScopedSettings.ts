@@ -15,21 +15,25 @@ import {
 } from "@t3tools/contracts";
 
 import { persistClientSettingsPatch, useMergedSettings } from "../../hooks/useSettings";
-import { readEnvironment } from "../../state/environments";
+import { readEnvironment, useEnvironments } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
+  changedScopedSettings,
   createScopedSettingsWriter,
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
+  resolveScopedSettingsTargets,
   scopedSettingsAreMixed,
   scopedSettingsSource,
+  selectScopedSettingsEnvironments,
   type ProjectOverrideEntry,
   type ScopedSettingsPatch,
 } from "./scopedSettings";
+import { resolveSettingsScope } from "./settingsScope";
 
 const writeScopedSettings = createScopedSettingsWriter(
   (environmentId) => readEnvironment(environmentId)?.serverConfig?.settings ?? null,
@@ -118,6 +122,22 @@ export function useUpdateScopedSettings() {
       (current) => planScopedSettingsPatch(scope, current, patch, { deviceOnly }),
       options?.onFailed,
     );
+}
+
+/** Ignores the settings URL scope: writes every connected environment and reads a change on any of them. */
+export function useAllEnvironmentsSettings() {
+  const { environments } = useEnvironments();
+  const scope = resolveSettingsScope({}, [], environments);
+  const { connectedEnvironments } = selectScopedSettingsEnvironments(scope, environments, null);
+  const changedSettings = useMergedSettings(
+    changedScopedSettings(resolveScopedSettingsTargets(scope, connectedEnvironments)),
+  );
+  const run = useRunScopedPlan();
+  return {
+    changedSettings,
+    updateSettings: (patch: ScopedSettingsPatch) =>
+      run(environments, (current) => planScopedSettingsPatch(scope, current, patch)),
+  };
 }
 
 export function useClearScopedSettings() {
