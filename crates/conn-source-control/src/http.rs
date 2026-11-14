@@ -179,6 +179,8 @@ struct Target<'a> {
 }
 
 fn parse_url(url: &str) -> Result<Target<'_>, HttpError> {
+    // A fragment never goes on the wire, also after a bare host (`https://host#top`).
+    let url = url.split('#').next().unwrap_or(url);
     let (tls, rest) = if let Some(rest) = url.strip_prefix("https://") {
         (true, rest)
     } else if let Some(rest) = url.strip_prefix("http://") {
@@ -308,6 +310,14 @@ fn resolve_location(base: &str, location: &str) -> Option<String> {
     }
     if location.starts_with('/') {
         return Some(format!("{origin}{location}"));
+    }
+    // A query or a fragment alone replaces only that part of the base.
+    if location.starts_with('?') {
+        let path = base.split(['?', '#']).next()?;
+        return Some(format!("{path}{location}"));
+    }
+    if location.starts_with('#') {
+        return base.split('#').next().map(str::to_owned);
     }
     let path = base.get(origin.len()..)?.split(['?', '#']).next()?;
     let folder = path.rsplit_once('/').map_or("", |(head, _)| head);
@@ -633,6 +643,15 @@ mod tests {
         );
         assert_eq!(resolve_location(base, "ftp://x/y"), None);
         assert_eq!(
+            resolve_location(base, "?page=2").as_deref(),
+            Some("http://127.0.0.1:9/2.0/repositories/ws/old?page=2")
+        );
+        assert_eq!(
+            resolve_location("http://h.test/a/b#f", "?q").as_deref(),
+            Some("http://h.test/a/b?q")
+        );
+        assert_eq!(resolve_location(base, "#x").as_deref(), Some(base));
+        assert_eq!(
             origin_of("HTTPS://Api.Bitbucket.org/2.0").as_deref(),
             Some("https://api.bitbucket.org")
         );
@@ -733,6 +752,13 @@ mod tests {
             "no credentials in URLs"
         );
         assert!(parse_url("ftp://host/").is_err(), "only http and https");
+        let t = parse_url("https://host.test#top").expect("parses");
+        assert_eq!(
+            (t.host, t.port, t.authority, t.path),
+            ("host.test", 443, "host.test", "/")
+        );
+        let t = parse_url("http://h.test:8080/a?b=1#c").expect("parses");
+        assert_eq!((t.host, t.port, t.path), ("h.test", 8080, "/a?b=1"));
     }
 
     #[tokio::test(flavor = "current_thread")]
