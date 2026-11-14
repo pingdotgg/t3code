@@ -1185,7 +1185,15 @@ impl ClaudeSession {
         // as given (it differs only through a symlinked cwd and a relative value).
         let task_output_root =
             crate::tail::output_root(&env, input.cwd.as_deref().map(std::path::Path::new));
-        let options = launch::query_options(&inner.config, &input, env);
+        // `launchArgs`: files read off the runtime thread; a value the CLI would refuse fails
+        // the start, as T3's query runner does.
+        let (args, cwd) = (inner.config.launch_args.clone(), input.cwd.clone());
+        let applied =
+            tokio::task::spawn_blocking(move || crate::launch_args::apply(&args, cwd.as_deref()))
+                .await
+                .map_err(|e| failed_err("start_turn", &e.to_string()))?
+                .map_err(|e| failed_err("start_turn", &e))?;
+        let options = launch::query_options(&inner.config, &input, env, &applied);
         let mut query = inner.helper.open(options, json!({}))?;
         let Some(rx) = query.take_events() else {
             return Err(failed_err("start_turn", "the query has no event stream"));

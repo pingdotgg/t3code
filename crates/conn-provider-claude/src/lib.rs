@@ -16,6 +16,7 @@ pub mod attachments;
 pub mod catalog;
 pub mod helper;
 pub mod launch;
+pub mod launch_args;
 pub mod mapper;
 pub mod ordered;
 pub mod protocol;
