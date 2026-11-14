@@ -11,6 +11,7 @@ import {
   cursorUsageWindowDetails,
   displayLimitWindows,
   formatResetsIn,
+  nextPoolRefillPercent,
   paceRemainingPercent,
   remainingPercent,
   type LimitAccount,
@@ -212,7 +213,7 @@ function PoolWindowCard({
       {description ? <Text className="text-xs text-foreground-muted">{description}</Text> : null}
       {nextRefill ? (
         <Text className="text-xs tabular-nums text-foreground-muted">
-          ↻ +{nextRefill.restoresPercent}%{" "}
+          ↻ +{nextPoolRefillPercent(pool)}%{" "}
           {formatResetsIn(nextRefill.member.window, now)
             ?.replace("resets in ", "in ")
             .replace("resets now", "now")}

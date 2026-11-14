@@ -1292,6 +1292,15 @@ describe("pooled account columns", () => {
     const noRefill = collectLimitPools([account("idle", [{ ...window, usedPercent: 0 }])], now)[0]!
       .windows[0]!;
     expect(nextPoolRefillPercent(noRefill)).toBeNull();
+
+    const negligibleFirst = collectLimitPools(
+      [
+        account("tiny", [{ ...window, usedPercent: 0.8, resetsAt: "2026-09-03T13:00:00.000Z" }]),
+        account("spent", [{ ...window, usedPercent: 80, resetsAt: "2026-09-03T14:00:00.000Z" }]),
+      ],
+      now,
+    )[0]!.windows[0]!;
+    expect(nextPoolRefillPercent(negligibleFirst)).toBe(40);
   });
 
   it("keeps the same account columns when their reset times change", () => {

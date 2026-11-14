@@ -679,7 +679,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
  * The first positive reset alone would understate how much quota becomes usable.
  */
 export function nextPoolRefillPercent(pool: LimitPoolWindow): number | null {
-  const first = pool.resets.find((reset) => reset.poolSharePercent > 0);
+  const first = pool.resets.find((reset) => reset.restoresPercent > 0);
   if (!first) return null;
   const oneMinuteLater = first.at + 60_000;
   const refill = pool.resets.reduce(
