@@ -50,7 +50,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 31 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14; 31 since the text generation check).
+`main` is in a working state. `tools/check.sh` passes 31 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14; 31 since the text generation check). The source control part 4 branch adds two (`gen-graphql --check`, `registry-diff`): 33.
 
 | Part | State |
 | --- | --- |
@@ -58,7 +58,7 @@ settings; about 140 MiB for the `claude` program alone).
 | Engine commands | 43 of 56 |
 | T3 testkit fixtures through this engine | 42 of 159 variants pass T3's own assertions (Claude 24 of 34, Codex 17 of 25, Grok 1 of 15; the other 85 are providers this server does not offer) |
 | HTTP routes | 13 of 57 |
-| `/mcp` tools | 28 of 87 |
+| `/mcp` tools | 33 of 87 |
 | Providers | Claude, Codex and Grok, of the 10 the T3 server has without Pi |
 
 Proven:
@@ -432,6 +432,42 @@ definition registry, provider detection and GitHub's GraphQL documents first
 the macOS release binary grew from 16,558,944 to 16,605,712 bytes (+46,768). `tools/check.sh`
 passed all 30 checks with `CONN_MONOREPO` set; the fixture replay is unchanged.
 
+## Source control, part 4 (2026-11-14)
+
+The three foundations the pull request steps rest on are built and proven; on them, the
+engine's pull request links and five `/mcp` tools. No RPC method was added.
+
+- **The host definition registry** (`conn-source-control/src/registry/`): remote recognition in
+  T3's recognition order, change request URLs in claim order and per host, canonical repository
+  keys, the selector, the project predicates, GitCafe's URL spelling, the thread link keys.
+  `registry-diff.mjs` (new check) runs T3's own registry and ours on every literal of T3's
+  definition tests and a fixed grid: 24,085 cases, 0 differences.
+- **Provider detection** (`detect.rs`, `cache.rs`): the checkout's remotes, the recognised
+  context, unknown servers refined through GitHub, GitLab and Forgejo CLIs one after another,
+  with T3's two caches (bounded, one shared lookup per key). T3's registry test cases pass on
+  scratch repositories with stub CLIs. Nothing calls it yet.
+- **GitHub's GraphQL operations, generated** (`gen-graphql.mjs`, new `--check`): 55 operations
+  printed by `effect/graphql` from T3's modules, and a batch renderer held to Effect's.
+- **Engine: `thread.pull-request.link` and `unlink` as T3's decider** (`pull_requests.rs`):
+  canonical keys, a Forgejo port from the URL, GitCafe's spelling, the branch pull request kept
+  beside a first manual link, a stack member unlinked to a tombstone that a manual link lifts,
+  `thread.pull-request-synced` always (it was `thread.metadata-updated`, and nothing on a
+  no-op). Proven through `client-check.mjs` (13 checks).
+- **`/mcp`: 33 of 87 tools** (was 28): `link_pull_request(s)`, `unlink_pull_request(s)`,
+  `list_thread_pull_requests`; 26 parity steps, values compared, no differences. The argument
+  check now decodes array elements and `minItems` in Effect's words.
+- New dependency: `url` 2.5 (WHATWG, ICU IDNA): +201,280 bytes on the macOS release binary
+  alone. With all of part 4 the binary grew from 16,800,544 to 17,093,088 bytes (+292,544).
+- `tools/check.sh` with `CONN_MONOREPO`: all 33 checks pass, none skipped (`check exit: 0`);
+  the fixture replay is unchanged at 42 of 159.
+
+Not built, and why: `git.*`, `pr` in VCS status and `pullRequests.*` need a fourth foundation,
+the project's `repositoryIdentity` (T3's `RepositoryIdentityResolver`; this engine's project
+rows carry none), then GitHub's request policy and each host's change request reads; a method
+is registered only when it serves all seven hosts. The fj login check and `cafe` token still
+last one operation (T3: 30 s and 5 minutes), and host calls still have no rate-limit slots or
+quota. Map: `crates/conn-source-control/README.md`, "What the next steps need".
+
 ## Claude provider: what the fixture replay showed (2026-11-14)
 
 Claude passes 24 of T3's 34 fixture variants through this engine, up from 17. Each fix has a
@@ -527,10 +563,11 @@ tasks, 64 links, 8 tails per turn, 16 ledger models).
    the area (48 methods, 7 engine commands, 9 `/mcp` tools, 7 hosts). Served (2026-11-14):
    `server.discoverSourceControl` for all 7 hosts, and all 9 `sourceControl.*` (sign-in as a
    T3 server without an app client id; GitHub stars; `lookupRepository`, `cloneRepository`,
-   `publishRepository` on all 7 hosts). Next: the definition registry, provider detection and
-   a generator for GitHub's GraphQL documents, then `git.*` (each host's change request
-   reads and checkout first), `pr` in VCS status, `pullRequests.*` (35), the linked pull
-   request commands and the `/mcp` tools.
+   `publishRepository` on all 7 hosts). Built since (part 4): the definition registry,
+   provider detection, GitHub's GraphQL operations generated, the engine's link and unlink as
+   T3's, 5 of the 9 `/mcp` tools. Next: the project's `repositoryIdentity`, GitHub's request
+   policy, each host's change request reads and checkout, then `git.*`, `pr` in VCS status,
+   `pullRequests.*` (35), the other 5 linked pull request commands and 4 `/mcp` tools.
    Also: the Conn-only methods
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest
    share); 67 more `/mcp` tools (11 need nothing new: `crates/conn-mcp/README.md`, "All 87 tools"); Codex subagents; worktree setup scripts
@@ -585,6 +622,9 @@ The check is the one to trust; several review findings did not hold.
   open session.
 
 ## Branches
+
+- `t3/44de3066` (source control part 4, 2026-11-14, not merged): all 33 checks pass on macOS
+  (`check exit: 0`, none skipped). See "Source control, part 4".
 
 - `t3/32cd278b` (text generators, titles, `runNow`, the redacting `Debug`): all 31 checks pass
   on macOS (2026-11-14). No new dependency; the release binary grew by 93,648 bytes
