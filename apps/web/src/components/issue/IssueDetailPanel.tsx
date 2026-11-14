@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { prependIssueComments } from "@t3tools/client-runtime/state/issues";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { AuthOrchestrationOperateScope, threadIssueKeysEqual } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   IssueAssigneeCandidate,
@@ -18,6 +19,8 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ExternalLinkIcon,
+  Link2Icon,
+  Link2OffIcon,
   SendIcon,
   TagIcon,
   UserPlusIcon,
@@ -26,8 +29,10 @@ import { useState, type ReactNode } from "react";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { issueEnvironment } from "~/state/issues";
-import { useProjects } from "~/state/entities";
+import { useProjects, useThreadShell } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
+import { useEnvironmentScope } from "~/state/session";
+import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
@@ -36,6 +41,7 @@ import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestCandidatePicker } from "../pullRequest/PullRequestCandidatePicker";
 import { PullRequestCommentBody } from "../pullRequest/PullRequestCommentBody";
 import { PullRequestDetailTitleRow } from "../pullRequest/PullRequestDetailLayout";
@@ -57,6 +63,79 @@ import {
   IssueStateGlyph,
   issueTrackerPresentation,
 } from "./issuePresentation";
+
+/**
+ * Links or unlinks the issue to the thread it is shown beside. Dispatches the orchestration
+ * command directly, as pull request linking does.
+ */
+function IssueThreadLinkButton({
+  environmentId,
+  reference,
+  issue,
+  threadRef,
+}: {
+  environmentId: EnvironmentId;
+  reference: IssueRef;
+  issue: Pick<IssueDetail, "url" | "displayKey" | "title">;
+  threadRef: ScopedThreadRef;
+}) {
+  const thread = useThreadShell(threadRef.environmentId === environmentId ? threadRef : null);
+  const canOperate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const link = useAtomCommand(threadEnvironment.linkIssue, { reportFailure: false });
+  const unlink = useAtomCommand(threadEnvironment.unlinkIssue, { reportFailure: false });
+  const [pending, setPending] = useState(false);
+  if (thread === null || !canOperate) return null;
+  const key = { ...reference, host: reference.host ?? "" };
+  const linked = (thread.issues ?? []).some((existing) => threadIssueKeysEqual(existing, key));
+  const toggle = async () => {
+    if (pending || reference.host === undefined) return;
+    setPending(true);
+    const result = await (linked
+      ? unlink({ environmentId, input: { threadId: threadRef.threadId, ...key } })
+      : link({
+          environmentId,
+          input: {
+            threadId: threadRef.threadId,
+            ...key,
+            url: issue.url,
+            displayKey: issue.displayKey,
+            title: issue.title,
+            source: "manual",
+          },
+        }));
+    setPending(false);
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: linked ? "Could not unlink the issue" : "Could not link the issue",
+        description: readableFailure(squashAtomCommandFailure(result), "The server refused it."),
+      });
+    }
+  };
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label={linked ? "Unlink from thread" : "Link to thread"}
+            aria-pressed={linked}
+            disabled={pending || reference.host === undefined}
+            onClick={() => void toggle()}
+          />
+        }
+      >
+        {linked ? (
+          <Link2OffIcon aria-hidden className="size-3.5" />
+        ) : (
+          <Link2Icon aria-hidden className="size-3.5" />
+        )}
+      </TooltipTrigger>
+      <TooltipPopup>{linked ? "Unlink from this thread" : "Link to this thread"}</TooltipPopup>
+    </Tooltip>
+  );
+}
 
 /** Why a control is off, said once so each disabled affordance can point at it. */
 function writeBlockReason(detail: IssueDetail, canWrite: boolean): string | null {
@@ -551,6 +630,14 @@ export function IssueDetailPanel({
               {detail.scope}
             </span>
             {stateControl}
+            {threadRef ? (
+              <IssueThreadLinkButton
+                environmentId={environmentId}
+                reference={{ ...reference, host: reference.host ?? detail.host }}
+                issue={detail}
+                threadRef={threadRef}
+              />
+            ) : null}
             <Button
               size="icon-xs"
               variant="ghost"
