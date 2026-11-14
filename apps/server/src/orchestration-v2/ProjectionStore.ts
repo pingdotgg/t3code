@@ -673,6 +673,15 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     runIds?: ReadonlyArray<RunId>,
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2TurnItem>, ProjectionStoreV2Error>;
+  /** The newest `limit` history items plus the first and latest user messages; the rest are only counted. */
+  readonly getHandoffHistory: (
+    threadId: ThreadId,
+    runIds: ReadonlyArray<RunId> | undefined,
+    limit: number,
+  ) => Effect.Effect<
+    { readonly items: ReadonlyArray<OrchestrationV2TurnItem>; readonly omittedItems: number },
+    ProjectionStoreV2Error
+  >;
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error>;
@@ -5201,6 +5210,57 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
     );
 
+    const getHandoffHistory: ProjectionStoreV2Shape["getHandoffHistory"] = Effect.fn(
+      "ProjectionStore.getHandoffHistory",
+    )(
+      function* (threadId, runIds, limit) {
+        const where = sql`thread_id = ${threadId}
+          AND type IN ('user_message','assistant_message','command_execution','error',
+            'run_interrupt_result','file_change','proposed_plan')
+          AND ${runIds === undefined ? sql`1` : sql`run_id IN ${sql.in(runIds)}`}`;
+        const newestRows = yield* sql<PayloadRow & { readonly turnItemId: string }>`
+          SELECT payload_json, turn_item_id AS "turnItemId" FROM (
+            SELECT payload_json, ordinal, turn_item_id
+            FROM orchestration_v2_projection_turn_items
+            WHERE ${where}
+            ORDER BY ordinal DESC, turn_item_id DESC
+            LIMIT ${limit}
+          ) ORDER BY ordinal ASC, turn_item_id ASC
+        `;
+        const firstUser = yield* sql<PayloadRow & { readonly turnItemId: string }>`
+          SELECT payload_json, turn_item_id AS "turnItemId"
+          FROM orchestration_v2_projection_turn_items
+          WHERE ${where} AND type = 'user_message'
+          ORDER BY ordinal ASC, turn_item_id ASC
+          LIMIT 1
+        `;
+        const latestUser = yield* sql<PayloadRow & { readonly turnItemId: string }>`
+          SELECT payload_json, turn_item_id AS "turnItemId"
+          FROM orchestration_v2_projection_turn_items
+          WHERE ${where} AND type = 'user_message'
+          ORDER BY ordinal DESC, turn_item_id DESC
+          LIMIT 1
+        `;
+        const countRows = yield* sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count FROM orchestration_v2_projection_turn_items WHERE ${where}
+        `;
+        // Selection always tries the first and latest user messages; outside the window both
+        // precede it, so this order stays ascending.
+        const outside = new Map(
+          [...firstUser, ...latestUser]
+            .filter((row) => !newestRows.some((newest) => newest.turnItemId === row.turnItemId))
+            .map((row) => [row.turnItemId, row]),
+        );
+        const rows = [...outside.values(), ...newestRows];
+        return {
+          items: yield* decodeRows(decodeTurnItemPayload, threadId)(rows),
+          omittedItems: (countRows[0]?.count ?? 0) - rows.length,
+        };
+      },
+      (effect, threadId, _runIds, _limit) =>
+        effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
+    );
+
     const getThreadProjection: ProjectionStoreV2Shape["getThreadProjection"] = (threadId) =>
       sql
         .withTransaction(readProjection(threadId, new Set()))
@@ -9077,6 +9137,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadProjection: readOnReader(getThreadProjection),
       getTurnStartContext: readOnReader(getTurnStartContext),
       getTurnStartHistory: readOnReader(getTurnStartHistory),
+      getHandoffHistory: readOnReader(getHandoffHistory),
       getRuntimeRecoveryProjection: readOnReader(getRuntimeRecoveryProjection),
       getRunningTurnContext: readOnReader(getRunningTurnContext),
       getThreadProviderContext: readOnReader(getThreadProviderContext),

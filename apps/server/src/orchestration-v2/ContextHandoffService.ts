@@ -84,6 +84,8 @@ export interface ContextHandoffServiceV2Shape {
       "delta_since_target_last_seen" | "full_thread_summary"
     >;
     readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+    /** Older history items left out of `items` that still count as omitted. */
+    readonly omittedItems?: number;
     readonly createdAt: DateTime.Utc;
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
   /** Parent activity after the fork point, prepended to a side chat's first provider turn. */
@@ -503,6 +505,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         "delta_since_target_last_seen" | "full_thread_summary"
       >;
       readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+      readonly omittedItems?: number;
       readonly createdAt: DateTime.Utc;
     }) {
       const handoffId = yield* idAllocator.allocate
@@ -537,6 +540,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           return message === null ? [] : [message];
         }),
         coverage,
+        ...(input.omittedItems === undefined ? {} : { omittedItems: input.omittedItems }),
         budget: tokenCap,
       });
       return {

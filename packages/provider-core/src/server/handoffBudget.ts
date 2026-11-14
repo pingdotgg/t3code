@@ -129,7 +129,7 @@ export function handoffBudget(input: {
   );
 }
 
-export const HISTORICAL_ITEM_TYPES = [
+const HISTORICAL_ITEM_TYPES = [
   "user_message",
   "assistant_message",
   "command_execution",
@@ -273,6 +273,9 @@ const RESPONSE_ENVELOPE_BYTES = {
   assistant: envelopeBytes("assistant"),
 };
 const MIN_MESSAGE_COST = Math.min(RESPONSE_ENVELOPE_BYTES.user, RESPONSE_ENVELOPE_BYTES.assistant);
+// The byte cap holds no more messages than this, so handoffs read only the newest this many
+// candidates (plus the first user message) and count older ones as omitted.
+export const HANDOFF_HISTORY_WINDOW = Math.ceil(HANDOFF_BYTE_CAP / MIN_MESSAGE_COST);
 
 function messageCost(message: OrchestrationV2HistoricalMessage): number {
   const rendered =
