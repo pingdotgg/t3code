@@ -227,7 +227,7 @@ function selectOpenCodeRuntimeTextGeneration(
         v2: v2.generateReviewGuide(input),
       }),
     generateProjectIcon: (input) =>
-      byOpenCodeRuntime(probe.get, {
+      byOpenCodeRuntime(resolve, {
         v1: v1.generateProjectIcon(input),
         v2: v2.generateProjectIcon(input),
       }),

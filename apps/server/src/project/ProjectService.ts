@@ -324,6 +324,7 @@ export const make = Effect.gen(function* () {
         threadTitles: [],
         ...context,
         modelSelection: resolveProjectIconModelSelection(settings, undefined, input.projectId),
+        projectId: input.projectId,
       })
       .pipe(
         Effect.mapError(

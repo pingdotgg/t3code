@@ -807,6 +807,7 @@ it.effect(
               calls.push(input.modelSelection);
               return {} as TextGeneration.ReviewGuideGenerationResult;
             }),
+          generateProjectIcon: () => Effect.die("unused"),
         }),
       } satisfies ProviderInstance;
       const serviceWith = (instances: ReadonlyArray<ProviderInstance>) =>

@@ -86,6 +86,7 @@ export interface ProjectIconGenerationInput {
   readmeExcerpt?: string | undefined;
   packageJsonExcerpt?: string | undefined;
   modelSelection: ModelSelection;
+  projectId?: ProjectId | null | undefined;
 }
 
 export interface ProjectIconGenerationResult {

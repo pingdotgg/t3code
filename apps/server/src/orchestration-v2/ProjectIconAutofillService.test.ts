@@ -37,6 +37,7 @@ function storedProject(
   return {
     projectId,
     title: overrides.title ?? "Autofill project",
+    hasCustomTitle: false,
     workspaceRoot: overrides.workspaceRoot ?? workspaceRoot,
     defaultModelSelection: null,
     defaultThreadEnvMode: null,

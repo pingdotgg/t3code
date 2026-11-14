@@ -202,8 +202,11 @@ export const make = Effect.gen(function* () {
     generateProjectIcon: Effect.fn("TextGeneration.generateProjectIcon")(function (
       input: ProjectIconGenerationInput,
     ): Effect.Effect<ProjectIconGenerationResult, TextGenerationError> {
-      return generate("generateProjectIcon", input.modelSelection, (service, modelSelection) =>
-        service.generateProjectIcon({ ...input, modelSelection }),
+      return generate(
+        "generateProjectIcon",
+        input.modelSelection,
+        input.projectId,
+        (service, modelSelection) => service.generateProjectIcon({ ...input, modelSelection }),
       );
     }),
     generateTranscriptionPostProcessing: Effect.fn(

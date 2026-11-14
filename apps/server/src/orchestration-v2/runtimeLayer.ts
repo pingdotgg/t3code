@@ -340,7 +340,7 @@ const layerProjectIconAutofillProvided = ProjectIconAutofillService.layer.pipe(
       ProjectStore.layer,
       layerEventSink,
       IdAllocator.layer,
-      TextGeneration.layer,
+      TextGeneration.layer.pipe(Layer.provide(ProviderInstallationGate.layer)),
     ),
   ),
 );

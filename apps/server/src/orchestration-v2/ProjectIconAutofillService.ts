@@ -174,6 +174,7 @@ const make = Effect.gen(function* () {
         undefined,
         input.projectId,
       ),
+      projectId: input.projectId,
     });
     const projectIcon: ProjectIconOverride = {
       kind: "lucide",
