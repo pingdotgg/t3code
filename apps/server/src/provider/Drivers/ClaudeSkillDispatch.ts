@@ -19,12 +19,16 @@ export interface ClaudeSkillDispatch {
   readonly commandText: string;
 }
 
-function matchSkillMentions(prompt: string, skills: ReadonlyMap<string, ClaudeSkillTarget>) {
+function matchSkillMentions(
+  prompt: string,
+  skills: ReadonlyMap<string, ClaudeSkillTarget>,
+  mentionsFrom = 0,
+) {
   return [...prompt.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
     const name = match[2] ?? "";
     const skill = skills.get(name);
-    if (!skill) return [];
     const start = (match.index ?? 0) + (match[1]?.length ?? 0);
+    if (!skill || start < mentionsFrom) return [];
     return [{ name, skill, start, end: (match.index ?? 0) + match[0].length }];
   });
 }
@@ -53,8 +57,10 @@ function inlineSkillMentions(
 export function planClaudeSkillDispatch(
   prompt: string,
   skills: ReadonlyMap<string, ClaudeSkillTarget>,
+  /** Mentions before this offset, such as inline handoff history, stay plain text. */
+  mentionsFrom = 0,
 ): ClaudeSkillDispatch | undefined {
-  const mentions = matchSkillMentions(prompt, skills);
+  const mentions = matchSkillMentions(prompt, skills, mentionsFrom);
   const last = mentions.at(-1);
   if (!last) {
     return undefined;

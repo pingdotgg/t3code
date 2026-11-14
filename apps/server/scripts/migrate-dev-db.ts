@@ -60,6 +60,18 @@ export class MigrateDevDbSourceIsDestinationError extends Schema.TaggedError<Mig
   }
 }
 
+export class MigrateDevDbLegacySourceError extends Schema.TaggedError<MigrateDevDbLegacySourceError>()(
+  "MigrateDevDbLegacySourceError",
+  {
+    sourcePath: Schema.String,
+    legacyThreads: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Source database '${this.sourcePath}' holds ${this.legacyThreads} legacy threads the server has not imported into V2 yet, which this command cannot carry over. Start a server once on a T3 home holding a copy of it so it imports them, then pass the userdata/statev2.sqlite that server leaves behind as --source.`;
+  }
+}
+
 export class MigrateDevDbServerRunningError extends Schema.TaggedError<MigrateDevDbServerRunningError>()(
   "MigrateDevDbServerRunningError",
   {
@@ -210,47 +222,71 @@ const rootIsVisible = (sql: SqlClient.SqlClient) => sql`
   AND json_extract(root.payload_json, '$.deletedAt') IS NULL
   AND json_extract(root.payload_json, '$.archivedAt') IS NULL`;
 
-// A single read transaction keeps the copy consistent with concurrent server writes.
+// One read transaction keeps the copy, and its legacy-thread guard, consistent with concurrent
+// server writes. The server imports V1 threads at boot, and the copy keeps only threads with V2
+// rows, so unimported ones would vanish silently (see LegacyV1ThreadImporter.pendingThreadCount).
 const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath: string) {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`ATTACH DATABASE ${`${NodeURL.pathToFileURL(sourcePath).href}?mode=ro`} AS src`;
-  const schema = yield* sql<{ type: string; name: string; sql: string }>`
-    SELECT type, name, sql FROM src.sqlite_master
-    WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'`;
-  const threadColumns = yield* sql<{ name: string; notnull: number }>`
-    SELECT m.name, c."notnull" FROM src.sqlite_master m, pragma_table_info(m.name, 'src') c
-    WHERE m.type = 'table' AND c.name = 'thread_id'`;
-  const threadIdNullable = new Map(threadColumns.map((row) => [row.name, row.notnull === 0]));
-  // FTS5 makes its own shadow tables and contentless rows cannot be copied:
-  // create the virtual table, skip its shadow tables and rows, and rebuild the
-  // index once the messages and triggers are in.
-  const virtualTables = schema
-    .filter((entry) => entry.type === "table" && /^CREATE VIRTUAL TABLE/i.test(entry.sql))
-    .map((entry) => entry.name);
-  const isShadowTable = (name: string) =>
-    virtualTables.some((virtual) =>
-      FTS5_SHADOW_SUFFIXES.some((suffix) => name === `${virtual}${suffix}`),
-    );
-  const tables = schema.filter((entry) => entry.type === "table" && !isShadowTable(entry.name));
-  const filtered = tables.some((table) => table.name === "orchestration_v2_projection_threads");
-  // A row that points into a cleared table cannot be copied, so whatever references one is
-  // cleared with it, however far down the chain a newer migration added it.
-  const references = yield* sql<{ name: string; parent: string }>`
-    SELECT m.name, f."table" AS parent FROM src.sqlite_master m, pragma_foreign_key_list(m.name, 'src') f
-    WHERE m.type = 'table'`;
-  const cleared = new Set(CLEARED_TABLES);
-  for (let grew = true; grew;) {
-    grew = false;
-    for (const { name, parent } of references) {
-      if (cleared.has(parent) && !cleared.has(name)) {
-        cleared.add(name);
-        grew = true;
-      }
-    }
-  }
 
   yield* sql.withTransaction(
     Effect.gen(function* () {
+      const schema = yield* sql<{ type: string; name: string; sql: string }>`
+        SELECT type, name, sql FROM src.sqlite_master
+        WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'`;
+      const threadColumns = yield* sql<{ name: string; notnull: number }>`
+        SELECT m.name, c."notnull" FROM src.sqlite_master m, pragma_table_info(m.name, 'src') c
+        WHERE m.type = 'table' AND c.name = 'thread_id'`;
+      const threadIdNullable = new Map(threadColumns.map((row) => [row.name, row.notnull === 0]));
+      // FTS5 makes its own shadow tables and contentless rows cannot be copied:
+      // create the virtual table, skip its shadow tables and rows, and rebuild the
+      // index once the messages and triggers are in.
+      const virtualTables = schema
+        .filter((entry) => entry.type === "table" && /^CREATE VIRTUAL TABLE/i.test(entry.sql))
+        .map((entry) => entry.name);
+      const isShadowTable = (name: string) =>
+        virtualTables.some((virtual) =>
+          FTS5_SHADOW_SUFFIXES.some((suffix) => name === `${virtual}${suffix}`),
+        );
+      const tables = schema.filter((entry) => entry.type === "table" && !isShadowTable(entry.name));
+      const filtered = tables.some((table) => table.name === "orchestration_v2_projection_threads");
+      // A row that points into a cleared table cannot be copied, so whatever references one is
+      // cleared with it, however far down the chain a newer migration added it.
+      const references = yield* sql<{ name: string; parent: string }>`
+        SELECT m.name, f."table" AS parent FROM src.sqlite_master m, pragma_foreign_key_list(m.name, 'src') f
+        WHERE m.type = 'table'`;
+      const cleared = new Set(CLEARED_TABLES);
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const { name, parent } of references) {
+          if (cleared.has(parent) && !cleared.has(name)) {
+            cleared.add(name);
+            grew = true;
+          }
+        }
+      }
+
+      if (tables.some((table) => table.name === "projection_threads")) {
+        // The V2 tables, application_event_version, and the partial index arrive in
+        // the same migration. Without the hint SQLite scans each thread's stream.
+        const [pending] = filtered
+          ? yield* sql<{ count: number }>`
+              SELECT COUNT(*) AS count FROM src.projection_threads AS thread
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM src.orchestration_events AS event INDEXED BY orchestration_events_v2_created_threads_idx
+                WHERE event.application_event_version = 2
+                  AND event.aggregate_kind = 'thread'
+                  AND event.stream_id = thread.thread_id
+                  AND event.event_type = 'thread.created'
+              )`
+          : yield* sql<{ count: number }>`SELECT COUNT(*) AS count FROM src.projection_threads`;
+        const legacyThreads = Number(pending?.count ?? 0);
+        if (legacyThreads > 0) {
+          return yield* new MigrateDevDbLegacySourceError({ sourcePath, legacyThreads });
+        }
+      }
+
       for (const table of tables) yield* sql.unsafe(table.sql).unprepared;
       if (filtered) {
         yield* sql`CREATE TEMP TABLE copied_threads (thread_id TEXT PRIMARY KEY)`;
@@ -382,12 +418,20 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
            OR (aggregate_kind = 'project'
             AND stream_id NOT IN (SELECT project_id FROM kept_projects))`;
       yield* sql`UPDATE orchestration_v2_projection_threads
-        SET payload_json = json_set(payload_json, '$.pullRequests', (
+        SET payload_json = json_set(payload_json, '$.pullRequests', json((
           SELECT json_group_array(json_remove(link.value, '$.watch') ORDER BY link.key)
-          FROM json_each(payload_json, '$.pullRequests') AS link))
+          FROM json_each(payload_json, '$.pullRequests') AS link)))
         WHERE EXISTS (
           SELECT 1 FROM json_each(payload_json, '$.pullRequests') AS link
           WHERE json_extract(link.value, '$.watch') IS NOT NULL)`;
+      // Copied threads keep their real worktree paths, where a settle script would run.
+      yield* sql`UPDATE projection_projects
+        SET scripts_json = (
+          SELECT json_group_array(json_remove(script.value, '$.runOnSettle') ORDER BY script.key)
+          FROM json_each(scripts_json) AS script)
+        WHERE EXISTS (
+          SELECT 1 FROM json_each(scripts_json) AS script
+          WHERE json_extract(script.value, '$.runOnSettle') IS NOT NULL)`;
       for (const table of CLEARED_TABLES) {
         yield* sql`DELETE FROM ${sql(table)}`;
       }
@@ -488,7 +532,6 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   }
 
   yield* fs.makeDirectory(stateDir, { recursive: true });
-  yield* ensureNotInUse(databasePath);
 
   const wrapPhase =
     (phase: MigrateDevDbPhaseError["phase"], phaseDatabasePath: string) =>
@@ -504,8 +547,15 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     yield* Console.log(`Copying visible threads from ${sourcePath} (read-only)...`);
     yield* copySourceSlice(sourcePath).pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
-      wrapPhase("snapshot", sourcePath),
+      Effect.catchTags({
+        SqlError: (cause) =>
+          Effect.fail(
+            new MigrateDevDbPhaseError({ phase: "snapshot", databasePath: sourcePath, cause }),
+          ),
+      }),
     );
+    // Checkpoints the destination, so it runs after the copy's legacy guard.
+    yield* ensureNotInUse(databasePath);
 
     // Migrate first so prune queries can use columns missing from older sources.
     yield* Console.log("Running migrations on the snapshot...");
