@@ -52,7 +52,7 @@ import { requestLayoutSurfacePlacement } from "./surfaceSync";
 import { LayoutLearningTips } from "./LayoutOnboarding";
 import { beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
-import { selectLayoutWayBack, type LayoutPageContent } from "./layoutModel";
+import { canCloseLayoutTab, selectLayoutWayBack, type LayoutPageContent } from "./layoutModel";
 import { useOpenLayoutPage } from "./pageNavigation";
 import { runInNewLayoutTab, useLayoutStore } from "./layoutStore";
 import {
@@ -441,6 +441,10 @@ function WorkspaceWayBackHint() {
 function LauncherTabNotch({ tabId }: { tabId: string | null }) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const siblingTabs = useLayoutPaneSiblingTabs();
+  const closable = useLayoutStore(
+    (state) => tabId !== null && canCloseLayoutTab(state.layout, tabId),
+  );
+  const icon = <SquareDashedIcon aria-hidden className="size-3.5 shrink-0" />;
   return (
     <PaneNotch>
       <LayoutPaneTabStrip>
@@ -459,12 +463,12 @@ function LauncherTabNotch({ tabId }: { tabId: string | null }) {
               void showLayoutTabMenu(tabId, { x: event.clientX, y: event.clientY }, keybindings);
             }}
           >
-            <span className={LAYOUT_TAB_ICON_CLASS}>
-              <SquareDashedIcon aria-hidden className="size-3.5 shrink-0" />
-            </span>
+            {closable ? <span className={LAYOUT_TAB_ICON_CLASS}>{icon}</span> : icon}
             <span className="truncate">New tab</span>
           </div>
-          {tabId === null ? null : <LayoutTabCloseButton tabId={tabId} title="New tab" />}
+          {closable && tabId !== null ? (
+            <LayoutTabCloseButton tabId={tabId} title="New tab" />
+          ) : null}
         </span>
         {siblingTabs.after.map((tab) => (
           <LayoutPaneTab key={tab.id} tab={tab} />

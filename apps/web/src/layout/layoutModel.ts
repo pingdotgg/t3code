@@ -1516,24 +1516,22 @@ export function keepLayoutTab(state: LayoutState, tabId: string): LayoutState {
 
 /**
  * Close a tab; its pane activates the neighboring tab, and empty panes
- * collapse. The window's last tab gives way to a launcher in its place, so
- * the window always keeps one pane; that lone launcher does not close.
+ * collapse. No workspace is left without a tab: its last one gives way to a
+ * blank tab, and closing that closes the workspace for the one beside it.
+ * The spare at the bottom stays, and the window's last blank tab does not close.
  */
 export function closeLayoutTab(state: LayoutState, tabId: string): LayoutState {
   const location = findLayoutTab(state, (tab) => tab.id === tabId);
   if (!location) return state;
-  if (countLayoutTabs(state) === 1) {
-    const content = location.tab.content;
-    if (content.kind === "launcher") return state;
-    const context: ThreadRouteTarget | null =
-      content.kind === "chat"
-        ? content.target
-        : content.kind === "surface"
-          ? { kind: "server", threadRef: content.threadRef }
-          : null;
-    const launcher = createLayoutTab(createLayoutLauncherContent(context));
-    return mapPanes(state, (pane) =>
-      pane.id === location.pane.id ? { ...pane, tabs: [launcher], activeTabId: launcher.id } : pane,
+  if (workspaceTabCount(location.workspace) === 1) {
+    if (location.tab.content.kind === "launcher") {
+      return closeLayoutBlankWorkspace(state, location.workspace);
+    }
+    const blank = createLayoutTab(createLayoutLauncherContent(null));
+    return normalizeLayout(
+      mapPanes(state, (pane) =>
+        pane.id === location.pane.id ? { ...pane, tabs: [blank], activeTabId: blank.id } : pane,
+      ),
     );
   }
   // A ghost hands its place back to the chat it was opened from.
@@ -1572,6 +1570,33 @@ export function closeLayoutTab(state: LayoutState, tabId: string): LayoutState {
         )
       : closed;
   return normalizeLayout(refocused);
+}
+
+function closeLayoutBlankWorkspace(state: LayoutState, workspace: LayoutWorkspace): LayoutState {
+  const index = state.workspaces.indexOf(workspace);
+  const focused = state.focusedWorkspaceId === workspace.id;
+  const above = state.workspaces[index - 1];
+  if (index === state.workspaces.length - 1) {
+    return focused && above ? focusLayoutWorkspace(state, above.id) : state;
+  }
+  const beside = above ?? state.workspaces[index + 1]!;
+  return normalizeLayout({
+    workspaces: state.workspaces.filter((candidate) => candidate !== workspace),
+    focusedWorkspaceId: focused ? beside.id : state.focusedWorkspaceId,
+  });
+}
+
+export function canCloseLayoutTab(state: LayoutState, tabId: string): boolean {
+  const location = findLayoutTab(state, (tab) => tab.id === tabId);
+  if (!location) return false;
+  if (location.tab.content.kind !== "launcher" || workspaceTabCount(location.workspace) > 1) {
+    return true;
+  }
+  const index = state.workspaces.indexOf(location.workspace);
+  return (
+    index < state.workspaces.length - 1 ||
+    (index > 0 && state.focusedWorkspaceId === location.workspace.id)
+  );
 }
 
 /** Activate the next (1) or previous (-1) tab of the focused pane, wrapping around. */
