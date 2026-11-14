@@ -116,6 +116,11 @@ const fixture = Effect.fn("ClaudeMaintenance.test.fixture")(function* (
       Effect.provideService(HostProcess.Environment, {
         PATH: "",
         CLAUDE_CONFIG_DIR: configDirectory,
+        // Disable the POSIX CLI fallback directories so the test controls exactly
+        // which tools (e.g. npm) are discoverable. Without this, a real `npm` in
+        // /usr/local/bin or /opt/homebrew/bin would be found and switch the
+        // version lookup from the npm registry HTTP API to a spawned `npm view`.
+
         ...(programFiles ? { PROGRAMFILES: programFiles } : {}),
       }),
     ),

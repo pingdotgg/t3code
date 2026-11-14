@@ -114,11 +114,14 @@ const CommandLookupEnvConfig = Config.all({
   path: Config.String("path").pipe(Config.option),
   PATHEXT: Config.String("PATHEXT").pipe(Config.option),
   HOME: Config.String("HOME").pipe(Config.option),
+  NVM_DIR: Config.String("NVM_DIR").pipe(Config.option),
+  npm_config_prefix: Config.String("npm_config_prefix").pipe(Config.option),
   LOCALAPPDATA: Config.String("LOCALAPPDATA").pipe(Config.option),
   ProgramFiles: Config.String("ProgramFiles").pipe(Config.option),
   ProgramW6432: Config.String("ProgramW6432").pipe(Config.option),
   XDG_DATA_HOME: Config.String("XDG_DATA_HOME").pipe(Config.option),
   "ProgramFiles(x86)": Config.String("ProgramFiles(x86)").pipe(Config.option),
+  T3CODE_CLI_FALLBACK_DIRS: Config.String("T3CODE_CLI_FALLBACK_DIRS").pipe(Config.option),
 }).pipe(Config.map(compactEnv));
 
 const readBrowserLaunchEnv = BrowserLaunchEnvConfig.pipe(Effect.orElseSucceed(() => ({})));

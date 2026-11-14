@@ -387,7 +387,9 @@ it.layer(
           fixture.install === "native" ? nativePackageToolUpdate : packageToolUpdate,
           { binaryPath, env: { PATH: fixture.install === "npm" ? npmBinDir : "" } },
         ).pipe(
-          Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
+          Effect.provideService(HostProcess.Environment, {
+            PATH: npmBinDir,
+          }),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             stdoutSpawner(
@@ -1460,7 +1462,9 @@ it.layer(
           { binaryPath: "package-tool", env: { PATH: bunBinDir } },
         ).pipe(
           Effect.provideService(HostProcess.Platform, "darwin"),
-          Effect.provideService(HostProcess.Environment, { PATH: "" }),
+          Effect.provideService(HostProcess.Environment, {
+            PATH: "",
+          }),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             stdoutSpawner((_command, args) =>

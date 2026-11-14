@@ -646,13 +646,22 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   }
 
   const pathValue = resolvePathEnvironmentVariable(env);
-  if (pathValue.length === 0) {
-    return null;
-  }
 
-  const cacheKey = [platform, pathValue, windowsPathExtensions.join(";"), command].join(
-    COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR,
-  );
+  // On POSIX, also search common CLI install directories that GUI apps may not
+  // have on their PATH (~/.local/bin, Homebrew, nvm, bun, npm global).
+  // This mirrors magpie's `proc.FindTool` fallback.
+  const knownPosixDirs = platform !== "win32" ? resolveKnownPosixCliDirs(env, platform) : [];
+
+  // Include the fallback directories in the cache key: calls with the same PATH
+  // but different HOME/NVM_DIR/npm_config_prefix must not reuse each other's
+  // cached result, since the fallback search space differs.
+  const cacheKey = [
+    platform,
+    pathValue,
+    windowsPathExtensions.join(";"),
+    knownPosixDirs.join(pathDelimiterForPlatform(platform)),
+    command,
+  ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
   const cache = yield* CommandResolutionCache;
   const nowNanos = yield* Clock.monotonicTimeNanos;
   const cached = cache.get(cacheKey);
@@ -669,6 +678,13 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
 
     seenPathEntries.add(pathEntry);
     pathEntries.push(pathEntry);
+  }
+
+  for (const knownDir of knownPosixDirs) {
+    if (!seenPathEntries.has(knownDir)) {
+      seenPathEntries.add(knownDir);
+      pathEntries.push(knownDir);
+    }
   }
 
   const listings = yield* PathDirectoryListings;
@@ -889,7 +905,27 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
 ): Effect.fn.Return<ResolvedSpawnCommand> {
   const platform = yield* HostProcess.Platform;
   const isMacosGit = platform === "darwin" && command === "git";
+
+  // On POSIX, ensure fallback CLI directories are on the spawn PATH so a
+  // discovered executable can find its interpreter (e.g. node for a script).
   if (platform !== "win32" && !isMacosGit) {
+    const hostEnvironment = yield* HostProcess.Environment;
+    const env =
+      options.env === undefined
+        ? hostEnvironment
+        : options.extendEnv
+          ? { ...hostEnvironment, ...options.env }
+          : options.env;
+    const fallbackDirs = resolveKnownPosixCliDirs(env, platform);
+    if (fallbackDirs.length > 0) {
+      const delimiter = pathDelimiterForPlatform(platform);
+      const existingPath = env.PATH ?? "";
+      const existingEntries = new Set(existingPath.split(delimiter));
+      const missing = fallbackDirs.filter((dir) => !existingEntries.has(dir));
+      if (missing.length > 0) {
+        env.PATH = [...missing, existingPath].filter(Boolean).join(delimiter);
+      }
+    }
     return { command, args: [...args], shell: false };
   }
 
@@ -973,6 +1009,71 @@ function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<strin
       ? [`${userProfile}\\.local\\bin`, `${userProfile}\\.bun\\bin`, `${userProfile}\\scoop\\shims`]
       : []),
   ];
+}
+
+/**
+ * Common POSIX CLI install dirs that GUI apps may lack on PATH.
+ * Tests override via T3CODE_CLI_FALLBACK_DIRS (empty string disables).
+ */
+function resolveKnownPosixCliDirs(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): ReadonlyArray<string> {
+  // Fall back to process.env so tests can disable fallback dirs globally via
+  // process.env.T3CODE_CLI_FALLBACK_DIRS="" without setting it on every call.
+  const override = env.T3CODE_CLI_FALLBACK_DIRS ?? process.env.T3CODE_CLI_FALLBACK_DIRS;
+  if (override !== undefined) {
+    return override
+      .split(pathDelimiterForPlatform(platform))
+      .map((dir) => dir.trim())
+      .filter((dir) => dir.length > 0);
+  }
+
+  const home = (env.HOME ?? process.env.HOME)?.trim();
+  const dirs: string[] = [];
+
+  if (home) {
+    // Native installer locations (Claude Code, Antigravity, etc.)
+    dirs.push(`${home}/.local/bin`);
+    // Bun global installs
+    dirs.push(`${home}/.bun/bin`);
+    // pnpm
+    dirs.push(`${home}/Library/pnpm`);
+    // Volta
+    dirs.push(`${home}/.volta/bin`);
+  }
+
+  // Homebrew (Apple Silicon)
+  dirs.push("/opt/homebrew/bin");
+  dirs.push("/opt/homebrew/sbin");
+  // Homebrew (Intel) / Linux common
+  dirs.push("/usr/local/bin");
+  dirs.push("/usr/local/sbin");
+
+  // npm global prefix (if set)
+  const npmPrefix = env.npm_config_prefix ?? process.env.npm_config_prefix;
+  if (npmPrefix) {
+    dirs.push(`${npmPrefix}/bin`);
+  }
+
+  // nvm: search all installed versions (newest first) so a CLI installed in
+  // an older version's bin dir is still found when the newest lacks it.
+  const nvmDir = env.NVM_DIR ?? process.env.NVM_DIR ?? (home ? `${home}/.nvm` : undefined);
+  if (nvmDir) {
+    try {
+      const versionsDir = NodePath.join(nvmDir, "versions", "node");
+      const versions = NodeFS.readdirSync(versionsDir).filter((v) => v.startsWith("v"));
+      // Compare version components numerically so v22.10.0 sorts above v22.9.0.
+      const sorted = versions.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+      for (const version of sorted) {
+        dirs.push(NodePath.join(versionsDir, version, "bin"));
+      }
+    } catch {
+      // nvm not installed or no versions
+    }
+  }
+
+  return dirs;
 }
 
 /** Keep one PATH spelling in copied Windows environment records. */

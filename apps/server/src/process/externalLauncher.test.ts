@@ -96,11 +96,19 @@ const layerTest = (input: {
       ),
     ),
     Layer.succeed(HostProcess.Platform, input.platform),
+    Layer.succeed(HostProcess.Environment, {
+      ...input.env,
+    }),
     Layer.succeed(
       SpawnExecutableResolution,
       (command) => input.resolveExecutable?.(command) ?? command,
     ),
-    ConfigProvider.layer(ConfigProvider.fromEnv({ env: input.env ?? {} })),
+    ConfigProvider.layer(
+      ConfigProvider.fromEnv({
+        env: { ...input.env },
+        preserveEmptyStrings: true,
+      }),
+    ),
   );
 };
 
@@ -210,7 +218,10 @@ it.effect.skipIf(windowsHost)(
             onSpawn: (command) => spawned.push(command),
           }),
         ),
-        Effect.provideService(HostProcess.Environment, { PATH: binDir, DISPLAY: ":0" }),
+        Effect.provideService(HostProcess.Environment, {
+          PATH: binDir,
+          DISPLAY: ":0",
+        }),
       );
 
       assert.deepEqual(
@@ -252,7 +263,9 @@ it.effect.skipIf(windowsHost)(
                   command.command === "busctl" ? sessionManager : undefined,
               }),
             ),
-            Effect.provideService(HostProcess.Environment, { PATH: binDir }),
+            Effect.provideService(HostProcess.Environment, {
+              PATH: binDir,
+            }),
           );
           // Only editors borrow the session display; a browser must not open on that screen.
           assert.deepEqual(spawned.find((command) => command.command === "xdg-open")?.options.env, {
@@ -281,8 +294,12 @@ it.effect.skipIf(windowsHost)(
           XAUTHORITY: "/home/user/auth files/cookie",
         },
       );
-      assert.deepEqual(yield* launchEnv({ stdout: "invalid JSON" }), { PATH: binDir });
-      assert.deepEqual(yield* launchEnv({ stdout: '{"data":[42]}' }), { PATH: binDir });
+      assert.deepEqual(yield* launchEnv({ stdout: "invalid JSON" }), {
+        PATH: binDir,
+      });
+      assert.deepEqual(yield* launchEnv({ stdout: '{"data":[42]}' }), {
+        PATH: binDir,
+      });
       assert.deepEqual(
         yield* launchEnv({
           spawnError: PlatformError.systemError({
@@ -759,7 +776,10 @@ it.effect.skipIf(windowsHost)("prefers zeditor in a later Linux fallback directo
       yield* fs.chmod(executable, 0o755);
     }
     const editor = EDITORS.find((editor) => editor.id === "zed")!;
-    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: "" }).pipe(
+    const resolve = resolveEditorCommand(editor, {
+      HOME: home,
+      PATH: "",
+    }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(Path.Path, withSystemBin(path, systemBin)),
     );
@@ -792,7 +812,10 @@ it.effect.skipIf(windowsHost)("does not offer the OpenZFS zed daemon as Zed on L
     );
     yield* fs.chmod(zfsZed, 0o755);
     const editor = EDITORS.find((editor) => editor.id === "zed")!;
-    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: binDir }).pipe(
+    const resolve = resolveEditorCommand(editor, {
+      HOME: home,
+      PATH: binDir,
+    }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(Path.Path, withSystemBin(path, systemBin)),
     );

@@ -21,3 +21,7 @@ if (process.env.T3CODE_TEST_KEEP_PROVIDER_ENV !== "1") {
     }
   }
 }
+
+// Disable POSIX CLI fallback directories by default in tests. Tests that need
+// them can set T3CODE_CLI_FALLBACK_DIRS explicitly on the env they pass.
+process.env.T3CODE_CLI_FALLBACK_DIRS = "";

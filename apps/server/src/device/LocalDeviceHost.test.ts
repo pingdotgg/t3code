@@ -686,7 +686,10 @@ it.effect(
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-consent-" });
       const host = yield* LocalDeviceHost.make().pipe(
         Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
-        Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
+        Effect.provideService(HostProcess.Environment, {
+          HOME: baseDir,
+          PATH: "",
+        }),
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,

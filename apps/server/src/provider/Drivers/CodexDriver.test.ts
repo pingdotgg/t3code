@@ -786,9 +786,11 @@ it.layer(layerTest)("CodexDriver", (it) => {
             homePath: NodePath.join(tempDir, "codex-home"),
           },
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, metadataSpawner));
-        const capabilities = yield* instance.snapshot
-          .resolveMaintenance()
-          .pipe(Effect.provideService(HostProcess.Environment, { PATH: "" }));
+        const capabilities = yield* instance.snapshot.resolveMaintenance().pipe(
+          Effect.provideService(HostProcess.Environment, {
+            PATH: "",
+          }),
+        );
         const latestVersion = yield* resolveLatestProviderVersion(capabilities).pipe(
           Effect.provideServiceEffect(
             ProviderLatestVersions.ProviderLatestVersions,

@@ -595,6 +595,74 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       Effect.provideService(CommandResolutionCache, new Map()),
     ),
   );
+
+  // Helpers to temporarily disable the global fallback-dir override so these
+  // tests exercise the default POSIX CLI directory search.
+  const disableFallbackDirsOverride = (): string | undefined => {
+    const saved = process.env.T3CODE_CLI_FALLBACK_DIRS;
+    delete process.env.T3CODE_CLI_FALLBACK_DIRS;
+    return saved;
+  };
+  const restoreFallbackDirsOverride = (saved: string | undefined): void => {
+    if (saved === undefined) delete process.env.T3CODE_CLI_FALLBACK_DIRS;
+    else process.env.T3CODE_CLI_FALLBACK_DIRS = saved;
+  };
+
+  it.effect("finds a command in a known POSIX CLI directory that is not on PATH", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(disableFallbackDirsOverride),
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-posix-home-" });
+          const localBin = path.join(home, ".local", "bin");
+          yield* fs.makeDirectory(localBin, { recursive: true });
+          const claude = path.join(localBin, "claude");
+          yield* fs.writeFileString(claude, "#!/bin/sh\n");
+          yield* fs.chmod(claude, 0o755);
+
+          // PATH deliberately excludes ~/.local/bin, as a GUI app launched from
+          // Finder/Dock would have.
+          const env = { HOME: home, PATH: "/usr/bin:/bin" };
+
+          const resolved = yield* resolveCommandPath("claude", { env }).pipe(
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(CommandResolutionCache, new Map()),
+          );
+
+          expect(resolved).toBe(claude);
+        }),
+      (saved) => Effect.sync(() => restoreFallbackDirsOverride(saved)),
+    ),
+  );
+
+  it.effect("finds a command in a known POSIX directory even when PATH is empty", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(disableFallbackDirsOverride),
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-posix-home-" });
+          const localBin = path.join(home, ".local", "bin");
+          yield* fs.makeDirectory(localBin, { recursive: true });
+          const claude = path.join(localBin, "claude");
+          yield* fs.writeFileString(claude, "#!/bin/sh\n");
+          yield* fs.chmod(claude, 0o755);
+
+          const env = { HOME: home, PATH: "" };
+
+          const resolved = yield* resolveCommandPath("claude", { env }).pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(CommandResolutionCache, new Map()),
+          );
+
+          expect(resolved).toBe(claude);
+        }),
+      (saved) => Effect.sync(() => restoreFallbackDirsOverride(saved)),
+    ),
+  );
 });
 
 describe("runsGitWithoutConsole", () => {

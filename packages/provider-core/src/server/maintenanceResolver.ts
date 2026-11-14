@@ -59,6 +59,10 @@ const CommandLookupEnvConfig = Config.all({
   Path: Config.String("Path").pipe(Config.option),
   path: Config.String("path").pipe(Config.option),
   PATHEXT: Config.String("PATHEXT").pipe(Config.option),
+  HOME: Config.String("HOME").pipe(Config.option),
+  NVM_DIR: Config.String("NVM_DIR").pipe(Config.option),
+  npm_config_prefix: Config.String("npm_config_prefix").pipe(Config.option),
+  T3CODE_CLI_FALLBACK_DIRS: Config.String("T3CODE_CLI_FALLBACK_DIRS").pipe(Config.option),
 }).pipe(Config.map(compactEnv));
 
 const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
