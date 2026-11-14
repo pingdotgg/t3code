@@ -6126,6 +6126,34 @@ describe("PiRpc early process exit", () => {
       assert.isFalse(error.message.includes("super-secret"));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("includes Pi's stderr cause when it exits nonzero", () =>
+    Effect.gen(function* () {
+      const cause = `Error: This extension ctx is stale after session replacement --api-key super-secret --token "quoted leaked-word ${"y".repeat(240)}"\n`;
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          makeHandle({
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            stderr: Stream.fromIterable([new TextEncoder().encode(cause)]),
+          }),
+        ),
+      );
+      const connection = yield* makePiRpcConnection({
+        command: "pi",
+        args: ["--mode", "rpc"],
+        cwd: undefined,
+        env: {},
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+
+      const error = yield* Queue.take(connection.events).pipe(Effect.flip);
+      assert.equal(error._tag, "PiRpcError");
+      assert.include(error.message, "pi process exited with code 1");
+      assert.include(error.message, "This extension ctx is stale after session replacement");
+      assert.include(error.message, "--api-key [REDACTED]");
+      assert.isFalse(error.message.includes("super-secret"));
+      assert.isFalse(error.message.includes("leaked-word"));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("PiRpc teardown", () => {
