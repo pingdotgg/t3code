@@ -619,7 +619,7 @@ it.effect("creates pull requests using the official REST payload shape", () => {
         branch: { name: "main" },
       },
     });
-  }).pipe(Effect.provide(layer), Effect.scoped);
+  }).pipe(Effect.provide(layer));
 });
 
 it.effect("reports the account Bitbucket confirms for the configured credential", () => {

@@ -9,15 +9,26 @@ import {
 } from "@t3tools/contracts";
 import { useImperativeHandle, type RefObject } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  threadContextRecord,
+} from "@t3tools/shared/composerContextReferences";
 import { toastManager } from "../ui/toast";
 
 import { act, render } from "../../../test/render";
 import { useComposerDraftStore, useComposerThreadDraft } from "../../composerDraftStore";
+import { formatInlineContextReference } from "../../lib/composerContextReferences";
+import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "../../lib/terminalContext";
+import {
+  environmentContextRecord,
+  environmentContextReference,
+  threadContextReference,
+} from "../../lib/composerContextRecords";
 import { deriveComposerSendState } from "../ChatView.logic";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
 import { useQueuedRunEdit } from "./useQueuedRunEdit";
+import { readAttachmentUpload, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
 
 interface RunStatus {
   readonly id: RunId;
@@ -74,8 +85,8 @@ const RUN = RunId.make("run-1");
 
 type HookResult = ReturnType<typeof useQueuedRunEdit>;
 
-function projection(runs: ReadonlyArray<RunStatus>) {
-  return { runs, messages: [] } as unknown as ThreadStructure;
+function projection(runs: ReadonlyArray<RunStatus>, messages: ReadonlyArray<unknown>) {
+  return { runs, messages } as unknown as ThreadStructure;
 }
 
 function setRuns(ref: ScopedThreadRef, status: string) {
@@ -86,13 +97,14 @@ function Harness(props: {
   readonly threadRef: ScopedThreadRef;
   readonly runStatus: string;
   readonly hookRef: RefObject<HookResult | null>;
+  readonly messages: ReadonlyArray<unknown>;
 }) {
   const result = useQueuedRunEdit({
     environmentId: ENV,
     routeThreadRef: props.threadRef,
     threadDraftTarget: props.threadRef,
     activeThreadId: props.threadRef.threadId,
-    serverProjection: projection([{ id: RUN, status: props.runStatus }]),
+    serverProjection: projection([{ id: RUN, status: props.runStatus }], props.messages),
     promptRef: { current: "" },
     composerRef: { current: null },
   });
@@ -124,16 +136,22 @@ function Harness(props: {
   ) : null;
 }
 
-function view(threadRef: ScopedThreadRef, runStatus: string, hook: { current: HookResult | null }) {
+function view(
+  threadRef: ScopedThreadRef,
+  runStatus: string,
+  hook: { current: HookResult | null },
+  messages: ReadonlyArray<unknown> = [],
+) {
   return (
     <AppAtomRegistryProvider>
-      <Harness threadRef={threadRef} runStatus={runStatus} hookRef={hook} />
+      <Harness threadRef={threadRef} runStatus={runStatus} hookRef={hook} messages={messages} />
     </AppAtomRegistryProvider>
   );
 }
 
 function setup() {
   mocks.editQueuedRun.mockReset();
+  useAttachmentUploadStore.setState({ uploadsByImageId: {} });
   useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
   setRuns(THREAD_A, "queued");
   setRuns(THREAD_B, "queued");
@@ -262,6 +280,82 @@ describe("useQueuedRunEdit", () => {
     );
   });
 
+  it("opens an edit with only the thread and machine records its text still mentions", async () => {
+    const { hook } = setup();
+    const thread = threadContextRecord(THREAD_B, "Support Any File Uploads");
+    const machine = environmentContextRecord(ENV, "Build box");
+    const unreferenced = threadContextRecord(THREAD_A, "Removed earlier");
+    const messageId = MessageId.make("message-1");
+    const text = `wait for ${formatInlineContextReference(threadContextReference(thread))} on ${formatInlineContextReference(environmentContextReference(machine))}`;
+    const messages = [
+      { id: messageId, text, context: { version: 1, records: [thread, machine, unreferenced] } },
+    ];
+    await using _screen = await render(view(THREAD_A, "queued", hook, messages));
+
+    await act(() => requireHook(hook).beginEdit({ runId: RUN, messageId, text, attachments: [] }));
+
+    const draft = useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget);
+    expect(draft?.prompt).toBe(text);
+    expect(draft?.threadContexts).toEqual([thread]);
+    expect(draft?.environmentContexts).toEqual([machine]);
+  });
+
+  it("saves only the thread mentions still in the edited message", async () => {
+    const { hook } = setup();
+    mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+    const kept = threadContextRecord(THREAD_B, "Kept");
+    const removed = threadContextRecord(THREAD_A, "Removed");
+    const messageId = MessageId.make("message-1");
+    const text = [kept, removed]
+      .map((record) => formatInlineContextReference(threadContextReference(record)))
+      .join(" and ");
+    const messages = [{ id: messageId, text, context: { version: 1, records: [kept, removed] } }];
+    await using _screen = await render(view(THREAD_A, "queued", hook, messages));
+    await act(() => requireHook(hook).beginEdit({ runId: RUN, messageId, text, attachments: [] }));
+    const target = requireHook(hook).draftTarget;
+    await act(() => useComposerDraftStore.getState().setThreadContexts(target, [kept]));
+
+    const draft = useComposerDraftStore.getState().getComposerDraft(target);
+    await requireHook(hook).saveEdit(
+      { ...savedContent(draft?.prompt ?? ""), threadContexts: draft?.threadContexts ?? [] },
+      () => {},
+    );
+
+    expect(mocks.editQueuedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          edit: expect.objectContaining({ context: { version: 1, records: [kept] } }),
+        }),
+      }),
+    );
+  });
+
+  it("adds terminal context to the queued message being edited", async () => {
+    const { hook } = setup();
+    await using _screen = await render(view(THREAD_A, "queued", hook));
+    await beginChangedEdit(hook);
+    const target = requireHook(hook).draftTarget;
+    const inserted = useComposerDraftStore.getState().insertTerminalContext(
+      target,
+      `changed${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}`,
+      {
+        id: "terminal-context-1",
+        threadId: THREAD_A.threadId,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        terminalId: "default",
+        terminalLabel: "Terminal 1",
+        lineStart: 3,
+        lineEnd: 3,
+        text: "hello",
+      },
+      0,
+    );
+    expect(inserted).toBe(true);
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(target)?.terminalContexts,
+    ).toHaveLength(1);
+  });
+
   it("keeps an open edit when the user leaves the thread and comes back", async () => {
     const { hook } = setup();
     await using screen = await render(view(THREAD_A, "queued", hook));
@@ -313,6 +407,78 @@ describe("useQueuedRunEdit", () => {
     expect(requireHook(hook).isEditing).toBe(false);
     expect(promptOf(THREAD_A)).toBe("");
   });
+
+  it.each([
+    { transition: "cancel", result: "Success" },
+    { transition: "recover", result: "Failure" },
+    { transition: "replace", result: "Success" },
+  ] as const)(
+    "settles saved attachments after $transition and $result",
+    async ({ transition, result }) => {
+      const { hook } = setup();
+      let finishSave!: (result: { readonly _tag: "Success" | "Failure" }) => void;
+      let started!: () => void;
+      const saving = new Promise<{ readonly _tag: "Success" | "Failure" }>((resolve) => {
+        finishSave = resolve;
+      });
+      const requested = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      mocks.editQueuedRun.mockImplementation(() => {
+        started();
+        return saving;
+      });
+      await using _screen = await render(view(THREAD_A, "queued", hook));
+      await beginChangedEdit(hook);
+      const image = {
+        type: "image" as const,
+        id: "saved-image",
+        name: "image.png",
+        mimeType: "image/png",
+        sizeBytes: 5,
+        file: new File(["image"], "image.png", { type: "image/png" }),
+        previewUrl: "blob:saved-image",
+      };
+      using revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+      await act(() =>
+        useComposerDraftStore.getState().addImage(requireHook(hook).draftTarget, image),
+      );
+      useAttachmentUploadStore.setState({
+        uploadsByImageId: {
+          [image.id]: { status: "ready", environmentId: ENV, attachmentId: "saved-upload" },
+        },
+      });
+      const target = requireHook(hook).draftTarget;
+      const saved = requireHook(hook).saveEdit(
+        { ...savedContent("changed"), images: [image] },
+        () => {},
+      );
+      await act(() => requested);
+      expect(requireHook(hook).isSaving).toBe(true);
+      if (transition === "cancel") await act(() => requireHook(hook).cancelEdit());
+      if (transition === "recover") await act(() => setRuns(THREAD_A, "running"));
+      if (transition === "replace") {
+        await beginChangedEdit(hook);
+        await act(() =>
+          useComposerDraftStore.getState().addImage(requireHook(hook).draftTarget, image),
+        );
+      }
+      expect(readAttachmentUpload(image.id)).toBeDefined();
+      expect(revoke).not.toHaveBeenCalled();
+      finishSave({ _tag: result });
+      await act(() => saved);
+      if (transition === "cancel") {
+        expect(readAttachmentUpload(image.id)).toBeUndefined();
+        expect(revoke).toHaveBeenCalledWith(image.previewUrl);
+        expect(useComposerDraftStore.getState().getComposerDraft(target)).toBeNull();
+      } else {
+        expect(readAttachmentUpload(image.id)).toBeDefined();
+        expect(revoke).not.toHaveBeenCalled();
+        const owner = transition === "recover" ? THREAD_A : target;
+        expect(useComposerDraftStore.getState().getComposerDraft(owner)?.images).toEqual([image]);
+      }
+    },
+  );
 
   it("leaves a newer edit alone when a save from before navigation finishes", async () => {
     const { hook } = setup();

@@ -1,7 +1,7 @@
 import { MessageId, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as DateTime from "effect/DateTime";
-import { assert, describe, expect, it } from "vite-plus/test";
+import { assert, describe, expect, it, vi } from "vite-plus/test";
 import { makeAssistantStreamingFilter, splitBufferedAssistantText } from "./assistantStreaming.ts";
 
 describe("V2 assistant streaming", () => {
@@ -174,6 +174,13 @@ it.each<{ readonly name: string; readonly mode?: "turn"; readonly steps: Readonl
     ],
   },
   {
+    name: "a rewrite that drops an open code fence",
+    steps: [
+      { at: 0, text: "Intro\n\n```ts\nx()\n", shows: "Intro\n\n" },
+      { at: 400, text: "Retry\n\n- a\n- b", shows: "Retry\n\n- a\n" },
+    ],
+  },
+  {
     name: "turn mode",
     mode: "turn",
     steps: [{ at: 0, text: "A\n\nB", shows: null }, { dueAt: null }],
@@ -192,4 +199,23 @@ it.each<{ readonly name: string; readonly mode?: "turn"; readonly steps: Readonl
         step.shows,
       );
   }
+});
+
+it("scans each streamed line once while a long code fence is still open", () => {
+  const filter = makeAssistantStreamingFilter("paragraph", 800);
+  const lineCount = 400;
+  let text = "Intro\n\n```ts\n";
+  const indexOf = vi.spyOn(String.prototype, "indexOf");
+  try {
+    for (let line = 0; line < lineCount; line++) {
+      text += `const value${line} = ${line};\n`;
+      filter.filter(snapshot("m", text, true), line * 400);
+    }
+    const newlineSearches = indexOf.mock.calls.filter(([search]) => search === "\n").length;
+    expect(newlineSearches).toBeLessThan(lineCount * 4);
+  } finally {
+    indexOf.mockRestore();
+  }
+  text += "```\n";
+  assert.equal(shown(filter.filter(snapshot("m", text, true), lineCount * 400)), text);
 });
