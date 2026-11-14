@@ -9,7 +9,13 @@ import {
   ProjectId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { PullRequestActor, PullRequestLabel, PullRequestState } from "./pullRequest.ts";
+import {
+  PullRequestActor,
+  PullRequestLabel,
+  PullRequestReaction,
+  PullRequestReactionContent,
+  PullRequestState,
+} from "./pullRequest.ts";
 
 /**
  * Which tracker an issue lives in. Git hosts reuse their `SourceControlProviderKind` spelling
@@ -53,25 +59,10 @@ export type IssueListState = typeof IssueListState.Type;
 export const IssueInvolvement = Schema.Literals(["all", "assigned", "authored", "mentioned"]);
 export type IssueInvolvement = typeof IssueInvolvement.Type;
 
-export const IssueReactionContent = Schema.Literals([
-  "thumbs-up",
-  "thumbs-down",
-  "laugh",
-  "hooray",
-  "confused",
-  "heart",
-  "rocket",
-  "eyes",
-]);
+export const IssueReactionContent = PullRequestReactionContent;
 export type IssueReactionContent = typeof IssueReactionContent.Type;
 
-export const IssueReaction = Schema.Struct({
-  content: IssueReactionContent,
-  count: PositiveInt,
-  /** Who reacted, as far as the tracker named them; the viewer is left out and shown as "You". */
-  actors: Schema.Array(TrimmedNonEmptyString),
-  viewerHasReacted: Schema.Boolean,
-});
+export const IssueReaction = PullRequestReaction;
 export type IssueReaction = typeof IssueReaction.Type;
 
 /**
