@@ -47,9 +47,9 @@ import {
   WorkspaceNativeTabs,
   WorkspaceSidebarTabsFooter,
 } from "./workspace/WorkspaceNativeTabs.ios";
+import { NAVIGATION_TAB_ORDER } from "./workspace/navigation-tab-order";
 import { workspaceUsesColumns } from "./workspace/workspace-tabs-state";
 import { useWorkspaceCompose } from "./workspace/useWorkspaceCompose";
-import { NAVIGATION_TAB_ORDER } from "./workspace/navigation-tab-order";
 import { selectedIssueKeyOf } from "../issues/issueParams";
 import { isSettingsRoute, settingsOpenIn } from "../settings/settings-navigation";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
