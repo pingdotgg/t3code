@@ -134,6 +134,20 @@ describe("workspaceAssetResource", () => {
 describe("document preview contents", () => {
   const bytes = (text: string) => new TextEncoder().encode(text).buffer;
 
+  it.each([
+    ["control symbols", String.raw`{\rtf1 Jean\_Luc\-X\~Y}`, "Jean\u2011Luc\u00adX\u00a0Y"],
+    [
+      "named spaces, joiners and direction marks",
+      String.raw`{\rtf1 A\tab B\emspace C\enspace D\qmspace E\zwj F\zwnj G\zwbo H\ltrmark I\rtlmark J}`,
+      "A\tB\u2003C\u2002D\u2005E\u200dF\u200cG\u200bH\u200eI\u200fJ",
+    ],
+    ["a Unicode fallback", String.raw`{\rtf1 Jean\u8209\_Luc}`, "Jean\u2011Luc"],
+  ])("keeps the text of %s", (_name, source, expected) => {
+    const result = openRtf(bytes(source));
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html.replaceAll(/<[^>]*>/g, "")).toBe(expected);
+  });
+
   it.each(["?", String.raw`\'3f`, String.raw`\\`])(
     "consumes skipped rich text Unicode fallback %s",
     (fallback) => {
@@ -162,7 +176,7 @@ describe("document preview contents", () => {
   it("decodes rich text formatting and Unicode without showing hidden destinations", () => {
     const result = openRtf(
       bytes(
-        String.raw`{\rtf1\ansi{\fonttbl{\f0 Hidden font;}}Hello \b bold\b0\par Unicode: \u945?{\*\unknown hidden}{\field{\*\fldinst HYPERLINK "https://example.com"}{\fldrslt visible}}}`,
+        String.raw`{\rtf1\ansi{\fonttbl{\f0 Hidden font;}}Hello \b bold\b0\par Unicode: \u945?{\*\unknown hidden\_\emspace\zwj}{\field{\*\fldinst HYPERLINK "https://example.com"}{\fldrslt visible}}}`,
       ),
     );
     expect(result.type).toBe("document");
