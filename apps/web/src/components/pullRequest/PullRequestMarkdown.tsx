@@ -25,6 +25,8 @@ export const PullRequestMarkdownContext = createContext<{
   threadRef: ScopedThreadRef | null;
   /** The change request's `owner/name`, which can differ from the checkout the body renders in. */
   repository: string | null;
+  /** The change request's host, which names a self-hosted forge's media hosts. */
+  host: string | null;
 } | null>(null);
 
 function PullRequestHostVideo({
@@ -33,18 +35,21 @@ function PullRequestHostVideo({
   url,
   fetchUrl,
   repository,
+  host,
 }: {
   environmentId: EnvironmentId;
   cwd: string;
   url: string;
   fetchUrl: string;
   repository: string | undefined;
+  host: string | undefined;
 }) {
   const resource: AssetResource = {
     _tag: SOURCE_CONTROL_MEDIA_ASSET,
     cwd,
     url: fetchUrl,
     ...(repository ? { repository } : {}),
+    ...(host ? { host } : {}),
   };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
@@ -79,6 +84,7 @@ function PullRequestBodySegmentView({
 }) {
   const context = useContext(PullRequestMarkdownContext);
   const repository = context?.repository ?? undefined;
+  const host = context?.host ?? undefined;
   if (segment.kind === "table") {
     return (
       <div className="space-y-3">
@@ -125,6 +131,7 @@ function PullRequestBodySegmentView({
         lineBreaks={lineBreaks}
         sourceControlMedia
         sourceControlMediaRepository={repository}
+        sourceControlMediaHost={host}
         onTaskListChange={
           onTaskListChange && segment.kind === "markdown"
             ? ({ markerOffset, checked }) =>
@@ -137,7 +144,7 @@ function PullRequestBodySegmentView({
       />
     );
   }
-  const hostMedia = sourceControlClients.mediaUrl(segment.url);
+  const hostMedia = sourceControlClients.mediaUrl(segment.url, host);
   if (segment.media === "video" && hostMedia !== null) {
     return (
       <PullRequestHostVideo
@@ -147,6 +154,7 @@ function PullRequestBodySegmentView({
         url={segment.url}
         fetchUrl={hostMedia.fetchUrl}
         repository={repository}
+        host={host}
       />
     );
   }

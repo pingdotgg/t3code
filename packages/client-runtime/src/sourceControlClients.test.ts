@@ -1,7 +1,11 @@
 import { ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { appSignInTargetForRemote, sourceControlClients } from "./sourceControlClients.ts";
+import {
+  appSignInTargetForRemote,
+  changeRequestMediaHost,
+  sourceControlClients,
+} from "./sourceControlClients.ts";
 import { normalizeThreadPullRequestKey } from "./threadPullRequests.ts";
 
 const parse = (url: string) => {
@@ -411,5 +415,41 @@ describe("appSignInTargetForRemote", () => {
   it("skips hosts the app is not registered on", () => {
     expect(appSignInTargetForRemote("https://ghe.acme.test/acme/web.git")).toBeNull();
     expect(appSignInTargetForRemote("https://gitlab.com/acme/web.git")).toBeNull();
+  });
+});
+
+describe("change request media host", () => {
+  const mediaFor = (provider: string, changeRequestUrl: string, imageUrl: string) =>
+    sourceControlClients.mediaUrl(
+      imageUrl,
+      changeRequestMediaHost({ provider, url: changeRequestUrl }),
+    )?.fetchUrl ?? null;
+
+  it("names a GitHub Enterprise Server pull request's own media through its raw host", () => {
+    expect(
+      mediaFor(
+        "github",
+        "https://ghe.example.com/o/r/pull/1",
+        "https://ghe.example.com/o/r/blob/main/a.png?raw=true",
+      ),
+    ).toBe("https://raw.ghe.example.com/o/r/main/a.png");
+  });
+
+  it("leaves another forge's same-host raw links to load as written", () => {
+    expect(
+      mediaFor(
+        "forgejo",
+        "https://forge.example.com/o/r/pulls/1",
+        "https://forge.example.com/o/r/raw/branch/main/a.png",
+      ),
+    ).toBeNull();
+    expect(
+      mediaFor(
+        "bitbucket",
+        "https://bitbucket.org/w/r/pull-requests/1",
+        "https://bitbucket.org/w/r/raw/main/a.png",
+      ),
+    ).toBeNull();
+    expect(changeRequestMediaHost(null)).toBeUndefined();
   });
 });

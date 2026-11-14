@@ -30,6 +30,7 @@ export const sourceControlMediaResponse = Effect.fn(
     readonly url: string;
     readonly cwd: string;
     readonly repository?: string;
+    readonly host?: string;
     readonly expiresAt: number;
   },
   requestHeaders: Record<string, string | undefined>,
@@ -40,7 +41,7 @@ export const sourceControlMediaResponse = Effect.fn(
       remainingSeconds > 0 ? `private, max-age=${remainingSeconds}` : "private, no-store",
     "x-content-type-options": "nosniff",
   };
-  const media = sourceControlDefinitions.mediaUrl(asset.url);
+  const media = sourceControlDefinitions.mediaUrl(asset.url, asset.host);
   const drivers = yield* BuiltInDrivers.SourceControlDrivers;
   const fetchMedia = drivers.find(({ driver }) => driver.kind === media?.definition.kind)?.instance
     .fetchMedia;
@@ -65,6 +66,7 @@ export const sourceControlMediaResponse = Effect.fn(
     url: asset.url,
     headers: forwarded,
     ...(repository === undefined ? {} : { repository }),
+    ...(asset.host === undefined ? {} : { host: asset.host }),
   });
   if (response === null) return HttpServerResponse.empty({ status: 502, headers });
   // It carries none of the upstream entity headers: a `content-length` with no body behind it

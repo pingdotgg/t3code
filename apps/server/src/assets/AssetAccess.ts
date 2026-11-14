@@ -171,6 +171,7 @@ const AssetClaimsSchema = Schema.Union([
     url: Schema.String,
     cwd: Schema.String,
     repository: Schema.optionalKey(Schema.String),
+    host: Schema.optionalKey(Schema.String),
     expiresAt: Schema.Number,
   }),
 ]);
@@ -200,6 +201,7 @@ export type ResolvedAsset =
       readonly url: string;
       readonly cwd: string;
       readonly repository?: string;
+      readonly host?: string;
       readonly expiresAt: number;
     };
 
@@ -833,7 +835,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       break;
     }
     case SOURCE_CONTROL_MEDIA_ASSET: {
-      const media = sourceControlDefinitions.mediaUrl(input.resource.url);
+      const media = sourceControlDefinitions.mediaUrl(input.resource.url, input.resource.host);
       if (media === null) {
         return yield* new AssetSourceControlMediaUrlValidationError({});
       }

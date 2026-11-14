@@ -12,6 +12,7 @@ import {
 import { GITHUB_CREDENTIALED_MEDIA_HOSTS } from "../shared/gitHubMedia.ts";
 
 import * as GitHubCredentials from "./GitHubCredentials.ts";
+import { gitHubApiUrls } from "./GitHubRequestPolicy.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 
 /**
@@ -19,14 +20,30 @@ import * as GitHubRest from "./GitHubRest.ts";
  * authorizes with its own signature, and some of them reject a request that also carries a
  * bearer token.
  */
-const isCredentialedHost = (url: string) => {
+const isCredentialedHost = (url: string, hosts: ReadonlySet<string>) => {
   const target = URL.parse(url);
   return (
     target !== null &&
     target.protocol === "https:" &&
-    target.port === "" &&
-    GITHUB_CREDENTIALED_MEDIA_HOSTS.has(target.hostname.toLowerCase())
+    target.username === "" &&
+    target.password === "" &&
+    hosts.has(target.host.toLowerCase())
   );
+};
+
+/**
+ * The account a request authenticates as, and the hosts its token may be sent to. An Enterprise
+ * Server host's token goes only to that host and its `raw.` subdomain, never to github.com.
+ */
+const credentialScope = (request: SourceControlMediaRequest) => {
+  const enterpriseHost = request.host?.trim().toLowerCase();
+  if (enterpriseHost && !GITHUB_CREDENTIALED_MEDIA_HOSTS.has(enterpriseHost)) {
+    const hosts: ReadonlySet<string> = new Set([enterpriseHost, `raw.${enterpriseHost}`]);
+    if (isCredentialedHost(request.url, hosts)) {
+      return { account: enterpriseHost, hosts, enterprise: true };
+    }
+  }
+  return { account: "github.com", hosts: GITHUB_CREDENTIALED_MEDIA_HOSTS, enterprise: false };
 };
 
 const MAX_REDIRECTS = 3;
@@ -39,6 +56,44 @@ const REPOSITORY_PATTERN = /^[\w.-]+\/[\w.-]+$/u;
 // GitHub's signed upload links last about five minutes.
 const SIGNED_URL_CACHE_TTL_MS = 4 * 60_000;
 const SIGNED_URL_CACHE_MAX_ENTRIES = 64;
+const CONTENTS_RAW_ACCEPT = "application/vnd.github.raw";
+const MAX_REF_SEGMENTS = 3;
+
+const decodeSegments = (segments: ReadonlyArray<string>) => {
+  const joined = segments.join("/");
+  try {
+    return decodeURIComponent(joined);
+  } catch {
+    return joined;
+  }
+};
+
+/** `owner/name` of a repository file URL, `https://<raw host>/<owner>/<name>/<ref>/<path>`. */
+const fileRepository = (url: string) => {
+  const [owner, name] = URL.parse(url)?.pathname.split("/").slice(1) ?? [];
+  const repository = `${owner}/${name}`;
+  return REPOSITORY_PATTERN.test(repository) ? repository : undefined;
+};
+
+/**
+ * Enterprise Server's web routes ignore a token and its `raw.` subdomain exists only with
+ * subdomain isolation, so a file is read through the Contents API. A branch can contain slashes,
+ * so each split of `<ref>/<path>` is a candidate, shortest ref first.
+ */
+const enterpriseContentsReads = (url: string, host: string) => {
+  const repository = fileRepository(url);
+  const refAndPath = URL.parse(url)?.pathname.split("/").slice(3) ?? [];
+  if (repository === undefined) return [];
+  const contents = `${gitHubApiUrls(host).rest}/repos/${repository}/contents`;
+  return refAndPath
+    .slice(0, -1)
+    .slice(0, MAX_REF_SEGMENTS)
+    .map((_, index) => {
+      const read = new URL(`${contents}/${refAndPath.slice(index + 1).join("/")}`);
+      read.searchParams.set("ref", decodeSegments(refAndPath.slice(0, index + 1)));
+      return read.toString();
+    });
+};
 
 const contentTypeOf = (response: HttpClientResponse.HttpClientResponse) =>
   response.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
@@ -70,21 +125,28 @@ export const make = Effect.gen(function* () {
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   const signedUrls = new Map<string, { readonly at: number; readonly url: string }>();
 
-  // Both media hosts are served by github.com's account, which is the host `gh` stores it under.
-  // Read on every fetch, so media loads as soon as the user signs in.
-  const credential = Effect.suspend(() => credentials.get("github.com")).pipe(
-    Effect.orElseSucceed(() => null),
-  );
+  // github.com's media hosts are served by github.com's account, which is the host `gh` stores it
+  // under. Read on every fetch, so media loads as soon as the user signs in.
+  const credential = (account: string) =>
+    Effect.suspend(() => credentials.get(account)).pipe(Effect.orElseSucceed(() => null));
 
   const fetchFollowingRedirects = Effect.fnUntraced(function* (
     url: string,
     headers: Readonly<Record<string, string>>,
     token: Redacted.Redacted<string> | null,
+    credentialedHosts: ReadonlySet<string> = GITHUB_CREDENTIALED_MEDIA_HOSTS,
+    // An upload redirects to a signed URL. Enterprise Server serves that from its own host and
+    // answers 404 when the token comes along too.
+    tokenOnRedirects = true,
   ) {
     let target = url;
     for (let hop = 0; ; hop += 1) {
       const authorization =
-        token !== null && isCredentialedHost(target) ? `Bearer ${Redacted.value(token)}` : null;
+        token !== null &&
+        (hop === 0 || tokenOnRedirects) &&
+        isCredentialedHost(target, credentialedHosts)
+          ? `Bearer ${Redacted.value(token)}`
+          : null;
       const response: HttpClientResponse.HttpClientResponse = yield* httpClient
         .execute(
           HttpClientRequest.get(target).pipe(
@@ -143,7 +205,33 @@ export const make = Effect.gen(function* () {
   });
 
   return Effect.fn("GitHubMediaFetch.fetchMedia")(function* (request: SourceControlMediaRequest) {
-    const signedIn = yield* credential;
+    const scope = credentialScope(request);
+    const signedIn = yield* credential(scope.account);
+    const upload = ATTACHMENT_PATH_PATTERN.test(URL.parse(request.url)?.pathname ?? "");
+    if (scope.enterprise) {
+      // The client names an Enterprise host, so only one the user has signed in to is fetched.
+      if (signedIn === null) return null;
+      if (upload) {
+        return yield* fetchFollowingRedirects(
+          request.url,
+          request.headers,
+          signedIn.token,
+          scope.hosts,
+          false,
+        );
+      }
+      let response: HttpClientResponse.HttpClientResponse | null = null;
+      for (const read of enterpriseContentsReads(request.url, scope.account)) {
+        response = yield* fetchFollowingRedirects(
+          read,
+          { ...request.headers, accept: CONTENTS_RAW_ACCEPT },
+          signedIn.token,
+          scope.hosts,
+        );
+        if (response?.status !== 404) return response;
+      }
+      return response;
+    }
     const repository = signedIn === null ? undefined : uploadRepository(request);
     const cacheKey =
       signedIn === null || repository === undefined
@@ -163,6 +251,8 @@ export const make = Effect.gen(function* () {
         request.url,
         request.headers,
         signedIn?.token ?? null,
+        scope.hosts,
+        !upload,
       );
       if (response === null || contentTypeOf(response) !== "text/html") return response;
     }
@@ -175,7 +265,7 @@ export const make = Effect.gen(function* () {
       MEDIA_CONTENT_TYPE_PATTERN.test(contentTypeOf(media))
     ) {
       // The render can run under another account if the user switched mid-request.
-      const current = yield* credential;
+      const current = yield* credential(scope.account);
       if (current?.fingerprint === signedIn.fingerprint) {
         if (signedUrls.size >= SIGNED_URL_CACHE_MAX_ENTRIES) {
           const oldest = signedUrls.keys().next().value;

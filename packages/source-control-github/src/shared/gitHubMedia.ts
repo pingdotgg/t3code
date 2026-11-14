@@ -46,19 +46,52 @@ function rawFile(fetchUrl: string): SourceControlMediaUrl {
   return media(fetchUrl, COMMIT_SHA_PATTERN.test(ref) ? { immutable: true } : {});
 }
 
-export function gitHubMediaUrl(url: URL): SourceControlMediaUrl | null {
+/** GitHub links an uploaded video bare, with no extension, and an image as markdown. */
+function upload(host: string, pathname: string): SourceControlMediaUrl | null {
+  if (ATTACHMENT_PATH_PATTERN.test(pathname)) {
+    return media(`https://${host}${pathname}`, { kind: "video", immutable: true });
+  }
+  return LEGACY_ATTACHMENT_PATH_PATTERN.test(pathname)
+    ? media(`https://${host}${pathname}`, { immutable: true })
+    : null;
+}
+
+/**
+ * A GitHub Enterprise Server file is named by its `raw.` subdomain URL, the equivalent of
+ * `raw.githubusercontent.com`; the server reads it through that host's API. Its hostname can be
+ * anything, so it is matched only as the host of the change request the media is in.
+ */
+function enterpriseMediaUrl(url: URL, knownHost: string): SourceControlMediaUrl | null {
+  const host = url.host.toLowerCase();
+  const rawHost = `raw.${knownHost}`;
+  if (host === rawHost) return rawFile(`https://${host}${url.pathname}${url.search}`);
+  if (host !== knownHost) return null;
+  const uploaded = upload(host, url.pathname);
+  if (uploaded !== null) return uploaded;
+  const repositoryFile = REPOSITORY_FILE_PATTERN.exec(url.pathname);
+  return repositoryFile
+    ? rawFile(`https://${rawHost}/${repositoryFile[1]}/${repositoryFile[2]}/${repositoryFile[3]}`)
+    : null;
+}
+
+export function gitHubMediaUrl(url: URL, knownHost?: string): SourceControlMediaUrl | null {
   if (url.protocol !== "https:") return null;
   const host = url.hostname.toLowerCase();
+  const enterpriseHost = knownHost?.trim().toLowerCase();
+  // `*.ghe.com` keeps loading directly until its raw host is known to accept a token.
+  if (
+    enterpriseHost &&
+    !GITHUB_CREDENTIALED_MEDIA_HOSTS.has(enterpriseHost) &&
+    !enterpriseHost.endsWith(".ghe.com")
+  ) {
+    const enterpriseMedia = enterpriseMediaUrl(url, enterpriseHost);
+    if (enterpriseMedia !== null) return enterpriseMedia;
+  }
   if (host === RAW_HOST) return rawFile(`https://${host}${url.pathname}${url.search}`);
   if (host === LFS_HOST) return media(`https://${host}${url.pathname}${url.search}`);
   if (!WEB_HOSTS.has(host)) return null;
-  // GitHub links an uploaded video bare, with no extension, and an image as markdown.
-  if (ATTACHMENT_PATH_PATTERN.test(url.pathname)) {
-    return media(`https://github.com${url.pathname}`, { kind: "video", immutable: true });
-  }
-  if (LEGACY_ATTACHMENT_PATH_PATTERN.test(url.pathname)) {
-    return media(`https://github.com${url.pathname}`, { immutable: true });
-  }
+  const uploaded = upload("github.com", url.pathname);
+  if (uploaded !== null) return uploaded;
   const repositoryFile = REPOSITORY_FILE_PATTERN.exec(url.pathname);
   return repositoryFile
     ? rawFile(`https://${RAW_HOST}/${repositoryFile[1]}/${repositoryFile[2]}/${repositoryFile[3]}`)

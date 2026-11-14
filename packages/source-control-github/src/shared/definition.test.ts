@@ -165,6 +165,65 @@ describe("GitHub media URLs", () => {
     expect(media("https://raw.githubusercontent.com/o/r/main/100%.png")?.fileName).toBe("100%.png");
   });
 
+  it("claims an Enterprise Server file only as the host of the change request it is in", () => {
+    const sha = "d108ed74240d7486565861acc984e0c47d63852a";
+    const blob = `https://ghe.example.com/owner/repo/blob/${sha}/docs/shot.png?raw=true`;
+    expect(definition.mediaUrl(new URL(blob), "ghe.example.com")).toEqual({
+      fetchUrl: `https://raw.ghe.example.com/owner/repo/${sha}/docs/shot.png`,
+      fileName: "shot.png",
+      immutable: true,
+    });
+    expect(
+      definition.mediaUrl(new URL("https://raw.ghe.example.com/o/r/main/a.png"), "ghe.example.com")
+        ?.fetchUrl,
+    ).toBe("https://raw.ghe.example.com/o/r/main/a.png");
+    expect(definition.mediaUrl(new URL(blob))).toBeNull();
+    expect(definition.mediaUrl(new URL(blob), "other.example.com")).toBeNull();
+    // Another forge's raw route on a different host stays a direct image.
+    expect(
+      definition.mediaUrl(
+        new URL("https://gitea.example/o/r/raw/branch/main/a.png"),
+        "ghe.example.com",
+      ),
+    ).toBeNull();
+    expect(
+      definition.mediaUrl(
+        new URL("https://raw.ghe.example.com/o/r/main/a.png?token=t"),
+        "ghe.example.com",
+      )?.fetchUrl,
+    ).toBe("https://raw.ghe.example.com/o/r/main/a.png?token=t");
+    // An upload is named by the host it was uploaded to.
+    expect(
+      definition.mediaUrl(
+        new URL("https://ghe.example.com/user-attachments/assets/abc-123"),
+        "ghe.example.com",
+      ),
+    ).toEqual({
+      fetchUrl: "https://ghe.example.com/user-attachments/assets/abc-123",
+      fileName: "abc-123",
+      kind: "video",
+      immutable: true,
+    });
+    expect(
+      definition.mediaUrl(
+        new URL("https://ghe.example.com/o/r/assets/12/abc-123"),
+        "ghe.example.com",
+      )?.fetchUrl,
+    ).toBe("https://ghe.example.com/o/r/assets/12/abc-123");
+    expect(
+      definition.mediaUrl(new URL("https://ghe.example.com/user-attachments/assets/abc-123")),
+    ).toBeNull();
+    // Enterprise Cloud's raw host is unverified, so its media keeps loading directly.
+    expect(
+      definition.mediaUrl(new URL("https://acme.ghe.com/o/r/blob/main/a.png"), "acme.ghe.com"),
+    ).toBeNull();
+    // github.com media keeps its own mapping inside an Enterprise pull request.
+    expect(
+      definition.mediaUrl(new URL("https://github.com/o/r/blob/main/a.png"), "ghe.example.com")
+        ?.fetchUrl,
+    ).toBe("https://raw.githubusercontent.com/o/r/main/a.png");
+  });
+
   it("marks only uploads and files at a full commit SHA as immutable", () => {
     const sha = "0123456789abcdef0123456789abcdef01234567";
     for (const url of [
