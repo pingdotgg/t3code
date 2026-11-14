@@ -18,9 +18,7 @@ import {
   installHttp1FetchDispatcher,
 } from "./outboundHttp.ts";
 
-// Test-only self-signed P-256 certificate for 127.0.0.1, valid until 2126; not a
-// secret. Node cannot mint X.509 certificates without a library, and a local
-// server only offers h2 over ALPN, which needs TLS.
+// Non-secret, self-signed 127.0.0.1 certificate, valid until 2126; ALPN h2 requires TLS.
 const TEST_KEY = `-----BEGIN PRIVATE KEY-----
 MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg3EwCztQysKTvzdcR
 g0LWq+axzUd4tHi9PyMdqh7PlGShRANCAARfQpoLgv/tOsHWCLriDza7Ruaey2b7
@@ -87,8 +85,7 @@ describe("installHttp1FetchDispatcher", () => {
     expect(Undici.getGlobalDispatcher()).toBeInstanceOf(Undici.EnvHttpProxyAgent);
   });
 
-  // Only a runtime that bundles undici 8 (Node 26+) offers h2 through the
-  // built-in fetch, so only there can this prove fetch reads the new dispatcher.
+  // Only bundled undici 8 (Node 26+) offers fetch h2 and can prove dispatcher replacement.
   it.effect.runIf(builtinFetchUsesHttp2(process.versions.undici))(
     "moves the built-in fetch off HTTP/2",
     () =>

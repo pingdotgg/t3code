@@ -11,16 +11,11 @@ import type { EnvironmentOption } from "../components/BranchToolbar.logic";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
-} from "../logicalProject";
+} from "@t3tools/client-runtime/state/project-grouping";
 import { useProjects } from "../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useClientSettings } from "./useSettings";
 
-/**
- * The environments a project (or a scratch draft) can move between. It reads only the
- * environment, project and grouping inputs, so the list keeps its identity while the thread
- * streams and the chat chrome it feeds can skip those renders.
- */
 export function useLogicalProjectEnvironments(
   activeProject: EnvironmentProject | null,
   scratchDraft: boolean,

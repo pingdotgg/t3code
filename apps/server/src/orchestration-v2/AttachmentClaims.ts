@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { isSvgAttachment } from "@t3tools/shared/image";
 
 import {
   parseThreadSegmentFromAttachmentId,
@@ -14,6 +15,7 @@ import {
   resolveAttachmentPath,
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 
 export class AttachmentClaimError extends Schema.TaggedError<AttachmentClaimError>()(
   "AttachmentClaimError",
@@ -44,17 +46,24 @@ export const releaseClaimedAttachments = Effect.fn("AttachmentClaims.releaseClai
   function* (claimedPaths: ReadonlyArray<string>) {
     if (claimedPaths.length === 0) return;
     const fileSystem = yield* FileSystem.FileSystem;
-    yield* Effect.forEach(claimedPaths, (path) => fileSystem.remove(path).pipe(Effect.ignore), {
-      concurrency: 1,
-      discard: true,
-    }).pipe(Effect.uninterruptible);
+    yield* Effect.forEach(
+      claimedPaths,
+      (path) =>
+        fileSystem
+          .remove(path)
+          .pipe(
+            Effect.ignore,
+            Effect.andThen(fileSystem.remove(`${path}.txt`, { force: true }).pipe(Effect.ignore)),
+          ),
+      {
+        concurrency: 1,
+        discard: true,
+      },
+    ).pipe(Effect.uninterruptible);
   },
 );
 
-/**
- * A copy, not a move — the pending file stays behind as the retry source for a
- * failed bootstrap, and the periodic pending sweep reclaims it later.
- */
+/** Copies preserve the pending retry source after failed bootstrap; the pending sweep reclaims it. */
 export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingAttachments")(
   function* (input: {
     readonly threadId: string;
@@ -75,6 +84,7 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
     const serverConfig = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const claimedPaths: string[] = [];
+    const documents = yield* DocumentText.DocumentText;
     const attachments = yield* Effect.forEach(
       input.attachments,
       (attachment) =>
@@ -109,6 +119,12 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
           const normalized: ChatAttachment = {
             ...attachment,
             id: ChatAttachmentId.make(claim.finalId),
+            name:
+              attachment.type === "file" &&
+              isSvgAttachment(attachment) &&
+              !/\.svg$/i.test(attachment.name)
+                ? `${attachment.name}.svg`
+                : attachment.name,
             mimeType: attachment.mimeType.toLowerCase(),
           };
           const expectedPath = resolveAttachmentPath({
@@ -120,11 +136,8 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
               message: `Attachment '${attachment.name}' cannot be sent: attachment type does not match the upload.`,
             });
           }
-          // A copy, not a hard link: an agent editing the delivered file in
-          // place must not mutate the retry source. fs.copyFile cannot be
-          // cancelled, so the copy and its rollback registration stay in one
-          // uninterruptible region: an interrupt landing mid-copy still waits
-          // for the write to settle and records the path before cleanup runs.
+          // Copies isolate edits from the retry source. Keep the uncancellable copy and rollback registration
+          // uninterruptible so cleanup always sees completed writes.
           yield* fileSystem.copyFile(claim.currentPath, claim.finalPath).pipe(
             Effect.mapError(
               (cause) =>
@@ -136,6 +149,20 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
             Effect.andThen(Effect.sync(() => claimedPaths.push(claim.finalPath))),
             Effect.uninterruptible,
           );
+          const sidecar = `${claim.currentPath}.txt`;
+          if (yield* fileSystem.exists(sidecar).pipe(Effect.orElseSucceed(() => false))) {
+            yield* fileSystem.copyFile(sidecar, `${claim.finalPath}.txt`).pipe(
+              Effect.andThen(Effect.sync(() => claimedPaths.push(`${claim.finalPath}.txt`))),
+              Effect.onError(() =>
+                fileSystem.remove(`${claim.finalPath}.txt`, { force: true }).pipe(Effect.ignore),
+              ),
+              Effect.uninterruptible,
+              Effect.ignore,
+            );
+          } else {
+            const extracted = yield* documents.ensure(claim.finalPath);
+            if (extracted) claimedPaths.push(extracted);
+          }
           return normalized;
         }),
       { concurrency: 1 },

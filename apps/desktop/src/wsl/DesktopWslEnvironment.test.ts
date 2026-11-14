@@ -1,15 +1,33 @@
 // @effect-diagnostics nodeBuiltinImport:off - the executed suite runs the generated install script through a real POSIX shell.
-import { describe, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, describe, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { afterAll, expect } from "vite-plus/test";
 import * as NodeChildProcess from "node:child_process";
 
+import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
+
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import {
+  DesktopWslEnvironment,
+  layer as layerDesktopWslEnvironment,
   buildWslRuntimeInstallScript,
+  makeIsAvailable,
   buildWslRuntimeInvalidateScript,
   buildWslRuntimePruneScript,
   buildWslRuntimeProbeScript,
   parseResolvedPath,
   parseWslRuntimeRoot,
+  windowsToWslPathImpl,
 } from "./DesktopWslEnvironment.ts";
 
 // The install script only fails the way this file cares about when a real shell
@@ -39,8 +57,7 @@ const posixShellRunner = (() => {
 
 const runShell = (script: string) => {
   if (posixShellRunner === null) throw new Error("no POSIX shell runner available");
-  // The install script arrives on stdin in production too, which is what lets
-  // its own /proc scan not match itself.
+  // Pass the script on stdin, as production does, to avoid matching its own /proc scan.
   const result = NodeChildProcess.spawnSync(
     posixShellRunner.file,
     [...posixShellRunner.args, "-s"],
@@ -54,10 +71,7 @@ const sh = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const awaitHolder = (condition: string) =>
   `i=0; until ${condition}; do i=$((i + 1)); [ "$i" -lt 500 ] || exit 1; sleep 0.01; done`;
 
-// Holds a cache busy the way a running server does: the holder's argv[0] is the
-// runtime entry, which the prune and install scripts look for in /proc cmdline.
-// It reads a pipe the script keeps open on fd 7, so it exits with the script
-// instead of outliving it on a timer.
+// Use runtime-entry argv[0] for /proc detection; an open pipe keeps it alive only while this script runs.
 const holdRuntimeBusy = (entry: string) =>
   [
     `exec 7> >(exec -a ${entry} cat >/dev/null 2>&1)`,
@@ -124,8 +138,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     const archivePath = `${work}/wsl-runtime.tar.gz`;
     const archiveSha = readField(result.stdout, "archiveSha");
     const runtimeId = `sha256-${archiveSha}`;
-    // The script reads $HOME, and WSL does not inherit the parent process's
-    // environment, so the home override rides in the script itself.
+    // WSL does not inherit HOME; embed the fixture's override in the script.
     const installScript = (archive = archivePath, sha = archiveSha) =>
       [
         `HOME=${sh(`${work}/home`)}`,
@@ -288,8 +301,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         `cat > "$work/install.sh" <<'T3CODE_INSTALL_SCRIPT'`,
         fixture.installScript(),
         "T3CODE_INSTALL_SCRIPT",
-        // Both racers run the same file, and neither file path contains the
-        // runtime root, so the script's own /proc scan cannot see them.
+        // Keep runtime roots out of both racers' argv so their /proc scans cannot match themselves.
         'sh "$work/install.sh" > "$work/first.out" 2>&1 &',
         "first=$!",
         'sh "$work/install.sh" > "$work/second.out" 2>&1 &',
@@ -378,6 +390,93 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     expect(selected.status, `${selected.stdout}\n${selected.stderr}`).toBe(0);
   });
 
+  // Runs the distro side on the local bash, so a Windows dev box using the wsl.exe runner skips it.
+  describe.skipIf(posixShellRunner?.file !== "bash")("prepareRuntime through wsl.exe", () => {
+    // Emulates `wsl.exe [-d <distro>] [--cd <dir>] [--|--exec] <argv>` in a distro with automount off.
+    const layerFakeWslExe = (home: string) =>
+      Layer.effect(
+        ChildProcessSpawner.ChildProcessSpawner,
+        Effect.map(ChildProcessSpawner.ChildProcessSpawner, (local) =>
+          ChildProcessSpawner.make((command) => {
+            if (!ChildProcess.isStandardCommand(command) || command.command !== "wsl.exe") {
+              return local.spawn(command);
+            }
+            const args = command.args.map((word) =>
+              Redacted.isRedacted(word) ? Redacted.value(word) : word,
+            );
+            while (args.length > 0) {
+              const flag = args[0];
+              if (flag === "-d" || flag === "--distribution" || flag === "--cd") {
+                args.splice(0, 2);
+              } else if (flag === "--" || flag === "--exec" || flag === "-e") {
+                args.shift();
+                break;
+              } else {
+                break;
+              }
+            }
+            const [file = "sh", ...rest] =
+              args[0] === "wslpath"
+                ? [
+                    "sh",
+                    "-c",
+                    'printf "wslpath: %s\\n" "$1" >&2; exit 1',
+                    "wslpath",
+                    args.at(-1) ?? "",
+                  ]
+                : args;
+            return local.spawn(
+              ChildProcess.make(file, rest, {
+                ...command.options,
+                env: { ...command.options.env, HOME: home },
+                extendEnv: true,
+              }),
+            );
+          }),
+        ),
+      );
+
+    const layerWslEnvironment = (home: string) =>
+      layerDesktopWslEnvironment.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            layerFakeWslExe(home),
+            DesktopManagedPolicy.layerTest(),
+            Layer.effect(
+              DesktopEnvironment.DesktopEnvironment,
+              Effect.map(
+                Path.Path,
+                (path) =>
+                  ({ platform: "win32", path }) as DesktopEnvironment.DesktopEnvironment["Service"],
+              ),
+            ),
+          ),
+        ),
+        Layer.provide(NodeServices.layer),
+      );
+
+    it.live("installs the runtime when wslpath cannot translate the archive's Windows path", () => {
+      const fixture = createFixture();
+      return Effect.gen(function* () {
+        const wsl = yield* DesktopWslEnvironment;
+        // The archive's Windows path; with no drives mounted, wslpath cannot map it into the distro.
+        const translated = yield* wsl.windowsToWslPath("Ubuntu", fixture.archivePath);
+        expect(translated._tag).toBe("None");
+
+        const prepared = yield* wsl.prepareRuntime("Ubuntu", {
+          windowsPath: fixture.archivePath,
+          runtimeId: fixture.runtimeId,
+          sha256: fixture.archiveSha,
+        });
+
+        expect(prepared).toEqual({ ok: true, linuxAppRoot: fixture.runtimeRoot });
+        const version = runShell(`${sh(fixture.serverEntry)} --version`);
+        expect(version.status, version.stderr).toBe(0);
+        expect(version.stdout).toBe("t3code wsl runtime test server 0.0.0\n");
+      }).pipe(Effect.provide(layerWslEnvironment(`${fixture.work}/home`)));
+    });
+  });
+
   it("prunes old and markerless caches without touching retained, active, locked, or unrelated roots", () => {
     const result = runShell(
       [
@@ -430,4 +529,75 @@ describe("parseResolvedPath", () => {
       "/usr/local/bin:/usr/bin",
     );
   });
+});
+
+// Path.layer joins with POSIX separators here, so the test windir is a POSIX path.
+const WSL_EXE = "/windows/System32/wsl.exe";
+
+const isAvailable = (policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0]) =>
+  makeIsAvailable("win32", "/windows").pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        FileSystem.layerNoop({ exists: (path) => Effect.succeed(path === WSL_EXE) }),
+        Path.layer,
+        DesktopManagedPolicy.layerTest(policy),
+      ),
+    ),
+  );
+
+describe("makeIsAvailable", () => {
+  it.effect("turns WSL off on a machine with a managed policy, even an invalid one", () =>
+    Effect.gen(function* () {
+      assert.isTrue(yield* isAvailable());
+      assert.isFalse(yield* isAvailable({ schemaVersion: 1, organization: "Example Corp" }));
+      assert.isFalse(
+        yield* isAvailable(new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" })),
+      );
+    }),
+  );
+});
+
+describe("windowsToWslPathImpl", () => {
+  it.effect("runs wslpath without a shell so folder names stay one literal argument", () =>
+    Effect.gen(function* () {
+      const spawned: Array<ChildProcess.Command> = [];
+      const stdout = Stream.make(new TextEncoder().encode("/mnt/c/a$b & c;(d)\n"));
+      const spawner = ChildProcessSpawner.make((command) => {
+        spawned.push(command);
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            stdout,
+            stderr: Stream.empty,
+            all: stdout,
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            stdin: Sink.drain,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+            unref: Effect.succeed(Effect.void),
+          }),
+        );
+      });
+
+      const converted = yield* windowsToWslPathImpl("Ubuntu", "C:\\a$b & c;(d)").pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+
+      assert.deepStrictEqual(converted, Option.some("/mnt/c/a$b & c;(d)"));
+      assert.lengthOf(spawned, 1);
+      const [command] = spawned;
+      assert(command?._tag === "StandardCommand");
+      assert.strictEqual(command.command, "wsl.exe");
+      assert.deepStrictEqual(command.args, [
+        "-d",
+        "Ubuntu",
+        "--exec",
+        "wslpath",
+        "-u",
+        "C:/a$b & c;(d)",
+      ]);
+    }),
+  );
 });

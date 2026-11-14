@@ -21,8 +21,11 @@ import {
   resolveMarkdownFileLinkTarget,
 } from "./markdownLinks.ts";
 import { upgradeLegacyContextMessage } from "./composerContextLegacy.ts";
-import { parseComposerContextHref } from "./composerContextReferences.ts";
-import { assistantCitationLabel, parseAssistantCitationHref } from "./assistantCitations.ts";
+import {
+  isAttachmentOnlyBootstrapPrompt,
+  parseComposerContextHref,
+} from "./composerContextReferences.ts";
+import { parseAssistantCitationHref } from "./assistantCitations.ts";
 import type { OrchestrationV2ConversationMessage } from "@t3tools/contracts";
 import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "./proposedPlanText.ts";
 import { unified } from "unified";
@@ -30,9 +33,11 @@ import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import {
   shouldPreserveAssistantLineBreaks,
+  remarkAssistantInsights,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
 } from "./markdownPipeline.ts";
 
 // Inline wrappers (including Shiki token spans) must not split a search phrase.
@@ -75,19 +80,22 @@ export const THREAD_FIND_BLOCK_TAGS = new Set([
   "ul",
 ]);
 
-const assistantProcessor = unified()
-  .use(remarkParse)
-  .use(CHAT_MARKDOWN_REMARK_PLUGINS)
-  .use(remarkRehype, { allowDangerousHtml: true })
-  .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
-const assistantBreaksProcessor = unified()
-  .use(remarkParse)
-  .use(CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS)
-  .use(remarkRehype, { allowDangerousHtml: true })
-  .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+function assistantTextProcessor(lineBreaks = false, renderInsights = false) {
+  return unified()
+    .use(remarkParse)
+    .use(renderInsights ? [remarkAssistantInsights] : [])
+    .use(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+}
+const assistantProcessor = assistantTextProcessor();
+const assistantBreaksProcessor = assistantTextProcessor(true);
+const insightProcessor = assistantTextProcessor(false, true);
+const insightBreaksProcessor = assistantTextProcessor(true, true);
 const userProcessor = unified()
   .use(remarkParse)
   .use(CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS)
+  .use(CHAT_USER_MARKDOWN_REMARK_PLUGINS)
   .use(remarkRehype, { allowDangerousHtml: true });
 
 interface TextTree {
@@ -108,13 +116,19 @@ function markdownThreadFindText(
   cwd?: string,
   skills: readonly InlineSkill[] = [],
   lineBreaks = false,
+  renderInsights = false,
 ): string[] {
   const processor = userMessage
     ? userProcessor
     : lineBreaks
       ? assistantBreaksProcessor
       : assistantProcessor;
-  const tree = processor.runSync(processor.parse(markdown));
+  const renderer = renderInsights
+    ? lineBreaks
+      ? insightBreaksProcessor
+      : insightProcessor
+    : processor;
+  const tree = renderer.runSync(renderer.parse(markdown), markdown);
   const paths = [
     ...extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(markdown)),
     ...extractInlineCodeSpans(markdown).flatMap((span) => inlineCodeFilePathCandidate(span) ?? []),
@@ -138,7 +152,9 @@ function markdownThreadFindText(
     const citation =
       node.tagName === "a" && typeof href === "string" ? parseAssistantCitationHref(href) : null;
     if (citation) {
-      text += assistantCitationLabel(citation);
+      // The quote card is not searched, and it splits the text before it from its comment.
+      flush();
+      text += (citation.comment ?? "").replace(/\r?\n/g, " ");
       return;
     }
     {
@@ -216,6 +232,8 @@ export function searchableMessageSegments(
   skills: readonly InlineSkill[] = [],
 ): readonly string[] | null {
   if (message.role === "user") {
+    // Clients hide this prompt, so find must not match text nobody can see.
+    if (isAttachmentOnlyBootstrapPrompt(message.text)) return [];
     const text = message.context ? message.text : upgradeLegacyContextMessage(message.text).text;
     return markdownThreadFindText(text, true, cwd, skills);
   }
@@ -226,5 +244,6 @@ export function searchableMessageSegments(
     cwd,
     skills,
     shouldPreserveAssistantLineBreaks(message.text),
+    true,
   );
 }

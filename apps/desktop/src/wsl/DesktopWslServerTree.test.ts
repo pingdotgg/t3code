@@ -6,15 +6,12 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
-import * as Scope from "effect/Scope";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopWslServerTree from "./DesktopWslServerTree.ts";
 
-// The service reads packaged Windows roots through the (asar-aware, in
-// Electron) fs, so a plain directory named server.asar exercises the full
-// extraction path under plain Node.
+// Electron's asar-aware fs accepts a plain server.asar directory under Node for extraction checks.
 
 const layerEnvironment = (input: {
   readonly baseDir: string;
@@ -44,20 +41,14 @@ const layerEnvironment = (input: {
     ),
   );
 
-const withTempDir = <A, E, R>(
-  run: (tempDir: string) => Effect.Effect<A, E, R>,
-): Effect.Effect<
-  A,
-  E | PlatformError.PlatformError,
-  FileSystem.FileSystem | Exclude<R, Scope.Scope>
-> =>
+const withTempDir = <A, E, R>(run: (tempDir: string) => Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const tempDir = yield* fileSystem.makeTempDirectoryScoped({
       prefix: "t3-wsl-server-tree-test-",
     });
     return yield* run(tempDir);
-  }).pipe(Effect.scoped);
+  });
 
 const ensureWith = (input: {
   readonly baseDir: string;
