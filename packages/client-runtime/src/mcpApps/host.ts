@@ -131,13 +131,35 @@ function isId(value: unknown): value is JsonRpcId {
   return typeof value === "string" || (typeof value === "number" && Number.isFinite(value));
 }
 
+const MCP_CONTENT_BLOCK_STRING_FIELDS: ReadonlyMap<string, ReadonlyArray<string>> = new Map([
+  ["text", ["text"]],
+  ["image", ["data", "mimeType"]],
+  ["audio", ["data", "mimeType"]],
+  ["resource_link", ["uri", "name"]],
+]);
+
+function isMcpContentBlock(block: unknown): boolean {
+  if (!Predicate.isObject(block) || typeof block.type !== "string") return false;
+  if (block.type === "resource") {
+    const resource = block.resource;
+    return (
+      Predicate.isObject(resource) &&
+      typeof resource.uri === "string" &&
+      (typeof resource.text === "string" || typeof resource.blob === "string")
+    );
+  }
+  const fields = MCP_CONTENT_BLOCK_STRING_FIELDS.get(block.type);
+  return fields !== undefined && fields.every((field) => typeof block[field] === "string");
+}
+
 /**
- * Providers can report absent fields as null (Codex sends `_meta: null`), which
- * the MCP Apps SDK rejects, dropping the whole notification or response.
+ * The MCP Apps SDK rejects the whole notification or response over one field it
+ * does not accept: null for an absent field (Codex sends `_meta: null`), or a
+ * content block MCP does not define, such as an image whose bytes storage stripped.
  */
 function normalizeMcpAppToolResult(result: McpAppCallToolResult): McpAppCallToolResult {
   return {
-    content: Array.isArray(result.content) ? result.content : [],
+    content: Array.isArray(result.content) ? result.content.filter(isMcpContentBlock) : [],
     ...(Predicate.isObject(result.structuredContent)
       ? { structuredContent: result.structuredContent }
       : {}),
