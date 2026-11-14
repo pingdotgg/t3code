@@ -240,7 +240,9 @@ export function startThreadNotifications(
     const subagentRequests = registry.get(
       environmentThreadShells.pendingSubagentRequestsAtom(environmentId),
     );
-    const delegatedUnderParent = registry.get(environmentThreadShells.delegatedUnderParentAtom);
+    const delegatedUnderParent = registry.get(
+      environmentThreadShells.delegatedUnderListedParentAtom,
+    );
     const changed: Array<[NotificationState | undefined, NotificationState]> = [];
     for (const rawThread of threads) {
       if (
@@ -343,7 +345,7 @@ export function startThreadNotifications(
       reobserve,
     );
     const unsubscribeDelegated = registry.subscribe(
-      environmentThreadShells.delegatedUnderParentAtom,
+      environmentThreadShells.delegatedUnderListedParentAtom,
       reobserve,
     );
     entry.unsubscribe = () => {

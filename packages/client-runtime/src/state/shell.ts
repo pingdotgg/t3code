@@ -329,6 +329,11 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
               removedAt.set(delta.threadId, delta.sequence);
               break;
             case "thread.updated":
+              if (delta.location === "archive") {
+                removedAt ??= new Map(next.removedAt);
+                removedAt.set(delta.thread.id, delta.sequence);
+              }
+              break;
             case "project.updated":
             case "project.removed":
               break;
@@ -855,6 +860,11 @@ function createEnvironmentShellProgressAtoms(
         Atom.withLabel(`environment-shell-status:${environmentId}`),
       ),
     ),
+    removedAtAtom: Atom.family((environmentId: EnvironmentId) =>
+      Atom.make((get) => get(stateValueAtom(environmentId)).removedAt).pipe(
+        Atom.withLabel(`environment-shell-removed-at:${environmentId}`),
+      ),
+    ),
     hasSnapshotAtom: Atom.family((environmentId: EnvironmentId) =>
       Atom.make((get) => Option.isSome(get(stateValueAtom(environmentId)).snapshot)).pipe(
         Atom.withLabel(`environment-shell-has-snapshot:${environmentId}`),
@@ -884,12 +894,14 @@ export function createEnvironmentShellAtoms<R, E>(
     ).pipe(Atom.withLabel(`environment-shell-state-value:${environmentId}`)),
   );
 
-  const { statusAtom, hasSnapshotAtom } = createEnvironmentShellProgressAtoms(stateValueAtom);
+  const { statusAtom, removedAtAtom, hasSnapshotAtom } =
+    createEnvironmentShellProgressAtoms(stateValueAtom);
 
   return {
     stateAtom,
     stateValueAtom,
     statusAtom,
+    removedAtAtom,
     hasSnapshotAtom,
   };
 }

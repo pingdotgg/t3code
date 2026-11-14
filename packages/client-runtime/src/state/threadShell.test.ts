@@ -15,6 +15,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { PrimaryConnectionTarget } from "../connection/model.ts";
 import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
+import type { EnvironmentShellStatus } from "./shell.ts";
 import { isThreadWorking } from "./threadInbox.ts";
 import { childThreadInputsTitle, createEnvironmentThreadShellAtoms } from "./threadShell.ts";
 
@@ -44,13 +45,23 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
       ]),
     ),
   });
+  const shellStatusAtom = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make<EnvironmentShellStatus>("live"),
+  );
+  const removedAtAtom = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make<ReadonlyMap<ThreadId, number>>(new Map()),
+  );
   return {
     registry: AtomRegistry.make(),
     snapshotAtom,
     catalogValueAtom,
+    shellStatusAtom,
+    removedAtAtom,
     threads: createEnvironmentThreadShellAtoms({
       catalogValueAtom,
       snapshotAtom,
+      shellStatusAtom,
+      removedAtAtom,
       hiddenThreadTagsAtom: () => Atom.make(null),
     }),
   };
@@ -445,6 +456,146 @@ describe("v2 thread shell lists", () => {
     disposeInputs();
     disposeParent();
     disposeNavigation();
+    registry.dispose();
+  });
+
+  it("keeps quiet completed tasks grouped while their missing parent's shell is unavailable", () => {
+    const { registry, threads, snapshotAtom, catalogValueAtom, shellStatusAtom, removedAtAtom } =
+      makeHarness([environmentId, remoteEnvironmentId]);
+    const parent = { ...v2ThreadShell, settledOverride: "settled" as const, settledAt: v2Now };
+    const task: OrchestrationV2ThreadShell = {
+      ...v2ThreadShell,
+      id: ThreadId.make("completed-remote-task"),
+      status: "completed",
+      activityRunStatus: null,
+      latestRunId: RunId.make("completed-run"),
+      delegatedFrom: { environmentId, threadId: parent.id, title: parent.title },
+    };
+    registry.set(snapshotAtom(remoteEnvironmentId), { ...v2ShellSnapshot, threads: [task] });
+    const unmount = registry.mount(threads.navigationThreadShellsAtom);
+    const listed = () =>
+      registry.get(threads.navigationThreadShellsAtom).map((thread) => thread.id);
+
+    for (const status of ["empty", "cached", "synchronizing"] as const) {
+      registry.set(shellStatusAtom(environmentId), status);
+      registry.set(
+        snapshotAtom(environmentId),
+        status === "empty" ? null : { ...v2ShellSnapshot, threads: [] },
+      );
+      expect(listed()).toEqual([]);
+    }
+    // No listed parent speaks for the task, so its completion still notifies.
+    expect(registry.get(threads.delegatedUnderListedParentAtom).size).toBe(0);
+    expect(
+      registry.get(
+        threads.threadShellAtom({ environmentId: remoteEnvironmentId, threadId: task.id }),
+      )?.settledOverride,
+    ).toBeNull();
+
+    const approval = {
+      id: RuntimeRequestId.make("approval"),
+      kind: "command" as const,
+      createdAt: v2Now,
+    };
+    for (const change of [
+      { status: "running" as const },
+      { status: "failed" as const },
+      { activeRunId: RunId.make("continuation") },
+      { activityRunStatus: "waiting" as const },
+      { pendingRuntimeRequest: approval },
+      { pendingRuntimeRequest: { ...approval, kind: "user_input" as const } },
+      { pendingGuestMessageCount: 1 },
+      { pendingBackgroundTasks: [{ taskId: "continuation", kind: "monitor" as const }] },
+      { lastError: "Continuation failed" },
+      { hasActionableProposedPlan: true },
+      { pinnedAt: v2Now },
+      { settledOverride: "active" as const },
+    ]) {
+      registry.set(snapshotAtom(remoteEnvironmentId), {
+        ...v2ShellSnapshot,
+        threads: [{ ...task, ...change }],
+      });
+      expect(listed()).toEqual([task.id]);
+    }
+    const helper = {
+      ...task,
+      id: ThreadId.make("asking-helper"),
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+      delegatedFrom: undefined,
+      lineage: {
+        ...task.lineage,
+        parentThreadId: task.id,
+        relationshipToParent: "subagent" as const,
+      },
+      pendingRuntimeRequest: approval,
+    };
+    registry.set(snapshotAtom(remoteEnvironmentId), {
+      ...v2ShellSnapshot,
+      threads: [task, helper],
+    });
+    expect(listed()).toEqual([task.id]);
+    for (const descendant of [
+      {
+        ...helper,
+        status: "completed" as const,
+        activityRunStatus: null,
+        pendingRuntimeRequest: null,
+        pendingBackgroundTasks: [{ taskId: "awaited-command", kind: "monitor" as const }],
+      },
+      {
+        ...task,
+        id: ThreadId.make("nested-task"),
+        delegatedFrom: { environmentId: remoteEnvironmentId, threadId: task.id, title: task.title },
+      },
+    ]) {
+      registry.set(snapshotAtom(remoteEnvironmentId), {
+        ...v2ShellSnapshot,
+        threads: [task, descendant],
+      });
+      expect(listed()).toEqual([task.id]);
+    }
+    registry.set(snapshotAtom(remoteEnvironmentId), { ...v2ShellSnapshot, threads: [task] });
+    expect(listed()).toEqual([]);
+    registry.set(snapshotAtom(remoteEnvironmentId), {
+      ...v2ShellSnapshot,
+      threads: [{ ...task, activityRunStatus: undefined }],
+    });
+    expect(listed()).toEqual([]);
+
+    registry.set(shellStatusAtom(environmentId), "live");
+    expect(listed()).toEqual([task.id]);
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [parent] });
+    expect(listed()).toEqual([parent.id]);
+    registry.set(shellStatusAtom(environmentId), "cached");
+    expect(listed()).toEqual([parent.id]);
+    for (const event of [
+      {
+        kind: "thread.updated",
+        location: "archive",
+        sequence: 1,
+        thread: { ...parent, archivedAt: v2Now },
+      },
+      { kind: "thread.removed", location: "active", sequence: 1, threadId: parent.id },
+    ] as const) {
+      registry.set(shellStatusAtom(environmentId), "live");
+      registry.set(
+        snapshotAtom(environmentId),
+        applyShellStreamEvent({ ...v2ShellSnapshot, threads: [parent] }, event),
+      );
+      registry.set(removedAtAtom(environmentId), new Map([[parent.id, 1]]));
+      registry.set(shellStatusAtom(environmentId), "cached");
+      expect(listed()).toEqual([task.id]);
+    }
+    registry.set(removedAtAtom(environmentId), new Map());
+    registry.set(snapshotAtom(environmentId), null);
+    expect(listed()).toEqual([]);
+    const catalog = registry.get(catalogValueAtom);
+    const entries = new Map(catalog.entries);
+    entries.set(environmentId, { ...entries.get(environmentId)!, enabled: false });
+    registry.set(catalogValueAtom, { ...catalog, entries });
+    expect(listed()).toEqual([task.id]);
+    unmount();
     registry.dispose();
   });
 

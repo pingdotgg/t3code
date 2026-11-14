@@ -60,7 +60,7 @@ vi.mock(import("../state/threads"), async (original) => {
     environmentThreadShells: {
       ...actual.environmentThreadShells,
       pendingSubagentRequestsAtom: (() => noRequestsAtom) as never,
-      get delegatedUnderParentAtom() {
+      get delegatedUnderListedParentAtom() {
         return noDelegatedAtom as never;
       },
     },

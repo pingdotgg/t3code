@@ -243,7 +243,7 @@ describe("environment shell synchronization", () => {
 
       const removedObserved = yield* SubscriptionRef.changes(shellState).pipe(
         Stream.filter(
-          (state) => Option.isSome(state.snapshot) && state.snapshot.value.snapshotSequence === 52,
+          (state) => Option.isSome(state.snapshot) && state.snapshot.value.snapshotSequence === 53,
         ),
         Stream.runHead,
         Effect.forkScoped({ startImmediately: true }),
@@ -262,10 +262,23 @@ describe("environment shell synchronization", () => {
           location: "active",
           threadId: ThreadId.make("thread-1"),
         },
+        {
+          kind: "thread.updated",
+          sequence: 53,
+          location: "archive",
+          thread: {
+            ...v2ThreadShell,
+            id: ThreadId.make("thread-1"),
+            archivedAt: v2ThreadShell.updatedAt,
+          },
+        },
       ]);
       const removedState = Option.getOrThrow(yield* Fiber.join(removedObserved));
       expect(removedState.generation).toBe(states.at(-1)!.generation);
-      expect([...removedState.removedAt]).toEqual([[ThreadId.make("thread-0"), 52]]);
+      expect([...removedState.removedAt]).toEqual([
+        [ThreadId.make("thread-0"), 52],
+        [ThreadId.make("thread-1"), 53],
+      ]);
 
       // An authoritative snapshot resets even a higher live cursor in the same batch.
       const resetRow = { ...v2ThreadShell, id: ThreadId.make("reset-row") };
