@@ -3500,6 +3500,63 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
+  it.effect("starts the OpenCode server with the thread's T3CODE_THREAD_ID", () =>
+    Effect.gen(function* () {
+      const connectInputs: Array<{ readonly environment?: NodeJS.ProcessEnv }> = [];
+      const unused = (operation: string) => () => Effect.die(`${operation} is not used`);
+      const runtime: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
+        startOpenCodeServerProcess: unused("startOpenCodeServerProcess"),
+        connectToOpenCodeServer: (input) => {
+          connectInputs.push(input);
+          return Effect.succeed({ url: "test://opencode", version: "test", exitCode: null });
+        },
+        runOpenCodeCommand: unused("runOpenCodeCommand"),
+        createOpenCodeSdkClient: () =>
+          ({
+            event: {
+              subscribe: async (_input?: unknown, options?: { readonly signal?: AbortSignal }) => ({
+                stream: {
+                  [Symbol.asyncIterator]: () => ({
+                    next: () =>
+                      new Promise<IteratorResult<never>>((resolve) => {
+                        const done = () => resolve({ done: true, value: undefined });
+                        if (options?.signal?.aborted) return done();
+                        options?.signal?.addEventListener("abort", done, { once: true });
+                      }),
+                  }),
+                },
+              }),
+            },
+          }) as unknown as OpencodeClient,
+        loadOpenCodeInventory: unused("loadOpenCodeInventory"),
+        loadOpenCodeSkills: unused("loadOpenCodeSkills"),
+      };
+      const instanceId = ProviderInstanceId.make("opencode");
+      const threadId = ThreadId.make("thread-opencode-env");
+      const adapter = yield* makeOpenCodeAdapterV2({
+        instanceId,
+        settings: OPENCODE_TEST_SETTINGS,
+        environment: {},
+      }).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime));
+      yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-opencode-env"),
+        modelSelection: { instanceId, model: "default" },
+        runtimePolicy: runtimePolicy("full-access"),
+      });
+      assert.equal(connectInputs[0]?.environment?.T3CODE_THREAD_ID, threadId);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    ),
+  );
+
   it.effect("adopts the handed-over provider thread identity on session create", () =>
     Effect.gen(function* () {
       let createCount = 0;
