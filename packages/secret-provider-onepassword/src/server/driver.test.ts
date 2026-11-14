@@ -2,9 +2,12 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import { assert, describe, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -23,6 +26,7 @@ type OpResult = {
   readonly stderr?: string;
   readonly code?: number;
   readonly hang?: boolean;
+  readonly delay?: Duration.Input;
 };
 
 function fakeOp(answer: (args: ReadonlyArray<string>) => OpResult) {
@@ -41,7 +45,9 @@ function fakeOp(answer: (args: ReadonlyArray<string>) => OpResult) {
             pid: ChildProcessSpawner.ProcessId(1),
             exitCode: result.hang
               ? Effect.never
-              : Effect.succeed(ChildProcessSpawner.ExitCode(result.code ?? 0)),
+              : Effect.sleep(result.delay ?? 0).pipe(
+                  Effect.as(ChildProcessSpawner.ExitCode(result.code ?? 0)),
+                ),
             isRunning: Effect.succeed(false),
             kill: () => Effect.void,
             unref: Effect.succeed(Effect.void),
@@ -151,5 +157,26 @@ describe("1Password driver", () => {
       assert.deepStrictEqual(yield* Fiber.join(reading), [undefined, undefined]);
       assert.strictEqual(op.invocations.length, 1);
     }).pipe(Effect.provide(op.layer));
+  });
+
+  it.effect("gives up within the read timeout when a slow batch fails", () => {
+    const op = fakeOp((args) =>
+      args.includes("inject")
+        ? { code: 1, delay: "40 seconds" }
+        : { stdout: "sk-a", delay: "40 seconds" },
+    );
+    // Keeps the temp template off real disk I/O so the virtual clock alone drives the read.
+    const templateFile = FileSystem.layerNoop({
+      makeTempFileScoped: () => Effect.succeed("/template"),
+      writeFileString: () => Effect.void,
+    });
+    return Effect.gen(function* () {
+      const reading = yield* driver
+        .read({ account }, ["op://Private/OpenAI/credential", "op://Private/Anthropic/key"])
+        .pipe(Effect.andThen(Clock.currentTimeMillis), Effect.forkChild);
+      yield* TestClock.adjust("5 minutes");
+
+      assert.isAtMost(yield* Fiber.join(reading), 45_000);
+    }).pipe(Effect.provide(Layer.merge(op.layer, templateFile)));
   });
 });
