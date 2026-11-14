@@ -251,7 +251,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-guest-foreground: var(--guest-foreground);
   --color-guest-surface: var(--guest-surface);
   --color-destructive-foreground: var(--destructive-foreground);
-  --color-destructive-fill: var(--app-theme-destructive-fill, var(--destructive));
+  --color-destructive-fill: var(--app-theme-destructive-fill, var(--destructive-fill));
   --color-ring: var(--ring);
   --color-input: var(--contrast-input);
   --color-border: var(--contrast-border);
@@ -1145,11 +1145,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --message-action-hover: color-mix(in srgb, var(--primary) 90%, var(--background));
   --accent: var(--color-zinc-100);
   --accent-foreground: var(--color-zinc-900);
-  --error: var(--color-red-500);
+  --error: var(--color-red-600);
   --error-foreground: var(--color-red-700);
   --tool-error-icon: var(--error);
   --error-surface: color-mix(in srgb, var(--error) 8%, transparent);
   --destructive: var(--error);
+  --destructive-fill: var(--destructive);
   --border: var(--color-zinc-200);
   --input: var(--color-zinc-300);
   --ring: var(--primary);
@@ -1209,6 +1210,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --error: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
     --error-foreground: var(--color-red-400);
     --tool-error-icon: #fca5a5;
+    /* The lighter dark-mode red is for text; white labels need a deeper fill. */
+    --destructive-fill: var(--color-red-600);
     --error-surface: color-mix(in srgb, var(--error) 16%, transparent);
     --border: --alpha(var(--color-white) / 8%);
     --input: --alpha(var(--color-white) / 11%);

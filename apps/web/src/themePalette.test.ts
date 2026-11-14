@@ -33,6 +33,7 @@ import {
   THEME_FILE_VERSION,
   withReadableThemeText,
   destructiveFillColor,
+  getStandardPaintedThemeColors,
 } from "./themePalette";
 
 function asHex(value: string): string {
@@ -112,6 +113,12 @@ describe("theme files", () => {
           expect(contrastRatio(error, surface)).toBeGreaterThanOrEqual(4.5);
         }
         expect(contrastRatio("#ffffff", destructiveFillColor(colors))).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    for (const appearance of ["light", "dark"] as const) {
+      const standard = getStandardPaintedThemeColors(appearance);
+      for (const surface of [standard.canvas, standard.surface]) {
+        expect(contrastRatio(standard.error, surface)).toBeGreaterThanOrEqual(4.5);
       }
     }
     const oceanDark = OCEAN_THEME.variants!.dark!;

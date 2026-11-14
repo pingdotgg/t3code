@@ -442,9 +442,10 @@ export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors
   return (standardLightThemeColors ??= decodeThemeColors(T3_CODE_LIGHT_THEME_COLORS));
 }
 
-// index.css paints the light bubble a step darker than the shared palette mobile uses.
+// index.css paints the light bubble a step darker, and error text one red step deeper so it
+// reads at 4.5:1, than the shared palette mobile uses.
 const STANDARD_WEB_PAINTED_COLORS: Record<ThemeAppearance, Partial<ThemeColors>> = {
-  light: { messageSurface: "#ebebed" },
+  light: { messageSurface: "#ebebed", error: "oklch(0.577 0.245 27.325)" },
   dark: { canvas: "#000000", messageSurface: "#1e1e1e" },
 };
 
