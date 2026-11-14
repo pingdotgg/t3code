@@ -40,10 +40,12 @@ const failureToast = (title: string, description: string) =>
 export function LinkEnvironmentAction({
   environmentId,
   sourceLabel,
+  onOpen,
   targetId: initialTargetId,
 }: {
   readonly environmentId: EnvironmentId;
   readonly sourceLabel: string;
+  readonly onOpen: () => void;
   readonly targetId?: EnvironmentId;
 }) {
   const [open, setOpen] = useState(false);
@@ -81,6 +83,7 @@ export function LinkEnvironmentAction({
     (!needsAddress || address.trim().length > 0) &&
     (canMint || pairingCode.trim().length > 0);
   const handleOpenChange = (next: boolean) => {
+    if (next) onOpen();
     setOpen(next);
     if (!next) {
       setChoice(initialTargetId ?? null);

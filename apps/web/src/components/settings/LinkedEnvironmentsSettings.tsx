@@ -40,10 +40,24 @@ export function LinkedEnvironmentsSettings({
 }) {
   const [selectedId, setSelectedId] = useState<EnvironmentId | null>(null);
   const selected =
-    environments.find((environment) => environment.environmentId === selectedId) ??
-    environments.find((environment) => environment.environmentId === primaryEnvironmentId) ??
-    environments[0];
-  if (!selected) return null;
+    selectedId === null
+      ? (environments.find((environment) => environment.environmentId === primaryEnvironmentId) ??
+        environments[0])
+      : environments.find((environment) => environment.environmentId === selectedId);
+  if (!selected)
+    return selectedId === null ? null : (
+      <SettingsSection title="Agent links">
+        <SettingsRow
+          title="Source unavailable"
+          description="Reconnect the selected source to manage its links."
+          control={
+            <Button size="xs" variant="outline" onClick={() => setSelectedId(null)}>
+              Choose another source
+            </Button>
+          }
+        />
+      </SettingsSection>
+    );
   return (
     <SourceLinks
       key={selected.environmentId}
@@ -89,7 +103,11 @@ function SourceLinks({
       title="Agent links"
       headerAction={
         canLink ? (
-          <LinkEnvironmentAction environmentId={environmentId} sourceLabel={source.label} />
+          <LinkEnvironmentAction
+            environmentId={environmentId}
+            sourceLabel={source.label}
+            onOpen={() => onSelect(environmentId)}
+          />
         ) : null
       }
     >
@@ -189,7 +207,10 @@ function SourceLinks({
                 sourceLabel={source.label}
                 link={link}
                 open={expandedId === link.environmentId}
-                onOpenChange={(open) => setExpandedId(open ? link.environmentId : null)}
+                onOpenChange={(open) => {
+                  onSelect(environmentId);
+                  setExpandedId(open ? link.environmentId : null);
+                }}
               />
             ))
           )}
@@ -218,6 +239,7 @@ function SourceLinks({
                     environmentId={environmentId}
                     targetId={machine.environmentId}
                     sourceLabel={source.label}
+                    onOpen={() => onSelect(environmentId)}
                   />
                 </div>
               ))
