@@ -142,7 +142,7 @@ export function parseGitRemoteRepository(
 
   if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
     try {
-      // Parse the raw remote: `.git` may sit before a query or fragment, so strip it from the path once.
+      // Apply suffix policy to the path: `.git` may sit before a query or fragment.
       const url = new URL(value.trim().toLowerCase());
       const repositorySegments = dropSuffix(url.pathname.replace(/\/+$/, ""))
         .split("/")
@@ -175,7 +175,7 @@ export function parseGitRemoteRepository(
 
 /**
  * `host/path` for a remote that names a host, otherwise the remote itself, lower case. A host that
- * spells repositories differently over SSH has its source control registry's
+ * spells repositories differently over SSH or treats `.git` literally has its source control registry's
  * `repositoryKeyFromRemote` rewrite this, so persisted keys come from that, not from here.
  */
 export function normalizeGitRemoteUrl(value: string): string {
