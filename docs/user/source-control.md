@@ -111,6 +111,10 @@ az extension add --name azure-devops
 az login
 ```
 
+Azure DevOps Server and other setups without an Azure account can sign in with a personal access
+token instead: run `az devops login --organization <collection URL>` and set that organization as
+the default with `az devops configure --defaults organization=<collection URL>`.
+
 ### GitCafe
 
 Install the GitCafe CLI and sign in:
