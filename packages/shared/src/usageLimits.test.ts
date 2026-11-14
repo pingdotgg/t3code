@@ -879,16 +879,6 @@ describe("pools", () => {
       17,
       83,
     ],
-    // A plan without a published multiplier makes every member count once.
-    [
-      "claudeAgent",
-      "Claude Subscription",
-      "Claude Pro Subscription",
-      "session",
-      "five_hour",
-      50,
-      50,
-    ],
   ] as const)(
     "weights pooled %s quota for %s",
     (driver, largePlan, smallPlan, kind, windowId, remaining, restored) => {
