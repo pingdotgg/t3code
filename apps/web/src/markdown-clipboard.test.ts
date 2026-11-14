@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  serializeCodeBlockToMarkdown,
   serializeRenderedMarkdownFragment,
   serializeTableElementToMarkdown,
 } from "./markdown-clipboard";
@@ -197,6 +198,109 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("first line\nsecond line");
   });
 
+  it.each([
+    ["backtick edges", "`value`"],
+    ["space edges", "  value  "],
+    ["only spaces", "   "],
+  ])("copies inline code that parses back unchanged: %s", (_, value) => {
+    const container = new FakeElement("DIV").append(
+      new FakeElement("P").append(
+        new FakeText("Use "),
+        new FakeElement("CODE").append(new FakeText(value)),
+        new FakeText(" here."),
+      ),
+    );
+    const paragraph = parseMarkdownWithMath(serializeRenderedMarkdownFragment(asNode(container)))
+      .children[0];
+    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
+    expect(paragraph.children.find((child) => child.type === "inlineCode")?.value).toBe(value);
+  });
+
+  it("copies email links with their address and drops in-app destinations", () => {
+    const container = new FakeElement("DIV").append(
+      new FakeElement("P").append(
+        new FakeText("Write to "),
+        new FakeElement("A", [], { href: "mailto:support@example.com" }).append(
+          new FakeText("support@example.com"),
+        ),
+        new FakeText(", "),
+        new FakeElement("A", [], { href: "mailto:support@example.com?subject=Help" }).append(
+          new FakeText("Support"),
+        ),
+        new FakeText(", "),
+        new FakeElement("A", [], { href: "mailto:support@example.com?subject=Help)" }).append(
+          new FakeText("Support"),
+        ),
+        new FakeText(" or "),
+        new FakeElement("A", [], { href: "/environment-one/thread-one" }).append(
+          new FakeText("the thread"),
+        ),
+        new FakeText("."),
+      ),
+    );
+    const copied = serializeRenderedMarkdownFragment(asNode(container));
+    expect(copied).toBe(
+      "Write to support@example.com, [Support](mailto:support@example.com?subject=Help), [Support](mailto:support@example.com?subject=Help\\)) or the thread.",
+    );
+    const paragraph = parseMarkdownWithMath(copied).children[0];
+    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
+    expect(
+      paragraph.children.filter((child) => child.type === "link").map((link) => link.url),
+    ).toEqual([
+      "mailto:support@example.com",
+      "mailto:support@example.com?subject=Help",
+      "mailto:support@example.com?subject=Help)",
+    ]);
+  });
+
+  it.each([
+    "support@example.com?subject=Help",
+    "foo",
+    "support@example.internal1",
+    "support@example.com_",
+    "support@example.com-",
+  ])("keeps the destination when the email label is not a bare address: %s", (label) => {
+    const href = `mailto:${label}`;
+    const anchor = new FakeElement("A", [], { href }).append(new FakeText(label));
+    const container = new FakeElement("DIV").append(anchor);
+    const paragraph = parseMarkdownWithMath(serializeRenderedMarkdownFragment(asNode(container)))
+      .children[0];
+    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
+    expect(paragraph.children.find((child) => child.type === "link")?.url).toBe(href);
+  });
+
+  it("copies alert and insight callouts as their Markdown instead of the rendered label", () => {
+    // The shape ChatMarkdown renders for `> [!WARNING]\n> Back up first.`.
+    const callout = new FakeElement("DIV", [], {
+      role: "note",
+      "data-markdown-alert": "warning",
+    }).append(
+      new FakeElement("P", [], {
+        "data-thread-find-ignore": "true",
+        "data-markdown-alert-label": "",
+      }).append(new FakeElement("SVG", [], { "aria-hidden": "true" }), new FakeText("Warning")),
+      new FakeElement("P").append(new FakeText("Back up first.")),
+    );
+    const container = new FakeElement("DIV").append(callout);
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "> [!WARNING]\n> Back up first.",
+    );
+    const insight = new FakeElement("DIV", [], {
+      role: "note",
+      "data-markdown-alert": "insight",
+    }).append(
+      new FakeElement("P", [], {
+        "data-thread-find-ignore": "true",
+        "data-markdown-alert-label": "",
+      }).append(new FakeText("Insight")),
+      new FakeElement("P").append(new FakeText("Caches are warm.")),
+    );
+    expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(insight)))).toBe(
+      `★ Insight ${"─".repeat(37)}\nCaches are warm.\n${"─".repeat(49)}`,
+    );
+  });
+
   it("preserves explicit ordered-list values and continues from resets when copying", () => {
     const list = new FakeElement("OL", [], { start: "0" }).append(
       new FakeElement("LI").append(new FakeText("A")),
@@ -209,13 +313,37 @@ describe("serializeRenderedMarkdownFragment", () => {
     );
   });
 
-  it("keeps fences when a bare list item sits alongside the code block", () => {
+  it("keeps a bare list item that sits alongside the code block", () => {
     const container = new FakeElement("DIV").append(
       new FakeElement("UL").append(new FakeElement("LI")),
       renderedCodeBlock(["pnpm test"]),
     );
 
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("-\n\n```\npnpm test\n```");
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("-\n\npnpm test");
+  });
+
+  it("copies a command and the prose after it as shown, without code fences", () => {
+    const container = new FakeElement("DIV").append(
+      renderedCodeBlock(["printf 'hello\\n'"]),
+      new FakeElement("P").append(new FakeText("T")),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("printf 'hello\\n'\n\nT");
+  });
+
+  it("keeps a diagram's source exactly as written when copied with prose", () => {
+    const source = 'flowchart TD\n  A["first   \n\n\nlast"]';
+    const container = new FakeElement("DIV").append(
+      new FakeElement("DIV", [], {
+        "data-markdown-mermaid": "",
+        "data-markdown-copy": serializeCodeBlockToMarkdown(source, "mermaid"),
+      }),
+      new FakeElement("P").append(new FakeText("After")),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      `\`\`\`mermaid\n${source}\n\`\`\`\n\nAfter`,
+    );
   });
 
   it("keeps blank lines inside a code block in a list item, quote, or longer fence", () => {
@@ -233,14 +361,14 @@ describe("serializeRenderedMarkdownFragment", () => {
     );
 
     expect(serializeRenderedMarkdownFragment(asNode(nestedFence))).toBe(
-      "Example:\n\n````\n```js\na()\n\n\nb()  \n```\n````",
+      "Example:\n\n```js\na()\n\n\nb()  \n```",
     );
 
     expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(list)))).toBe(
-      "1. Create it:\n   ```\n   import os\n\n\n   def main():\n   ```",
+      "1. Create it:\n   import os\n\n\n   def main():",
     );
     expect(serializeRenderedMarkdownFragment(asNode(new FakeElement("DIV").append(quote)))).toBe(
-      "> Note:\n>\n> ```\n> import os\n>\n>\n> def main():\n> ```",
+      "> Note:\n>\n> import os\n>\n>\n> def main():",
     );
   });
 
@@ -330,5 +458,22 @@ describe("copying rendered Markdown tables", () => {
       type: "link",
       url: "https://example.com/?q=a|b",
     });
+  });
+
+  it("copies code and diagrams in cells without markers or unescaped pipes", () => {
+    const code = new FakeElement("PRE").append(
+      new FakeElement("CODE").append(new FakeText("a  b")),
+    );
+    const diagram = new FakeElement("DIV", [], {
+      "data-markdown-mermaid": "",
+      "data-markdown-copy": serializeCodeBlockToMarkdown("A -->|hi| B", "mermaid"),
+    });
+    expect(
+      serializeTableElementToMarkdown(
+        asNode(
+          renderedTable([new FakeText("Command"), new FakeText("Diagram")], [code, diagram]),
+        ) as Element,
+      ),
+    ).toBe("| Command | Diagram |\n| --- | --- |\n| a  b | ```mermaid A -->\\|hi\\| B ``` |");
   });
 });
