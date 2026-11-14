@@ -1,6 +1,6 @@
 import { BINARY_PREVIEW_MAX_BYTES } from "./binaryPreviewProtocol";
 
-export async function readBinaryPreview(src: string, signal: AbortSignal) {
+export async function readBinaryPreview(src: string, signal: AbortSignal | null = null) {
   const response = await fetch(src, { signal });
   if (!response.ok) throw new Error("The file could not be loaded. Close it and try again.");
   if (Number(response.headers.get("content-length")) > BINARY_PREVIEW_MAX_BYTES)
