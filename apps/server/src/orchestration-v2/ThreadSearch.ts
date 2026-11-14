@@ -69,7 +69,7 @@ const TokenList = Schema.fromJsonString(Schema.Array(Schema.String));
 const SearchRequest = Schema.Struct({
   /** The FTS5 query, or null to scan messages instead. */
   match: Schema.NullOr(Schema.String),
-  /** Tokens every hit must contain, checked on the text. */
+  /** Tokens every hit must contain, as typed or as their GLOB folding case and Latin accents. */
   substrings: Schema.fromJsonString(
     Schema.Array(Schema.Struct({ token: Schema.String, accentInsensitive: Schema.String })),
   ),
@@ -122,19 +122,16 @@ function shortTokenSpellings(token: string): ReadonlyArray<string> {
   return [...new Set(spellings)];
 }
 
-/**
- * The accented letters search reads as each ASCII letter, which SQLite's
- * lower() leaves as they are: Latin-1 Supplement and Latin Extended-A, which
- * European languages write in. Vietnamese and other later blocks are left out.
- */
+// Latin-1 Supplement and Extended-A letters that fold to each ASCII letter, which
+// SQLite's lower() leaves alone. Later blocks such as Vietnamese are left out.
 const accentedForms = Map.groupBy(
   Array.from({ length: 0x180 - 0xc0 }, (_, offset) => String.fromCharCode(0xc0 + offset)).filter(
     (char) => /^[a-z]$/.test(foldSearchQuery(char)),
   ),
   (char) => foldSearchQuery(char),
 );
-// Whether `message.text` holds one of those letters, by their UTF-8 lead
-// bytes: each costs a byte scan, several times cheaper than a GLOB.
+// Only text holding one of those letters (by UTF-8 lead byte) needs the GLOB:
+// lower() already folds ASCII case.
 const MESSAGE_HOLDS_ACCENTED_LATIN = [
   ...new Set(
     [...accentedForms.values()].flat().map((char) => Buffer.from(char).toString("hex", 0, 1)),

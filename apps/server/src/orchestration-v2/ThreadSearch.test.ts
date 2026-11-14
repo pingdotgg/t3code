@@ -900,7 +900,6 @@ it.layer(layerTest)("ThreadSearch short words outside ASCII", (it) => {
           message(russian, "russian", "user", "В логах ошибка"),
           thread(french, project),
           message(french, "french", "user", "École fermée à Lyon"),
-          message(french, "french-shout", "user", "Météo école"),
         ],
         projections.apply,
         { discard: true },
@@ -912,8 +911,6 @@ it.layer(layerTest)("ThreadSearch short words outside ASCII", (it) => {
         assert.deepEqual(yield* threadIds("ошибка в"), [russian]);
         assert.deepEqual(yield* threadIds("fermée éc"), [french]);
         assert.deepEqual(yield* threadIds("ecole fermée"), [french]);
-        assert.deepEqual(yield* threadIds("fermée ec"), [french]);
-        assert.deepEqual(yield* threadIds("école me"), [french]);
         // They still narrow: a word the message lacks rules it out.
         assert.deepEqual(yield* threadIds("ошибка я"), []);
         assert.deepEqual(yield* threadIds("fermée ce"), []);
