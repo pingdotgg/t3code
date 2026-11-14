@@ -870,9 +870,16 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const stop: DeviceHost.DeviceHost["Service"]["stop"] = startLock.withPermits(1)(
     Effect.gen(function* () {
       const running = yield* Ref.getAndSet(runningRef, null);
-      yield* stopHub(running?.hub);
-      yield* fs.remove(hubStatePath(), { force: true }).pipe(Effect.ignore);
-      yield* stopAgentDeviceDaemon;
+      // Hub cleanup waits for its exit unbounded; it must not strand the detached agent daemon.
+      yield* Effect.all(
+        [
+          stopHub(running?.hub).pipe(
+            Effect.andThen(fs.remove(hubStatePath(), { force: true }).pipe(Effect.ignore)),
+          ),
+          stopAgentDeviceDaemon,
+        ],
+        { concurrency: "unbounded", discard: true },
+      );
     }),
   );
 

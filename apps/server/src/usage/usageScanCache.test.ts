@@ -169,7 +169,7 @@ describe("scan cache round trip", () => {
     expect(restored).toEqual(original);
   });
 
-  it.each([5, 6, 7, 8, 10, 11, 12, 13, 14, 15])(
+  it.each([5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16])(
     "retains v%s history and compatible positions but invalidates obsolete state",
     (version) => {
       const original = cacheWith([["/gone.jsonl", 100, [record({ speed: "fast" })]]]);
@@ -232,20 +232,20 @@ describe("scan cache round trip", () => {
         position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
       });
       expect(restored.get("/gone-codex.jsonl")).toEqual(
-        version >= 15
+        version >= 16
           ? original.get("/gone-codex.jsonl")
           : {
               ...original.get("/gone-codex.jsonl"),
-              size: -1,
+              size: version === 15 ? original.get("/gone-codex.jsonl")!.size : -1,
               position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
             },
       );
       expect(restored.get("/clean-codex.jsonl")).toEqual(
-        version >= 15
+        version >= 16
           ? cleanCodex
           : {
               ...cleanCodex,
-              size: version === 14 ? cleanCodex.size : -1,
+              size: version >= 14 ? cleanCodex.size : -1,
               position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
             },
       );
@@ -290,9 +290,49 @@ describe("scan cache round trip", () => {
       ...codex(0),
       position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
     });
+    // The migrated entries persist without a state and load again under the current version.
+    expect(decodeScanCache(parse(makeScanCacheWriter()(restored, {})), TEST_FORMAT_MAP)).toEqual(
+      restored,
+    );
   });
 
-  it.each([11, 12, 13, 14, 15])(
+  it("restarts a grown v15 Codex entry, whose baseline time can be older than its totals", () => {
+    const request = {
+      input_tokens: 100,
+      cached_input_tokens: 0,
+      cache_write_input_tokens: 0,
+      output_tokens: 20,
+      reasoning_output_tokens: 0,
+      total_tokens: 120,
+    };
+    const entry: CachedFile = {
+      size: 10,
+      mtimeMs: 100,
+      provider: "codex",
+      records: [record({ provider: "codex", model: "gpt-6-astra", dedupeKey: null })],
+      tailRecords: [],
+      malformedRecords: 0,
+      position: position({
+        state: {
+          ...initialCodexScanState(),
+          model: "gpt-6-astra",
+          lastCumulativeUsage: request,
+          latestCumulativeAtMs: 1_786_000_000_000,
+        },
+      }),
+    };
+    const current = parse(makeScanCacheWriter()(new Map([["/codex.jsonl", entry]]), {}));
+
+    expect(
+      decodeScanCache({ ...current, version: 15 }, TEST_FORMAT_MAP).get("/codex.jsonl"),
+    ).toEqual({
+      ...entry,
+      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+    });
+    expect(decodeScanCache(current, TEST_FORMAT_MAP).get("/codex.jsonl")).toEqual(entry);
+  });
+
+  it.each([11, 12, 13, 14, 15, 16])(
     "re-parses v%s Claude transcripts for corrected attempt usage",
     (version) => {
       const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
