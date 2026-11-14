@@ -78,7 +78,15 @@ shutdown. Follow it byte for byte where a provider can see it.
 - **Never touch a real T3 home.** The `conn-server` binary's default base folder is `~/.t3`,
   like `t3`. Every test, script and manual run passes `--state-dir <a temp folder>`. A
   TypeScript server started for a comparison gets its own temp `T3CODE_HOME` and a free port.
-- Never change Claude, Codex or other provider settings or credentials on the machine.
+- Never change Claude, Codex or other provider settings or credentials on the machine, and
+  never read them, nor `gh` or `git` settings, in a check. **The canary check holds this
+  rule**: `tools/canary.mjs`, the last check in `tools/check.sh`. Every check runs with a
+  decoy HOME, marker variables, a stand-in `SHELL` and a watched `TMPDIR`. The canary fails
+  when a decoy file was read or the decoy home changed. It also fails when a marker reached any
+  output or file, or when our code has a passwd home lookup. A process that a tool starts gets
+  `sealedEnv`, `sealedNodeEnv` or `sealedCargoEnv` from `tools/sealed-env.mjs`, and a `git`
+  run gets `gitEnv`. Never pass the shell's environment, `HOME` or `SHELL` on, and never use
+  `env -i` without `HOME=`.
 - **Model calls.** `tools/check.sh` calls no model, and a new check must not call one by
   default. A live proof uses the cheapest model (Claude Haiku), few turns, behind an explicit
   flag or `--ignored`.

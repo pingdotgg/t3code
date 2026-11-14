@@ -32,7 +32,11 @@ fn open_input(thread: &str, terminal: &str) -> TerminalOpenInput {
         worktree_path: None,
         cols: Some(80),
         rows: Some(24),
-        env: Some(Map::from([("PS1".to_owned(), "$ ".to_owned())])),
+        // No history file: an interactive /bin/sh would write ~/.bash_history in the real home.
+        env: Some(Map::from([
+            ("PS1".to_owned(), "$ ".to_owned()),
+            ("HISTFILE".to_owned(), "/dev/null".to_owned()),
+        ])),
         provider_instance_id: None,
         stop_on_settle: None,
     }
@@ -46,7 +50,11 @@ fn attach_input(thread: &str, terminal: &str) -> TerminalAttachInput {
         worktree_path: None,
         cols: None,
         rows: None,
-        env: Some(Map::from([("PS1".to_owned(), "$ ".to_owned())])),
+        // No history file: an interactive /bin/sh would write ~/.bash_history in the real home.
+        env: Some(Map::from([
+            ("PS1".to_owned(), "$ ".to_owned()),
+            ("HISTFILE".to_owned(), "/dev/null".to_owned()),
+        ])),
         provider_instance_id: None,
         stop_on_settle: None,
         restart_if_not_running: None,

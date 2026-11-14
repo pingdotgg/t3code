@@ -14,7 +14,7 @@ import * as NodePath from "node:path";
 
 import { McpSession, oauthMcpToken, pairBearer } from "./mcp-client.mjs";
 import { monorepo } from "../../../tools/monorepo.mjs";
-import { gitEnv } from "../../../tools/sealed-env.mjs";
+import { gitEnv, sealedEnv } from "../../../tools/sealed-env.mjs";
 
 const argv = process.argv.slice(2);
 const noModel = !argv.includes("--model");
@@ -148,7 +148,7 @@ async function startRust() {
   const { origin, code } = await start(
     rustBinary,
     ["--listen", `127.0.0.1:${port}`, "--state-dir", state, "--project", project],
-    {},
+    { env: sealedEnv(NodePath.join(root, "rust")) },
     port,
   );
   return { name: "Conn Server", origin, authorization: `Bearer ${await pairBearer(origin, code)}` };

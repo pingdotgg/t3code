@@ -87,7 +87,7 @@ run "cargo fmt --check" cargo fmt --check
 run "cargo clippy" cargo clippy --workspace --all-targets --all-features -- -D warnings
 run "cargo test" cargo test --workspace
 run "release build" cargo build --release --workspace --bins --examples
-run "decode check" env CARGO_TARGET_DIR="$repo/target" \
+run "decode check" env CARGO_TARGET_DIR="$repo/target" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
   cargo test --manifest-path fixtures/decode-check/Cargo.toml
 
 # Advisories, licences, bans and sources (deny.toml). Advisories need network access for the

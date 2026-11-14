@@ -99,6 +99,17 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 | T3 replay (Claude)  | `node crates/conn-provider-claude/tools/t3-replay/check.mjs`                                                                    | The T3 server's Claude transcripts: exactly the scenarios in `expected-failures.txt` fail            |
 | T3 fixture replay   | `node crates/conn-engine/tools/t3-fixture-replay/check.mjs`                                                                     | T3's testkit fixtures through this engine and our Claude, Codex and Grok providers pass T3's own assertions, except the variants in its `expected-failures.txt` (69 of 159 pass) |
 | Orbit flow          | `node crates/conn-server/tools/orbit-flow.mjs target/release/examples/replay_server`                                            | Orbit's container flow: start, project add, session issue, launch over `/mcp`, revoke, clean stop   |
+| Canary (last)       | `node tools/canary.mjs verify` (set up by `tools/check.sh` before the first check) | No check read a decoy file of the home, changed the home, or let a marker variable or file reach any output or written file; no passwd home lookup in our code |
+
+**The canary.** `tools/check.sh` runs every check with a decoy HOME (marker files where
+`~/.claude`, `~/.codex`, `~/.grok`, `~/.config/gh`, `~/.gitconfig`, `~/.netrc` and `~/.t3` would
+be; the credential files mode 000), marker values in `ANTHROPIC_*`, `OPENAI_API_KEY`,
+`CODEX_HOME`, `XAI_API_KEY`, `GH_TOKEN`, `GITHUB_TOKEN`, `GITLAB_TOKEN`, `T3CODE_HOME` and
+`CONN_CANARY`, a stand-in `SHELL`, and a `TMPDIR` that the canary scans twice a second. Cargo
+and rustup keep their real folders (`CARGO_HOME`, `RUSTUP_HOME`), and cargo runs without the
+global git configuration. Reads are seen by access time (a self-test fails the check on a
+`noatime` file system), opens of a mode-000 file only when the error names the decoy path, and
+a stat or a file that lived less than half a second without printing a marker not at all.
 
 `replay_server` is `conn-server` with the engine's scripted fake provider, so these checks call
 no model. Each server they start gets a temp state folder; `parity.mjs` gives the T3 server a

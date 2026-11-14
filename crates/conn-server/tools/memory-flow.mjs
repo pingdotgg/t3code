@@ -12,7 +12,7 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
-import { gitEnv } from "../../../tools/sealed-env.mjs";
+import { gitEnv, sealedEnv } from "../../../tools/sealed-env.mjs";
 
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const { McpSession } = await import(
@@ -41,8 +41,9 @@ const home = NodePath.join(root, ".t3");
 const state = NodePath.join(home, "userdata");
 const workspace = NodePath.join(root, "workspace");
 const origin = `http://127.0.0.1:${port}`;
-// CONN_CLAUDE_STATUS_PROBE=off: the server never runs this machine's `claude` for its status.
-const env = { ...process.env, T3CODE_HOME: home, DISABLE_AUTOUPDATER: "1", CONN_CLAUDE_STATUS_PROBE: "off" };
+// Sealed: a throwaway HOME, a stand-in shell, no variable of the shell beyond what a process
+// needs, and no run of this machine's `claude` for the status (sealedEnv).
+const env = { ...sealedEnv(root), T3CODE_HOME: home, DISABLE_AUTOUPDATER: "1" };
 delete env.T3CODE_PORT;
 delete env.T3CODE_HOST;
 const cli = (...args) =>
