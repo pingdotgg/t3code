@@ -4430,12 +4430,17 @@ describe("orchestration v2 provider switching", () => {
     () => importedFailureScenario(true),
   );
 
-  it.live.each(["immediately", "behind a running turn"] as const)(
-    "hands a portable fork's inherited conversation to a provider switched to %s",
+  it.live.each([
+    "immediately",
+    "behind a running turn",
+    "after a cancelled queued switch",
+  ] as const)(
+    "hands a portable fork's inherited conversation to a provider switched %s",
     (variant) =>
       Effect.gen(function* () {
         const queued = variant !== "immediately";
-        const key = queued ? "queued" : "immediate";
+        const cancelled = variant === "after a cancelled queued switch";
+        const key = cancelled ? "cancelled" : queued ? "queued" : "immediate";
         const cwd = yield* checkpointWorkspace(`fork-switch-history-${key}`);
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const started = yield* Deferred.make<void>();
@@ -4513,8 +4518,26 @@ describe("orchestration v2 provider switching", () => {
           if (queued) {
             yield* Deferred.await(started);
             yield* worker.drain();
-            yield* send(forkThreadId, "fork-codex", CODEX_MODEL_SELECTION);
+            yield* send(
+              forkThreadId,
+              cancelled ? "fork-codex-cancelled" : "fork-codex",
+              CODEX_MODEL_SELECTION,
+            );
+            if (cancelled) {
+              // The cancelled run leaves its reserved Codex row behind without a native thread.
+              const pending = (yield* orchestrator.getThreadProjection(forkThreadId)).runs.at(-1)!;
+              yield* orchestrator.dispatch({
+                type: "queued-run.cancel",
+                commandId: CommandId.make(`command:fork-switch-history:${key}:cancel`),
+                threadId: forkThreadId,
+                runId: pending.id,
+              });
+            }
             yield* Deferred.succeed(release, undefined);
+            if (cancelled) {
+              yield* settle(forkThreadId);
+              yield* send(forkThreadId, "fork-codex", CODEX_MODEL_SELECTION);
+            }
           } else {
             yield* settle(forkThreadId);
             yield* send(forkThreadId, "fork-codex", CODEX_MODEL_SELECTION);

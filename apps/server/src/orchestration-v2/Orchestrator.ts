@@ -8504,7 +8504,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               run.ordinal <= latestHandoffRun.ordinal,
           );
     const providerSwitchNeedsFullContext =
-      targetProviderThread === undefined || requiresFullProviderSwitchContext;
+      targetProviderThread === undefined ||
+      targetProviderThread.nativeThreadRef === null ||
+      requiresFullProviderSwitchContext;
     const providerSwitchItems =
       providerSwitchCoveredRuns.length === 0
         ? []
