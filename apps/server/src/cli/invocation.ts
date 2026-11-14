@@ -156,15 +156,21 @@ const shellWord = (value: string) =>
   /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
 
 /** The npm launcher starts the runtime named by its package version, so only the package manager moves it. */
-export function packageUpdateCommand(installation: ServerInstallation, version: string): string {
+export function packageUpdateCommand(
+  installation: ServerInstallation,
+  version: string,
+): string | null {
   const spec = `t3@${version}`;
   switch (installation.kind) {
     case "npm-global":
       return `npm install --global --prefix ${shellWord(installation.prefix)} ${spec}`;
     case "pnpm-dlx":
       return `pnpm dlx ${spec}`;
-    default:
+    case "npx":
+    case "bunx":
       return `${installation.kind} ${spec}`;
+    case "t3-launcher":
+      return null;
   }
 }
 

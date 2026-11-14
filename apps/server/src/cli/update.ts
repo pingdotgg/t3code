@@ -239,8 +239,9 @@ const resolveNextStep = Effect.fn("cli.update.resolve_next_step")(function* (inp
   if (input.targetVersion === packageJson.version) return `Run ${input.entryPath}`;
   const stillRuns = `The t3 npm package still runs ${packageJson.version}.`;
   const installation = yield* resolveServerInstallation;
-  if (installation !== null) {
-    const command = packageUpdateCommand(installation, input.targetVersion);
+  const command =
+    installation === null ? null : packageUpdateCommand(installation, input.targetVersion);
+  if (command !== null) {
     return `${stillRuns} Run \`${command}\` to move to ${input.targetVersion}.`;
   }
   if (Option.isSome(yield* resolveNpmLauncherPath)) {
