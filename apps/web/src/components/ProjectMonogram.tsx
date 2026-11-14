@@ -17,6 +17,7 @@ export function ProjectMonogram({
   return (
     <span
       aria-hidden="true"
+      data-slot="project-monogram"
       className={cn("inline-flex size-4 shrink-0 items-center justify-center", className)}
     >
       <svg

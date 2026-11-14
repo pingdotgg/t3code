@@ -1,180 +1,151 @@
-import * as Alchemist from "@/Alchemist";
-import { describe, expect, test } from "alchemy-test";
+import { describe, expect, test } from "@alchemy.run/test";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import type * as Scope from "effect/Scope";
+import { Action } from "@/Action";
+import * as Alchemist from "@/Alchemist/index.ts";
+import { Stack } from "@/index.ts";
+import { inMemoryState } from "@/State/index.ts";
+
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+
+type Output = { readonly url: string };
+
+const stack = Stack(
+  "AlchemistRuntime",
+  { providers: Layer.empty, state: inMemoryState() },
+  Effect.succeed({ url: "https://example.com" } as Output),
+);
+
+const run = <A, E>(program: Effect.Effect<A, E, Alchemist.Services | Scope.Scope>) =>
+  Effect.runPromise(program.pipe(Effect.provide(Alchemist.layer()), Effect.scoped));
 
 describe("Alchemist runtime", { tags: ["unit", "local"] }, () => {
-  test("provides every service required by the programmatic stack API", () => {
-    const deploy = Effect.gen(function* () {
-      const snapshot = yield* Alchemist.Stack.plan({
-        operation: "deploy",
-        target: { entrypoint: "./alchemy.run.ts", stage: "prod" },
-      });
-      yield* Alchemist.Stack.apply(snapshot);
+  test("deploys and destroys a stack value under Alchemist.layer() alone", async () => {
+    // Each operation closes its own scope, releasing the stage's lease.
+    const program = Effect.gen(function* () {
+      const output = yield* Effect.scoped(
+        Effect.flatMap(
+          Alchemist.plan({ stack, operation: "deploy", stage: "test" }),
+          Alchemist.apply,
+        ),
+      );
+      const changes = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const destroy = yield* Alchemist.plan({ stack, operation: "destroy", stage: "test" });
+          yield* Alchemist.apply(destroy);
+          return Alchemist.hasChanges(destroy);
+        }),
+      );
+      return { output, changes };
     });
-    const runnable: Effect.Effect<void, unknown, never> = deploy.pipe(
+    const runnable: Effect.Effect<unknown, unknown, never> = program.pipe(
       Effect.provide(Alchemist.layer()),
-      Effect.scoped,
     );
-
-    expect(Effect.isEffect(runnable)).toBe(true);
-  });
-
-  test("infers apply output from an explicitly supplied stack module", () => {
-    type Module = {
-      readonly default: Effect.Effect<{
-        readonly output: { readonly url: string };
-      }>;
-    };
-
-    const deploy = Effect.gen(function* () {
-      const snapshot = yield* Alchemist.Stack.plan<Module>({
-        operation: "deploy",
-        target: { entrypoint: "./alchemy.run.ts", stage: "prod" },
-      });
-      const output = yield* Alchemist.Stack.apply(snapshot);
-      const url: string = output.url;
-      return url;
+    expect(await Effect.runPromise(runnable)).toEqual({
+      output: { url: "https://example.com" },
+      changes: false,
     });
-
-    expect(Effect.isEffect(deploy)).toBe(true);
   });
 
-  test("filtered apply exposes no stack output", () => {
-    type Module = {
-      readonly default: Effect.Effect<{
-        readonly output: { readonly url: string };
-      }>;
-    };
-    const deploy = Effect.gen(function* () {
-      const snapshot = yield* Alchemist.Stack.plan<Module>({
-        operation: "deploy",
-        target: { entrypoint: "./alchemy.run.ts", stage: "prod" },
-        include: ["Branch"],
-      });
-      const output: undefined = yield* Alchemist.Stack.apply(snapshot);
-      return output;
-    });
-    expect(Effect.isEffect(deploy)).toBe(true);
+  test("destroy and drift never run the stack's program", async () => {
+    let runs = 0;
+    const counted = Stack(
+      "AlchemistProgramRuns",
+      { providers: Layer.empty, state: inMemoryState() },
+      Effect.sync(() => ++runs),
+    );
+    await run(
+      Effect.gen(function* () {
+        yield* Effect.scoped(
+          Effect.flatMap(
+            Alchemist.plan({ stack: counted, operation: "deploy", stage: "test" }),
+            Alchemist.apply,
+          ),
+        );
+        yield* Effect.scoped(
+          Effect.flatMap(
+            Alchemist.Drift.scan({ stack: counted, stage: "test" }),
+            Alchemist.Drift.execute,
+          ),
+        );
+        yield* Effect.scoped(
+          Effect.flatMap(
+            Alchemist.plan({ stack: counted, operation: "destroy", stage: "test" }),
+            Alchemist.apply,
+          ),
+        );
+      }),
+    );
+    expect(runs).toBe(1);
   });
 
-  test("legacy PlanInput stays full and optional filter inputs stay optional", () => {
-    type Equal<A, B> =
-      (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
-        ? true
-        : false;
-    type Output = { readonly url: string };
-    type Module = {
-      readonly default: Effect.Effect<{ readonly output: Output }>;
-    };
-    const input: Alchemist.Stack.PlanInput = {
+  test("apply reports to its own subscriber, and actions count as changes", async () => {
+    const Sync = Action("Sync", (_: { n: number }) => Effect.succeed({ ok: true }));
+    const withAction = Stack(
+      "AlchemistActionOnly",
+      { providers: Layer.empty, state: inMemoryState() },
+      Effect.gen(function* () {
+        yield* Sync({ n: 1 });
+        return {};
+      }),
+    );
+    const seen: Array<string> = [];
+    const changes = await run(
+      Effect.gen(function* () {
+        // Planned under one subscriber, applied under another: the plan's
+        // captured services must not carry the planning loggers along.
+        const plan = yield* Alchemist.plan({
+          stack: withAction,
+          operation: "deploy",
+          stage: "test",
+        }).pipe(Alchemist.onEvent(() => Effect.void));
+        yield* Alchemist.apply(plan).pipe(
+          Alchemist.onEvent((event) => Effect.sync(() => seen.push(event.type))),
+        );
+        return Alchemist.hasChanges(plan);
+      }),
+    );
+    expect(changes).toBe(true);
+    expect(seen).toContain("apply.resource.status");
+  });
+
+  test("infers the deploy output from the stack and selection", () => {
+    const full = Alchemist.plan({ stack, operation: "deploy", stage: "prod" });
+    const included = Alchemist.plan({
+      stack,
       operation: "deploy",
-      target: { entrypoint: "./alchemy.run.ts", stage: "prod" },
-      force: true,
-    };
-    const full = Alchemist.Stack.plan<Module>(input);
-    const excluded = Alchemist.Stack.plan<Module>({
-      ...input,
+      stage: "prod",
+      include: ["Branch"],
+    });
+    const excluded = Alchemist.plan({
+      stack,
+      operation: "deploy",
+      stage: "prod",
       exclude: ["Other"],
     });
-    const absent = Alchemist.Stack.plan<Module>({
-      ...input,
-      include: undefined,
-      exclude: undefined,
-    });
-    const optional = (input: Alchemist.Stack.FilteredPlanInput) =>
-      Alchemist.Stack.plan<Module>(input);
-    const optionalExclude = (exclude?: ReadonlyArray<string>) =>
-      Alchemist.Stack.plan<Module>({ ...input, exclude });
-    const assertions: [
-      Equal<Effect.Success<typeof full>["native"]["output"], Output>,
-      Equal<Effect.Success<typeof excluded>["native"]["output"], undefined>,
-      Equal<Effect.Success<typeof absent>["native"]["output"], Output>,
-      Equal<
-        Effect.Success<ReturnType<typeof optional>>["native"]["output"],
-        Output | undefined
-      >,
-      Equal<
-        Effect.Success<ReturnType<typeof optionalExclude>>["native"]["output"],
-        Output | undefined
-      >,
-    ] = [true, true, true, true, true];
-    expect(assertions.every(Boolean)).toBe(true);
-  });
+    const optional = (options: Alchemist.PlanOptions) => Alchemist.plan({ ...options, stack });
+    const fullApply = Effect.flatMap(full, Alchemist.apply);
+    const includedApply = Effect.flatMap(included, Alchemist.apply);
+    const destroyApply = Effect.flatMap(
+      Alchemist.plan({ stack, operation: "destroy", stage: "prod" }),
+      Alchemist.apply,
+    );
 
-  test("full Alchemist inputs cannot erase known or optional filters", () => {
-    type Assignable<A, B> = [A] extends [B] ? true : false;
-    type Full = Alchemist.Stack.PlanInput;
-    type Base = Omit<Full, "include" | "exclude">;
-    const assignable: [
-      Assignable<Base & { include: ReadonlyArray<string> }, Full>,
-      Assignable<Base & { exclude: ReadonlyArray<string> }, Full>,
-      Assignable<Base & { include?: ReadonlyArray<string> }, Full>,
-      Assignable<Base & { exclude?: ReadonlyArray<string> }, Full>,
-      Assignable<Alchemist.Stack.FilteredPlanInput, Full>,
-    ] = [false, false, false, false, false];
-    expect(assignable.some(Boolean)).toBe(false);
-  });
-
-  test("preserves explicit module output inference through higher-order planning", () => {
-    type Equal<A, B> =
-      (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
-        ? true
-        : false;
-    type Output = { readonly url: string };
-    type Module = {
-      readonly default: Effect.Effect<{ readonly output: Output }>;
-    };
-    const input: Alchemist.Stack.PlanInput = {
-      operation: "deploy",
-      target: { entrypoint: "./alchemy.run.ts", stage: "prod" },
-      force: true,
-    };
-    const included = { ...input, include: ["Branch"] };
-    const excluded = { ...input, exclude: ["Other"] };
-    const optionalInput: Alchemist.Stack.FilteredPlanInput = input;
-    const full = Effect.succeed(input).pipe(
-      Effect.flatMap(Alchemist.Stack.plan<Module>),
-    );
-    const selected = Effect.succeed(included).pipe(
-      Effect.flatMap(Alchemist.Stack.plan<Module, typeof included>),
-    );
-    const excludedPlan = Effect.succeed(excluded).pipe(
-      Effect.flatMap(Alchemist.Stack.plan<Module, typeof excluded>),
-    );
-    const optional = Effect.succeed(optionalInput).pipe(
-      Effect.flatMap(
-        Alchemist.Stack.plan<Module, Alchemist.Stack.FilteredPlanInput>,
-      ),
-    );
-    const selectedCallback = Effect.succeed(included).pipe(
-      Effect.flatMap((input) => Alchemist.Stack.plan<Module>(input)),
-    );
-    const optionalCallback = Effect.succeed(optionalInput).pipe(
-      Effect.flatMap((input) => Alchemist.Stack.plan<Module>(input)),
-    );
-    const fullApply = full.pipe(Effect.flatMap(Alchemist.Stack.apply));
-    const selectedApply = selected.pipe(Effect.flatMap(Alchemist.Stack.apply));
-    const optionalApply = optional.pipe(Effect.flatMap(Alchemist.Stack.apply));
+    type PlanOutput<T> =
+      T extends Effect.Effect<Alchemist.StackPlan<infer O>, any, any> ? O : never;
     const assertions: [
-      Equal<Effect.Success<typeof full>["native"]["output"], Output>,
-      Equal<Effect.Success<typeof selected>["native"]["output"], undefined>,
-      Equal<Effect.Success<typeof excludedPlan>["native"]["output"], undefined>,
-      Equal<
-        Effect.Success<typeof optional>["native"]["output"],
-        Output | undefined
-      >,
-      Equal<
-        Effect.Success<typeof selectedCallback>["native"]["output"],
-        undefined
-      >,
-      Equal<
-        Effect.Success<typeof optionalCallback>["native"]["output"],
-        Output | undefined
-      >,
+      Equal<PlanOutput<typeof full>, Output>,
+      Equal<PlanOutput<typeof included>, undefined>,
+      Equal<PlanOutput<typeof excluded>, undefined>,
+      Equal<PlanOutput<ReturnType<typeof optional>>, Output | undefined>,
       Equal<Effect.Success<typeof fullApply>, Output>,
-      Equal<Effect.Success<typeof selectedApply>, undefined>,
-      Equal<Effect.Success<typeof optionalApply>, Output | undefined>,
-    ] = [true, true, true, true, true, true, true, true, true];
+      Equal<Effect.Success<typeof includedApply>, undefined>,
+      Equal<Effect.Success<typeof destroyApply>, undefined>,
+    ] = [true, true, true, true, true, true, true];
     expect(assertions.every(Boolean)).toBe(true);
   });
 });

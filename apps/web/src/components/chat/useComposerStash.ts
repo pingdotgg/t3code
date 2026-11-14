@@ -28,11 +28,14 @@ import {
 import { type PendingUserInput } from "../../session-logic";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
 import { collapseExpandedComposerCursor } from "../../composer-logic";
+import { collectComposerPromptInlineTokens } from "../../composer-editor-mentions";
 import { compressImageForStash } from "../../lib/imageCompression";
 import { formatInlineContextReference } from "~/lib/composerContextReferences";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { pendingDraftWork } from "./pendingDraftWork";
+import { countPreparingComposerImages } from "./preparingComposerImages";
 import {
+  isResponseContextRecord,
   previewAnnotationContextRecord,
   reviewCommentContextRecord,
   terminalContextRecord,
@@ -126,6 +129,7 @@ export function useComposerStash(input: {
   } = input;
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const setComposerDraftReplyTo = useComposerDraftStore((store) => store.setReplyTo);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
   const removeComposerDraftPreviewAnnotation = useComposerDraftStore(
@@ -207,6 +211,17 @@ export function useComposerStash(input: {
     const rewrittenContextIds = entry.records
       ? importContextRecords(entry.records, null, composerDraftTarget)
       : new Map<string, string>();
+    // A reply only makes sense in the thread that holds the response, and one already pending wins.
+    const stashedReply = entry.records?.find(isResponseContextRecord);
+    if (
+      stashedReply &&
+      !getComposerDraft(composerDraftTarget)?.replyTo &&
+      typeof composerDraftTarget !== "string" &&
+      stashedReply.citation.threadId === composerDraftTarget.threadId &&
+      stashedReply.citation.environmentId === composerDraftTarget.environmentId
+    ) {
+      setComposerDraftReplyTo(composerDraftTarget, stashedReply);
+    }
     const restoredPrompt = replaceComposerContextReferences(entry.prompt, (reference) => {
       const contextId = rewrittenContextIds.get(reference.contextId);
       return contextId
@@ -455,11 +470,18 @@ export function useComposerStash(input: {
       });
       return;
     }
-    const prompt = promptRef.current.trim();
+    const replyTo = getComposerDraft(composerDraftTarget)?.replyTo;
+    const trimmedPrompt = promptRef.current.trim();
+    // A trailing chip only parses with whitespace after it, so keep one space to restore it.
+    const endsWithChip =
+      collectComposerPromptInlineTokens(promptRef.current).at(-1)?.end ===
+      promptRef.current.trimEnd().length;
+    const prompt = endsWithChip ? `${trimmedPrompt} ` : trimmedPrompt;
     const attachmentDraft = readAttachmentDraft();
     const images = [...attachmentDraft.images];
     const files = [...attachmentDraft.files];
     const stashedRecords: ComposerContextRecord[] = [
+      ...(replyTo ? [replyTo] : []),
       ...composerThreadContexts,
       ...readTerminalContexts().map(terminalContextRecord),
       ...composerReviewComments.map(reviewCommentContextRecord),
@@ -479,6 +501,16 @@ export function useComposerStash(input: {
       } else {
         setIsStashMenuOpen((open) => !open);
       }
+      return;
+    }
+    // The snapshot only holds compressed images; a still-compressing one would land in the
+    // emptied composer instead of travelling with this entry.
+    if (countPreparingComposerImages(attachmentTargetKey) > 0) {
+      toastManager.add({
+        type: "info",
+        title: "Still compressing a pasted image.",
+        description: "Stash again once it finishes compressing.",
+      });
       return;
     }
     const stashedFiles: PersistedComposerFileAttachment[] = [];
@@ -564,6 +596,7 @@ export function useComposerStash(input: {
       clearComposerDraftPromptAndImages(stashTarget);
       clearComposerDraftTerminalContexts(stashTarget);
       setComposerDraftThreadContexts(stashTarget, []);
+      setComposerDraftReplyTo(stashTarget, null);
       for (const comment of composerReviewComments) {
         removeComposerDraftReviewComment(stashTarget, comment.id);
       }
