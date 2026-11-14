@@ -755,7 +755,7 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
       })
       .pipe(Effect.withTracer(command.tracer));
     for (const [table, seeks] of [
-      ["turn_items", ["USING INDEX orchestration_v2_projection_turn_items_conversation_idx"]],
+      ["turn_items", ["turn_items_thread_type_idx (thread_id=? AND type=?)"]],
       ["nodes", ["nodes_settled_leaf_idx (thread_id=? AND <expr>=?)"]],
       ["subagents", ["USING COVERING INDEX orchestration_v2_projection_subagents_settled_idx"]],
       [
@@ -1292,9 +1292,9 @@ it.effect("record reads filter notification sources without dropping matching me
       `EXPLAIN QUERY PLAN ${ordinalLookup}`,
       [threadId, "[]"],
     )).map((row) => row.detail);
-    // User-only reads must stay on the partial index instead of scanning every turn item.
+    // User-only reads must stay on a type-bounded index instead of scanning every turn item.
     assert.isTrue(
-      plan.some((detail) => detail.includes("turn_items_user_message_idx")),
+      plan.some((detail) => /turn_items_(user_message|thread_type)_idx/.test(detail)),
       plan.join("\n"),
     );
     // With every user item loaded, the items give the order and the lookup does not run.
@@ -2807,11 +2807,25 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
     assert.deepEqual([...(yield* family(id("missing")))], []);
 
     // Includes another root's idle child on the same path, which a shell may leave out.
-    const onWorktree = yield* store.getShellSnapshot({ location: "active", worktreePath });
+    const { statements, tracer } = traceSqlStatements();
+    const onWorktree = yield* store
+      .getShellSnapshot({ location: "active", worktreePath })
+      .pipe(Effect.withTracer(tracer));
     assert.sameMembers(
       onWorktree.threads.map((thread) => thread.id),
       [id("root"), id("child"), id("other-child")],
     );
+    // A path names a few threads; scanning every thread parses every payload.
+    const sql = yield* SqlClient.SqlClient;
+    const threadQuery = statements.find((statement) =>
+      statement.includes("AS latest_run_stop_requested"),
+    );
+    assert.isDefined(threadQuery);
+    const threadPlan = (yield* sql.unsafe<{ readonly detail: string }>(
+      `EXPLAIN QUERY PLAN ${threadQuery}`,
+      [],
+    )).map((row) => row.detail);
+    assert.notInclude(threadPlan, "SCAN t", threadPlan.join("\n"));
     // A fork keeps its deleted source's root, so the deleted root still names the live tree.
     yield* store.apply({
       id: EventId.make("event:family:root-deleted"),
@@ -4319,9 +4333,16 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         workCursor = page.nextCursor;
       }
       assert.strictEqual(workIds.size, 999);
-      for (const toolName of ["t3-code.delegate_task", "mcp__t3_code__delegate_task"]) {
+      for (const [toolName, output] of [
+        ["t3-code.delegate_task", null],
+        ["mcp__t3_code__delegate_task", null],
+        ["mcp__t3-code__send_to_user", null],
+        // OpenCode Code Mode reports a nested send_to_user call as one `execute` item.
+        ["execute", JSON.stringify({ sentMessage: "Draft" })],
+      ] as const) {
         yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool',
-          payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', ${toolName})
+          payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', ${toolName},
+            '$.output', ${output})
           WHERE thread_id = ${threadId} AND ordinal = 2`;
         const window = yield* projectionStore.getThreadSnapshotWindow(threadId, {
           rowLimit: sqlPageLimit,
@@ -5018,29 +5039,38 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           })}
         )
       `;
-      const cancelledSuffixSnapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
-        rowLimit: sqlPageLimit,
-      });
-      const cancelledSuffixPage = buildBoundedThreadProjection({
-        policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined },
-        projection: cancelledSuffixSnapshot.projection,
-        snapshotSequence: cancelledSuffixSnapshot.snapshotSequence,
-      });
-      assert.strictEqual(cancelledSuffixPage.latestLocalTurnOrdinal, 1_202);
-      assert.lengthOf(cancelledSuffixPage.projection.visibleTurnItems, 75);
-      assert.isFalse(
-        cancelledSuffixPage.projection.visibleTurnItems.some((row) =>
-          String(row.sourceItemId).includes(":cancelled:"),
-        ),
-      );
-      assert.isTrue(
-        cancelledSuffixPage.projection.visibleTurnItems.some(
-          (row) => row.sourceItemId === runlessQueuedId,
-        ),
-      );
+      // A steer that fell back to the queue keeps its queued-turn item while its
+      // run waits. End on cancelled for the checks below.
+      for (const status of ["queued", "cancelled"] as const) {
+        yield* sql`
+          UPDATE orchestration_v2_projection_runs
+          SET status = ${status}, payload_json = json_set(payload_json, '$.status', ${status})
+          WHERE run_id = ${cancelledRunId}
+        `;
+        const cancelledSuffixSnapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+          rowLimit: sqlPageLimit,
+        });
+        const cancelledSuffixPage = buildBoundedThreadProjection({
+          policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined },
+          projection: cancelledSuffixSnapshot.projection,
+          snapshotSequence: cancelledSuffixSnapshot.snapshotSequence,
+        });
+        assert.strictEqual(cancelledSuffixPage.latestLocalTurnOrdinal, 1_202);
+        assert.lengthOf(cancelledSuffixPage.projection.visibleTurnItems, 75);
+        assert.isFalse(
+          cancelledSuffixPage.projection.visibleTurnItems.some((row) =>
+            String(row.sourceItemId).includes(":cancelled:"),
+          ),
+          status,
+        );
+        assert.isTrue(
+          cancelledSuffixPage.projection.visibleTurnItems.some(
+            (row) => row.sourceItemId === runlessQueuedId,
+          ),
+        );
+      }
 
-      // A steer cancels the queued run before it starts while the steered run keeps writing, so
-      // the queued message leaves the window but its run is still the shell's latest run.
+      // A steer moves the cancelled queued message outside the window.
       const steeredItemId = "turn-item:bounded-sql-history:steered-output";
       const steeredRunId = RunId.make("run:bounded-sql-history:1000");
       yield* sql`
@@ -5078,7 +5108,14 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.isFalse(
         steeredSnapshot.projection.turnItems.some((item) => item.runId === cancelledRunId),
       );
-      assert.isTrue(steeredSnapshot.projection.runs.some((run) => run.id === cancelledRunId));
+      const latestRunId = (yield* projectionStore.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      )?.latestRunId;
+      assert.equal(latestRunId, hiddenRunId);
+      assert.isFalse(
+        steeredSnapshot.projection.turnItems.some((item) => item.runId === latestRunId),
+      );
+      assert.isTrue(steeredSnapshot.projection.runs.some((run) => run.id === latestRunId));
       yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ${steeredItemId}`;
 
       const interruptRunId = RunId.make("run:bounded-sql-history:interrupt");
@@ -5788,7 +5825,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       let windowReads = 0;
       let foldedGroups = 0;
 
-      for (let round = 0; round < 4; round += 1) {
+      for (let round = 0; round < 5; round += 1) {
         const threadId = ThreadId.make(`thread:window-equivalence:${round}`);
         const created = {
           id: EventId.make(`event:window-equivalence:${round}`),
@@ -5820,34 +5857,41 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           },
         } satisfies Parameters<typeof projectionStore.apply>[0];
         yield* projectionStore.apply(created);
+        // The last thread puts three things below a window: a user turn under a hidden queued
+        // turn, the start of a long run that folds, and the start of the run before it, which
+        // has later rows among the first rows of the long run.
+        const windowEdges = round === 4;
         // One run of each kind in a random order, then an active run. Every other thread has
         // one user turn and then only wake turns.
-        // The last thread is a long run that a late notification wakes, then enough one-row
-        // runs that a page stops at the raw turn limit only if it counts that wake as a turn.
+        // The fourth thread is a turn, many rolled-back rows, a late notification of that turn,
+        // then 149 one-row turns. A page stops at that notification only if it counts as a turn.
         const kinds =
           round === 3
-            ? ["late wake", ...Array.from({ length: 148 }, () => "one row")]
-            : [
-                "rolled back",
-                "cancelled queued turn",
-                "replaced attempt",
-                "stopped",
-                "stopped",
-                "folds work",
-                "folds work",
-                "short",
-                "short",
-                "short",
-              ]
-                .map((kind) => ({ kind, order: random() }))
-                .toSorted((left, right) => left.order - right.order)
-                .map(({ kind }) => kind);
+            ? ["rolled back", "late wake", ...Array.from({ length: 149 }, () => "one row")]
+            : windowEdges
+              ? ["short", "cancelled queued turn", "folds work", "long fold", "stopped"]
+              : [
+                  "rolled back",
+                  "cancelled queued turn",
+                  "held queued turn",
+                  "replaced attempt",
+                  "stopped",
+                  "stopped",
+                  "folds work",
+                  "folds work",
+                  "short",
+                  "short",
+                  "short",
+                ]
+                  .map((kind) => ({ kind, order: random() }))
+                  .toSorted((left, right) => left.order - right.order)
+                  .map(({ kind }) => kind);
         const agentDriven = round === 1;
         const runs: Array<unknown> = [];
         const attempts: Array<unknown> = [];
         const items: Array<unknown> = [];
         const tiedWithHidden: Array<TurnItemId> = [];
-        const repliesInStoppedRuns: Array<string> = [];
+        const pageEnds: Array<string> = [];
         let ordinal = 0;
         for (const [index, kind] of [...kinds, "active"].entries()) {
           const run = index + 1;
@@ -5860,9 +5904,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
                 ? "rolled_back"
                 : kind === "cancelled queued turn"
                   ? "cancelled"
-                  : kind === "short" && chance(0.5)
-                    ? "interrupted"
-                    : "completed";
+                  : kind === "held queued turn"
+                    ? "queued"
+                    : kind === "short" && chance(0.5)
+                      ? "interrupted"
+                      : "completed";
           runs.push({
             id: runId,
             threadId,
@@ -5939,9 +5985,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           const wakes =
             kind === "one row"
               ? run % 10 !== 0
-              : kind !== "late wake" && (agentDriven ? run > 1 : chance(0.2));
+              : windowEdges
+                ? ["folds work", "long fold", "stopped"].includes(kind)
+                : kind !== "late wake" && (agentDriven ? run > 1 : chance(0.2));
+          if (round === 3 && kind === "active")
+            pageEnds.push(`turn-item:window-equivalence:${round}:${items.length}`);
           if (wakes) notification();
-          else userMessage(kind === "cancelled queued turn" ? "queued_turn" : "turn_start");
+          else
+            userMessage(
+              kind === "cancelled queued turn" || kind === "held queued turn"
+                ? "queued_turn"
+                : "turn_start",
+            );
           // A stopped run never folds, so it is long enough for page ends to fall inside it.
           const work =
             kind === "late wake"
@@ -5950,25 +6005,40 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
                 ? 320 + Math.floor(random() * 60)
                 : kind === "folds work"
                   ? 155 + Math.floor(random() * 60)
-                  : kind === "one row"
-                    ? 0
-                    : Math.floor(random() * 30);
+                  : kind === "long fold"
+                    ? 300
+                    : kind === "one row"
+                      ? 0
+                      : Math.floor(random() * 30);
           for (let row = 0; row < work; row += 1) {
-            if (chance(0.5)) add("command_execution", { input: "echo", output: "ok", exitCode: 0 });
-            else add("reasoning", { text: "", streaming: false });
+            // The first rows of a long fold and the work of a late wake belong to the run before.
+            const owner =
+              (kind === "long fold" && row < 140) || kind === "late wake"
+                ? {
+                    runId: `run:window-equivalence:${round}:${run - 1}`,
+                    nodeId: `node:window-equivalence:${round}:${run - 1}`,
+                  }
+                : {};
+            if (chance(0.5))
+              add("command_execution", { input: "echo", output: "ok", exitCode: 0, ...owner });
+            else add("reasoning", { text: "", streaming: false, ...owner });
             // A reply deep in a stopped run: a page that ends on it has enough work below it
             // to fold, and only the stop request above it says that it does not.
             const reply = kind === "stopped" && row === 200;
-            if (reply)
-              repliesInStoppedRuns.push(`turn-item:window-equivalence:${round}:${items.length}`);
-            if (reply || chance(0.02))
+            if (reply) pageEnds.push(`turn-item:window-equivalence:${round}:${items.length}`);
+            // With these replies, the part of a long fold in one window is too small to fold,
+            // and a shown row lies below the notification of a late wake.
+            const replies = kind === "long fold" || kind === "late wake";
+            if (reply || (replies && row % 5 === 0) || chance(0.02))
               add("assistant_message", {
                 messageId: `message:window-equivalence:${round}:${items.length}`,
                 text: "Reply",
                 streaming: false,
               });
-            if (chance(0.01)) notification();
-            if (chance(0.004) && !agentDriven) userMessage("steer");
+            // A late wake has no other input above its turn start.
+            if (chance(0.01) && kind !== "late wake") notification();
+            if (chance(0.004) && !agentDriven && !windowEdges && kind !== "late wake")
+              userMessage("steer");
           }
           if (kind === "late wake") notification();
           if (kind === "stopped") add("run_interrupt_request", { message: "Stop" });
@@ -6063,7 +6133,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             cursor = page.nextCursor;
           }
         }
-        for (const sourceItemId of repliesInStoppedRuns) {
+        for (const sourceItemId of pageEnds) {
           const cursor = encodeThreadHistoryCursor({
             snapshotSequence: 0,
             sourceThreadId: threadId,
@@ -6080,6 +6150,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         for (const view of ["messages", "activity"] as const) {
           for (const afterPosition of [-1, Math.floor(totalItems / 3), totalItems - 5])
             yield* windowed(timeline({ view, afterPosition, limit: 20 }));
+          for (const beforePosition of [
+            Number.POSITIVE_INFINITY,
+            Math.floor(totalItems / 3),
+            totalItems - 5,
+          ])
+            yield* windowed(timeline({ view, beforePosition, limit: 20 }));
+          yield* windowed(timeline({ view, afterPosition: 3, beforePosition: 40, limit: 20 }));
         }
         for (const itemId of [newest.sourceItemId, ...tiedWithHidden])
           yield* windowed(timeline({ itemId, limit: 1 }));
@@ -6573,7 +6650,17 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.isNotEmpty(countQueries);
       for (const countQuery of countQueries) {
         for (const detail of yield* planOf(countQuery)) {
-          assert.notInclude(detail, "orchestration_v2_projection_turn_items");
+          // A thread's counts read only each run's status, never its row and payload.
+          if (/^SEARCH (r|run) /.test(detail)) {
+            assert.include(detail, "COVERING INDEX", detail);
+          }
+          if (detail.includes("orchestration_v2_projection_turn_items")) {
+            // Only held input is read from the sparse index; transcript history stays unread.
+            assert.include(
+              detail,
+              "SEARCH held USING INDEX orchestration_v2_projection_turn_items_queued_input_idx (run_id=?)",
+            );
+          }
         }
       }
     }),
@@ -7395,6 +7482,28 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           silent ? hidden : visible,
         ]);
 
+        // A follow-up removed before it started stays latest unless a visible run outlives it.
+        const removedRunId = RunId.make(`run:projection-shell-silent:${key}:removed`);
+        yield* projectionStore.apply({
+          id: EventId.make(`event:projection-shell-silent:${key}:removed`),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            ...(yield* projectionStore.getThreadProjection(threadId)).runs[0]!,
+            id: removedRunId,
+            ordinal: 2,
+            userMessageId: MessageId.make(`message:projection-shell-silent:${key}:removed`),
+            status: "cancelled",
+            startedAt: null,
+            completedAt: now,
+          },
+        });
+        assert.deepStrictEqual(
+          (yield* presented).map((shell) => shell.latestRunId),
+          silent ? [removedRunId, removedRunId] : [runId, runId],
+        );
+
         // A run that fails outright, e.g. on a provider error, needs the user too.
         const running = (yield* projectionStore.getThreadProjection(threadId)).runs[0]!;
         const setRunStatus = (status: "failed" | "running") =>
@@ -7633,8 +7742,26 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             value == null ? null : DateTime.toEpochMillis(value);
           assert.equal(timestamp(sqlShell.activityRunStartedAt), expected);
           assert.equal(timestamp(memoryShell.activityRunStartedAt), expected);
-          assert.equal(sqlShell.latestRunId, "run:clock:newer");
+          // A queued message steered or removed before it started never ran, so the run that did presents.
+          for (const shell of [sqlShell, memoryShell]) {
+            assert.equal(shell.latestRunId, status === "cancelled" ? runId : "run:clock:newer");
+          }
         }
+      }
+      // Removing a message after the earlier run ended leaves the cancelled run as the latest.
+      yield* projectionStore.apply({
+        id: EventId.make("event:clock:ended-before-cancel"),
+        type: "run.updated",
+        threadId,
+        occurredAt: later,
+        payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+      });
+      const endedBeforeCancelProjection = yield* projectionStore.getThreadProjection(threadId);
+      for (const shell of [
+        (yield* projectionStore.getShellSnapshot()).threads.find((row) => row.id === threadId)!,
+        ProjectionStore.threadShellFromProjection(endedBeforeCancelProjection),
+      ]) {
+        assert.equal(shell.latestRunId, "run:clock:newer");
       }
 
       yield* projectionStore.apply({
@@ -8829,6 +8956,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       ]) {
         assert.equal(shell?.pendingRuntimeRequest?.id, "secret:b");
         assert.isTrue(shell?.pendingRuntimeRequest?.blocking);
+        assert.isTrue(shell?.pendingRuntimeRequest?.userOnly);
       }
 
       const requestId = RuntimeRequestId.make(`request:${suffix}:async`);
@@ -8919,6 +9047,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         assert.deepEqual(
           [thread?.pendingRuntimeRequest?.blocking, memoryShell.pendingRuntimeRequest?.blocking],
           terminal ? [false, false] : [true, true],
+        );
+        assert.deepEqual(
+          [thread?.pendingRuntimeRequest?.userOnly, memoryShell.pendingRuntimeRequest?.userOnly],
+          terminal ? [undefined, undefined] : [true, true],
         );
       }
     }),
@@ -9759,6 +9891,23 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       });
       assert.deepEqual(followingPage.items, targetAfterRollback.visibleTurnItems.slice(2));
       assert.isFalse(followingPage.hasMore);
+      assert.isTrue(followingPage.hasEarlier);
+      const newestPage = yield* projectionStore.getTimelinePage(targetThreadId, {
+        view: "activity",
+        limit: 2,
+        beforePosition: Number.POSITIVE_INFINITY,
+      });
+      assert.deepEqual(newestPage.items, targetAfterRollback.visibleTurnItems.slice(-2));
+      assert.isFalse(newestPage.hasMore);
+      assert.isTrue(newestPage.hasEarlier);
+      const earlierPage = yield* projectionStore.getTimelinePage(targetThreadId, {
+        view: "activity",
+        limit: 10,
+        beforePosition: newestPage.items[0]!.position,
+      });
+      assert.deepEqual(earlierPage.items, targetAfterRollback.visibleTurnItems.slice(0, -2));
+      assert.isTrue(earlierPage.hasMore);
+      assert.isFalse(earlierPage.hasEarlier);
       const tracedTimelinePage = (limit: number) =>
         Effect.gen(function* () {
           const { statements, tracer } = traceSqlStatements();
@@ -10413,6 +10562,256 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ["local", targetThreadId, "command_execution"],
         ],
       );
+
+      const sourceThread = (yield* projectionStore.getThreadProjection(sourceThreadId)).thread;
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:source-deleted"),
+        type: "thread.deleted",
+        threadId: sourceThreadId,
+        occurredAt: now,
+        payload: { ...sourceThread, deletedAt: now },
+      });
+      const afterSourceDeleted = yield* projectionStore.getShellSnapshot();
+      assert.isUndefined(afterSourceDeleted.threads.find((thread) => thread.id === sourceThreadId));
+      for (const forkId of [targetThreadId, nestedThreadId]) {
+        const expected = (yield* projectionStore.getThreadProjection(forkId)).visibleTurnItems
+          .length;
+        assert.equal((yield* projectionStore.getThreadShell(forkId))?.visibleItemCount, expected);
+        assert.equal(
+          afterSourceDeleted.threads.find((thread) => thread.id === forkId)?.visibleItemCount,
+          expected,
+        );
+      }
+    }),
+  );
+
+  it.effect("keeps undelivered queued input out of forks taken after a later run", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const projectId = ProjectId.make("project:projection-fork-held-queue");
+
+      for (const heldStatus of ["queued", "cancelled"] as const) {
+        const prefix = `projection-fork-held-queue:${heldStatus}`;
+        const sourceThreadId = ThreadId.make(`thread:${prefix}:source`);
+        const targetThreadId = ThreadId.make(`thread:${prefix}:target`);
+        const heldRunId = RunId.make(`run:${prefix}:held`);
+        const heldAttemptId = RunAttemptId.make(`attempt:${prefix}:held`);
+        const answeredRunId = RunId.make(`run:${prefix}:answered`);
+
+        for (const [threadId, forkedFrom] of [
+          [sourceThreadId, null],
+          [targetThreadId, { type: "run", threadId: sourceThreadId, runId: answeredRunId }],
+        ] as const) {
+          yield* projectionStore.apply({
+            id: EventId.make(`event:${threadId}:created`),
+            type: "thread.created",
+            threadId,
+            occurredAt: now,
+            payload: {
+              createdBy: "user",
+              creationSource: "web",
+              id: threadId,
+              projectId,
+              title: threadId,
+              providerInstanceId,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              activeProviderThreadId: null,
+              lineage: {
+                parentThreadId: forkedFrom === null ? null : sourceThreadId,
+                relationshipToParent: forkedFrom === null ? null : "fork",
+                rootThreadId: sourceThreadId,
+              },
+              forkedFrom,
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+          });
+        }
+
+        const applyRun = (
+          runId: RunId,
+          ordinal: number,
+          status: typeof heldStatus | "completed" | "rolled_back",
+        ) =>
+          projectionStore.apply({
+            id: EventId.make(`event:${runId}:${status}`),
+            type: "run.updated",
+            threadId: sourceThreadId,
+            runId,
+            nodeId: NodeId.make(`node:${runId}`),
+            driver,
+            occurredAt: now,
+            payload: {
+              id: runId,
+              threadId: sourceThreadId,
+              ordinal,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: MessageId.make(`message:${runId}`),
+              rootNodeId: NodeId.make(`node:${runId}`),
+              activeAttemptId: runId === heldRunId ? heldAttemptId : null,
+              status,
+              requestedAt: now,
+              startedAt: runId === heldRunId ? null : now,
+              completedAt: status === "queued" ? null : now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          });
+        const applyUserItem = (input: {
+          readonly threadId: ThreadId;
+          readonly runId: RunId | null;
+          readonly ordinal: number;
+          readonly text: string;
+          readonly inputIntent: "turn_start" | "queued_turn";
+        }) =>
+          projectionStore.apply({
+            id: EventId.make(`event:${input.threadId}:item:${input.ordinal}`),
+            type: "turn-item.updated",
+            threadId: input.threadId,
+            ...(input.runId === null ? {} : { runId: input.runId }),
+            occurredAt: now,
+            payload: {
+              createdBy: "user",
+              creationSource: "web",
+              id: TurnItemId.make(`turn-item:${input.threadId}:${input.ordinal}`),
+              threadId: input.threadId,
+              runId: input.runId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: input.ordinal,
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "user_message",
+              messageId: MessageId.make(`message:${input.threadId}:${input.ordinal}`),
+              inputIntent: input.inputIntent,
+              text: input.text,
+              attachments: [],
+            },
+          });
+
+        yield* applyRun(heldRunId, 1, heldStatus);
+        yield* projectionStore.apply({
+          id: EventId.make(`event:${heldAttemptId}:created`),
+          type: "run-attempt.created",
+          threadId: sourceThreadId,
+          runId: heldRunId,
+          nodeId: NodeId.make(`node:${heldRunId}`),
+          driver,
+          occurredAt: now,
+          payload: {
+            id: heldAttemptId,
+            runId: heldRunId,
+            attemptOrdinal: 1,
+            rootNodeId: NodeId.make(`node:${heldRunId}`),
+            providerInstanceId,
+            providerThreadId: ProviderThreadId.make(`provider-thread:${prefix}`),
+            providerTurnId: null,
+            reason: "initial",
+            status: heldStatus === "queued" ? "pending" : "cancelled",
+            startedAt: null,
+            completedAt: heldStatus === "queued" ? null : now,
+          },
+        });
+        yield* applyRun(answeredRunId, 2, "completed");
+        yield* applyUserItem({
+          threadId: sourceThreadId,
+          runId: heldRunId,
+          ordinal: 100,
+          text: "held",
+          inputIntent: "queued_turn",
+        });
+        yield* applyUserItem({
+          threadId: sourceThreadId,
+          runId: answeredRunId,
+          ordinal: 200,
+          text: "answered",
+          inputIntent: "turn_start",
+        });
+        yield* applyUserItem({
+          threadId: sourceThreadId,
+          runId: answeredRunId,
+          ordinal: 201,
+          text: "delivered steer",
+          inputIntent: "queued_turn",
+        });
+        // Enough local turns for a turn-limited window to count inherited rows in SQL.
+        for (let index = 0; index < THREAD_HISTORY_PAGE_POLICY.maxUserTurns; index += 1) {
+          yield* applyUserItem({
+            threadId: targetThreadId,
+            runId: null,
+            ordinal: index,
+            text: `local ${index}`,
+            inputIntent: "turn_start",
+          });
+        }
+
+        const assertForkHidesHeldInput = Effect.fn("assertForkHidesHeldInput")(function* () {
+          const target = yield* projectionStore.getThreadProjection(targetThreadId);
+          assert.deepEqual(
+            target.visibleTurnItems
+              .slice(0, 3)
+              .map((row) => (row.item.type === "user_message" ? row.item.text : row.item.type)),
+            ["answered", "delivered steer", "fork"],
+          );
+          const page = yield* projectionStore.getTimelinePage(targetThreadId, {
+            view: "activity",
+            limit: target.visibleTurnItems.length + 1,
+          });
+          assert.deepEqual(page.items, target.visibleTurnItems);
+          const bounded = yield* projectionStore.getThreadSnapshotWindow(targetThreadId, {
+            rowLimit: target.visibleTurnItems.length + 1,
+          });
+          assert.deepEqual(bounded.projection.visibleTurnItems, target.visibleTurnItems);
+          const shellSnapshot = yield* projectionStore.getShellSnapshot();
+          for (const projection of [
+            yield* projectionStore.getThreadProjection(sourceThreadId),
+            target,
+          ]) {
+            for (const shell of [
+              yield* projectionStore.getThreadShell(projection.thread.id),
+              shellSnapshot.threads.find((thread) => thread.id === projection.thread.id),
+            ]) {
+              assert.equal(shell?.visibleItemCount, projection.visibleTurnItems.length);
+            }
+          }
+          const filledLocalPage = yield* projectionStore.getThreadSnapshotWindow(targetThreadId, {
+            rowLimit: target.visibleTurnItems.length,
+            userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+          });
+          assert.deepEqual(
+            filledLocalPage.projection.visibleTurnItems.filter((row) => row.visibility === "local"),
+            target.visibleTurnItems.filter((row) => row.visibility === "local"),
+          );
+        });
+
+        yield* assertForkHidesHeldInput();
+        // Forks keep rolled-back source history, but still not undelivered input.
+        yield* applyRun(answeredRunId, 2, "rolled_back");
+        yield* assertForkHidesHeldInput();
+        // Rollback also takes cancelled runs, and overwrites the status that hid their input.
+        if (heldStatus === "cancelled") {
+          yield* applyRun(heldRunId, 1, "rolled_back");
+          yield* assertForkHidesHeldInput();
+        }
+      }
     }),
   );
 
