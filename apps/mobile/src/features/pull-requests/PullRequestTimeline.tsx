@@ -1,8 +1,16 @@
+import {
+  parsePullRequestAnchor,
+  pullRequestAnchorMatchesUrl,
+} from "@t3tools/shared/pullRequestAnchor";
 import { PullRequestEntryRow } from "./PullRequestEntryRow";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import IconGitCommit from "@tabler/icons-react-native/IconGitCommit";
-import type { PullRequestActivity, PullRequestComment } from "@t3tools/contracts";
+import {
+  pullRequestConversationThreads,
+  type PullRequestActivity,
+  type PullRequestComment,
+} from "@t3tools/contracts";
 import { StackActions, type NavigationProp } from "@react-navigation/native";
 import { useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
@@ -74,7 +82,10 @@ function TimelineComment({
   params: PullRequestParams;
   actions: CommentActions;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const target = parsePullRequestAnchor(params.navigationUrl);
+  const linked =
+    target?.kind === "timeline" && pullRequestAnchorMatchesUrl(target.anchor, comment.url);
+  const [expanded, setExpanded] = useState(linked);
   const { themeVariables: colors } = useAppearancePreferences();
   const long = comment.body.length > 450 || comment.body.split("\n").length > 8;
   const content = useMemo(
@@ -108,7 +119,13 @@ function TimelineComment({
         </Text>
       ) : null}
       {preview.trim() || content.attachments.length ? (
-        <View className="gap-2 overflow-hidden rounded-2xl bg-grouped-card p-3">
+        <View
+          className={
+            linked
+              ? "gap-2 overflow-hidden rounded-2xl border border-primary bg-primary/10 p-3"
+              : "gap-2 overflow-hidden rounded-2xl bg-grouped-card p-3"
+          }
+        >
           <View style={long && !expanded ? { maxHeight: 240, overflow: "hidden" } : undefined}>
             <PullRequestMarkdown
               markdown={long && !expanded ? comment.body.slice(0, 1200) : comment.body}
@@ -202,8 +219,10 @@ export function pullRequestTimelineRows(
   navigation: Pick<NavigationProp<ReactNavigation.RootParamList>, "navigate" | "dispatch">,
   actions: CommentActions,
 ) {
+  const linkTarget = parsePullRequestAnchor(params.navigationUrl);
+  const threads = pullRequestConversationThreads(activity);
   const discussionIds = new Set(
-    activity.reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
+    threads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
   );
   const events = [
     ...activity.comments
@@ -211,9 +230,21 @@ export function pullRequestTimelineRows(
       .map((comment) => ({
         key: `comment:${comment.id}`,
         date: comment.createdAt,
-        content: <TimelineComment comment={comment} params={params} actions={actions} />,
+        content: (
+          <TimelineComment
+            key={
+              linkTarget?.kind === "timeline" &&
+              pullRequestAnchorMatchesUrl(linkTarget.anchor, comment.url)
+                ? `${comment.id}:${params.navigationId ?? params.navigationUrl}`
+                : comment.id
+            }
+            comment={comment}
+            params={params}
+            actions={actions}
+          />
+        ),
       })),
-    ...activity.reviewThreads.map((thread) => ({
+    ...threads.map((thread) => ({
       key: `discussion:${thread.id}`,
       date: thread.comments[0]?.createdAt ?? "",
       content: (
@@ -234,18 +265,24 @@ export function pullRequestTimelineRows(
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Open ${thread.isResolved ? "resolved" : "unresolved"} discussion in ${thread.path}`}
+            accessibilityLabel={`Open ${thread.isResolved ? "resolved" : "unresolved"} discussion in ${thread.path ?? "the overview"}`}
             onPress={() =>
               navigation.navigate("PullRequestDiscussion", { ...params, discussionId: thread.id })
             }
             className="gap-2 rounded-2xl bg-grouped-card p-3 active:opacity-70"
           >
             <View className="flex-row items-center gap-2">
-              <SymbolView name="doc.text" size={14} tintColorClassName="accent-icon-muted" />
-              <Text className="flex-1 font-mono text-xs" numberOfLines={2}>
-                {thread.path}
-                {thread.line ? `:${thread.line}` : ""}
-              </Text>
+              {thread.path === null ? (
+                <Text className="flex-1 text-xs">Overview</Text>
+              ) : (
+                <>
+                  <SymbolView name="doc.text" size={14} tintColorClassName="accent-icon-muted" />
+                  <Text className="flex-1 font-mono text-xs" numberOfLines={2}>
+                    {thread.path}
+                    {thread.line ? `:${thread.line}` : ""}
+                  </Text>
+                </>
+              )}
               <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
             </View>
             <Text className="text-xs text-foreground-muted">
