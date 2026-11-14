@@ -50,13 +50,13 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 31 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14; 31 since the text generation check).
+`main` is in a working state. `tools/check.sh` passes 31 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14; 31 since the text generation check; again on the Codex subagents branch, nothing skipped).
 
 | Part | State |
 | --- | --- |
 | RPC methods | 99 of 236 served; 99 have a run that the real client's decoders accept |
 | Engine commands | 43 of 56 |
-| T3 testkit fixtures through this engine | 42 of 159 variants pass T3's own assertions (Claude 24 of 34, Codex 17 of 25, Grok 1 of 15; the other 85 are providers this server does not offer) |
+| T3 testkit fixtures through this engine | 51 of 159 variants pass T3's own assertions (Claude 25 of 34, Codex 25 of 25, Grok 1 of 15; the other 85 are providers this server does not offer) |
 | HTTP routes | 13 of 57 |
 | `/mcp` tools | 28 of 87 |
 | Providers | Claude, Codex and Grok, of the 10 the T3 server has without Pi |
@@ -69,8 +69,9 @@ Proven:
   `JAVA_HOME`) and stdin as from the T3 server. 18 of the T3 server's 39 Claude transcripts pass (all that the
   driver runs). 11 live tests
   pass on Claude Haiku on macOS.
-- **Codex** runs on `codex app-server`, as in the T3 server. 37 scenarios show no difference,
-  20 of them the T3 server's own recordings. **No live Codex turn has run.**
+- **Codex** runs on `codex app-server`, as in the T3 server, subagents included. 40 scenarios
+  show no difference, 24 of them the T3 server's own recordings; two of them compare a thread
+  title through `codex exec`. **No live Codex turn has run.**
 - Orbit's container flow (start, add a project on the running server, a Swamp session, a
   thread through `/mcp`, wait, read, revoke, SIGTERM with no child left) passes on the fake
   provider and once with a live Haiku turn, on macOS.
@@ -476,6 +477,61 @@ Memory: the T3 transcript replay (18 scenarios, release) peaked at 4.11–4.16 M
 `main` and 3.94–4.28 MiB on the branch (3 runs each); the new state is bounded (64 roster
 tasks, 64 links, 8 tails per turn, 16 ledger models).
 
+## Codex: subagents, the replay gate, message order and titles (2026-11-14)
+
+The fixture replay passes 51 of 159 variants (was 42): Codex 25 of 25 (was 17), Claude 25 of
+34 (was 24), Grok 1 of 15 (unchanged). Codex conformance: 0 open differences in 40 scenarios
+(was 37). `tools/check.sh`: 31 passed, nothing skipped.
+
+- **Codex subagents** (`crates/conn-provider-codex/src/mapper/subagents.rs`), as
+  `CodexAdapterV2` maps `collabAgentToolCall`, `subAgentActivity` and child threads. Proof: the
+  six subagent recordings replay event for event equal to T3's adapter (115, 87, 36, 50, 103
+  and 77 events, the crate's replay test); all six fixture variants pass. What Codex receives
+  changed in three places, each compared with T3: a child with no reported model gets
+  `thread/read`, then `thread/resume` (conformance compares them as a set: both servers send
+  them from a background task, and T3's test kit answers them, so recordings never hold
+  them); Stop sends `turn/interrupt` to the root, then each running child turn (new scenario
+  `subagentStop`, cut from T3's `subagent_v2` recording); a child of a stopped turn gets
+  `turn/interrupt`. The client routes a child thread to the session whose frame names it.
+  Bounds: 64 subagents per session, 16 child threads with early turns, 64 stopped turns.
+- **Engine changes (small, local; the engine worker owns `runner.rs` and the store):**
+  `translate` writes `provider_thread.updated` to its `appThreadId` and
+  `provider_turn.updated`/`runtime_request.updated` to the event's `threadId`, as T3's
+  `ProviderEventIngestor` (a child's turn no longer becomes the run's provider turn); the
+  projection read lists the provider threads a thread's subagents name, and orders messages
+  as T3's `sortMessagesByTurnItemOrder`; `runtime-request.respond` ends the request's node and
+  turn item and records `questionAnswer`, as T3's `Orchestrator`. No schema change: rows from
+  `main` load as before.
+- **The replay gate** (T3's `makeProviderReplayGate`) in the stub `codex` and the fake SDK host,
+  through files in the scenario folder; `queued_cancelled_while_active/codex` passes. The two
+  Claude variants now pass the gate and fail on Claude background wakes (not built). The ACP
+  stub has none: its four Grok variants also need `finish_held_run` and Grok background tasks.
+- **`queued_turn`.** The cause was never the clock: T3 stores the same `createdAt` stamps
+  (dumped from T3's own run) but lists messages by the ordinal of the turn item that shows
+  them. With that order the Codex and Claude variants pass; Grok's fails on the buffered
+  delivery.
+- **Thread titles through Codex.** `Provider::generate_text` (new, additive, default
+  `Unsupported`) takes the operation, folder, prompt, T3's output schema text, the selection,
+  image paths and a deadline, and returns one JSON object. Codex runs it as
+  `CodexTextGeneration.ts`: `codex mcp list --json` (10 s), then `codex exec` (180 s) with T3's
+  argv, the prompt on stdin, schema and output files named as T3 names them. The title code
+  asks the instance when the title model is not a text generator. Proof: conformance
+  `titleListed` and `titleFallback` run T3's own `generateThreadTitle` and ours on the stub:
+  argv, environment, folder, stdin bytes, schema file and answer are equal; the schema text is
+  generated from the monorepo (`TITLE_OUTPUT_SCHEMA`). Claude still keeps the seed title until
+  its provider implements `generate_text`. Not built: T3's fallback to another provider when
+  the chosen one is unusable; its managed runtime and custom models in the model choice.
+- **The provider thread's `error` status:** nothing to report. T3's Codex adapter ends every
+  turn `reusable`, a crash included; a test now holds that.
+
+Not ported on purpose: the subagent wake (T3 asks for a continuation turn when a child ends
+after its parent's turn; this server has no such wake for Codex, as for background commands).
+
+Memory (macOS, `memory_load` 1,000 fake turns, release, run beside `main`): live heap 415 KiB at
+turn 1,000 and 346 KiB after close (`main`: 414 and 346); RSS at the end 60.8 MiB (`main`
+57.8; allocator pages). The new provider state is bounded as listed above; the mapper's
+bound test runs 300 turns with a subagent each.
+
 ## What is left, in the planned order
 
 1. **Rust hygiene, step 1: done (2026-11-14).** The toolchain is pinned to 1.99.1; BeautifulRust's
@@ -512,16 +568,17 @@ tasks, 64 links, 8 tails per turn, 16 ledger models).
    terminal host (`ProviderHost`; in T3 only Antigravity's files and the registry's terminals
    use it). Cursor, OpenCode and Muse go in the SDK host as driver modules.
 4. **Replay of the T3 server's `testkit` fixtures: done (2026-11-14), Claude, Codex and Grok.**
-   See "Engine, part 2", "Codex: the turn start, …" and "ACP provider, part 3". Next: T3's
-   buffered delivery in the engine (9 Grok variants), Codex subagents (6), a replay gate in the
-   stand-ins (3 + 4 Grok variants), the `queued_turn` tie (2; a provider clock seam is not
-   enough).
+   See "Engine, part 2", "Codex: the turn start, …", "ACP provider, part 3" and "Codex:
+   subagents, …". Codex passes all 25. Next: T3's buffered delivery in the engine (9 Grok
+   variants), the replay gate in the ACP stub with `finish_held_run` (4 Grok variants, which
+   also need Grok background tasks), Claude's background wakes.
 5. **Engine.** Merge-back and the portable fork path (both need T3's `ContextHandoffService`);
    prepared runs and setup scripts in a `setup-<id>` terminal; bounded thread snapshots and the `/history`, `/bounded` and
    `/transcript` routes (a full snapshot of a long thread peaks at about 13 bytes per byte of
    JSON); a workspace strategy for delegated tasks; search details (no NFC normalization, the
-   old snippet rule); titles only through a text generator (an agent title model keeps the seed
-   title; no fork source or linked pull request context in the prompt). `freshContext` is
+   old snippet rule); titles through a text generator or Codex (Claude as the title model keeps
+   the seed title until the Claude provider implements `generate_text`; no fork source or
+   linked pull request context in the prompt; no fallback to another provider). `freshContext` is
    served. A Claude turn shows as running at once since 2026-11-14.
 6. **Features.** Pull requests and source control: `crates/conn-source-control/README.md` maps
    the area (48 methods, 7 engine commands, 9 `/mcp` tools, 7 hosts). Served (2026-11-14):
@@ -533,7 +590,7 @@ tasks, 64 links, 8 tails per turn, 16 ledger models).
    request commands and the `/mcp` tools.
    Also: the Conn-only methods
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest
-   share); 67 more `/mcp` tools (11 need nothing new: `crates/conn-mcp/README.md`, "All 87 tools"); Codex subagents; worktree setup scripts
+   share); 67 more `/mcp` tools (11 need nothing new: `crates/conn-mcp/README.md`, "All 87 tools"); Codex subagent wakes and stop; worktree setup scripts
    the T3 way (typed into a thread terminal, with a completion marker).
 7. **Small leftovers.** Done on 2026-11-14 (`docs/server-area.md`, end): the contract's
    limits on terminal environment variables and `assets.createUrl` strings (generated,

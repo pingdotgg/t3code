@@ -216,12 +216,18 @@ that list.
   "Reply with OK." to one model. A thread title is generated for the first message of a thread
   launched with `generateTitle`, and on `regenerateTitle`, when the title model
   (`textGenerationModelSelection`, or the project's override) is a text generator.
-- **Agent title models are not called.** The default title model is Codex, and Claude can be
-  chosen; the T3 server then asks that provider's CLI or SDK (`ClaudeTextGeneration.ts`,
-  `CodexTextGeneration.ts`, also Antigravity, Grok and OpenCode). This server does not: the
-  request fails without a call. A first title keeps its seed (a short `titleRegeneration`
-  shows), a regenerate reports "This server generates titles only with a text generator.
-  Choose one as the title model in Settings."
+- **Agent title models.** The default title model is Codex, and Claude can be chosen; the T3
+  server then asks that provider's CLI or SDK (`ClaudeTextGeneration.ts`,
+  `CodexTextGeneration.ts`, also Antigravity, Grok and OpenCode). This server asks the
+  provider instance through `Provider::generate_text` (the prompt, T3's output schema text
+  generated as `TITLE_OUTPUT_SCHEMA`, the whole selection, the thread's folder and its image
+  attachments). Codex implements it (`codex mcp list`, then `codex exec`, as T3; proven by the
+  Codex conformance check, `titleListed` and `titleFallback`). A provider that does not
+  (Claude, for now, and Grok) fails the request without a call: a first title keeps its seed
+  (a short `titleRegeneration` shows), a regenerate reports "This server generates titles
+  only with a text generator. Choose one as the title model in Settings." Not built: T3's
+  fallback to another provider when the chosen one is unusable
+  (`fallbackTextGenerationModelSelection`).
 - **The key.** In `settings.json` (`textGenerators.<id>.apiKey`, file 0600), where this server
   keeps every settings secret (`settings.rs`). When settings hold the redaction marker, the
   key is read from the T3 server's store, `<state>/secrets/text-generator-<b64url id>-<b64url
@@ -244,7 +250,7 @@ that list.
 
 | Use | Source | Here |
 | --- | --- | --- |
-| Thread titles | `orchestration-v2/ThreadTitleRegenerationService.ts` | built, text generators only |
+| Thread titles | `orchestration-v2/ThreadTitleRegenerationService.ts` | built: text generators and Codex |
 | Commit messages | `git/GitManager.ts:2210` (`generateCommitMessage`) | not built: needs the `git.*` stacked actions (source control worker) |
 | Pull request title and body | `git/GitManager.ts:2438` (`generatePrContent`) | not built: needs pull request creation |
 | Worktree branch names | `orchestration-v2/ThreadLaunchService.ts:475` (`generateBranchName`) | not built: needs prepared runs (worktree preparation is not built) |

@@ -181,6 +181,31 @@ Ignored: `thread/started`, `thread/status/changed`, `account/updated`,
 `serverRequest/resolved`, `item/reasoning/summaryPartAdded`, `hook/*`, and the realtime,
 fuzzy-search and fs families.
 
+## Subagents
+
+Child threads report on their own `threadId`; T3 maps them in `CodexAdapterV2`
+(`registerSubagentThread`, `emitSubagentProviderTurnStarted`, `updateSubagentStates`).
+
+| Frame | Effect |
+| --- | --- |
+| `item/completed` `collabAgentToolCall` `spawnAgent` | each `receiverThreadIds` entry becomes a child: `app_thread.created`, `node.updated` (`subagent`, and the child's `root_turn`), `provider_thread.updated`, the prompt as the child's first message, `subagent.updated` + `turn_item.updated` (`subagent`) |
+| `item/started` `subAgentActivity` `started` (v2) | the same child, titled by `agentPath`, without a prompt |
+| `collabAgentToolCall` `wait` / `sendInput` / `resumeAgent`, completed | `agentsStates` statuses (`pendingInit` pending, `errored`/`notFound` failed, `shutdown` cancelled) and messages update each task |
+| `subAgentActivity` `completed` / `interrupted` | the task's status |
+| `turn/started` on a child thread | the child's provider turn and root node (the second and later turns reopen the task); `turn/completed` ends them, sets the child's provider thread back to `idle`, ends the `subagent` node and the task |
+| a server request on a child turn | an approval shows on the root turn under the subagent's node; a question on the child |
+
+Requests T3 sends for subagents: `thread/read` `{threadId, includeTurns: false}`, then
+`thread/resume` `{threadId, excludeTurns: true}` when the read names no model (a child with
+no model yet); `turn/interrupt` to each running child turn when the root turn is stopped,
+and to a child turn that starts under a stopped turn.
+
+## Text generation (`codex exec`)
+
+Thread titles with Codex as the title model do not use the app-server: see the README,
+"Text generation". `codex mcp list --json` prints `[{name, enabled}]`; `codex exec` reads
+the prompt on stdin and writes the last message, a JSON object, to `--output-last-message`.
+
 ## Exit and errors
 
 - The process exits: the event stream fails, so every open turn ends.

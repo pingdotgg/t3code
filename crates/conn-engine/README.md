@@ -124,6 +124,16 @@ all 23 are.
   within 5 minutes). A run the provider never took starts again.
 - **Retention.** `shell_changes` keeps 1,024 rows and `receipts` 4,096; an older shell cursor
   gets a fresh snapshot. Events and projections are the history and stay.
+- **Projection order and rows of other threads** (T3's `ProjectionStore`). Messages are listed
+  by the lowest ordinal of the user or assistant message item that shows each, then
+  `createdAt`, then id (`sortMessagesByTurnItemOrder`). A thread's projection also lists the
+  provider threads its subagents run on, read from the child threads. A provider's
+  `provider_thread.updated` goes to its `appThreadId`, and `provider_turn.updated` and
+  `runtime_request.updated` to the event's `threadId` (`ProviderEventIngestor`): a subagent's
+  turn is written on its child thread and never becomes the run's provider turn.
+- **Answers.** `runtime-request.respond` ends the request's node and its turn item
+  (`cancelled` for a declined or cancelled request, else `completed`) and records a
+  question's answer as `questionAnswer`, as T3's `Orchestrator` does.
 - **Search.** `searchThreads` reads a trigram FTS5 index of final message texts
   (`message_search`) with `MATCH` and quoted words, as `ThreadSearch.ts`; SQLite's bundled
   build already has FTS5. Every word of three characters or more must match; shorter words
@@ -183,10 +193,12 @@ server crate and an `Engine` method for a page.
 
 - `cargo test -p conn-engine`: commands, streams, restart, families, reads, titles, observer.
 - `tools/t3-fixture-replay/check.mjs`: T3's own testkit fixtures through this engine and the
-  Claude and Codex providers on stand-ins, judged by T3's own assertions (the vitest file is
-  placed in the monorepo for the run and removed; only the scenario runner is mocked). 35 of
-  159 variants pass; `expected-failures.txt` lists the rest by cause. The Rust half is
-  `examples/t3_fixture_replay.rs`. About 3 minutes; `--only <fixture>/<driver>` runs one,
+  Claude, Codex and Grok providers on stand-ins, judged by T3's own assertions (the vitest file
+  is placed in the monorepo for the run and removed; only the scenario runner is mocked). 51 of
+  159 variants pass (Claude 25, Codex 25, Grok 1); `expected-failures.txt` lists the rest by
+  cause. The Rust half is `examples/t3_fixture_replay.rs`. T3's replay gate
+  (`release_replay_gate`) holds the stub `codex` and the fake SDK host before a labelled
+  frame through files in the scenario folder; the ACP stub has none yet. About 3 minutes; `--only <fixture>/<driver>` runs one,
   `--keep` keeps the work folder (each fixture's plan, stub log, database and result).
 - `tools/client-check.mjs`: the client's own decoders and reducers over
   `examples/export_turn.rs` output. Needs the Conn monorepo in `CONN_MONOREPO`. From the
