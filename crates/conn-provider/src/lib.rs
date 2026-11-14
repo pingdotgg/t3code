@@ -85,6 +85,21 @@ pub trait Provider: Send + Sync {
     fn refresh_status(&self, _instance: Option<serde_json::Value>) -> BoxFuture<'_, ()> {
         Box::pin(async {})
     }
+
+    /// The periodic probe (`ManagedServerProvider` `refreshOnInterval` with `deferFailure`):
+    /// a disabled instance is not probed, and a failed check over a ready entry keeps that
+    /// entry. `true` asks for a recheck after 30 s (`FAILED_CHECK_RECHECK_DELAY`); `defer`
+    /// `false` is that recheck, which publishes whatever it finds.
+    fn refresh_status_on_interval(
+        &self,
+        instance: Option<serde_json::Value>,
+        _defer: bool,
+    ) -> BoxFuture<'_, bool> {
+        Box::pin(async move {
+            self.refresh_status(instance).await;
+            false
+        })
+    }
 }
 
 /// One text generation request (`TextGenerationOperations.Request`).
@@ -173,6 +188,14 @@ pub trait Session: Send + Sync {
 
     /// Stops the running turn. Its `TurnTerminal` reports `interrupted`.
     fn interrupt_turn(&self, input: InterruptInput) -> BoxFuture<'_, ProviderResult<()>>;
+
+    /// `interruptTurn` with `requestRuntimeRestart` on a settled turn: Stop on a thread whose
+    /// latest run ended while its background work still runs (`ProviderTurnControlService`
+    /// calls it for settled turns too). A provider that holds such work ends it (Claude
+    /// closes its idle query); the default changes nothing.
+    fn stop_background_work(&self, _input: InterruptInput) -> BoxFuture<'_, ProviderResult<()>> {
+        Box::pin(async { Ok(()) })
+    }
 
     /// Applies a new model to the running process. `Unsupported` means it applies next turn.
     fn apply_model_selection(
@@ -368,6 +391,10 @@ pub struct ContinuationRequest {
     pub thread_id: ThreadId,
     pub provider_thread_id: ProviderThreadId,
     pub detail: Option<String>,
+    /// The notice the client shows for the wake (`OrchestrationV2Notification`:
+    /// `source`, `outcome`, `summary`). Absent: the engine's default notice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notification: Option<serde_json::Value>,
 }
 
 /// `ProviderAdapterV2Event` `steer.updated` status.

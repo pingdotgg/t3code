@@ -9,6 +9,7 @@ mod notices;
 mod presentation;
 mod roster;
 mod subagents;
+mod wakes;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -101,7 +102,25 @@ pub struct Mapper<E: Env> {
     roster: roster::Roster,
     /// The provider thread as last sent (`lastProviderThreadByNativeThread`).
     last_provider_thread: Option<Value>,
+    /// What the next wake reports (`wakeReportsByNativeThread`) and its message text.
+    wakes: wakes::Wakes,
+    /// How this CLI process echoes a prompt (`promptEchoMode`).
+    echo_mode: EchoMode,
+    /// Claude's pending `ScheduleWakeup` (`scheduledWakeupsByNativeThread`).
+    scheduled: wakes::Scheduled,
 }
+
+/// `ClaudeLiveQueryContext.promptEchoMode`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EchoMode {
+    Unknown,
+    Acknowledged,
+    Early,
+    ResultOnly,
+}
+
+/// Root frames held before the prompt's echo, at most.
+const HELD_ROOT_CAP: usize = 512;
 
 /// Input and output tokens (`ClaudeLedgerUsage`).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -255,6 +274,15 @@ struct Turn {
     /// Ledger growth of the segments a steer cut short (`steeredLedgerUsage`).
     steered_ledger: Option<Ledger>,
     had_subagents: bool,
+    /// A continuation turn the provider asked for (`isClaudeProviderContinuationTurn`).
+    continuation: bool,
+    /// The prompt written for this turn (`promptUuid`); none for a continuation.
+    prompt_uuid: Option<String>,
+    /// The CLI echoed the prompt: its frames are this turn's (`promptEcho: "confirmed"`).
+    echo_confirmed: bool,
+    gated_before_echo: u32,
+    /// Root frames that came before the echo (`heldRootFrames`).
+    held_root: Vec<Inbound>,
 }
 
 impl Turn {
@@ -319,12 +347,18 @@ impl<E: Env> Mapper<E> {
             result_growth: None,
             roster: roster::Roster::default(),
             last_provider_thread: None,
+            wakes: wakes::Wakes::default(),
+            echo_mode: EchoMode::Unknown,
+            scheduled: wakes::Scheduled::default(),
         }
     }
 
     /// A new CLI process: its `modelUsage` starts from nothing (`modelLedger: new Map()`).
     pub fn new_process(&mut self) {
         self.ledger = Some(Vec::new());
+        self.echo_mode = EchoMode::Unknown;
+        // Replacing the process cancels Claude's wakeup.
+        self.scheduled.clear();
         // The SDK sends no first roster: a new process starts with none.
         self.roster.clear();
     }
@@ -342,13 +376,18 @@ impl<E: Env> Mapper<E> {
 
     /// Subagents still running, or Claude output waiting for a continuation turn.
     pub fn has_pending_background_work(&self) -> bool {
-        self.subagents.any_running() || self.continuation_requested || !self.roster.is_empty()
+        // A wakeup can be up to an hour out, past the idle timeout, and dies with the process.
+        self.subagents.any_running()
+            || self.continuation_requested
+            || !self.roster.is_empty()
+            || self.scheduled.due.is_some()
     }
 
     /// Sizes of every collection that outlives a turn, for the memory checks.
     #[cfg(test)]
-    pub fn held_sizes(&self) -> [usize; 7] {
+    pub fn held_sizes(&self) -> [usize; 8] {
         [
+            self.wakes.len() + self.scheduled.len(),
             self.pending.len(),
             self.subagents.len(),
             self.wake.len(),
@@ -415,6 +454,40 @@ impl<E: Env> Mapper<E> {
         vec![steer_event(turn, &message_id, SteerStatus::Completed)]
     }
 
+    /// Stop with no turn running: the process and its background work are gone
+    /// (`clearWakeStateForNativeThread`, `resetBackgroundTaskStateForNativeThreadProcess`).
+    /// Running subagents end as cancelled; a thread that showed background work is sent idle
+    /// with none.
+    pub fn stop_background_work(&mut self) -> Vec<Out> {
+        let mut out = Vec::new();
+        self.end_running_subagents("cancelled", &mut out);
+        let shown = self
+            .last_provider_thread
+            .as_ref()
+            .and_then(|t| t["pendingBackgroundTasks"].as_array())
+            .is_some_and(|tasks| !tasks.is_empty());
+        let had = self.roster.clear() || shown;
+        self.roster.forget_wakes();
+        self.scheduled.clear();
+        self.wakes.clear();
+        self.wake.clear();
+        self.continuation_requested = false;
+        if had {
+            self.emit_roster(&mut out);
+        }
+        out
+    }
+
+    /// The uuid of the prompt written for the running turn: frames before its echo may
+    /// belong to a wake Claude runs first.
+    pub fn set_prompt_uuid(&mut self, uuid: &str) {
+        if let Some(turn) = &mut self.turn
+            && !turn.continuation
+        {
+            turn.prompt_uuid = Some(uuid.to_string());
+        }
+    }
+
     pub fn set_permission_mode(&mut self, mode: &str) {
         if let Some(turn) = &mut self.turn {
             turn.permission_mode = mode.to_string();
@@ -423,6 +496,11 @@ impl<E: Env> Mapper<E> {
 
     /// Opens a turn after its user message was written to the CLI.
     pub fn begin_turn(&mut self, input: &TurnInput, permission_mode: &str) -> Vec<Out> {
+        self.wakes.start_user_turn();
+        self.open_turn(input, permission_mode)
+    }
+
+    fn open_turn(&mut self, input: &TurnInput, permission_mode: &str) -> Vec<Out> {
         let now = self.env.now();
         // A user turn retires output held for a continuation that never started.
         self.wake.clear();
@@ -477,6 +555,11 @@ impl<E: Env> Mapper<E> {
             steered_usage: None,
             steered_ledger: Some(Ledger::default()),
             had_subagents: false,
+            continuation: false,
+            prompt_uuid: None,
+            echo_confirmed: false,
+            gated_before_echo: 0,
+            held_root: Vec::new(),
         };
         let mut out = Vec::new();
         emit(
@@ -505,15 +588,25 @@ impl<E: Env> Mapper<E> {
     pub fn begin_continuation(&mut self, input: &TurnInput, permission_mode: &str) -> Vec<Out> {
         let held: Vec<Inbound> = self.wake.drain(..).collect();
         self.continuation_requested = false;
-        let mut out = self.begin_turn(input, permission_mode);
+        self.wakes.detail = None;
+        // The continuation takes in the notifications it was asked for.
+        self.roster.clear_tombstones();
+        let mut out = self.open_turn(input, permission_mode);
+        if let Some(turn) = &mut self.turn {
+            turn.continuation = true;
+        }
         for frame in held {
             out.extend(self.handle(frame));
         }
         out
     }
 
-    pub fn handle(&mut self, message: Inbound) -> Vec<Out> {
+    pub fn handle(&mut self, mut message: Inbound) -> Vec<Out> {
         let mut out = Vec::new();
+        if let Inbound::Result(result) = &mut message {
+            self.measure_ledger(result);
+        }
+        self.track_scheduled_wakeup(&message);
         // Before routing: an idle Monitor reports its task before its call replays.
         self.roster.track_monitor_calls(&message);
         if self.turn.is_none() && is_wake_frame(&message) {
@@ -523,6 +616,9 @@ impl<E: Env> Mapper<E> {
         if let Some(turn) = &mut self.turn {
             accept_echoed_steers(turn, &message, &mut out);
         }
+        let Some(message) = self.echo_gate(message, &mut out) else {
+            return out;
+        };
         match message {
             // Subagent text arrives as whole assistant frames; its stream is not shown.
             Inbound::StreamEvent(msg) if msg.parent_tool_use_id.is_some() => {}
@@ -850,14 +946,39 @@ impl<E: Env> Mapper<E> {
     fn on_system(&mut self, msg: SystemMsg, out: &mut Vec<Out>) {
         match msg.subtype.as_str() {
             "task_started" => {
+                if msg.task_type.as_deref() != Some("local_bash")
+                    && let Some(task_id) = &msg.task_id
+                {
+                    if msg.spawn_depth.is_some_and(|d| d > 1.0) {
+                        self.wakes.mark_nested(task_id);
+                    } else if msg.is_backgrounded == Some(true) {
+                        self.wakes.mark_backgrounded(task_id);
+                    }
+                }
                 self.on_task_started(&msg, out);
                 self.apply_roster(&msg, out);
                 return;
             }
             "task_progress" => return self.on_task_progress(&msg, out),
             "task_notification" => {
+                // Read the roster and the subagent before the notification settles them.
+                let wakes_root = match &self.turn {
+                    None => self.record_wake_notification(&msg),
+                    Some(turn) => {
+                        if !turn.continuation {
+                            self.record_turn_notification(&msg);
+                        }
+                        false
+                    }
+                };
+                if let Some(task_id) = &msg.task_id {
+                    self.wakes.unmark_backgrounded(task_id);
+                }
                 self.on_task_notification(&msg, out);
                 self.apply_roster(&msg, out);
+                if wakes_root {
+                    self.request_continuation(out);
+                }
                 return;
             }
             "background_tasks_changed" => {
@@ -928,9 +1049,10 @@ impl<E: Env> Mapper<E> {
             "compact_boundary" => {
                 let id = msg.uuid.unwrap_or_default();
                 let meta = msg.compact_metadata.unwrap_or(Value::Null);
+                // T3 takes the turn's compaction row whatever its status.
                 let mut item = match turn.compaction.take() {
-                    Some(running) if running["status"] == "running" => running,
-                    _ => {
+                    Some(existing) => existing,
+                    None => {
                         let mut item = notice_base(turn, &id, &now, "completed");
                         item["type"] = json!("compaction");
                         item["driver"] = json!(DRIVER);
@@ -1015,8 +1137,13 @@ impl<E: Env> Mapper<E> {
         }
     }
 
-    fn on_result(&mut self, msg: ResultMsg, out: &mut Vec<Out>) {
-        // Growth of the process ledger, measured once per result as it arrives.
+    /// Growth of the process ledger, measured once per result in arrival order, before a
+    /// result waits for a wake or an echo (`resultLedgerUsage` in the query reader).
+    fn measure_ledger(&mut self, msg: &mut ResultMsg) {
+        if msg.ledger_measured {
+            return;
+        }
+        msg.ledger_measured = true;
         let ledger = model_ledger(msg.model_usage.as_ref());
         let growth = ledger_delta(self.ledger.as_deref(), ledger.as_deref());
         // A ledger that went backwards cannot anchor the next turn's growth.
@@ -1025,6 +1152,14 @@ impl<E: Env> Mapper<E> {
         } else {
             ledger
         };
+        msg.ledger_growth = growth.map(|g| (g.input, g.output));
+    }
+
+    fn on_result(&mut self, mut msg: ResultMsg, out: &mut Vec<Out>) {
+        self.measure_ledger(&mut msg);
+        let growth = msg
+            .ledger_growth
+            .map(|(input, output)| Ledger { input, output });
         self.result_growth = growth;
         // A result that reports a context window not seen before refreshes the usage row.
         let mut new_window = false;
@@ -1129,6 +1264,9 @@ impl<E: Env> Mapper<E> {
         self.end_running_subagents(if stopped { "cancelled" } else { "failed" }, &mut out);
         self.wake.clear();
         self.continuation_requested = false;
+        self.wakes.clear();
+        // An exited process loses its wakeup.
+        self.scheduled.clear();
         let Some(turn) = &self.turn else {
             return out;
         };
@@ -1254,8 +1392,16 @@ impl<E: Env> Mapper<E> {
         // A stopped or failed turn takes its background work with it.
         if !completed {
             self.roster.clear();
+            self.roster.forget_wakes();
+            // A Stop cancels Claude's wakeup; a failed turn on a live process leaves it.
+            if status != TurnStatus::Failed {
+                self.scheduled.clear();
+            }
         }
-        thread["pendingBackgroundTasks"] = self.roster.tasks();
+        thread["pendingBackgroundTasks"] = self.roster.published(
+            self.last_provider_thread.as_ref(),
+            self.scheduled.due.is_some(),
+        );
         // A turn that wrote to the transcript moved past a rollback's pinned head.
         if completed || turn.cursor.is_some() {
             thread["nativeConversationHeadRef"] = Value::Null;
@@ -2523,6 +2669,13 @@ fn turn_token_usage(
     if !models.is_empty() {
         usage["models"] = json!(models);
     }
+    if result
+        .and_then(|r| r.local_command.as_ref())
+        .and_then(Value::as_str)
+        .is_some_and(|c| !c.is_empty())
+    {
+        usage["localCommand"] = json!(true);
+    }
     let success = result.is_some_and(|r| r.subtype == "success");
     let Some(u) = usage_total.filter(|_| result.is_some()) else {
         usage["usageStatus"] = json!("unavailable");
@@ -2682,6 +2835,70 @@ fn overage_allowed(info: &Value) -> bool {
         || info.get("overageInUse") == Some(&json!(true))
 }
 
+/// `claudeEchoedPromptUuids`.
+fn echoed_uuids(message: &Inbound) -> Vec<&str> {
+    let (many, one) = match message {
+        Inbound::Assistant(m) => (&m.user_message_uuids, &m.user_message_uuid),
+        Inbound::Result(m) => (&m.user_message_uuids, &m.user_message_uuid),
+        Inbound::StreamEvent(m) => (&m.user_message_uuids, &m.user_message_uuid),
+        Inbound::System(m) => (&None, &m.user_message_uuid),
+        _ => return Vec::new(),
+    };
+    match many {
+        Some(list) => list.iter().map(String::as_str).collect(),
+        None => one.iter().map(String::as_str).collect(),
+    }
+}
+
+/// `isClaudePromptEchoGatedFrame`.
+fn is_echo_gated(message: &Inbound) -> bool {
+    match message {
+        Inbound::Assistant(m) => m.parent_tool_use_id.is_none(),
+        Inbound::StreamEvent(m) => m.parent_tool_use_id.is_none(),
+        Inbound::User(m) => m.parent_tool_use_id.is_none(),
+        Inbound::Result(_) => true,
+        _ => false,
+    }
+}
+
+fn is_task_notification_result(result: &ResultMsg) -> bool {
+    result
+        .origin
+        .as_ref()
+        .and_then(|o| o.get("kind"))
+        .and_then(Value::as_str)
+        == Some("task-notification")
+}
+
+/// `isClaudeResultForOtherTurn`.
+fn result_for_other_turn(
+    result: &ResultMsg,
+    prompt: &str,
+    steers: &[(String, String)],
+    mode: EchoMode,
+) -> bool {
+    let echoed: Vec<&str> = match &result.user_message_uuids {
+        Some(list) => list.iter().map(String::as_str).collect(),
+        None => result
+            .user_message_uuid
+            .iter()
+            .map(String::as_str)
+            .collect(),
+    };
+    if !echoed.is_empty() {
+        return !echoed
+            .iter()
+            .any(|u| *u == prompt || steers.iter().any(|(s, _)| s == u));
+    }
+    mode != EchoMode::Unknown
+        && result
+            .origin
+            .as_ref()
+            .and_then(|o| o.get("kind"))
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind != "human")
+}
+
 /// Root frames that mean Claude is working with no turn open.
 fn is_wake_frame(message: &Inbound) -> bool {
     match message {
@@ -2714,20 +2931,238 @@ impl<E: Env> Mapper<E> {
             self.wake.pop_front();
         }
         self.wake.push_back(message);
-        if !starts_work || self.continuation_requested {
+        if !starts_work {
+            return;
+        }
+        self.request_continuation(out);
+    }
+
+    /// `trackClaudeScheduledWakeup`, in arrival order.
+    fn track_scheduled_wakeup(&mut self, message: &Inbound) {
+        match message {
+            Inbound::System(m) if m.subtype == "init" => {
+                let now = self.env.now_ms();
+                self.scheduled.turn_started(now, self.turn.is_none());
+            }
+            Inbound::Result(r) => self.scheduled.result(is_task_notification_result(r)),
+            Inbound::Assistant(m) => {
+                for block in &m.message.content {
+                    if let Block::ToolUse { id, name, .. } = block
+                        && name == "ScheduleWakeup"
+                    {
+                        self.scheduled.call(id);
+                    }
+                }
+            }
+            Inbound::User(m) => {
+                let UserContent::Blocks(blocks) = &m.message.content else {
+                    return;
+                };
+                let ids: Vec<&str> = blocks
+                    .iter()
+                    .filter_map(|b| match b {
+                        Block::ToolResult { tool_use_id, .. } => Some(tool_use_id.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                self.scheduled.results(&ids, m.tool_use_result.as_ref());
+            }
+            _ => {}
+        }
+    }
+
+    /// The prompt echo gate of `handleSdkMessage`: Claude may run a queued wake before the
+    /// prompt just written. Root frames before the prompt's echo wait; when they end in a
+    /// result for another turn they were that wake, and become a continuation. Returns the
+    /// frame to handle now, if any.
+    fn echo_gate(&mut self, message: Inbound, out: &mut Vec<Out>) -> Option<Inbound> {
+        let Some(turn) = &mut self.turn else {
+            return Some(message);
+        };
+        let Some(prompt) = turn.prompt_uuid.clone() else {
+            return Some(message);
+        };
+        if turn.echo_confirmed {
+            return Some(message);
+        }
+        if echoed_uuids(&message).contains(&prompt.as_str()) {
+            if matches!(self.echo_mode, EchoMode::Unknown | EchoMode::Acknowledged) {
+                self.echo_mode =
+                    if !matches!(message, Inbound::Result(_)) && turn.gated_before_echo == 0 {
+                        EchoMode::Early
+                    } else {
+                        EchoMode::ResultOnly
+                    };
+            }
+            self.release_held_root(out);
+            return Some(message);
+        }
+        if let Inbound::CommandLifecycle { command_uuid, .. } = &message
+            && *command_uuid == prompt
+        {
+            if self.echo_mode == EchoMode::Unknown {
+                self.echo_mode = EchoMode::Acknowledged;
+            }
+            return Some(message);
+        }
+        if !is_echo_gated(&message) {
+            return Some(message);
+        }
+        turn.gated_before_echo += 1;
+        if let Inbound::Result(result) = &message
+            && result_for_other_turn(result, &prompt, &turn.pending_steers, self.echo_mode)
+        {
+            let held = std::mem::take(&mut turn.held_root);
+            turn.gated_before_echo = 0;
+            if result.num_turns == Some(0) {
+                turn.held_root = held;
+                return None;
+            }
+            if self.echo_mode == EchoMode::Early {
+                // `claude-wake-turn-before-prompt`: the held frames were a wake.
+                for frame in held.into_iter().chain(std::iter::once(message)) {
+                    self.hold_wake(frame, out);
+                }
+                return None;
+            }
+            // Foreign output already streamed; its result settles nothing here.
+            if is_task_notification_result(result) {
+                self.wakes.clear();
+            }
+            return None;
+        }
+        if self.echo_mode != EchoMode::Early {
+            return Some(message);
+        }
+        if !matches!(message, Inbound::Result(_)) {
+            if turn.held_root.len() < HELD_ROOT_CAP {
+                turn.held_root.push(message);
+            }
+            return None;
+        }
+        self.release_held_root(out);
+        Some(message)
+    }
+
+    /// `releaseHeldRootFrames`: the echo came; the held frames are this turn's.
+    fn release_held_root(&mut self, out: &mut Vec<Out>) {
+        let Some(turn) = &mut self.turn else {
+            return;
+        };
+        turn.echo_confirmed = true;
+        for frame in std::mem::take(&mut turn.held_root) {
+            out.extend(self.handle(frame));
+        }
+    }
+
+    /// `offerWakeContinuation`: asks the engine for a continuation turn, once per wake, with
+    /// the wake's notice and the last notification's summary as its text.
+    fn request_continuation(&mut self, out: &mut Vec<Out>) {
+        if self.continuation_requested {
             return;
         }
         let Some(ctx) = &self.last_ctx else {
             return;
         };
         self.continuation_requested = true;
+        let mut reports = self.wakes.take();
+        // A wake with no finished work while a Monitor runs is the Monitor's event.
+        if reports.is_empty() && self.roster.has_monitor() {
+            reports.push(wakes::Report {
+                kind: wakes::Kind::Monitor,
+                label: None,
+                outcome: "updated",
+                child_thread_id: None,
+            });
+        }
         out.push(event(ProviderEvent::ContinuationRequested(
             ContinuationRequest {
                 thread_id: ctx.thread_id.as_str().into(),
                 provider_thread_id: ctx.provider_thread_id.as_str().into(),
-                detail: None,
+                detail: self.wakes.detail.clone(),
+                notification: wakes::notification(&reports),
             },
         )));
+    }
+
+    /// A `task_notification` during a user turn: Claude reports it in a wake after the turn,
+    /// so the wake names it (the active branch of `handleRoutedSdkMessage`).
+    fn record_turn_notification(&mut self, msg: &SystemMsg) {
+        let Some(task_id) = msg.task_id.as_deref() else {
+            return;
+        };
+        let outcome = wakes::task_outcome(msg.status.as_ref().and_then(Value::as_str));
+        if self.roster.is_known(task_id) {
+            if let Some(task) = self.roster.wake_task(task_id) {
+                self.wakes.record(
+                    task_id,
+                    wakes::Report {
+                        kind: wakes::Kind::from_task_kind(task["kind"].as_str()),
+                        label: task["description"].as_str().map(str::to_string),
+                        outcome,
+                        child_thread_id: task["childThreadId"].as_str().map(str::to_string),
+                    },
+                );
+            }
+        } else if self.wakes.is_backgrounded(task_id)
+            && let Some((title, child)) = self.subagents.report(task_id)
+        {
+            self.wakes.record(
+                task_id,
+                wakes::Report {
+                    kind: wakes::Kind::Subagent,
+                    label: title,
+                    outcome,
+                    child_thread_id: Some(child),
+                },
+            );
+        }
+    }
+
+    /// `bufferWakeMessage` for a `task_notification` with no turn running: records what the
+    /// wake reports. Returns whether the notification wakes the root by itself (a background
+    /// subagent of the root ended).
+    fn record_wake_notification(&mut self, msg: &SystemMsg) -> bool {
+        let Some(task_id) = msg.task_id.as_deref() else {
+            return false;
+        };
+        let outcome = wakes::task_outcome(msg.status.as_ref().and_then(Value::as_str));
+        let mut evidence = false;
+        let mut wakes_root = false;
+        if self.roster.consume_wake(task_id)
+            && let Some(task) = self.roster.wake_task(task_id)
+        {
+            // `opaqueTaskWakeReport`.
+            let kind = wakes::Kind::from_task_kind(task["kind"].as_str());
+            self.wakes.record(
+                task_id,
+                wakes::Report {
+                    kind,
+                    label: task["description"].as_str().map(str::to_string),
+                    outcome,
+                    child_thread_id: task["childThreadId"].as_str().map(str::to_string),
+                },
+            );
+            evidence = true;
+        } else if self.wakes.is_nested(task_id) {
+            evidence = true;
+        } else if let Some((title, child)) = self.subagents.running_report(task_id) {
+            self.wakes.record(
+                task_id,
+                wakes::Report {
+                    kind: wakes::Kind::Subagent,
+                    label: title,
+                    outcome,
+                    child_thread_id: Some(child),
+                },
+            );
+            evidence = true;
+            wakes_root = true;
+        }
+        if evidence && let Some(summary) = msg.summary.as_deref().filter(|s| !s.is_empty()) {
+            self.wakes.detail = Some(summary.to_string());
+        }
+        wakes_root
     }
 
     fn on_rate_limit(&mut self, info: &Value, out: &mut Vec<Out>) {

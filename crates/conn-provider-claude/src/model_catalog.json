@@ -1855,5 +1855,58 @@
     ]
    }
   }
+ ],
+ "compatibility": [
+  {
+   "slug": "claude-opus-5-5",
+   "minVersion": "2.1.280"
+  },
+  {
+   "slug": "claude-sonnet-5-5",
+   "minVersion": "2.1.284"
+  },
+  {
+   "slug": "claude-fable-5-2",
+   "minVersion": "2.1.290"
+  },
+  {
+   "slug": "claude-fable-5-1",
+   "minVersion": "2.1.257"
+  },
+  {
+   "slug": "claude-fable-5",
+   "minVersion": "2.1.169"
+  },
+  {
+   "slug": "claude-opus-5",
+   "minVersion": "2.1.219"
+  },
+  {
+   "slug": "claude-opus-4-8",
+   "minVersion": "2.1.154"
+  },
+  {
+   "slug": "claude-opus-4-7",
+   "minVersion": "2.1.111"
+  },
+  {
+   "slug": "claude-opus-4-6"
+  },
+  {
+   "slug": "claude-opus-4-5"
+  },
+  {
+   "slug": "claude-sonnet-5"
+  },
+  {
+   "slug": "claude-sonnet-4-6"
+  },
+  {
+   "slug": "claude-haiku-5-5",
+   "minVersion": "2.1.293"
+  },
+  {
+   "slug": "claude-haiku-4-5"
+  }
  ]
 }

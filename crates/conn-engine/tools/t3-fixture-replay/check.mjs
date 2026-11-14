@@ -2,7 +2,7 @@
 // The T3 server's own replay fixtures (`apps/server/src/orchestration-v2/testkit`) through
 // this engine and our providers, judged by T3's own assertions.
 //
-//   CONN_MONOREPO=/path/to/conn node crates/conn-engine/tools/t3-fixture-replay/check.mjs [--keep] [--only <fixture>/<driver>]
+//   CONN_MONOREPO=/path/to/conn node crates/conn-engine/tools/t3-fixture-replay/check.mjs [--keep] [--only <fixture>/<driver> | --only '*/<driver>']
 //
 // How: one temporary vitest file in that testkit folder registers T3's fixture tests
 // (`itRunsReplayFixtures`, one per fixture and driver) and runs each with T3's own
@@ -28,6 +28,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo, repoRoot } from "../../../../tools/monorepo.mjs";
+import { sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
 
 const MONOREPO = monorepo();
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -324,7 +325,7 @@ fs.writeFileSync(
 describe("conn engine: T3 replay fixtures", () => {
   for (const driver of drivers) {
     itRunsReplayFixtures(driver, (input: any) => {
-      if (CONFIG.only !== null && CONFIG.only !== input.fixtureName + "/" + driver) {
+      if (CONFIG.only !== null && CONFIG.only !== input.fixtureName + "/" + driver && CONFIG.only !== "*/" + driver) {
         return Effect.void;
       }
       // Each driver as its own T3 test file runs it.
@@ -381,7 +382,10 @@ try {
       "--sequence.concurrent",
       "--maxConcurrency=4",
     ],
-    { cwd: server, stdio: ["ignore", "ignore", "inherit"] },
+    // Sealed: T3's code and every stand-in and driver it starts get a throwaway HOME and only
+    // what node needs from the shell, so none finds the real ~/.claude or ~/.codex or an
+    // ANTHROPIC_* or token variable of the shell.
+    { cwd: server, stdio: ["ignore", "ignore", "inherit"], env: sealedNodeEnv(work) },
   );
 } finally {
   cleanup();
@@ -419,7 +423,7 @@ const byDriver = new Map();
 let open = 0;
 const lines = [];
 for (const variant of variants) {
-  if (only !== null && variant !== only) continue;
+  if (only !== null && variant !== only && only !== `*/${variant.split("/").at(-1)}`) continue;
   const driver = variant.split("/").at(-1);
   const counts = byDriver.get(driver) ?? { passed: 0, total: 0 };
   counts.total += 1;

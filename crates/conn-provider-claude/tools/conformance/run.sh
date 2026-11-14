@@ -54,7 +54,10 @@ for (const s of JSON.parse(fs.readFileSync(scenarios, "utf8")).scenarios) {
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
   fs.copyFileSync(stub, path.join(dir, "stub-claude"));
   fs.chmodSync(path.join(dir, "stub-claude"), 0o755);
-  s.scripts.forEach((name, i) => fs.copyFileSync(path.join(cli, name + ".ndjson"), path.join(dir, "scripts", i + ".ndjson")));
+  // A recording from testdata/cli, else a constructed one (constructed/README.md).
+  const source = (name) =>
+    [path.join(cli, name + ".ndjson"), path.join(path.dirname(stub), "constructed", name + ".ndjson")].find((p) => fs.existsSync(p));
+  s.scripts.forEach((name, i) => fs.copyFileSync(source(name), path.join(dir, "scripts", i + ".ndjson")));
 }' "$here/scenarios.json" "$OUT/$side" "$here/stub-claude" "$crate/testdata/cli"
 }
 prepare t3

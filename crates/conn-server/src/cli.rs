@@ -77,6 +77,8 @@ pub struct ServeArgs {
 #[derive(Debug, PartialEq)]
 pub enum Command {
     Serve(ServeArgs),
+    /// `acp-mcp-bridge`: the stdio MCP bridge an ACP agent starts (unlisted, as in T3).
+    AcpMcpBridge,
     Pair {
         state_dir: PathBuf,
         scopes: Vec<String>,
@@ -259,6 +261,7 @@ pub fn parse(raw: Vec<String>) -> Result<Command, String> {
     let json = args.has("--json");
     match words.as_slice() {
         ["help", ..] => Ok(Command::Help),
+        ["acp-mcp-bridge"] => Ok(Command::AcpMcpBridge),
         ["pair"] => {
             args.only(&["--scopes", "--ttl", "--label"])?;
             Ok(Command::Pair {
@@ -720,6 +723,9 @@ pub fn run(command: Command) -> i32 {
     if let Command::Thread { state_dir, command } = command {
         return thread::run(&state_dir, command);
     }
+    if matches!(command, Command::AcpMcpBridge) {
+        return crate::acp_mcp_bridge::main();
+    }
     match run_inner(command) {
         Ok(()) => 0,
         Err(message) => {
@@ -786,8 +792,9 @@ fn run_inner(command: Command) -> Result<(), String> {
             crate::environment::CONTRACT_SERVER_VERSION,
             conn_contract::contract_commit()
         )),
-        Command::Serve(_) | Command::Thread { .. } => {
-            return Err("serve and thread run elsewhere".into());
+        Command::Serve(_) => return Err("serve runs from main".into()),
+        Command::Thread { .. } | Command::AcpMcpBridge => {
+            return Err("thread and acp-mcp-bridge run from run".into());
         }
         Command::Pair {
             state_dir,

@@ -92,7 +92,8 @@ impl GrokSettings {
                         let name = v.get("name")?.as_str()?.to_owned();
                         // An unresolved secret reference carries no value.
                         let value = v.get("value")?.as_str()?.to_owned();
-                        Some((name, expand_home(&value)))
+                        let value = expand_home_variable(&name, &value);
+                        Some((name, value))
                     })
                     .collect()
             })
@@ -111,18 +112,62 @@ impl GrokSettings {
     }
 }
 
-/// `expandHomeVariable`: a leading `~/` or `$HOME` in a value names the home folder.
-fn expand_home(value: &str) -> String {
-    let Some(home) = std::env::var_os("HOME").map(|h| h.to_string_lossy().into_owned()) else {
+/// `HOME_PATH_VARIABLES` (`provider-core/src/server/pathExpansion.ts`): the only instance
+/// variables whose `~` names the home folder. `tools/probe-conformance.mjs` checks the list
+/// against the monorepo.
+pub(crate) const HOME_PATH_VARIABLES: [&str; 3] = ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "GROK_HOME"];
+
+/// `expandHomeVariable`.
+fn expand_home_variable(name: &str, value: &str) -> String {
+    if !HOME_PATH_VARIABLES.contains(&name) {
+        return value.to_owned();
+    }
+    match std::env::var_os("HOME") {
+        Some(home) => expand_home_path(value, &home.to_string_lossy()),
+        None => value.to_owned(),
+    }
+}
+
+/// `expandHomePath`: `~`, `~/…` and `~\…`, joined as `path.join` joins (normalized).
+fn expand_home_path(value: &str, home: &str) -> String {
+    if value == "~" {
+        return home.to_owned();
+    }
+    let Some(rest) = value
+        .strip_prefix("~/")
+        .or_else(|| value.strip_prefix("~\\"))
+    else {
         return value.to_owned();
     };
-    if value == "~" {
-        return home;
+    let joined = format!("{home}/{rest}");
+    let absolute = joined.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for part in joined.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if parts.last().is_some_and(|p| *p != "..") {
+                    parts.pop();
+                } else if !absolute {
+                    parts.push("..");
+                }
+            }
+            other => parts.push(other),
+        }
     }
-    if let Some(rest) = value.strip_prefix("~/") {
-        return format!("{home}/{rest}");
+    let body = parts.join("/");
+    let trailing = joined.ends_with('/') && !body.is_empty();
+    let mut out = if absolute {
+        format!("/{body}")
+    } else if body.is_empty() {
+        ".".into()
+    } else {
+        body
+    };
+    if trailing {
+        out.push('/');
     }
-    value.to_owned()
+    out
 }
 
 /// `mergeProviderInstanceEnvironment`: the server's environment with the instance's entries.
@@ -255,7 +300,7 @@ fn base_model_id(model: &str) -> String {
 }
 
 /// `isValidGrokReasoningEffortToken`: `^[a-z0-9][a-z0-9._-]{0,31}$`, any case.
-fn is_effort_token(value: &str) -> bool {
+pub(crate) fn is_effort_token(value: &str) -> bool {
     let mut chars = value.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -263,6 +308,16 @@ fn is_effort_token(value: &str) -> bool {
     first.is_ascii_alphanumeric()
         && value.len() <= 32
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// The efforts a model offers (`grokReasoningOptionsFromModel(...).options`).
+pub(crate) fn offered_efforts(model: &Value) -> Vec<String> {
+    model_capabilities(model)["optionDescriptors"][0]["options"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|o| o["id"].as_str().map(str::to_owned))
+        .collect()
 }
 
 /// `grokReasoningOptionsFromModel` + `buildGrokModelCapabilities`.
@@ -864,6 +919,7 @@ pub(crate) async fn check_status(
     .unwrap_or_default();
 
     let initialized = crate::initialize_probe(
+        &crate::flavor::GROK,
         binary,
         &env,
         context.server_cwd,
@@ -970,6 +1026,14 @@ async fn discover_skills(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn expands_home_only_in_t3s_variables() {
+        assert_eq!(super::expand_home_path("~/a/../b//c", "/h"), "/h/b/c");
+        assert_eq!(super::expand_home_path("~", "/h"), "/h");
+        assert_eq!(super::expand_home_path("~x", "/h"), "~x");
+        assert_eq!(super::expand_home_variable("PATH", "~/bin"), "~/bin");
+    }
+
     use super::*;
 
     const LOGGED_IN: &str = "You are logged in with grok.com.\n\nDefault model: grok-4.6\n\nAvailable models:\n  * grok-4.6 (default)\n  - grok-4.5\n";

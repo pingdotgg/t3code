@@ -13,21 +13,11 @@
 */pi            provider: out of scope (AGENTS.md)
 
 # --- Grok (conn-provider-acp; its own replay shows these adapter events equal to T3's) ---
-grok_subagent_lineage/grok           provider: Grok subagents are not built (crates/conn-provider-acp README)
-grok_background_bash/grok            driver: finish_held_run (no replay gate in acp-stub.mjs); provider: Grok background tasks are not built
-grok_background_bash_fast_wake/grok  driver: finish_held_run; provider: Grok background tasks are not built
-grok_background_subagent/grok        driver: finish_held_run; provider: Grok background tasks and subagents are not built
-grok_monitor/grok                    driver: finish_held_run; provider: Grok monitors are not built
+# The provider replays all five equal to T3 in its own test (17 of 17). Here they fail in the
+# replay driver or the engine's projection.
+grok_subagent_lineage/grok           engine: a Grok subagent's provider thread is missing from the projection (the assertion gets null for its id)
+grok_background_bash/grok            driver: the replay agent never starts; the driver's replay gate and finish_held_run are not wired to the ACP stub
+grok_background_bash_fast_wake/grok  driver: as grok_background_bash
+grok_background_subagent/grok        driver: as grok_background_bash
+grok_monitor/grok                    driver: as grok_background_bash
 
-# --- Claude provider: background roster, monitors and wakes are not built ---
-claude_background_subagent_after_root/claudeAgent    provider: no background_work.updated roster for Claude subagents; the subagent item never shows
-claude_background_monitor_wake/claudeAgent           provider: Claude Monitor wakes are not built
-claude_nested_background_subagent_wake/claudeAgent   provider: no Claude background roster for nested subagents
-claude_background_subagent_lifecycle/claudeAgent     provider: no Claude background roster; the subagent statuses differ
-claude_background_wake_before_queued_prompt/claudeAgent  provider: Claude background wakes are not built; the wake and queued prompt order differs
-claude_compact_after_resume_wake/claudeAgent         provider: Claude background wakes are not built (the resumed wake's compaction differs)
-claude_compact_after_peer_turn/claudeAgent           provider: Claude background wakes are not built (the peer turn's run never reaches its status)
-
-# --- Claude provider, past the replay gate ---
-claude_background_task_after_root/claudeAgent provider: Claude background wakes are not built (the task's pending row ends before its wake run)
-claude_background_task_wake/claudeAgent       provider: Claude background wakes are not built (the wake's message text differs)

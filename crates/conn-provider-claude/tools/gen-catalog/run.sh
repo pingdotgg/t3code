@@ -16,9 +16,13 @@ if [ "${1:-}" = "--check" ]; then
   scratch="$(mktemp -d "${TMPDIR:-/tmp}/conn-claude-catalog.XXXXXX")"
   out="$scratch/model_catalog.json"
 fi
-trap 'rm -f "$copy"; [ -z "$scratch" ] || rm -rf "$scratch"' EXIT
+# Sealed: T3's code runs with a throwaway HOME and only what node needs from the shell, so it
+# finds no real ~/.claude and no ANTHROPIC_*, CLAUDE_* or token variable.
+sealed_home="$(mktemp -d "${TMPDIR:-/tmp}/conn-claude-sealed.XXXXXX")"
+sealed() { env -i PATH="$PATH" HOME="$sealed_home" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C}" "$@"; }
+trap 'rm -f "$copy"; rm -rf "$sealed_home"; [ -z "$scratch" ] || rm -rf "$scratch"' EXIT
 cp "$here/claudeCatalogDump.test.ts" "$copy"
-(cd "$repo/apps/server" && CATALOG_OUT="$out" node "$repo/node_modules/vite-plus/bin/vp" test run "src/$name")
+(cd "$repo/apps/server" && sealed CATALOG_OUT="$out" node "$repo/node_modules/vite-plus/bin/vp" test run "src/$name")
 if [ -n "$scratch" ]; then
   if cmp -s "$out" "$target"; then
     echo "model_catalog.json is current"

@@ -57,10 +57,17 @@ const fixtures = NodeFS.readdirSync(goldenDir)
 const skipped = fixtures.filter((f) => expected.has(f));
 const scenarios = fixtures.filter((f) => !expected.has(f));
 
+// The `/mcp` scenario: `simple` with a T3 MCP session for its thread, so `session/new` carries
+// the `t3-code` server (the stdio bridge for Grok) and the prompt the T3 tool notes.
+const MCP_SCENARIO = "simple";
+const MCP = { endpoint: "http://127.0.0.1:9/mcp", authorization: "Bearer conformance-token" };
+
 const work = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-acp-conformance-")));
 
-const wrapper = (dir, transcript) => {
+const wrapper = (dir, transcript, gates) => {
   NodeFS.mkdirSync(dir, { recursive: true });
+  const gateDir = NodePath.join(dir, "gates");
+  NodeFS.mkdirSync(gateDir, { recursive: true });
   const config = NodePath.join(dir, "stub-config.json");
   NodeFS.writeFileSync(
     config,
@@ -69,6 +76,8 @@ const wrapper = (dir, transcript) => {
       status: NodePath.join(dir, "status.json"),
       log: NodePath.join(dir, "stub.ndjson"),
       replayAgent: REPLAY_AGENT,
+      gates: gates.map((g) => g.label),
+      gateDir,
     }),
   );
   const script = NodePath.join(dir, "grok");
@@ -92,8 +101,12 @@ const plan = scenarios.map((name) => {
     name,
     dir,
     golden: NodePath.join(goldenDir, `${name}.json`),
-    tsBinary: wrapper(NodePath.join(dir, "ts"), transcript),
-    binary: wrapper(NodePath.join(dir, "rust"), transcript),
+    tsBinary: wrapper(NodePath.join(dir, "ts"), transcript, golden.gates ?? []),
+    binary: wrapper(NodePath.join(dir, "rust"), transcript, golden.gates ?? []),
+    tsGateDir: NodePath.join(dir, "ts", "gates"),
+    gateDir: NodePath.join(dir, "rust", "gates"),
+    gates: golden.gates ?? [],
+    mcp: name === MCP_SCENARIO ? { ...MCP } : null,
     workspace: rustWorkspace,
   };
 });
@@ -116,6 +129,7 @@ import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { GROK_DEFAULT_INSTANCE_ID, makeGrokAdapterV2 } from "@t3tools/provider-grok/testing";
 import { GrokOrchestratorReplayHarness } from "../Adapters/GrokAdapterV2.testkit.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -126,19 +140,58 @@ process.env.TMPDIR = fs.realpathSync(os.tmpdir());
 const PLAN = __PLAN__;
 fs.writeFileSync(__PARENT_ENV__, JSON.stringify(process.env));
 
-const stubHarness = (binaryPath: string) => ({
+// The fixture's replay gate reaches across to the stub: the stub writes <label>.reached when it
+// holds the line, and the gate's release writes <label>.released.
+const bridgeGates = (scenario: any, gate: any) => {
+  if (gate === undefined) return;
+  for (const { label } of scenario.gates) {
+    const file = (kind: string) => scenario.tsGateDir + "/" + encodeURIComponent(label) + "." + kind;
+    const timer = setInterval(() => {
+      if (!fs.existsSync(file("reached"))) return;
+      clearInterval(timer);
+      void gate.beforeEmit(label).then(() => fs.writeFileSync(file("released"), ""));
+    }, 5);
+    timer.unref();
+  }
+};
+
+const stubHarness = (scenario: any) => ({
   ...GrokOrchestratorReplayHarness,
-  makeProviderAdapterRegistryLayer: () =>
+  makeProviderAdapterRegistryLayer: (_transcript: any, options?: any) =>
     ProviderAdapterRegistry.layerFromAdaptersEffect(
       Effect.gen(function* () {
-        const adapter = yield* makeGrokAdapterV2({
+        const gate = options?.replayGate;
+        bridgeGates(scenario, gate);
+        // The /mcp scenario: every thread of this run has a T3 MCP session (thread ids
+        // differ per run).
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
+        const mcpSessions =
+          scenario.mcp === null
+            ? sessions
+            : {
+                ...sessions,
+                read: (threadId: any) =>
+                  Effect.succeed({
+                    environmentId: "conformance",
+                    threadId,
+                    providerSessionId: "conformance",
+                    providerInstanceId: GROK_DEFAULT_INSTANCE_ID,
+                    endpoint: scenario.mcp.endpoint,
+                    authorizationHeader: scenario.mcp.authorization,
+                    browserToolsAvailable: false,
+                  } as any),
+              };
+        const adapter = yield* Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions as any)(makeGrokAdapterV2({
           instanceId: GROK_DEFAULT_INSTANCE_ID,
-          settings: Schema.decodeSync(GrokSettings)({ binaryPath }),
+          settings: Schema.decodeSync(GrokSettings)({ binaryPath: scenario.tsBinary }),
           environment: {},
           hostPlatform: yield* HostProcess.Platform,
           selfInvocation: yield* resolveSelfInvocation(),
           continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
-        });
+          ...(gate === undefined
+            ? {}
+            : { testHooks: { onDeferredFinalizeScheduled: (debounce: any) => Effect.sync(() => gate.recordFinishArmed(debounce)) } }),
+        }));
         return [adapter];
       }),
     ).pipe(
@@ -156,7 +209,7 @@ const stubHarness = (binaryPath: string) => ({
 const runOne = (input: any) => {
     const scenario = PLAN.find((s: any) => s.name === input.fixtureName);
     if (scenario === undefined) return Effect.void;
-    return runReplayFixture({ ...input, harness: stubHarness(scenario.tsBinary) as any }).pipe(
+    return runReplayFixture({ ...input, harness: stubHarness(scenario) as any }).pipe(
       Effect.exit,
       Effect.tap((exit) => Effect.sync(() => fs.writeFileSync(scenario.dir + "/ts-outcome.txt", String(exit._tag === "Success" ? "passed" : exit.cause)))),
       Effect.asVoid,
@@ -215,6 +268,18 @@ NodeChildProcess.execFileSync(
 
 // ---- compare ------------------------------------------------------------------------------
 
+// Each stub process's worker writes `worker-exit` last, after the end of input; its log is
+// complete once every started process has one (the worker outlives the client's SIGKILL).
+const settled = (file) => {
+  if (!NodeFS.existsSync(file)) return true;
+  const entries = NodeFS.readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  return entries.filter((e) => e.kind === "start").length <= entries.filter((e) => e.kind === "worker-exit").length;
+};
+const until = Date.now() + 20_000;
+while (Date.now() < until && !plan.every((s) => settled(NodePath.join(s.dir, "ts", "stub.ndjson")) && settled(NodePath.join(s.dir, "rust", "stub.ndjson")))) {
+  NodeChildProcess.execFileSync("sleep", ["0.1"]);
+}
+
 const readLog = (file) =>
   NodeFS.existsSync(file)
     ? NodeFS.readFileSync(file, "utf8")
@@ -232,7 +297,21 @@ const tsParent = JSON.parse(NodeFS.readFileSync(tsParentEnv, "utf8"));
 const rustParent = JSON.parse(NodeFS.readFileSync(rustParentEnv, "utf8"));
 // T3 attaches a fresh trace context to each request; the values differ by design.
 const scrubTrace = (line) =>
-  line.replace(/"traceId":"[0-9a-f]{32}"/g, '"traceId":"<trace>"').replace(/"spanId":"[0-9a-f]{16}"/g, '"spanId":"<span>"');
+  scrubSelf(line).replace(/"traceId":"[0-9a-f]{32}"/g, '"traceId":"<trace>"').replace(/"spanId":"[0-9a-f]{16}"/g, '"spanId":"<span>"');
+// The one accepted difference: the stdio MCP bridge runs each server's own executable (T3:
+// its Node binary and script, `selfInvocationArgs`; ours: the conn-server binary).
+function scrubSelf(line) {
+  if (!line.includes("acp-mcp-bridge")) return line;
+  const frame = JSON.parse(line);
+  for (const server of frame.params?.mcpServers ?? []) {
+    if (!Array.isArray(server.args)) continue;
+    const at = server.args.indexOf("acp-mcp-bridge");
+    if (at < 0) continue;
+    server.command = "<self>";
+    server.args = server.args.slice(at);
+  }
+  return JSON.stringify(frame);
+}
 
 let differences = 0;
 const report = [];
@@ -262,7 +341,7 @@ for (const scenario of plan) {
     }
   }
   const lines = (log, workspace) =>
-    log.filter((e) => e.kind !== "start" && e.kind !== "agent-exit").map((e) =>
+    log.filter((e) => e.kind !== "start" && e.kind !== "agent-exit" && e.kind !== "worker-exit" && e.kind !== "stub-gone").map((e) =>
       e.kind === "stdin" ? `stdin ${scrubTrace(e.line.replaceAll(workspace, "<workspace>"))}` : e.kind,
     );
   const tsWorkspace = tsStarts[0]?.cwd ?? "\u0000";

@@ -20,7 +20,10 @@ in the Conn monorepo at the pinned commit.
 | `mapper/subagents` | Subagent rows and their child threads                                                   |
 | `mapper/notices`   | Todo lists, API retries, usage limits, failure classes                                  |
 | `mapper/presentation` | Tool row titles, MCP tool source and icon (`mcpToolPresentation`), web search patterns and results |
-| `mapper/roster`    | The background roster: Bash and Monitor tasks on `pendingBackgroundTasks`               |
+| `mapper/roster`    | The background roster: Bash and Monitor tasks on `pendingBackgroundTasks`, owed wakes, awaited tasks, the scheduled wakeup entry |
+| `mapper/wakes`     | What a wake reports (`backgroundWorkNotification`), the scheduled wakeup (`trackClaudeScheduledWakeup`) |
+| `text_generation`  | `Provider::generate_text`: the `claude` CLI directly, as `ClaudeTextGeneration.ts` |
+| `status`           | The `ServerProvider` entry, probed as `checkClaudeProviderStatus`: `claude --version`, the version-filtered catalog, the capabilities probe in the SDK host |
 | `tail`             | Live output of a foreground Bash call from the CLI's task file (`ClaudeTaskOutputTail.ts`) |
 | `attachments`      | Image blocks and attachment paths in a user message                                     |
 | `session`          | `Session`: lazy query, SDK calls, a driver and an idle watcher per query                |
@@ -82,6 +85,59 @@ result equal, byte for byte.
   prompt effort.
 - **Fork:** the SDK's `forkSession` at fork time; the fork's first turn resumes it.
 - **Prompts:** trimmed, `Ultrathink:` for the ultrathink effort, as T3.
+
+## Background work and wakes
+
+As `ClaudeAdapterV2.ts`, with each rule's T3 name:
+
+- **Roster** (`pendingBackgroundTasksByNativeThread`): background Bash and Monitor tasks; every
+  `background_tasks_changed` sends the thread. A task that ended while it can still wake
+  Claude stays listed until its continuation runs (`owedWakeTasksForNativeThread`,
+  wake-eligible ids and replay tombstones). `awaitBackgroundTasks` marks tasks `awaited`. A
+  `ScheduleWakeup` result lists T3's `claude-scheduled-wakeup` entry until the wakeup fires,
+  is cancelled, a Stop ends the turn or the process ends; it counts as background work.
+- **Wake reports** (`recordWakeReport`): a task notification during a user turn (a known
+  background task or a backgrounded subagent) or while idle records what the next wake names.
+  Reports live through one user turn. The continuation request carries T3's notice
+  (`backgroundWorkNotification`: `Subagent "X" finished`, `Command "Y" and monitor "Z"
+  failed`, …) and the last notification's summary as its text. A root subagent's end asks for
+  the continuation at once; a Monitor event with nothing finished is "Monitor reported new
+  output". Nested subagents (`spawn_depth` > 1) wake nothing.
+- **Prompt echo gate** (`promptEchoMode`): after a prompt is written, root frames before its
+  echo wait; when they end in a result for another turn (`isClaudeResultForOtherTurn`) they were
+  a wake Claude ran first, and become a continuation.
+- **Subagents across turns**: settled subagents stay known (up to 64), so a `SendMessage`
+  resume reopens the row in the resuming turn and adds the sent message to the child thread.
+- **Stop with no turn running** (`interruptTurn` with `requestRuntimeRestart`):
+  `Session::stop_background_work` closes the thread's idle query and clears the roster and
+  wake state; the next turn resumes in a new CLI.
+- **Usage ledger** (`resultLedgerUsage`): measured when a result arrives, before it waits for a
+  wake or an echo. `/compact` results report `localCommand`.
+
+All state above is bounded (64 entries per list; `the_background_roster_stays_bounded`).
+
+## Status entry
+
+`ClaudeProvider::refresh_status` builds the entry as `checkClaudeProviderStatus`: `claude
+--version` (20 s; missing, failing and hanging CLIs give T3's messages), T3's catalog filtered
+by that version (`resolveClaudeModelsForVersion`, `updateRequiredModels`, the upgrade
+message), then `probeClaudeCapabilities` in the SDK host (`probeCapabilities`, 25 s): the
+official SDK starts the CLI with a prompt that never yields, so no request reaches the API.
+The host returns the account status the SDK reports (email, subscription, token and key
+source, API provider; never a token), slash commands, models, usage windows and effort caps.
+Before the first probe the entry is T3's pending one. `CONN_CLAUDE_STATUS_PROBE=off` turns the
+probe off; every check that starts the server sets it, so no check runs this machine's
+`claude`. Not ported: reset credits (Anthropic's API), the organization id (Claude's account
+file), the version advisory (a registry lookup), skills, custom models, applying effort caps.
+Proof: `tools/probe-conformance/run.mjs`, 10 status scenarios against T3's own function (and
+4 title scenarios against T3's `generateThreadTitle`). It runs T3's side with the sealed
+environment (`tools/sealed-env.mjs`, `sealedNodeEnv`): a throwaway HOME and no `ANTHROPIC_*`,
+`CLAUDE_*` or other variable of the shell.
+
+The SDK host starts for a probe and stops right after it (under 1 s with a stub CLI, 89 MiB
+RSS at its peak). The server probes at start, on a settings change, on `server.refreshProviders`,
+and every 5 minutes only while a client in the foreground holds a `provider-status`
+activity lease, as T3's `BackgroundPolicy`: an idle server starts no CLI and no host.
 
 ## Idle children
 
@@ -158,11 +214,10 @@ Normalized in the comparison:
 - **Subagents:** no workflow subagents (`local_workflow`), no recovery of running subagents
   after a restart (`getSubagentMessages` is offered by the helper but not used), `stopSubagent`
   and `stop_task` / `background_tasks` not sent.
-- **Background roster:** built for Bash and Monitor tasks (`mapper/roster`), bounded to 64
-  tasks. Not built: background subagents in the roster, awaited tasks
-  (`awaitBackgroundTasks`), owed wake tasks, the scheduled wakeup entry, `stopTask`, and the
-  re-emit when a new process clears a roster. An unchanged `background_tasks_changed` sends no
-  `provider_thread.updated` (T3 sends one with the same content).
+- **Background work:** not built: workflow tasks, so `stopTask` (T3 stops only workflow
+  tasks) stays unsupported; the re-emit when a new process clears a roster; the stale-latch
+  rules of `retireOfferedWake` (a continuation that never starts); held frames for tool calls
+  that a held root frame owns.
 - **Live command output:** a relative `CLAUDE_CODE_TMPDIR` resolves against the cwd as given;
   T3 uses the real path. Only the first 8 tailed calls of a turn are tailed.
 - **Task list:** starts from the task tools it sees; TS first reads the list Claude saved on
@@ -170,9 +225,6 @@ Normalized in the comparison:
 - **Tool titles:** T3's own `/mcp` tools (`t3-code` and its aliases) get no presentation, as
   T3; T3 decides by its tool table, this provider by the server name. `normalizeMcpHttpUrl`
   keeps an icon URL as sent, where T3 normalizes it with `new URL`.
-- **Model list:** every catalog model is offered and `version` is null; T3 probes
-  `claude --version` and drops models outside their version bounds
-  (`resolveClaudeModelsForVersion`). Not built (see `docs/status.md`).
 - **Attachments:** PDFs stay path-only. No skill splitting of slash commands. The 28 MiB
   inline budget lives in memory and starts over after a restart.
 - **Not passed:** `launchArgs` and their `--settings`/append-file text, `autoCompactWindow`,
@@ -182,10 +234,16 @@ Normalized in the comparison:
   without systemd have none either). T3 records each CLI before it opens the fd 4 gate, so a
   restarted server can reap survivors (`ProviderProcesses`); the helper opens the gate at once
   and nothing reaps after a restart.
-- **Wakes:** T3 tells a Claude Monitor event from finished work (`monitorEvent`) and shows a
-  subagent that Claude resumes by itself as running again. Not followed here.
-- **Stop without a running turn:** T3's `interruptTurn` with `requestRuntimeRestart` closes an
-  idle query that runs background work; our engine calls the provider only for a running turn.
+- **Wakes:** a Monitor event is told from finished work by "a Monitor runs and nothing
+  finished" (T3 also checks the wake's result origin and the scheduled wakeup); a subagent
+  that Claude resumes by itself is not shown as running again.
+- **Stop without a running turn:** the engine reaches the provider, but writes none of T3's
+  interrupt request and result items for the settled run.
+- **Titles:** none known. `Provider::generate_text` runs the CLI directly, as
+  `ClaudeTextGeneration.ts` does (`text_generation.rs`): `claude -p --output-format json
+  --json-schema … --tools "" --permission-mode dontAsk`, the prompt on stdin, a fresh temp
+  folder, 180 s, a retry without `--no-session-persistence` for CLIs before 2.0.63. No SDK host.
+  Proven by the four `title*` scenarios of `tools/probe-conformance`.
 - **Elicitation:** only field-less forms; TS fills simple forms.
 - **No `/mcp` instructions text** in this crate: the server passes it as `mcp_instructions`.
 
@@ -233,6 +291,7 @@ last query closed (`helpers/sdk-host/README.md`). The host process stayed at 4.6
 cargo test -p conn-provider-claude                                        # offline
 cargo test -p conn-provider-claude live_ -- --ignored --test-threads=1    # real CLI, Haiku
 tools/conformance/run.sh                                                  # vs the T3 server, no model
+node tools/probe-conformance/run.mjs                                      # the status entry vs T3's, stub CLIs
 node tools/t3-replay/check.mjs                                            # T3's transcripts, expected failures listed
 tools/gen-catalog/run.sh                                                  # regenerate model_catalog.json
 cargo run --release -p conn-provider-claude --example helper_memory -- <claude> <cwd> 10

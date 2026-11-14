@@ -16,9 +16,10 @@ use std::{
 
 use conn_contract::{ProviderSessionId, ProviderThread, from_json, to_json};
 use conn_provider::{
-    BoxFuture, EnsureThreadInput, ForkThreadInput, InterruptInput, McpServer, ProviderError,
-    ProviderEvent, ProviderResult, ResumeThreadInput, RollbackTarget, RollbackThreadInput,
-    RuntimePolicy, RuntimeRequestResponse, Session, SteerInput, ThreadSnapshot, TurnInput,
+    AwaitBackgroundTasksInput, BoxFuture, EnsureThreadInput, ForkThreadInput, InterruptInput,
+    McpServer, ProviderError, ProviderEvent, ProviderResult, ResumeThreadInput, RollbackTarget,
+    RollbackThreadInput, RuntimePolicy, RuntimeRequestResponse, Session, SteerInput,
+    ThreadSnapshot, TurnInput,
 };
 use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, watch};
@@ -1131,7 +1132,9 @@ impl ClaudeSession {
             } else {
                 state.mapper.begin_turn(&input, &mode)
             };
-            (outs, query, SystemEnv.uuid())
+            let uuid = SystemEnv.uuid();
+            state.mapper.set_prompt_uuid(&uuid);
+            (outs, query, uuid)
         };
         inner.deliver(Some(&query), outs).await;
         let offered = query
@@ -1500,6 +1503,34 @@ impl Session for ClaudeSession {
         })
     }
 
+    /// `interruptTurn` with `requestRuntimeRestart` and no current turn: closes the thread's
+    /// idle query (its background work ends with the CLI) and clears the wake and roster
+    /// state, as T3 does. The next turn resumes in a new CLI.
+    fn stop_background_work(&self, input: InterruptInput) -> BoxFuture<'_, ProviderResult<()>> {
+        Box::pin(async move {
+            let _serial = self.inner.turn_control.lock().await;
+            let Some(native) = native_thread_id(&input.provider_thread) else {
+                return Ok(());
+            };
+            let live = {
+                let mut state = self.inner.lock();
+                if state.mapper.turn_active() {
+                    return Ok(());
+                }
+                match &state.live {
+                    Some(live) if live.native_thread_id == native => state.live.take(),
+                    _ => None,
+                }
+            };
+            if let Some(live) = live {
+                end_query(&self.inner.helper, live).await;
+            }
+            let outs = self.inner.lock().mapper.stop_background_work();
+            self.inner.deliver(None, outs).await;
+            Ok(())
+        })
+    }
+
     /// `ClaudeAdapterV2.applyModelSelection`: effort and settings apply to the live query of
     /// this thread; a new model waits for the next turn. A failed update is logged, as T3 does.
     fn apply_model_selection(
@@ -1758,6 +1789,24 @@ impl Session for ClaudeSession {
 
     fn has_pending_background_work(&self) -> bool {
         self.inner.lock().mapper.has_pending_background_work()
+    }
+
+    /// `awaitBackgroundTasks`: marks the roster's tasks the agent waits on, and sends the
+    /// roster so the thread stays working.
+    fn await_background_tasks(
+        &self,
+        input: AwaitBackgroundTasksInput,
+    ) -> BoxFuture<'_, ProviderResult<Vec<String>>> {
+        Box::pin(async move {
+            let thread = to_json(&input.provider_thread);
+            let (matched, outs) = self.inner.lock().mapper.await_background_tasks(
+                &thread,
+                &input.task_ids,
+                input.awaited,
+            );
+            self.inner.deliver(None, outs).await;
+            Ok(matched)
+        })
     }
 
     fn close(&self) -> BoxFuture<'_, ()> {

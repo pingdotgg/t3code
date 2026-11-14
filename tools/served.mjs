@@ -51,7 +51,8 @@ export async function binaryCoverage(binary) {
   const child = NodeChildProcess.spawn(
     program,
     ["--listen", "127.0.0.1:0", "--state-dir", NodePath.join(tmp, "state"), "--project", project],
-    { cwd: tmp, stdio: ["ignore", "pipe", "pipe"] },
+    // CONN_CLAUDE_STATUS_PROBE=off: no run of this machine's `claude` for the status.
+    { cwd: tmp, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CONN_CLAUDE_STATUS_PROBE: "off" } },
   );
   try {
     return await new Promise((ok) => {

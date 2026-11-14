@@ -969,11 +969,16 @@ impl Inner {
                 Translated::CreateThread(thread) => {
                     self.create_provider_thread(thread).await;
                 }
+                Translated::Subagent(draft, subagent) => {
+                    self.commit(vec![draft]).await;
+                    self.sync_subagent_thread_model(subagent).await;
+                }
                 Translated::Steer { message_id, status } => {
                     self.steer_updated(&thread_id, message_id, status).await;
                 }
-                Translated::Continuation(detail) => {
-                    self.request_continuation(&thread_id, detail).await;
+                Translated::Continuation(detail, notification) => {
+                    self.request_continuation(&thread_id, detail, notification)
+                        .await;
                 }
                 Translated::Terminal(status, failure, broken) => {
                     // The root run's messages are closed; none of its text is flushed later.
@@ -1030,6 +1035,50 @@ impl Inner {
         }
     }
 
+    /// `syncSubagentThreadModel` (`ProviderEventIngestor`): a provider reveals a native
+    /// subagent's model late, and its child thread takes it.
+    async fn sync_subagent_thread_model(&self, subagent: Value) {
+        if subagent["origin"] != "provider_native" {
+            return;
+        }
+        let Some(child) = subagent["childThreadId"].as_str().map(str::to_owned) else {
+            return;
+        };
+        let model = subagent["model"].as_str().map(str::to_owned);
+        let selection = subagent
+            .get("modelSelection")
+            .filter(|s| s.is_object())
+            .cloned();
+        if model.is_none() && selection.is_none() {
+            return;
+        }
+        let result = self
+            .write(move |tx| {
+                let Some(mut thread) = tx.thread(&child)? else {
+                    return Ok(());
+                };
+                let current = thread["modelSelection"].clone();
+                let reported = match (selection, model) {
+                    (Some(selection), _) => selection,
+                    (None, Some(model)) if current["model"] != model.as_str() => {
+                        json!({"instanceId": current["instanceId"], "model": model})
+                    }
+                    _ => current.clone(),
+                };
+                if reported == current {
+                    return Ok(());
+                }
+                thread["modelSelection"] = reported;
+                thread["updatedAt"] = json!(tx.now());
+                tx.append(Draft::new(&child, "thread.model-selection-updated", thread))?;
+                Ok(())
+            })
+            .await;
+        if let Err(e) = result {
+            eprintln!("conn-engine: could not update a subagent thread's model: {e}");
+        }
+    }
+
     /// `steer.updated`: the steered message's turn item takes the provider's status, as
     /// `ProviderEventIngestor` does; only a pending or completed item changes.
     async fn steer_updated(&self, thread_id: &str, message_id: String, status: &'static str) {
@@ -1071,7 +1120,12 @@ impl Inner {
 
     /// `continuation.requested`: a queued agent message whose run starts the provider's
     /// continuation turn (`ProviderContinuationService`), so it runs after any active run.
-    async fn request_continuation(self: &Arc<Self>, thread_id: &str, detail: Option<String>) {
+    async fn request_continuation(
+        self: &Arc<Self>,
+        thread_id: &str,
+        detail: Option<String>,
+        notification: Option<Value>,
+    ) {
         let message_id = format!(
             "message:provider-continuation:{}",
             crate::time::unique_suffix()
@@ -1082,12 +1136,12 @@ impl Inner {
             "threadId": thread_id,
             "messageId": message_id,
             "text": detail.unwrap_or_else(|| "Background task completed.".to_owned()),
-            // `ProviderContinuationService`'s default: the client shows a notice.
-            "notification": {
+            // The provider's notice, else `ProviderContinuationService`'s default.
+            "notification": notification.unwrap_or_else(|| json!({
                 "source": {"kind": "background_task"},
                 "outcome": "updated",
                 "summary": "Background activity updated",
-            },
+            })),
             "attachments": [],
             "dispatchMode": {"type": "queue_after_active"},
             "createdBy": "agent",
@@ -1174,6 +1228,60 @@ impl Inner {
             self.close_session(&thread_id).await;
         }
         self.end_run(&thread_id, &run_id, "interrupted", None).await;
+    }
+
+    /// Stop with no active run (`ProviderTurnControlService.interrupt` on a settled turn):
+    /// the live session gets the run's provider thread and its latest provider turn, and ends
+    /// the background work it holds. With no live session nothing runs anymore.
+    pub(crate) async fn stop_background_work(self: Arc<Self>, thread_id: String, run_id: String) {
+        let Some(live) = self.live_thread(&thread_id) else {
+            return;
+        };
+        if live.active().is_some() {
+            return;
+        }
+        let (tid, rid) = (thread_id.clone(), run_id);
+        let target = self
+            .db(move |store| -> Result<Option<(Value, Value)>, String> {
+                let tx = store.tx()?;
+                let Some(run) = tx.entity(&tid, "runs", &rid)? else {
+                    tx.rollback();
+                    return Ok(None);
+                };
+                let provider_thread_id = run["providerThreadId"].clone();
+                let provider_thread = tx
+                    .entities(&tid, "providerThreads")?
+                    .into_iter()
+                    .find(|pt| pt["id"] == provider_thread_id);
+                let turn = tx
+                    .entities(&tid, "providerTurns")?
+                    .into_iter()
+                    .filter(|t| t["providerThreadId"] == provider_thread_id)
+                    .max_by_key(|t| t["ordinal"].as_u64().unwrap_or(0));
+                tx.rollback();
+                Ok(provider_thread.zip(turn))
+            })
+            .await
+            .ok()
+            .flatten();
+        let Some((provider_thread, turn)) = target else {
+            return;
+        };
+        let (Ok(provider_thread), Ok(provider_turn_id)) =
+            (from_json(provider_thread), from_json(turn["id"].clone()))
+        else {
+            return;
+        };
+        if let Err(e) = live
+            .session
+            .stop_background_work(InterruptInput {
+                provider_thread,
+                provider_turn_id,
+            })
+            .await
+        {
+            eprintln!("conn-engine: the provider did not stop its background work: {e}");
+        }
     }
 
     /// `ProviderTurnControlService.applyModelSelection`: only a running provider turn on the
@@ -1604,7 +1712,9 @@ enum Translated {
         status: &'static str,
     },
     /// The provider has output with no turn running and asks for one.
-    Continuation(Option<String>),
+    Continuation(Option<String>, Option<Value>),
+    /// `subagent.updated`, then the child thread follows the subagent's model.
+    Subagent(Draft, Value),
 }
 
 /// `providerThreadLoadKey`: the native thread, the provider's load part of the selection,
@@ -1707,7 +1817,8 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
             Translated::Event(scoped("node.updated", to_json(&node)))
         }
         ProviderEvent::SubagentUpdated { subagent } => {
-            Translated::Event(scoped("subagent.updated", to_json(&subagent)))
+            let payload = to_json(&subagent);
+            Translated::Subagent(scoped("subagent.updated", payload.clone()), payload)
         }
         ProviderEvent::MessageUpdated { message } => {
             Translated::Event(scoped("message.updated", to_json(&message)))
@@ -1770,7 +1881,9 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
                 SteerStatus::Cancelled => "cancelled",
             },
         },
-        ProviderEvent::ContinuationRequested(request) => Translated::Continuation(request.detail),
+        ProviderEvent::ContinuationRequested(request) => {
+            Translated::Continuation(request.detail, request.notification)
+        }
         // Handled before translation.
         ProviderEvent::BackgroundWorkUpdated { .. } => Translated::Ignore,
     }

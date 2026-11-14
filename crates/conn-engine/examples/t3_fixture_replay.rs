@@ -371,6 +371,57 @@ impl Run {
                     ))
                 }
             }
+            // `releaseReplayGateAfterWaiting`: release once the gate is reached, the run
+            // completed and its provider thread lists background work; then wait until the
+            // provider thread lists none.
+            "release_replay_gate_after_waiting" => {
+                let label = text(step, "label")?;
+                let tid = thread()?.to_owned();
+                let rid = run_id()?.to_owned();
+                let reached = self.gate_file(label, "reached")?;
+                let release = self.gate_file(label, "release")?;
+                let deadline = tokio::time::Instant::now() + WAIT;
+                let provider_thread_id = loop {
+                    let projection = self.projection(&tid).await?;
+                    let run = rows(&projection, "runs").find(|r| r["id"] == rid.as_str());
+                    let provider_thread = run.and_then(|run| {
+                        rows(&projection, "providerThreads")
+                            .find(|t| t["id"] == run["providerThreadId"])
+                    });
+                    let pending = provider_thread
+                        .and_then(|t| t["pendingBackgroundTasks"].as_array())
+                        .map_or(0, Vec::len);
+                    let is_reached = blocking(|path| path.exists(), reached.clone()).await;
+                    if is_reached
+                        && run.is_some_and(|r| r["status"] == "completed")
+                        && pending > 0
+                        && let Some(id) = provider_thread.and_then(|t| t["id"].as_str())
+                    {
+                        break id.to_owned();
+                    }
+                    if tokio::time::Instant::now() >= deadline {
+                        blocking(|path| std::fs::write(path, b"").is_ok(), release).await;
+                        return Err(format!(
+                            "release_replay_gate_after_waiting:{label}:reached={is_reached}:run={}:pending={pending}",
+                            run.map_or("missing".into(), |r| r["status"].to_string())
+                        ));
+                    }
+                    tokio::time::sleep(POLL).await;
+                };
+                blocking(|path| std::fs::write(path, b"").is_ok(), release).await;
+                self.wait_for(
+                    &tid,
+                    &format!("await_provider_background_tasks_cleared:{tid}"),
+                    |p| {
+                        rows(p, "providerThreads")
+                            .find(|t| t["id"] == provider_thread_id.as_str())
+                            .and_then(|t| t["pendingBackgroundTasks"].as_array())
+                            .is_none_or(Vec::is_empty)
+                    },
+                )
+                .await
+                .map(|_| ())
+            }
             other => Err(format!("{other}: not run by this replay driver")),
         }
     }
@@ -386,7 +437,7 @@ impl Run {
 
     async fn release_all_gates(&self, steps: &Value) {
         for step in steps.as_array().into_iter().flatten() {
-            if let (Some("release_replay_gate"), Some(label)) =
+            if let (Some("release_replay_gate" | "release_replay_gate_after_waiting"), Some(label)) =
                 (step["type"].as_str(), step["label"].as_str())
                 && let Ok(path) = self.gate_file(label, "release")
             {

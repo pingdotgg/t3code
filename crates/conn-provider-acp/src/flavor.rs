@@ -3,7 +3,9 @@
 
 use serde_json::{Value, json};
 
+use crate::grok_background::{Lifecycle, SubagentUpdate, TaskMutation};
 use crate::ordered::{J, obj};
+use crate::tools::ToolState;
 
 /// The launch the T3 driver builds (`buildGrokAcpSpawnInput` and peers).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,6 +45,10 @@ pub(crate) enum Completion {
 }
 
 /// The executable setting, the launch runtime mode and the instance environment → the launch.
+/// Setup, initialize result, model, effort → the `session/set_model` model id and effort.
+pub(crate) type SelectModelFn =
+    fn(&Value, &Value, &str, Option<&str>) -> Option<(String, Option<String>)>;
+
 pub(crate) type LaunchFn = fn(&str, Option<&str>, &[(String, String)]) -> Launch;
 
 pub struct Flavor {
@@ -66,7 +72,8 @@ pub struct Flavor {
     pub(crate) permission_override: fn(&Value) -> Option<crate::mapper::Disposition>,
     /// `applyModelSelection` / the model config option: the model id to send with
     /// `session/set_model`, or `None` when the session keeps its model.
-    pub(crate) select_model: fn(&Value, &Value, &str) -> Option<String>,
+    /// The selection's `reasoningEffort` goes along when the flavor sends it.
+    pub(crate) select_model: SelectModelFn,
     /// `normalizeToolCall`, applied to each incoming tool update of the root turn.
     pub(crate) normalize_tool: Option<fn(crate::tools::ToolState) -> crate::tools::ToolState>,
     /// `capabilities` (`OrchestrationV2ProviderCapabilities`) for the session row.
@@ -74,7 +81,65 @@ pub struct Flavor {
     /// `supportsCompaction`: `/compact` goes to the agent as a prompt, and its success (or
     /// the agent's own `compaction_update`) makes the next prompt resend T3's notes.
     pub(crate) supports_compaction: bool,
+    /// Background work: `deferFinalizeForBackgroundWork` and `enablePostSettleContinuation`
+    /// with the hooks that find background tasks. `None` for an agent without them.
+    pub(crate) background: Option<BackgroundHooks>,
+    /// `mcpOverHttp`: the `/mcp` entry goes as HTTP when the agent offers HTTP; otherwise
+    /// it is the stdio bridge. In T3: Grok, Kiro and fx no; Antigravity yes; the registry
+    /// only for Copilot.
+    pub(crate) mcp_over_http: bool,
+    /// `supportsImagePrompts`: image blocks go even when `promptCapabilities.image` is
+    /// false (Grok accepts them).
+    pub(crate) supports_image_prompts: bool,
 }
+
+/// `extractBackgroundTaskId`, `isBackgroundCommandTool`, `extractBackgroundTaskCompletion`,
+/// `extractBackgroundToolMutation`, `isPersistentBackgroundTool`, `isProviderWakeNotification`
+/// and the lifecycle notifications of `registerExtensions`.
+#[derive(Clone, Copy)]
+pub(crate) struct BackgroundHooks {
+    pub task_id: fn(&ToolState) -> Option<String>,
+    pub is_command: fn(&ToolState) -> bool,
+    pub completions: fn(&ToolState) -> Vec<TaskMutation>,
+    pub text_mutations: fn(&str) -> Vec<TaskMutation>,
+    pub is_persistent: fn(&ToolState) -> bool,
+    pub is_wake: fn(&Value) -> bool,
+    /// A notification method and its params → a task lifecycle change.
+    pub lifecycle: fn(&str, &Value) -> Option<Lifecycle>,
+    /// `extractSubagentUpdate`.
+    pub subagent: fn(&ToolState) -> Option<SubagentUpdate>,
+}
+
+impl std::fmt::Debug for BackgroundHooks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BackgroundHooks")
+    }
+}
+
+/// `registerXAiBackgroundTaskTracking`: `x.ai/task_backgrounded` and `x.ai/task_completed`,
+/// with their legacy `_x.ai/` forms.
+fn grok_lifecycle(method: &str, params: &Value) -> Option<Lifecycle> {
+    match method {
+        "x.ai/task_backgrounded" | "_x.ai/task_backgrounded" => {
+            crate::grok_background::lifecycle(params, false)
+        }
+        "x.ai/task_completed" | "_x.ai/task_completed" => {
+            crate::grok_background::lifecycle(params, true)
+        }
+        _ => None,
+    }
+}
+
+const GROK_BACKGROUND: BackgroundHooks = BackgroundHooks {
+    task_id: crate::grok_background::background_task_id,
+    is_command: |tool| crate::grok_background::background_shell_task_id(tool).is_some(),
+    completions: crate::grok_background::background_task_completions,
+    text_mutations: crate::grok_background::background_tool_mutations,
+    is_persistent: crate::grok_background::is_persistent_monitor,
+    is_wake: crate::grok_background::is_task_completed_wake,
+    lifecycle: grok_lifecycle,
+    subagent: crate::grok_background::subagent_update,
+};
 
 impl std::fmt::Debug for Flavor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -286,9 +351,17 @@ pub static GROK: Flavor = Flavor {
     prompt_failure: grok_prompt_failure,
     permission_override: grok_permission_override,
     normalize_tool: Some(crate::grok::normalize_tool),
-    select_model: |setup, _initialize, model| crate::grok::model_switch(setup, model),
+    // Protocol 1 sends the effort as `session/set_model` metadata; newer protocols are not
+    // built (Grok answers protocol 1), so there no effort goes.
+    select_model: |setup, initialize, model, effort| {
+        let effort = effort.filter(|_| initialize["protocolVersion"] == 1);
+        crate::grok::model_switch(setup, model, effort)
+    },
     capabilities: grok_capabilities,
     supports_compaction: true,
+    background: Some(GROK_BACKGROUND),
+    mcp_over_http: false,
+    supports_image_prompts: true,
 };
 
 /// `grokLaunchRuntimeMode`.

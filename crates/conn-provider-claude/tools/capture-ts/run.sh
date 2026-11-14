@@ -18,7 +18,12 @@ mkdir -p "$CAPTURE_OUT_DIR"
 CAPTURE_OUT_DIR="$(cd "$CAPTURE_OUT_DIR" && pwd)"
 CAPTURE_CLI_DIR="$(cd "$CAPTURE_CLI_DIR" && pwd)"
 
-trap 'rm -f "$copy"' EXIT
+# Sealed: T3's code runs with a throwaway HOME and only what node needs from the shell, so it
+# finds no real ~/.claude and no ANTHROPIC_*, CLAUDE_* or token variable.
+sealed_home="$(mktemp -d "${TMPDIR:-/tmp}/conn-claude-sealed.XXXXXX")"
+sealed() { env -i PATH="$PATH" HOME="$sealed_home" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C}" "$@"; }
+trap 'rm -f "$copy"; rm -rf "$sealed_home"' EXIT
 cp "$here/claudeCapture.test.ts" "$copy"
 cd "$repo/apps/server"
-node "$repo/node_modules/vite-plus/bin/vp" test run "src/orchestration-v2/Adapters/$name"
+sealed CAPTURE_CLI_DIR="$CAPTURE_CLI_DIR" CAPTURE_OUT_DIR="$CAPTURE_OUT_DIR" ${CAPTURE_LOG_DIR:+CAPTURE_LOG_DIR="$CAPTURE_LOG_DIR"} \
+  node "$repo/node_modules/vite-plus/bin/vp" test run "src/orchestration-v2/Adapters/$name"

@@ -16,7 +16,7 @@
 //! `consumeResetCredit`) stay unregistered and answer "not supported".
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -81,24 +81,108 @@ fn open_with(state: Value) -> mpsc::Receiver<Result<Value, Failure>> {
     rx
 }
 
-/// Tells config streams that a provider entry changed (T3's `ProviderRegistry.streamChanges`).
+/// Tells config streams that a provider entry changed (T3's `ProviderRegistry.streamChanges`),
+/// and holds the clients' activity leases that let the periodic probe run
+/// (`BackgroundPolicy`: `reportClientActivity`, `shouldRunScopeWork`).
 #[derive(Clone, Debug)]
-pub struct ProviderStatus(Arc<watch::Sender<u64>>);
+pub struct ProviderStatus {
+    revision: Arc<watch::Sender<u64>>,
+    leases: Arc<std::sync::Mutex<Vec<Lease>>>,
+}
+
+/// One client's `ClientActivityLease`, as far as provider status needs it.
+#[derive(Clone, Debug)]
+struct Lease {
+    client_id: String,
+    expires: Instant,
+    /// `isForegroundLease`: visible, and focused or recently used.
+    foreground: bool,
+    /// `provider-status` scopes: `None` for every instance, else the instance id.
+    scopes: Vec<Option<String>>,
+}
+
+/// `DEFAULT_LEASE_TTL_MS` and `MAX_LEASE_TTL_MS`.
+const DEFAULT_LEASE_TTL: Duration = Duration::from_secs(45);
+const MAX_LEASE_TTL: Duration = Duration::from_secs(120);
+/// Clients with a lease at once; the oldest goes first.
+const MAX_LEASES: usize = 64;
 
 impl Default for ProviderStatus {
     fn default() -> Self {
-        Self(Arc::new(watch::channel(0).0))
+        Self {
+            revision: Arc::new(watch::channel(0).0),
+            leases: Arc::default(),
+        }
     }
 }
 
 impl ProviderStatus {
     pub fn subscribe(&self) -> watch::Receiver<u64> {
-        self.0.subscribe()
+        self.revision.subscribe()
     }
 
     fn bump(&self) {
-        self.0
+        self.revision
             .send_modify(|revision| *revision = revision.wrapping_add(1));
+    }
+
+    fn leases(&self) -> std::sync::MutexGuard<'_, Vec<Lease>> {
+        self.leases
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// `server.reportClientActivity` (`ClientActivityReportInput`): renews the client's lease.
+    pub fn report_activity(&self, input: &Value) {
+        let Some(client_id) = input["clientId"]
+            .as_str()
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+        else {
+            return;
+        };
+        let ttl = input["ttlMs"]
+            .as_f64()
+            .filter(|ms| ms.is_finite())
+            .map_or(DEFAULT_LEASE_TTL, |ms| {
+                Duration::from_millis(ms.max(1_000.0) as u64)
+            })
+            .min(MAX_LEASE_TTL);
+        let scopes = input["scopes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|scope| scope["type"] == "provider-status")
+            .map(|scope| scope["instanceId"].as_str().map(str::to_owned))
+            .collect();
+        let lease = Lease {
+            client_id: client_id.to_owned(),
+            expires: Instant::now() + ttl,
+            foreground: input["visible"] == true
+                && (input["focused"] == true || input["recentlyInteracted"] == true),
+            scopes,
+        };
+        let mut leases = self.leases();
+        let now = Instant::now();
+        leases.retain(|l| l.expires > now && l.client_id != lease.client_id);
+        if leases.len() >= MAX_LEASES {
+            leases.remove(0);
+        }
+        leases.push(lease);
+    }
+
+    /// `shouldRunScopeWork` for `provider-status` (generic or this instance): an active lease
+    /// with the scope, in the foreground unless the profile is `performance`.
+    fn wants(&self, instance_id: &str, performance: bool) -> bool {
+        let now = Instant::now();
+        self.leases().iter().any(|lease| {
+            lease.expires > now
+                && (performance || lease.foreground)
+                && lease
+                    .scopes
+                    .iter()
+                    .any(|s| s.as_deref().is_none_or(|id| id == instance_id))
+        })
     }
 }
 
@@ -141,10 +225,49 @@ pub async fn refresh(deps: &Deps, only: Option<&str>) {
     deps.provider_status.bump();
 }
 
+/// `FAILED_CHECK_RECHECK_DELAY`.
+const FAILED_CHECK_RECHECK: Duration = Duration::from_secs(30);
+
+/// The `performance` background profile lets a lease run scoped work in the background.
+fn performance_profile(deps: &Deps) -> bool {
+    let Some(environment) = deps.environment.as_ref() else {
+        return false;
+    };
+    let settings = environment.settings.raw();
+    settings["backgroundActivity"]["profile"] == "performance"
+        || settings["backgroundActivityProfile"] == "performance"
+}
+
+/// The periodic probe (`refreshOnInterval`): only the providers a client wants
+/// (`shouldRefreshOnInterval`), so an idle server with no client starts no provider CLI; each
+/// on its own rule. `recheck` is the probe 30 s after a deferred failure. Returns whether a
+/// provider asks for that recheck.
+async fn refresh_on_interval(deps: &Deps, recheck: bool) -> bool {
+    let performance = performance_profile(deps);
+    let mut again = false;
+    let mut any = false;
+    for provider in &deps.providers {
+        let id = provider.instance_id().as_str();
+        if deps.provider_status.wants(id, performance) {
+            again |= provider
+                .refresh_status_on_interval(instance_settings(deps, id), !recheck)
+                .await;
+            any = true;
+        }
+    }
+    if any {
+        deps.provider_status.bump();
+    }
+    again
+}
+
 /// T3's managed provider loop: probe once the server listens, again when an instance's
-/// settings entry changes, and every `providerHealthRefreshInterval` (5 minutes by default).
-/// Not ported: the background-work demand gate (T3 skips the periodic probe while no client
-/// wants background work) and the 30 s recheck after a failed check.
+/// settings entry changes, and every `providerHealthRefreshInterval` (5 minutes by default)
+/// while a client in the foreground asks for provider status (T3's `BackgroundPolicy`
+/// demand gate, with leases from `server.reportClientActivity`). A failed periodic check over
+/// a ready provider is rechecked after 30 s before it shows (`FAILED_CHECK_RECHECK_DELAY`),
+/// and a disabled instance is not probed on the interval. Not ported: host power and client
+/// low-power pauses.
 pub fn start_status_refresh(deps: &Deps) {
     let deps = deps.clone();
     tokio::spawn(async move {
@@ -157,8 +280,13 @@ pub fn start_status_refresh(deps: &Deps) {
         };
         let mut last = snapshot(&deps);
         refresh(&deps, None).await;
+        let mut recheck = false;
         loop {
-            let interval = refresh_interval(&deps);
+            let interval = if recheck {
+                Some(FAILED_CHECK_RECHECK)
+            } else {
+                refresh_interval(&deps)
+            };
             let changed = async {
                 match settings.as_mut() {
                     Some(rx) => rx.changed().await.is_ok(),
@@ -185,7 +313,7 @@ pub fn start_status_refresh(deps: &Deps) {
                     }
                     last = next;
                 }
-                () = tick => refresh(&deps, None).await,
+                () = tick => recheck = refresh_on_interval(&deps, recheck).await,
             }
         }
     });
@@ -207,8 +335,95 @@ mod tests {
 
     use super::*;
 
+    /// Records the periodic probes; the first one fails over a ready entry.
+    struct Flaky {
+        id: conn_contract::ProviderInstanceId,
+        calls: std::sync::Mutex<Vec<bool>>,
+    }
+
+    impl conn_provider::Provider for Flaky {
+        fn instance_id(&self) -> &conn_contract::ProviderInstanceId {
+            &self.id
+        }
+        fn driver(&self) -> &str {
+            "grok"
+        }
+        fn capabilities(
+            &self,
+        ) -> conn_provider::BoxFuture<
+            '_,
+            conn_provider::ProviderResult<conn_contract::ProviderCapabilities>,
+        > {
+            Box::pin(async {
+                Err(conn_provider::ProviderError::Unsupported {
+                    operation: "capabilities",
+                })
+            })
+        }
+        fn open_session(
+            &self,
+            _input: conn_provider::OpenSessionInput,
+        ) -> conn_provider::BoxFuture<'_, conn_provider::ProviderResult<conn_provider::OpenedSession>>
+        {
+            Box::pin(async {
+                Err(conn_provider::ProviderError::Unsupported {
+                    operation: "open_session",
+                })
+            })
+        }
+        fn refresh_status_on_interval(
+            &self,
+            _instance: Option<Value>,
+            defer: bool,
+        ) -> conn_provider::BoxFuture<'_, bool> {
+            Box::pin(async move {
+                let mut calls = self.calls.lock().unwrap();
+                calls.push(defer);
+                calls.len() == 1
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn a_failed_periodic_probe_is_rechecked_after_30_seconds() {
+        let flaky = Arc::new(Flaky {
+            id: "grok".into(),
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        let deps = Deps {
+            engine: None,
+            providers: vec![flaky.clone()],
+            ..Deps::default()
+        };
+        // The periodic probe runs only while a client in the foreground asks for provider status.
+        deps.provider_status
+            .report_activity(&json!({"clientId": "web-1", "visible": true,
+            "focused": true, "ttlMs": 120_000, "scopes": [{"type": "provider-status"}]}));
+        start_status_refresh(&deps);
+        tokio::time::sleep(Duration::from_secs(5 * 60) + Duration::from_millis(10)).await;
+        assert_eq!(
+            *flaky.calls.lock().unwrap(),
+            vec![true],
+            "the 5-minute probe defers"
+        );
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        assert_eq!(
+            *flaky.calls.lock().unwrap(),
+            vec![true, false],
+            "the recheck publishes"
+        );
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        assert_eq!(
+            flaky.calls.lock().unwrap().len(),
+            2,
+            "then back to the interval"
+        );
+    }
+
+    /// Before its first probe the Claude entry is T3's pending one (`makePendingClaudeProvider`);
+    /// the probe itself is proven by `tools/probe-conformance` in `conn-provider-claude`.
     #[test]
-    fn a_claude_instance_is_offered_ready_with_models() {
+    fn a_claude_instance_is_pending_with_models_before_its_probe() {
         let deps = Deps {
             engine: None,
             providers: vec![Arc::new(ClaudeProvider::new(
@@ -222,10 +437,42 @@ mod tests {
         let entry = &entries[0];
         assert_eq!(entry["instanceId"], "claudeAgent");
         assert_eq!(entry["driver"], "claudeAgent");
-        assert_eq!(entry["status"], "ready");
+        assert_eq!(entry["status"], "warning");
         assert_eq!(entry["enabled"], true);
-        assert_eq!(entry["installed"], true);
+        assert_eq!(entry["installed"], false);
+        assert_eq!(
+            entry["message"],
+            "Claude provider status has not been checked in this session yet."
+        );
         assert!(!entry["models"].as_array().unwrap().is_empty());
+    }
+
+    /// `BackgroundPolicy.shouldRunScopeWork` for `provider-status`: a foreground lease with the
+    /// scope (generic or the instance's) lets the periodic probe run; a background one only
+    /// under the `performance` profile; none at all, nothing.
+    #[test]
+    fn client_activity_leases_gate_the_periodic_probe() {
+        let status = ProviderStatus::default();
+        assert!(!status.wants("claudeAgent", true));
+        status.report_activity(
+            &json!({"clientId": "web-1", "visible": true, "focused": false,
+            "recentlyInteracted": false, "scopes": [{"type": "provider-status"}]}),
+        );
+        assert!(!status.wants("claudeAgent", false));
+        assert!(status.wants("claudeAgent", true));
+        status.report_activity(&json!({"clientId": "web-1", "visible": true, "focused": true,
+            "recentlyInteracted": false, "scopes": [{"type": "provider-status", "instanceId": "grok"}]}));
+        assert!(status.wants("grok", false));
+        assert!(!status.wants("claudeAgent", false));
+        status.report_activity(
+            &json!({"clientId": "web-1", "visible": true, "focused": true,
+            "recentlyInteracted": true, "scopes": [{"type": "thread", "threadId": "t"}]}),
+        );
+        assert!(!status.wants("grok", false));
+        for n in 0..100 {
+            status.report_activity(&json!({"clientId": format!("c{n}"), "scopes": []}));
+        }
+        assert!(status.leases().len() <= MAX_LEASES);
     }
 
     /// T3's default `grok` instance: listed, off, and probed with nothing until settings

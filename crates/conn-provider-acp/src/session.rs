@@ -29,6 +29,8 @@ use crate::protocol::RequestId;
 pub(crate) const EVENT_CAPACITY: usize = 256;
 /// `ACP_TEXT_FLUSH_INTERVAL`.
 pub(crate) const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
+/// `ACP_DEFERRED_FINALIZE_DEBOUNCE`.
+pub(crate) const FINALIZE_DEBOUNCE: Duration = Duration::from_secs(3);
 /// `ACP_STOP_CONFIRM_TIMEOUT_MS`.
 const STOP_CONFIRM_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -55,6 +57,9 @@ pub(crate) type Spawner = Arc<dyn Fn() -> std::io::Result<Spawned> + Send + Sync
 pub(crate) struct Config {
     /// `None` holds streamed text until the segment closes, as T3's paused test clock does.
     pub flush_interval: Option<Duration>,
+    /// `ACP_DEFERRED_FINALIZE_DEBOUNCE` (3 s); the replay shortens it, as T3's test clock
+    /// skips it.
+    pub finalize_debounce: Duration,
     pub flavor: &'static Flavor,
     pub instance_id: String,
     pub provider_session_id: String,
@@ -63,8 +68,14 @@ pub(crate) struct Config {
     /// The session's runtime policy as JSON, until a turn brings its own.
     pub policy: Value,
     pub model: String,
+    /// The selection's `reasoningEffort` option.
+    pub effort: Option<String>,
     pub mcp_servers: Vec<McpServer>,
     pub client_version: String,
+    /// This server's executable: the stdio MCP bridge runs as `<it> acp-mcp-bridge`.
+    pub self_command: String,
+    /// Where attachments are saved (`resolveAttachmentPath`); `None`: paths unavailable.
+    pub attachments_dir: Option<std::path::PathBuf>,
 }
 
 struct Runtime {
@@ -257,11 +268,15 @@ impl AcpSession {
         {
             let mut state = inner.state.lock().await;
             state.session_id = Some(session_id.clone());
+            state.mapper.set_root_session(&session_id);
             state.initialize = initialize;
             state.setup = setup;
         }
         let model = inner.config.model.clone();
-        inner.configure(&connection, &model).await?;
+        let effort = inner.config.effort.clone();
+        inner
+            .configure(&connection, &model, effort.as_deref())
+            .await?;
         let session = Self {
             id: inner.config.provider_session_id.as_str().into(),
             inner,
@@ -277,6 +292,16 @@ impl AcpSession {
     #[cfg(test)]
     pub(crate) async fn has_turn(&self) -> bool {
         self.inner.state.lock().await.mapper.has_turn()
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn background_state_empty(&self) -> bool {
+        self.inner
+            .state
+            .lock()
+            .await
+            .mapper
+            .background_state_empty()
     }
 }
 
@@ -323,74 +348,125 @@ impl Inner {
             .map_err(|e| failed("initialize", &e))
     }
 
-    /// `configureSession`'s model part: switch the session's model when the flavor says so.
-    async fn configure(&self, connection: &Connection, model: &str) -> ProviderResult<()> {
-        let (session_id, switch) = {
+    /// `configureSession`'s model part: switch the session's model (and Grok's reasoning
+    /// effort) when the flavor says so. A rejected effort is dropped and the switch sent
+    /// again without it, as T3 does.
+    async fn configure(
+        &self,
+        connection: &Connection,
+        model: &str,
+        effort: Option<&str>,
+    ) -> ProviderResult<()> {
+        let key = format!("{model}\u{0}{}", effort.unwrap_or(""));
+        let (session_id, switch, current) = {
             let state = self.state.lock().await;
-            if state.active_model.as_deref() == Some(model) {
+            if state.active_model.as_deref() == Some(key.as_str()) {
                 return Ok(());
             }
-            let switch = (self.config.flavor.select_model)(&state.setup, &state.initialize, model);
-            (state.session_id.clone().unwrap_or_default(), switch)
+            let switch =
+                (self.config.flavor.select_model)(&state.setup, &state.initialize, model, effort);
+            let current = state.setup["models"]["currentModelId"]
+                .as_str()
+                .map(str::to_owned);
+            (
+                state.session_id.clone().unwrap_or_default(),
+                switch,
+                current,
+            )
         };
-        if let Some(model_id) = &switch {
-            connection
-                .call(
+        let mut sent = None;
+        if let Some((model_id, effort)) = &switch {
+            let call = |effort: Option<&String>| {
+                let meta = effort.map(|e| obj().with("reasoningEffort", e.clone()));
+                connection.call(
                     "session/set_model",
                     obj()
-                        .with("sessionId", session_id)
-                        .with("modelId", model_id.clone()),
+                        .with("sessionId", session_id.clone())
+                        .with("modelId", model_id.clone())
+                        .with_opt("_meta", meta),
                 )
-                .await
-                .map_err(|e| failed("session/set_model", &e))?;
+            };
+            match call(effort.as_ref()).await {
+                Ok(_) => sent = Some(model_id.clone()),
+                Err(CallError::Rpc(_)) if effort.is_some() => {
+                    // `skipEffort`, then the selection without it.
+                    let retry = crate::grok::apply_selection(current.as_deref(), model, None);
+                    if let Some((model_id, _)) = retry {
+                        let meta: Option<J> = None;
+                        connection
+                            .call(
+                                "session/set_model",
+                                obj()
+                                    .with("sessionId", session_id.clone())
+                                    .with("modelId", model_id.clone())
+                                    .with_opt("_meta", meta),
+                            )
+                            .await
+                            .map_err(|e| failed("session/set_model", &e))?;
+                        sent = Some(model_id);
+                    }
+                }
+                Err(e) => return Err(failed("session/set_model", &e)),
+            }
         }
         let mut state = self.state.lock().await;
-        if let Some(model_id) = switch {
+        if let Some(model_id) = sent {
             state.setup["models"]["currentModelId"] = json!(model_id);
         }
-        state.active_model = Some(model.to_owned());
+        state.active_model = Some(key);
         Ok(())
     }
 
-    /// `session/new` (or load) params: `cwd`, then `mcpServers`.
+    /// `session/new` (or load) params: `cwd`, then `mcpServers` (`sessionMcpServers`).
     fn session_setup_params(&self, initialize: &Value, load: Option<&str>) -> J {
-        let http = initialize["agentCapabilities"]["mcpCapabilities"]["http"] == true
-            || !initialize["capabilities"]["session"]["mcp"]["http"].is_null();
-        let servers: Vec<J> = if http {
-            self.config
-                .mcp_servers
-                .iter()
-                .map(|server| {
-                    obj()
-                        .with("type", "http")
-                        .with("name", server.name.clone())
-                        .with("url", server.url.clone())
-                        .with(
-                            "headers",
-                            J::Arr(
-                                server
-                                    .headers
-                                    .iter()
-                                    .map(|(name, value)| {
-                                        obj()
-                                            .with("name", name.clone())
-                                            .with("value", value.clone())
-                                    })
-                                    .collect(),
-                            ),
-                        )
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
         let params = match load {
             Some(session_id) => obj().with("sessionId", session_id),
             None => obj(),
         };
         params
             .with("cwd", self.config.cwd.clone())
-            .with("mcpServers", J::Arr(servers))
+            .with("mcpServers", J::Arr(self.session_mcp_servers(initialize)))
+    }
+
+    /// `sessionMcpServers` over `acpMcpContext`: the HTTP entry when the agent offers HTTP
+    /// and the flavor sets `mcpOverHttp`; otherwise the stdio bridge, which every ACP agent
+    /// must accept. T3's `acp` entry (MCP over ACP) is not built: an agent that offers `acp`
+    /// gets the same as one that does not (no built flavor offers it).
+    fn session_mcp_servers(&self, initialize: &Value) -> Vec<J> {
+        mcp_entries(
+            self.config.flavor,
+            &self.config.mcp_servers,
+            &self.config.self_command,
+            initialize,
+        )
+    }
+
+    /// `resolvePromptParts`' image blocks: each native image attachment read from the
+    /// attachments folder, as `{type: image, data, mimeType}` after the text.
+    async fn image_blocks(&self, attachments: &[Value]) -> ProviderResult<Vec<J>> {
+        use conn_provider_support::attachments::{is_native_image, saved_path};
+        let mut blocks = Vec::new();
+        for attachment in attachments.iter().filter(|a| is_native_image(a)) {
+            let id = attachment["id"].as_str().unwrap_or("").to_owned();
+            let Some(path) = saved_path(self.config.attachments_dir.as_deref(), attachment) else {
+                return Err(protocol_error(format!("Invalid attachment id '{id}'")));
+            };
+            let bytes = tokio::task::spawn_blocking(move || std::fs::read(path))
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .ok_or_else(|| protocol_error(format!("Failed to read attachment '{id}'")))?;
+            blocks.push(
+                obj()
+                    .with("type", "image")
+                    .with("data", conn_support::base64::encode(&bytes))
+                    .with(
+                        "mimeType",
+                        attachment["mimeType"].as_str().unwrap_or("").to_owned(),
+                    ),
+            );
+        }
+        Ok(blocks)
     }
 
     fn has_t3_mcp(&self) -> bool {
@@ -404,6 +480,7 @@ impl Inner {
         for out in outs {
             match out {
                 Out::ScheduleFlush => arm = true,
+                Out::Timer(timer) => self.run_timer(timer),
                 other => deliver_one(state, other).await,
             }
         }
@@ -424,6 +501,23 @@ impl Inner {
                 }
             });
         }
+    }
+
+    /// Runs a mapper timer; when it fires, the mapper decides under the state lock.
+    fn run_timer(self: &Arc<Self>, timer: mapper::Timer) {
+        let delay = match &timer {
+            mapper::Timer::Finalize { .. } => self.config.finalize_debounce,
+            mapper::Timer::Hydration { .. } => mapper::HYDRATION_WAIT,
+            mapper::Timer::InjectedReport { .. } => mapper::INJECTED_REPORT_WAIT,
+        };
+        let weak = Arc::downgrade(self);
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let Some(inner) = weak.upgrade() else { return };
+            let mut state = inner.state.lock().await;
+            let outs = state.mapper.timer_fired(timer);
+            Box::pin(inner.deliver(&mut state, outs)).await;
+        });
     }
 
     /// Settles the running prompt once (reply, or Grok's completion notification).
@@ -479,7 +573,7 @@ async fn deliver_one(state: &mut State<DynEnv>, out: Out) {
                 runtime.connection.reply(&id, result).await;
             }
         }
-        Out::ScheduleFlush => {}
+        Out::ScheduleFlush | Out::Timer(_) => {}
     }
 }
 
@@ -634,6 +728,31 @@ async fn handle_notification(inner: &Arc<Inner>, generation: u64, method: &str, 
         inner.deliver(&mut state, outs).await;
         return;
     }
+    if let Some(hooks) = inner.config.flavor.background
+        && let Some(life) = (hooks.lifecycle)(method, params)
+    {
+        let mut state = inner.state.lock().await;
+        if state.generation != generation {
+            return;
+        }
+        let outs = state.mapper.apply_background_task_mutation(life);
+        inner.deliver(&mut state, outs).await;
+        return;
+    }
+    if inner.config.flavor.background.is_some()
+        && let Some((child, status, result)) = xai_subagent_finished(method, params)
+    {
+        let mut state = inner.state.lock().await;
+        if state.generation != generation {
+            return;
+        }
+        let session_id = params["sessionId"].as_str().unwrap_or("");
+        let outs = state
+            .mapper
+            .finish_subagent(session_id, &child, status, result);
+        inner.deliver(&mut state, outs).await;
+        return;
+    }
     if inner.config.flavor.completion == Completion::XAiPromptComplete
         && let Some((prompt_id, outcome)) = xai_prompt_complete(method, params)
     {
@@ -643,6 +762,46 @@ async fn handle_notification(inner: &Arc<Inner>, generation: u64, method: &str, 
     let mut state = inner.state.lock().await;
     let label = format!("notification {method}");
     state.mapper.skip(&label);
+}
+
+/// `xAiSubagentFinishedNotice`: Grok's `subagent_finished` session notification (child
+/// session, status, result text).
+fn xai_subagent_finished(
+    method: &str,
+    params: &Value,
+) -> Option<(String, &'static str, Option<String>)> {
+    if !matches!(
+        method,
+        "x.ai/session_notification" | "_x.ai/session_notification" | "_x.ai/session/update"
+    ) {
+        return None;
+    }
+    let update = &params["update"];
+    if update["sessionUpdate"] != "subagent_finished" {
+        return None;
+    }
+    let child = update["child_session_id"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?
+        .to_owned();
+    let status = match update["status"].as_str()? {
+        "completed" => "completed",
+        "failed" => "failed",
+        "cancelled" => "cancelled",
+        _ => return None,
+    };
+    let text = if status == "completed" {
+        &update["output"]
+    } else {
+        &update["error"]
+    };
+    let result = text
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    Some((child, status, result))
 }
 
 /// Grok's prompt completion (`makeXAiPromptCompletionRuntime`): `prompt_complete`, or a
@@ -714,6 +873,58 @@ fn xai_prompt_complete(method: &str, params: &Value) -> Option<(String, PromptOu
     Some((prompt_id, outcome))
 }
 
+/// `acpMcpContext` + `sessionMcpServers` for each `/mcp` server (see
+/// `Inner::session_mcp_servers`).
+fn mcp_entries(
+    flavor: &Flavor,
+    servers: &[McpServer],
+    self_command: &str,
+    initialize: &Value,
+) -> Vec<J> {
+    let http = initialize["agentCapabilities"]["mcpCapabilities"]["http"] == true
+        || !initialize["capabilities"]["session"]["mcp"]["http"].is_null();
+    servers
+        .iter()
+        .map(|server| {
+            let authorization = server
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                .map(|(_, value)| value.clone())
+                .unwrap_or_default();
+            if flavor.mcp_over_http && http {
+                return obj()
+                    .with("type", "http")
+                    .with("name", server.name.clone())
+                    .with("url", server.url.clone())
+                    .with(
+                        "headers",
+                        J::Arr(vec![
+                            obj()
+                                .with("name", "Authorization")
+                                .with("value", authorization),
+                        ]),
+                    );
+            }
+            let env = |name: &str, value: String| obj().with("name", name).with("value", value);
+            obj()
+                .with("name", server.name.clone())
+                .with("command", self_command.to_owned())
+                .with("args", J::Arr(vec![J::from("acp-mcp-bridge")]))
+                .with(
+                    "env",
+                    J::Arr(vec![
+                        // T3 sets it so an Electron executable runs as Node; this server's
+                        // binary ignores it. Kept so the agent sees T3's environment list.
+                        env("ELECTRON_RUN_AS_NODE", "1".into()),
+                        env("T3_ACP_MCP_ENDPOINT", server.url.clone()),
+                        env("T3_ACP_MCP_AUTHORIZATION", authorization),
+                    ]),
+                )
+        })
+        .collect()
+}
+
 impl Session for AcpSession {
     fn provider_session_id(&self) -> &ProviderSessionId {
         &self.id
@@ -779,6 +990,35 @@ impl Session for AcpSession {
                 .as_str()
                 .unwrap_or("")
                 .to_owned();
+            let attachments: Vec<Value> = input.message.attachments.iter().map(to_json).collect();
+            let image_blocks = inner.image_blocks(&attachments).await?;
+            // `compactThread`: T3's orchestrator sends `/compact` in any case as exactly
+            // `/compact` to a flavor that compacts.
+            let user_text = if flavor.supports_compaction
+                && attachments.is_empty()
+                && input.message.text.trim().eq_ignore_ascii_case("/compact")
+            {
+                "/compact".to_owned()
+            } else {
+                input.message.text.clone()
+            };
+            // The attachment paths check the disk: off the runtime thread.
+            let message_text = {
+                let (text, attachments, dir) = (
+                    user_text.clone(),
+                    attachments.clone(),
+                    inner.config.attachments_dir.clone(),
+                );
+                tokio::task::spawn_blocking(move || {
+                    conn_provider_support::attachments::prompt_text(
+                        &text,
+                        &attachments,
+                        dir.as_deref(),
+                    )
+                })
+                .await
+                .map_err(|_| protocol_error("attachment paths"))?
+            };
             let live = inner
                 .state
                 .lock()
@@ -787,7 +1027,10 @@ impl Session for AcpSession {
                 .as_ref()
                 .map(|r| r.connection.clone());
             if let Some(connection) = live {
-                inner.configure(&connection, &model).await?;
+                let effort = crate::grok::selection_effort(&to_json(&input.model_selection));
+                inner
+                    .configure(&connection, &model, effort.as_deref())
+                    .await?;
             }
             {
                 let mut state = inner.state.lock().await;
@@ -811,20 +1054,14 @@ impl Session for AcpSession {
                 let connection = runtime.connection.clone();
                 let generation = runtime.generation;
                 let session_id = state.session_id.clone().unwrap_or_default();
-                let attachments: Vec<Value> =
-                    input.message.attachments.iter().map(to_json).collect();
-                // `compactThread`: T3's orchestrator sends `/compact` in any case as exactly
-                // `/compact` to a flavor that compacts.
-                let user_text = if flavor.supports_compaction
-                    && attachments.is_empty()
-                    && input.message.text.trim().eq_ignore_ascii_case("/compact")
-                {
-                    "/compact".to_owned()
-                } else {
-                    input.message.text.clone()
-                };
-                let message_text =
-                    conn_provider_support::attachments::prompt_text(&user_text, &attachments, None);
+                // A provider continuation sends no prompt: it replays the buffered wake turn.
+                if flavor.background.is_some() && input.message.is_provider_continuation() {
+                    let outs = state
+                        .mapper
+                        .begin_turn(&input, &session_id, &input.message.text);
+                    inner.deliver(&mut state, outs).await;
+                    return Ok(());
+                }
                 let instruction_state = InstructionState {
                     plan_mode: serde_json::to_value(input.runtime_policy.interaction_mode)
                         .ok()
@@ -853,6 +1090,15 @@ impl Session for AcpSession {
                 if !text.is_empty() {
                     blocks.push(obj().with("type", "text").with("text", text.clone()));
                 }
+                if !image_blocks.is_empty()
+                    && !flavor.supports_image_prompts
+                    && state.initialize["agentCapabilities"]["promptCapabilities"]["image"] != true
+                {
+                    return Err(protocol_error(
+                        "ACP driver did not negotiate image prompt support",
+                    ));
+                }
+                blocks.extend(image_blocks);
                 if blocks.is_empty() {
                     return Err(protocol_error(
                         "ACP turn requires non-empty text or attachments",
@@ -985,6 +1231,7 @@ impl Session for AcpSession {
                     return;
                 }
                 state.closed = true;
+                state.mapper.close_background();
                 let can_close =
                     !state.initialize["agentCapabilities"]["sessionCapabilities"]["close"]
                         .is_null()
@@ -1033,4 +1280,40 @@ impl Drop for AcpSession {
 /// A clock for real sessions.
 pub(crate) fn system_env() -> Box<dyn Env + Sync> {
     Box::new(SystemEnv)
+}
+
+#[cfg(test)]
+mod mcp_tests {
+    use serde_json::json;
+
+    /// The `t3-code` entry as `acpMcpContext` builds it for a flavor without `mcpOverHttp`:
+    /// the stdio bridge, also for an agent that offers neither `http` nor `acp`.
+    #[test]
+    fn grok_gets_t3s_stdio_bridge() {
+        let server = conn_provider::McpServer {
+            name: "t3-code".into(),
+            url: "http://127.0.0.1:1/mcp".into(),
+            headers: vec![("Authorization".into(), "Bearer t".into())],
+        };
+        for initialize in [
+            json!({"agentCapabilities": {"mcpCapabilities": {"http": true, "sse": true}}}),
+            json!({"agentCapabilities": {}}),
+        ] {
+            let entries = super::mcp_entries(
+                &crate::flavor::GROK,
+                std::slice::from_ref(&server),
+                "/bin/conn-server",
+                &initialize,
+            );
+            let entry: serde_json::Value = serde_json::from_str(&entries[0].to_line()).unwrap();
+            assert_eq!(
+                entry,
+                json!({"name": "t3-code", "command": "/bin/conn-server", "args": ["acp-mcp-bridge"], "env": [
+                    {"name": "ELECTRON_RUN_AS_NODE", "value": "1"},
+                    {"name": "T3_ACP_MCP_ENDPOINT", "value": "http://127.0.0.1:1/mcp"},
+                    {"name": "T3_ACP_MCP_AUTHORIZATION", "value": "Bearer t"}
+                ]})
+            );
+        }
+    }
 }

@@ -95,8 +95,9 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 | Grok probe conformance | `node crates/conn-provider-acp/tools/probe-conformance.mjs` | Grok's `ServerProvider` entry and every CLI run of its status probe equal the T3 server's, on a stub CLI |
 | Claude catalog      | `crates/conn-provider-claude/tools/gen-catalog/run.sh --check`                                                                   | The Claude model catalog matches T3's bundled catalog                                                |
 | Claude conformance  | `crates/conn-provider-claude/tools/conformance/run.sh` (skipped, with one line, without `npm ci` in `helpers/sdk-host`)          | The `claude` CLI gets the same argv, environment and stdin as from the T3 server, on a stub CLI      |
+| Claude probe conformance | `node crates/conn-provider-claude/tools/probe-conformance/run.mjs` (skipped with the Claude conformance) | Claude's `ServerProvider` entry and every CLI run of its status probe equal the T3 server's `checkClaudeProviderStatus`, and its thread titles equal `generateThreadTitle`, on a stub CLI |
 | T3 replay (Claude)  | `node crates/conn-provider-claude/tools/t3-replay/check.mjs`                                                                    | The T3 server's Claude transcripts: exactly the scenarios in `expected-failures.txt` fail            |
-| T3 fixture replay   | `node crates/conn-engine/tools/t3-fixture-replay/check.mjs`                                                                     | T3's testkit fixtures through this engine and our Claude, Codex and Grok providers pass T3's own assertions, except the variants in its `expected-failures.txt` (60 of 159 pass) |
+| T3 fixture replay   | `node crates/conn-engine/tools/t3-fixture-replay/check.mjs`                                                                     | T3's testkit fixtures through this engine and our Claude, Codex and Grok providers pass T3's own assertions, except the variants in its `expected-failures.txt` (69 of 159 pass) |
 | Thread CLI diff     | `node crates/conn-server/tools/thread-cli-diff.mjs target/release/conn-server` | Orbit's task-turn commands (`t3 thread` start, send, list and show, `t3 auth session issue --scope … --json`, revoke, and `t3_copy_rpc.mjs`'s calls) give the same stdout, stderr and exit code as the T3 server's own `t3` CLI, on a stub `codex` with T3's transcripts |
 | Model manifest diff | `node crates/conn-server/tools/model-manifest-diff.mjs target/release/examples/model_manifest_cache` | `model-manifest.json` as this server writes it equals T3's `encodeManifestCache`, byte for byte |
 | Orbit flow          | `node crates/conn-server/tools/orbit-flow.mjs target/release/examples/replay_server`                                            | Orbit's container flow: start, project add, session issue, launch over `/mcp`, revoke, clean stop; then its task-turn path: the model check, `t3 thread` start, list, show, send, a turn that asks, and `t3_copy_rpc.mjs`'s read and interrupt   |
@@ -493,7 +494,7 @@ What a real Conn session hits that this server does not do:
 - **`/mcp` serves 28 of 87 T3 tools** (`crates/conn-mcp/README.md`).
 - **Worktree launch:** the worktree is made before the thread exists; `prepared-run.*` stays
   refused and no project setup script runs.
-- **Providers:** Claude, Codex and Grok (Grok with `/compact`, without background work or subagents). Their gaps are in each crate's README.
+- **Providers:** Claude, Codex and Grok (Grok with `/compact`, background work and subagents; not subagents carried over to a later turn). Their gaps are in each crate's README.
 - **Auth:** bearer and ticket only. No cookie sessions, DPoP or relay (`DROP-IN.md` §4).
 - **Desktop-local backend:** the `--bootstrap-fd` start works; the desktop itself still
   spawns the T3 server (`DROP-IN.md` §2).

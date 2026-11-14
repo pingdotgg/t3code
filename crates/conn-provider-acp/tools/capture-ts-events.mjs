@@ -17,7 +17,9 @@
 // - `calls`: every ProviderAdapterV2 session call the orchestrator made (`openSession`,
 //   `ensureThread`, `startTurn`, ...) with its input, in order, and the value it returned;
 // - `events`: every ProviderAdapterV2Event the adapter emitted, `driver` dropped;
-// - `outcome`: `passed` or the T3 test's own failure text.
+// - `outcome`: `passed` or the T3 test's own failure text;
+// - `gates`: the replay gate labels the fixture holds (`release_replay_gate`), each with the
+//   run that must end first (the `finish_held_run` before it), read from the fixture's input.ts.
 
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -188,6 +190,30 @@ try {
   NodeFS.rmSync(testFile, { force: true });
 }
 
+// `release_replay_gate` steps of a fixture's input.ts, in order, with the run before each.
+function fixtureGates(name) {
+  const file = NodePath.join(testkit, "fixtures", name, "input.ts");
+  if (!NodeFS.existsSync(file)) return [];
+  const source = NodeFS.readFileSync(file, "utf8");
+  const constant = (id) => {
+    const match = source.match(new RegExp(`const ${id}\\s*=\\s*"([^"]*)"`));
+    return match?.[1];
+  };
+  const gates = [];
+  let afterRun = 0;
+  const steps = /\{\s*type:\s*"(finish_held_run|release_replay_gate)",\s*(?:targetRunIndex:\s*(\d+)|label:\s*(?:"([^"]*)"|(\w+)))/g;
+  for (const step of source.matchAll(steps)) {
+    if (step[1] === "finish_held_run") {
+      afterRun = Number(step[2]);
+    } else {
+      const label = step[3] ?? constant(step[4]);
+      if (label === undefined) throw new Error(`${name}: cannot resolve gate label ${step[4]}`);
+      gates.push({ label, afterRun });
+    }
+  }
+  return gates;
+}
+
 const target = NodePath.join(CRATE, "testdata", flavor);
 NodeFS.mkdirSync(target, { recursive: true });
 for (const file of NodeFS.readdirSync(out).toSorted()) {
@@ -200,6 +226,7 @@ for (const file of NodeFS.readdirSync(out).toSorted()) {
     note: `ProviderAdapterV2 calls and events from T3's ${flavor} adapter replaying ${source} through the orchestrator fixture runner at ${head}; driver dropped.`,
     capturedOn,
     outcome: raw.outcome,
+    gates: fixtureGates(name),
     transcripts: raw.transcripts.map((t) => t.entries),
     calls: raw.log.filter((e) => e.kind === "call").map(({ kind: _k, ...rest }) => rest),
     events: raw.log

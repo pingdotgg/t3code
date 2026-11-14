@@ -224,6 +224,21 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
                 .unwrap_or_else(|e| panic!("resume_thread: {e}"));
             continue;
         }
+        if step["stop"] == json!(true) {
+            // As the engine calls it for a Stop on a settled turn with background work.
+            let latest = turns
+                .last()
+                .unwrap_or_else(|| panic!("{name}: stop needs a turn"));
+            session
+                .stop_background_work(InterruptInput {
+                    provider_thread: thread.clone(),
+                    provider_turn_id: from_json(latest["id"].clone())
+                        .unwrap_or_else(|e| panic!("{e}")),
+                })
+                .await
+                .unwrap_or_else(|e| panic!("{name}: stop: {e}"));
+            continue;
+        }
         if step["fork"] == json!(true) {
             let forked = session
                 .fork_thread(ForkThreadInput {

@@ -195,6 +195,17 @@ impl Process {
 }
 
 impl Process {
+    /// Ends input and waits up to `wait` until the writer task closed stdin (once no clone
+    /// from `writer()` is left). T3's ACP runtime ends an agent's stdin as its writer stream
+    /// completes, just before the scope's SIGKILL to the group.
+    pub async fn end_input(&mut self, wait: Duration) {
+        let (closed, _) = mpsc::channel(1);
+        drop(std::mem::replace(&mut self.writer, closed));
+        let (_, never) = oneshot::channel();
+        let stdin_closed = std::mem::replace(&mut self.stdin_closed, never);
+        let _ = tokio::time::timeout(wait, stdin_closed).await;
+    }
+
     /// Ends input, then sends SIGTERM to the process group, and SIGKILL after `grace` when
     /// the child still runs. Returns once the child is reaped. This is how the T3 server stops
     /// a CLI (Effect's spawner with `forceKillAfter`).

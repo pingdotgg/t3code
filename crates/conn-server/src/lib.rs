@@ -1,5 +1,6 @@
 //! The Conn server: HTTP and WebSocket listener, pairing endpoints, method table.
 
+pub mod acp_mcp_bridge;
 pub mod auth;
 pub mod cli;
 pub mod diagnostics;
