@@ -14,6 +14,7 @@ import {
   type ComposerSubmissionIntent,
   type ComposerTrigger,
   collapseExpandedComposerCursor,
+  composerDefaultSendIntent,
   composerSubmissionIntentForKey,
 } from "../../composer-logic";
 import { type PendingUserInput } from "../../session-logic";
@@ -40,6 +41,7 @@ export function composerCommandKeyHandler(input: {
   readonly phase: ChatComposerProps["phase"];
   readonly canSteer: boolean;
   readonly followUpBehavior: ChatComposerProps["settings"]["followUpBehavior"];
+  readonly startNewThreadsInBackground: ChatComposerProps["settings"]["startNewThreadsInBackground"];
   readonly isSoftwareKeyboardOpen: boolean;
   readonly isLiteralPendingAnswer: boolean;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
@@ -93,6 +95,7 @@ export function composerCommandKeyHandler(input: {
     phase,
     canSteer,
     followUpBehavior,
+    startNewThreadsInBackground,
     isSoftwareKeyboardOpen,
     isLiteralPendingAnswer,
     pendingUserInputs,
@@ -208,6 +211,7 @@ export function composerCommandKeyHandler(input: {
       isRunning: phase === "running" || phase === "connecting",
       sendShortcut,
       prompt: promptRef.current,
+      startNewThreadsInBackground,
     });
     if (key === "Tab" && event.shiftKey && submissionIntent === null) {
       return applyListEdit(event, listOutdentForTab);
@@ -226,7 +230,11 @@ export function composerCommandKeyHandler(input: {
       composerMenuOpenRef.current = false;
       return true;
     }
-    if (menuIsActive && (submissionIntent === null || submissionIntent === "foreground")) {
+    const plainSendIntent = composerDefaultSendIntent({
+      isDraftThread: routeKind === "draft",
+      startNewThreadsInBackground,
+    });
+    if (menuIsActive && (submissionIntent === null || submissionIntent === plainSendIntent)) {
       const currentItems = composerMenuItemsRef.current;
       const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
       if (key === "ArrowDown" && currentItems.length > 0) {

@@ -101,6 +101,7 @@ describe("composerSubmissionIntentForKey", () => {
     platform: "Linux",
     isSoftwareKeyboardOpen: false,
     isDraftThread: false,
+    startNewThreadsInBackground: false,
   };
   const enter = { key: "Enter", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false };
 
@@ -220,6 +221,39 @@ describe("composerSubmissionIntentForKey", () => {
       expect(
         composerSubmissionIntentForKey({ ...custom, event: { ...enter, key: "b", altKey: true } }),
       ).toBeNull();
+    },
+  );
+
+  const ctrlEnter = { ...enter, ctrlKey: true };
+  const ctrlShiftEnter = { ...ctrlEnter, shiftKey: true };
+  const ctrlAltEnter = { ...ctrlEnter, altKey: true };
+  it.each([
+    ["enter", "one line", true, enter, "background"],
+    ["enter", "one line", true, ctrlEnter, "foreground"],
+    ["enter", "one line", true, ctrlAltEnter, "foreground"],
+    ["enter", "one line", false, enter, "foreground"],
+    ["enter", "one line", false, ctrlAltEnter, "background"],
+    ["mod-enter", "one line", true, enter, null],
+    ["mod-enter", "one line", true, ctrlEnter, "background"],
+    ["mod-enter", "one line", true, ctrlShiftEnter, "foreground"],
+    ["mod-enter", "one line", true, ctrlAltEnter, "foreground"],
+    ["mod-enter-multiline", "two\nlines", true, ctrlEnter, "background"],
+    ["mod-enter-multiline", "two\nlines", true, ctrlShiftEnter, "foreground"],
+    ["mod-enter-multiline", "one line", true, enter, "background"],
+    ["mod-enter-multiline", "one line", true, ctrlEnter, "foreground"],
+  ] as const)(
+    "resolves sends with new threads starting in the background (%s, %j, draft %s, %j)",
+    (sendShortcut, prompt, isDraftThread, event, expected) => {
+      expect(
+        composerSubmissionIntentForKey({
+          ...input,
+          startNewThreadsInBackground: true,
+          sendShortcut,
+          prompt,
+          isDraftThread,
+          event,
+        }),
+      ).toBe(expected);
     },
   );
 

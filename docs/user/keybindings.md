@@ -18,10 +18,16 @@ inserts a new line. This applies to the web and desktop composer at desktop widt
 `mod+Enter` to do the opposite for one message, even when the send shortcut
 requires a modifier. `mod+Alt+Enter` sends, keeps that thread running in the
 background, and opens a fresh new-thread composer. In a new thread, `mod+Enter`
-does the same. Change these shortcuts in **Settings → Keybindings** under
+does the same (`mod+Shift+Enter` when the send shortcut requires `mod+Enter` for
+that prompt). Change these shortcuts in **Settings → Keybindings** under
 **Composer: Opposite Queue or Steer Action**, **Composer: Start in Background**,
 or **Composer: Send and Start New Thread**. These bindings take priority over the
 send shortcut. Click the send button to use the configured follow-up behavior.
+
+With **Settings → Chat → Start new threads in background** on, sending from a new
+thread starts it in the background, and **Composer: Start in Background** opens
+the thread instead: `mod+Alt+Enter`, or `mod+Enter` (`mod+Shift+Enter` when the
+send shortcut requires `mod+Enter` for that prompt).
 
 When a thread has queued messages, `mod+Shift+Enter` sends the first one as a steer
 while a turn is running, or as a new turn when the thread is stopped. Change it under

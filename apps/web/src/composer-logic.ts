@@ -56,6 +56,14 @@ export function composerRequiresModifier(
   );
 }
 
+/** Intent for a plain send from this route: the send shortcut, the send button, and dictation. */
+export function composerDefaultSendIntent(input: {
+  isDraftThread: boolean;
+  startNewThreadsInBackground: boolean;
+}) {
+  return input.isDraftThread && input.startNewThreadsInBackground ? "background" : "foreground";
+}
+
 export function composerSubmissionIntentForKey(input: {
   event: ShortcutEventLike & { isComposing?: boolean; keyCode?: number; repeat?: boolean };
   keybindings: ResolvedKeybindingsConfig;
@@ -65,31 +73,35 @@ export function composerSubmissionIntentForKey(input: {
   isRunning?: boolean;
   sendShortcut?: ClientSettings["sendShortcut"];
   prompt?: string;
+  startNewThreadsInBackground: boolean;
 }): ComposerSubmissionIntent | null {
   const { event } = input;
   if (event.isComposing || event.keyCode === 229 || event.repeat) return null;
   if (input.isSoftwareKeyboardOpen && event.key === "Enter" && !event.metaKey && !event.ctrlKey)
     return null;
+  const requiresModifier = composerRequiresModifier(input.sendShortcut, input.prompt ?? "");
   const command = resolveShortcutCommand(event, input.keybindings, {
     ...(input.platform === undefined ? {} : { platform: input.platform }),
     context: {
       composerFocus: true,
       draftThreadRoute: input.isDraftThread,
       turnRunning: input.isRunning === true,
-      composerRequiresModifier: composerRequiresModifier(input.sendShortcut, input.prompt ?? ""),
+      composerRequiresModifier: requiresModifier,
     },
   });
+  const defaultIntent = composerDefaultSendIntent({
+    isDraftThread: input.isDraftThread,
+    startNewThreadsInBackground: input.startNewThreadsInBackground,
+  });
   if (command === "composer.sendAlternate" && input.isRunning) return "alternate";
-  if (command === "composer.sendBackground" && input.isDraftThread) return "background";
+  // Start in Background does the opposite of a plain send, so it opens the thread when plain
+  // sends already start in the background.
+  if (command === "composer.sendBackground" && input.isDraftThread)
+    return defaultIntent === "background" ? "foreground" : "background";
   if (command === "composer.sendAndNewThread" && !input.isDraftThread) return "background";
   if (command !== null || event.key !== "Enter" || event.shiftKey || event.altKey) return null;
-  if (
-    composerRequiresModifier(input.sendShortcut, input.prompt ?? "") &&
-    !event.metaKey &&
-    !event.ctrlKey
-  )
-    return null;
-  return "foreground";
+  if (requiresModifier && !event.metaKey && !event.ctrlKey) return null;
+  return defaultIntent;
 }
 
 function clampCursor(text: string, cursor: number): number {

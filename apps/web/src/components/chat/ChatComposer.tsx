@@ -74,6 +74,7 @@ import {
   type ComposerTrigger,
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
+  composerDefaultSendIntent,
   composerRequiresModifier,
   composerSubmissionIntentForKey,
   composerStateAtPromptEnd,
@@ -2118,10 +2119,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const submitComposerRef = useRef<
     (dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => void
   >(() => {});
+  const defaultSendIntent = composerDefaultSendIntent({
+    isDraftThread: routeKind === "draft",
+    startNewThreadsInBackground: settings.startNewThreadsInBackground,
+  });
+  // Callers that name no intent (send button, form submit, citation send) get the plain send.
   const submitComposer = (
     event?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
-    submissionIntent?: ComposerSubmissionIntent,
+    submissionIntent: ComposerSubmissionIntent = defaultSendIntent,
   ) => {
     if (voiceInputActive) {
       event?.preventDefault();
@@ -2205,6 +2211,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         isRunning: phase === "running" || phase === "connecting",
         sendShortcut: settings.sendShortcut,
         prompt: promptRef.current,
+        startNewThreadsInBackground: settings.startNewThreadsInBackground,
       });
       if (!intent) return;
       event.preventDefault();
@@ -2324,6 +2331,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       phase,
       canSteer,
       followUpBehavior,
+      startNewThreadsInBackground: settings.startNewThreadsInBackground,
       isSoftwareKeyboardOpen,
       isLiteralPendingAnswer,
       pendingUserInputs,

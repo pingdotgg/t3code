@@ -53,6 +53,11 @@ on Windows and Linux to start a new thread and immediately open another draft. T
 next draft keeps the workspace mode and base branch you selected. With **New
 worktree**, each background submission creates its own worktree.
 
+To make this the default, turn on **Settings → Chat → Start new threads in
+background**. Sending from a new thread then starts it in the background, and the
+shortcut opens the thread instead. See [Keybindings](./keybindings.md#composer-controls)
+for the chord under each send shortcut.
+
 To send the same prompt to several models on web or desktop, **Shift-click** models
 in a new thread's model picker to add or remove them. A regular click returns to a
 single model. Choose a base branch and send. Each selection starts a separate thread
