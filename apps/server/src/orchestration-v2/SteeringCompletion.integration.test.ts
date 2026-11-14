@@ -700,9 +700,15 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   return { cwd, events, started, steered, steeredSelections, interrupted, layer, startFirstTurn };
 });
 
-it.effect.each([false, true])(
-  "preserves steering attachments stopped before acceptance, accepted: %s",
-  (accepted) =>
+it.effect.each([
+  { accepted: false, nested: false, sourceAccepted: true },
+  { accepted: true, nested: false, sourceAccepted: true },
+  { accepted: false, nested: true, sourceAccepted: true },
+  { accepted: true, nested: true, sourceAccepted: true },
+  { accepted: false, nested: true, sourceAccepted: false },
+])(
+  "preserves steering attachments stopped before acceptance, accepted: $accepted, nested: $nested, source accepted: $sourceAccepted",
+  ({ accepted, nested, sourceAccepted }) =>
     Effect.gen(function* () {
       const { started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
         "resume-unaccepted-steering-replacement",
@@ -713,8 +719,51 @@ it.effect.each([false, true])(
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const threadId = yield* startFirstTurn;
-        const sourceId = started[0]!.runId;
-        yield* orchestrator.dispatch({
+        let sourceId = started[0]!.runId;
+        if (nested) {
+          yield* orchestrator.dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make("stop-ancestor"),
+            threadId,
+          });
+          yield* worker.drain();
+          const running = sourceAccepted
+            ? yield* orchestrator.streamDomainEvents.pipe(
+                Stream.filter(
+                  (event) =>
+                    event.type === "provider-turn.updated" &&
+                    event.payload.status === "running" &&
+                    event.payload.ordinal === 2,
+                ),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.forkScoped,
+              )
+            : undefined;
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("resume-ancestor"),
+            threadId,
+            messageId: MessageId.make("resume-ancestor-input"),
+            manualContinuationOfRunId: sourceId,
+            text: "",
+            attachments: [],
+            modelSelection: runSelection,
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          if (running !== undefined) {
+            yield* worker.drain();
+            yield* Fiber.join(running);
+            yield* (yield* ThreadCommandExecutor.ThreadCommandExecutor).withLock(
+              threadId,
+              Effect.void,
+            );
+          }
+          sourceId = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!.id;
+        }
+        const replacement = {
           type: "message.dispatch",
           commandId: CommandId.make("replace"),
           threadId,
@@ -733,14 +782,61 @@ it.effect.each([false, true])(
           dispatchMode: { type: "restart_active", targetRunId: sourceId },
           createdBy: "user",
           creationSource: "web",
-        });
+        } as const;
+        if (sourceAccepted) {
+          yield* orchestrator.dispatch(replacement);
+        } else {
+          // Seed recovery history; live steering requires a previously accepted provider turn.
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          const source = projection.runs.find((run) => run.id === sourceId)!;
+          const attempt = projection.attempts.find(
+            (attempt) => attempt.id === source.activeAttemptId,
+          )!;
+          const message = projection.messages.find(
+            (message) => message.id === source.userMessageId,
+          )!;
+          const now = yield* DateTime.now;
+          yield* (yield* EventSink.EventSinkV2).write({
+            events: [
+              {
+                id: EventId.make("event:seed-replacement-message"),
+                type: "message.updated",
+                threadId,
+                runId: sourceId,
+                occurredAt: now,
+                payload: {
+                  ...message,
+                  id: replacement.messageId,
+                  text: replacement.text,
+                  attachments: [...replacement.attachments],
+                },
+              },
+              {
+                id: EventId.make("event:seed-replacement-run"),
+                type: "run.updated",
+                threadId,
+                runId: sourceId,
+                occurredAt: now,
+                payload: { ...source, userMessageId: replacement.messageId },
+              },
+              {
+                id: EventId.make("event:seed-replacement-attempt"),
+                type: "run-attempt.updated",
+                threadId,
+                runId: sourceId,
+                occurredAt: now,
+                payload: { ...attempt, attemptOrdinal: 2, reason: "steering_restart" },
+              },
+            ],
+          });
+        }
         if (accepted) {
           const running = yield* orchestrator.streamDomainEvents.pipe(
             Stream.filter(
               (event) =>
                 event.type === "provider-turn.updated" &&
                 event.payload.status === "running" &&
-                event.payload.ordinal === 2,
+                event.payload.ordinal === (nested ? 3 : 2),
             ),
             Stream.take(1),
             Stream.runDrain,
@@ -769,13 +865,13 @@ it.effect.each([false, true])(
           creationSource: "web",
         });
         yield* worker.drain();
-        assert.lengthOf(started, accepted ? 3 : 2);
+        assert.lengthOf(started, (accepted ? 3 : 2) + (nested && sourceAccepted ? 1 : 0));
         const resumed = started.at(-1)!.message;
         assert.deepEqual(
           resumed.attachments.map((attachment) => attachment.id),
           accepted ? [] : [ChatAttachmentId.make("replacement-image")],
         );
-        assert.match(resumed.text, accepted ? /^$/ : /\nUpdated steering request$/);
+        assert.match(resumed.text, accepted ? /^$/ : /\nUser message:\nUpdated steering request$/);
       }).pipe(Effect.provide(layer));
     }),
 );
