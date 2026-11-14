@@ -57,7 +57,7 @@ settings; about 140 MiB for the `claude` program alone).
 | RPC methods | 81 of 236 served; 80 have a run that the real client's decoders accept |
 | Engine commands | 41 of 56 |
 | HTTP routes | 13 of 57 |
-| `/mcp` tools | 16 of 87 |
+| `/mcp` tools | 20 of 87 |
 | Providers | Claude and Codex, of the 10 the T3 server has without Pi |
 
 Proven:
@@ -134,6 +134,17 @@ write tools without a caller check; settings secrets sent to clients; a scope ho
 Each of these was our own difference from the T3 server, not a T3 behaviour. That is worth
 remembering: an own server brings its own defects.
 
+## `/mcp` tools, batch 1 (2026-11-14)
+
+`/mcp` serves 20 of 87 tools, up from 16: `send_to_user`, `t3_thread_organize` (with T3's
+settle at the end of the agent's own turn), `t3_queue` and `t3_thread_configure`, each with
+a unit test and parity steps. `t3_thread_search` now reads the engine's message index with
+T3's slot rule; its ranking is not ported. The argument check now answers type, length,
+range and literal failures in Effect's words and keeps `null` where the schema takes it
+(generated). `crates/conn-mcp/README.md` has a table of all 87 tools with what each unserved
+one needs. 17 tools that a text we send to an agent names are still not served; a test holds
+that list.
+
 ## What is left, in the planned order
 
 1. **Rust hygiene, step 1: done (2026-11-14).** The toolchain is pinned to 1.99.1; BeautifulRust's
@@ -166,11 +177,12 @@ remembering: an own server brings its own defects.
    old snippet rule).
 6. **Features.** `pullRequests.*` (34), `sourceControl.*` and `git.*`; the Conn-only methods
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest
-   share); 71 more `/mcp` tools; Codex subagents and MCP elicitation; worktree setup scripts
+   share); 67 more `/mcp` tools (11 need nothing new: `crates/conn-mcp/README.md`, "All 87 tools"); Codex subagents and MCP elicitation; worktree setup scripts
    the T3 way (typed into a thread terminal, with a completion marker).
 7. **Small leftovers.** Limits on terminal environment variables; string caps on
    `assets.createUrl`; finished `git` children stay unreaped while the server runs;
-   `t3_thread_search` on the engine's search; the Linux systemd scope for provider processes;
+   T3's search ranking (`scoreThreadSearch`, `rankMessageMatches`) for `t3_thread_search` and
+   `orchestration.searchThreads`; the Linux systemd scope for provider processes;
    a cap on the blocking pool or one store thread (measure first: each store call takes its
    own blocking thread).
 8. **Proofs.** The recorder with the real web client and a live model; live Codex; the Linux

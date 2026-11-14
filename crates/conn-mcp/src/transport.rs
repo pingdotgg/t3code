@@ -210,7 +210,9 @@ async fn call(service: &Arc<McpService>, caller: &Caller, id: &Value, mut params
     let Some((tool, order)) = catalog::tool(name) else {
         return rpc_error(id, -32602, &format!("Tool '{name}' not found"));
     };
-    if let Err(problem) = catalog::check_arguments(&tool["inputSchema"], &order, &mut arguments) {
+    if let Err(problem) =
+        catalog::check_arguments(name, &tool["inputSchema"], &order, &mut arguments)
+    {
         return rpc_error(
             id,
             -32602,
