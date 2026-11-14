@@ -569,45 +569,73 @@ function isOwnedPastedImageUri(uri: string): boolean {
   }
 }
 
+/** Leave out existingCount when the draft store caps after its duplicate check. */
 export async function convertPastedImagesToAttachments(input: {
   readonly uris: ReadonlyArray<string>;
-}): Promise<ReadonlyArray<DraftComposerImageAttachment>> {
+  readonly existingCount?: number;
+}): Promise<{
+  readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
+  readonly error: string | null;
+}> {
   const { File } = await import("expo-file-system");
-  const results: DraftComposerImageAttachment[] = [];
+  const remainingSlots =
+    input.existingCount === undefined
+      ? Number.POSITIVE_INFINITY
+      : PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
+  const attachments: DraftComposerImageAttachment[] = [];
+  let error: string | null = null;
 
-  for (const uri of input.uris) {
+  for (const [index, uri] of input.uris.entries()) {
     const temporaryUris = isOwnedPastedImageUri(uri) ? [uri] : [];
     try {
+      if (index >= Math.max(0, remainingSlots)) {
+        continue;
+      }
       const file = new File(uri);
       const reportedMimeType = file.type;
       const sourceMimeType = reportedMimeType?.startsWith("image/")
         ? reportedMimeType
         : mimeTypeFromUri(uri);
-      const mimeType = isProviderSendTurnSupportedImageMimeType(sourceMimeType)
+      let mimeType = isProviderSendTurnSupportedImageMimeType(sourceMimeType)
         ? sourceMimeType
         : "image/jpeg";
       const rendered = mimeType === sourceMimeType ? null : await renderPhoto(uri);
-      if (rendered !== null) {
-        temporaryUris.push(rendered.uri);
-      }
       const pastedBase64 = rendered?.base64 ?? (await file.base64());
       const fitted = rendered ?? (await fitComposerImage({ uri, mimeType, base64: pastedBase64 }));
-      const base64 = fitted?.base64 ?? pastedBase64;
+      if (fitted !== null) {
+        temporaryUris.push(fitted.uri);
+      }
+      let base64 = fitted?.base64 ?? pastedBase64;
+      if (
+        rendered === null &&
+        estimateBase64ByteSize(base64) > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
+      ) {
+        const jpeg = await renderPhoto(uri);
+        temporaryUris.push(jpeg.uri);
+        mimeType = "image/jpeg";
+        base64 = jpeg.base64;
+      }
       const sizeBytes = estimateBase64ByteSize(base64);
       if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+        error =
+          sizeBytes > 0
+            ? "A pasted image exceeds the 10 MB attachment limit."
+            : "Could not read a pasted image.";
         continue;
       }
-      results.push({
+      const dataUrl = `data:${mimeType};base64,${base64}`;
+      attachments.push({
         id: uuidv4(),
         type: "image",
         name: `pasted-image.${mimeType.split("/")[1] ?? "png"}`,
         mimeType,
         sizeBytes,
-        dataUrl: `data:${mimeType};base64,${base64}`,
-        previewUri: `data:${mimeType};base64,${base64}`,
+        dataUrl,
+        previewUri: dataUrl,
       });
-    } catch (error) {
-      console.warn("Failed to read pasted image", uri, error);
+    } catch (cause) {
+      console.warn("Failed to read pasted image", uri, cause);
+      error = "Could not read a pasted image.";
     } finally {
       for (const temporaryUri of temporaryUris) {
         try {
@@ -622,5 +650,5 @@ export async function convertPastedImagesToAttachments(input: {
     }
   }
 
-  return results;
+  return { attachments, error };
 }
