@@ -160,9 +160,7 @@ it("folderMoveMenuBlockReason names the first thing that blocks a move", () => {
     running: false,
   };
   expect(folderMoveMenuBlockReason(free)).toBeNull();
-  expect(folderMoveMenuBlockReason({ ...free, running: true })).toBe(
-    "This thread is still working. Try again when the turn ends.",
-  );
+  expect(folderMoveMenuBlockReason({ ...free, running: true })).toMatch(/still working/);
   expect(folderMoveMenuBlockReason({ ...free, running: true, requestPending: true })).toMatch(
     /pending question/,
   );

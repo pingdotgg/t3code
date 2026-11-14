@@ -564,6 +564,8 @@ type MessagesTimelineRowContent =
       id: string;
       createdAt: string;
       paths: ReadonlyArray<string>;
+      /** The group's first entry, as on its work row: it names the folder the paths resolve in. */
+      source: Pick<WorkLogEntry, "id" | "runId">;
     }
   | {
       kind: "turn-fold";
@@ -690,9 +692,10 @@ function viewedImagesRows(
   groupedEntries: ReadonlyArray<WorkLogEntry>,
 ): Array<Extract<MessagesTimelineRow, { kind: "viewed-images" }>> {
   const paths = workEntriesViewedImagePaths(groupedEntries);
-  return paths.length === 0
+  const [source] = groupedEntries;
+  return source === undefined || paths.length === 0
     ? []
-    : [{ kind: "viewed-images", id: `${groupId}:viewed-images`, createdAt, paths }];
+    : [{ kind: "viewed-images", id: `${groupId}:viewed-images`, createdAt, paths, source }];
 }
 
 export function resolveAssistantMessageCopyState({
@@ -2760,6 +2763,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       const bv = b as typeof a;
       return (
         a.createdAt === bv.createdAt &&
+        a.source.id === bv.source.id &&
+        a.source.runId === bv.source.runId &&
         a.paths.length === bv.paths.length &&
         a.paths.every((path, index) => path === bv.paths[index])
       );
@@ -2855,7 +2860,13 @@ export function timelineEntryPreviousFolder(entry: TimelineEntry) {
 
 export function timelineRowFolder(row: MessagesTimelineRow, folders: TimelineRowFolders) {
   const entry =
-    row.kind === "work" ? row.groupedEntries[0] : row.kind === "work-live" ? row.entry : undefined;
+    row.kind === "work"
+      ? row.groupedEntries[0]
+      : row.kind === "work-live"
+        ? row.entry
+        : row.kind === "viewed-images"
+          ? row.source
+          : undefined;
   const source =
     row.kind === "message" ? row.message : row.kind === "proposed-plan" ? row.proposedPlan : entry;
   return rowFolder(folders, source?.runId, entry?.id ?? row.id);

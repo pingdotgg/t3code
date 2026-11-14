@@ -61,6 +61,7 @@ import {
   TimelineRowActivityCtx,
   TimelineRowFolderCtx,
   WorkGroupViewCtx,
+  useTimelineRowWorkspaceRoot,
   type TimelineRow,
   type TimelineWorkEntry,
 } from "./timelineRowContext";
@@ -191,7 +192,8 @@ export function ViewedImagesTimelineRow({
 }: {
   row: Extract<TimelineRow, { kind: "viewed-images" }>;
 }) {
-  const { threadRef, workspaceRoot, onImageExpand } = use(TimelineRowCtx);
+  const { threadRef, onImageExpand } = use(TimelineRowCtx);
+  const workspaceRoot = useTimelineRowWorkspaceRoot();
   if (!threadRef) return null;
   return (
     <div className="flex flex-wrap items-start gap-2 px-0.5" data-image-gallery>
@@ -537,6 +539,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                     THOUGHT_PREVIEW_SOURCE_MAX_LENGTH,
                   )}
                   cwd={ctx.markdownCwd}
+                  fileLinkBaseDir={use(TimelineRowFolderCtx)?.cwd}
                   parseRawHtml={false}
                   extraRemarkPlugins={
                     workEntry.toolLifecycleStatus === "inProgress"

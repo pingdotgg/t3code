@@ -19,7 +19,7 @@ import {
 import type { AsyncResult, Atom } from "effect/reactivity";
 import type { CommandOutputView } from "@t3tools/client-runtime/state/command-output";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
-import { useEffect, useRef, createContext, type MouseEvent, type ReactNode } from "react";
+import { use, useEffect, useRef, createContext, type MouseEvent, type ReactNode } from "react";
 import { type LegendListRef } from "@legendapp/list/react";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import type { PendingApproval } from "../../session-logic";
@@ -124,6 +124,11 @@ export const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 export const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 
 export const TimelineRowFolderCtx = createContext<TimelineRunFolder | undefined>(undefined);
+
+/** The root a work row's paths and images resolve in: its run's folder, else the thread's. */
+export function useTimelineRowWorkspaceRoot() {
+  return use(TimelineRowFolderCtx)?.cwd ?? use(TimelineRowCtx).workspaceRoot;
+}
 
 export interface WorkGroupViewState {
   scrollPositions: Map<string, WorkGroupScrollAnchor>;
