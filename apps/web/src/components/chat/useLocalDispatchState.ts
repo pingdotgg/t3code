@@ -1,4 +1,4 @@
-import { type MessageId, type RuntimeRequestId } from "@t3tools/contracts";
+import { type EnvironmentId, type MessageId, type RuntimeRequestId } from "@t3tools/contracts";
 import { useState } from "react";
 import { type ComposerSubmissionIntent } from "../../composer-logic";
 import { type SessionPhase, type Thread } from "../../types";
@@ -9,6 +9,7 @@ import {
 } from "../ChatView.logic";
 
 export function useLocalDispatchState(input: {
+  environmentId: EnvironmentId;
   activeThread: Thread | undefined;
   activeLatestRun: Thread["latestRun"] | null;
   latestUserMessageId: MessageId | null;
@@ -50,6 +51,7 @@ export function useLocalDispatchState(input: {
       }
       return createLocalDispatchSnapshot(input.activeThread, {
         ...options,
+        environmentId: input.environmentId,
         latestUserMessageId: input.latestUserMessageId,
       });
     });
