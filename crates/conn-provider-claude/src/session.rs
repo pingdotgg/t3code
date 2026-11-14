@@ -1038,13 +1038,41 @@ impl ClaudeSession {
     }
 
     async fn start_turn_inner(&self, input: TurnInput) -> ProviderResult<()> {
-        if self.inner.lock().mapper.turn_active() {
-            return Err(failed_err(
-                "start_turn",
-                "the previous turn is still running",
-            ));
+        // T3 emits the provider turn right after `query()`, which returns at once. Ours opens
+        // the query through the SDK host, and on a cold start the host first has to launch
+        // (about 3.5 s, also for `resolveSettings`). With no live query the turn opens now, so
+        // the client shows it running as T3's does; what the CLI receives does not change.
+        // With a live query the host is up, and frames of that query must not reach the new
+        // turn before `prepare` decided to keep or close it, so the turn opens after it.
+        let early = {
+            let mut state = self.inner.lock();
+            if state.mapper.turn_active() {
+                return Err(failed_err(
+                    "start_turn",
+                    "the previous turn is still running",
+                ));
+            }
+            if state.live.is_none() && !state.closed {
+                let mode = plain_policy(&input.runtime_policy).permission_mode;
+                Some(state.mapper.begin_turn(&input, &mode))
+            } else {
+                None
+            }
+        };
+        let opened_early = early.is_some();
+        if let Some(outs) = early {
+            self.inner.deliver(None, outs).await;
         }
-        let policy = self.prepare(&input).await?;
+        let policy = match self.prepare(&input).await {
+            Ok(policy) => policy,
+            Err(error) => {
+                if opened_early {
+                    let outs = self.inner.lock().mapper.fail_start(&error.to_string());
+                    self.inner.deliver(None, outs).await;
+                }
+                return Err(error);
+            }
+        };
         let effort = catalog::compile(&to_json(&input.model_selection)).prompt_effort;
         self.inner.lock().turn_prompt_effort = effort.clone();
         let text = catalog::prompt_text(&input.message.text, effort.as_deref());
@@ -1063,7 +1091,12 @@ impl ClaudeSession {
                 .map_or(policy.permission_mode.clone(), |l| {
                     l.permission_mode.clone()
                 });
-            let outs = state.mapper.begin_turn(&input, &mode);
+            let outs = if opened_early {
+                state.mapper.set_permission_mode(&mode);
+                Vec::new()
+            } else {
+                state.mapper.begin_turn(&input, &mode)
+            };
             (outs, query, SystemEnv.uuid())
         };
         inner.deliver(Some(&query), outs).await;
