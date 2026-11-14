@@ -221,6 +221,60 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.live("reports only the failed launch's own output, not an earlier launch's log", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-launch-log-" });
+      const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+      const stateDir = NodePath.join(home, ".t3", "ssh-launch", yield* remoteStateKey(target));
+      const bin = NodePath.join(home, "bin");
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      yield* fs.makeDirectory(bin);
+      yield* fs.writeFileString(NodePath.join(stateDir, "server.log"), "EARLIER_LAUNCH\n");
+      // The new server exits without output. Readiness then fails after a process from the
+      // earlier launch writes through the log descriptor it still holds (fd 3).
+      yield* fs.writeFileString(
+        NodePath.join(bin, "node"),
+        '#!/bin/sh\n[ "$1" = - ] || exit 0\ncat >/dev/null\ncase "$2" in\n  */port) echo 37731 ;;\n  37731) { printf "EARLIER_PROCESS\\n" >&3; } 2>/dev/null; exit 1 ;;\n  *) exit 1 ;;\nesac\n',
+        { mode: 0o755 },
+      );
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const remoteShell = ChildProcessSpawner.make((command) => {
+        if (command._tag !== "StandardCommand") return spawner.spawn(command);
+        return spawner.spawn(
+          ChildProcess.make(
+            "sh",
+            [
+              "-c",
+              'exec 3>>"$1/server.log"; exec sh -s -- "$2"',
+              "sh",
+              stateDir,
+              launchStateKey(command) ?? "",
+            ],
+            {
+              ...command.options,
+              env: { HOME: home, PATH: `${bin}:${process.env.PATH ?? ""}` },
+              extendEnv: false,
+            },
+          ),
+        );
+      });
+      const result = yield* SshTunnel.launchOrReuseRemoteServer(target, undefined, {
+        nodeScriptPath: "/unused/server.ts",
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, remoteShell),
+        Effect.result,
+      );
+      assert.isTrue(Result.isFailure(result));
+      if (!Result.isFailure(result)) return;
+      assert.isTrue(isSshCommandError(result.failure));
+      if (!isSshCommandError(result.failure)) return;
+      assert.include(result.failure.stderr, "It wrote nothing to");
+      assert.notInclude(result.failure.stderr, "EARLIER_LAUNCH");
+      assert.notInclude(result.failure.stderr, "EARLIER_PROCESS");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it("rejects archive versions that are not a single exact version segment", () => {
     for (const archiveVersion of [
       "../other",
@@ -1463,6 +1517,33 @@ describe("SSH launch during desktop update", () => {
       assert.isAtMost(result.now, 61_000);
       assert.isTrue(result.markerExists, "an expired marker is ignored, not deleted");
       assert.equal(result.events.filter((event) => event.startsWith("start ")).length, 1);
+    }),
+  );
+
+  it.effect.each([false, true])(
+    "waits for a boot service between two servers (archive: %s)",
+    (archive) =>
+      Effect.gen(function* () {
+        const script = yield* archive
+          ? captureLauncherFor({ archiveVersion: "1.2.3" })
+          : captureLauncher;
+        const result = runLauncher(script, { archive, serviceServing: true, readyAt: 5_000 });
+        assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
+        assert.equal(result.now, 5_000);
+        assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+      }),
+  );
+
+  it.effect("fails without starting a second server when the home's owner never answers", () =>
+    Effect.gen(function* () {
+      const result = runLauncher(yield* captureLauncher, {
+        serviceServing: true,
+        allowFailure: true,
+      });
+      assert.equal(result.status, 1);
+      assert.include(result.stderr, "no second server was started");
+      assert.equal(result.now, 60_000);
+      assert.isFalse(result.events.some((event) => event.startsWith("start ")));
     }),
   );
 

@@ -202,6 +202,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     text = "hello",
     startProviderThread: OrchestrationV2ProviderThread = providerThread,
     turnPolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy = policy,
+    resume = false,
   ) =>
     runtime.startTurn({
       appThread: {
@@ -234,6 +235,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
       attemptId: RunAttemptId.make(`attempt-opencode-${suffix}`),
       rootNodeId: NodeId.make(`node-opencode-${suffix}`),
       providerThread: startProviderThread,
+      ...(resume ? { resume: true as const } : {}),
       message: {
         createdBy: "user",
         creationSource: "web",
@@ -264,6 +266,7 @@ describe("OpenCodeAdapterV2", () => {
     ["unknown", "prompt"],
     ["failure", "prompt"],
     ["unset", "prompt"],
+    ["unset", "resume"],
   ] as const)("normalizes reasoning variants for %s inventory at %s dispatch", ([kind, request]) =>
     Effect.gen(function* () {
       const suffix = `variant-${kind}-${request}`;
@@ -329,10 +332,16 @@ describe("OpenCodeAdapterV2", () => {
           ],
         },
       );
-      yield* harness.startTurn(request === "command" ? "/review staged changes" : "hello");
+      yield* harness.startTurn(
+        request === "command" ? "/review staged changes" : request === "resume" ? "" : "hello",
+        harness.providerThread,
+        harness.policy,
+        request === "resume",
+      );
       assert.equal(inputs.length, 1);
       const payload = inputs[0]!;
       assert.equal(payload.agent, "plan");
+      if (request === "resume") assert.deepEqual(payload.parts, []);
       if (kind === "supported" || kind === "unknown" || kind === "failure") {
         assert.equal(payload.variant, "medium");
       } else {
@@ -1387,7 +1396,13 @@ describe("OpenCodeAdapterV2", () => {
   );
 
   // OpenCode 1.18.32 background tasks complete at launch; children stay busy after root settlement.
-  it.effect("reports a background task child as pending work after the root turn settles", () =>
+  // Event order from a live 1.19.5 run: the child reports busy only after the launch completes.
+  it.effect.each([
+    { case: "finishes", ending: "idle", outcome: "completed" },
+    { case: "is aborted", ending: "abort", outcome: "interrupted" },
+    { case: "fails before its first turn", ending: "error", outcome: "failed" },
+    { case: "never starts and the thread is stopped", ending: "stop", outcome: "interrupted" },
+  ])("keeps a background task's subagent running until its child $case", ({ ending, outcome }) =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
       const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
@@ -1415,9 +1430,14 @@ describe("OpenCodeAdapterV2", () => {
         return yield* Effect.die("OpenCode runtime must expose hasPendingBackgroundWork.");
       }
       yield* harness.startTurn();
-      const terminal = yield* harness.runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "subagent" &&
+            event.turnItem.status !== "running",
+        ),
+        Stream.runCollect,
         Effect.forkScoped,
       );
       const taskPart = (status: "running" | "completed") => ({
@@ -1459,7 +1479,6 @@ describe("OpenCodeAdapterV2", () => {
         },
       });
       yield* push(status(root, "busy"));
-      yield* push(taskPart("running"));
       yield* push({
         type: "session.created",
         properties: {
@@ -1467,15 +1486,55 @@ describe("OpenCodeAdapterV2", () => {
           info: { id: child, parentID: root, time: { created: 2, updated: 2 } },
         },
       });
-      yield* push(status(child, "busy"));
+      yield* push(taskPart("running"));
+      const starts = ending !== "stop" && ending !== "error";
+      if (starts) {
+        yield* push({
+          type: "message.updated",
+          properties: {
+            sessionID: child,
+            info: { id: "msg_child_prompt", sessionID: child, role: "user", time: { created: 2 } },
+          },
+        });
+      }
       yield* push(taskPart("completed"));
+      if (starts) yield* push(status(child, "busy"));
       yield* push(status(root, "idle"));
-      assert.equal(Option.getOrUndefined(yield* Fiber.join(terminal))?.status, "completed");
-      assert.isTrue(yield* hasPendingBackgroundWork, "the running child must pin idle release");
+      assert.equal(yield* hasPendingBackgroundWork, starts, "a running child pins idle release");
 
-      yield* push(status(child, "idle"));
-      yield* push({ type: "session.idle", properties: { sessionID: child } });
+      if (ending === "stop") {
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: ProviderTurnId.make("provider-turn:settled"),
+          requestRuntimeRestart: true,
+        });
+      } else {
+        if (ending !== "idle") {
+          yield* push({
+            type: "session.error",
+            properties: {
+              sessionID: child,
+              error:
+                ending === "abort"
+                  ? { name: "MessageAbortedError", data: {} }
+                  : { name: "UnknownError", data: { message: "model unavailable" } },
+            },
+          });
+        }
+        yield* push(status(child, "idle"));
+        yield* push({ type: "session.idle", properties: { sessionID: child } });
+      }
       assert.isFalse(yield* hasPendingBackgroundWork, "an idle child must not pin idle release");
+      assert.deepEqual(
+        (yield* Fiber.join(received)).flatMap((event) =>
+          event.type === "subagent.updated"
+            ? [`subagent ${event.subagent.status}`]
+            : event.type === "turn.terminal"
+              ? [`root turn ${event.status}`]
+              : [],
+        ),
+        ["subagent running", "subagent running", "root turn completed", `subagent ${outcome}`],
+      );
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
@@ -2722,6 +2781,268 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
+  it.effect.each([
+    "during",
+    "idle-during-status",
+    "busy-during-status",
+    "after-refused-connection",
+  ] as const)("completes the turn when the session goes idle %s a rejected steer", (idleTiming) =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const sessionId = `native-steer-rejected-${idleTiming}`;
+      const idle = {
+        type: "session.status",
+        properties: { sessionID: sessionId, status: { type: "idle" } },
+      };
+      const promptIds: Array<string> = [];
+      const terminal = yield* Deferred.make<void>();
+      const statusRead = promiseGate<void>();
+      const statusRechecked = promiseGate<void>();
+      let statusCalls = 0;
+      const harness = yield* makeOpenCodeRuntimeHarness(`steer-rejected-${idleTiming}`, sessionId, {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+          get: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+          messages: async () => ({ data: [] }),
+          status: async () => {
+            statusCalls++;
+            statusRead.resolve();
+            if (idleTiming === "busy-during-status") {
+              if (statusCalls === 1) {
+                await nativeEvents.push({
+                  type: "session.status",
+                  properties: { sessionID: sessionId, status: { type: "busy" } },
+                });
+                return { data: { [sessionId]: { type: "idle" } } };
+              }
+              statusRechecked.resolve();
+              return { data: { [sessionId]: { type: statusCalls === 2 ? "busy" : "idle" } } };
+            }
+            if (idleTiming === "idle-during-status" && statusCalls === 1) {
+              await nativeEvents.push(idle);
+              return { data: { [sessionId]: { type: "busy" } } };
+            }
+            return {
+              data: {
+                [sessionId]: { type: idleTiming === "after-refused-connection" ? "busy" : "idle" },
+              },
+            };
+          },
+          promptAsync: async (input: { messageID: string }) => {
+            promptIds.push(input.messageID);
+            if (promptIds.length === 1) return { data: true };
+            if (idleTiming === "during") await nativeEvents.push(idle);
+            if (idleTiming === "after-refused-connection") {
+              throw new TypeError("fetch failed", {
+                cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+              });
+            }
+            // The SDK wraps an HTTP error reply in an Error with its status on `cause`.
+            throw new Error("steer rejected", { cause: { body: "steer rejected", status: 503 } });
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+      yield* harness.startTurn();
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: sessionId,
+            info: {
+              id: promptIds[0],
+              sessionID: sessionId,
+              role: "user",
+              time: { created: DateTime.toEpochMillis(harness.now) },
+            },
+          },
+        }),
+      );
+      const running = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      yield* harness.runtime.events.pipe(
+        Stream.tap((event) =>
+          event.type === "turn.terminal" ? Deferred.succeed(terminal, undefined) : Effect.void,
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      const steer = yield* Effect.exit(
+        harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: harness.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: running.providerTurns.at(-1)!.id,
+          message: {
+            messageId: MessageId.make(`message-steer-rejected-${idleTiming}`),
+            text: "also cover the README",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        }),
+      );
+      assert.isTrue(Exit.isFailure(steer));
+      yield* Effect.promise(() => statusRead.promise);
+      if (idleTiming === "busy-during-status") {
+        const outcome = yield* Effect.raceFirst(
+          Effect.promise(() => statusRechecked.promise).pipe(Effect.as("rechecked")),
+          Deferred.await(terminal).pipe(Effect.as("completed")),
+        );
+        assert.equal(outcome, "rechecked");
+        const active = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        assert.equal(active.providerTurns.at(-1)?.status, "running");
+        yield* Effect.promise(() => nativeEvents.push(idle));
+      }
+      if (idleTiming === "after-refused-connection") {
+        const active = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        assert.equal(active.providerTurns.at(-1)?.status, "running");
+        yield* Effect.promise(() => nativeEvents.push(idle));
+      }
+      yield* Deferred.await(terminal);
+      if (idleTiming !== "busy-during-status") {
+        assert.equal(statusCalls, idleTiming === "idle-during-status" ? 2 : 1);
+      }
+
+      const settled = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      assert.equal(settled.providerTurns.at(-1)?.status, "completed");
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect(
+    "keeps the turn for a steer whose reply was lost until its output lands, even after a retry is rejected",
+    () =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        const sessionId = "native-steer-reply-lost";
+        const promptIds: Array<string> = [];
+        const harness = yield* makeOpenCodeRuntimeHarness(sessionId, sessionId, {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+            get: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+            messages: async () => ({ data: [] }),
+            // OpenCode took the steer but has not saved its message yet.
+            status: async () => ({ data: { [sessionId]: { type: "idle" } } }),
+            promptAsync: async (input: { messageID: string }) => {
+              promptIds.push(input.messageID);
+              if (promptIds.length === 1) return { data: true };
+              if (promptIds.length === 3) {
+                throw new Error("Service Unavailable", { cause: { status: 503 } });
+              }
+              throw new TypeError("fetch failed", {
+                cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }),
+              });
+            },
+            abort: async () => ({ data: true }),
+            children: async () => ({ data: [] }),
+          },
+        });
+        yield* harness.startTurn();
+        const userMessage = (id: string | undefined) =>
+          Effect.promise(() =>
+            nativeEvents.push({
+              type: "message.updated",
+              properties: {
+                sessionID: sessionId,
+                info: { id, sessionID: sessionId, role: "user", time: { created: 1 } },
+              },
+            }),
+          );
+        yield* userMessage(promptIds[0]);
+        const running = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        const received = yield* harness.runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const steer = harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: harness.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: running.providerTurns.at(-1)!.id,
+          message: {
+            messageId: MessageId.make("message-steer-reply-lost"),
+            text: "also cover the README",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        });
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(steer)));
+        // T3 retries a failed steer; this retry's request is refused outright.
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(steer)));
+        // A real status read answers before OpenCode saves the steer's message.
+        yield* Effect.yieldNow;
+        yield* userMessage(promptIds[1]);
+        const assistant = (completed?: number) =>
+          Effect.promise(() =>
+            nativeEvents.push({
+              type: "message.updated",
+              properties: {
+                sessionID: sessionId,
+                info: {
+                  id: "steer-answer",
+                  sessionID: sessionId,
+                  role: "assistant",
+                  time: completed === undefined ? { created: 2 } : { created: 2, completed },
+                },
+              },
+            }),
+          );
+        yield* assistant();
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.part.updated",
+            properties: {
+              sessionID: sessionId,
+              part: {
+                id: "steer-answer-text",
+                sessionID: sessionId,
+                messageID: "steer-answer",
+                type: "text",
+                text: "README covered",
+                time: { start: 2 },
+              },
+            },
+          }),
+        );
+        yield* assistant(3);
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "session.status",
+            properties: { sessionID: sessionId, status: { type: "idle" } },
+          }),
+        );
+        const events = yield* Fiber.join(received);
+        const answers = events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [event.turnItem.text]
+            : [],
+        );
+        assert.include(answers, "README covered");
+        const terminal = events.at(-1);
+        assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, "completed");
+      }).pipe(
+        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+        Effect.scoped,
+      ),
+  );
+
   it.effect("interrupts an initial prompt while its SDK request is pending", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
@@ -3101,6 +3422,15 @@ describe("OpenCodeAdapterV2", () => {
         yield* reconcileOpenCodePromptAdmissionStatus(admission, 4, Effect.succeed("unknown")),
         "unknown",
       );
+      assert.isTrue(admission.admissionPending);
+      const stalled = yield* reconcileOpenCodePromptAdmissionStatus(
+        admission,
+        4,
+        Effect.never,
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("10 seconds");
+      assert.isDefined(stalled.pollUnsafe());
+      assert.equal(yield* Fiber.join(stalled), "unknown");
       assert.isTrue(admission.admissionPending);
       assert.equal(
         yield* reconcileOpenCodePromptAdmissionStatus(admission, 4, Effect.succeed("idle")),

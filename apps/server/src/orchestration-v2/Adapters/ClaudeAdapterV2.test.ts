@@ -70,6 +70,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -101,8 +102,15 @@ import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutab
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
+  resolveClaudeModelCatalog,
   scopeClaudeModelCatalog,
+  withClaudeCodeModelRoutes,
 } from "../../provider/ClaudeModelCatalog.ts";
+import {
+  makeClaudeCodeModelRoutes,
+  resolveClaudeModelSettingsKey,
+} from "../../provider/ClaudeCodeModelRoutes.ts";
+import { resolveProviderCatalog } from "../../provider/ModelManifest.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -161,6 +169,9 @@ const CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
       },
     },
   ],
+});
+const ALIAS_CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
+  customModels: ["haiku", "sonnet"],
 });
 const ULTRACODE_CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   customModels: [
@@ -269,6 +280,69 @@ function makeClaudeTestTurnInput(input: {
     runtimePolicy: input.runtimePolicy ?? CLAUDE_TEST_RUNTIME_POLICY,
   };
 }
+
+describe("ClaudeAdapterV2 native resume history", () => {
+  const entry = (uuid: string, type: string, content: unknown) => ({
+    uuid,
+    type,
+    message: { content },
+  });
+  const prompt = entry("prompt", "user", "Run the task");
+  const completed = entry("completed-tool", "user", [
+    { type: "tool_result", tool_use_id: "done", content: "Saved", is_error: false },
+  ]);
+  const call = entry("call", "assistant", [
+    { type: "tool_use", id: "pending", name: "Bash", input: {} },
+  ]);
+  const interrupted = entry("stopped-tool", "user", [
+    {
+      type: "tool_result",
+      tool_use_id: "pending",
+      content: "The user doesn't want to proceed with this tool use. STOP",
+      is_error: true,
+    },
+  ]);
+  it.each([
+    {
+      name: "an interrupted reply",
+      messages: [
+        prompt,
+        entry("reply", "assistant", "Partial response"),
+        entry("stop", "user", [{ type: "text", text: "[Request interrupted by user]" }]),
+      ],
+      head: "reply",
+    },
+    {
+      name: "an interrupted tool after completed work",
+      messages: [
+        prompt,
+        completed,
+        call,
+        interrupted,
+        entry("stop", "user", "[Request interrupted by user for tool use]"),
+      ],
+      head: "call",
+    },
+    {
+      name: "an interrupted request before any reply",
+      messages: [prompt, entry("stop", "user", "[Request interrupted by user]")],
+      head: "prompt",
+    },
+    {
+      name: "completed tool results",
+      messages: [prompt, completed, entry("stop", "user", "[Request interrupted by user]")],
+      head: "completed-tool",
+    },
+    { name: "an explicit refusal", messages: [prompt, call, interrupted], head: undefined },
+    {
+      name: "ordinary conversation text",
+      messages: [prompt, entry("reply", "assistant", "Continue where you left off.")],
+      head: undefined,
+    },
+  ])("selects the native history head for $name", ({ messages, head }) => {
+    assert.equal(ClaudeAdapterV2.claudeResumeSessionAt(messages), head);
+  });
+});
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
   it.each([
@@ -3392,6 +3466,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly allocateSessionId?: Effect.Effect<string>;
     readonly offer?: (message: SDKUserMessage) => Effect.Effect<void>;
     readonly promptSuggestions?: boolean;
+    readonly routeModelCatalog?: ClaudeAdapterV2.ClaudeAdapterV2Options["routeModelCatalog"];
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -3455,6 +3530,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         path: yield* Path.Path,
         random: yield* SecureRandom.SecureRandom,
         idAllocator,
+        ...(options?.routeModelCatalog ? { routeModelCatalog: options.routeModelCatalog } : {}),
         continuationRequests: {
           offer: (request) =>
             Effect.sync(() => {
@@ -3647,6 +3723,72 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect.each([false, true])(
+    "resumes a stopped query with empty SDK content and a fresh native process, buffered: %s",
+    (buffered) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          freshQueueOnReopen: true,
+          close: (queue) => Queue.shutdown(queue),
+        });
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: DateTime.makeUnsafe(0),
+          attemptId: RunAttemptId.make("native-resume"),
+          text: "Initial task",
+          attachments: [],
+          providerTurnOrdinal: 1,
+        });
+        yield* harness.runtime.startTurn(input);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        if (buffered) {
+          yield* harness.offerAndWait(wakeAssistant);
+          yield* harness.offerAndWait(wakeResult);
+        }
+        const { message, ...turn } = input;
+        yield* harness.runtime.resumeTurn!({
+          ...turn,
+          providerTurnOrdinal: 2,
+          messageId: message.messageId,
+        });
+        assert.equal(harness.processQueues.length, 2);
+        assert.equal(
+          harness.getOpenedOptions()?.resume,
+          harness.providerThread.nativeThreadRef?.nativeId,
+        );
+        if (buffered) {
+          assert.equal(harness.offeredMessages.length, 1);
+        } else {
+          assert.deepEqual(harness.offeredMessages.at(-1)?.message.content, []);
+          yield* harness.offerAndWait(turnOneResult);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+        assert.equal(harness.terminalEvents().length, 2);
+        if (buffered) {
+          assert.isTrue(
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "assistant_message" &&
+                event.turnItem.text === WAKE_ASSISTANT_TEXT,
+            ),
+          );
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
 
   it.effect("resumes the session a /clear selected after the Claude process is replaced", () =>
     Effect.gen(function* () {
@@ -6245,6 +6387,174 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("sends the model id Claude Code reported for the selected catalog model", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const modelCatalog = yield* Ref.make(BUNDLED_CLAUDE_MODEL_CATALOG);
+        const harness = yield* makeWakeHarnessWithOptions({
+          modelCatalog: Ref.get(modelCatalog),
+          settings: ALIAS_CUSTOM_MODEL_CLAUDE_SETTINGS,
+          close: Queue.shutdown,
+          freshQueueOnReopen: true,
+          // Bedrock with ANTHROPIC_DEFAULT_*_MODEL set, as the probe reports it.
+          routeModelCatalog: (catalog) =>
+            Effect.succeed(
+              withClaudeCodeModelRoutes(catalog, [
+                { value: "default", resolvedModel: "global.anthropic.claude-sonnet-6" },
+                { value: "sonnet", resolvedModel: "global.anthropic.claude-sonnet-6" },
+                { value: "haiku", resolvedModel: "global.anthropic.claude-haiku-6" },
+              ]),
+            ),
+        });
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number, model: string) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-reported-model:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            modelSelection: { instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID, model },
+          });
+        // Models the live manifest delivers after a release, so the bundled catalog lacks them.
+        const manifestCatalog = resolveClaudeModelCatalog(
+          resolveProviderCatalog(
+            {
+              version: 1,
+              currentModels: {},
+              providers: {
+                claudeAgent: {
+                  profiles: {},
+                  models: [
+                    { slug: "claude-haiku-6", name: "Claude Haiku 6", status: "current" },
+                    { slug: "claude-sonnet-6", name: "Claude Sonnet 6", status: "current" },
+                  ],
+                },
+              },
+            },
+            ProviderDriverKind.make("claudeAgent"),
+          ) ?? undefined,
+        );
+        yield* Ref.set(modelCatalog, manifestCatalog);
+
+        const openedPins = () => {
+          const env = (
+            harness.getOpenedOptions()?.settings as { env?: Record<string, string> } | undefined
+          )?.env;
+          return [env?.ANTHROPIC_DEFAULT_HAIKU_MODEL, env?.ANTHROPIC_DEFAULT_SONNET_MODEL];
+        };
+        yield* harness.runtime.startTurn(turn(1, "claude-haiku-6"));
+        assert.equal(harness.getOpenedOptions()?.model, "haiku");
+        // The user's ANTHROPIC_DEFAULT_HAIKU_MODEL maps the routed alias to the Bedrock id.
+        assert.deepEqual(openedPins(), [undefined, undefined]);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+
+        yield* harness.runtime.startTurn(turn(2, "claude-sonnet-6"));
+        assert.deepEqual(harness.liveSelectionChanges[0], { model: "sonnet" });
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000b02", result: "Two." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+
+        // Custom models named like an alias pin it, so a change of pin reopens Claude Code.
+        yield* harness.runtime.startTurn(turn(3, "haiku"));
+        assert.deepEqual(openedPins(), ["haiku", undefined]);
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000b03", result: "Three." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.runtime.startTurn(turn(4, "sonnet"));
+        assert.deepEqual(openedPins(), [undefined, "sonnet"]);
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000b04", result: "Four." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.runtime.startTurn(turn(5, "claude-haiku-6"));
+        assert.deepEqual(openedPins(), [undefined, undefined]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps the reported model id when a running turn is steered or changes effort", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          routeModelCatalog: (catalog) =>
+            Effect.succeed(
+              withClaudeCodeModelRoutes(catalog, [
+                { value: "haiku", resolvedModel: "global.anthropic.claude-haiku-5-5" },
+              ]),
+            ),
+        });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const haiku = {
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          model: "claude-haiku-5-5",
+        } satisfies ModelSelection;
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-reported-model-live-change"),
+          text: "Run the slow build.",
+          attachments: [],
+          modelSelection: haiku,
+        });
+        yield* harness.runtime.startTurn(input);
+        assert.equal(harness.getOpenedOptions()?.model, "haiku");
+
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${input.attemptId}`,
+          }),
+          modelSelection: haiku,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("steer-reported-model"),
+            text: "Also check the tests.",
+            attachments: [],
+          },
+        });
+        assert.deepEqual(harness.liveSelectionChanges, []);
+        assert.lengthOf(harness.offeredMessages, 2);
+
+        yield* harness.runtime.applyModelSelection!({
+          providerThread: harness.providerThread,
+          modelSelection: { ...haiku, options: [{ id: "effort", value: "high" }] },
+        });
+        assert.deepEqual(harness.liveSelectionChanges, [
+          { effortLevel: "high", fastMode: null, ultracode: null },
+        ]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     {
       content: { type: "advisor_tool_result_error", error_code: "overloaded" },
@@ -6308,6 +6618,130 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  it.effect(
+    "sends Claude Code's reported model id only where the cwd resolves it as the probe did",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sdk = yield* Effect.promise(() =>
+          vi.importActual<typeof ClaudeSdk>("@anthropic-ai/claude-agent-sdk"),
+        );
+        vi.mocked(ClaudeSdk.resolveSettings).mockImplementation(sdk.resolveSettings);
+        const probeCwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-probe-" });
+        const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-project-" });
+        const overridden = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-local-",
+        });
+        yield* fileSystem.makeDirectory(path.join(overridden, ".claude"));
+        yield* fileSystem.writeFileString(
+          path.join(overridden, ".claude", "settings.local.json"),
+          JSON.stringify({
+            env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: "global.anthropic.claude-sonnet-4-6" },
+          }),
+        );
+        const routes = yield* makeClaudeCodeModelRoutes(
+          (cwd) =>
+            resolveClaudeModelSettingsKey(["project", "local"], cwd).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            ),
+          probeCwd,
+        );
+        yield* routes.record([
+          { value: "haiku", resolvedModel: "us.anthropic.claude-haiku-4-5-20251001-v1:0" },
+        ]);
+        yield* routes.settle;
+        const openedModel = (cwd: string, launchSettings?: Record<string, unknown>) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const harness = yield* makeWakeHarnessWithOptions({
+                routeModelCatalog: routes.route,
+                settings: {
+                  ...DEFAULT_CLAUDE_SETTINGS,
+                  launchArgs:
+                    launchSettings === undefined
+                      ? ""
+                      : `--settings '${JSON.stringify(launchSettings)}'`,
+                },
+              });
+              yield* harness.runtime.startTurn(
+                makeClaudeTestTurnInput({
+                  threadId: harness.threadId,
+                  providerThread: harness.providerThread,
+                  now: yield* DateTime.now,
+                  attemptId: RunAttemptId.make("attempt-reported-model-cwd"),
+                  text: "Request",
+                  attachments: [],
+                  modelSelection: {
+                    instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+                    model: "claude-haiku-4-5",
+                  },
+                  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                    runtimeMode: "full-access",
+                    interactionMode: "default",
+                    cwd,
+                  }),
+                }),
+              );
+              return harness.getOpenedOptions()?.model;
+            }),
+          );
+
+        assert.equal(yield* openedModel(project), "haiku");
+        assert.equal(
+          yield* openedModel(project, {
+            env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: "global.anthropic.claude-sonnet-4-6" },
+          }),
+          "claude-haiku-4-5",
+        );
+        assert.equal(yield* openedModel(project, { env: { FOO: "1" } }), "haiku");
+        // Claude Code resolves `haiku` to Sonnet there, so the slug is the only safe id.
+        assert.equal(yield* openedModel(overridden), "claude-haiku-4-5");
+
+        // A linked worktree and a repository subdirectory read the main checkout's local file.
+        const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-repo-" });
+        const worktree = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-wt-" });
+        const worktreeGitDir = path.join(repo, ".git", "worktrees", "wt");
+        yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
+        yield* fileSystem.writeFileString(
+          path.join(worktree, ".git"),
+          `gitdir: ${worktreeGitDir}\n`,
+        );
+        yield* fileSystem.makeDirectory(path.join(repo, ".claude"));
+        yield* fileSystem.makeDirectory(path.join(repo, "packages", "app"), { recursive: true });
+        const rootLocal = (settings: object) =>
+          fileSystem.writeFileString(
+            path.join(repo, ".claude", "settings.local.json"),
+            JSON.stringify(settings),
+          );
+        yield* rootLocal({
+          env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: "global.anthropic.claude-sonnet-4-6" },
+        });
+        assert.equal(
+          yield* openedModel(worktree),
+          (yield* HostProcess.Platform) === "win32" ? "haiku" : "claude-haiku-4-5",
+        );
+        assert.equal(
+          yield* openedModel(path.join(repo, "packages", "app")),
+          (yield* HostProcess.Platform) === "win32" ? "haiku" : "claude-haiku-4-5",
+        );
+        yield* rootLocal({ env: { FOO: "1" } });
+        assert.equal(yield* openedModel(worktree), "haiku");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
   );
 
   describe("MCP elicitations", () => {
@@ -8484,6 +8918,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     { status: 503, cooldown: "999999999999999999999999h", seconds: 0 },
     { status: 503, cooldown: "4m 6s", seconds: 0, errorType: "overloaded_error" },
     { status: 401, cooldown: "4m 6s", seconds: 0 },
+    { status: 429, cooldown: "1h2m3s", seconds: 3723, proxy: true, sdkResetSeconds: 60 },
+    { status: 429, cooldown: "1h2m3s", seconds: 7200, proxy: true, sdkResetSeconds: 7200 },
+    { status: 429, cooldown: "1h2m3s", seconds: 0, proxy: true, sdkResetSeconds: null },
+    {
+      status: 429,
+      cooldown: "nested 1h",
+      seconds: 0,
+      proxy: true,
+      result:
+        "API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (last error: rate_limit_error (reset after 1h))",
+    },
+    {
+      status: 429,
+      cooldown: "outer cooldown",
+      seconds: 60,
+      proxy: true,
+      result:
+        "API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (reset after 1m) (last error: All credentials for model upstream are cooling down (reset after 1h))",
+    },
   ])("recovers wrapped gateway limits with status $status and cooldown $cooldown", (input) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
@@ -8499,13 +8952,35 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       yield* Queue.offerAll(harness.sdkMessages, [
+        ...(input.sdkResetSeconds !== undefined
+          ? [
+              claudeSdkFrame({
+                type: "rate_limit_event",
+                rate_limit_info: {
+                  status: "rejected",
+                  rateLimitType: "five_hour",
+                  ...(input.sdkResetSeconds === null
+                    ? {}
+                    : {
+                        resetsAt: DateTime.toEpochMillis(now) / 1000 + input.sdkResetSeconds,
+                      }),
+                },
+                uuid: "00000000-0000-4000-8000-000000000651",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            ]
+          : []),
         makeAssistantErrorFrame({
           uuid: "00000000-0000-4000-8000-000000000652",
-          error: "server_error",
+          error: input.proxy ? "rate_limit" : "server_error",
         }),
         makeResultFrame({
           uuid: "00000000-0000-4000-8000-000000000653",
-          result: `API Error: ${input.status} [claude/claude-opus-5-5] [429]: {"type":"error","error":{"type":"${input.errorType ?? "rate_limit_error"}","message":"Please try again later."}} (reset after ${input.cooldown}).`,
+          result:
+            input.result ??
+            (input.proxy
+              ? `API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (reset after ${input.cooldown}) (last error: rate_limit_error: Please try again later.)`
+              : `API Error: ${input.status} [claude/claude-opus-5-5] [429]: {"type":"error","error":{"type":"${input.errorType ?? "rate_limit_error"}","message":"Please try again later."}} (reset after ${input.cooldown}).`),
           terminalReason: "api_error",
           isError: true,
           apiErrorStatus: input.status,
@@ -8514,7 +8989,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const terminal = yield* Queue.take(harness.terminalReceipts);
       assert.equal(terminal.status, "failed");
       if (terminal.status !== "failed") return;
-      assert.equal(terminal.failure.class, input.seconds > 0 ? "usage_limit" : "provider_error");
+      assert.equal(
+        terminal.failure.class,
+        input.seconds > 0 || input.proxy ? "usage_limit" : "provider_error",
+      );
       if (input.seconds > 0) {
         assert.equal(terminal.failure.retryable, true);
         assert.equal(
@@ -8524,7 +9002,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         );
       } else {
-        assert.isUndefined(terminal.failure.resetAt);
+        assert.equal(terminal.failure.resetAt, input.proxy ? null : undefined);
       }
     }).pipe(
       Effect.provide(
@@ -15347,7 +15825,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   it.effect("leaves buffered wake messages for the continuation queued behind a user turn", () =>
     Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped();
+      const settingsPath = NodePath.join(directory, "settings.json");
+      yield* fileSystem.writeFileString(settingsPath, "{}");
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs: `--settings "${settingsPath}"` },
+      });
       const now = yield* DateTime.now;
 
       yield* harness.runtime.startTurn(
@@ -15367,6 +15851,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* Queue.offer(harness.sdkMessages, wakeResult);
       yield* harness.awaitContinuation(1);
 
+      yield* fileSystem.remove(settingsPath);
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
           threadId: harness.threadId,
@@ -17448,6 +17933,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* harness.awaitContinuation(1);
 
         yield* Queue.shutdown(harness.sdkMessages);
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.nativeTaskRef?.nativeId === OUTER_TASK_ID &&
+              event.subagent.status === "completed",
+          ),
+        );
         yield* yieldTicks(50);
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -18602,12 +19095,36 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("records only explicit effort for nested subagents", () =>
-    Effect.gen(function* () {
+  it.effect("records explicit effort, else the effort a subagent's transcript reports", () => {
+    const UNSPECIFIED_TOOL_USE_ID = "toolu-effort-nested-unspecified";
+    const firstRead = Deferred.makeUnsafe<void>();
+    return Effect.gen(function* () {
       const OUTER_TOOL_USE_ID = "toolu-effort-outer";
-      const UNSPECIFIED_TOOL_USE_ID = "toolu-effort-nested-unspecified";
       const OVERRIDING_TOOL_USE_ID = "toolu-effort-nested-overriding";
-      const harness = yield* makeWakeHarness;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const configDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-claude-effort-",
+      });
+      // Claude names the folder after the resolved cwd, here as if /workspace were a symlink.
+      const subagentsDir = NodePath.join(
+        configDir,
+        "projects",
+        "-private-workspace",
+        WAKE_NATIVE_SESSION,
+        "subagents",
+      );
+      yield* fileSystem.makeDirectory(subagentsDir, { recursive: true });
+      const transcriptPath = NodePath.join(
+        subagentsDir,
+        `agent-task-${UNSPECIFIED_TOOL_USE_ID}.jsonl`,
+      );
+      yield* fileSystem.writeFileString(
+        transcriptPath,
+        `{"type":"user","uuid":"effort-line-0","message":{"role":"user","content":"Check one thing."}}\n`,
+      );
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: { CLAUDE_CONFIG_DIR: configDir },
+      });
       const now = yield* DateTime.now;
       const parentSelection = {
         instanceId: CLAUDE_TEST_MODEL_SELECTION.instanceId,
@@ -18677,6 +19194,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
         taskStarted(UNSPECIFIED_TOOL_USE_ID, "00000000-0000-4000-8000-000000000224"),
         taskStarted(OVERRIDING_TOOL_USE_ID, "00000000-0000-4000-8000-000000000225"),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_notification",
+          task_id: `task-${UNSPECIFIED_TOOL_USE_ID}`,
+          tool_use_id: UNSPECIFIED_TOOL_USE_ID,
+          status: "completed",
+          output_file: "/tmp/claude-replay/tasks/unspecified.output",
+          summary: "OK",
+          uuid: "00000000-0000-4000-8000-000000000227",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeSubagentToolResultFrame({
+          parentToolUseId: OUTER_TOOL_USE_ID,
+          uuid: "00000000-0000-4000-8000-000000000228",
+          toolUseId: UNSPECIFIED_TOOL_USE_ID,
+        }),
         makeResultFrame({
           uuid: "00000000-0000-4000-8000-000000000226",
           result: "Spawned the subagents.",
@@ -18684,7 +19217,27 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ]) {
         yield* Queue.offer(harness.sdkMessages, frame);
       }
+      // The settled subagent's reply lands after the first lookup, beyond one read's cap.
+      yield* Deferred.await(firstRead);
+      NodeFS.appendFileSync(
+        transcriptPath,
+        `${"x".repeat(512 * 1024 + 1)}\n{"type":"assistant","effort":"low","uuid":"effort-line-1","message":{"role":"assistant","id":"msg_effort_child","content":[{"type":"text","text":"OK"}]}}\n`,
+      );
+      yield* TestClock.adjust(500);
       yield* Queue.take(harness.terminalReceipts);
+      // A run can stop reading events once its subagents settle, so the settle carries the effort.
+      const settle = harness.events.find(
+        (event) =>
+          event.type === "subagent.updated" &&
+          event.subagent.status === "completed" &&
+          event.subagent.nativeTaskRef?.nativeId === `task-${UNSPECIFIED_TOOL_USE_ID}`,
+      );
+      assert.equal(
+        settle?.type === "subagent.updated"
+          ? getModelSelectionStringOptionValue(settle.subagent.modelSelection, "effort")
+          : null,
+        "low",
+      );
 
       const efforts = new Map(
         harness.events.flatMap((event) =>
@@ -18700,7 +19253,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       assert.deepEqual(Object.fromEntries(efforts), {
         [`task-${OUTER_TOOL_USE_ID}`]: "low",
-        [`task-${UNSPECIFIED_TOOL_USE_ID}`]: undefined,
+        [`task-${UNSPECIFIED_TOOL_USE_ID}`]: "low",
         [`task-${OVERRIDING_TOOL_USE_ID}`]: "max",
       });
       const childEfforts = harness.events.flatMap((event) =>
@@ -18710,6 +19263,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       assert.deepEqual(childEfforts, ["low", undefined, "max"]);
     }).pipe(
+      Effect.provideService(WorkflowAgentTranscriptReadObserver, (read) =>
+        read.agentId === `task-${UNSPECIFIED_TOOL_USE_ID}`
+          ? Deferred.succeed(firstRead, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      ),
       Effect.provide(
         Layer.mergeAll(
           IdAllocator.layer,
@@ -18718,8 +19276,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           NodeCrypto.layer,
         ),
       ),
-    ),
-  );
+    );
+  });
 
   it.effect.each([
     {
