@@ -7,10 +7,10 @@ import { PixelRatio, Platform, Pressable, StyleSheet, Text, View } from "react-n
 import { parse, Svg, SvgXml } from "react-native-svg";
 
 import { FilePreviewModal } from "../components/ui/FilePreviewModal";
-import { SymbolView, type AppSymbolName } from "../components/ui/AppSymbol";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { mermaidSvgForNative, withDiagramBackground } from "../lib/mermaidSvg";
 import { themeColorWithAlpha } from "../lib/mobileTheme";
+import { CodeBlockFrame, CodeBlockHeaderButton } from "./CodeBlockFrame";
 import type { NativeMarkdownTextStyle } from "./SelectableMarkdownText.types";
 
 type Pele = typeof import("pele/lazy");
@@ -191,43 +191,29 @@ function MermaidBlock(props: MermaidCodeBlockProps & { readonly diagram: Diagram
     );
   };
 
-  // The header copies the native code block's, which this block replaces once the fence closes.
   return (
-    <View
-      style={[
-        styles.block,
-        {
-          backgroundColor: textStyle.codeBlockBackgroundColor,
-          borderColor: textStyle.dividerColor,
-        },
-      ]}
-    >
-      <View
-        style={[
-          styles.header,
-          { borderBottomColor: themeColorWithAlpha(textStyle.codeColor, 0.2) },
-        ]}
-      >
-        <Text style={[styles.language, { color: secondaryColor, fontSize: codeFontSize * 0.85 }]}>
-          Mermaid
-        </Text>
-        <View style={styles.actions}>
+    <CodeBlockFrame
+      label="Mermaid"
+      textStyle={textStyle}
+      actions={
+        <>
           {svg ? (
-            <HeaderButton
+            <CodeBlockHeaderButton
               icon={showCode ? "flowchart" : "chevron.left.forwardslash.chevron.right"}
               label={showCode ? "Show diagram" : "Show code"}
-              color={secondaryColor}
+              textStyle={textStyle}
               onPress={() => setShowCode((value) => !value)}
             />
           ) : null}
-          <HeaderButton
+          <CodeBlockHeaderButton
             icon="doc.on.doc"
             label="Copy code"
-            color={secondaryColor}
+            textStyle={textStyle}
             onPress={() => copyTextWithHaptic(code)}
           />
-        </View>
-      </View>
+        </>
+      }
+    >
       <View style={styles.content}>
         {diagram?.status === "error" ? (
           <Text style={[styles.error, { color: secondaryColor, fontSize: codeFontSize * 0.85 }]}>
@@ -296,45 +282,11 @@ function MermaidBlock(props: MermaidCodeBlockProps & { readonly diagram: Diagram
           onRequestClose={() => setExpansion(null)}
         />
       ) : null}
-    </View>
+    </CodeBlockFrame>
   );
 }
 
-function HeaderButton(props: {
-  readonly icon: AppSymbolName;
-  readonly label: string;
-  readonly color: string;
-  readonly onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={props.label}
-      hitSlop={10}
-      onPress={props.onPress}
-    >
-      <SymbolView name={props.icon} size={14} tintColor={props.color} type="monochrome" />
-    </Pressable>
-  );
-}
-
-// The block slot already applies the code block's outer margins.
 const styles = StyleSheet.create({
-  block: {
-    borderRadius: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: "hidden",
-  },
-  header: {
-    height: 32,
-    paddingHorizontal: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  language: { fontWeight: "500" },
-  actions: { flexDirection: "row", alignItems: "center", gap: 14 },
   content: { padding: 12 },
   diagramRow: { flexDirection: "row", justifyContent: "center" },
   error: { marginBottom: 8 },

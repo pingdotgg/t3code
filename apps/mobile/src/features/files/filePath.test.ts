@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   fileRoutePathSegments,
+  isAudioPreviewFile,
+  isMarkdownPreviewFile,
   needsWorkspaceFileContents,
   resolveFileLinkPath,
   resolveWorkspaceRelativeFilePath,
@@ -56,5 +58,16 @@ describe("needsWorkspaceFileContents", () => {
     const input = { relativePath: "package.json", activeMode: "source" } as const;
     expect(needsWorkspaceFileContents({ ...input, metadataKind: undefined })).toBe(true);
     expect(needsWorkspaceFileContents({ ...input, metadataKind: "directory" })).toBe(false);
+  });
+});
+
+describe("workspace preview classifiers", () => {
+  it("treat # and ? as literal filename characters", () => {
+    for (const path of ["notes/clip#1.wav", "notes/clip?1.wav", "notes#old/clip.wav"]) {
+      expect(isAudioPreviewFile(path)).toBe(true);
+    }
+    for (const path of ["docs/draft#1.md", "docs/draft?1.md", "docs#old/draft.md"]) {
+      expect(isMarkdownPreviewFile(path)).toBe(true);
+    }
   });
 });

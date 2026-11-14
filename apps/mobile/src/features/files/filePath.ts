@@ -100,15 +100,15 @@ export function isVideoPreviewFile(path: string): boolean {
 }
 
 export function isAudioPreviewFile(path: string): boolean {
-  return isWorkspaceAudioPreviewPath(path.split(/[?#]/, 1)[0] ?? "");
+  return isWorkspaceAudioPreviewPath(path);
 }
 
 export function isSvgImagePreviewFile(path: string): boolean {
-  return /\.svg$/i.test(path.split(/[?#]/, 1)[0] ?? "");
+  return /\.svg$/i.test(path);
 }
 
 export function isMarkdownPreviewFile(path: string): boolean {
-  return /\.(?:md|mdx)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
+  return /\.(?:md|mdx)$/i.test(path);
 }
 
 export function needsWorkspaceFileContents(input: {
