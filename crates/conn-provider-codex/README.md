@@ -39,10 +39,21 @@ dies, open turns end as failed, and the next call starts a new process and resum
 
 ## Launch (matches the TS server)
 
-- **Executable:** `CodexConfig.binary`, default `codex` on `PATH`, `~` expanded. The instance
-  is offered only when the binary exists (`CodexProvider::detect`).
-- **argv:** `app-server -c thread_unload_delay_secs=0`, then `T3CODE_CODEX_LAUNCH_ARGS` or
-  `CodexConfig.launch_args`.
+- **Instance settings:** `CodexProvider::for_instance` builds the provider for one
+  `providerInstances` entry (`CodexConfig::with_instance`), as `CodexDriver.ts` 188-221 and
+  `createCodexAdapterV2`: `binaryPath` trimmed, `~` expanded, `codex` when empty; `homePath`,
+  else a `CODEX_HOME` from the instance's or the server's environment, `~` expanded and made
+  absolute, as `CODEX_HOME`; the instance environment (`~` expanded only in `CODEX_HOME`,
+  `CLAUDE_CONFIG_DIR`, `GROK_HOME`; a sensitive value is the real one; `Debug` prints names
+  only); `launchArgs` trimmed. The server builds one per instance and a new one when the
+  entry changes (`conn-server/src/instances.rs`); a session already open keeps its
+  app-server. An enabled instance is offered only when its binary exists; a disabled one is
+  listed with T3's disabled entry and starts nothing. `displayName` and `accentColor` go on
+  the entry. Not read: `customModels`, `shadowHomePath` and `setupMode` (T3's managed home).
+- **Executable:** `CodexConfig.binary`, default `codex` on `PATH`, `~` expanded.
+- **argv:** `app-server -c thread_unload_delay_secs=0`, then `T3CODE_CODEX_LAUNCH_ARGS` (the
+  instance's environment over the server's, as `resolveCodexLaunchArgs` reads the merged
+  environment) or `CodexConfig.launch_args`.
 - **Environment:** inherited whole. Added: `CODEX_INTERNAL_ORIGINATOR_OVERRIDE=T3 Code` (a host
   or instance value wins, as in TS), the instance's own entries, and `CODEX_HOME` when a home
   path is set.
@@ -114,6 +125,11 @@ after. Errors carry T3's texts ("Codex CLI request timed out.", "Codex CLI comma
 - **Subagent wakes:** when a child ends after its parent's turn, T3 asks for a continuation
   turn on the parent (`continuationRequests`, "Subagent completed: …"); this crate does not,
   as for background commands. Subagent stop (`stopTask`) is not built.
+- **Status probe:** T3's `checkCodexProviderStatus` starts the instance's `app-server` and
+  asks `initialize`, `account/read`, `skills/list`, the model list, `config/read` and
+  `account/rateLimits/read` (and `codex --version` on failure). Not built: the entry is a
+  fixed `ready` one with the models from `models_cache.json`, so a broken binary, a signed-out
+  account or a wrong home shows only at the first turn.
 - **Text generation:** T3's managed runtime (`resolveRuntime`), custom models
   (`customModels`) and the catalog's `isDefault`/`isLegacy` flags in the model fallback; the
   fallback to another provider when Codex is unusable (in the server's title code).
@@ -193,7 +209,12 @@ CONN_MONOREPO=/path/to/conn node tools/capture-ts-events.mjs   # regenerate test
   `makeCodexTextGeneration().generateThreadTitle` and our `generate_text` (with T3's prompt
   and schema): the `mcp list` and `exec` argv (temp files compared by their shape),
   environment, folder, stdin bytes, schema file and answer must be equal. Known differences
-  are listed in it with their reason.
+  are listed in it with their reason. `instanceSettings`, `instanceLaunchEnv` and
+  `titleInstance` give both sides the same `providerInstances` entry (launch args; an
+  environment with a plain, a sensitive and an originator value; `T3CODE_CODEX_LAUNCH_ARGS`
+  from the instance; a title with an instance environment). A `~` binary path is not run
+  there: the check keeps the shell's `HOME`, so it would point into the real home; a unit
+  test and the server's `instances-flow.mjs` (`homePath` with `~`) cover the expansion.
   Rerun on every Codex CLI or pinned-commit change.
 - `src/replay_tests.rs` replays 21 of the TS test kit's 25 Codex recordings (all that do not
   need rollback, fork or a transformed transcript; the six subagent recordings included) and compares every event with

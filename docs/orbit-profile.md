@@ -133,6 +133,17 @@ needs four things the Conn Server lacks [code, `R/crates/conn-server/src/cli.rs:
 
 Section 4c proposes to replace the CLI path rather than copy it.
 
+**Closed on 2026-11-14: provider instance settings.** The server ignored `providerInstances`
+for Claude and Codex, so the binary, home, launch arguments, environment and `enabled` that a
+container's settings name did not apply, and the task copies' `claudeLow` … `claudeMax`
+instances did not exist. They are built now, from the settings written before the first
+start and again on each change, as the T3 server builds them [code,
+`R/crates/conn-server/src/instances.rs`; proof, `R/crates/conn-server/tools/instances-flow.mjs`
+and the Claude and Codex conformance checks]. Left: the Codex status probe (a broken Codex
+shows at the first turn, not in the provider list), `customModels`, Claude's
+`autoCompactWindow` [docs, `R/docs/status.md`, "Provider instance settings for Claude and
+Codex"].
+
 **The brief's facts, checked against Orbit's code and docs:**
 
 | Fact in the brief | Finding |
@@ -142,7 +153,7 @@ Section 4c proposes to replace the CLI path rather than copy it.
 | About 1 s per `t3` CLI call | Not found in the docs. |
 | About 6 s for 48 servers | **Contradicted.** 43 servers take 150 to 190 ms per pass, and 200 servers take 0.6 s (`conn.md:371-376`). The poll is off by default. |
 | A sleeping container frees 408 to 496 MiB | Not found. A frozen clone holds about 13 MiB of RAM and about 340 MiB of swap (`development-containers.md:1263`). |
-| Five `providerInstances` | Only for task copies. Every clone gets `{"linkedEnvironmentsEnabled": true}` (`InstanceContainer.php:461-485`). |
+| Five `providerInstances` | Only for task copies. Every clone gets `{"linkedEnvironmentsEnabled": true}` (`InstanceContainer.php:461-485`). The Conn Server builds them since 2026-11-14. |
 | `401 invalid_mcp_credential` | Correct for T3: `M/apps/server/src/mcp/McpHttpServer.ts:132,288`. Orbit's docs only say "refused". |
 | Everything else (gate file, `model.env`, state path, label, ports, hourly renewal, two users, the AI router, the cloned files) | Confirmed in code. |
 
@@ -245,8 +256,8 @@ in section 11 agree: an item the list hides or removes is X or U.
 
 | Item | Served | C | H | Evidence |
 | --- | --- | --- | --- | --- |
-| Claude (Agent SDK through the SDK host) | yes | N | N | Every run Orbit has seen uses Claude [brief] |
-| Codex (`codex app-server`) | yes | U | N | Orbit writes `~/.codex/config.toml` for the router [code, `InstanceContainer.php:422-424`]. No live Codex turn has run here [docs, `R/docs/status.md`]. |
+| Claude (Agent SDK through the SDK host) | yes, every `providerInstances` instance | N | N | Every run Orbit has seen uses Claude [brief]; task copies use five instances, `claudeLow` to `claudeMax` |
+| Codex (`codex app-server`) | yes, every instance; no status probe | U | N | Orbit writes `~/.codex/config.toml` for the router [code, `InstanceContainer.php:422-424`]. No live Codex turn has run here [docs, `R/docs/status.md`]. |
 | Grok (ACP) | yes, off by default | U | U | See section 8 |
 | Kiro, fx, Antigravity, ACP registry (offline part) | no | U | U | Section 8 |
 | Cursor, OpenCode, Muse (SDK) | no | X | U | Not used by Orbit |

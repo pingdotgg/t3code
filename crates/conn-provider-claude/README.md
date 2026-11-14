@@ -12,7 +12,8 @@ in the Conn monorepo at the pinned commit.
 | Module             | Holds                                                                                   |
 | ------------------ | --------------------------------------------------------------------------------------- |
 | `helper`           | The `claude` driver of the SDK host (`conn_provider_support::sdk_host`), with T3's key order |
-| `launch`           | The `query()` option object, its environment, the runtime policy → permission mode       |
+| `launch`           | The `query()` option object, its environment, the runtime policy → permission mode; `ClaudeConfig::with_instance` |
+| `launch_args`      | The instance's `launchArgs` as `makeClaudeQueryOptions` applies them, with an order-keeping JSON value |
 | `catalog`          | `compileClaudeModelSelection` over T3's bundled catalog (`model_catalog.json`, generated), and the models with their options that clients are offered |
 | `ordered`          | JSON with T3's key order for what the SDK writes to the CLI verbatim                    |
 | `protocol`         | Typed SDK messages; unknown kinds and changed shapes fall back to raw JSON              |
@@ -32,6 +33,25 @@ The SDK yields the CLI's own stream messages, so the mapper is unchanged from th
 SDK callbacks (`canUseTool`, `onElicitation`, `onUserDialog`) become the control requests it
 reads, and its replies become the callback results (`session::callback_request`,
 `callback_answer`). The eight replays still pass.
+
+## Instance settings
+
+`ClaudeProvider::for_instance` builds the provider for one `providerInstances` entry, as the
+T3 server's Claude driver and `createClaudeAdapterV2` build theirs; the server
+(`conn-server/src/instances.rs`) builds one per instance and a new one when the entry changes.
+
+| Field | Here |
+| --- | --- |
+| `binaryPath` | trimmed, `~` expanded (`expandHomePath`), `claude` when empty: `pathToClaudeCodeExecutable`, the `--version` probe, titles |
+| `homePath` | trimmed, `~` expanded, made absolute: `CLAUDE_CONFIG_DIR` everywhere, over an instance variable of that name |
+| `environment` | each entry with a value, `~` expanded only in `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GROK_HOME`; a sensitive value is the real one from the secret store. `Debug` prints names only |
+| `launchArgs` | per query (`launch_args`): `--add-dir` values after the cwd and attachments; `--permission-mode`, then `--dangerously-skip-permissions`, over the policy's mode; `--append-system-prompt-file` text (one trailing newline trimmed) and `--append-system-prompt` text after T3's append text; `--settings` (inline JSON or a file, comments and trailing commas allowed) beneath T3's settings keys, in its own key order; every other flag to `extraArgs` in T3's order, then `thinking-display`. A missing value or an unreadable file fails the start. Probes and titles do not use them, as in T3 |
+| `enabled` | T3's rule; a disabled instance gets T3's disabled entry, also with the probe off, and the engine refuses its turns |
+| `displayName`, `accentColor` | on the entry, pending and probed (`withInstanceIdentity`) |
+| `customModels`, `autoCompactWindow` | not read yet |
+
+Proof: the conformance scenarios `instance_*` and the probe scenarios `instance-settings` and
+`title-instance` (below); `instances-flow.mjs` in `conn-server` for a turn through the server.
 
 ## Launch policy
 
@@ -129,8 +149,11 @@ Before the first probe the entry is T3's pending one. `CONN_CLAUDE_STATUS_PROBE=
 probe off; every check that starts the server sets it, so no check runs this machine's
 `claude`. Not ported: reset credits (Anthropic's API), the organization id (Claude's account
 file), the version advisory (a registry lookup), skills, custom models, applying effort caps.
-Proof: `tools/probe-conformance/run.mjs`, 10 status scenarios against T3's own function (and
-4 title scenarios against T3's `generateThreadTitle`). It runs T3's side with the sealed
+Proof: `tools/probe-conformance/run.mjs`, 11 status scenarios against T3's own function (and
+5 title scenarios against T3's `generateThreadTitle`); `instance-settings` and
+`title-instance` run an instance with a `~` binary path, a sensitive variable and
+`CLAUDE_CONFIG_DIR` with `~`, T3's side decoding the entry with its own
+`ProviderInstanceConfig`. It runs T3's side with the sealed
 environment (`tools/sealed-env.mjs`, `sealedNodeEnv`): a throwaway HOME and no `ANTHROPIC_*`,
 `CLAUDE_*` or other variable of the shell.
 
@@ -227,7 +250,7 @@ Normalized in the comparison:
   keeps an icon URL as sent, where T3 normalizes it with `new URL`.
 - **Attachments:** PDFs stay path-only. No skill splitting of slash commands. The 28 MiB
   inline budget lives in memory and starts over after a restart.
-- **Not passed:** `launchArgs` and their `--settings`/append-file text, `autoCompactWindow`,
+- **Not passed:** `autoCompactWindow`, `customModels`,
   `ENABLE_TOOL_SEARCH`, the delegated child's prompt cache TTL, prompt suggestions, the
   device-tool text and hook (no device tools), custom models.
 - **Process:** no Linux `systemd-run` agent scope (T3's `AgentScope`; macOS and containers

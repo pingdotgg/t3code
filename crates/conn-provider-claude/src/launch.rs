@@ -672,6 +672,30 @@ pub fn expand_home(path: &str) -> PathBuf {
 mod tests {
     use super::*;
 
+    #[test]
+    fn an_instance_entry_shapes_the_config() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let entry = json!({
+            "driver": "claudeAgent",
+            "config": {"binaryPath": " ~/bin/claude ", "homePath": "~/claude-low", "launchArgs": " --verbose "},
+            "environment": [{"name": "SECRET", "value": "s3cret", "sensitive": true}],
+        });
+        let config = ClaudeConfig::default().with_instance(Some(&entry));
+        assert_eq!(config.binary, PathBuf::from(format!("{home}/bin/claude")));
+        assert_eq!(
+            config.home_path,
+            Some(PathBuf::from(format!("{home}/claude-low")))
+        );
+        // T3 does not trim Claude's launch arguments.
+        assert_eq!(config.launch_args, " --verbose ");
+        assert_eq!(config.instance_env.get("SECRET"), Some("s3cret"));
+        assert!(!format!("{config:?}").contains("s3cret"));
+        assert_eq!(
+            ClaudeConfig::default().with_instance(None).binary,
+            PathBuf::from("claude")
+        );
+    }
+
     fn policy(runtime: &str) -> QueryPolicy {
         query_policy(
             &PolicyInput {

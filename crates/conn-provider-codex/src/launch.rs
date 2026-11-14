@@ -626,6 +626,36 @@ fn is_amount(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_instance_entry_shapes_the_launch() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let entry = json!({
+            "driver": "codex",
+            "config": {"binaryPath": "  ~/bin/codex ", "homePath": "~/codex-work/./x/..", "launchArgs": " --enable a "},
+            "environment": [
+                {"name": "SECRET", "value": "s3cret", "sensitive": true},
+                {"name": "T3CODE_CODEX_LAUNCH_ARGS", "value": "--enable b"},
+            ],
+        });
+        let config = CodexConfig::default().with_instance(Some(&entry));
+        assert_eq!(config.binary, PathBuf::from(format!("{home}/bin/codex")));
+        assert_eq!(
+            config.home_path,
+            Some(PathBuf::from(format!("{home}/codex-work")))
+        );
+        assert_eq!(config.launch_args, "--enable a");
+        assert_eq!(config.launch_args_env().as_deref(), Some("--enable b"));
+        assert!(!format!("{config:?}").contains("s3cret"));
+        // No homePath: the instance's CODEX_HOME, expanded.
+        let entry = json!({"environment": [{"name": "CODEX_HOME", "value": "~/ch"}]});
+        let config = CodexConfig::default().with_instance(Some(&entry));
+        assert_eq!(config.home_path, Some(PathBuf::from(format!("{home}/ch"))));
+        assert_eq!(
+            CodexConfig::default().with_instance(None).binary,
+            PathBuf::from("codex")
+        );
+    }
     use conn_contract::from_json;
 
     /// A `PATH` search skips a file without an execute bit, as the shell does (review
