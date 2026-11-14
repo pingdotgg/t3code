@@ -991,9 +991,21 @@ every check runs with:
   `GITHUB_TOKEN`, `GITLAB_TOKEN`, `T3CODE_HOME` and `CONN_CANARY`;
 - a stand-in `SHELL` (runs the `-c` script with `/bin/sh`, reads no profile, keeps no history),
   and a `TMPDIR` inside the canary's folder, which a watcher scans every 0.5 s.
+- **real CLIs:** marker executables named `claude`, `codex`, `grok`, `gh`, `glab`, `fj`, `tea`,
+  `az` and `cafe` first on `PATH`; each run is logged and fails;
+- **outside network:** every Node process loads a hook (`NODE_OPTIONS=--import`) that refuses
+  and logs a socket or DNS lookup outside loopback (`fetch`, `http`, `https`, `tls`, `net`);
+  our server refuses and logs one when `CONN_NETWORK_LOG` is set (`conn_source_control::http`,
+  the one place it dials outside; unset in use). This works without root on macOS and Linux,
+  unlike `sandbox-exec`. Cargo and cargo-deny reach crates.io and the RustSec database on
+  purpose and are not covered; nor is any other program (git, a CLI a tool puts on its own
+  `PATH`) that opens a socket itself;
+- after each check, `mark` names that check beside every read, CLI run and outside call.
 
-The last check (`canary`) first runs a self-test (each kind of breach must fail `verify`, and
-each lint rule must fire on a sample), then fails when: a readable decoy file's access time
+The last check (`canary`) first runs a self-test (each kind of breach, a marker CLI run and an
+outside `fetch` and socket from Node must fail `verify`, a loopback socket must not, and each
+lint rule must fire on a sample), then fails when: a marker CLI ran; a Node process or our
+server tried a host outside loopback; a readable decoy file's access time
 moved; the decoy home differs from its listing (type, mode, size, SHA-256); the tripwire ran;
 a marker appears in any check's output or in a file under TMPDIR or the check's scratch folder;
 or the lint finds `os.userInfo().homedir`, `getpwuid`, a `home_dir` lookup, `env -i` without
@@ -1009,7 +1021,7 @@ passwd lookup in a program we do not own (T3's `hydratePosixHome`, `os-jank.ts:9
 `os.userInfo().homedir` only when `HOME` is empty; every sealed environment sets `HOME`).
 
 **How each check finds a home, and what it caught** (first run: 36 checks green, canary 1,875
-findings; now 0):
+findings; after the marker CLIs and the network hook: 385 more; now 0 with 40 checks):
 
 | Check | How it finds a home | Sealed before | Found and done |
 | --- | --- | --- | --- |
@@ -1026,7 +1038,17 @@ findings; now 0):
 | claude catalog, claude conformance, claude t3-replay | `env -i` with a throwaway `HOME` | yes | cargo builds read `~/.gitconfig`; sealed |
 | claude probe conformance, t3 fixture replay | `sealedNodeEnv`, a known base environment | yes | cargo build read `~/.gitconfig`; `gitEnv()` |
 | orbit-flow (fake provider) | our server with the whole environment | no | `sealedEnv` without a model; the live Haiku run keeps the shell's environment |
+| replay, effect-client (found once the marker CLIs were in) | our server's source control discovery runs each host CLI found on `PATH` | HOME sealed, `PATH` not | the server ran `gh --version`, `gh auth status --json hosts`, `gh auth token --hostname github.com`, `glab`, `az account show`, `fj`, `tea`, `cafe`: the real ones from Homebrew, with the sealed HOME (no login found). `sealedEnv` now gives a `PATH` without provider, host and VCS CLIs (`sealedPath`: a folder holding one becomes links to the rest) |
+| cargo test (marker CLIs, network) | `StubDir::path_env` puts the inherited `PATH` after the stubs | no | `github_reads_and_creates_repositories_over_rest` ran this machine's `gh auth token` (now a stub); the link-local tests stay refused before any dial |
+| thread-cli-diff, model-manifest-diff (from `main`) | own sealed env; git and the example inherited | partly | git read `~/.gitconfig`; sealed |
+| parity, again | T3 server `PATH` | done above | it now fails when a provider or host CLI is on that `PATH` without `--model` |
 | Not in check.sh: capture-ts-events (Codex, ACP), memory-flow, test-contract-change, bump-report, churn | the same patterns | no | sealed the same way; `fixtures/recorder/record.mjs` keeps the real HOME (live turns, marked `canary: allow`) |
+
+Cargo reads `~/.gitconfig` through `HOME` and ignores `GIT_CONFIG_GLOBAL`, so `check.sh` runs
+cargo with a throwaway HOME and a target runner hands the decoy HOME back to the test and
+example binaries. The `ignore` crate behind `conn-files`' walk parsed `~/.gitconfig` itself
+in every listing and search; the walk now skips it when `GIT_CONFIG_GLOBAL` is set, as git
+does (`conn-files/src/entries.rs`).
 
 Our Rust code finds a home only through `HOME` (`home.rs`, the providers' `expand_home`,
 `conn-files`, `conn-terminal`); it has no passwd lookup, and the lint keeps it so. Children

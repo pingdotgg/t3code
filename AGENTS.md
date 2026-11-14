@@ -83,9 +83,12 @@ shutdown. Follow it byte for byte where a provider can see it.
   rule**: `tools/canary.mjs`, the last check in `tools/check.sh`. Every check runs with a
   decoy HOME, marker variables, a stand-in `SHELL` and a watched `TMPDIR`. The canary fails
   when a decoy file was read or the decoy home changed. It also fails when a marker reached any
-  output or file, or when our code has a passwd home lookup. A process that a tool starts gets
-  `sealedEnv`, `sealedNodeEnv` or `sealedCargoEnv` from `tools/sealed-env.mjs`, and a `git`
-  run gets `gitEnv`. Never pass the shell's environment, `HOME` or `SHELL` on, and never use
+  output or file, or when our code has a passwd home lookup. It also fails when a check ran a
+  provider or host CLI (marker executables first on `PATH`) or connected outside loopback (a
+  Node hook, and `CONN_NETWORK_LOG` in our server). A process that a tool starts gets
+  `sealedEnv` (its `PATH` holds no provider or host CLI), `sealedNodeEnv` or `sealedCargoEnv`
+  from `tools/sealed-env.mjs`. A `git` run gets `gitEnv`, and a `cargo build` gets
+  `cargoBuildEnv`. Never pass the shell's environment, `HOME` or `SHELL` on, and never use
   `env -i` without `HOME=`.
 - **Model calls.** `tools/check.sh` calls no model, and a new check must not call one by
   default. A live proof uses the cheapest model (Claude Haiku), few turns, behind an explicit

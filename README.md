@@ -103,7 +103,7 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 | Model manifest diff | `node crates/conn-server/tools/model-manifest-diff.mjs target/release/examples/model_manifest_cache` | `model-manifest.json` as this server writes it equals T3's `encodeManifestCache`, byte for byte |
 | Orbit flow          | `node crates/conn-server/tools/orbit-flow.mjs target/release/examples/replay_server`                                            | Orbit's container flow: start, project add, session issue, launch over `/mcp`, revoke, clean stop; then its task-turn path: the model check, `t3 thread` start, list, show, send, a turn that asks, and `t3_copy_rpc.mjs`'s read and interrupt   |
 | Instances flow      | `node crates/conn-server/tools/instances-flow.mjs target/release/conn-server` (skipped without `npm ci` in `helpers/sdk-host`)  | Claude and Codex instances from `providerInstances` written before start: a turn on each starts its stub with its settings; a change and a removal through `server.updateSettings` apply to the next session; disabled instances refused and listed disabled |
-| Canary (last)       | `node tools/canary.mjs verify` (set up by `tools/check.sh` before the first check) | No check read a decoy file of the home, changed the home, or let a marker variable or file reach any output or written file; no passwd home lookup in our code |
+| Canary (last)       | `node tools/canary.mjs verify` (set up by `tools/check.sh` before the first check) | No check read a decoy file of the home, changed the home, let a marker variable or file reach any output or written file, ran a provider or host CLI, or connected outside loopback; no passwd home lookup in our code |
 
 **The canary.** `tools/check.sh` runs every check with a decoy HOME (marker files where
 `~/.claude`, `~/.codex`, `~/.grok`, `~/.config/gh`, `~/.gitconfig`, `~/.netrc` and `~/.t3` would
@@ -113,7 +113,11 @@ be; the credential files mode 000), marker values in `ANTHROPIC_*`, `OPENAI_API_
 and rustup keep their real folders (`CARGO_HOME`, `RUSTUP_HOME`), and cargo runs without the
 global git configuration. Reads are seen by access time (a self-test fails the check on a
 `noatime` file system), opens of a mode-000 file only when the error names the decoy path, and
-a stat or a file that lived less than half a second without printing a marker not at all.
+a stat or a file that lived less than half a second without printing a marker not at all. Marker
+executables named after the provider and host CLIs (`claude`, `codex`, `grok`, `gh`, `glab`,
+`fj`, `tea`, `az`, `cafe`) go first on `PATH` and fail the canary when run; a Node hook
+(`NODE_OPTIONS=--import`) and `CONN_NETWORK_LOG` in our server refuse and record any
+connection outside loopback. `mark` names the check behind each record.
 
 `replay_server` is `conn-server` with the engine's scripted fake provider, so these checks call
 no model. Each server they start gets a temp state folder; `parity.mjs` gives the T3 server a
