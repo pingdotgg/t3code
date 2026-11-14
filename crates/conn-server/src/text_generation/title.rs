@@ -31,11 +31,22 @@ const INITIAL_RETRY_DELAYS: [Duration; 2] = [Duration::from_secs(2), Duration::f
 #[derive(Debug)]
 pub struct Titles {
     generators: Arc<TextGenerators>,
+    retry_delays: Vec<Duration>,
 }
 
 impl Titles {
     pub fn new(generators: Arc<TextGenerators>) -> Self {
-        Self { generators }
+        Self {
+            generators,
+            retry_delays: INITIAL_RETRY_DELAYS.to_vec(),
+        }
+    }
+
+    /// Other waits between the tries of a first title, for tests.
+    #[cfg(test)]
+    pub(crate) fn with_retry_delays(mut self, delays: &[Duration]) -> Self {
+        self.retry_delays = delays.to_vec();
+        self
     }
 }
 
@@ -203,7 +214,7 @@ impl Titles {
         let input = prompt_input(&request, title_instructions(&settings, project_id))?;
         let prompt = prompts::thread_title_prompt(&input);
         let initial = matches!(request.kind, TitleKind::Initial { .. });
-        let delays: &[Duration] = if initial { &INITIAL_RETRY_DELAYS } else { &[] };
+        let delays: &[Duration] = if initial { &self.retry_delays } else { &[] };
         let mut delays = delays.iter();
         loop {
             match self.attempt(&instance, &model, &prompt).await {
@@ -221,5 +232,18 @@ impl Titles {
 impl TitleGenerator for Titles {
     fn generate(&self, request: TitleRequest) -> BoxFuture<'_, Result<String, String>> {
         Box::pin(self.title(request))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_first_title_waits_as_t3_between_tries() {
+        assert_eq!(
+            INITIAL_RETRY_DELAYS,
+            [Duration::from_secs(2), Duration::from_secs(4)]
+        );
     }
 }

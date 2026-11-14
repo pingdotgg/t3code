@@ -11,7 +11,7 @@ workspace README describes the trait's first methods and the wire.
 | `Engine::methods`, `call`, `open_stream`      | Other unary and stream methods, by RPC tag, with contract JSON      |
 | `EngineConfig::home`                          | `scratch/` and `projects/` folders; defaults to the database folder |
 | `EngineConfig::idle_session`                  | Closes a provider session after 10 idle minutes (its process too)   |
-| `TitleGenerator`, `TitleRequest`, `TitleKind` | `generateTitle` and `regenerateTitle` through a small model         |
+| `TitleGenerator`, `TitleRequest`, `TitleKind`, `TitleMessage` | `generateTitle` and `regenerateTitle`; the server wires `text_generation::title::Titles` |
 | `TurnObserver`, `TurnPoint`                   | Turn start and end (`/mcp` touch, VCS refresh)                      |
 | `EngineConfig::checkpoints`                   | Git checkpoints per turn, diffs, rollback (`src/checkpoint.rs`)     |
 | `EngineConfig::clock` (`Clock`, `SystemClock`, `ManualClock`) | Every stored timestamp and the idle release; a replay runs on a `ManualClock` at the epoch, as T3's `TestClock` |

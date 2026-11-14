@@ -502,6 +502,8 @@ fn the_debug_output_never_holds_a_key() {
 }
 
 mod titles {
+    use std::time::Duration;
+
     use super::*;
     use crate::text_generation::title::{AGENT_TITLES_NOT_SERVED, Titles, title_selection};
     use conn_engine::{TitleKind, TitleMessage, TitleRequest};
@@ -581,15 +583,17 @@ mod titles {
         );
     }
 
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    /// T3 waits 2 s, then 4 s (`Schedule.exponential("2 seconds")`); the test waits 1 ms on
+    /// the real clock, because a paused clock moves on while loopback I/O is pending.
+    #[tokio::test(flavor = "current_thread")]
     async fn a_first_title_tries_three_times_and_a_regenerate_once() {
         let stub = Stub::start(|_| (500, "{}".into())).await;
         let f = fixture(
             "retry",
             settings_for(&stub.base, json!({"instanceId": ID, "model": "m"})),
         );
-        let titles = Titles::new(Arc::new(f.generators));
-        let started = tokio::time::Instant::now();
+        let titles = Titles::new(Arc::new(f.generators))
+            .with_retry_delays(&[Duration::from_millis(1), Duration::from_millis(1)]);
         let error = titles.title(initial("x")).await.unwrap_err();
         assert_eq!(
             error,
@@ -599,10 +603,6 @@ mod titles {
             )
         );
         assert_eq!(stub.taken().len(), 3, "two retries");
-        assert!(
-            started.elapsed() >= std::time::Duration::from_secs(6),
-            "2 s, then 4 s"
-        );
         let regenerate = TitleRequest {
             kind: TitleKind::Regenerate {
                 previous_title: "Old".into(),

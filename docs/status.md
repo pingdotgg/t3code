@@ -50,11 +50,11 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 30 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
+`main` is in a working state. `tools/check.sh` passes 31 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14; 31 since the text generation check).
 
 | Part | State |
 | --- | --- |
-| RPC methods | 98 of 236 served; 98 have a run that the real client's decoders accept |
+| RPC methods | 99 of 236 served; 99 have a run that the real client's decoders accept |
 | Engine commands | 43 of 56 |
 | T3 testkit fixtures through this engine | 33 of 159 variants pass T3's own assertions (Claude 17 of 34, Codex 16 of 25; the other 100 are providers this server does not offer) |
 | HTTP routes | 13 of 57 |
@@ -162,10 +162,29 @@ that list.
 `schedule_task`, `list_scheduled_tasks`, `delete_scheduled_task`, `run_scheduled_task_now`
 (`crates/conn-features`). One timer sleeps until the next run; no poll. Proven by 31 ported
 unit tests on a paused clock, the real client's decoders, and `parity.mjs` (no differences).
-Not built: webhook tasks (refused on save). `fresh_session` tasks are served since part 2 of the engine work (below). Annotations
+`runNow` stops with its caller and records a failure, as T3 (2026-11-14). Not built: webhook
+tasks (refused on save; `crates/conn-features/README.md` maps what is left). `fresh_session` tasks are served since part 2 of the engine work (below). Annotations
 (`annotations.*` and the four `annotations_*` tools) on the T3 server's own files, also with
 parity. `docs/conn-only-areas.md`
 maps the Conn-only areas and what each needs.
+
+## Text generators and thread titles (2026-11-14)
+
+Nick decided to serve text generators as the T3 server does. `server.listTextGeneratorModels`
+is served, so the client's "Add text generator" wizard can save; saving, changing and removing
+a generator was already served by `server.updateSettings` (3 more `settings-diff` cases).
+Thread titles are generated through a text generator: T3's prompt (generated from
+`buildThreadTitlePrompt`), its reply rules, three tries for a first title. When the title model
+is an agent provider (Codex by default, or Claude), the T3 server asks that provider; this
+server does not call it, and the thread keeps its seed title. The key stays in `settings.json`
+with the other settings secrets, or in the T3 server's secret store when a T3 server moved it.
+Proven by 23 unit tests on a loopback stub, the client's decoders, and `textgen-diff.mjs`
+(a new check: T3's own code and ours against one stub, 102 comparisons). Map, what is sent and
+when, and the differences: `docs/server-area.md`, "Text generators". Commit messages, pull
+request text and branch names need parts that are not built.
+
+The generator `gen-contract.mjs` now writes a redacting `Debug` for every secret field of the
+contract (17 types, among them the webhook signature and the secret answer), with a test.
 
 ## Repositories and the login-shell PATH (2026-11-14)
 
@@ -356,7 +375,8 @@ times), the remaining 13 commands.
    skip a loaded thread); bounded thread snapshots and the `/history`, `/bounded` and
    `/transcript` routes (a full snapshot of a long thread peaks at about 13 bytes per byte of
    JSON); a workspace strategy for delegated tasks; search details (no NFC normalization, the
-   old snippet rule); no title generation, so a thread keeps its first message as title. A
+   old snippet rule); titles only through a text generator (an agent title model keeps the seed
+   title; no fork source or linked pull request context in the prompt). A
    provider turn shows as running only after about 3.5 s on a cold Claude start: the cause is
    in the Claude provider ("Engine, part 2"). `freshContext` is served.
 6. **Features.** Pull requests and source control: `crates/conn-source-control/README.md` maps
@@ -376,9 +396,7 @@ times), the remaining 13 commands.
    `limits-diff` check); `git` children are reaped (a test). Left:
    T3's search ranking (`scoreThreadSearch`, `rankMessageMatches`) for `t3_thread_search` and
    `orchestration.searchThreads`; `@` file search ranks with nucleo, not T3's fff (`@hello`
-   finds `hello.ts`, T3 also `helper.ts`); `server.listTextGeneratorModels`, without which the
-   client's "Add text generator" wizard cannot save (it calls a model API: Nick's decision);
-   the Claude model list is not filtered by the CLI's version (needs a CLI version probe in
+   finds `hello.ts`, T3 also `helper.ts`); the Claude model list is not filtered by the CLI's version (needs a CLI version probe in
    the provider); the Linux systemd scope for provider processes;
    a cap on the blocking pool or one store thread (measure first: each store call takes its
    own blocking thread).

@@ -9,22 +9,22 @@ lives, the scope, and what the method needs from outside. Paths are in the Conn 
 
 ## In short
 
-42 `server.*` methods. 11 are served. 11 are the ACP registry's, and another worker owns them.
-20 are not served:
+42 `server.*` methods. 12 are served. 11 are the ACP registry's, and another worker owns them.
+19 are not served:
 
 | Needs | Count | Methods |
 | --- | --- | --- |
 | Nothing from outside, but a large port into other areas | 5 | `getStorageCleanupReport`, `runStorageCleanup` (engine, VCS, terminals); `getDatabaseStorage`, `reclaimDatabaseSpace` (engine store, an offline repair command, a supervisor); `getTraceDiagnostics` (a trace writer) |
 | Our own resource sampler | 3 | `getProcessResourceHistory`, `getResourceTelemetryHistory`, `retryResourceTelemetry` |
 | Provider files (local reads) and an outside price table | 2 | `getUsageSummary`, `refreshUsageRates` |
-| An outside service | 4 | `listTextGeneratorModels` (a model API with the user's key), `checkOtlpEndpoint` (a user URL), `getNpmRelease` (npm), `prepareTriage` (GitHub through git) |
+| An outside service | 3 | `checkOtlpEndpoint` (a user URL), `getNpmRelease` (npm), `prepareTriage` (GitHub through git) |
 | A secret provider that reads secrets | 1 | `checkSecretSource` |
 | Changes software on the machine, or a supervisor | 5 | `updateProvider`, `updateServer`, `updateServerWithProgress`, `commitDesktopUpdate` (desktop), `restart` |
 
 Nothing in this area was built without an outside service and without another area's code.
 The small leftovers were done instead (see the end).
 
-## Served (11)
+## Served (12)
 
 | Method | Scope | Here | State |
 | --- | --- | --- | --- |
@@ -37,8 +37,9 @@ The small leftovers were done instead (see the end).
 | `server.getProcessDiagnostics`, `server.signalProcess` | diagnostics:read; environment:maintain | `diagnostics.rs` | none |
 | `server.reportClientActivity` | orchestration:read | `methods/server.rs`: accepted, no background policy | none |
 | `server.discoverSourceControl` | orchestration:read | another worker (`conn-source-control`) | |
+| `server.listTextGeneratorModels` | settings:write | `methods/text_generation.rs`, `text_generation/` (below) | a model list per generator in memory (at most 32) |
 
-## Not served (20)
+## Not served (19)
 
 ### Local state, large ports
 
@@ -91,12 +92,6 @@ The small leftovers were done instead (see the end).
 
 ### An outside service
 
-- **`server.listTextGeneratorModels`**: `S/textGeneration/TextGenerators.ts`. Calls
-  `GET <baseUrl>/models` of a user-configured model API (OpenAI-compatible or Anthropic) with
-  the API key from the `textGenerators` settings, and with `test` one tiny generation
-  ("Reply with OK."). Caches by the whole config. Refuses under a managed provider allow-list.
-  Scope settings:write. **Without it the client's "Add text generator" wizard cannot save.**
-  It cannot be served without an outside call and a key the server reads from settings.
 - **`server.checkOtlpEndpoint`**: `S/observability/OtlpEndpointCheck.ts`. POSTs an empty OTLP
   export to a URL the user gives (5 s, no redirects). Settings `otlpTracesUrl`,
   `otlpMetricsUrl`, `otlpLogsUrl`. This server exports no OTLP.
@@ -165,11 +160,8 @@ that list.
 
 ## Decisions for Nick
 
-1. **Text generator models** (`listTextGeneratorModels`). The method calls the user's own
-   model API with the key the user saved in settings. That is not a provider credential, but
-   it is an outside call with a secret. Options: serve it as the T3 server does (an HTTP
-   client, about the size of the one `conn-source-control` already has); or leave the wizard
-   broken on this server.
+1. **Text generator models** (`listTextGeneratorModels`): decided by Nick on 2026-11-14, serve
+   them as the T3 server does. Served (see "Text generators" below).
 2. **Usage figures** (`getUsageSummary`). Options: read provider transcripts locally and
    report prices `unavailable`; also fetch LiteLLM's price table as the T3 server does; or
    leave it.
@@ -205,3 +197,56 @@ that list.
   every bounded model. It needs the CLI's version from a probe of the executable the session
   will run, which is provider work (`conn-provider-claude`, `server_provider_entry` reports
   `version: null`). Not built here.
+
+## Text generators (served 2026-11-14)
+
+`server.listTextGeneratorModels` and thread titles through a text generator, in
+`crates/conn-server/src/text_generation/` (`S/textGeneration/TextGenerators.ts`,
+`textGeneratorDrivers.ts`, `packages/provider-core/src/server/textGeneration*.ts`).
+
+- **What the server sends.** OpenAI-compatible: `GET <baseUrl>/models` and
+  `POST <baseUrl>/chat/completions` with `{"model","messages":[{"role":"user","content"}]}`,
+  `authorization: Bearer <key>` only when a key is set. Anthropic: `GET <baseUrl>/models?limit=1000`
+  (`&after_id=<last_id>`, at most 10 pages) and `POST <baseUrl>/messages` with
+  `{"model","max_tokens":8192,"messages":[…]}`, `x-api-key` (also when empty) and
+  `anthropic-version: 2023-06-01`. JSON bodies carry `content-type: application/json`. One
+  connection per request, no redirect followed (a redirect reads as "Couldn't reach"), answers
+  read up to 8 MiB. Timeouts: 25 s for a model list with all its pages, 2 minutes for a reply.
+- **When.** The client lists models (wizard, pickers, refresh, test); a test also sends
+  "Reply with OK." to one model. A thread title is generated for the first message of a thread
+  launched with `generateTitle`, and on `regenerateTitle`, when the title model
+  (`textGenerationModelSelection`, or the project's override) is a text generator.
+- **Agent title models are not called.** The default title model is Codex, and Claude can be
+  chosen; the T3 server then asks that provider's CLI or SDK (`ClaudeTextGeneration.ts`,
+  `CodexTextGeneration.ts`, also Antigravity, Grok and OpenCode). This server does not: the
+  request fails without a call. A first title keeps its seed (a short `titleRegeneration`
+  shows), a regenerate reports "This server generates titles only with a text generator.
+  Choose one as the title model in Settings."
+- **The key.** In `settings.json` (`textGenerators.<id>.apiKey`, file 0600), where this server
+  keeps every settings secret (`settings.rs`). When settings hold the redaction marker, the
+  key is read from the T3 server's store, `<state>/secrets/text-generator-<b64url id>-<b64url
+  "apiKey">.bin`. A secret provider reference cannot be read (no secret provider here) and
+  fails with T3's `SettingsSecretUnresolvedError` text. Only the request header holds the
+  key (`conn_source_control::Secret`); no `Debug`, error or log shows it.
+- **Proofs.** 22 unit tests (the cases of `TextGenerators.test.ts` on a loopback stub, the
+  title retries on a paused clock, the project override); the client's decoders accept both
+  answers (`effect-client.mjs`); `textgen-diff.mjs` (a check step) runs T3's own code and
+  ours against one loopback stub: 102 comparisons of answers, request method, path, headers
+  and body bytes, prompts, thread contexts, sanitized titles and the model order.
+- **Differences left on purpose.** The transport headers Node's fetch adds (`accept`,
+  `accept-language`, `accept-encoding`, `sec-fetch-mode`, `user-agent: node`, keep-alive) are
+  not sent. No managed policy, so no allow-list refusal. The model cache is capped at 32
+  lists. Titles: no fork source section, no linked pull request or issue context
+  (`ThreadTitleLinks.ts`), assistant citation links are not turned into plain text, no
+  fallback to another model when the chosen one is unusable.
+
+### Other uses of text generation in the T3 server
+
+| Use | Source | Here |
+| --- | --- | --- |
+| Thread titles | `orchestration-v2/ThreadTitleRegenerationService.ts` | built, text generators only |
+| Commit messages | `git/GitManager.ts:2210` (`generateCommitMessage`) | not built: needs the `git.*` stacked actions (source control worker) |
+| Pull request title and body | `git/GitManager.ts:2438` (`generatePrContent`) | not built: needs pull request creation |
+| Worktree branch names | `orchestration-v2/ThreadLaunchService.ts:475` (`generateBranchName`) | not built: needs prepared runs (worktree preparation is not built) |
+| Review guides | `pullRequest/PullRequestReviewGuideService.ts` | never through a text generator: T3 requires Codex or Claude |
+| Transcript cleanup | `speech/postProcessing.ts` | not built: no speech methods |
