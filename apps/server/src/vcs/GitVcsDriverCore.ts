@@ -1866,6 +1866,32 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.orElseSucceed(() => false),
     );
 
+  // A fetch reads only the remote's first url, while a push writes every push URL (pushurl, else
+  // each url). A fetched ref is evidence of the push destination only when those are the same one.
+  const pushesOnlyToFetchUrl = Effect.fn("GitVcsDriver.pushesOnlyToFetchUrl")(
+    function* (cwd: string, remoteName: string) {
+      const [fetchUrl, pushUrls] = yield* Effect.all([
+        runGitStdout("GitVcsDriver.pushesOnlyToFetchUrl.fetchUrl", cwd, [
+          "remote",
+          "get-url",
+          "--",
+          remoteName,
+        ]),
+        runGitStdout("GitVcsDriver.pushesOnlyToFetchUrl.pushUrls", cwd, [
+          "remote",
+          "get-url",
+          "--push",
+          "--all",
+          "--",
+          remoteName,
+        ]),
+      ]);
+      const [onlyPushUrl, ...otherPushUrls] = pushUrls.split("\n").filter((url) => url.length > 0);
+      return otherPushUrls.length === 0 && onlyPushUrl === fetchUrl.trim();
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
   const ensureRemote: GitVcsDriver.GitVcsDriver["Service"]["ensureRemote"] = Effect.fn(
     "ensureRemote",
   )(function* (input) {
@@ -2983,14 +3009,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const { pushRemote, branchName } = destination;
       const pushRemoteRef = `${pushRemote}/${branchName}`;
       // The local ref can be stale when the branch was deleted or rewound elsewhere.
-      const pushRemoteHasHead = yield* fetchRemoteTrackingBranch({
-        cwd,
-        remoteName: pushRemote,
-        remoteBranch: branchName,
-      }).pipe(
-        Effect.andThen(remoteRefContainsHead(cwd, pushRemoteRef)),
-        Effect.orElseSucceed(() => false),
-      );
+      const pushRemoteHasHead =
+        (yield* pushesOnlyToFetchUrl(cwd, pushRemote)) &&
+        (yield* fetchRemoteTrackingBranch({
+          cwd,
+          remoteName: pushRemote,
+          remoteBranch: branchName,
+        }).pipe(
+          Effect.andThen(remoteRefContainsHead(cwd, pushRemoteRef)),
+          Effect.orElseSucceed(() => false),
+        ));
       if (pushRemoteHasHead) {
         return {
           status: "skipped_up_to_date" as const,

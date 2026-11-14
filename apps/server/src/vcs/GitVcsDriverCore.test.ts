@@ -8206,30 +8206,52 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    it.effect("skips an up-to-date tracked branch the push remote already has", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const upstreamRemote = yield* makeTmpDir("git-upstream-remote-");
-        const forkRemote = yield* makeTmpDir("git-fork-remote-");
-        yield* initRepoWithCommit(cwd);
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* git(upstreamRemote, ["init", "--bare"]);
-        yield* git(forkRemote, ["init", "--bare"]);
-        yield* git(cwd, ["remote", "add", "upstream", upstreamRemote]);
-        yield* git(cwd, ["remote", "add", "fork", forkRemote]);
-        yield* git(cwd, ["checkout", "-b", "topic"]);
-        yield* git(cwd, ["push", "-u", "upstream", "topic"]);
-        yield* git(cwd, ["push", "fork", "topic"]);
-        yield* git(cwd, ["config", "remote.pushDefault", "fork"]);
+    it.effect.each([
+      { pushUrls: "the fetch URL", status: "skipped_up_to_date" },
+      { pushUrls: "another URL", status: "pushed" },
+      { pushUrls: "the fetch URL and another URL", status: "pushed" },
+    ] as const)(
+      "skips an up-to-date tracked branch only when every push URL has it ($pushUrls)",
+      ({ pushUrls, status }) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const upstreamRemote = yield* makeTmpDir("git-upstream-remote-");
+          const forkRemote = yield* makeTmpDir("git-fork-remote-");
+          const mirrorRemote = yield* makeTmpDir("git-mirror-remote-");
+          yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* git(upstreamRemote, ["init", "--bare"]);
+          yield* git(forkRemote, ["init", "--bare"]);
+          yield* git(mirrorRemote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "upstream", upstreamRemote]);
+          yield* git(cwd, ["remote", "add", "fork", forkRemote]);
+          yield* git(cwd, ["checkout", "-b", "topic"]);
+          yield* git(cwd, ["push", "-u", "upstream", "topic"]);
+          yield* git(cwd, ["push", "fork", "topic"]);
+          yield* git(cwd, ["config", "remote.pushDefault", "fork"]);
+          const pushDestinations = {
+            "the fetch URL": [forkRemote],
+            "another URL": [mirrorRemote],
+            "the fetch URL and another URL": [forkRemote, mirrorRemote],
+          }[pushUrls];
+          if (pushUrls !== "the fetch URL") {
+            for (const url of pushDestinations) {
+              yield* git(cwd, ["remote", "set-url", "--add", "--push", "fork", url]);
+            }
+          }
 
-        const pushed = yield* driver.pushCurrentBranch(cwd, null);
+          const pushed = yield* driver.pushCurrentBranch(cwd, null);
 
-        assert.deepInclude(pushed, {
-          status: "skipped_up_to_date",
-          upstreamBranch: "fork/topic",
-          pushRemote: "fork",
-        });
-      }),
+          assert.deepInclude(pushed, { status, upstreamBranch: "fork/topic", pushRemote: "fork" });
+          const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+          for (const url of pushDestinations) {
+            assert.equal(yield* git(url, ["--git-dir=.", "rev-parse", "refs/heads/topic"]), head);
+          }
+          assert.equal(
+            yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+            "upstream/topic",
+          );
+        }),
     );
 
     it.effect("skips an up-to-date branch whose differently named upstream is its base", () =>
