@@ -328,7 +328,7 @@ Third}`;
                   output_type: "error",
                   traceback: [
                     "\u001b[31mTraceback (most recent call last):\n\u001b[0m",
-                    "\u001b[32mCell In[3], line 1\n----> 1 fail()\n\u001b[0m\u001b[39m",
+                    "\u001b[38:2::255:0:0mCell In[3], line 1\n----> 1 fail()\n\u001b[0m\u001b[39m",
                     "\u001b[31mValueError: preview proof\u001b[0m",
                     "final entry",
                   ],
