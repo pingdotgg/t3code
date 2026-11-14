@@ -1364,9 +1364,32 @@ export const layer: Layer.Layer<
           }),
         );
         if (replacement === undefined) return undefined;
+        if (
+          replacement.nativeThreadRef?.nativeId != null &&
+          replacement.nativeThreadRef.driver === providerThread.nativeThreadRef?.driver &&
+          replacement.nativeThreadRef.nativeId === providerThread.nativeThreadRef.nativeId
+        ) {
+          // Never retried. Forget the load first, or the next turn would skip resume and start on
+          // the reused session without this error or the recovery handoff.
+          yield* providerSessions.forgetLoadedProviderThread({
+            providerSessionId: session.providerSessionId,
+            threadId: projection.thread.id,
+            providerThread: replacement,
+            modelSelection: run.modelSelection,
+            runtimePolicy: resolvedRuntimePolicy,
+          });
+          yield* settleStartFailure({
+            signal: "provider-thread-load-failure",
+            title: "Provider turn failed to start",
+            error: new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: session.driver,
+              detail:
+                "the provider returned its existing session when asked for a fresh one, so the conversation context could not be moved to a new session",
+            }),
+          });
+          return undefined;
+        }
         const { handoff, transferId, createdAt } = yield* recoveryHandoff;
-        effectiveHandoffs = withRecoveryHandoff(handoff);
-        resumeFellBack = true;
         const previousRun = projection.runs.findLast(
           (candidate) =>
             candidate.providerThreadId === providerThread.id &&
@@ -1411,7 +1434,11 @@ export const layer: Layer.Layer<
           strategy: handoff.strategy,
           summary: handoff.summaryText,
         };
-        yield* eventSink.write({
+        const replacementWrite = yield* eventSink.writeIfRunCurrent({
+          threadId: projection.thread.id,
+          runId: run.id,
+          activeAttemptId: attempt.id,
+          expectedStatus: "starting",
           events: [
             {
               id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
@@ -1450,6 +1477,9 @@ export const layer: Layer.Layer<
             },
           ],
         });
+        if (!replacementWrite.committed) return undefined;
+        effectiveHandoffs = withRecoveryHandoff(handoff);
+        resumeFellBack = true;
         recoveryTurnItem = handoffTurnItem;
         return replacement;
       });
