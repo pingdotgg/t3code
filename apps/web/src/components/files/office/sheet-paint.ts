@@ -104,17 +104,18 @@ export function paintCells(
     columns.forEach((column) => {
       if (row.end <= row.start || column.end <= column.start) return;
 
-      const left = Math.round(origin.x + column.start * ratio);
-      const top = Math.round(origin.y + row.start * ratio);
+      // A shifted bitmap's frozen pixels must never enter a scrolling pane.
+      const left = Math.round(
+        origin.x + Math.max(column.start, column.start + column.shift) * ratio,
+      );
+      const top = Math.round(origin.y + Math.max(row.start, row.start + row.shift) * ratio);
+      const right = Math.round(origin.x + column.end * ratio);
+      const bottom = Math.round(origin.y + row.end * ratio);
+      if (left >= right || top >= bottom) return;
 
       context.save();
       context.beginPath();
-      context.rect(
-        left,
-        top,
-        Math.round(origin.x + column.end * ratio) - left,
-        Math.round(origin.y + row.end * ratio) - top,
-      );
+      context.rect(left, top, right - left, bottom - top);
       context.clip();
       // Whole device pixels, so a frame at its own position lands exactly where the worker painted its cells.
       context.drawImage(

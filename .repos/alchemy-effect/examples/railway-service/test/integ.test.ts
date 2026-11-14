@@ -1,10 +1,10 @@
-import * as Alchemy from "alchemy";
-import * as Railway from "alchemy/Railway";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Railway from "@alchemy.run/railway";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
-import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/http/HttpClient";
+import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 import { SECRET_NAME } from "../src/shared.ts";
 
@@ -19,9 +19,7 @@ const fetchOk = (url: string) =>
     const client = yield* HttpClient.HttpClient;
     return yield* client.get(url).pipe(
       Effect.flatMap((res) =>
-        res.status === 200
-          ? Effect.succeed(res)
-          : Effect.fail(new Error(`HTTP ${res.status}`)),
+        res.status === 200 ? Effect.succeed(res) : Effect.fail(new Error(`HTTP ${res.status}`)),
       ),
       Effect.retry({
         schedule: Schedule.exponential("500 millis"),

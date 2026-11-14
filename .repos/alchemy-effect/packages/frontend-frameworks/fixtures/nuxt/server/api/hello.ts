@@ -11,9 +11,7 @@ export default defineEventHandler((event) => {
   return {
     marker: "api-route-ok",
     secret:
-      typeof cloudflare?.env?.FIXTURE_SECRET === "string"
-        ? cloudflare.env.FIXTURE_SECRET
-        : null,
+      typeof cloudflare?.env?.FIXTURE_SECRET === "string" ? cloudflare.env.FIXTURE_SECRET : null,
     hasWaitUntil: typeof cloudflare?.context?.waitUntil === "function",
   };
 });
