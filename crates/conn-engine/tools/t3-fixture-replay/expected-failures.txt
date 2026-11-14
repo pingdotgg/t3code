@@ -13,19 +13,7 @@
 */pi            provider: out of scope (AGENTS.md)
 
 # --- Grok (conn-provider-acp; its own replay shows these adapter events equal to T3's) ---
-# Engine: T3's buffered delivery (RunExecutionService, `isStreamingAssistantEvent`) never stores a
-# running assistant node or a streaming message or turn item; this engine writes them and deletes
-# them at the turn end, which leaves gaps in the stored sequence. Codex and Claude replays do not
-# interleave such rows with other events, Grok's do.
-simple/grok                          engine: buffered delivery stores streaming assistant rows (see above)
-multi_turn/grok                      engine: buffered delivery stores streaming assistant rows
-tool_call_read_only/grok             engine: buffered delivery stores streaming assistant rows
-tool_call_read_only_on_request/grok  engine: buffered delivery stores streaming assistant rows
-todo_list/grok                       engine: buffered delivery stores streaming assistant rows
-plan_questions/grok                  engine: buffered delivery stores streaming assistant rows
-grok_prompt_error/grok               engine: buffered delivery stores streaming assistant rows
-grok_auto_blocked_command/grok       engine: buffered delivery stores streaming assistant rows
-queued_turn/grok                     engine: buffered delivery stores streaming assistant rows; then clock: as queued_turn/codex
+queued_turn/grok                     clock: as queued_turn/codex
 grok_subagent_lineage/grok           provider: Grok subagents are not built (crates/conn-provider-acp README)
 grok_background_bash/grok            driver: finish_held_run (no replay gate in acp-stub.mjs); provider: Grok background tasks are not built
 grok_background_bash_fast_wake/grok  driver: finish_held_run; provider: Grok background tasks are not built

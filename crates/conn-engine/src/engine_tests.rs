@@ -47,7 +47,6 @@ fn open_with(db: &TempDb, provider: FakeProvider) -> (SqliteEngine, Arc<FakeProv
         workspace_root: ROOT.into(),
     }];
     config.providers = vec![provider.clone()];
-    config.stream_flush = Duration::from_millis(20);
     (SqliteEngine::open(config).unwrap(), provider)
 }
 
@@ -953,7 +952,6 @@ fn open_home(db: &TempDb) -> SqliteEngine {
         workspace_root: ROOT.into(),
     }];
     config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
-    config.stream_flush = Duration::from_millis(20);
     SqliteEngine::open(config).unwrap()
 }
 
@@ -2423,7 +2421,6 @@ fn open_two(db: &TempDb) -> (SqliteEngine, Arc<FakeProvider>, Arc<FakeProvider>)
         workspace_root: ROOT.into(),
     }];
     config.providers = vec![claude.clone(), codex.clone()];
-    config.stream_flush = Duration::from_millis(20);
     (SqliteEngine::open(config).unwrap(), claude, codex)
 }
 

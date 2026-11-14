@@ -121,7 +121,6 @@ async fn main() {
     }];
     config.checkpoints = checkpoints;
     config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
-    config.stream_flush = Duration::from_millis(5);
     // `IDLE_MS` closes provider sessions idle that long (default: the engine's 10 minutes).
     let idle = std::env::var("IDLE_MS")
         .ok()

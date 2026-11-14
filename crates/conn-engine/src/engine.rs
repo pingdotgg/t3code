@@ -39,8 +39,6 @@ pub struct EngineConfig {
     pub home: Option<PathBuf>,
     pub projects: Vec<ProjectConfig>,
     pub providers: Vec<Arc<dyn Provider>>,
-    /// How long streamed assistant text may wait before it is written. Default 100 ms.
-    pub stream_flush: Duration,
     /// A provider session with no turn for this long is closed, ending its process (a
     /// `claude` child holds about 140 MiB). Default 30 minutes, as T3's session manager;
     /// `None` keeps sessions open.
@@ -101,7 +99,6 @@ impl std::fmt::Debug for EngineConfig {
             .field("home", &self.home)
             .field("projects", &self.projects)
             .field("providers", &self.providers.len())
-            .field("stream_flush", &self.stream_flush)
             .field("idle_session", &self.idle_session)
             .field("idle_max_hold", &self.idle_max_hold)
             .finish_non_exhaustive()
@@ -115,7 +112,6 @@ impl EngineConfig {
             home: None,
             projects: vec![],
             providers: vec![],
-            stream_flush: Duration::from_millis(100),
             idle_session: Some(DEFAULT_IDLE_SESSION),
             idle_max_hold: Duration::from_secs(4 * 60 * 60),
             host: None,
@@ -146,7 +142,6 @@ pub(crate) struct Inner {
     pub(crate) providers: Vec<Arc<dyn Provider>>,
     /// Threads with an open provider session. The only per-thread state kept in memory.
     pub(crate) live: Mutex<HashMap<String, Arc<LiveThread>>>,
-    pub(crate) stream_flush: Duration,
     pub(crate) home: PathBuf,
     pub(crate) titles: Option<Arc<dyn crate::TitleGenerator>>,
     pub(crate) observer: Option<Arc<dyn crate::TurnObserver>>,
@@ -225,7 +220,6 @@ impl SqliteEngine {
                 live: Mutex::new(HashMap::new()),
                 command_output: crate::output::CommandOutputHub::default(),
                 shutting_down: std::sync::atomic::AtomicBool::new(false),
-                stream_flush: config.stream_flush,
                 home,
                 titles: config.title_generator.clone(),
                 observer: config.turn_observer.clone(),

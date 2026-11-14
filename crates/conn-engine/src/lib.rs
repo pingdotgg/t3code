@@ -46,6 +46,7 @@ mod rollback;
 mod runner;
 mod shell;
 mod store;
+mod streaming;
 mod streams;
 mod time;
 mod titles;
@@ -56,6 +57,7 @@ pub use engine::{
     CommandOutputTap, DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, RuntimePolicyOverride,
     SqliteEngine,
 };
+pub use streaming::ResponseStreamingMode;
 
 /// What a [`TitleGenerator`] titles: the first message of a new thread, or a whole thread whose
 /// title the user asked to regenerate.
@@ -139,6 +141,12 @@ pub trait EngineHost: Send + Sync {
     /// dispatch, as T3's `assertDispatchTargetEnabled` does. The default allows all.
     fn provider_instance_enabled(&self, _project_id: Option<&str>, _instance_id: &str) -> bool {
         true
+    }
+
+    /// `responseStreamingMode` of `project_id` (`resolveProjectSettings`): how streamed
+    /// assistant text is stored. The default is T3's default, `paragraph`.
+    fn response_streaming_mode(&self, _project_id: Option<&str>) -> ResponseStreamingMode {
+        ResponseStreamingMode::Paragraph
     }
 
     /// Copies a message's pending uploads to the thread before the message is written. The

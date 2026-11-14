@@ -40,7 +40,6 @@ fn fixture_with_host(name: &str, host: Option<Arc<dyn conn_engine::EngineHost>>)
         workspace_root: ROOT.into(),
     }];
     config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
-    config.stream_flush = Duration::from_millis(5);
     config.host = host;
     let engine = Arc::new(SqliteEngine::open(config).unwrap());
     let service = McpService::new(McpConfig {

@@ -61,6 +61,12 @@ CREATE TABLE IF NOT EXISTS message_keys (
   message_id TEXT NOT NULL,
   UNIQUE (thread_id, message_id)
 );
+CREATE TABLE IF NOT EXISTS turn_item_positions (
+  thread_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  ordinal INTEGER NOT NULL,
+  PRIMARY KEY (thread_id, item_id)
+);
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value INTEGER NOT NULL
@@ -561,20 +567,16 @@ impl Tx<'_> {
                 "turnItems" => {
                     // The engine owns turn item positions: a new item goes after every item
                     // of the thread, an update keeps the position it already has.
+                    // A held item's reserved position wins (`reserve_turn_item_position`).
                     let ordinal = match existing {
                         Some((_, Some(ordinal))) => ordinal,
-                        _ => {
-                            let max: Option<i64> = self
-                                .tx
-                                .query_row(
-                                    "SELECT MAX(ordinal) FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'",
-                                    [&thread_id],
-                                    |row| row.get(0),
-                                )
-                                .map_err(err)?;
-                            let wanted = payload["ordinal"].as_i64().unwrap_or(0);
-                            wanted.max(max.unwrap_or(0) + 1)
-                        }
+                        _ => match take_reserved_position(&self.tx, &thread_id, &id)? {
+                            Some(ordinal) => ordinal,
+                            None => {
+                                let wanted = payload["ordinal"].as_i64().unwrap_or(0);
+                                wanted.max(next_turn_item_ordinal(&self.tx, &thread_id)?)
+                            }
+                        },
                     };
                     payload["ordinal"] = json!(ordinal);
                     Some(ordinal)
@@ -655,12 +657,32 @@ impl Tx<'_> {
         Ok(seq)
     }
 
-    /// Drops streaming versions of rows that have a final version, so the log keeps one event
-    /// per finished message instead of one per streamed chunk.
-    pub(crate) fn compact_streaming(&mut self, thread_id: &str) -> StoreResult<()> {
+    /// Takes the next turn item position for an item whose text is held and not stored yet
+    /// (T3's `TurnItemPositionStore.allocate`). The item gets it when it is written; nothing
+    /// changes when the item has a position already.
+    pub(crate) fn reserve_turn_item_position(
+        &mut self,
+        thread_id: &str,
+        item_id: &str,
+    ) -> StoreResult<()> {
+        if self.entity(thread_id, "turnItems", item_id)?.is_some() {
+            return Ok(());
+        }
+        let next = next_turn_item_ordinal(&self.tx, thread_id)?;
         self.tx
             .execute(
-                "DELETE FROM events WHERE thread_id = ?1 AND streaming = 1",
+                "INSERT OR IGNORE INTO turn_item_positions (thread_id, item_id, ordinal) VALUES (?1, ?2, ?3)",
+                params![thread_id, item_id, next],
+            )
+            .map(|_| ())
+            .map_err(err)
+    }
+
+    /// Drops the positions of a thread's held items that were never written (a run ended).
+    pub(crate) fn release_turn_item_positions(&mut self, thread_id: &str) -> StoreResult<()> {
+        self.tx
+            .execute(
+                "DELETE FROM turn_item_positions WHERE thread_id = ?1",
                 [thread_id],
             )
             .map(|_| ())
@@ -969,6 +991,45 @@ pub(crate) fn shell_project(project: &Value) -> Value {
     row
 }
 
+/// The position after every turn item of the thread and every reserved one.
+fn next_turn_item_ordinal(conn: &Connection, thread_id: &str) -> StoreResult<i64> {
+    let max: Option<i64> = conn
+        .query_row(
+            "SELECT MAX(ordinal) FROM (
+               SELECT MAX(ordinal) AS ordinal FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'
+               UNION ALL
+               SELECT MAX(ordinal) FROM turn_item_positions WHERE thread_id = ?1)",
+            [thread_id],
+            |row| row.get(0),
+        )
+        .map_err(err)?;
+    Ok(max.unwrap_or(0) + 1)
+}
+
+/// A held item's reserved position, removed as the item takes it.
+fn take_reserved_position(
+    conn: &Connection,
+    thread_id: &str,
+    item_id: &str,
+) -> StoreResult<Option<i64>> {
+    let ordinal: Option<i64> = conn
+        .query_row(
+            "SELECT ordinal FROM turn_item_positions WHERE thread_id = ?1 AND item_id = ?2",
+            params![thread_id, item_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(err)?;
+    if ordinal.is_some() {
+        conn.execute(
+            "DELETE FROM turn_item_positions WHERE thread_id = ?1 AND item_id = ?2",
+            params![thread_id, item_id],
+        )
+        .map_err(err)?;
+    }
+    Ok(ordinal)
+}
+
 /// Schema steps beyond `CREATE ... IF NOT EXISTS`, by `PRAGMA user_version`.
 fn migrate(conn: &Connection) -> StoreResult<()> {
     let version: i64 = conn
@@ -999,6 +1060,15 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS events_streaming ON events(thread_id) WHERE streaming = 1;
              PRAGMA user_version = 2;",
+        )
+        .map_err(err)?;
+    }
+    if version < 3 {
+        // 3: streaming rows stay in the log (T3's buffered delivery), so the index for their
+        // deletion goes. A log written before keeps its gaps; nothing reads it as dense.
+        conn.execute_batch(
+            "DROP INDEX IF EXISTS events_streaming;
+             PRAGMA user_version = 3;",
         )
         .map_err(err)?;
     }
@@ -1060,6 +1130,7 @@ fn prune(conn: &Connection) -> StoreResult<()> {
 }
 
 /// One event before it gets its sequence, id and time.
+#[derive(Clone, Debug)]
 pub(crate) struct Draft {
     pub thread_id: String,
     pub event_type: &'static str,
@@ -1247,38 +1318,114 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A store from before the index gets it when it opens, and the turn-end delete uses it.
+    /// A store written by the engine before buffered delivery (version 2: streaming rows
+    /// deleted at the turn end, so its log has gaps, and no position table) opens, loses the
+    /// deletion index, and goes on writing.
     #[test]
-    fn the_streaming_index_serves_compaction_on_an_old_store() {
+    fn a_store_from_before_buffered_delivery_opens_and_goes_on() {
         let dir = std::env::temp_dir().join(format!(
-            "conn-engine-{}-streaming-index",
+            "conn-engine-{}-buffered-delivery-migration",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("engine.sqlite");
         {
-            let store = Store::open(&path).unwrap();
+            let mut store = Store::open(&path).unwrap();
+            let mut tx = store.tx().unwrap();
+            for n in 0..3 {
+                let streaming = n == 1;
+                tx.append(Draft::new(
+                    "t1",
+                    "message.updated",
+                    json!({"id": "m1", "role": "assistant", "text": "x", "streaming": streaming}),
+                ))
+                .unwrap();
+            }
+            tx.commit(None).unwrap();
             store
                 .conn
-                .execute_batch("DROP INDEX IF EXISTS events_streaming; PRAGMA user_version = 1;")
+                .execute_batch(
+                    "DELETE FROM events WHERE thread_id = 't1' AND streaming = 1;
+                     DROP TABLE turn_item_positions;
+                     CREATE INDEX IF NOT EXISTS events_streaming ON events(thread_id) WHERE streaming = 1;
+                     PRAGMA user_version = 2;",
+                )
                 .unwrap();
         }
-        let store = Store::open(&path).unwrap();
+        let mut store = Store::open(&path).unwrap();
         let version: i64 = store
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 2);
-        let plan = store.query_plan(
-            "DELETE FROM events WHERE thread_id = ?1 AND streaming = 1",
-            ["t1"],
-        );
-        assert!(
-            plan.iter()
-                .any(|step| step.contains("USING INDEX events_streaming")),
-            "{plan:?}"
-        );
+        assert_eq!(version, 3);
+        let index: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'events_streaming'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index, 0);
+        let seqs: Vec<i64> = store
+            .conn
+            .prepare("SELECT seq FROM events ORDER BY seq")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(seqs.len(), 2, "the old gap stays: {seqs:?}");
+        let mut tx = store.tx().unwrap();
+        tx.reserve_turn_item_position("t1", "held").unwrap();
+        let seq = tx
+            .append(Draft::new("t1", "thread.activity-updated", json!({})))
+            .unwrap();
+        tx.commit(None).unwrap();
+        assert!(seq as i64 > *seqs.last().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A held item keeps the place it took when its text was first held: an item that began
+    /// after it, and was written first, still comes after it (T3's `TurnItemPositionStore`).
+    #[test]
+    fn a_held_turn_item_keeps_its_reserved_position() {
+        let dir = std::env::temp_dir().join(format!(
+            "conn-engine-{}-turn-item-positions",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = Store::open(&dir.join("engine.sqlite")).unwrap();
+        let mut tx = store.tx().unwrap();
+        let item = |id: &str| {
+            Draft::new(
+                "t1",
+                "turn-item.updated",
+                json!({"id": id, "type": "assistant_message", "text": "", "ordinal": 0}),
+            )
+        };
+        tx.append(item("first")).unwrap();
+        tx.reserve_turn_item_position("t1", "held").unwrap();
+        tx.reserve_turn_item_position("t1", "held").unwrap();
+        tx.append(item("tool")).unwrap();
+        tx.append(item("held")).unwrap();
+        tx.reserve_turn_item_position("t1", "first").unwrap();
+        let ordinal = |tx: &Tx<'_>, id: &str| {
+            tx.entity("t1", "turnItems", id).unwrap().unwrap()["ordinal"]
+                .as_i64()
+                .unwrap()
+        };
+        assert_eq!(ordinal(&tx, "first"), 1);
+        assert_eq!(ordinal(&tx, "held"), 2);
+        assert_eq!(ordinal(&tx, "tool"), 3);
+        tx.reserve_turn_item_position("t1", "never-written")
+            .unwrap();
+        tx.release_turn_item_positions("t1").unwrap();
+        tx.append(item("next")).unwrap();
+        assert_eq!(ordinal(&tx, "next"), 4);
+        tx.commit(None).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1730,7 +1730,8 @@ pub(crate) fn finish_run_as(
         tx.append(draft("node.updated", node))?;
     }
     settle_provider_thread(tx, thread_id, &run, "idle")?;
-    tx.compact_streaming(thread_id)
+    // Positions held text took and never used.
+    tx.release_turn_item_positions(thread_id)
 }
 
 /// The run's provider thread goes back from `active` when the run ends: `idle`, or `error`
