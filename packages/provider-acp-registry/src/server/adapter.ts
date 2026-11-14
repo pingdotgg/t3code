@@ -210,6 +210,14 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       /^claude-agent-acp(\.exe|\.cmd)?$/i.test(
         options.settings.commandPath.split(/[\\/]/).pop() ?? "",
       ));
+  // The registry ships `kimi-code`; the archived legacy entry is `kimi`.
+  const isKimi =
+    registryAgentId === "kimi-code" ||
+    registryAgentId === "kimi" ||
+    (options.settings.source === "local" &&
+      /^kimi(?:-code)?(\.exe|\.cmd)?$/i.test(
+        options.settings.commandPath.split(/[\\/]/).pop() ?? "",
+      ));
   const runtimeOptions = isClaude
     ? {
         ...options,
@@ -251,6 +259,15 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           extractSubagentUpdate: extractClaudeSubagentUpdate,
           isProvisionalSubagentTool: isClaudeProvisionalSubagentTool,
           extractSubagentSessionEvent: extractClaudeSubagentSessionEvent,
+        }
+      : {}),
+    // Kimi Code ends its turn while a detached shell task runs, then self-starts a
+    // turn when the task terminates; the wake buffer surfaces that follow-up.
+    // Kimi registers no background tasks, so deferred finalize only ends turns.
+    ...(isKimi
+      ? {
+          enablePostSettleContinuation: true,
+          deferFinalizeForBackgroundWork: true,
         }
       : {}),
     ...(isDevin
