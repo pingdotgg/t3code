@@ -39,6 +39,8 @@ import {
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./PullRequestService.ts";
+import { makeThreadPullRequests } from "@t3tools/source-control-core/shared/threadPullRequests";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 
 function project(input: {
@@ -1007,15 +1009,18 @@ it.effect.each([
     provider: "forgejo",
     host: "ssh.forge.example",
     remoteUrl: "ssh://git@ssh.forge.example:2222/team/repo.git",
+    projectIds: ["ssh", "ssh-worktree"],
   },
   {
+    // The HTTP remote already names the authority, so clients need no project ids.
     provider: "unknown",
     host: "forge.example",
     remoteUrl: "http://forge.example:3000/team/repo.git",
+    projectIds: undefined,
   },
 ])(
   "identifies every worktree behind an unavailable refined Forgejo authority",
-  ({ provider, host, remoteUrl }) =>
+  ({ provider, host, remoteUrl, projectIds }) =>
     Effect.gen(function* () {
       const service = yield* makeService({
         projects: ["ssh", "ssh-worktree"].map((id) =>
@@ -1062,7 +1067,7 @@ it.effect.each([
           configured,
           projectIds: projectIds?.map(String),
         })),
-        [{ host: "forge.example:3000", configured: false, projectIds: ["ssh", "ssh-worktree"] }],
+        [{ host: "forge.example:3000", configured: false, projectIds }],
       );
       assert.deepStrictEqual(result.entries, []);
       assert.deepStrictEqual(
@@ -2097,34 +2102,95 @@ it.effect("names an SSH remote's web host from a later checkout when the first c
   }),
 );
 
-it.effect("rejects a different Forgejo HTTP port for an HTTP checkout", () =>
+it.effect("routes matching HTTP authorities and rejects a different web port", () =>
   Effect.gen(function* () {
-    const service = yield* makeService({
-      projects: [
-        project({
-          id: "http",
-          title: "http",
-          workspaceRoot: "/http",
-          repository: "team/repo",
-          provider: SourceControlProviderKind.make("forgejo"),
-          host: "code.example",
-          remoteUrl: "http://code.example:4000/team/repo.git",
-        }),
-      ],
-      providers: [fakePullRequestProvider(SourceControlProviderKind.make("forgejo"))],
-    });
-    const failure = yield* service
-      .summary(
+    for (const kind of ["forgejo", "github", "gitlab"] as const) {
+      const reads: string[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "http",
+            title: "http",
+            workspaceRoot: "/http",
+            repository: "team/repo",
+            provider: kind,
+            host: "code.example",
+            remoteUrl: "http://code.example:4000/team/repo.git",
+          }),
+          // Forgejo names an SSH remote's web host itself, covered above.
+          ...(kind === "forgejo"
+            ? []
+            : [
+                project({
+                  id: "ssh",
+                  title: "ssh",
+                  workspaceRoot: "/ssh",
+                  repository: "team/repo",
+                  provider: kind,
+                  host: "code.example",
+                  remoteUrl: "ssh://git@code.example:2222/team/repo.git",
+                }),
+              ]),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make(kind), {
+            servesHost: (host) => host !== "code.example:6000",
+            getChangeRequestPreview: (input) => {
+              reads.push(input.host);
+              return Effect.succeed(changeRequest(42, "2026-07-02T00:00:00Z"));
+            },
+            getChangeRequest: (input) => {
+              reads.push(input.host);
+              return Effect.succeed({ ...hostedChangeRequest("Port detail"), number: 42 });
+            },
+          }),
+        ],
+      });
+      const selected = makeThreadPullRequests(
+        sourceControlDefinitions,
+      ).resolveThreadCurrentPullRequestLink([
         {
-          projectId: "http" as ProjectId,
-          host: "code.example:3000",
+          host: "code.example",
           repository: "team/repo",
           number: 42,
+          url: `http://code.example:4000/team/repo/${kind === "gitlab" ? "-/merge_requests" : kind === "forgejo" ? "pulls" : "pull"}/42`,
+          source: "manual",
+          linkedAt: "2026-01-01T00:00:00.000Z",
+          snapshot: null,
+          stack: null,
         },
-        { recoverTransientFailure: false },
-      )
-      .pipe(Effect.flip);
-    assert.strictEqual(failure._tag, "PullRequestUnavailableError");
+      ])!;
+      const ref = {
+        projectId: "http" as ProjectId,
+        host: selected.host,
+        repository: selected.repository,
+        number: selected.number,
+      };
+      assert.strictEqual((yield* service.preview(ref)).number, 42);
+      assert.strictEqual((yield* service.detail(ref)).body, "Port detail");
+      assert.deepStrictEqual(reads, ["code.example:4000", "code.example:4000"]);
+      const failure = yield* service
+        .summary({ ...ref, host: "code.example:3000" }, { recoverTransientFailure: false })
+        .pipe(Effect.flip);
+      assert.strictEqual(failure._tag, "PullRequestUnavailableError");
+      if (kind === "forgejo") continue;
+      // An SSH checkout names no web port: a checkout naming the requested one wins, else the
+      // SSH checkout reads its hostname on the requested port.
+      const fromSsh = { ...ref, projectId: "ssh" as ProjectId };
+      yield* service.preview(fromSsh);
+      assert.strictEqual(reads.at(-1), "code.example:4000");
+      for (const repository of ["team/repo", "team/sibling"]) {
+        const onOtherPort = { ...fromSsh, host: "code.example:5000", repository };
+        yield* service.preview(onOtherPort);
+        yield* service.detail(onOtherPort);
+        assert.deepStrictEqual(reads.slice(-2), ["code.example:5000", "code.example:5000"]);
+      }
+      // Neither another hostname nor an authority the provider does not serve is borrowed.
+      for (const unserved of ["other.example:5000", "code.example:6000"]) {
+        const failure = yield* service.preview({ ...fromSsh, host: unserved }).pipe(Effect.flip);
+        assert.strictEqual(failure._tag, "PullRequestUnavailableError");
+      }
+    }
   }),
 );
 

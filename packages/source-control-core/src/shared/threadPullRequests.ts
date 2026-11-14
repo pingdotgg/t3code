@@ -135,6 +135,31 @@ export function makeThreadPullRequests(
     return normalized;
   }
 
+  /**
+   * The key `links` hold `key` under. A link saved before its URL's web port was part of its
+   * identity keeps a hostname-only host, which clients send back as is, without a URL.
+   */
+  function storedThreadPullRequestKey(
+    links: ReadonlyArray<ThreadPullRequestLink>,
+    key: ThreadPullRequestKeySource,
+  ): ThreadPullRequestKey {
+    const normalized = normalizeThreadPullRequestKey(key);
+    if (
+      key.url !== undefined ||
+      key.authority !== undefined ||
+      links.some((link) => threadPullRequestKeysEqual(link, normalized))
+    ) {
+      return normalized;
+    }
+    const stored = links.find((link) =>
+      threadPullRequestKeysEqual(
+        { host: link.host, repository: link.repository, number: link.number },
+        normalized,
+      ),
+    );
+    return stored === undefined ? normalized : normalizedKeyOf(stored);
+  }
+
   function threadPullRequestKeyOf(key: ThreadPullRequestKeySource): string {
     const normalized = normalizedKeyOf(key);
     return `${normalized.host}/${normalized.repository}#${normalized.number}`;
@@ -180,12 +205,27 @@ export function makeThreadPullRequests(
     return { kind: "single", link: latest };
   }
 
+  const routedLinks = new WeakMap<ThreadPullRequestLink, ThreadPullRequestLink>();
+
   function resolveThreadCurrentPullRequestLink(
     links: ReadonlyArray<ThreadPullRequestLink>,
   ): ThreadPullRequestLink | null {
     const current = resolveThreadCurrentPullRequest(links);
     if (current === null) return null;
-    return current.kind === "single" ? current.link : current.top;
+    const link = current.kind === "single" ? current.link : current.top;
+    const cached = routedLinks.get(link);
+    if (cached !== undefined) return cached;
+    const parsed = parse(link.url);
+    const authority =
+      parsed?.host === link.host.trim().toLowerCase() &&
+      parsed.repository === link.repository.trim().toLowerCase() &&
+      parsed.number === link.number
+        ? parsed.authority
+        : undefined;
+    const routed =
+      authority === undefined || authority === link.host ? link : { ...link, host: authority };
+    routedLinks.set(link, routed);
+    return routed;
   }
 
   function resolveThreadPullRequestChains(
@@ -343,6 +383,7 @@ export function makeThreadPullRequests(
     legacyThreadPullRequestKey,
     threadPullRequestKeysEqual,
     threadPullRequestKeyOf,
+    storedThreadPullRequestKey,
     resolveThreadCurrentPullRequest,
     resolveThreadCurrentPullRequestLink,
     resolveThreadPullRequestChains,

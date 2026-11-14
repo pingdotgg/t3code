@@ -1044,6 +1044,19 @@ export const make = Effect.gen(function* () {
         ).pipe(
           Effect.flatMap(({ supported }) => {
             const onHost = supported.filter((candidate) => candidate.host === host);
+            // An SSH checkout names no web port, so it serves its hostname on the requested one.
+            const sshApi =
+              own !== undefined &&
+              own.repositoryKey === null &&
+              isSshRemoteUrl(own.project.repositoryIdentity?.locator.remoteUrl ?? "") &&
+              URL.canParse(`https://${host}`) &&
+              new URL(`https://${host}`).hostname === own.host
+                ? registry.get(own.api.kind)
+                : null;
+            const sshRoute =
+              own !== undefined && sshApi != null && sshApi.servesHost?.(host) !== false
+                ? { ...own, host, api: withRateLimitBackoff(sshApi, host, rateLimits) }
+                : undefined;
             const route =
               supported.find(
                 (candidate) =>
@@ -1054,7 +1067,8 @@ export const make = Effect.gen(function* () {
                   candidate.repositoryKey === null &&
                   candidate.repository.toLowerCase() === repository.toLowerCase(),
               ) ??
-              onHost.find((candidate) => candidate.repositoryKey === null);
+              onHost.find((candidate) => candidate.repositoryKey === null) ??
+              sshRoute;
             if (route === undefined) {
               return Effect.gen(function* () {
                 const publicHost = sourceControlDefinitions.findByPublicHost(host);
