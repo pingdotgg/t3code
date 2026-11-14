@@ -297,6 +297,7 @@ import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
+import { ThreadTabStrip } from "./ThreadTabStrip";
 import { useSideChat } from "./chat/useSideChat";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
@@ -3383,6 +3384,9 @@ export default function ChatView(props: ChatViewProps) {
               {...(threadFindEnabled ? { onFindInThread: openThreadFindStable } : {})}
             />
           </header>
+        )}
+        {embedded ? null : (
+          <ThreadTabStrip activeThreadKey={isServerThread ? activeThreadKey : null} />
         )}
 
         <div className="relative flex min-h-0 min-w-0 flex-1">

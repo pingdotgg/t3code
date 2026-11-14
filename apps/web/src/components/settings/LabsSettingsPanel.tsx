@@ -19,6 +19,7 @@ export function LabsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
         <BoringSidebarRow />
+        <ThreadTabsRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -69,6 +70,51 @@ function BoringSidebarMultilineRow() {
             updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
           }
           aria-label="Two-line folder rows"
+        />
+      }
+    />
+  );
+}
+
+function ThreadTabsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("thread-tabs")}
+      description="Keep threads open as tabs above the chat. Use the + next to a thread's title to add one."
+      control={
+        <Switch
+          checked={settings.threadTabsEnabled}
+          onCheckedChange={(checked) => updateSettings({ threadTabsEnabled: Boolean(checked) })}
+          aria-label="Thread tabs"
+        />
+      }
+    >
+      {settings.threadTabsEnabled ? (
+        <div className="mt-2 mb-2 border-l-2 border-border/60 ps-3">
+          <ThreadTabsAutoAddRow />
+        </div>
+      ) : null}
+    </SettingsRow>
+  );
+}
+
+function ThreadTabsAutoAddRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("thread-tabs-auto-add")}
+      className="px-0 py-2 sm:px-0"
+      description="Give working threads a tab of their own. It goes away once you have seen the result."
+      control={
+        <Switch
+          checked={settings.threadTabsAutoAddWorking}
+          onCheckedChange={(checked) =>
+            updateSettings({ threadTabsAutoAddWorking: Boolean(checked) })
+          }
+          aria-label="Tabs for working threads"
         />
       }
     />

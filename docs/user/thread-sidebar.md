@@ -160,6 +160,15 @@ Pinned threads stay above the folders, and Snoozed and Settled stay below them. 
 can drag a thread onto the composer to mention it, but not within the sidebar, and the Working
 section is off. Each device keeps its own choice.
 
+### Thread tabs (beta)
+
+Turn on **Settings → Labs → Thread tabs** on web and desktop to keep threads open as tabs above
+the chat. Click the **+** next to a thread's title to add it, and close a tab with its **×** or a
+middle-click. Closing a tab does not change the thread. With **Tabs for working threads** also on,
+a thread gets a tab of its own while it works or has a result you have not seen. The tab stays
+while the thread works and goes away once you open the finished result. Each browser keeps its own
+tabs.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list
