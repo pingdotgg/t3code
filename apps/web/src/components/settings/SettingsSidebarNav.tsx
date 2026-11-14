@@ -263,9 +263,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           "max-md:absolute max-md:inset-y-0 max-md:start-0 max-md:z-10 max-md:w-full",
       )}
     >
-      <SidebarContent className="overflow-x-hidden">
-        <SidebarGroup>
-          <div className="flex flex-col gap-2">
+      <SidebarContent
+        className="overflow-x-hidden"
+        fixedHeader={
+          <SidebarGroup>
             <div
               className={cn(
                 "flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
@@ -319,6 +320,23 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 <Kbd>/</Kbd>
               )}
             </div>
+            {isSearching || compactSearchOpen ? null : (
+              <SidebarMenu className="mb-2 md:hidden">
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    aria-label={gt("Search settings")}
+                    onClick={() => setCompactSearchOpen(true)}
+                  >
+                    <SearchIcon />
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            )}
+          </SidebarGroup>
+        }
+      >
+        <SidebarGroup>
+          <div className="flex flex-col gap-2">
             {isSearching && results.length === 0 ? (
               <p
                 role="status"
@@ -364,66 +382,49 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 ))}
               </SidebarMenu>
             ) : (
-              <div className="flex flex-col gap-4">
-                {compactSearchOpen ? null : (
-                  <SidebarMenu className="md:hidden">
-                    <SidebarMenuItem>
-                      <SidebarMenuButton
-                        aria-label={gt("Search settings")}
-                        onClick={() => setCompactSearchOpen(true)}
-                      >
-                        <SearchIcon />
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  </SidebarMenu>
-                )}
-                <div onKeyDown={handleSettingsSectionKeyDown} className="flex flex-col gap-4">
-                  {SETTINGS_NAV_GROUPS.map((group, index) => (
-                    <div
-                      key={group.heading}
-                      className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
+              <div onKeyDown={handleSettingsSectionKeyDown} className="flex flex-col gap-4">
+                {SETTINGS_NAV_GROUPS.map((group, index) => (
+                  <div
+                    key={group.heading}
+                    className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
+                  >
+                    <h3
+                      id={`settings-nav-group-${index}`}
+                      className={cn(
+                        "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
+                        group.headingHidden ? "sr-only" : !compactSearchOpen && "max-md:sr-only",
+                      )}
                     >
-                      <h3
-                        id={`settings-nav-group-${index}`}
-                        className={cn(
-                          "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
-                          group.headingHidden ? "sr-only" : !compactSearchOpen && "max-md:sr-only",
-                        )}
-                      >
-                        {m(group.heading)}
-                      </h3>
-                      {/* The heading stays outside the group it names so NVDA does not read the name twice. */}
-                      <div role="group" aria-labelledby={`settings-nav-group-${index}`}>
-                        <SidebarMenu>
-                          {group.paths.map((to) => {
-                            const Icon = SETTINGS_SECTION_ICONS[to];
-                            const isActive = activePath === to || activePath.startsWith(`${to}/`);
-                            return (
-                              <SidebarMenuItem key={to}>
-                                <SidebarMenuButton
-                                  data-settings-section={to}
-                                  aria-current={isActive ? "page" : undefined}
-                                  isActive={isActive}
-                                  onClick={() => handleSectionClick(to)}
+                      {m(group.heading)}
+                    </h3>
+                    {/* The heading stays outside the group it names so NVDA does not read the name twice. */}
+                    <div role="group" aria-labelledby={`settings-nav-group-${index}`}>
+                      <SidebarMenu>
+                        {group.paths.map((to) => {
+                          const Icon = SETTINGS_SECTION_ICONS[to];
+                          const isActive = activePath === to || activePath.startsWith(`${to}/`);
+                          return (
+                            <SidebarMenuItem key={to}>
+                              <SidebarMenuButton
+                                data-settings-section={to}
+                                aria-current={isActive ? "page" : undefined}
+                                isActive={isActive}
+                                onClick={() => handleSectionClick(to)}
+                              >
+                                <Icon />
+                                <span
+                                  className={cn("truncate", !compactSearchOpen && "max-md:sr-only")}
                                 >
-                                  <Icon />
-                                  <span
-                                    className={cn(
-                                      "truncate",
-                                      !compactSearchOpen && "max-md:sr-only",
-                                    )}
-                                  >
-                                    {m(SETTINGS_SECTION_LABELS[to])}
-                                  </span>
-                                </SidebarMenuButton>
-                              </SidebarMenuItem>
-                            );
-                          })}
-                        </SidebarMenu>
-                      </div>
+                                  {m(SETTINGS_SECTION_LABELS[to])}
+                                </span>
+                              </SidebarMenuButton>
+                            </SidebarMenuItem>
+                          );
+                        })}
+                      </SidebarMenu>
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
