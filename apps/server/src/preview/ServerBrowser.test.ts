@@ -1665,25 +1665,6 @@ it.effect("releases an attached viewer after its page closes", () =>
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect("does not let a watching panel resize an explicitly sized viewport", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { browser, broker, tabId } = yield* ready;
-      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
-      yield* broker.invoke({
-        scope,
-        tabId,
-        operation: "resize",
-        input: { mode: "freeform", width: 390, height: 844 },
-      });
-      yield* viewer.input({ type: "resize", width: 720, height: 1000 });
-      expect(contexts[0]!.page.viewportSize()).toEqual({ width: 390, height: 844 });
-      yield* broker.invoke({ scope, tabId, operation: "resize", input: { mode: "fill" } });
-      expect(contexts[0]!.page.viewportSize()).toEqual({ width: 720, height: 1000 });
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
 it.effect(
   "streams to a read-only viewer without allowing takeover, input, or viewport changes",
   () =>

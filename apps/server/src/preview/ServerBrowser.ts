@@ -3106,15 +3106,17 @@ const make = Effect.gen(function* () {
       scrolledAt: 0,
       requestedSize: null,
     };
+    const applySizeViewer = async () => {
+      const sizing = tab.sizeViewer;
+      if (sizing?.requestedSize)
+        await dispatchViewerInput(tab, session, sizing, {
+          type: "resize",
+          ...sizing.requestedSize,
+        });
+    };
     const releaseInput = async () => {
       await releaseViewerInput(viewer, session);
-      const sizingViewer = tab.sizeViewer;
-      if (sizingViewer?.requestedSize) {
-        await dispatchViewerInput(tab, session, sizingViewer, {
-          type: "resize",
-          ...sizingViewer.requestedSize,
-        });
-      }
+      await applySizeViewer();
     };
     yield* Effect.acquireRelease(
       Effect.sync(() => {
@@ -3133,13 +3135,7 @@ const make = Effect.gen(function* () {
                 if (tab.sizeViewer !== viewer) return;
                 tab.sizeViewer =
                   [...tab.viewers].find((candidate) => candidate.requestedSize !== null) ?? null;
-                const sizingViewer = tab.sizeViewer;
-                if (sizingViewer?.requestedSize) {
-                  await dispatchViewerInput(tab, session, sizingViewer, {
-                    type: "resize",
-                    ...sizingViewer.requestedSize,
-                  });
-                }
+                await applySizeViewer();
               }),
             )
             .catch(constVoid);
