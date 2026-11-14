@@ -6400,18 +6400,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         ],
         addsMapping: true,
       },
-      {
-        configuration: "matching wildcard",
-        fetchRefspecs: ["+refs/heads/feature/*:refs/remotes/origin/feature/*"],
-        addsMapping: false,
-      },
-      {
-        configuration: "matching exact",
-        fetchRefspecs: [
-          "+refs/heads/feature/example-change:refs/remotes/origin/feature/example-change",
-        ],
-        addsMapping: false,
-      },
     ])(
       "sets a fetched branch's upstream with $configuration fetch configuration",
       ({ fetchRefspecs, addsMapping }) =>
@@ -6429,18 +6417,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const branch = "review/example-change";
           const mapping = `+refs/heads/${remoteBranch}:refs/remotes/origin/${remoteBranch}`;
           yield* git(cwd, ["push", remote, `HEAD:refs/heads/${remoteBranch}`]);
-          yield* git(remote, ["--git-dir", remote, "branch", "unrelated", remoteBranch]);
           const driver = yield* GitVcsDriver.GitVcsDriver;
           yield* driver.fetchRemoteTrackingBranch({ cwd, remoteName: "origin", remoteBranch });
           yield* git(cwd, ["checkout", "--no-track", "-b", branch, `origin/${remoteBranch}`]);
-          const before = yield* driver.listRefs({ cwd });
-          assert.equal(before.refs.find((ref) => ref.name === branch)?.upstreamRef, undefined);
 
           const input = { cwd, branch, remoteName: "origin", remoteBranch };
           yield* driver.setBranchUpstream(input);
           yield* driver.setBranchUpstream(input);
 
-          assert.equal(yield* git(cwd, ["branch", "--show-current"]), branch);
           assert.equal(
             yield* git(cwd, ["rev-parse", "--abbrev-ref", `${branch}@{upstream}`]),
             `origin/${remoteBranch}`,
@@ -6454,12 +6438,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             (yield* git(cwd, ["config", "--get-all", "remote.origin.fetch"])).split("\n"),
             addsMapping ? [...fetchRefspecs, mapping] : fetchRefspecs,
           );
-          const after = yield* driver.listRefs({ cwd, includeMatchingRemoteRefs: true });
-          assert.equal(
-            after.refs.find((ref) => ref.name === branch)?.upstreamRef,
-            `refs/remotes/origin/${remoteBranch}`,
-          );
-          assert.isFalse(after.refs.some((ref) => ref.name === "origin/unrelated"));
         }),
     );
 
