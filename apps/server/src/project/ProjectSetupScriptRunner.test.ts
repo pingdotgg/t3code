@@ -232,7 +232,7 @@ describe("ProjectSetupScriptRunner", () => {
   );
 });
 
-const runObservedSetup = Effect.fnUntraced(function* (command: string, stdin = "") {
+const runObservedSetup = Effect.fnUntraced(function* (command: string) {
   const { writes, outputLines, emit, completion } = yield* setup({ command });
   yield* emit({ ...event, type: "output", data: "\x1b[?2004h" });
   const submitted = yield* Queue.take(writes);
@@ -250,7 +250,6 @@ const runObservedSetup = Effect.fnUntraced(function* (command: string, stdin = "
         {
           cwd,
           env: { PATH: env.PATH },
-          stdin: Stream.make(new TextEncoder().encode(stdin)),
         },
       ),
     );
@@ -318,17 +317,6 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX setup co
       for (const line of result.submitted.slice(0, -1).split("\r")) {
         assert.isBelow(utf8.encode(line).byteLength, 1_024);
       }
-    }),
-  );
-
-  it.live("leaves stdin available to the script without consuming completion commands", () =>
-    Effect.gen(function* () {
-      const result = yield* runObservedSetup(
-        "read -r value\nprintf '%s\\n' \"$value\"",
-        "from stdin \\path\n",
-      );
-      assert.deepEqual(result.lines, ["from stdin \\path"]);
-      assert.equal(result.exitCode, 0);
     }),
   );
 

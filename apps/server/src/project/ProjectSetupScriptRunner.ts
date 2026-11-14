@@ -177,6 +177,57 @@ function resolveCompletionShell(shell: string): CompletionShell | null {
   return "posix";
 }
 
+const utf8 = new TextEncoder();
+// Canonical TTY input (before a line editor starts reading) caps a line below 1 KiB on Linux.
+const POSIX_MAX_LINE_BYTES = 1_023;
+const POSIX_APPEND = '__t3_command="$__t3_command"';
+
+function encodePosixScript(text: string): string {
+  let encoded = "";
+  for (const character of text) {
+    const code = character.charCodeAt(0);
+    if (character === "'") {
+      encoded += "'\\''";
+    } else if (character === "\\" || code <= 0x1f || code === 0x7f) {
+      encoded += `\\0${code.toString(8).padStart(3, "0")}`;
+    } else {
+      encoded += character;
+    }
+  }
+  return encoded;
+}
+
+// Line editors run each submitted line on its own, so every line must be a complete command.
+function wrapPosixCommand(command: string, sentinel: string): string {
+  const normalized = command.replace(/\r\n/g, "\n");
+  // The `_` suffix keeps trailing newlines; the subshell contains exits and syntax errors.
+  const evaluate = (payload: string) =>
+    `( __t3_command=$(printf '%b_' ${payload}); eval "\${__t3_command%_}" ); printf '\\n${sentinel}%s\\n' "$?"`;
+  const inline = evaluate(`'${encodePosixScript(normalized)}'`);
+  if (utf8.encode(` ${inline}\r`).byteLength <= POSIX_MAX_LINE_BYTES) return inline;
+
+  const maxChunkBytes = POSIX_MAX_LINE_BYTES - utf8.encode(` ${POSIX_APPEND}''\r`).byteLength;
+  const lines: string[] = [];
+  let prefix = "__t3_command=";
+  let chunk = "";
+  let chunkBytes = 0;
+  for (const character of normalized) {
+    const encoded = encodePosixScript(character);
+    const bytes = utf8.encode(encoded).byteLength;
+    if (chunkBytes + bytes > maxChunkBytes) {
+      lines.push(`${prefix}'${chunk}'`);
+      prefix = POSIX_APPEND;
+      chunk = "";
+      chunkBytes = 0;
+    }
+    chunk += encoded;
+    chunkBytes += bytes;
+  }
+  lines.push(`${prefix}'${chunk}'`, `${evaluate('"$__t3_command"')}; unset __t3_command`);
+  // The leading space gives every line the history suppression a short command gets.
+  return lines.join("\r ");
+}
+
 function wrapCommandForCompletion(
   command: string,
   shell: CompletionShell,
@@ -202,54 +253,8 @@ function wrapCommandForCompletion(
         `print $"\\n${sentinel}($__t3c)"`,
       ].join("; ");
     }
-    case "posix": {
-      const normalized = command.replace(/\r\n/g, "\n");
-      const encode = (text: string) => {
-        let encoded = "";
-        for (const character of text) {
-          const code = character.charCodeAt(0);
-          if (character === "'") {
-            encoded += "'\\''";
-          } else if (character === "\\" || code <= 0x1f || code === 0x7f) {
-            encoded += `\\0${code.toString(8).padStart(3, "0")}`;
-          } else {
-            encoded += character;
-          }
-        }
-        return encoded;
-      };
-      // The suffix preserves trailing newlines; the subshell contains exits and syntax errors.
-      const evaluate = (payload: string) =>
-        `( __t3_command=$(printf '%b_' ${payload}); eval "\${__t3_command%_}" ); printf '\\n${sentinel}%s\\n' "$?"`;
-      const inline = evaluate(`'${encode(normalized)}'`);
-      const utf8 = new TextEncoder();
-      const maxLineBytes = 1_023;
-      if (utf8.encode(` ${inline}\r`).byteLength <= maxLineBytes) return inline;
-
-      // Before readline starts, canonical TTY limits apply. Line editors also need each
-      // submission to be complete, so accumulate encoded text with standalone assignments.
-      const append = '__t3_command="$__t3_command"';
-      const maxChunkBytes = maxLineBytes - utf8.encode(` ${append}''\r`).byteLength;
-      const lines: string[] = [];
-      let prefix = "__t3_command=";
-      let chunk = "";
-      let chunkBytes = 0;
-      for (const character of normalized) {
-        const encoded = encode(character);
-        const bytes = utf8.encode(encoded).byteLength;
-        if (chunkBytes + bytes > maxChunkBytes) {
-          lines.push(`${prefix}'${chunk}'`);
-          prefix = append;
-          chunk = "";
-          chunkBytes = 0;
-        }
-        chunk += encoded;
-        chunkBytes += bytes;
-      }
-      lines.push(`${prefix}'${chunk}'`, `${evaluate('"$__t3_command"')}; unset __t3_command`);
-      // Each physical line gets the same history suppression as a short command.
-      return lines.join("\r ");
-    }
+    case "posix":
+      return wrapPosixCommand(command, sentinel);
   }
 }
 
