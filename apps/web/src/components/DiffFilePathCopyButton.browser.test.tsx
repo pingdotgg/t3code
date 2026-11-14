@@ -8,7 +8,7 @@ import { AnchoredToastProvider } from "./ui/toast";
 it("explains a denied clipboard write and lets the same path be copied again", async () => {
   await using screen = await render(
     <AnchoredToastProvider timeout={0}>
-      <DiffFilePathCopyButton filePath="apps/web/src/index.ts" />
+      <DiffFilePathCopyButton filePath="apps/web/src/index.ts" workspaceRoot="/repo" />
     </AnchoredToastProvider>,
   );
   using write = vi
@@ -27,4 +27,18 @@ it("explains a denied clipboard write and lets the same path be copied again", a
   await expect.element(page.getByText("Copied!", { exact: true })).not.toBeInTheDocument();
   expect(write).toHaveBeenCalledTimes(2);
   expect(write).toHaveBeenLastCalledWith("apps/web/src/index.ts");
+});
+
+it("copies a Windows workspace's file path with Windows separators", async () => {
+  await using screen = await render(
+    <AnchoredToastProvider timeout={0}>
+      <DiffFilePathCopyButton filePath="apps/web/src/index.ts" workspaceRoot="C:\repo" />
+    </AnchoredToastProvider>,
+  );
+  using write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+
+  await screen.getByRole("button", { name: "Copy file path" }).click();
+
+  await expect.element(page.getByText("Copied!", { exact: true })).toBeVisible();
+  expect(write).toHaveBeenCalledWith("apps\\web\\src\\index.ts");
 });
