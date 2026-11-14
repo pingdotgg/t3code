@@ -29,6 +29,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Statement from "effect/sql/Statement";
 import * as Tracer from "effect/Tracer";
@@ -4060,8 +4061,21 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       });
       const parentReads: Array<string> = [];
       const transferReadParams: Array<ReadonlyArray<unknown>> = [];
-      const observe: Statement.Transformer = (statement) => {
+      // The parent runs read while the child's result is recorded, with their bound ids.
+      const resultRunReads: Array<readonly [string, ReadonlyArray<unknown>]> = [];
+      const recordsResult = (span: Tracer.AnySpan | undefined): boolean =>
+        span?._tag === "Span" &&
+        (span.name === "Orchestrator.finalizeAppOwnedSubagentTask" ||
+          recordsResult(Option.getOrUndefined(span.parent)));
+      const observe: Statement.Transformer = (statement, _sql, _fiber, span) => {
         const [query, params] = statement.compile();
+        if (
+          params.includes(threadId) &&
+          query.includes("FROM orchestration_v2_projection_runs") &&
+          recordsResult(span)
+        ) {
+          resultRunReads.push([query, params]);
+        }
         if (
           params.includes(threadId) &&
           (/FROM orchestration_v2_projection_(subagents|context_transfers)\b/.test(query) ||
@@ -4100,6 +4114,27 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         transferReads.filter((query) => !/AND source_thread_id (=|IN)/.test(query)),
         [],
         "a parent context-transfer read is not narrowed",
+      );
+      // Only the task's run and the run its delivery message started, each read by id.
+      const deliveryRunId = projection.runs.find((run) => run.userMessageId === messageId)?.id;
+      assert.isDefined(deliveryRunId);
+      assert.isNotEmpty(resultRunReads);
+      assert.deepEqual(
+        resultRunReads.filter(([query]) => !/AND run_id IN/.test(query)),
+        [],
+        "a parent runs read is not narrowed",
+      );
+      assert.deepEqual(
+        [
+          ...new Set(
+            resultRunReads.flatMap(([, params]) =>
+              params
+                .filter((param) => param !== threadId)
+                .flatMap((param) => JSON.parse(String(param)) as Array<string>),
+            ),
+          ),
+        ].toSorted(),
+        [runId, deliveryRunId].toSorted(),
       );
       // An existing result transfer is found only when the read asks for this child's.
       assert.deepEqual(

@@ -13929,10 +13929,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         turnItems: childResult.turnItems,
       };
       const parentThreadId = childControls.thread.lineage.parentThreadId;
-      // Only this child's tasks, node, card and result transfers; a delivery is read by id below.
+      // Only this child's tasks, node, card and transfers; runs and a delivery are read by id.
       const parentProjection = yield* projectionStore.getThreadRecords(
         parentThreadId,
-        ["runs", "subagents", "nodes", "turnItems", "contextTransfers"],
+        ["subagents", "nodes", "turnItems", "contextTransfers"],
         {
           turnItemTypes: ["subagent"],
           subagentChildThreadIds: [childThreadId],
@@ -13967,10 +13967,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
       const now = yield* DateTime.now;
       const result = subagentResultForRun(childProjection, { ...childRun, status: outcome });
-      const parentRun =
-        task.runId === null
-          ? undefined
-          : parentProjection.runs.find((candidate) => candidate.id === task.runId);
+      const parentRunsById = (runIds: ReadonlyArray<RunId>) =>
+        projectionStore
+          .getThreadRecords(parentThreadId, ["runs"], { runIds })
+          .pipe(Effect.map((records) => records.runs));
+      const parentRun = task.runId === null ? undefined : (yield* parentRunsById([task.runId]))[0];
       const parentNode = parentProjection.nodes.find((candidate) => candidate.id === task.id);
       const parentTurnItem = parentProjection.turnItems.find(
         (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
@@ -14003,9 +14004,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   !parentProjection.subagents.some((candidate) => candidate.id === taskId),
               ),
             });
+      // The delivery message's run decides whether that delivery can still take this result.
+      const deliveryRunId = deliveryRecords.messages[0]?.runId ?? null;
+      const deliveryRuns =
+        deliveryRunId === null || deliveryRunId === parentRun?.id
+          ? []
+          : yield* parentRunsById([deliveryRunId]);
       const completionPlan = yield* planDelegatedCompletionDelivery({
         parentProjection: {
           ...parentProjection,
+          runs: [...(parentRun === undefined ? [] : [parentRun]), ...deliveryRuns],
           messages: deliveryRecords.messages,
           subagents: [...parentProjection.subagents, ...deliveryRecords.subagents],
         },
