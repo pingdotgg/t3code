@@ -11,7 +11,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { publicProxy } from "./publicProxy.ts";
+import { publicProxy, resolvePreviewEgressProxy } from "./publicProxy.ts";
 
 export class HtmlRenderBrowserError extends Schema.TaggedError<HtmlRenderBrowserError>()(
   "HtmlRenderBrowserError",
@@ -182,6 +182,12 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   readonly profileDirectory: string;
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const egressProxy = resolvePreviewEgressProxy();
+  if (egressProxy === "invalid") {
+    return yield* new HtmlRenderBrowserError({
+      reason: "T3CODE_PREVIEW_EGRESS_PROXY must be an http://host:port URL",
+    });
+  }
   const proxy = yield* publicProxy.pipe(
     Effect.mapError(
       (cause) => new HtmlRenderBrowserError({ reason: "the preview proxy could not start", cause }),
@@ -206,6 +212,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
           "--proxy-bypass-list=<-loopback>",
           // WebRTC would otherwise send UDP, which no proxy carries.
           "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+          ...(egressProxy !== undefined ? ["--disable-quic"] : []),
           ...(input.noSandbox ? ["--no-sandbox"] : []),
           `--user-data-dir=${input.profileDirectory}`,
           "about:blank",
