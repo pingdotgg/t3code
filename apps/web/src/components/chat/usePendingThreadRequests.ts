@@ -22,7 +22,6 @@ import { useShallow } from "zustand/react/shallow";
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { getUploadedAttachments, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
-import { reviewCommentContextRecord } from "../../lib/composerContextRecords";
 import {
   buildPendingUserInputAnswers,
   setPendingUserInputCustomAnswer,
@@ -31,7 +30,9 @@ import {
 } from "@t3tools/client-runtime/state/pending-user-input";
 import {
   carryDisplacedCustomAnswerIntoPrompt,
+  withdrawDisplacedCustomAnswerFromPrompt,
   derivePendingUserInputProgress,
+  answerContextRecords,
   projectPendingUserInputAnswer,
   threadContextsReferencedByAnswer,
 } from "../../pendingUserInput";
@@ -63,6 +64,7 @@ function makePendingCustomAnswerSetter(input: {
   readonly activePendingUserInput: PendingUserInput | null;
   readonly activePendingRequestKey: string;
   readonly writePrompt: (prompt: string) => void;
+  readonly withdrawRestoredAnswer: (questionId: string, value: string) => void;
   readonly setPendingUserInputAnswersByRequestId: (
     update: SetStateAction<Record<string, Record<string, PendingUserInputDraftAnswer>>>,
   ) => void;
@@ -77,6 +79,7 @@ function makePendingCustomAnswerSetter(input: {
       return;
     }
     input.writePrompt(value);
+    input.withdrawRestoredAnswer(questionId, value);
     input.setPendingUserInputAnswersByRequestId((existing) => ({
       ...existing,
       [activePendingRequestKey]: {
@@ -124,6 +127,15 @@ export function usePendingThreadRequests(input: {
     reportFailure: false,
   });
   const userInputResponsesInFlight = useRef(new Set<string>());
+  // In the order the text went into the thread draft, which is how a copy is found again.
+  const displacedAnswers = useRef<
+    Array<{ readonly draft: string; readonly key: string; readonly text: string }>
+  >([]);
+  // This hook outlives a thread switch, and each thread has its own draft.
+  const displacedDraftKey =
+    typeof composerDraftTarget === "string"
+      ? composerDraftTarget
+      : `${composerDraftTarget.environmentId}:${composerDraftTarget.threadId}`;
   const [respondingRequestIds, setRespondingRequestIds] = useState<RuntimeRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     RuntimeRequestId[]
@@ -288,10 +300,7 @@ export function usePendingThreadRequests(input: {
     if (userInputResponsesInFlight.current.has(responseKey)) return;
     const attachmentsByQuestionId = new Map<string, UserInputAttachments[string]>();
     const providerAnswers = { ...answers };
-    // Diff comments land in the thread draft even when their chip is in an answer.
-    const reviewCommentRecords = (
-      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments ?? []
-    ).map(reviewCommentContextRecord);
+    const threadDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
     for (const question of pendingInput.questions) {
       const target = questionAttachmentDraftId(
         environmentId,
@@ -301,10 +310,10 @@ export function usePendingThreadRequests(input: {
       );
       if ((useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0) return;
       const draft = useComposerDraftStore.getState().getComposerDraft(target);
-      providerAnswers[question.id] = projectPendingUserInputAnswer(answers[question.id], [
-        ...(draft?.threadContexts ?? []),
-        ...reviewCommentRecords,
-      ]);
+      providerAnswers[question.id] = projectPendingUserInputAnswer(
+        answers[question.id],
+        answerContextRecords(draft, threadDraft),
+      );
       const attachments = draft ? [...draft.images, ...draft.files] : [];
       if (attachments.length === 0) continue;
       const uploaded = getUploadedAttachments({ environmentId, images: attachments });
@@ -389,6 +398,11 @@ export function usePendingThreadRequests(input: {
     const nextPrompt = carryDisplacedCustomAnswerIntoPrompt(currentPrompt, displacedAnswer);
     if (nextPrompt !== currentPrompt) {
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+      displacedAnswers.current.push({
+        draft: displacedDraftKey,
+        key: `${activePendingRequestKey}:${questionId}`,
+        text: displacedAnswer ?? "",
+      });
       toastManager.add({
         type: "info",
         title: "Your typed text was set aside",
@@ -444,10 +458,37 @@ export function usePendingThreadRequests(input: {
   const writePrompt = useStableCallback((prompt: string) => {
     promptRef.current = prompt;
   });
+  // Undo can put set-aside text back into the answer; left in the draft too, it is sent twice.
+  const withdrawRestoredAnswer = useStableCallback((questionId: string, value: string) => {
+    const key = `${activePendingRequestKey}:${questionId}`;
+    const entries = displacedAnswers.current;
+    const index = entries.findLastIndex(
+      (entry) =>
+        entry.draft === displacedDraftKey &&
+        entry.key === key &&
+        entry.text.trim() === value.trim(),
+    );
+    const displaced = entries[index];
+    if (displaced === undefined) return;
+    const later = entries
+      .slice(index + 1)
+      .filter((entry) => entry.draft === displaced.draft)
+      .map((entry) => entry.text);
+    displacedAnswers.current = entries.filter((entry) => entry !== displaced);
+    const currentPrompt =
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.prompt ?? "";
+    const nextPrompt = withdrawDisplacedCustomAnswerFromPrompt(
+      currentPrompt,
+      displaced.text,
+      later,
+    );
+    if (nextPrompt !== currentPrompt) setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+  });
   const onChangeActivePendingUserInputCustomAnswer = makePendingCustomAnswerSetter({
     activePendingUserInput,
     activePendingRequestKey,
     writePrompt,
+    withdrawRestoredAnswer,
     setPendingUserInputAnswersByRequestId,
   });
 

@@ -299,6 +299,7 @@ overrides:
   expo-modules-core: 58.0.30
   '@exodus/bytes>@noble/hashes': 1.8.0
   '@react-navigation/core': 7.24.0
+  unenv: 2.0.0-rc.24
   dbus-next>usocket: '-'
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-arm64': '-'
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-x64': '-'
@@ -336,9 +337,9 @@ overrides:
   '@tailwindcss/oxide': 4.3.3
   '@tailwindcss/vite': 4.3.3
   '@types/node': 24.12.4
-  effect: 4.1.2
-  '@opencode/protocol>effect': 4.1.2
-  '@opencode/schema>effect': 4.1.2
+  effect: 4.1.3
+  '@opencode/protocol>effect': 4.1.3
+  '@opencode/schema>effect': 4.1.3
   node-abi: 4.33.0
   '@react-native/metro-config': 0.88.1
   electron-webauthn>@electron-webauthn/macos: 1.3.1
@@ -363,7 +364,8 @@ patchedDependencies:
   '@clerk/expo-native-components@0.4.4': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4
   '@cursor/sdk@1.2.0': 57f502128bf6accd976963b126e227c86a45d815a53a8dc450461beae3bed4a4
   '@effect/vitest@4.1.2': 299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7
-  '@ff-labs/fff-node@0.11.0': cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c
+  '@expo/ui@58.0.27': 9f2547678939f4ec78fe45163b6455aad63d3c80353d7e0cc783f6a61a7ccc2f
+  '@ff-labs/fff-node@0.11.0': 3be7107340e5f388114da259637828cd47f2b32eb8ae572440715c4e38cffe6e
   '@legendapp/list@3.7.2': 3c68607b8bb7a531873bcbe0b197d163ef1fdb4d4cf52a4ddf9d2b3804671658
   '@muse-code/sdk@1.4.6': 7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101
   '@pierre/diffs@1.7.0-beta.3': 4a64f63a0def94c5add9d86d70560d26d6857e1f5150133862e42e1fd77bc4e8
@@ -373,7 +375,7 @@ patchedDependencies:
   alchemy@2.0.0-beta.85: 07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd
   app-builder-lib@26.16.1: 0fbe9ae51783f5768ebe197d12d1fdb7d477a08c92e5db2f6356bcce62613c53
   dbus-next@0.10.2: cfff57561b0ee59b5addb3b2e6c6f20906e967507a530ab67e8db8108e520ba4
-  electron-updater@6.8.9: 2ed21db470f254c5e095a0eb8dabc086c310d180322004bceee7d56e7ce86b84
+  electron-updater@6.8.9: 5e096d34a46fdbaa6d48a5803b2c0ed9c7c04f8ab43a30ebebbf726f8f28ed8e
   expo-audio@58.0.11: 93691f7f59edb30a3bb2c23b489e605e7ea35506b1212d4a2ebbd1fd79079483
   expo-modules-core@58.0.30: f0b0fd100550ed76e5c25b4d13eb7c9ff62825f8f197c53edf7bf447c50c9fb7
   expo-network@58.0.4: 159c2d760d1cd5102e95df51c20600111e7a72096ef0daea8215d50cae48bd98
@@ -430,7 +432,7 @@ importers:
         version: 0.15.4
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@napi-rs/keyring':
         specifier: ^1.3.0
         version: 1.3.0
@@ -453,8 +455,8 @@ importers:
         specifier: 0.10.2
         version: 0.10.2(patch_hash=cfff57561b0ee59b5addb3b2e6c6f20906e967507a530ab67e8db8108e520ba4)
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
       electron:
         specifier: 44.10.1
         version: 44.10.1(supports-color@8.1.1)
@@ -463,7 +465,7 @@ importers:
         version: 8.2.0
       electron-updater:
         specifier: 6.8.9
-        version: 6.8.9(patch_hash=2ed21db470f254c5e095a0eb8dabc086c310d180322004bceee7d56e7ce86b84)(supports-color@8.1.1)
+        version: 6.8.9(patch_hash=5e096d34a46fdbaa6d48a5803b2c0ed9c7c04f8ab43a30ebebbf726f8f28ed8e)(supports-color@8.1.1)
       electron-webauthn:
         specifier: 'catalog:'
         version: 1.3.1(typescript@6.0.3)
@@ -482,7 +484,7 @@ importers:
     devDependencies:
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -540,7 +542,7 @@ importers:
         version: 0.4.4(patch_hash=7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4)(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1)(typescript@6.0.3)
       '@effect/atom-react':
         specifier: 4.1.2
-        version: 4.1.2(effect@4.1.2)(react@19.3.0)(scheduler@0.28.0)
+        version: 4.1.2(effect@4.1.3)(react@19.3.0)(scheduler@0.28.0)
       '@expo-google-fonts/dm-sans':
         specifier: ^0.4.2
         version: 0.4.2
@@ -549,7 +551,7 @@ importers:
         version: 58.0.17(@expo/log-box@58.0.15)(expo@58.0.23)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       '@expo/ui':
         specifier: 58.0.27
-        version: 58.0.27(@babel/core@7.29.7(supports-color@8.1.1))(expo@58.0.23)(react-dom@19.3.0(react@19.3.0))(react-native-worklets@0.13.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
+        version: 58.0.27(patch_hash=9f2547678939f4ec78fe45163b6455aad63d3c80353d7e0cc783f6a61a7ccc2f)(@babel/core@7.29.7(supports-color@8.1.1))(expo@58.0.23)(react-dom@19.3.0(react@19.3.0))(react-native-worklets@0.13.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       '@formatjs/intl-displaynames':
         specifier: 6.8.13
         version: 6.8.13
@@ -585,7 +587,7 @@ importers:
         version: 7.5.1(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       '@react-navigation/native-stack':
         specifier: 7.21.0
-        version: 7.21.0(patch_hash=990d575444c4af2ce8218b3b7a8280fe244c03abbdb32b822a2e862f791dbf42)(bce9d5917b75ecfdccb2630d9f614f34)
+        version: 7.21.0(patch_hash=990d575444c4af2ce8218b3b7a8280fe244c03abbdb32b822a2e862f791dbf42)(8cabb04b1defcb22245317e78e4e5f29)
       '@t3tools/client-runtime':
         specifier: workspace:*
         version: link:../../packages/client-runtime
@@ -617,8 +619,8 @@ importers:
         specifier: 8.0.3
         version: 8.0.3
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
       expo:
         specifier: 58.0.23
         version: 58.0.23(d226faf1ca90e630d8c56a2108dee32d)
@@ -749,8 +751,8 @@ importers:
         specifier: 0.88.1
         version: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
       react-native-enriched-markdown:
-        specifier: file:deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz
-        version: file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz(katex@0.16.47)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
+        specifier: file:deps/react-native-enriched-markdown-1.2.0-t3.18-16db4c75.tgz
+        version: file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-16db4c75.tgz(katex@0.16.47)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       react-native-gesture-handler:
         specifier: 3.5.0
         version: 3.5.0(patch_hash=171379dd378f8f11e9187876dec2116e5cbf5f21cef6576cdde6956518324f98)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
@@ -773,8 +775,8 @@ importers:
         specifier: ~5.11.1
         version: 5.11.1(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       react-native-screens:
-        specifier: file:deps/react-native-screens-5.0.0-t3.48.tgz
-        version: file:apps/mobile/deps/react-native-screens-5.0.0-t3.48.tgz(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
+        specifier: file:deps/react-native-screens-5.0.0-t3.50.tgz
+        version: file:apps/mobile/deps/react-native-screens-5.0.0-t3.50.tgz(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       react-native-svg:
         specifier: 15.16.1
         version: 15.16.1(patch_hash=110f9243ffad03654ce40dd1cdb09f01af16b8fa2ccb2b2cd3d62e682c180399)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
@@ -805,10 +807,10 @@ importers:
         version: 7.29.7(supports-color@8.1.1)
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@pierre/trees':
         specifier: 1.0.0-beta.6
         version: 1.0.0-beta.6(@pierre/theme@2.0.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
@@ -850,13 +852,13 @@ importers:
         version: 1.2.0(patch_hash=57f502128bf6accd976963b126e227c86a45d815a53a8dc450461beae3bed4a4)(zod@4.6.7)
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/platform-node-shared':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
       '@ff-labs/fff-node':
         specifier: 0.11.0
-        version: 0.11.0(patch_hash=cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c)
+        version: 0.11.0(patch_hash=3be7107340e5f388114da259637828cd47f2b32eb8ae572440715c4e38cffe6e)
       '@muse-code/sdk':
         specifier: 1.4.6
         version: 1.4.6(patch_hash=7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101)(@types/node@24.12.4)
@@ -927,8 +929,8 @@ importers:
         specifier: 8.0.3
         version: 8.0.3
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
       ffi-rs:
         specifier: 1.3.2
         version: 1.3.2
@@ -968,10 +970,10 @@ importers:
     devDependencies:
       '@effect/graphql-generator':
         specifier: 'catalog:'
-        version: 4.1.2(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(effect@4.1.2)
+        version: 4.1.2(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(effect@4.1.3)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@handy-computer/models':
         specifier: 0.2.3
         version: 0.2.3
@@ -1076,7 +1078,7 @@ importers:
         version: 3.2.2(react@19.3.0)
       '@effect/atom-react':
         specifier: 4.1.2
-        version: 4.1.2(effect@4.1.2)(react@19.3.0)(scheduler@0.28.0)
+        version: 4.1.2(effect@4.1.3)(react@19.3.0)(scheduler@0.28.0)
       '@fontsource-variable/inter':
         specifier: ^5.3.0
         version: 5.3.0
@@ -1174,8 +1176,8 @@ importers:
         specifier: ^3.4.17
         version: 3.4.17
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
       entities:
         specifier: 8.1.0
         version: 8.1.0
@@ -1269,10 +1271,10 @@ importers:
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@tailwindcss/vite':
         specifier: 4.3.3
         version: 4.3.3(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))
@@ -1344,7 +1346,7 @@ importers:
     dependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../packages/contracts
@@ -1355,12 +1357,12 @@ importers:
         specifier: workspace:*
         version: link:../packages/shared
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -1372,28 +1374,28 @@ importers:
     dependencies:
       '@alchemy.run/axiom':
         specifier: 'catalog:'
-        version: 2.0.0-beta.85(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.2)
+        version: 2.0.0-beta.85(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.3)
       '@alchemy.run/cloudflare':
         specifier: 'catalog:'
-        version: 2.0.0-beta.85(935199ac9c22ca360eddcc7164e5b8a7)
+        version: 2.0.0-beta.85(dabba7d529c10a239fedb30f64291b80)
       '@alchemy.run/drizzle':
         specifier: 'catalog:'
-        version: 2.0.0-beta.85(8a334cf6654889bd393813214c98db49)
+        version: 2.0.0-beta.85(eb667a4b2658382830b9c27fc99af2f0)
       '@alchemy.run/planetscale':
         specifier: 'catalog:'
-        version: 2.0.0-beta.85(@effect/sql-pg@4.1.2(effect@4.1.2))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.2)(pg@8.23.0)
+        version: 2.0.0-beta.85(@effect/sql-pg@4.1.2(effect@4.1.3))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.3)(pg@8.23.0)
       '@clerk/backend':
         specifier: 3.27.0
         version: 3.27.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@distilled.cloud/cloudflare':
         specifier: 'catalog:'
-        version: 1.0.0-rc.18(effect@4.1.2)
+        version: 1.0.0-rc.18(effect@4.1.3)
       '@effect/sql-pg':
         specifier: 4.1.2
-        version: 4.1.2(effect@4.1.2)
+        version: 4.1.2(effect@4.1.3)
       '@effect/sql-sqlite-do':
         specifier: 'catalog:'
-        version: 4.1.2(effect@4.1.2)
+        version: 4.1.2(effect@4.1.3)
       '@noble/curves':
         specifier: 'catalog:'
         version: 1.9.1
@@ -1411,26 +1413,26 @@ importers:
         version: link:../../packages/shared
       alchemy:
         specifier: 2.0.0-beta.85
-        version: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+        version: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
       drizzle-orm:
         specifier: 1.0.0-rc.5
-        version: 1.0.0-rc.5(@cloudflare/workers-types@4.20260604.1)(@effect/sql-d1@4.1.1(effect@4.1.2))(@effect/sql-pg@4.1.2(effect@4.1.2))(@effect/sql-sqlite-do@4.1.2(effect@4.1.2))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/sql.js@1.4.11)(bun-types@1.3.14)(effect@4.1.2)(expo-sqlite@58.0.15(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(sql.js@1.15.0)(zod@4.6.7)
+        version: 1.0.0-rc.5(@cloudflare/workers-types@4.20260604.1)(@effect/sql-d1@4.1.1(effect@4.1.3))(@effect/sql-pg@4.1.2(effect@4.1.3))(@effect/sql-sqlite-do@4.1.2(effect@4.1.3))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/sql.js@1.4.11)(bun-types@1.3.14)(effect@4.1.3)(expo-sqlite@58.0.15(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(sql.js@1.15.0)(zod@4.6.7)
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@alchemy.run/test':
         specifier: 'catalog:'
-        version: 2.0.0-beta.85(patch_hash=29c0539ea71d9cc372f0b16558640599beb9bc609605feb2a493da268d72713e)(93775fed45909d71c0b8bba962f026cf)
+        version: 2.0.0-beta.85(patch_hash=29c0539ea71d9cc372f0b16558640599beb9bc609605feb2a493da268d72713e)(9cad13029aba0f237bc67ebbac58cedc)
       '@cloudflare/workers-types':
         specifier: ^4.20260601.1
         version: 4.20260604.1
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@electric-sql/pglite':
         specifier: 0.3.15
         version: 0.3.15
@@ -1439,7 +1441,7 @@ importers:
         version: 24.12.4
       drizzle-kit:
         specifier: 1.0.0-rc.5
-        version: 1.0.0-rc.5(drizzle-orm@1.0.0-rc.5(@cloudflare/workers-types@4.20260604.1)(@effect/sql-d1@4.1.1(effect@4.1.2))(@effect/sql-pg@4.1.2(effect@4.1.2))(@effect/sql-sqlite-do@4.1.2(effect@4.1.2))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/sql.js@1.4.11)(bun-types@1.3.14)(effect@4.1.2)(expo-sqlite@58.0.15(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(sql.js@1.15.0)(zod@4.6.7))
+        version: 1.0.0-rc.5(drizzle-orm@1.0.0-rc.5(@cloudflare/workers-types@4.20260604.1)(@effect/sql-d1@4.1.1(effect@4.1.3))(@effect/sql-pg@4.1.2(effect@4.1.3))(@effect/sql-sqlite-do@4.1.2(effect@4.1.3))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/sql.js@1.4.11)(bun-types@1.3.14)(effect@4.1.3)(expo-sqlite@58.0.15(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(sql.js@1.15.0)(zod@4.6.7))
       vite:
         specifier: npm:@voidzero-dev/vite-plus-core@1.4.0
         version: '@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0)'
@@ -1451,16 +1453,16 @@ importers:
     dependencies:
       '@alchemy.run/axiom':
         specifier: 'catalog:'
-        version: 2.0.0-beta.85(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.2)
+        version: 2.0.0-beta.85(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.3)
       '@alchemy.run/cloudflare':
         specifier: 'catalog:'
-        version: 2.0.0-beta.85(935199ac9c22ca360eddcc7164e5b8a7)
+        version: 2.0.0-beta.85(dabba7d529c10a239fedb30f64291b80)
       alchemy:
         specifier: 2.0.0-beta.85
-        version: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+        version: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
       jose:
         specifier: 'catalog:'
         version: 6.2.2
@@ -1470,10 +1472,10 @@ importers:
         version: 4.20260604.1
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -1487,15 +1489,15 @@ importers:
         specifier: ^1.63.0
         version: 1.89.0
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       vite-plus:
         specifier: 1.4.0
         version: 1.4.0(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
@@ -1548,21 +1550,33 @@ importers:
         specifier: workspace:*
         version: link:../source-control-definitions
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
       jszip:
         specifier: 3.10.1
         version: 3.10.1
+      remark-gfm:
+        specifier: 'catalog:'
+        version: 4.0.1(supports-color@8.1.1)
+      remark-parse:
+        specifier: 'catalog:'
+        version: 11.0.0(supports-color@8.1.1)
       three:
         specifier: 0.180.0
         version: 0.180.0
       unbash:
         specifier: ^5.0.0
         version: 5.0.0
+      unified:
+        specifier: 'catalog:'
+        version: 11.0.5
     devDependencies:
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+      '@types/mdast':
+        specifier: ^4.0.4
+        version: 4.0.4
       '@types/three':
         specifier: 0.180.0
         version: 0.180.0
@@ -1573,12 +1587,12 @@ importers:
   packages/contracts:
     dependencies:
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       vite-plus:
         specifier: 1.4.0
         version: 1.4.0(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
@@ -1586,18 +1600,18 @@ importers:
   packages/effect-acp:
     dependencies:
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/openapi-generator':
         specifier: 'catalog:'
-        version: 4.1.2(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(effect@4.1.2)(encoding@0.1.13)
+        version: 4.1.2(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(effect@4.1.3)(encoding@0.1.13)
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -1608,18 +1622,18 @@ importers:
   packages/effect-codex-app-server:
     dependencies:
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/openapi-generator':
         specifier: 'catalog:'
-        version: 4.1.2(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(effect@4.1.2)(encoding@0.1.13)
+        version: 4.1.2(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(effect@4.1.3)(encoding@0.1.13)
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -1642,15 +1656,15 @@ importers:
         specifier: 8.0.3
         version: 8.0.3
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -1679,15 +1693,15 @@ importers:
         specifier: workspace:*
         version: link:../shared
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@t3tools/provider-testing':
         specifier: workspace:*
         version: link:../provider-testing
@@ -1710,15 +1724,15 @@ importers:
         specifier: workspace:*
         version: link:../shared
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -1741,18 +1755,21 @@ importers:
         specifier: workspace:*
         version: link:../shared
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
+      jsonc-parser:
+        specifier: 3.3.1
+        version: 3.3.1
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@t3tools/provider-testing':
         specifier: workspace:*
         version: link:../provider-testing
@@ -1778,15 +1795,15 @@ importers:
         specifier: workspace:*
         version: link:../shared
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@t3tools/provider-testing':
         specifier: workspace:*
         version: link:../provider-testing
@@ -1815,15 +1832,15 @@ importers:
         specifier: workspace:*
         version: link:../shared
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@t3tools/provider-testing':
         specifier: workspace:*
         version: link:../provider-testing
@@ -1852,15 +1869,15 @@ importers:
         specifier: workspace:*
         version: link:../shared
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@t3tools/provider-testing':
         specifier: workspace:*
         version: link:../provider-testing
@@ -1889,15 +1906,15 @@ importers:
         specifier: workspace:*
         version: link:../shared
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@t3tools/provider-testing':
         specifier: workspace:*
         version: link:../provider-testing
@@ -1915,7 +1932,7 @@ importers:
         version: 1.15.13
       '@opencode/client':
         specifier: 2.0.28
-        version: 2.0.28(effect@4.1.2)
+        version: 2.0.28(effect@4.1.3)
       '@opencode/protocol':
         specifier: 2.0.28
         version: 2.0.28
@@ -1932,15 +1949,15 @@ importers:
         specifier: workspace:*
         version: link:../shared
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@t3tools/provider-testing':
         specifier: workspace:*
         version: link:../provider-testing
@@ -1963,15 +1980,15 @@ importers:
         specifier: workspace:*
         version: link:../shared
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@t3tools/provider-testing':
         specifier: workspace:*
         version: link:../provider-testing
@@ -1986,7 +2003,7 @@ importers:
     dependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -1997,8 +2014,8 @@ importers:
         specifier: workspace:*
         version: link:../shared
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@types/node':
         specifier: 24.12.4
@@ -2010,15 +2027,15 @@ importers:
         specifier: workspace:*
         version: link:../contracts
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -2050,15 +2067,15 @@ importers:
         specifier: workspace:*
         version: link:../shared
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -2078,8 +2095,8 @@ importers:
         specifier: workspace:*
         version: link:../contracts
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
       ffi-rs:
         specifier: 1.3.2
         version: 1.3.2
@@ -2128,10 +2145,10 @@ importers:
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/mdast':
         specifier: ^4.0.4
         version: 4.0.4
@@ -2160,15 +2177,15 @@ importers:
         specifier: 8.0.3
         version: 8.0.3
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@t3tools/source-control-testing':
         specifier: workspace:*
         version: link:../source-control-testing
@@ -2194,15 +2211,15 @@ importers:
         specifier: workspace:*
         version: link:../source-control-core
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@t3tools/source-control-testing':
         specifier: workspace:*
         version: link:../source-control-testing
@@ -2222,12 +2239,12 @@ importers:
         specifier: workspace:*
         version: link:../shared
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -2239,7 +2256,7 @@ importers:
     dependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -2253,12 +2270,12 @@ importers:
         specifier: workspace:*
         version: link:../source-control-core
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -2308,15 +2325,15 @@ importers:
         specifier: workspace:*
         version: link:../source-control-core
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@t3tools/source-control-testing':
         specifier: workspace:*
         version: link:../source-control-testing
@@ -2342,12 +2359,12 @@ importers:
         specifier: workspace:*
         version: link:../source-control-core
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@t3tools/source-control-testing':
         specifier: workspace:*
         version: link:../source-control-testing
@@ -2362,7 +2379,7 @@ importers:
     dependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -2376,15 +2393,15 @@ importers:
         specifier: workspace:*
         version: link:../source-control-core
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/graphql-generator':
         specifier: 'catalog:'
-        version: 4.1.2(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(effect@4.1.2)
+        version: 4.1.2(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(effect@4.1.3)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@t3tools/source-control-testing':
         specifier: workspace:*
         version: link:../source-control-testing
@@ -2407,12 +2424,12 @@ importers:
         specifier: workspace:*
         version: link:../source-control-core
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@t3tools/source-control-testing':
         specifier: workspace:*
         version: link:../source-control-testing
@@ -2427,7 +2444,7 @@ importers:
     dependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -2438,8 +2455,8 @@ importers:
         specifier: workspace:*
         version: link:../source-control-core
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@types/node':
         specifier: 24.12.4
@@ -2454,15 +2471,15 @@ importers:
         specifier: workspace:*
         version: link:../shared
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -2479,12 +2496,12 @@ importers:
         specifier: workspace:*
         version: link:../shared
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -2502,7 +2519,7 @@ importers:
         version: 0.15.5(e2e@0.23.0)
       '@effect/platform-node':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@electron/asar':
         specifier: ^4.3.0
         version: 4.3.0
@@ -2525,8 +2542,8 @@ importers:
         specifier: 0.23.0
         version: 0.23.0
       effect:
-        specifier: 4.1.2
-        version: 4.1.2
+        specifier: 4.1.3
+        version: 4.1.3
       playwright-core:
         specifier: 1.64.1
         version: 1.64.1
@@ -2542,7 +2559,7 @@ importers:
     devDependencies:
       '@effect/vitest':
         specifier: 4.1.2
-        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/plist':
         specifier: 'catalog:'
         version: 3.0.5
@@ -2552,6 +2569,9 @@ importers:
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
+      jszip:
+        specifier: 3.10.1
+        version: 3.10.1
       postject:
         specifier: 1.0.0-alpha.6
         version: 1.0.0-alpha.6
@@ -2591,13 +2611,13 @@ packages:
     resolution: {integrity: sha512-hOV18VHG6ivrbPnk35hoqlCQPc6bR8b9soGmHlSkbnPIgVZUg7jpliF9AztSSJbJK4GHcBFc9hWetwCRHzGYAg==}
     peerDependencies:
       alchemy: 2.0.0-beta.85
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@alchemy.run/axiom@2.0.0-beta.85':
     resolution: {integrity: sha512-dpBBDxZaRlRIiszRYTUB9M3e3yN6hvkyYTpc0E66tJfcESY6rwp2O2fl38Mun5iLEyGJb2Gvv4HqPiURYWzrHw==}
     peerDependencies:
       alchemy: 2.0.0-beta.85
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@alchemy.run/cloudflare-runtime@2.0.0-beta.85':
     resolution: {integrity: sha512-OyGH/j5R9QaUdMjvm3y6pIUpMa7T9SvVYvlVd+fWo/eltOf+k/KQxC12QHC2fe22GVs3apL28l9f4VUH8N9aEA==}
@@ -2605,7 +2625,7 @@ packages:
       '@distilled.cloud/cloudflare': 1.0.0-rc.18
       '@effect/platform-bun': 4.1.2
       '@effect/platform-node': 4.1.2
-      effect: 4.1.2
+      effect: 4.1.3
       rolldown: 1.2.13
       vite: ^7.0.0 || ^8.0.0
     peerDependenciesMeta:
@@ -2626,7 +2646,7 @@ packages:
       '@effect/platform-bun': 4.1.2
       '@effect/platform-node': 4.1.2
       alchemy: 2.0.0-beta.85
-      effect: 4.1.2
+      effect: 4.1.3
       vite: ^7.0.0 || ^8.0.0
     peerDependenciesMeta:
       '@alchemy.run/domain':
@@ -2645,7 +2665,7 @@ packages:
     peerDependencies:
       '@effect/platform-bun': 4.1.2
       alchemy: 2.0.0-beta.85
-      effect: 4.1.2
+      effect: 4.1.3
     peerDependenciesMeta:
       '@effect/platform-bun':
         optional: true
@@ -2660,7 +2680,7 @@ packages:
       alchemy: 2.0.0-beta.85
       drizzle-kit: 1.0.0-rc.5
       drizzle-orm: 1.0.0-rc.5
-      effect: 4.1.2
+      effect: 4.1.3
     peerDependenciesMeta:
       '@alchemy.run/cloudflare':
         optional: true
@@ -2680,7 +2700,7 @@ packages:
     resolution: {integrity: sha512-rBG26S6nGVF3fzCTnvMKu/Un/5H+YepOIJyld+1JeaAKV78z3U+bYtR+dSWR6KcW8tG8xX9pj83sisZdp0iNog==}
     peerDependencies:
       alchemy: 2.0.0-beta.85
-      effect: 4.1.2
+      effect: 4.1.3
       mysql2: ^3.24.2
       pg: ^8.22.0
     peerDependenciesMeta:
@@ -2708,7 +2728,7 @@ packages:
       '@effect/sql-mysql2': ^4.1.0
       '@effect/sql-pg': 4.1.2
       alchemy: 2.0.0-beta.85
-      effect: 4.1.2
+      effect: 4.1.3
       mysql2: ^3.24.2
       pg: ^8.22.0
     peerDependenciesMeta:
@@ -2731,7 +2751,7 @@ packages:
       '@effect/vitest': 4.1.2
       '@opentui/core': ^0.6.6
       alchemy: 2.0.0-beta.85
-      effect: 4.1.2
+      effect: 4.1.3
       vitest: ^5.0.4
     peerDependenciesMeta:
       '@effect/vitest':
@@ -3708,42 +3728,42 @@ packages:
   '@distilled.cloud/acme@1.0.0-rc.18':
     resolution: {integrity: sha512-OWO6NG9IcpDqZCzlrN5T4MIQqSbpZ5cw61Ru/dYn1vr3AIyx3Vlg+Ew8NhlunpURr4wqDUW2/7QW3fKbrmfwLg==}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@distilled.cloud/aws4signer@1.0.0-rc.18':
     resolution: {integrity: sha512-eYJi2rsblwjxpa0kj2qUQYqY9cEwD6ow0njiFL6I5ZnlOqrE8I3aLiWvScoc3s9bQUQD5nFdmSnORoPJ5GsHKg==}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@distilled.cloud/aws@1.0.0-rc.18':
     resolution: {integrity: sha512-VZDlOGEXvXvTdY/0sTEoTWnPCGde+fjvq1ZIW3wgiZK/X8ChbbonGArg+Sc9OO4E9tr1WBymASrZ906uLnLWFw==}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@distilled.cloud/axiom@1.0.0-rc.18':
     resolution: {integrity: sha512-8z6PPKm3OlEI9ovuSgqnQBYrGU5Fg8LVrk/Xs85NBDH8kJ69ttdJ8vaSb6hILi9hHluefvYO7SJ1XTOXxH+vCw==}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@distilled.cloud/cloudflare@1.0.0-rc.18':
     resolution: {integrity: sha512-UJB7pitkg7msm7BGTuAE8yYx4GzKdPLRtiOm3G3XHw07xLUlqEiEr4xpSf0CeziWzDygjI53FSkpC2qyVZr49g==}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@distilled.cloud/core@1.0.0-rc.18':
     resolution: {integrity: sha512-Iui60+sNl1CwUu7NKGLuFf3VC4H9xYzfm0Fc8ZQvd87qwf1sDMB3EAWZrq/QFgrwzSY16z2mJ0PNHaBUnGet8A==}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@distilled.cloud/iceberg@1.0.0-rc.18':
     resolution: {integrity: sha512-XjUJ/vEOylhIZbAm85O9H6YqXKWGfVROT5BE9BGA/RXvo0bLK2+sUcjC6BoN77a99lImJkrXJuvbHBhNebObEA==}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@distilled.cloud/planetscale@1.0.0-rc.18':
     resolution: {integrity: sha512-GSpQVfwYq2QKjjQpjiMl4IUBgyS7doNX4mnIzIRzM44BMMtTwx0gMcBj7b7PVAA0O7MyKLKV134Ba1+w3u71kw==}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@dnd-kit/accessibility@3.1.1':
     resolution: {integrity: sha512-2P+YgaXF+gRsIihwwY1gCsQSYnu9Zyj2py8kY5fFvUM1qm2WA2u639R6YNVfU4GWr+ZM5mqEsfHZZLoRONbemw==}
@@ -3793,7 +3813,7 @@ packages:
   '@effect/atom-react@4.1.2':
     resolution: {integrity: sha512-XRAm4lks2kzNFQIz9QTGKR02CaDTR9VJNRXDjDAR8OzM15ybrK4YkB7OlFZ9U+hxXe3DXJZx7RU1/xI2Em2PGQ==}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
       react: '>=19.0.0 <20.0.0'
       scheduler: '>=0.25.0 <0.29.0'
 
@@ -3802,47 +3822,47 @@ packages:
     hasBin: true
     peerDependencies:
       '@effect/platform-node': 4.1.2
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@effect/openapi-generator@4.1.2':
     resolution: {integrity: sha512-seh1li7cp6XE734rWmsQ/lQ2RFp1YCMb1PP6pZ7CvFAeoAUsgM4J2z8iCllY8yE2VnswWWw9GQ/XKHLm/gpGzg==}
     hasBin: true
     peerDependencies:
       '@effect/platform-node': 4.1.2
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@effect/platform-bun@4.1.2':
     resolution: {integrity: sha512-waEAa84CITqjctgw9VdhlL9PyXRHICG3KAWTFRDPUE2XL/pfMPhO7V9oFdfx22dbAhhUzV+MHs0d9hnmy/DQ7w==}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@effect/platform-node-shared@4.1.2':
     resolution: {integrity: sha512-wSwl9A/G1hcVvF8nLI+YfB3EyOIDvWS6+lsTZBkmgDnPBL7m8YWZF+1HD+mdEsb52SUGfukip46Q3gRwSdk3QA==}
     engines: {node: '>=22.19.0'}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@effect/platform-node@4.1.2':
     resolution: {integrity: sha512-ye0UjxORdd5Qu3paZ1LljgGOALWHt7muP9VTpjUSCNfcesiB/Hm7wPJIvZeu4gnwpTe5BtEnO1VHngWqjJp8mA==}
     engines: {node: '>=22.19.0'}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
       redis: '>=5.1.0 <7.0.0'
 
   '@effect/sql-d1@4.1.1':
     resolution: {integrity: sha512-CQMOiw9bmj4ifsUA4KLwIgBJBMpPHaF3OYdXnA9oOxeEmD61+XDLkJUSA2mG7BWCIEZc7MquGxl3HuUVOeqtSA==}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@effect/sql-pg@4.1.2':
     resolution: {integrity: sha512-0UehR7B5W8dC+dX6fDeWStLbVbBb2M4pk4HBATEeH0cmV4Odl2lckTg0jFmLuadekTLa4OyB+bZQo1yTG1y2Mw==}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@effect/sql-sqlite-do@4.1.2':
     resolution: {integrity: sha512-1qlYhIvNsvYxvfp1183FPMGnHN/9TAGtlMLsBB7OrVE5R/9bWnWyahMxGID79sJ6csW3Azeyxk3ZwRdWXLvNTQ==}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@effect/tsgo-darwin-arm64@0.67.1':
     resolution: {integrity: sha512-q10xwD2s+KvZEwbY5OHGSmfAp9Is4e/a7PS4NiUVnvGnPOCbjOMEbVrYjOImy5uawPAa1CVA+55qxCv4ctaw4g==}
@@ -3886,7 +3906,7 @@ packages:
   '@effect/vitest@4.1.2':
     resolution: {integrity: sha512-JJPwAHkJHxvM/woW9mMW/khjasAHcmwWdOMAgMy16rfqsxcVhFDnrRsvN9VI2+kMv8zDCCyBE2q1n5hzZlfE0w==}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@electric-sql/pglite@0.3.15':
     resolution: {integrity: sha512-Cj++n1Mekf9ETfdc16TlDi+cDDQF0W7EcbyRHYOAeZdsAe8M/FJg18itDTSwyHfar2WIezawM9o0EKaRGVKygQ==}
@@ -5254,7 +5274,7 @@ packages:
   '@opencode/client@2.0.28':
     resolution: {integrity: sha512-YV0Yxk93/K2h4Xy/sEW/4ZYGMwn7ltxG2Y/Vdy2VCIZ2z0/r9MI6x5/XawSNfCvImBxuHkQNbYtu9Rgp3ArJ4g==}
     peerDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
       solid-js: '>=1.9.0'
     peerDependenciesMeta:
       effect:
@@ -7885,7 +7905,7 @@ packages:
       '@alchemy.run/frontend-frameworks': 2.0.0-beta.85
       '@effect/platform-bun': 4.1.2
       '@effect/platform-node': 4.1.2
-      effect: 4.1.2
+      effect: 4.1.3
       vite: ^7.0.0 || ^8.0.0
       ws: 8.22.0
     peerDependenciesMeta:
@@ -8772,7 +8792,7 @@ packages:
       arktype: '>=2.0.0'
       better-sqlite3: '>=9.3.0'
       bun-types: '*'
-      effect: 4.1.2
+      effect: 4.1.3
       expo-sqlite: '>=14.0.0'
       mssql: ^11.0.1
       mysql2: '>=2'
@@ -8927,8 +8947,8 @@ packages:
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
 
-  effect@4.1.2:
-    resolution: {integrity: sha512-d3Oah1WyKxFLFh19yWheS5IXIVaITzxZ71JkE1rkUozq/6EcJSU5nPk5bF2QrSygZ3SQoiNQB8TsxFriyMeMaQ==}
+  effect@4.1.3:
+    resolution: {integrity: sha512-QWNEu35groH/78Ejq01lZGt8U0sF1P4nrhbcAZz5WffcS27bUUK9C/db+xWWUwNYUvFD5SrSLE0mFGtwyP0PCQ==}
 
   ejs@3.1.10:
     resolution: {integrity: sha512-UeJmFfOrAQS8OJWPZ4qtgHyWExa088/MtK5UEyoJGFH67cDEXkZSviOiKRCZ4Xij0zxI3JECgYs3oKx+AizQBA==}
@@ -11518,8 +11538,8 @@ packages:
       '@types/react': '>=18'
       react: '>=18'
 
-  react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz:
-    resolution: {integrity: sha512-2Ph2EXnXbcYd5LK5SmDwqnQNgwqOVAK2uqasW1NzzFGqm5SRR4QD1TmAvUFytrKudnRkzHW8kpnHgXcYRhcyBA==, tarball: file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz}
+  react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-16db4c75.tgz:
+    resolution: {integrity: sha512-TdP2nTxn8W4jPJ5EU+9Ctgf6aOncENP/kMa9aEZpJDmWNLXkxPpcugHMWyZJt2o5WDYE4SPi0V6zV6mOl3+8cA==, tarball: file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-16db4c75.tgz}
     version: 1.2.0-t3.18
     peerDependencies:
       katex: '>=0.16.0'
@@ -11584,9 +11604,9 @@ packages:
       react: '*'
       react-native: '*'
 
-  react-native-screens@file:apps/mobile/deps/react-native-screens-5.0.0-t3.48.tgz:
-    resolution: {integrity: sha512-DQa7yVsOye72bUNH4UVC3D8QicmOm+LMFLpZui6ZEnwU5wtlyEsqFX26kKSvDkpByAffQVIqqJ3s0QNCGNwF1A==, tarball: file:apps/mobile/deps/react-native-screens-5.0.0-t3.48.tgz}
-    version: 5.0.0-t3.48
+  react-native-screens@file:apps/mobile/deps/react-native-screens-5.0.0-t3.50.tgz:
+    resolution: {integrity: sha512-APO5MIX4Bf842vXuChMsL/5GTC+Xl5GQEl48QBOgUJkEGibpmU54HZ+jWWDvnIqqQyzYntKF/iK7OCSR+S4xSg==, tarball: file:apps/mobile/deps/react-native-screens-5.0.0-t3.50.tgz}
+    version: 5.0.0-t3.50
     peerDependencies:
       react: '*'
       react-native: '*'
@@ -13073,27 +13093,27 @@ snapshots:
     dependencies:
       json-schema: 0.4.0
 
-  '@alchemy.run/acme@2.0.0-beta.85(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.2)':
+  '@alchemy.run/acme@2.0.0-beta.85(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.3)':
     dependencies:
-      '@distilled.cloud/acme': 1.0.0-rc.18(effect@4.1.2)
-      alchemy: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
-      effect: 4.1.2
+      '@distilled.cloud/acme': 1.0.0-rc.18(effect@4.1.3)
+      alchemy: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      effect: 4.1.3
 
-  '@alchemy.run/axiom@2.0.0-beta.85(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.2)':
+  '@alchemy.run/axiom@2.0.0-beta.85(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.3)':
     dependencies:
-      '@distilled.cloud/axiom': 1.0.0-rc.18(effect@4.1.2)
-      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.2)
-      alchemy: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
-      effect: 4.1.2
+      '@distilled.cloud/axiom': 1.0.0-rc.18(effect@4.1.3)
+      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.3)
+      alchemy: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      effect: 4.1.3
 
-  '@alchemy.run/cloudflare-runtime@2.0.0-beta.85(@distilled.cloud/cloudflare@1.0.0-rc.18(effect@4.1.2))(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/node@24.12.4)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(rolldown@1.2.13)(typescript@6.0.3)':
+  '@alchemy.run/cloudflare-runtime@2.0.0-beta.85(@distilled.cloud/cloudflare@1.0.0-rc.18(effect@4.1.3))(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/node@24.12.4)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(rolldown@1.2.13)(typescript@6.0.3)':
     dependencies:
       '@alchemy.run/node-utils': 2.0.0-beta.85
       '@cloudflare/unenv-preset': 2.16.2(unenv@2.0.0-rc.24)(workerd@1.20261026.1)
-      '@distilled.cloud/cloudflare': 1.0.0-rc.18(effect@4.1.2)
+      '@distilled.cloud/cloudflare': 1.0.0-rc.18(effect@4.1.3)
       '@puppeteer/browsers': 3.2.6(yauzl@3.4.0)
       capnp-es: 0.0.16(typescript@6.0.3)
-      effect: 4.1.2
+      effect: 4.1.3
       magic-string: 0.30.21
       mime: 4.1.1
       sharp: 0.35.5(@types/node@24.12.4)
@@ -13101,8 +13121,8 @@ snapshots:
       workerd: 1.20261026.1
       yauzl: 3.4.0
     optionalDependencies:
-      '@effect/platform-bun': 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6)
-      '@effect/platform-node': 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+      '@effect/platform-bun': 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
+      '@effect/platform-node': 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       rolldown: 1.2.13
       vite: '@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0)'
     transitivePeerDependencies:
@@ -13110,27 +13130,27 @@ snapshots:
       - proxy-agent
       - typescript
 
-  '@alchemy.run/cloudflare@2.0.0-beta.85(935199ac9c22ca360eddcc7164e5b8a7)':
+  '@alchemy.run/cloudflare@2.0.0-beta.85(dabba7d529c10a239fedb30f64291b80)':
     dependencies:
-      '@alchemy.run/acme': 2.0.0-beta.85(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.2)
-      '@alchemy.run/cloudflare-runtime': 2.0.0-beta.85(@distilled.cloud/cloudflare@1.0.0-rc.18(effect@4.1.2))(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/node@24.12.4)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(rolldown@1.2.13)(typescript@6.0.3)
-      '@alchemy.run/docker': 2.0.0-beta.85(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.2)
-      '@alchemy.run/sql': 2.0.0-beta.85(@effect/sql-pg@4.1.2(effect@4.1.2))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.2)(pg@8.23.0)
-      '@distilled.cloud/aws': 1.0.0-rc.18(effect@4.1.2)
-      '@distilled.cloud/aws4signer': 1.0.0-rc.18(effect@4.1.2)
-      '@distilled.cloud/cloudflare': 1.0.0-rc.18(effect@4.1.2)
-      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.2)
-      '@distilled.cloud/iceberg': 1.0.0-rc.18(effect@4.1.2)
-      '@effect/sql-d1': 4.1.1(effect@4.1.2)
-      alchemy: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
-      effect: 4.1.2
+      '@alchemy.run/acme': 2.0.0-beta.85(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.3)
+      '@alchemy.run/cloudflare-runtime': 2.0.0-beta.85(@distilled.cloud/cloudflare@1.0.0-rc.18(effect@4.1.3))(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/node@24.12.4)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(rolldown@1.2.13)(typescript@6.0.3)
+      '@alchemy.run/docker': 2.0.0-beta.85(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.3)
+      '@alchemy.run/sql': 2.0.0-beta.85(@effect/sql-pg@4.1.2(effect@4.1.3))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.3)(pg@8.23.0)
+      '@distilled.cloud/aws': 1.0.0-rc.18(effect@4.1.3)
+      '@distilled.cloud/aws4signer': 1.0.0-rc.18(effect@4.1.3)
+      '@distilled.cloud/cloudflare': 1.0.0-rc.18(effect@4.1.3)
+      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.3)
+      '@distilled.cloud/iceberg': 1.0.0-rc.18(effect@4.1.3)
+      '@effect/sql-d1': 4.1.1(effect@4.1.3)
+      alchemy: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      effect: 4.1.3
       pathe: 2.0.3
       picomatch: 4.0.7
       rolldown: 1.2.13
       tinyglobby: 0.2.17
     optionalDependencies:
-      '@effect/platform-bun': 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6)
-      '@effect/platform-node': 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+      '@effect/platform-bun': 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
+      '@effect/platform-node': 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       vite: '@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0)'
     transitivePeerDependencies:
       - '@effect/sql-libsql'
@@ -13142,26 +13162,26 @@ snapshots:
       - proxy-agent
       - typescript
 
-  '@alchemy.run/docker@2.0.0-beta.85(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.2)':
+  '@alchemy.run/docker@2.0.0-beta.85(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.3)':
     dependencies:
-      alchemy: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
-      effect: 4.1.2
+      alchemy: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      effect: 4.1.3
       rolldown: 1.2.13
     optionalDependencies:
-      '@effect/platform-bun': 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6)
+      '@effect/platform-bun': 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
 
-  '@alchemy.run/drizzle@2.0.0-beta.85(8a334cf6654889bd393813214c98db49)':
+  '@alchemy.run/drizzle@2.0.0-beta.85(eb667a4b2658382830b9c27fc99af2f0)':
     dependencies:
-      '@alchemy.run/sql': 2.0.0-beta.85(@effect/sql-pg@4.1.2(effect@4.1.2))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.2)(pg@8.23.0)
-      '@effect/sql-d1': 4.1.1(effect@4.1.2)
-      '@effect/sql-sqlite-do': 4.1.2(effect@4.1.2)
-      alchemy: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
-      drizzle-orm: 1.0.0-rc.5(@cloudflare/workers-types@4.20260604.1)(@effect/sql-d1@4.1.1(effect@4.1.2))(@effect/sql-pg@4.1.2(effect@4.1.2))(@effect/sql-sqlite-do@4.1.2(effect@4.1.2))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/sql.js@1.4.11)(bun-types@1.3.14)(effect@4.1.2)(expo-sqlite@58.0.15(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(sql.js@1.15.0)(zod@4.6.7)
-      effect: 4.1.2
+      '@alchemy.run/sql': 2.0.0-beta.85(@effect/sql-pg@4.1.2(effect@4.1.3))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.3)(pg@8.23.0)
+      '@effect/sql-d1': 4.1.1(effect@4.1.3)
+      '@effect/sql-sqlite-do': 4.1.2(effect@4.1.3)
+      alchemy: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      drizzle-orm: 1.0.0-rc.5(@cloudflare/workers-types@4.20260604.1)(@effect/sql-d1@4.1.1(effect@4.1.3))(@effect/sql-pg@4.1.2(effect@4.1.3))(@effect/sql-sqlite-do@4.1.2(effect@4.1.3))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/sql.js@1.4.11)(bun-types@1.3.14)(effect@4.1.3)(expo-sqlite@58.0.15(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(sql.js@1.15.0)(zod@4.6.7)
+      effect: 4.1.3
     optionalDependencies:
-      '@alchemy.run/cloudflare': 2.0.0-beta.85(935199ac9c22ca360eddcc7164e5b8a7)
-      '@effect/sql-pg': 4.1.2(effect@4.1.2)
-      drizzle-kit: 1.0.0-rc.5(drizzle-orm@1.0.0-rc.5(@cloudflare/workers-types@4.20260604.1)(@effect/sql-d1@4.1.1(effect@4.1.2))(@effect/sql-pg@4.1.2(effect@4.1.2))(@effect/sql-sqlite-do@4.1.2(effect@4.1.2))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/sql.js@1.4.11)(bun-types@1.3.14)(effect@4.1.2)(expo-sqlite@58.0.15(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(sql.js@1.15.0)(zod@4.6.7))
+      '@alchemy.run/cloudflare': 2.0.0-beta.85(dabba7d529c10a239fedb30f64291b80)
+      '@effect/sql-pg': 4.1.2(effect@4.1.3)
+      drizzle-kit: 1.0.0-rc.5(drizzle-orm@1.0.0-rc.5(@cloudflare/workers-types@4.20260604.1)(@effect/sql-d1@4.1.1(effect@4.1.3))(@effect/sql-pg@4.1.2(effect@4.1.3))(@effect/sql-sqlite-do@4.1.2(effect@4.1.3))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/sql.js@1.4.11)(bun-types@1.3.14)(effect@4.1.3)(expo-sqlite@58.0.15(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(sql.js@1.15.0)(zod@4.6.7))
     transitivePeerDependencies:
       - mysql2
       - pg
@@ -13171,13 +13191,13 @@ snapshots:
       chokidar: 5.0.0
       rolldown: 1.2.13
 
-  '@alchemy.run/planetscale@2.0.0-beta.85(@effect/sql-pg@4.1.2(effect@4.1.2))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.2)(pg@8.23.0)':
+  '@alchemy.run/planetscale@2.0.0-beta.85(@effect/sql-pg@4.1.2(effect@4.1.3))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.3)(pg@8.23.0)':
     dependencies:
-      '@alchemy.run/sql': 2.0.0-beta.85(@effect/sql-pg@4.1.2(effect@4.1.2))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.2)(pg@8.23.0)
-      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.2)
-      '@distilled.cloud/planetscale': 1.0.0-rc.18(effect@4.1.2)
-      alchemy: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
-      effect: 4.1.2
+      '@alchemy.run/sql': 2.0.0-beta.85(@effect/sql-pg@4.1.2(effect@4.1.3))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.3)(pg@8.23.0)
+      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.3)
+      '@distilled.cloud/planetscale': 1.0.0-rc.18(effect@4.1.3)
+      alchemy: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      effect: 4.1.3
     optionalDependencies:
       pg: 8.23.0
     transitivePeerDependencies:
@@ -13190,21 +13210,21 @@ snapshots:
       '@types/react': 19.3.0
       react-devtools-core: 6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6)
 
-  '@alchemy.run/sql@2.0.0-beta.85(@effect/sql-pg@4.1.2(effect@4.1.2))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.2)(pg@8.23.0)':
+  '@alchemy.run/sql@2.0.0-beta.85(@effect/sql-pg@4.1.2(effect@4.1.3))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.3)(pg@8.23.0)':
     dependencies:
-      alchemy: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
-      effect: 4.1.2
+      alchemy: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      effect: 4.1.3
     optionalDependencies:
-      '@effect/sql-pg': 4.1.2(effect@4.1.2)
+      '@effect/sql-pg': 4.1.2(effect@4.1.3)
       pg: 8.23.0
 
-  '@alchemy.run/test@2.0.0-beta.85(patch_hash=29c0539ea71d9cc372f0b16558640599beb9bc609605feb2a493da268d72713e)(93775fed45909d71c0b8bba962f026cf)':
+  '@alchemy.run/test@2.0.0-beta.85(patch_hash=29c0539ea71d9cc372f0b16558640599beb9bc609605feb2a493da268d72713e)(9cad13029aba0f237bc67ebbac58cedc)':
     dependencies:
-      '@effect/platform-bun': 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6)
-      effect: 4.1.2
+      '@effect/platform-bun': 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
+      effect: 4.1.3
     optionalDependencies:
-      '@effect/vitest': 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
-      alchemy: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      '@effect/vitest': 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+      alchemy: 2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
       vitest: 5.0.5(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/browser-preview@5.0.5)(@vitest/ui@5.0.5)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0)
     transitivePeerDependencies:
       - bufferutil
@@ -14183,45 +14203,45 @@ snapshots:
 
   '@dimforge/rapier3d-compat@0.12.0': {}
 
-  '@distilled.cloud/acme@1.0.0-rc.18(effect@4.1.2)':
+  '@distilled.cloud/acme@1.0.0-rc.18(effect@4.1.3)':
     dependencies:
-      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.2)
-      effect: 4.1.2
+      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.3)
+      effect: 4.1.3
 
-  '@distilled.cloud/aws4signer@1.0.0-rc.18(effect@4.1.2)':
+  '@distilled.cloud/aws4signer@1.0.0-rc.18(effect@4.1.3)':
     dependencies:
-      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.2)
-      effect: 4.1.2
+      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.3)
+      effect: 4.1.3
 
-  '@distilled.cloud/aws@1.0.0-rc.18(effect@4.1.2)':
+  '@distilled.cloud/aws@1.0.0-rc.18(effect@4.1.3)':
     dependencies:
-      '@distilled.cloud/aws4signer': 1.0.0-rc.18(effect@4.1.2)
-      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.2)
-      effect: 4.1.2
+      '@distilled.cloud/aws4signer': 1.0.0-rc.18(effect@4.1.3)
+      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.3)
+      effect: 4.1.3
 
-  '@distilled.cloud/axiom@1.0.0-rc.18(effect@4.1.2)':
+  '@distilled.cloud/axiom@1.0.0-rc.18(effect@4.1.3)':
     dependencies:
-      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.2)
-      effect: 4.1.2
+      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.3)
+      effect: 4.1.3
 
-  '@distilled.cloud/cloudflare@1.0.0-rc.18(effect@4.1.2)':
+  '@distilled.cloud/cloudflare@1.0.0-rc.18(effect@4.1.3)':
     dependencies:
-      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.2)
-      effect: 4.1.2
+      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.3)
+      effect: 4.1.3
 
-  '@distilled.cloud/core@1.0.0-rc.18(effect@4.1.2)':
+  '@distilled.cloud/core@1.0.0-rc.18(effect@4.1.3)':
     dependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
-  '@distilled.cloud/iceberg@1.0.0-rc.18(effect@4.1.2)':
+  '@distilled.cloud/iceberg@1.0.0-rc.18(effect@4.1.3)':
     dependencies:
-      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.2)
-      effect: 4.1.2
+      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.3)
+      effect: 4.1.3
 
-  '@distilled.cloud/planetscale@1.0.0-rc.18(effect@4.1.2)':
+  '@distilled.cloud/planetscale@1.0.0-rc.18(effect@4.1.3)':
     dependencies:
-      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.2)
-      effect: 4.1.2
+      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.3)
+      effect: 4.1.3
 
   '@dnd-kit/accessibility@3.1.1(react@19.3.0)':
     dependencies:
@@ -14267,64 +14287,64 @@ snapshots:
       e2e: 0.23.0
       playwright-core: 1.64.1
 
-  '@effect/atom-react@4.1.2(effect@4.1.2)(react@19.3.0)(scheduler@0.28.0)':
+  '@effect/atom-react@4.1.2(effect@4.1.3)(react@19.3.0)(scheduler@0.28.0)':
     dependencies:
-      effect: 4.1.2
+      effect: 4.1.3
       react: 19.3.0
       scheduler: 0.28.0
 
-  '@effect/graphql-generator@4.1.2(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(effect@4.1.2)':
+  '@effect/graphql-generator@4.1.2(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(effect@4.1.3)':
     dependencies:
-      '@effect/platform-node': 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
-      effect: 4.1.2
+      '@effect/platform-node': 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
+      effect: 4.1.3
 
-  '@effect/openapi-generator@4.1.2(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(effect@4.1.2)(encoding@0.1.13)':
+  '@effect/openapi-generator@4.1.2(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(effect@4.1.3)(encoding@0.1.13)':
     dependencies:
-      '@effect/platform-node': 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
-      effect: 4.1.2
+      '@effect/platform-node': 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
+      effect: 4.1.3
       swagger2openapi: 7.0.8(encoding@0.1.13)
     transitivePeerDependencies:
       - encoding
 
-  '@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6)':
+  '@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)':
     dependencies:
-      '@effect/platform-node-shared': 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6)
-      effect: 4.1.2
+      '@effect/platform-node-shared': 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
+      effect: 4.1.3
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node-shared@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6)':
+  '@effect/platform-node-shared@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)':
     dependencies:
       '@types/ws': 8.18.2
-      effect: 4.1.2
+      effect: 4.1.3
       ws: 8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)':
+  '@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)':
     dependencies:
-      '@effect/platform-node-shared': 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6)
-      effect: 4.1.2
+      '@effect/platform-node-shared': 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
+      effect: 4.1.3
       redis: 6.2.1
       undici: 8.12.4
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/sql-d1@4.1.1(effect@4.1.2)':
+  '@effect/sql-d1@4.1.1(effect@4.1.3)':
     dependencies:
       '@cloudflare/workers-types': 5.20261026.1
-      effect: 4.1.2
+      effect: 4.1.3
 
-  '@effect/sql-pg@4.1.2(effect@4.1.2)':
+  '@effect/sql-pg@4.1.2(effect@4.1.3)':
     dependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
-  '@effect/sql-sqlite-do@4.1.2(effect@4.1.2)':
+  '@effect/sql-sqlite-do@4.1.2(effect@4.1.3)':
     dependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@effect/tsgo-darwin-arm64@0.67.1':
     optional: true
@@ -14357,9 +14377,9 @@ snapshots:
       '@effect/tsgo-win32-arm64': 0.67.1
       '@effect/tsgo-win32-x64': 0.67.1
 
-  '@effect/vitest@4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)':
+  '@effect/vitest@4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)':
     dependencies:
-      effect: 4.1.2
+      effect: 4.1.3
       vite-plus: 1.4.0(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
     transitivePeerDependencies:
       - '@arethetypeswrong/core'
@@ -15096,8 +15116,8 @@ snapshots:
 
   '@expo/sudo-prompt@9.3.2': {}
 
-  '@expo/ui@58.0.27(@babel/core@7.29.7(supports-color@8.1.1))(expo@58.0.23)(react-dom@19.3.0(react@19.3.0))(react-native-worklets@0.13.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)':
-    dependencies:
+  ? '@expo/ui@58.0.27(patch_hash=9f2547678939f4ec78fe45163b6455aad63d3c80353d7e0cc783f6a61a7ccc2f)(@babel/core@7.29.7(supports-color@8.1.1))(expo@58.0.23)(react-dom@19.3.0(react@19.3.0))(react-native-worklets@0.13.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)'
+  : dependencies:
       expo: 58.0.23(d226faf1ca90e630d8c56a2108dee32d)
       react: 19.3.0
       react-native: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
@@ -15144,7 +15164,7 @@ snapshots:
   '@ff-labs/fff-bin-win32-x64@0.11.0':
     optional: true
 
-  '@ff-labs/fff-node@0.11.0(patch_hash=cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c)':
+  '@ff-labs/fff-node@0.11.0(patch_hash=3be7107340e5f388114da259637828cd47f2b32eb8ae572440715c4e38cffe6e)':
     dependencies:
       ffi-rs: 1.3.2
     optionalDependencies:
@@ -15835,22 +15855,22 @@ snapshots:
     dependencies:
       cross-spawn: 7.0.6
 
-  '@opencode/client@2.0.28(effect@4.1.2)':
+  '@opencode/client@2.0.28(effect@4.1.3)':
     dependencies:
       '@opencode/protocol': 2.0.28
       '@opencode/schema': 2.0.28
     optionalDependencies:
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@opencode/protocol@2.0.28':
     dependencies:
       '@opencode/schema': 2.0.28
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@opencode/schema@2.0.28':
     dependencies:
       '@standard-schema/spec': 1.1.0
-      effect: 4.1.2
+      effect: 4.1.3
 
   '@oslojs/asn1@1.0.0':
     dependencies:
@@ -16648,7 +16668,7 @@ snapshots:
     optionalDependencies:
       '@react-native-masked-view/masked-view': 0.3.2(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
 
-  '@react-navigation/native-stack@7.21.0(patch_hash=990d575444c4af2ce8218b3b7a8280fe244c03abbdb32b822a2e862f791dbf42)(bce9d5917b75ecfdccb2630d9f614f34)':
+  '@react-navigation/native-stack@7.21.0(patch_hash=990d575444c4af2ce8218b3b7a8280fe244c03abbdb32b822a2e862f791dbf42)(8cabb04b1defcb22245317e78e4e5f29)':
     dependencies:
       '@react-navigation/elements': 2.9.45(83450c2b8dad8f97d4bec4849f35b99e)
       '@react-navigation/native': 7.5.1(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
@@ -16656,7 +16676,7 @@ snapshots:
       react: 19.3.0
       react-native: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
       react-native-safe-area-context: 5.11.1(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
-      react-native-screens: file:apps/mobile/deps/react-native-screens-5.0.0-t3.48.tgz(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
+      react-native-screens: file:apps/mobile/deps/react-native-screens-5.0.0-t3.50.tgz(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       sf-symbols-typescript: 2.2.0
       warn-once: 0.1.1
     transitivePeerDependencies:
@@ -17937,12 +17957,12 @@ snapshots:
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
-  alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.2)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)):
+  alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)):
     dependencies:
       '@alchemy.run/node-utils': 2.0.0-beta.85
       '@alchemy.run/sigil': 0.1.0-alpha.1(@types/react@19.3.0)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))
       capnweb: 0.12.0
-      effect: 4.1.2
+      effect: 4.1.3
       fflate: 0.8.3
       pathe: 2.0.3
       picomatch: 4.0.7
@@ -17950,8 +17970,8 @@ snapshots:
       tinyglobby: 0.2.17
       yaml: 2.9.0
     optionalDependencies:
-      '@effect/platform-bun': 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6)
-      '@effect/platform-node': 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
+      '@effect/platform-bun': 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
+      '@effect/platform-node': 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       vite: '@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0)'
       ws: 8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     transitivePeerDependencies:
@@ -18910,21 +18930,21 @@ snapshots:
 
   dotenv@16.6.1: {}
 
-  drizzle-kit@1.0.0-rc.5(drizzle-orm@1.0.0-rc.5(@cloudflare/workers-types@4.20260604.1)(@effect/sql-d1@4.1.1(effect@4.1.2))(@effect/sql-pg@4.1.2(effect@4.1.2))(@effect/sql-sqlite-do@4.1.2(effect@4.1.2))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/sql.js@1.4.11)(bun-types@1.3.14)(effect@4.1.2)(expo-sqlite@58.0.15(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(sql.js@1.15.0)(zod@4.6.7)):
+  drizzle-kit@1.0.0-rc.5(drizzle-orm@1.0.0-rc.5(@cloudflare/workers-types@4.20260604.1)(@effect/sql-d1@4.1.1(effect@4.1.3))(@effect/sql-pg@4.1.2(effect@4.1.3))(@effect/sql-sqlite-do@4.1.2(effect@4.1.3))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/sql.js@1.4.11)(bun-types@1.3.14)(effect@4.1.3)(expo-sqlite@58.0.15(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(sql.js@1.15.0)(zod@4.6.7)):
     optionalDependencies:
-      drizzle-orm: 1.0.0-rc.5(@cloudflare/workers-types@4.20260604.1)(@effect/sql-d1@4.1.1(effect@4.1.2))(@effect/sql-pg@4.1.2(effect@4.1.2))(@effect/sql-sqlite-do@4.1.2(effect@4.1.2))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/sql.js@1.4.11)(bun-types@1.3.14)(effect@4.1.2)(expo-sqlite@58.0.15(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(sql.js@1.15.0)(zod@4.6.7)
+      drizzle-orm: 1.0.0-rc.5(@cloudflare/workers-types@4.20260604.1)(@effect/sql-d1@4.1.1(effect@4.1.3))(@effect/sql-pg@4.1.2(effect@4.1.3))(@effect/sql-sqlite-do@4.1.2(effect@4.1.3))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/sql.js@1.4.11)(bun-types@1.3.14)(effect@4.1.3)(expo-sqlite@58.0.15(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(sql.js@1.15.0)(zod@4.6.7)
 
-  drizzle-orm@1.0.0-rc.5(@cloudflare/workers-types@4.20260604.1)(@effect/sql-d1@4.1.1(effect@4.1.2))(@effect/sql-pg@4.1.2(effect@4.1.2))(@effect/sql-sqlite-do@4.1.2(effect@4.1.2))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/sql.js@1.4.11)(bun-types@1.3.14)(effect@4.1.2)(expo-sqlite@58.0.15(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(sql.js@1.15.0)(zod@4.6.7):
+  drizzle-orm@1.0.0-rc.5(@cloudflare/workers-types@4.20260604.1)(@effect/sql-d1@4.1.1(effect@4.1.3))(@effect/sql-pg@4.1.2(effect@4.1.3))(@effect/sql-sqlite-do@4.1.2(effect@4.1.3))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/sql.js@1.4.11)(bun-types@1.3.14)(effect@4.1.3)(expo-sqlite@58.0.15(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0))(pg@8.23.0)(sql.js@1.15.0)(zod@4.6.7):
     optionalDependencies:
       '@cloudflare/workers-types': 4.20260604.1
-      '@effect/sql-d1': 4.1.1(effect@4.1.2)
-      '@effect/sql-pg': 4.1.2(effect@4.1.2)
-      '@effect/sql-sqlite-do': 4.1.2(effect@4.1.2)
+      '@effect/sql-d1': 4.1.1(effect@4.1.3)
+      '@effect/sql-pg': 4.1.2(effect@4.1.3)
+      '@effect/sql-sqlite-do': 4.1.2(effect@4.1.3)
       '@electric-sql/pglite': 0.3.15
       '@libsql/client': 0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
       '@types/sql.js': 1.4.11
       bun-types: 1.3.14
-      effect: 4.1.2
+      effect: 4.1.3
       expo-sqlite: 58.0.15(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       pg: 8.23.0
       sql.js: 1.15.0
@@ -18963,7 +18983,7 @@ snapshots:
 
   ee-first@1.1.1: {}
 
-  effect@4.1.2: {}
+  effect@4.1.3: {}
 
   ejs@3.1.10:
     dependencies:
@@ -19015,7 +19035,7 @@ snapshots:
 
   electron-to-chromium@1.5.430: {}
 
-  electron-updater@6.8.9(patch_hash=2ed21db470f254c5e095a0eb8dabc086c310d180322004bceee7d56e7ce86b84)(supports-color@8.1.1):
+  electron-updater@6.8.9(patch_hash=5e096d34a46fdbaa6d48a5803b2c0ed9c7c04f8ab43a30ebebbf726f8f28ed8e)(supports-color@8.1.1):
     dependencies:
       builder-util-runtime: 9.7.0(supports-color@8.1.1)
       fs-extra: 10.1.0
@@ -19570,7 +19590,7 @@ snapshots:
   ? expo-widgets@58.0.27(patch_hash=8bf49067f93742855e15f29559ac75c8b50230b47069060993c9ea01dac11171)(@babel/core@7.29.7(supports-color@8.1.1))(expo@58.0.23)(react-dom@19.3.0(react@19.3.0))(react-native-worklets@0.13.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
   : dependencies:
       '@expo/plist': 0.10.1
-      '@expo/ui': 58.0.27(@babel/core@7.29.7(supports-color@8.1.1))(expo@58.0.23)(react-dom@19.3.0(react@19.3.0))(react-native-worklets@0.13.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
+      '@expo/ui': 58.0.27(patch_hash=9f2547678939f4ec78fe45163b6455aad63d3c80353d7e0cc783f6a61a7ccc2f)(@babel/core@7.29.7(supports-color@8.1.1))(expo@58.0.23)(react-dom@19.3.0(react@19.3.0))(react-native-worklets@0.13.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       expo: 58.0.23(d226faf1ca90e630d8c56a2108dee32d)
       react: 19.3.0
       react-native: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
@@ -22447,7 +22467,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz(katex@0.16.47)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0):
+  react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-16db4c75.tgz(katex@0.16.47)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0):
     dependencies:
       react: 19.3.0
       react-native: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
@@ -22505,7 +22525,7 @@ snapshots:
       react: 19.3.0
       react-native: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
 
-  react-native-screens@file:apps/mobile/deps/react-native-screens-5.0.0-t3.48.tgz(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0):
+  react-native-screens@file:apps/mobile/deps/react-native-screens-5.0.0-t3.50.tgz(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0):
     dependencies:
       react: 19.3.0
       react-freeze: 1.0.4(react@19.3.0)

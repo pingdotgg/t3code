@@ -6,7 +6,12 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import type { ReviewBranchCommitsResult, ScopedThreadRef, RunId } from "@t3tools/contracts";
+import {
+  CHECKPOINT_DIFF_TRUNCATED_MARKER,
+  type ReviewBranchCommitsResult,
+  type ScopedThreadRef,
+  type RunId,
+} from "@t3tools/contracts";
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -232,7 +237,8 @@ export default function DiffPanel({
     wordWrap: settings.wordWrap,
   }));
   const diffLayout = settings.diffLayout;
-  const [wordWrap, setWordWrap] = useState(settings.wordWrap);
+  const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
+  const wordWrap = wordWrapOverride ?? settings.wordWrap;
   const diffIgnoreWhitespace =
     useDiffPanelSessionStore((state) => state.ignoreWhitespace) ?? settings.diffIgnoreWhitespace;
   const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
@@ -330,7 +336,9 @@ export default function DiffPanel({
     diffSelection.kind === "branch" || diffSelection.kind === "commit"
       ? diffSelection.baseRef
       : null;
-  const selectedFilePath = diffSelection.kind === "turn" ? diffSelection.filePath : null;
+  // @pierre/diffs trims trailing whitespace from parsed file names; leading whitespace survives.
+  const selectedFilePath =
+    diffSelection.kind === "turn" ? diffSelection.filePath?.trimEnd() || null : null;
   const selectedFileRevealRequestId =
     diffSelection.kind === "turn" ? diffSelection.revealRequestId : 0;
   const selectedTurn =
@@ -482,7 +490,10 @@ export default function DiffPanel({
       : gitDiff;
   const isSelectedPatchTruncated =
     toolCallPreview?.truncated === true ||
-    (isGitSelection && selectedGitSource?.truncated === true);
+    (isGitSelection && selectedGitSource?.truncated === true) ||
+    (!toolCallSelection &&
+      selectedTurn !== undefined &&
+      selectedPatch?.endsWith(CHECKPOINT_DIFF_TRUNCATED_MARKER) === true);
   const selectedPatchQuery = toolCallSelection
     ? toolCallDetail
     : selectedTurn
@@ -1218,7 +1229,7 @@ export default function DiffPanel({
                 size="sm"
                 pressed={wordWrap}
                 onPressedChange={(pressed) => {
-                  setWordWrap(Boolean(pressed));
+                  setWordWrapOverride(Boolean(pressed));
                 }}
               />
             }

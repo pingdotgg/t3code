@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import * as NodeURL from "node:url";
 
 import type { ChatAttachment, ProviderApprovalDecision } from "@t3tools/contracts";
@@ -42,7 +43,7 @@ const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonStri
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
 export const MINIMUM_OPENCODE_VERSION = "1.14.19";
-const OPENCODE_HEALTH_TIMEOUT = "5 seconds";
+const OPENCODE_HEALTH_TIMEOUT_MS = 5_000;
 
 const OpenCodeHealthSchema = Schema.Struct({
   healthy: Schema.Literal(true),
@@ -163,10 +164,15 @@ export const runOpenCodeSdk = <A>(
 
 export const verifyOpenCodeServerVersion = Effect.fn("verifyOpenCodeServerVersion")(function* (
   client: OpencodeClient,
+  environment?: NodeJS.ProcessEnv,
 ) {
   const healthOption = yield* runOpenCodeSdk("global.health", (signal) =>
     client.global.health({ signal }),
-  ).pipe(Effect.timeoutOption(OPENCODE_HEALTH_TIMEOUT));
+  ).pipe(
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("opencode", OPENCODE_HEALTH_TIMEOUT_MS, environment),
+    ),
+  );
   if (Option.isNone(healthOption)) {
     return yield* new OpenCodeRuntimeError({
       operation: "global.health",
@@ -261,7 +267,43 @@ export interface ParsedOpenCodeModelSlug {
   readonly modelID: string;
 }
 
-export type OpenCodeVariantCache = Map<string, ReadonlySet<string> | undefined>;
+export interface OpenCodeCatalogModel {
+  readonly variants: ReadonlySet<string>;
+  readonly contextWindow: number | undefined;
+}
+
+export type OpenCodeVariantCache = Map<string, OpenCodeCatalogModel | undefined>;
+
+/** The model's catalog entry; a failed read returns undefined and is not cached. */
+export const readOpenCodeCatalogModel = Effect.fnUntraced(function* (
+  client: OpencodeClient,
+  model: ParsedOpenCodeModelSlug,
+  abortSignal?: AbortSignal,
+  cache?: OpenCodeVariantCache,
+) {
+  const key = `${model.providerID}/${model.modelID}`;
+  if (cache?.has(key)) return cache.get(key);
+
+  const response = yield* runOpenCodeSdk("provider.list", (signal) =>
+    client.provider.list(undefined, {
+      signal: abortSignal ? AbortSignal.any([signal, abortSignal]) : signal,
+    }),
+  ).pipe(
+    Effect.timeout("10 seconds"),
+    Effect.orElseSucceed(() => undefined),
+  );
+  if (response?.data === undefined) return undefined;
+
+  const catalogModel = response.data.all.find((provider) => provider.id === model.providerID)
+    ?.models[model.modelID];
+  const entry: OpenCodeCatalogModel | undefined = catalogModel && {
+    variants: new Set(Object.keys(catalogModel.variants ?? {})),
+    contextWindow: catalogModel.limit?.input ?? catalogModel.limit?.context,
+  };
+  // Keep only what this model needs; provider.list can return several megabytes.
+  cache?.set(key, entry);
+  return entry;
+});
 
 export const resolveOpenCodeVariant = Effect.fnUntraced(function* (
   client: OpencodeClient,
@@ -271,32 +313,9 @@ export const resolveOpenCodeVariant = Effect.fnUntraced(function* (
   cache?: OpenCodeVariantCache,
 ) {
   if (!variant || !model) return variant;
-
-  const key = `${model.providerID}/${model.modelID}`;
-  const cached = cache?.get(key);
-  if (cache?.has(key)) {
-    return cached !== undefined && !cached.has(variant) ? undefined : variant;
-  }
-
   // Only a confirmed catalog mismatch can invalidate a persisted selection.
-  const response = yield* runOpenCodeSdk("provider.list", (signal) =>
-    client.provider.list(undefined, {
-      signal: abortSignal ? AbortSignal.any([signal, abortSignal]) : signal,
-    }),
-  ).pipe(
-    Effect.timeout("10 seconds"),
-    Effect.orElseSucceed(() => undefined),
-  );
-  if (response?.data === undefined) return variant;
-
-  const catalogModel = response.data.all.find((provider) => provider.id === model.providerID)
-    ?.models[model.modelID];
-  const variants = catalogModel ? new Set(Object.keys(catalogModel.variants ?? {})) : undefined;
-  if (cache !== undefined) {
-    // Keep only this model's names; provider.list can return several megabytes.
-    cache.set(key, variants);
-  }
-  return variants !== undefined && !variants.has(variant) ? undefined : variant;
+  const entry = yield* readOpenCodeCatalogModel(client, model, abortSignal, cache);
+  return entry !== undefined && !entry.variants.has(variant) ? undefined : variant;
 });
 
 export interface OpenCodeSkill {
@@ -578,7 +597,13 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             }),
         ),
       ));
-    const timeoutMs = input.timeoutMs ?? DEFAULT_OPENCODE_SERVER_TIMEOUT_MS;
+    const timeoutMs =
+      input.timeoutMs ??
+      resolveProviderProbeTimeoutMs(
+        "opencode",
+        DEFAULT_OPENCODE_SERVER_TIMEOUT_MS,
+        input.environment,
+      );
     const args = ["serve", `--hostname=${hostname}`, `--port=${port}`];
     const launch = yield* agentScope.wrap({
       command: input.binaryPath,
@@ -749,6 +774,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             directory: input.directory,
             ...(serverPassword !== undefined ? { serverPassword } : {}),
           }),
+          input.environment,
         )
     );
 
@@ -801,6 +827,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           directory: input.directory,
           ...(serverPassword !== undefined ? { serverPassword } : {}),
         }),
+        input.environment,
       ).pipe(
         Effect.map((version) => ({
           url: serverUrl,
