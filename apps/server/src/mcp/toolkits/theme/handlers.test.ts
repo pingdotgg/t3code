@@ -50,6 +50,7 @@ it.effect("applies the theme through the service and reports a refusal as an inv
       Layer.mock(ThreadManagement.ThreadManagementService)({
         getThreadRecords: runsWithoutModes,
         getThreadShell: () => Effect.succeed(liveThreadShell(threadId)),
+        getThreadRecords: runsWithoutModes,
       }),
       Layer.mock(EnvironmentThemeService)({
         apply: (input) =>
