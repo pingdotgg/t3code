@@ -21,6 +21,10 @@ import {
   PreviewAutomationError,
   PreviewAutomationUnavailableError,
   ProviderInstanceId,
+  PullRequestCheck,
+  PullRequestComment,
+  PullRequestReviewThread,
+  ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -51,6 +55,7 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
+import { pullRequestWatchMessage } from "../../apps/server/src/orchestration-v2/pullRequestWatch.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
@@ -294,6 +299,36 @@ const McpToolUseWorld = Schema.StructWithRest(
   Rest,
 );
 
+/** The parts of a PR watch wake that cases use, typed by the contracts `pullRequestWatchMessage` reads. */
+const PullRequestWake = Schema.Struct({
+  number: Schema.Number,
+  url: Schema.String,
+  baseBranch: Schema.String,
+  headSha: Schema.NullOr(Schema.String),
+  report: Schema.Struct({
+    changes: Schema.Array(
+      Schema.Union([
+        Schema.Struct({
+          kind: Schema.Literal("checks-failed"),
+          failed: Schema.Array(PullRequestCheck),
+        }),
+        Schema.Struct({
+          kind: Schema.Literal("remarks"),
+          remarks: Schema.Array(PullRequestComment),
+        }),
+      ]),
+    ),
+    next: ThreadPullRequestWatch,
+    exhausted: Schema.Boolean,
+  }),
+  state: Schema.Struct({
+    checks: Schema.Array(PullRequestCheck),
+    reviewThreads: Schema.NullOr(
+      Schema.Struct({ threads: Schema.Array(PullRequestReviewThread), truncated: Schema.Boolean }),
+    ),
+  }),
+});
+
 /** One fake thread, one JSON object per line in a case file. */
 export const McpToolUseCase = Schema.Struct({
   id: Schema.String,
@@ -340,6 +375,8 @@ export const McpToolUseCase = Schema.Struct({
   }),
   /** Empty to resume a top-level thread without side-chat context after its last tool result. */
   prompt: Schema.String,
+  /** `pullRequestWatchMessage` input; its text replaces `prompt`, so the case reads T3's current wake. */
+  wake: Schema.optional(PullRequestWake),
   /** Records for the context chips `prompt` links, projected as T3 sends them. */
   promptContext: Schema.optional(Schema.Struct({ records: Schema.Array(ComposerContextRecord) })),
   expect: McpToolUseExpect,
@@ -2451,6 +2488,13 @@ const decodeFlags = Schema.decodeUnknownEffect(Flags);
 const decodeCapture = Schema.decodeUnknownEffect(Schema.fromJsonString(Capture));
 const decodeCodexCapture = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexCapture));
 const decodeCase = Schema.decodeUnknownEffect(Schema.fromJsonString(McpToolUseCase));
+const withWake = (testCase: McpToolUseCase): McpToolUseCase =>
+  testCase.wake === undefined
+    ? testCase
+    : {
+        ...testCase,
+        prompt: pullRequestWatchMessage(testCase.wake).text,
+      };
 const decodeBaselineRow = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -2511,7 +2555,9 @@ const main = Effect.gen(function* () {
       .filter((name) => name.endsWith(".ndjson"))
       .toSorted()
       .map((name) => path.join(casesDir, name));
-  const cases = (yield* Effect.forEach(caseFiles, (file) => readNdjson(file, decodeCase))).flat();
+  const cases = (yield* Effect.forEach(caseFiles, (file) => readNdjson(file, decodeCase)))
+    .flat()
+    .map(withWake);
   const wanted = flags.case?.flatMap((ids) => ids.split(","));
   const codex = isCodex(flags.model);
   const harness = codex ? "codex" : "claude";

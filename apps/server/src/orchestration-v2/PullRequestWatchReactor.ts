@@ -40,6 +40,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import {
   combinePullRequestWatchWakes,
   evaluatePullRequestWatch,
+  holdFailures,
   PULL_REQUEST_WATCH_NO_CHECKS_MS,
   pullRequestWatchMessage,
 } from "./pullRequestWatch.ts";
@@ -161,8 +162,13 @@ function planRead(
   last: LastRead | undefined,
   fingerprint: ProviderChangeRequestWatchFingerprint | null,
   now: number,
+  released: boolean,
 ): ReadPlan {
-  if (last === undefined || group.targets.some((target) => !last.watches.has(watchKey(target)))) {
+  if (
+    released ||
+    last === undefined ||
+    group.targets.some((target) => !last.watches.has(watchKey(target)))
+  ) {
     return { detail: true, activity: true };
   }
   // Nothing on the host changes when the no-checks deadline passes, or when a push to another
@@ -205,6 +211,7 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     (left.owedChecks ?? []).join("\n") === (right.owedChecks ?? []).join("\n") &&
     (left.awaitingApproval ?? []).join("\n") === (right.awaitingApproval ?? []).join("\n") &&
     (left.approvalAnnounced ?? false) === (right.approvalAnnounced ?? false) &&
+    JSON.stringify(left.heldFailures ?? null) === JSON.stringify(right.heldFailures ?? null) &&
     left.remarksThrough === right.remarksThrough &&
     left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
     left.conflicting === right.conflicting &&
@@ -280,6 +287,12 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => reportEnd(lifeKey(target), lifeOf(target), reason));
 
   const readFailures = new Map<string, number>();
+  /**
+   * Watches with news held while their thread was busy. Their state is recorded only with the
+   * failures seen meanwhile, so the first read once the thread is idle tells everything since in
+   * one wake; the entry goes once that wake or a quiet read is recorded.
+   */
+  const deferred = new Set<string>();
   /** The last sweep's groups, whose pull requests get host change feeds. */
   let currentGroups: ReadonlyArray<WatchGroup> = [];
   // A pass reads watches and records new ones, so passes must not overlap.
@@ -438,8 +451,13 @@ export const make = Effect.gen(function* () {
   let held: Array<HeldWake> = [];
   const hold = (wake: HeldWake) => Effect.sync(() => void held.push(wake));
 
+  // Held news is cleared only once it reached the thread, so a failed send keeps it.
+  const clearHeld = (target: WatchTarget) =>
+    Effect.sync(() => void deferred.delete(lifeKey(target)));
+
   const sendOne = (item: HeldWake) =>
     record(item.target, item.next, item.wake, item.endedWatch).pipe(
+      Effect.tap(() => clearHeld(item.target)),
       Effect.tap(() => woke(item.target)),
       Effect.tap(() => (item.reason === undefined ? Effect.void : ended(item.target, item.reason))),
       Effect.catchCause((cause) => {
@@ -487,7 +505,8 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(
       items,
       (item) =>
-        woke(item.target).pipe(
+        clearHeld(item.target).pipe(
+          Effect.andThen(woke(item.target)),
           Effect.andThen(item.reason === undefined ? Effect.void : ended(item.target, item.reason)),
         ),
       { discard: true },
@@ -585,7 +604,10 @@ export const make = Effect.gen(function* () {
   ) {
     const now = yield* Clock.currentTimeMillis;
     const last = lastReads.get(group.key);
-    const plan = planRead(group, last, fingerprint, now);
+    const released = group.targets.some(
+      (target) => deferred.has(lifeKey(target)) && !target.thread.busy,
+    );
+    const plan = planRead(group, last, fingerprint, now, released);
     if (!plan.detail) return;
     if (
       last === undefined ||
@@ -636,7 +658,8 @@ export const make = Effect.gen(function* () {
       return yield* Effect.failCause(read.cause);
     }
     readFailures.delete(group.key);
-    const [detail, activity] = read.value;
+    const [detail, firstActivity] = read.value;
+    let activity = firstActivity;
     for (const target of group.targets) {
       const life = lifeOf(target);
       const headSha = detail.headSha ?? life.headSha;
@@ -660,31 +683,68 @@ export const make = Effect.gen(function* () {
     }
 
     // Never advance the remark watermark past comments an incomplete read could have missed.
-    const remarks = Option.isSome(activity)
-      ? yield* readRemarks(
-          group.key,
-          reference,
-          activity.value,
-          now,
-          fingerprint === null ? QUIET_REREAD_MS : FINGERPRINT_REREAD_MS,
-        )
-      : null;
+    const remarksOf = (read: PullRequestActivity) =>
+      readRemarks(
+        group.key,
+        reference,
+        read,
+        now,
+        fingerprint === null ? QUIET_REREAD_MS : FINGERPRINT_REREAD_MS,
+      );
+    let remarks = Option.isSome(activity) ? yield* remarksOf(activity.value) : null;
+    const reportOf = (target: WatchTarget) =>
+      evaluatePullRequestWatch(target.watch, detail, remarks, now);
+    // A wake lists the open review threads, so a pass that skipped them reads them before waking.
+    const holds = (target: WatchTarget) =>
+      target.thread.busy && target.watch.awaitingBaseline === undefined;
+    const wakes = (target: WatchTarget) => !holds(target) && reportOf(target).changes.length > 0;
+    if (Option.isNone(activity) && group.targets.some(wakes)) {
+      activity = yield* pullRequests.activity(reference).pipe(
+        Effect.asSome,
+        Effect.catch((error) =>
+          Effect.logDebug("pull request watch thread read failed", {
+            pullRequest: group.key,
+            error,
+          }).pipe(Effect.as(Option.none<PullRequestActivity>())),
+        ),
+      );
+      if (Option.isSome(activity)) remarks = yield* remarksOf(activity.value);
+    }
+    const state = {
+      checks: detail.checks,
+      // Without the flag a host cannot say whether it read every thread, so the wake leaves them out.
+      reviewThreads: Option.match(activity, {
+        onNone: () => null,
+        onSome: (read) =>
+          read.reviewThreadsTruncated === undefined
+            ? null
+            : { threads: read.reviewThreads, truncated: read.reviewThreadsTruncated },
+      }),
+    };
     lastReads.set(group.key, {
       at:
-        plan.activity || last === undefined
+        Option.isSome(activity) || last === undefined
           ? (threadTails.get(group.key)?.fetchedAt ?? now)
           : last.at,
       fingerprint: group.fingerprint,
       inFlight:
         detail.mergeability === "unknown" ||
         detail.checks.some((check) => check.status === "pending"),
-      remarksComplete: plan.activity ? remarks !== null : (last?.remarksComplete ?? false),
+      remarksComplete: Option.isSome(activity)
+        ? remarks !== null
+        : (last?.remarksComplete ?? false),
       watches: new Set(group.targets.map(watchKey)),
       status: fingerprint?.status ?? null,
       remarks: fingerprint?.remarks ?? null,
     });
     yield* eachTarget(group, (target) => {
-      const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);
+      const report = reportOf(target);
+      // A pass that sets the check baseline is recorded, or every later read would stay one.
+      if (report.changes.length > 0 && holds(target)) {
+        deferred.add(lifeKey(target));
+        const held = holdFailures(target.watch, report);
+        return watchesEqual(held, target.watch) ? Effect.void : record(target, held);
+      }
       if (report.changes.length > 0) {
         const wake = {
           ...pullRequestWatchMessage({
@@ -693,6 +753,7 @@ export const make = Effect.gen(function* () {
             baseBranch: detail.baseBranch,
             headSha: report.next.headSha,
             report,
+            state,
           }),
           includesRemarks: report.changes.some((change) => change.kind === "remarks"),
         };
@@ -710,7 +771,10 @@ export const make = Effect.gen(function* () {
             : { groupKey: group.key, target, next: report.next, wake },
         );
       }
-      return watchesEqual(report.next, target.watch) ? Effect.void : record(target, report.next);
+      // A busy pass may skip the activity, so only an idle read can find the held news gone.
+      return (
+        watchesEqual(report.next, target.watch) ? Effect.void : record(target, report.next)
+      ).pipe(Effect.tap(() => (holds(target) ? Effect.void : clearHeld(target))));
     });
   });
 
@@ -758,6 +822,8 @@ export const make = Effect.gen(function* () {
       for (const cache of [readFailures, lastReads, threadTails]) {
         for (const key of cache.keys()) if (!byPullRequest.has(key)) cache.delete(key);
       }
+      const watched = new Set(targets.map(lifeKey));
+      for (const key of deferred.keys()) if (!watched.has(key)) deferred.delete(key);
     }
     yield* Effect.forEach(
       ending,

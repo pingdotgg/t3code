@@ -3,6 +3,7 @@ import type {
   PullRequestCheck,
   PullRequestComment,
   PullRequestDetail,
+  PullRequestReviewThread,
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -15,7 +16,15 @@ const LISTED_ITEMS = 10;
 const SNIPPET_LENGTH = 200;
 
 export type PullRequestWatchChange =
-  | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
+  | {
+      readonly kind: "checks-failed";
+      readonly failed: ReadonlyArray<PullRequestCheck>;
+      /** Checks that failed while the thread was busy and are not failing now, with what they say now. */
+      readonly earlier?: ReadonlyArray<{
+        readonly check: PullRequestCheck;
+        readonly now: PullRequestCheck["status"] | null;
+      }>;
+    }
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
   | { readonly kind: "checks-awaiting-approval"; readonly checks: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
@@ -72,13 +81,11 @@ export function evaluatePullRequestWatch(
   const checks = detail.checks.filter((check) => check.placeholder !== true);
   const failed = checks.filter(isFailedCheck);
   const awaiting = checks.filter((check) => check.status === "action-required");
+  let newlyFailed: Array<PullRequestCheck> = [];
   if (checks.length > 0) {
     // A run awaiting approval waits on a person, like a review, so only running checks count.
     checksPending = checks.some((check) => check.status === "pending");
-    const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
-    if (!checksBaseline && newlyFailed.length > 0) {
-      changes.push({ kind: "checks-failed", failed: newlyFailed });
-    }
+    newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
     if (!approvalAnnounced && awaiting.length > 0) {
       if (!checksBaseline) changes.push({ kind: "checks-awaiting-approval", checks: awaiting });
       approvalAnnounced = true;
@@ -115,6 +122,19 @@ export function evaluatePullRequestWatch(
           (workflowRunOf(key) === key ? !finished.has(key) : nameUnfinished(key)),
       ),
     ];
+  }
+  // A failure seen while the thread was busy is news when it hears, whatever the check says now.
+  const held = watch.heldFailures;
+  const earlier = (held?.headSha === headSha ? without(held.checks, failed) : []).map((check) => ({
+    check,
+    now: checks.find((current) => current.name === check.name)?.status ?? null,
+  }));
+  if (!checksBaseline && (newlyFailed.length > 0 || earlier.length > 0)) {
+    changes.unshift({
+      kind: "checks-failed",
+      failed: newlyFailed,
+      ...(earlier.length === 0 ? {} : { earlier }),
+    });
   }
   const required = checks.filter((check) => check.required === true);
   const gate = required.length > 0 ? required : checks;
@@ -253,6 +273,32 @@ export function evaluatePullRequestWatch(
   };
 }
 
+function without(
+  checks: ReadonlyArray<PullRequestCheck>,
+  others: ReadonlyArray<PullRequestCheck>,
+): Array<PullRequestCheck> {
+  return checks.filter((check) => !others.some((other) => other.name === check.name));
+}
+
+/**
+ * The watch a busy pass records: unchanged but for every failure it would tell, those held before
+ * on the head included, so a restart before the thread hears still tells them.
+ */
+export function holdFailures(
+  watch: ThreadPullRequestWatch,
+  report: PullRequestWatchReport,
+): ThreadPullRequestWatch {
+  const checks = report.changes.flatMap((change) =>
+    change.kind === "checks-failed"
+      ? [...change.failed, ...(change.earlier ?? []).map(({ check }) => check)]
+      : [],
+  );
+  const { heldFailures: _held, ...rest } = watch;
+  return checks.length === 0
+    ? rest
+    : { ...rest, heldFailures: { headSha: report.next.headSha, checks } };
+}
+
 function snippet(body: string): string {
   const text = body
     .replaceAll(/<!--[\s\S]*?-->/g, " ")
@@ -280,9 +326,15 @@ function changeLines(
       return [
         `- Checks failed${context.commit}:`,
         ...listed(
-          change.failed,
-          (check) =>
-            `  - ${check.name}${check.status === "failure" ? "" : ` (${check.status})`}${check.url ? ` ${check.url}` : ""}`,
+          [
+            ...change.failed.map((check) => ({ check, since: "" })),
+            ...(change.earlier ?? []).map(({ check, now }) => ({
+              check,
+              since: `, failed earlier, now ${now ?? "not reported"}`,
+            })),
+          ],
+          ({ check, since }) =>
+            `  - ${check.name}${check.status === "failure" ? "" : ` (${check.status})`}${since}${check.url ? ` ${check.url}` : ""}`,
         ),
       ];
     case "checks-awaiting-approval":
@@ -315,6 +367,65 @@ function changeLines(
         `- It was removed from the merge queue without merging${change.reason === null ? "" : `: ${change.reason}`}.`,
       ];
   }
+}
+
+/** What the wake says about the pull request as it stands, so the agent need not read it again. */
+export interface PullRequestWatchState {
+  readonly checks: ReadonlyArray<PullRequestCheck>;
+  /** Null when this pass could not read the review threads. */
+  readonly reviewThreads: {
+    readonly threads: ReadonlyArray<PullRequestReviewThread>;
+    readonly truncated: boolean;
+  } | null;
+}
+
+const CHECK_COUNTS: ReadonlyArray<readonly [PullRequestCheck["status"], string]> = [
+  ["success", "passed"],
+  ["failure", "failed"],
+  ["cancelled", "cancelled"],
+  ["pending", "pending"],
+  ["action-required", "awaiting approval"],
+  ["skipped", "skipped"],
+  ["neutral", "neutral"],
+];
+
+function stateLines(state: PullRequestWatchState, commit: string): Array<string> {
+  const checks = state.checks.filter((check) => check.placeholder !== true);
+  const counts = CHECK_COUNTS.flatMap(([status, label]) => {
+    const count = checks.filter((check) => check.status === status).length;
+    return count === 0 ? [] : [`${count} ${label}`];
+  });
+  const failing = checks.filter(isFailedCheck).map((check) => check.name);
+  const more = failing.length > LISTED_ITEMS ? [`and ${failing.length - LISTED_ITEMS} more`] : [];
+  const failingNames = [...failing.slice(0, LISTED_ITEMS), ...more].join(", ");
+  const lines = [
+    "",
+    `The pull request now${commit}:`,
+    counts.length === 0
+      ? "- No checks have reported."
+      : `- Checks: ${counts.join(", ")}.${failing.length === 0 ? "" : ` Failing: ${failingNames}.`}`,
+  ];
+  if (checks.length < state.checks.length) lines.push("- Some checks could not be read.");
+  if (state.reviewThreads === null) return lines;
+  const open = state.reviewThreads.threads.filter((thread) => !thread.isResolved);
+  if (open.length === 0) {
+    return [
+      ...lines,
+      state.reviewThreads.truncated
+        ? "- No unresolved review threads among those read, but not all of them could be read."
+        : "- No unresolved review threads.",
+    ];
+  }
+  return [
+    ...lines,
+    `- ${state.reviewThreads.truncated ? "At least " : ""}${open.length} unresolved review ${open.length === 1 ? "thread" : "threads"}:`,
+    ...listed(open, (thread) => {
+      const first = thread.comments[0];
+      const where = `${thread.path}${thread.line === null ? "" : `:${thread.line}`}${thread.isOutdated ? " (outdated)" : ""}`;
+      const body = first === undefined ? "" : snippet(first.body);
+      return `  - ${first?.author?.login ?? "someone"} on ${where}${body.length === 0 ? "" : `: "${body}"`}${first?.url ? ` ${first.url}` : ""}`;
+    }),
+  ];
 }
 
 const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
@@ -364,12 +475,36 @@ export function combinePullRequestWatchWakes(
   };
 }
 
+/** Tells the agent not to read again what the wake already says in full. */
+function rereadAdvice(state: PullRequestWatchState): Array<string> {
+  const told = (count: number) => count <= LISTED_ITEMS;
+  const complete = [
+    // Some hosts return no checks when the read fails, so an empty list is not a complete one.
+    ...(state.checks.length === 0 ||
+    state.checks.some((check) => check.placeholder === true) ||
+    !told(state.checks.filter(isFailedCheck).length)
+      ? []
+      : ["the checks"]),
+    ...(state.reviewThreads === null ||
+    state.reviewThreads.truncated ||
+    !told(state.reviewThreads.threads.filter((thread) => !thread.isResolved).length)
+      ? []
+      : ["review threads"]),
+  ];
+  return complete.length === 0
+    ? []
+    : [
+        `This was read just now, so do not read ${complete.join(" or ")} again unless you need a log or a full comment.`,
+      ];
+}
+
 export function pullRequestWatchMessage(input: {
   readonly number: number;
   readonly url: string;
   readonly baseBranch: string;
   readonly headSha: string | null;
   readonly report: PullRequestWatchReport;
+  readonly state: PullRequestWatchState;
 }): { readonly text: string; readonly notification: OrchestrationV2Notification } {
   const { changes, exhausted } = input.report;
   const context = {
@@ -379,6 +514,8 @@ export function pullRequestWatchMessage(input: {
   const text = [
     `Update on pull request #${input.number} (${input.url}), which T3 Code is watching for you:`,
     ...changes.flatMap((change) => changeLines(change, context)),
+    ...stateLines(input.state, context.commit),
+    ...rereadAdvice(input.state),
     "",
     exhausted
       ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} comment-only updates in a row. Call watch_pull_request to watch it again.`
@@ -386,11 +523,15 @@ export function pullRequestWatchMessage(input: {
   ].join("\n");
   const failed = changes.some(
     (change) =>
-      change.kind === "checks-failed" ||
+      (change.kind === "checks-failed" && change.failed.length > 0) ||
       change.kind === "conflicting" ||
       change.kind === "merge-queue-removed",
   );
-  const summary = changes.map((change) => SUMMARY[change.kind]);
+  const summary = changes.map((change) =>
+    change.kind === "checks-failed" && change.failed.length === 0
+      ? "checks failed earlier"
+      : SUMMARY[change.kind],
+  );
   if (exhausted) summary.push("stopped watching");
   return {
     text,

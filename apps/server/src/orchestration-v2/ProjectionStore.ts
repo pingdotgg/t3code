@@ -197,7 +197,10 @@ export type ProjectionLimitRecoveryCandidate = Pick<
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
   "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pullRequests"
->;
+> & {
+  /** A run is at work or queued to start, so a wake sent now would wait behind it. */
+  readonly busy: boolean;
+};
 
 export type ProjectionSettlementCandidate = Pick<
   OrchestrationV2ThreadShell,
@@ -8235,8 +8238,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const getThreadsWithPullRequests: ProjectionStoreV2Shape["getThreadsWithPullRequests"] =
       Effect.fn("ProjectionStore.getThreadsWithPullRequests")(
         function* (threadId) {
-          const rows = yield* sql<PayloadRow>`
-          SELECT payload_json
+          const rows = yield* sql<PayloadRow & { readonly busy: number }>`
+          SELECT payload_json, EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_runs AS run
+            WHERE run.thread_id = orchestration_v2_projection_threads.thread_id
+              AND run.status IN ('preparing', 'starting', 'running', 'waiting', 'queued')
+              AND (run.status <> 'queued' OR json_extract(run.payload_json, '$.queueHeld') IS NOT 1)
+          ) AS busy
           FROM orchestration_v2_projection_threads
           WHERE deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND thread_id = ${threadId}`}
             AND json_extract(payload_json, '$.archivedAt') IS NULL
@@ -8252,6 +8260,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 settledOverride: thread.settledOverride,
                 settledAt: thread.settledAt,
                 pullRequests: thread.pullRequests ?? [],
+                busy: row.busy === 1,
               })),
             ),
           );

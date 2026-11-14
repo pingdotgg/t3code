@@ -13,8 +13,10 @@ import {
 
 // These cases read the head once or at one moment, so the no-checks notice never comes due.
 const evaluatePullRequestWatch = (
-  ...args: Parameters<typeof evaluate> extends [...infer Head, number] ? Head : never
-) => evaluate(...args, 0);
+  watch: Parameters<typeof evaluate>[0],
+  read: Parameters<typeof evaluate>[1],
+  remarks: Parameters<typeof evaluate>[2],
+) => evaluate(watch, read, remarks, 0);
 
 const STARTED = "2026-10-02T12:00:00.000Z";
 
@@ -684,9 +686,111 @@ describe("evaluatePullRequestWatch", () => {
       baseBranch: "main",
       headSha: null,
       report,
+      state: { checks: [], reviewThreads: null },
     });
     assert.isTrue(text.isWellFormed());
     assert.include(text, `"${"x".repeat(196)}..."`);
+  });
+
+  it("tells the pull request's state with each wake", () => {
+    const report = evaluatePullRequestWatch(watch(), detail(), [
+      remark("reviewer", "2026-10-02T12:06:00Z"),
+    ]);
+    const reviewThread = (id: string, isResolved: boolean, line: number | null) => ({
+      id,
+      path: "src/index.ts",
+      line,
+      side: "right" as const,
+      isResolved,
+      isOutdated: line === null,
+      comments: [
+        {
+          ...remark("reviewer", STARTED, `Fix ${id}.`),
+          id: `${id}-1`,
+          url: `https://github.com/o/r/pull/1#${id}`,
+        },
+      ],
+    });
+    const message = (state: Parameters<typeof pullRequestWatchMessage>[0]["state"]) =>
+      pullRequestWatchMessage({
+        number: 1,
+        url: "https://github.com/o/r/pull/1",
+        baseBranch: "main",
+        headSha: "aaaaaaaaaa",
+        report,
+        state,
+      }).text;
+    const checks = [check("lint", "success"), check("test", "failure"), check("build", "pending")];
+
+    const told = message({
+      checks,
+      reviewThreads: {
+        threads: [
+          reviewThread("open", false, 4),
+          reviewThread("old", false, null),
+          reviewThread("done", true, 9),
+        ],
+        truncated: false,
+      },
+    });
+    assert.include(
+      told,
+      [
+        "The pull request now on aaaaaaa:",
+        "- Checks: 1 passed, 1 failed, 1 pending. Failing: test.",
+        "- 2 unresolved review threads:",
+        '  - reviewer on src/index.ts:4: "Fix open." https://github.com/o/r/pull/1#open',
+        '  - reviewer on src/index.ts (outdated): "Fix old." https://github.com/o/r/pull/1#old',
+        "",
+      ].join("\n"),
+    );
+    assert.include(told, "do not read the checks or review threads again");
+    const cut = message({
+      checks,
+      reviewThreads: { threads: [reviewThread("open", false, 4)], truncated: true },
+    });
+    assert.include(cut, "- At least 1 unresolved review thread:");
+    assert.include(cut, "do not read the checks again");
+
+    const settled = message({
+      checks: [],
+      reviewThreads: { threads: [reviewThread("done", true, 9)], truncated: false },
+    });
+    assert.include(settled, "- No checks have reported.\n- No unresolved review threads.");
+    // Some hosts return no checks when their read fails, so the agent may still read them.
+    assert.include(settled, "do not read review threads again");
+    // Past the listed ten, the wake names no more, so the agent may read them again.
+    const many = message({
+      checks: Array.from({ length: 11 }, (_, i) => check(`job-${i}`, "failure")),
+      reviewThreads: {
+        threads: Array.from({ length: 11 }, (_, i) => reviewThread(`open-${i}`, false, i + 1)),
+        truncated: false,
+      },
+    });
+    assert.include(many, "  - and 1 more");
+    assert.notInclude(many, "do not read");
+    assert.include(
+      message({
+        checks,
+        reviewThreads: { threads: [reviewThread("done", true, 9)], truncated: true },
+      }),
+      "- No unresolved review threads among those read, but not all of them could be read.",
+    );
+
+    const unread = message({ checks, reviewThreads: null });
+    assert.notInclude(unread, "review thread");
+    assert.include(unread, "do not read the checks again");
+
+    // A check the host could not read stays out of the counts, and the agent may read them again.
+    const partial = message({
+      checks: [...checks, { ...check("deploy", "pending"), placeholder: true }],
+      reviewThreads: null,
+    });
+    assert.include(
+      partial,
+      "- Checks: 1 passed, 1 failed, 1 pending. Failing: test.\n- Some checks could not be read.",
+    );
+    assert.notInclude(partial, "do not read");
   });
 
   it("reports a conflict once, until the branch is clean again", () => {
@@ -741,6 +845,7 @@ describe("evaluatePullRequestWatch", () => {
       baseBranch: "main",
       headSha: first.next.headSha,
       report: first,
+      state: { checks: green.checks, reviewThreads: null },
     });
     assert.deepEqual(wake.notification, {
       source: { kind: "monitor" },
@@ -809,6 +914,20 @@ describe("evaluatePullRequestWatch", () => {
     );
     assert.isFalse(result.exhausted);
     assert.equal(result.next.wakes, 0);
+
+    // A failure held while the thread was busy is check news too, even after it passed again.
+    const recovered = evaluatePullRequestWatch(
+      { ...tired, heldFailures: { headSha: "aaaaaaaaaa", checks: [check("lint", "failure")] } },
+      detail({ checks: [check("lint", "success")] }),
+      [remark("reviewer", "2026-10-02T12:10:00Z")],
+    );
+    assert.deepEqual(recovered.changes[0], {
+      kind: "checks-failed",
+      failed: [],
+      earlier: [{ check: check("lint", "failure"), now: "success" }],
+    });
+    assert.isFalse(recovered.exhausted);
+    assert.equal(recovered.next.wakes, 0);
   });
 
   it("stops after the wake limit unless the head moves", () => {

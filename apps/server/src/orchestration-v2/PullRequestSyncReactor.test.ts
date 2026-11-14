@@ -272,6 +272,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
                 settledOverride: thread.settledOverride,
                 settledAt: thread.settledAt === null ? null : DateTime.makeUnsafe(thread.settledAt),
                 pullRequests: thread.pullRequests,
+                busy: false,
               })),
           ),
         ),
