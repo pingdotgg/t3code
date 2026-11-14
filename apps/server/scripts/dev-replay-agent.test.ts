@@ -6,7 +6,12 @@ import * as NodeURL from "node:url";
 
 import { describe, expect, it } from "@effect/vitest";
 
-import { parseReplayTurns, SCENARIOS, streamChunks } from "./dev-replay-agent.ts";
+import {
+  parseReplayTurns,
+  scenarioTranscript,
+  SCENARIOS,
+  streamChunks,
+} from "./dev-replay-agent.ts";
 
 interface AgentMessage {
   readonly id?: number;
@@ -89,8 +94,8 @@ describe("dev replay agent", () => {
     expect(new Set(toolCallIds).size).toBe(6);
   });
 
-  it.each(SCENARIOS)("$id plays a turn without session setup frames", ({ file }) => {
-    const turns = parseReplayTurns(NodeFS.readFileSync(new URL(file, import.meta.url), "utf8"));
+  it.each(SCENARIOS)("$id plays a turn without session setup frames", (scenario) => {
+    const turns = parseReplayTurns(scenarioTranscript(scenario));
     expect(turns.length).toBeGreaterThan(0);
     const updates = turns.flatMap((turn) =>
       turn.frames.flatMap(({ frame }) =>
