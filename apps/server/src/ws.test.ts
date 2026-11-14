@@ -55,6 +55,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 import { vi } from "vite-plus/test";
 
+import { threadReplayEncodedBytes } from "./orchestration-v2/ThreadStream.ts";
 import * as AssetSigner from "./assets/AssetSigner.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
@@ -397,6 +398,7 @@ it.live("shell resume skips unknown types, synchronizes, and receives the live t
 
 it.effect.each([
   { count: 260, padding: 0, unknownPrefix: 0 },
+  { count: 40, padding: 2_000, unknownPrefix: 0 },
   { count: 3, padding: 600_000, unknownPrefix: 0 },
   { count: 3, padding: 0, unknownPrefix: 140 },
 ])(
@@ -447,7 +449,14 @@ it.effect.each([
       assert.equal(first.length, Math.min(10, count - 1));
       assert.equal(last?.kind, "event");
       if (last?.kind !== "event") return;
-      const resumed = yield* subscribe(last.sequence).pipe(Effect.flatMap(Stream.runCollect));
+      const frames = yield* subscribe(last.sequence).pipe(
+        Effect.flatMap((stream) => stream.pipe(Stream.chunks, Stream.runCollect)),
+      );
+      // Each chunk is one RPC frame; only its last event may cross the page budget.
+      for (const frame of frames) {
+        assert.isBelow(threadReplayEncodedBytes(frame.slice(0, -1)), 32 * 1024);
+      }
+      const resumed = frames.flat();
       assert.deepEqual(
         [...first, ...resumed].map((item) => (item.kind === "event" ? item.sequence : item.kind)),
         [...inserted.slice(unknownPrefix).map((row) => row.sequence), "synchronized"],

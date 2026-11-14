@@ -703,7 +703,9 @@ function projectFileFailureContext(
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
-const THREAD_REPLAY_PAGE_BYTES = 256 * 1024;
+// A replay page goes out as one RPC frame, and a client keeps only frames it
+// fully received, so small pages keep progress across a dropping connection.
+const THREAD_REPLAY_PAGE_BYTES = 32 * 1024;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
