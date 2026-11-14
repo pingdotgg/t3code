@@ -35,6 +35,8 @@ required-features = ["fake-provider"]
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 # examples/t3_fixture_replay.rs: T3's recorded Codex fixtures through this engine.
 conn-provider-codex.workspace = true
+# ... and T3's recorded Claude fixtures, on a fake SDK host.
+conn-provider-claude.workspace = true
 # examples/memory_load.rs: live heap bytes (the workspace forbids the unsafe a counting
 # allocator needs). Dev only; not in the server binary.
 stats_alloc = "0.1"

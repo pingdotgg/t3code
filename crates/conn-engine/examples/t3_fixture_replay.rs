@@ -56,6 +56,28 @@ fn provider(plan: &Value) -> Result<Arc<dyn Provider>, Failure> {
                 config,
             )))
         }
+        // The SDK host is the fake host of the Claude transcript replay
+        // (`crates/conn-provider-claude/tools/t3-replay/fake-host.mjs`).
+        "claudeAgent" => {
+            let args = field(plan, "helperArgs")?
+                .as_array()
+                .ok_or("plan: helperArgs")?
+                .iter()
+                .filter_map(|a| a.as_str().map(str::to_owned))
+                .collect();
+            let config = conn_provider_claude::ClaudeConfig {
+                helper: conn_provider_claude::HelperCommand {
+                    program: PathBuf::from(text(plan, "binary")?),
+                    args,
+                },
+                idle_timeout: None,
+                ..conn_provider_claude::ClaudeConfig::default()
+            };
+            Ok(Arc::new(conn_provider_claude::ClaudeProvider::new(
+                "claudeAgent".into(),
+                config,
+            )))
+        }
         other => Err(format!("driver {other} is not offered by this replay")),
     }
 }

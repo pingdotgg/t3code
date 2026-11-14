@@ -1908,6 +1908,13 @@ async fn an_idle_session_closes_and_the_next_turn_resumes_it() {
     // The paused clock jumps past the idle limit; the reaper closes the session.
     tokio::time::sleep(Duration::from_secs(120)).await;
     assert_eq!(engine.inner().live_count(), 0);
+    // T3's release record: the session's row says it stopped.
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        p["providerSessions"][0]["status"], "stopped",
+        "{}",
+        p["providerSessions"]
+    );
 
     dispatch(&engine, message("t1", "c3", "second")).await;
     let p = run_to_end(&engine, "t1", "run:t1:2").await;

@@ -1346,10 +1346,49 @@ impl Inner {
             live.session.close().await;
             // `notify_one` keeps a permit, so a pump not yet waiting still sees it.
             live.closed.notify_one();
+            if !self.shutting_down() {
+                self.record_release(thread_id, &live.provider_session_id)
+                    .await;
+            }
             if live.background_tasks_end_with_process && !self.shutting_down() {
                 self.clear_released_rosters(thread_id, &live.provider_session_id)
                     .await;
             }
+        }
+    }
+
+    /// `writeReleasedSessionEvents` and `writeReleasedRuntimeRequestEvents` in T3's
+    /// `ProviderSessionManager.ts`: the session's row says `stopped`, and the requests it
+    /// alone could answer (`responseCapability.type: live`) are `expired`.
+    async fn record_release(&self, thread_id: &str, provider_session_id: &str) {
+        let (tid, sid) = (thread_id.to_owned(), provider_session_id.to_owned());
+        let written = self
+            .write(move |tx| {
+                let now = tx.now().to_owned();
+                if let Some(mut session) = tx.entity(&tid, "providerSessions", &sid)?
+                    && !matches!(session["status"].as_str(), Some("stopped" | "error"))
+                {
+                    session["status"] = json!("stopped");
+                    if session.get("extensionStatuses").is_some() {
+                        session["extensionStatuses"] = json!([]);
+                    }
+                    session["updatedAt"] = json!(now);
+                    session["lastError"] = Value::Null;
+                    tx.append(Draft::new(&tid, "provider-session.updated", session))?;
+                }
+                for mut request in tx.entities(&tid, "runtimeRequests")? {
+                    let live = request["responseCapability"]["type"] == "live"
+                        && request["responseCapability"]["providerSessionId"] == sid.as_str();
+                    if request["status"] == "pending" && live {
+                        request["status"] = json!("expired");
+                        tx.append(Draft::new(&tid, "runtime-request.updated", request))?;
+                    }
+                }
+                Ok(())
+            })
+            .await;
+        if let Err(e) = written {
+            eprintln!("conn-engine: could not record a released session: {e}");
         }
     }
 

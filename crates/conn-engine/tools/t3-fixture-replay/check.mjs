@@ -32,6 +32,10 @@ import { monorepo, repoRoot } from "../../../../tools/monorepo.mjs";
 const MONOREPO = monorepo();
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const CODEX_STUB = NodePath.join(repoRoot, "crates/conn-provider-codex/tools/codex-stub.mjs");
+const CLAUDE_FAKE_HOST = NodePath.join(
+  repoRoot,
+  "crates/conn-provider-claude/tools/t3-replay/fake-host.mjs",
+);
 const EXPECTED = NodePath.join(HERE, "expected-failures.txt");
 
 const args = process.argv.slice(2);
@@ -61,6 +65,8 @@ const config = {
   work,
   driverBinary: DRIVER,
   codexStub: CODEX_STUB,
+  claudeFakeHost: CLAUDE_FAKE_HOST,
+  claudeShim: NodePath.join(HERE, "claude-session-shim.mjs"),
   node: process.execPath,
   only,
 };
@@ -74,6 +80,7 @@ import { describe, vi } from "vitest";
 import * as Effect from "effect/Effect";
 
 import { materializeReplayTranscriptWorkspace } from "@t3tools/provider-testing/replayTranscript";
+import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
 import { itRunsReplayFixtures, runReplayFixture } from "./ProviderReplayFixtures.ts";
@@ -107,16 +114,11 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
     return value;
   };
 
-  const runConn = (scenario: any, harness: any) =>
-    Effect.promise(async () => {
-      if (harness.driver !== "codex") {
-        throw new Error("conn: driver " + harness.driver + " is not replayed by this check");
-      }
-      counter += 1;
-      const dir = path.join(CONFIG.work, scenario.name.replace(/[^a-zA-Z0-9_-]+/g, "-") + "-" + counter);
-      fs.mkdirSync(path.join(dir, "home"), { recursive: true });
-      fs.mkdirSync(path.join(dir, "state"), { recursive: true });
-      fs.writeFileSync(path.join(dir, "transcript.json"), JSON.stringify(scenario.transcript));
+  // The provider's stand-in: Codex gets a stub codex executable that replays the recording
+  // (codex-stub.mjs); Claude gets the fake SDK host of the Claude transcript replay.
+  const standIn = (driver: string, dir: string, transcript: any) => {
+    if (driver === "codex") {
+      fs.writeFileSync(path.join(dir, "transcript.json"), JSON.stringify(transcript));
       const stubConfig = path.join(dir, "stub-config.json");
       fs.writeFileSync(
         stubConfig,
@@ -129,11 +131,55 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
           " --stub-config " + JSON.stringify(stubConfig) + ' "$@"\n',
         { mode: 0o755 },
       );
+      return { binary: wrapper };
+    }
+    if (driver === "claudeAgent") {
+      const ndjson = path.join(dir, "transcript.ndjson");
+      fs.writeFileSync(ndjson, transcript.entries.map((e: any) => JSON.stringify(e)).join("\n") + "\n");
+      // T3 pins the session id to the recording's (nativeSessionIdFor); the shim maps ours.
+      const recorded = transcript.metadata?.nativeSessionId ?? "00000000-0000-4000-8000-000000000000";
+      return {
+        binary: CONFIG.node,
+        helperArgs: [CONFIG.claudeShim, recorded, CONFIG.claudeFakeHost, ndjson, path.join(dir, "host-result.json")],
+      };
+    }
+    throw new Error("conn: driver " + driver + " is not offered by this server");
+  };
+
+  // What the stand-in saw that the recording did not expect: T3's replay fails on it.
+  const frameDifference = (driver: string, dir: string): string | null => {
+    if (driver === "codex") {
+      const log = path.join(dir, "stub.ndjson");
+      if (!fs.existsSync(log)) return null;
+      for (const line of fs.readFileSync(log, "utf8").split("\n")) {
+        if (line === "") continue;
+        const entry = JSON.parse(line);
+        if (entry.kind === "missing") return "the server never sent the recorded " + (entry.expected?.method ?? "reply");
+        if (entry.kind === "extra") return "the server sent " + (entry.frame?.method ?? "a reply") + " the recording does not have";
+      }
+      return null;
+    }
+    const result = path.join(dir, "host-result.json");
+    if (!fs.existsSync(result)) return null;
+    const host = JSON.parse(fs.readFileSync(result, "utf8"));
+    if (host.mismatch == null) return null;
+    const expected = host.mismatch.expected?.type ?? JSON.stringify(host.mismatch.expected).slice(0, 80);
+    const actual = host.mismatch.actual?.type ?? "nothing";
+    return "the SDK host got " + actual + " where the recording has " + expected;
+  };
+
+  const runConn = (scenario: any, harness: any) =>
+    Effect.promise(async () => {
+      counter += 1;
+      const dir = path.join(CONFIG.work, scenario.name.replace(/[^a-zA-Z0-9_-]+/g, "-") + "-" + counter);
+      fs.mkdirSync(path.join(dir, "home"), { recursive: true });
+      fs.mkdirSync(path.join(dir, "state"), { recursive: true });
+      const provider = standIn(harness.driver, dir, scenario.transcript);
       const create = scenario.commands.find((c: any) => c.type === "thread.create");
       const out = path.join(dir, "result.json");
       const plan = {
         driver: harness.driver,
-        binary: wrapper,
+        ...provider,
         providerHome: path.join(dir, "home"),
         stateDir: path.join(dir, "state"),
         workspace: scenario.runtimePolicyOverride?.cwd,
@@ -151,6 +197,8 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
         child.on("exit", (status) => resolve(status));
       });
       const raw = fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, "utf8")) : { error: "no result (exit " + code + ")" };
+      const difference = frameDifference(harness.driver, dir);
+      if (difference !== null) throw new Error("provider frames differ: " + difference + " [" + dir + "]");
       if (raw.error) throw new Error("conn driver: " + raw.error + " [" + dir + "]");
       const storedEvents = decodeEvents(raw.storedEvents);
       const projections = new Map(
@@ -206,14 +254,19 @@ describe("conn engine: T3 replay fixtures", () => {
       if (CONFIG.only !== null && CONFIG.only !== input.fixtureName + "/" + driver) {
         return Effect.void;
       }
-      return driver === "codex"
-        ? runReplayFixture({
-            ...input,
-            harness: CodexOrchestratorReplayHarness,
-            materializeWorkspace: (transcript: any, workspace: string) =>
-              Effect.succeed(materializeReplayTranscriptWorkspace(transcript, workspace)),
-          })
-        : runReplayFixture({ ...input, harness: generic(driver) as any });
+      // Each driver as its own T3 test file runs it.
+      if (driver === "codex") {
+        return runReplayFixture({
+          ...input,
+          harness: CodexOrchestratorReplayHarness,
+          materializeWorkspace: (transcript: any, workspace: string) =>
+            Effect.succeed(materializeReplayTranscriptWorkspace(transcript, workspace)),
+        });
+      }
+      if (driver === "claudeAgent") {
+        return runReplayFixture({ ...input, harness: ClaudeOrchestratorReplayHarness });
+      }
+      return runReplayFixture({ ...input, harness: generic(driver) as any });
     });
   }
 });
