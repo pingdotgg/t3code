@@ -145,6 +145,8 @@ const ManualSchemas: Record<string, Schema.Json> = {
 // `account/read` decode and take the provider down with it.
 const DefinitionOverrides: Record<string, Schema.Json> = {
   PlanType: { type: "string" },
+  // Newer Codex releases add hook events (e.g. `preModelRequest`); a closed enum drops their notifications.
+  HookEventName: { type: "string" },
   // Newer custom Codex binaries emit partial answers before additional tools or text.
   MessagePhase: {
     description:
@@ -183,6 +185,32 @@ function openStringEnum(schema: Schema.Json): Schema.Json {
         ? { type: "string" }
         : variant,
     ),
+  };
+}
+
+// Newer Codex identifies a generated image by `fileId` and omits the inline `result`.
+// Requiring `result` fails the whole notification decode and drops the finished image.
+function acceptImageFileIds(schema: Schema.Json): Schema.Json {
+  if (!isJsonSchemaNode(schema) || !Array.isArray(schema.oneOf)) return schema;
+  return {
+    ...schema,
+    oneOf: schema.oneOf.map((variant: Schema.Json) => {
+      if (
+        !isJsonSchemaNode(variant) ||
+        !isJsonSchemaNode(variant.properties) ||
+        !isJsonSchemaNode(variant.properties.type) ||
+        !Array.isArray(variant.properties.type.enum) ||
+        !variant.properties.type.enum.includes("imageGeneration") ||
+        !Array.isArray(variant.required)
+      ) {
+        return variant;
+      }
+      return {
+        ...variant,
+        properties: { ...variant.properties, fileId: { type: "string" } },
+        required: variant.required.filter((key: Schema.Json) => key !== "result"),
+      };
+    }),
   };
 }
 
@@ -682,7 +710,9 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
           DefinitionOverrides[definitionName] ??
             (OpenStringEnumDefinitions.has(definitionName)
               ? openStringEnum(definitionSchema)
-              : definitionSchema),
+              : definitionName === "ThreadItem"
+                ? acceptImageFileIds(definitionSchema)
+                : definitionSchema),
           localDefinitionNames,
           file.namespace,
           exportNameByQualifiedName,
