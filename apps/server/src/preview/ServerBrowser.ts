@@ -938,11 +938,18 @@ const make = Effect.gen(function* () {
     if (tabs.get(key) !== tab) return;
     movedTabs.set(key, { url: tab.page.url(), downloads: tab.downloads });
     dropTab(tab, false);
-    yield* findTab(tab.threadId, tab.tabId).pipe(Effect.ignore);
-    // The session closed before the new page opened, so nothing owns the files.
-    if (movedTabs.delete(key)) {
-      void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
-    }
+    yield* findTab(tab.threadId, tab.tabId).pipe(
+      // A failed launch keeps the move for the next viewer; a closed session leaves nothing to own the files.
+      Effect.catchTags({
+        ServerBrowserTabNotFoundError: () =>
+          Effect.sync(() => {
+            if (movedTabs.delete(key)) {
+              void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
+            }
+          }),
+      }),
+      Effect.ignore,
+    );
   });
 
   const desktopRenders = (snapshot: PreviewSessionSnapshot) =>
@@ -1006,7 +1013,6 @@ const make = Effect.gen(function* () {
     const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
     adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
     const moved = movedTabs.get(tabKey(snapshot.threadId, snapshot.tabId));
-    movedTabs.delete(tabKey(snapshot.threadId, snapshot.tabId));
     const desktop =
       adopted === undefined && (await desktopRenders(snapshot))
         ? await connectDesktop(snapshot)
@@ -1261,6 +1267,7 @@ const make = Effect.gen(function* () {
     page.on("close", () => dropTab(tab, true));
     page.on("crash", () => reopenCrashedTab(tab));
     tabs.set(key, tab);
+    movedTabs.delete(key);
     reportLiveTabs();
     // A desktop page navigates on its own and can finish loading before these listeners attach.
     if (desktop) void page.waitForLoadState("load").then(() => reportLoaded(tab), constVoid);
