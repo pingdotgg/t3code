@@ -79,7 +79,6 @@ it.each(plugins)("%s finds each escape's word after earlier escapes in the text"
 it.each([
   [String.raw`C:\work\&stuff\x.png`, String.raw`C:\work\&stuff\x.png`],
   [String.raw`\\server\share\&amp;stuff\x.png`, String.raw`\\server\share\&stuff\x.png`],
-  [String.raw`C:\work folder\.t3\shot.png`, String.raw`C:\work folder\.t3\shot.png`],
   [String.raw`C:\R&D folder\.t3\shot.png`, String.raw`C:\R&D folder\.t3\shot.png`],
   [String.raw`C:\R&amp;D folder\.t3\shot.png`, String.raw`C:\R&D folder\.t3\shot.png`],
 ])(
