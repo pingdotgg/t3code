@@ -297,7 +297,12 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
           WHERE ${rootIsVisible(sql)}`;
       }
       for (const { name } of tables) {
-        if (cleared.has(name) || virtualTables.includes(name)) continue;
+        if (
+          cleared.has(name) ||
+          virtualTables.includes(name) ||
+          name === "orchestration_v2_message_projects"
+        )
+          continue;
         const nullable = threadIdNullable.get(name);
         const filter = !filtered
           ? ""
@@ -316,7 +321,6 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
       for (const entry of schema) {
         if (entry.type !== "table") yield* sql.unsafe(entry.sql).unprepared;
       }
-      yield* rebuildMessageSearch(sql);
     }),
   );
   yield* sql`DETACH DATABASE src`;
@@ -600,6 +604,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     const sql = yield* SqlClient.SqlClient;
     // VACUUM INTO loses WAL mode; restore the server boot setting.
     yield* sql.unsafe("PRAGMA journal_mode = WAL").unprepared;
+    yield* rebuildMessageSearch(sql);
   }).pipe(
     Effect.provide(NodeSqliteClient.layer({ filename: databasePath })),
     wrapPhase("compact", databasePath),
