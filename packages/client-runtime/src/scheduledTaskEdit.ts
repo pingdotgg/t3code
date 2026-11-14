@@ -34,6 +34,18 @@ const unchangedSchedule = (
       }
     : opened;
 
+// Editors rebuild the workspace from its type, base ref and origin toggle (unset reads as off).
+const unchangedWorkspace = (opened: ScheduledTask["workspaceStrategy"]) =>
+  opened.type === "worktree"
+    ? {
+        type: opened.type,
+        baseRef: opened.baseRef,
+        startFromOrigin: opened.startFromOrigin ?? false,
+      }
+    : opened.type === "existing_worktree"
+      ? { type: opened.type, worktreePath: opened.worktreePath }
+      : { type: opened.type };
+
 /**
  * The fields an editor's full save changed from the task it opened, so a save does not
  * overwrite what another client or an agent changed since.
@@ -56,7 +68,7 @@ export function scheduledTaskEditPatch(
     ...(save.threadMode === undefined || save.threadMode === scheduledTaskThreadMode(opened)
       ? {}
       : { threadMode: save.threadMode }),
-    ...(same(save.workspaceStrategy, opened.workspaceStrategy)
+    ...(same(save.workspaceStrategy, unchangedWorkspace(opened.workspaceStrategy))
       ? {}
       : { workspaceStrategy: save.workspaceStrategy }),
     ...(same(save.modelSelection, opened.modelSelection)

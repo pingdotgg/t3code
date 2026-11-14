@@ -85,6 +85,22 @@ describe("scheduledTaskEditPatch", () => {
     });
   });
 
+  it("leaves an untouched workspace out, so a concurrent base ref change survives", () => {
+    const task: ScheduledTask = {
+      ...opened,
+      workspaceStrategy: { type: "worktree", baseRef: "main", branch: "kept" },
+    };
+    const save = editorSave({
+      title: "Renamed",
+      workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: false },
+    });
+    expect(scheduledTaskEditPatch(task, save)).toEqual({
+      id: opened.id,
+      projectId: opened.projectId,
+      title: "Renamed",
+    });
+  });
+
   it("sends a project change as a move from the opened project", () => {
     expect(
       scheduledTaskEditPatch(opened, editorSave({ projectId: ProjectId.make("project:other") })),
