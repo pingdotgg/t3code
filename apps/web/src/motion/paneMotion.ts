@@ -41,6 +41,8 @@ interface Shown {
   elements: Map<HTMLElement, { left: number; right: number }>;
   /** Taken before the sidebar's commit, which moves the panes before React lays them out. */
   held: boolean;
+  /** Inline details cards, in stage px. */
+  cards: { card: HTMLElement; left: number; top: number; width: number }[];
 }
 
 /** The strip's left edge on screen, which the camera's transform on the stage leaves alone. */
@@ -55,7 +57,46 @@ function snapshot(stage: HTMLElement, held: boolean) {
   for (const element of stage.querySelectorAll<HTMLElement>(TRACKED)) {
     if (!element.closest("[data-layout-closing]")) elements.set(element, trackedRect(element));
   }
-  shownBefore.set(stage, { strip: stripLeft(stage), elements, held });
+  const origin = stage.getBoundingClientRect();
+  const cards = [
+    ...stage.querySelectorAll<HTMLElement>('[data-thread-details-panel="inline"]'),
+  ].map((card) => {
+    const { left, top, width } = card.getBoundingClientRect();
+    return { card, left: left - origin.left, top: top - origin.top, width };
+  });
+  shownBefore.set(stage, { strip: stripLeft(stage), elements, held, cards });
+}
+
+/** A pane sliding in over the room its donor gave up; `release` runs once it rests. */
+interface Opening {
+  box: PaneBox;
+  release: (() => void) | undefined;
+}
+
+/** A details card its narrowed pane moves into a popover stays where it showed, under the pane
+ * sliding in over it, until that pane rests; React has already unmounted it. */
+function holdCoveredCards(cards: Shown["cards"], box: Box, edge: HTMLElement) {
+  const covered = cards.filter(
+    ({ card, left, width }) =>
+      !card.isConnected && left >= box.x - 1 && left + width <= box.x + box.width + 1,
+  );
+  for (const { card, left, top, width } of covered) {
+    card.inert = true;
+    card.setAttribute("aria-hidden", "true");
+    Object.assign(card.style, {
+      left: `${left}px`,
+      top: `${top}px`,
+      right: "auto",
+      width: `${width}px`,
+      transition: "none",
+      // Over the donor's fill, under the edge and the pane that covers it.
+      zIndex: "-1",
+    });
+    edge.before(card);
+  }
+  return () => {
+    for (const { card } of covered) card.remove();
+  };
 }
 
 /** Before a sidebar toggle commits: what its split panes show now. */
@@ -830,6 +871,7 @@ export function usePaneMotion(
         return makeEdge(stage, box, side, beside.gap, radius ?? 0, travel, false);
       };
     const panesBefore = new Set(paneWas.keys());
+    const opened: Opening[] = [];
     const raised: HTMLElement[] = [];
     let moving = 1;
     const settle = () => {
@@ -865,8 +907,14 @@ export function usePaneMotion(
               ? { dx: old.x + old.width + gap - box.x, dy: 0 }
               : { dx: 0, dy: old.y + old.height + gap - box.y };
           if (unseen(box, offset.dx, view)) continue;
-          slide(box.element, offset.dx, offset.dy, undefined, (dx, dy) =>
-            makeEdge(stage, box, side, gap, radius ?? 0, Math.abs(dx + dy), false),
+          const opening: Opening = { box, release: undefined };
+          opened.push(opening);
+          slide(
+            box.element,
+            offset.dx,
+            offset.dy,
+            () => opening.release?.(),
+            (dx, dy) => makeEdge(stage, box, side, gap, radius ?? 0, Math.abs(dx + dy), false),
           );
           if (passesEnd(box, offset.dx, viewEnd)) holdEnd(box.element);
           continue;
@@ -911,7 +959,15 @@ export function usePaneMotion(
     // After the chat lanes re-measure for the new widths, so what they move lands once. Watching
     // the tracked elements: a sidebar toggle commits this from inside a resize observer.
     afterResizeObservers(
-      () => trackContent(stage, tracked.elements, anchors, wholePixels),
+      () => {
+        trackContent(stage, tracked.elements, anchors, wholePixels);
+        // The chat lanes' re-measure is what moves a narrowed pane's details card out.
+        if (tracked.held) return;
+        for (const opening of opened) {
+          const edge = slides.get(opening.box.element)?.rider?.edge;
+          if (edge) opening.release = holdCoveredCards(tracked.cards, opening.box, edge.element);
+        }
+      },
       [...tracked.elements.keys()].filter((element) => element.isConnected),
     );
   }, [framed, key, placement, stageRef, viewportWidth]);
