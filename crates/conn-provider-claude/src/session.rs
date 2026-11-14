@@ -528,6 +528,13 @@ fn model_selection(
     (compiled.api_model_id, compiled.effort, compiled.settings)
 }
 
+/// Whether a live selection change may also change the API model.
+#[derive(Clone, Copy, Debug)]
+enum ModelChange {
+    Never,
+    WhenOpenedInMode,
+}
+
 /// The runtime policy as T3's Claude adapter reads it: modes, `approvalPolicy` and the
 /// `sandboxPolicy` kind (`sandboxPolicyKindForClaudeRuntimePolicy`,
 /// `readOnlyPolicyAllowsGlobalReads`).
@@ -943,34 +950,46 @@ impl ClaudeSession {
         Ok(())
     }
 
-    /// Applies a selection to the live query, or marks it for a new one when the change
-    /// cannot apply live (thinking toggled, effort cleared).
+    /// Applies a selection to the live query when T3 would (`canApplyClaudeSelectionLive`, a
+    /// different `queryIdentity`), and returns whether it did. `model_change` allows a new API
+    /// model too: a steer may change it when the CLI opened in the turn's mode; a selection sent
+    /// on its own (`applyModelSelection`) may not, so a model change waits for the next turn.
+    /// `native` limits it to the live query of that native thread.
     async fn apply_selection(
         &self,
         selection: &conn_contract::ModelSelection,
-    ) -> ProviderResult<()> {
+        native: Option<&str>,
+        model_change: ModelChange,
+    ) -> ProviderResult<bool> {
         let (model, effort, settings) = model_selection(selection);
         let live_change = {
-            let mut state = self.inner.lock();
-            match &mut state.live {
-                Some(live) => {
-                    let can_apply = live.selection_settings.get("alwaysThinkingEnabled")
-                        == settings.get("alwaysThinkingEnabled")
-                        && (effort.is_some() || live.effort.is_none());
-                    live.restart_needed |= !can_apply;
-                    can_apply
-                        && (live.model != model
-                            || live.effort != effort
-                            || live.selection_settings != settings)
-                }
-                None => false,
-            }
+            let state = self.inner.lock();
+            state.live.as_ref().is_some_and(|live| {
+                let same_identity = live.model == model
+                    && live.effort == effort
+                    && live.selection_settings == settings;
+                let can_apply = live.selection_settings.get("alwaysThinkingEnabled")
+                    == settings.get("alwaysThinkingEnabled")
+                    && (effort.is_some() || live.effort.is_none());
+                let model_ok = live.model == model
+                    || match model_change {
+                        ModelChange::Never => false,
+                        ModelChange::WhenOpenedInMode => {
+                            live.opened_permission_mode == live.policy.permission_mode
+                        }
+                    };
+                live.query.is_open()
+                    && native.is_none_or(|n| n == live.native_thread_id)
+                    && !same_identity
+                    && can_apply
+                    && model_ok
+            })
         };
         if live_change {
             self.apply_live_selection(&model, effort.as_deref(), &settings)
                 .await?;
         }
-        Ok(())
+        Ok(live_change)
     }
 
     async fn start_turn_inner(&self, input: TurnInput) -> ProviderResult<()> {
@@ -1272,11 +1291,16 @@ impl Session for ClaudeSession {
 
     fn steer_turn(&self, input: SteerInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
-            if let Some(selection) = &input.model_selection {
-                self.apply_selection(selection).await?;
-            }
-            // The steer's own selection, else the running turn's (T3's liveSteerSelection).
-            let effort = match &input.model_selection {
+            // The steer's own selection when it applies live, else the running turn's (T3's
+            // liveSteerSelection).
+            let live_selection = match &input.model_selection {
+                Some(selection) => self
+                    .apply_selection(selection, None, ModelChange::WhenOpenedInMode)
+                    .await?
+                    .then_some(selection),
+                None => None,
+            };
+            let effort = match live_selection {
                 Some(selection) => catalog::compile(&to_json(selection)).prompt_effort,
                 None => self.inner.lock().turn_prompt_effort.clone(),
             };
@@ -1333,12 +1357,25 @@ impl Session for ClaudeSession {
         })
     }
 
+    /// `ClaudeAdapterV2.applyModelSelection`: effort and settings apply to the live query of
+    /// this thread; a new model waits for the next turn. A failed update is logged, as T3 does.
     fn apply_model_selection(
         &self,
-        _thread: ProviderThread,
+        thread: ProviderThread,
         selection: conn_contract::ModelSelection,
     ) -> BoxFuture<'_, ProviderResult<()>> {
-        Box::pin(async move { self.apply_selection(&selection).await })
+        Box::pin(async move {
+            let Some(native) = native_thread_id(&thread) else {
+                return Ok(());
+            };
+            if let Err(e) = self
+                .apply_selection(&selection, Some(&native), ModelChange::Never)
+                .await
+            {
+                eprintln!("conn-provider-claude: the live selection change failed: {e}");
+            }
+            Ok(())
+        })
     }
 
     fn apply_runtime_policy(

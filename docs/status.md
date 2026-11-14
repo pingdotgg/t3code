@@ -63,7 +63,7 @@ settings; about 140 MiB for the `claude` program alone).
 Proven:
 
 - **Claude** runs through Anthropic's official Claude Agent SDK in the SDK host
-  (`helpers/sdk-host`). In 11 scenarios the `claude` CLI gets the same argv, environment and
+  (`helpers/sdk-host`). In 13 scenarios the `claude` CLI gets the same argv, environment and
   stdin as from the T3 server. 18 of the T3 server's 39 Claude transcripts pass (all that the
   driver runs). 11 live tests
   pass on Claude Haiku on macOS.
@@ -162,8 +162,7 @@ remembering: an own server brings its own defects.
    and passed. It needs an event export without pruning and a clock seam in the engine.
 5. **Engine.** Bounded thread snapshots and the `/history`, `/bounded` and `/transcript`
    routes (a full snapshot of a long thread peaks at about 13 bytes per byte of JSON);
-   checkpoints and diffs per turn; rollback, fork and merge-back; a model change during a
-   turn; a workspace strategy for delegated tasks; search details (no NFC normalization, the
+   checkpoints and diffs per turn; rollback, fork and merge-back; a workspace strategy for delegated tasks; search details (no NFC normalization, the
    old snippet rule).
 6. **Features.** `pullRequests.*` (34), `sourceControl.*` and `git.*`; the Conn-only methods
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest

@@ -354,6 +354,10 @@ impl Inner {
             Effect::Interrupt { thread_id, run_id } => self.interrupt(thread_id, run_id).await,
             Effect::Respond { thread_id, request } => self.respond(thread_id, request).await,
             Effect::CloseSession { thread_id } => self.close_session(&thread_id).await,
+            Effect::ApplyModelSelection {
+                thread_id,
+                selection,
+            } => self.apply_model_selection(&thread_id, selection).await,
             Effect::ThreadClosed { thread_id, reason } => {
                 if let Some(host) = &self.host {
                     host.thread_closed(&thread_id, reason);

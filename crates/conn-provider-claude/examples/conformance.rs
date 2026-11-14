@@ -238,6 +238,7 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
             .collect();
         answers.reverse();
         let mut interrupted = step["interrupt"] != json!(true);
+        let mut live_selection = step.get("liveSelection").cloned();
         loop {
             let Some(event) = next(&mut events).await else {
                 eprintln!("{name}: turn {n}: no provider event in time; scenario stopped");
@@ -250,6 +251,23 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
                 }
                 Some("provider_turn.updated") => {
                     let turn = event["providerTurn"].clone();
+                    if let Some(change) = live_selection
+                        .as_ref()
+                        .filter(|_| turn["tokenUsage"].is_object())
+                    {
+                        let mut selection = run.model_selection(change["model"].as_str());
+                        if let Some(options) = change.get("options") {
+                            selection["options"] = options.clone();
+                        }
+                        session
+                            .apply_model_selection(
+                                thread.clone(),
+                                from_json(selection).unwrap_or_else(|e| panic!("{e}")),
+                            )
+                            .await
+                            .unwrap_or_else(|e| panic!("apply_model_selection: {e}"));
+                        live_selection = None;
+                    }
                     if !interrupted && turn["tokenUsage"].is_object() {
                         interrupted = true;
                         session

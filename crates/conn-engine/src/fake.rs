@@ -38,6 +38,8 @@ pub struct FakeProvider {
     pub mcp_servers: Arc<Mutex<Vec<McpServer>>>,
     /// Sessions closed so far.
     pub closed: Arc<AtomicUsize>,
+    /// Model selections sent to a running turn (`apply_model_selection`), as JSON.
+    pub applied_selections: Arc<Mutex<Vec<Value>>>,
     steering: bool,
     close_delay: std::time::Duration,
 }
@@ -59,6 +61,7 @@ impl FakeProvider {
             sessions: Arc::new(AtomicUsize::new(0)),
             mcp_servers: Arc::new(Mutex::new(vec![])),
             closed: Arc::new(AtomicUsize::new(0)),
+            applied_selections: Arc::new(Mutex::new(vec![])),
             steering: true,
             close_delay: std::time::Duration::ZERO,
         }
@@ -95,6 +98,7 @@ struct FakeSession {
     background: Arc<AtomicBool>,
     mcp_servers: Arc<Mutex<Vec<McpServer>>>,
     closed: Arc<AtomicUsize>,
+    applied_selections: Arc<Mutex<Vec<Value>>>,
     close_delay: std::time::Duration,
 }
 
@@ -126,6 +130,7 @@ impl Provider for FakeProvider {
                     background: Arc::new(AtomicBool::new(false)),
                     mcp_servers: self.mcp_servers.clone(),
                     closed: self.closed.clone(),
+                    applied_selections: self.applied_selections.clone(),
                     close_delay: self.close_delay,
                 }),
                 events: rx,
@@ -438,6 +443,15 @@ impl Session for FakeSession {
             tokio::spawn(async move { emit(&tx, events).await });
             Ok(())
         })
+    }
+
+    fn apply_model_selection(
+        &self,
+        _thread: ProviderThread,
+        selection: conn_contract::ModelSelection,
+    ) -> BoxFuture<'_, ProviderResult<()>> {
+        crate::lock(&self.applied_selections).push(conn_contract::to_json(&selection));
+        Box::pin(async { Ok(()) })
     }
 
     fn set_mcp_servers(&self, servers: Vec<McpServer>) -> BoxFuture<'_, ProviderResult<()>> {

@@ -789,6 +789,41 @@ impl Inner {
         self.end_run(&thread_id, &run_id, "interrupted", None).await;
     }
 
+    /// `ProviderTurnControlService.applyModelSelection`: only a running provider turn on the
+    /// live session gets the selection. A provider that cannot apply it live keeps it for the
+    /// next turn, which carries the thread's selection anyway.
+    pub(crate) async fn apply_model_selection(&self, thread_id: &str, selection: Value) {
+        let Some(live) = self.live_thread(thread_id) else {
+            return;
+        };
+        let provider_thread = {
+            let state = lock(&live.state);
+            let running = state
+                .active
+                .as_ref()
+                .is_some_and(|a| a.provider_turn_id.is_some());
+            match (&state.provider_thread, running) {
+                (Some(thread), true) => thread.clone(),
+                _ => return,
+            }
+        };
+        let selection: conn_contract::ModelSelection = match from_json(selection) {
+            Ok(selection) => selection,
+            Err(e) => {
+                eprintln!("conn-engine: a model selection does not decode: {e}");
+                return;
+            }
+        };
+        match live
+            .session
+            .apply_model_selection(provider_thread, selection)
+            .await
+        {
+            Ok(()) | Err(conn_provider::ProviderError::Unsupported { .. }) => {}
+            Err(e) => eprintln!("conn-engine: the provider did not take the model change: {e}"),
+        }
+    }
+
     /// Turns the messages that waited for this run's provider turn into steers, in queue order.
     async fn deliver_deferred_steers(self: &Arc<Self>, thread_id: &str, run_id: &str) {
         let (tid, rid) = (thread_id.to_owned(), run_id.to_owned());

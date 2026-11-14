@@ -32,6 +32,13 @@ pub(crate) enum Effect {
     CloseSession {
         thread_id: String,
     },
+    /// Sends a model selection to the thread's running provider turn
+    /// (`provider-session.apply-model-selection`). The provider applies what it can live; the
+    /// rest waits for the next turn.
+    ApplyModelSelection {
+        thread_id: String,
+        selection: Value,
+    },
     /// Tells the host a thread was archived, deleted or settled (its terminals close).
     ThreadClosed {
         thread_id: String,
@@ -1193,8 +1200,9 @@ fn thread_interaction_mode_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
     Ok(vec![])
 }
 
-/// A model change on the thread's instance applies at the next turn. A change of instance is a
-/// provider switch, as `Orchestrator.ts` plans it for `thread.model-selection.set`.
+/// A model change on the thread's instance changes the thread, and goes to a running provider
+/// turn as `ApplyModelSelection` (the runner checks that a turn runs). A change of instance is
+/// a provider switch, as `Orchestrator.ts` plans it for `thread.model-selection.set`.
 fn thread_model_selection_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
     let Some(selection) = command
@@ -1213,10 +1221,13 @@ fn thread_model_selection_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
         "thread.model-selection-updated",
         true,
         |t, _| {
-            t["modelSelection"] = selection;
+            t["modelSelection"] = selection.clone();
         },
     )?;
-    Ok(vec![])
+    Ok(vec![Effect::ApplyModelSelection {
+        thread_id,
+        selection,
+    }])
 }
 
 /// Ends a live run: final versions of its streaming rows, its open requests, attempt, run and

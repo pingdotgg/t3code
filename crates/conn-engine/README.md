@@ -54,6 +54,10 @@ with a reason the client shows (`commands::refusal`).
   build already has FTS5. Every word of three characters or more must match; shorter words
   only narrow, and a query without a long word searches no messages (two CJK characters count
   as long). Hidden threads drop out in SQL before the limit. Titles are the client's to match.
+- **Model change during a turn.** A `thread.model-selection.set` on the thread's instance
+  goes to the running provider turn's session (`provider-session.apply-model-selection`,
+  `ProviderTurnControlService.applyModelSelection`); the provider applies what it can live.
+  Without a running provider turn only the thread changes. Codex has no live change (as T3).
 - **Provider switch.** A `thread.model-selection.set` to another instance is a provider switch
   (refused while a run is active). A run on another instance than the live session closes it
   and opens one on its own instance; a provider thread of another instance is never resumed.

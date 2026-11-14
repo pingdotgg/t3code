@@ -42,6 +42,8 @@ A stdin line that differs only in JSON key order is reported as such and fails t
 | `fork`                     | `forkSession` on disk, then the fork's first turn               |
 | `image`                    | an image attachment                                             |
 | `settings_bypass_disabled` | settings forbid bypass (downgrade to `auto`), settings entrypoint |
+| `live_selection_effort`    | a new effort sent to the running turn: `apply_flag_settings` during the turn |
+| `live_selection_model`     | a new model sent to the running turn: nothing until the next turn |
 | `read_only_sandbox`        | `approvalPolicy: never` and a read-only sandbox (`policyOverride`), with `t3-code`: `dontAsk`, the read-only tools and allow rules |
 
 Not covered here: steering, subagents, elicitation and dialogs, and a CLI that fails to start.

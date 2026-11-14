@@ -2307,6 +2307,45 @@ fn model_selection_set(command: &str, instance: &str) -> Value {
     })
 }
 
+/// A model change on the thread's instance during a provider turn goes to the running session
+/// (`provider-session.apply-model-selection` in `Orchestrator.ts`); with no provider turn
+/// running it only changes the thread, and the next turn carries it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_model_change_during_a_turn_reaches_the_running_session() {
+    let db = TempDb::new("live-selection");
+    let (engine, claude, _codex) = open_two(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    // Idle thread: nothing is sent to a provider.
+    dispatch(&engine, model_selection_set("c2", "claudeAgent")).await;
+    assert!(crate::lock(&claude.applied_selections).is_empty());
+
+    dispatch(&engine, message("t1", "c3", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(
+        &engine,
+        json!({
+            "type": "thread.model-selection.set", "commandId": "c4", "threadId": "t1",
+            "modelSelection": {"instanceId": "claudeAgent", "model": "m2"},
+        }),
+    )
+    .await;
+    for _ in 0..200 {
+        if !crate::lock(&claude.applied_selections).is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let applied = crate::lock(&claude.applied_selections).clone();
+    assert_eq!(applied.len(), 1, "{applied:?}");
+    assert_eq!(applied[0]["model"], "m2");
+    assert_eq!(count(&claude.closed), 0, "the session stays open");
+}
+
 /// `thread.model-selection.set` to another instance is a provider switch, as in
 /// `Orchestrator.ts`: refused while a run is active, `thread.provider-switched`, the old session
 /// closes, and the next turn runs on the new provider in its own provider thread.

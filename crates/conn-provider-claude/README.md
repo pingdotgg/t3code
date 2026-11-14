@@ -63,8 +63,12 @@ result equal, byte for byte.
   off denies every tool that would ask. The T3 server sets the two policies only through
   `RuntimePolicy.layerWithOverride` (its replay harness); its engine never does, and neither
   does ours.
-- **Live changes:** model by `setModel` (only when the CLI opened in the policy's mode) then
-  `applyFlagSettings`; permission mode by `setPermissionMode`; anything else a new query.
+- **Live changes:** at a turn start, model by `setModel` (only when the CLI opened in the
+  policy's mode) then `applyFlagSettings`; permission mode by `setPermissionMode`; anything
+  else a new query. A selection sent to a running turn (`applyModelSelection`) applies effort
+  and settings live, and never a new model: that waits for the next turn, as T3. A steer's
+  selection applies live when T3's `liveSteerSelection` would, and only then sets the steer's
+  prompt effort.
 - **Fork:** the SDK's `forkSession` at fork time; the fork's first turn resumes it.
 - **Prompts:** trimmed, `Ultrathink:` for the ultrathink effort, as T3.
 
