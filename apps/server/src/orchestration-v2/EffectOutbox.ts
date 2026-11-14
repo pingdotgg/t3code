@@ -219,6 +219,11 @@ export interface EffectOutboxV2Shape {
   readonly listByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
+  /** The `messageIds` whose provider steer succeeded. */
+  readonly listSteeredMessageIds: (input: {
+    readonly threadId: ThreadId;
+    readonly messageIds: ReadonlyArray<MessageId>;
+  }) => Effect.Effect<ReadonlyArray<MessageId>, EffectOutboxError>;
   readonly cancelUnsettled: (input: {
     readonly threadId: ThreadId;
     readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
@@ -464,6 +469,21 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               ? cause
               : new EffectOutboxError({ operation: "list", cause }),
           ),
+        ),
+      listSteeredMessageIds: ({ threadId, messageIds }) =>
+        sql<{ readonly message_id: string }>`
+          SELECT json_extract(payload_json, '$.messageId') AS message_id
+          FROM orchestration_v2_effect_outbox
+          WHERE thread_id = ${threadId}
+            AND status = 'succeeded'
+            AND effect_type = 'provider-turn.steer'
+            AND json_extract(payload_json, '$.messageId') IN (
+              SELECT value FROM json_each(${JSON.stringify(messageIds)})
+            )
+        `.pipe(
+          NodeSqliteClient.readOnly,
+          Effect.map((rows) => rows.map((row) => MessageId.make(row.message_id))),
+          Effect.mapError((cause) => new EffectOutboxError({ operation: "list", cause })),
         ),
       cancelUnsettled: Effect.fn("EffectOutbox.cancelUnsettled")(
         function* ({ threadId, effectTypes, reason }) {

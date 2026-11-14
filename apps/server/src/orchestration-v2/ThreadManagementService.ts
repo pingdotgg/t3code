@@ -1144,20 +1144,23 @@ const make = Effect.gen(function* () {
         return true;
       const later = records.runs.filter((candidate) => candidate.ordinal > run.ordinal);
       // Promoting a queued message to steer cancels its run and moves the message into the
-      // run it steered; this run already handled that message, so the cancelled run is no follow-up.
+      // run it steered. Only once that steer reached the provider did this run handle the
+      // message; until then the cancelled run still counts as a follow-up.
       const cancelledMessageIds = later
         .filter((candidate) => candidate.status === "cancelled")
         .map((candidate) => candidate.userMessageId);
-      const steeredIntoRun =
+      const movedMessageIds =
         cancelledMessageIds.length === 0
-          ? new Set<string>()
-          : new Set(
-              (yield* getProjectThreadRecords(input, ["messages"], {
-                messageIds: cancelledMessageIds,
-              })).messages
-                .filter((message) => message.runId === run.id)
-                .map((message) => message.id),
-            );
+          ? []
+          : (yield* getProjectThreadRecords(input, ["messages"], {
+              messageIds: cancelledMessageIds,
+            })).messages
+              .filter((message) => message.runId === run.id)
+              .map((message) => message.id);
+      const steeredIntoRun: ReadonlySet<string> =
+        movedMessageIds.length === 0
+          ? new Set()
+          : yield* orchestrator.steeredMessageIds(input.threadId, movedMessageIds);
       const following = later.filter(
         (candidate) =>
           candidate.status !== "cancelled" || !steeredIntoRun.has(candidate.userMessageId),

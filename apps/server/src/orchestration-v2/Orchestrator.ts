@@ -406,6 +406,11 @@ export interface OrchestratorV2Shape {
     taskId?: NodeId,
   ) => Effect.Effect<boolean, OrchestratorProjectionError>;
   readonly restartContinuationPending: (run: OrchestrationV2Run) => Effect.Effect<boolean>;
+  /** The `messageIds` whose steer reached the provider; an unreadable outbox reports none. */
+  readonly steeredMessageIds: (
+    threadId: ThreadId,
+    messageIds: ReadonlyArray<MessageId>,
+  ) => Effect.Effect<ReadonlySet<MessageId>>;
   /** Declined continuations emit no thread event; this still wakes waiters. */
   readonly awaitRestartContinuation: (run: OrchestrationV2Run) => Effect.Effect<void>;
   readonly dispatch: (
@@ -16054,6 +16059,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     restartContinuationPending: Effect.fn("OrchestratorV2.restartContinuationPending")(
       function (run) {
         return awaitsRestartContinuation(run).pipe(Effect.orElseSucceed(() => false));
+      },
+    ),
+    steeredMessageIds: Effect.fn("OrchestratorV2.steeredMessageIds")(
+      function (threadId, messageIds) {
+        return effectOutbox.listSteeredMessageIds({ threadId, messageIds }).pipe(
+          Effect.map((ids): ReadonlySet<MessageId> => new Set(ids)),
+          Effect.orElseSucceed((): ReadonlySet<MessageId> => new Set()),
+        );
       },
     ),
     awaitRestartContinuation: Effect.fn("OrchestratorV2.awaitRestartContinuation")(function (run) {

@@ -19,11 +19,13 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -2158,6 +2160,133 @@ it.effect("steers a promoted queued message with the selection it was queued wit
       assert.deepEqual(projection.thread.modelSelection, composerSelection);
     }).pipe(Effect.provide(layer));
   }),
+);
+
+it.effect.each(["delivered", "failed"] as const)(
+  "keeps a pending self-settle across a promoted steer only once it was %s",
+  (delivery) =>
+    Effect.gen(function* () {
+      const name = `settle-after-promoted-steer-${delivery}`;
+      const { events, started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+        name,
+        false,
+        true,
+        Effect.void,
+        true,
+        undefined,
+        (turn) =>
+          delivery === "delivered"
+            ? Effect.void
+            : Effect.fail(
+                new ProviderAdapter.ProviderAdapterSteerRunError({
+                  driver,
+                  providerThreadId: turn.providerThread.id,
+                  providerTurnId: turn.providerTurnId,
+                }),
+              ),
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+        const threadId = yield* startFirstTurn;
+        const first = started[0]!;
+        const settleRequest = yield* threadManagement
+          .settleAfterRun({
+            projectId: ProjectId.make(`project:${name}`),
+            threadId,
+            runId: first.runId,
+          })
+          .pipe(Effect.forkChild);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("queued"),
+          threadId,
+          messageId: MessageId.make("message:queued"),
+          text: "queued",
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.status === "queued",
+        )!;
+        yield* orchestrator.dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make("promote"),
+          threadId,
+          queuedRunId: queuedRun.id,
+          targetRunId: first.runId,
+        });
+        yield* worker.drain();
+        // A failed steer retries until the worker gives up, and no fallback run takes the message.
+        for (let retry = 1; delivery === "failed" && retry < 5; retry++) {
+          yield* TestClock.adjust(Duration.minutes(1));
+          yield* worker.drain();
+        }
+        assert.deepEqual(
+          (yield* outbox.listByCommandId(CommandId.make("promote"))).map((effect) => [
+            effect.request.type,
+            effect.status,
+          ]),
+          [["provider-turn.steer", delivery === "delivered" ? "succeeded" : "failed"]],
+        );
+
+        const ended = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === first.runId &&
+              event.payload.status !== "running",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+        yield* Queue.offer(events, {
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: { ...turn, status: "completed", completedAt: yield* DateTime.now },
+        });
+        yield* Queue.offer(events, {
+          type: "turn.terminal",
+          driver,
+          providerThreadId: turn.providerThreadId,
+          providerTurnId: turn.id,
+          runOrdinal: first.runOrdinal,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* Fiber.join(ended);
+        yield* worker.drain();
+        yield* Fiber.join(settleRequest);
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          projection.runs.map((run) => run.status),
+          ["completed", "cancelled"],
+        );
+        assert.equal(
+          projection.thread.settledOverride,
+          delivery === "delivered" ? "settled" : null,
+        );
+      }).pipe(
+        Effect.provide(
+          ThreadManagementService.layer.pipe(
+            Layer.provideMerge(layer),
+            Layer.provide(ServerSettings.layerTest()),
+            Layer.provide(
+              CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+            ),
+          ),
+        ),
+      );
+    }),
 );
 
 it.effect("steers a promoted scheduled delivery with the thread's current selection", () =>
