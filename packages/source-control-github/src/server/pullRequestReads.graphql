@@ -421,10 +421,10 @@ query ViewerPermissions($owner: String!, $name: String!, $number: Int!) {
 # the repository) rather than `collaborators`, which the REST API refuses to anyone without push
 # access and which would therefore be empty for exactly the reader most likely to be looking.
 #
-# Teams are asked for only where one has already been requested, so a request to a team can be
-# taken back. The teams a repository could newly be sent to live on the owning organization and
-# need `read:org`, which a repository-scoped token need not carry, and a query GitHub refuses
-# fails whole, taking the people down with the teams.
+# Teams already requested are read here so those requests can be taken back. The teams a review
+# could newly be sent to come from ReviewerTeams, a separate read: they need `read:org`, which a
+# repository-scoped token need not carry, and a query GitHub refuses fails whole, taking the
+# people down with the teams.
 query ReviewerCandidates($owner: String!, $name: String!, $number: Int!, $query: String) {
   repository(owner: $owner, name: $name) {
     assignableUsers(first: 100, query: $query) {
@@ -460,6 +460,30 @@ query ReviewerCandidates($owner: String!, $name: String!, $number: Int!, $query:
               login
               avatarUrl
             }
+          }
+        }
+      }
+    }
+  }
+}
+
+# GitHub refuses a review request to a team without access to the repository, and the REST list of
+# a repository's teams needs admin, so each team's repositories are searched for this one by name.
+# `query` matches loosely; the exact repository is picked out from the results.
+query ReviewerTeams($owner: String!, $name: String!, $query: String) {
+  organization(login: $owner) {
+    teams(first: 100, query: $query) {
+      pageInfo {
+        hasNextPage
+      }
+      nodes {
+        slug
+        combinedSlug
+        name
+        avatarUrl
+        repositories(query: $name, first: 100) {
+          nodes {
+            nameWithOwner
           }
         }
       }

@@ -19,6 +19,7 @@ import {
   toPullRequestFilesViewedPage,
   toPullRequestRows,
   toReviewerCandidates,
+  toReviewerTeams,
   toReviewThreadCommentsPage,
   toCanWrite,
   toReviewThreadPage,
@@ -31,6 +32,7 @@ import {
   PullRequestCore,
   PullRequestFilesViewed,
   ReviewerCandidates,
+  ReviewerTeams,
   ViewerPermissions,
 } from "./pullRequestReads.graphql.ts";
 import { ReviewThreadComments, ReviewThreads } from "./pullRequestReviews.graphql.ts";
@@ -212,6 +214,8 @@ const decodeReviewThreadCommentsJson = (raw: string) =>
 const decodeViewerPermissionsJson = through(ViewerPermissions.result, toViewerPermissions);
 const decodeLabelCandidatesJson = through(LabelCandidates.result, toLabelCandidates);
 const decodeReviewerCandidatesJson = through(ReviewerCandidates.result, toReviewerCandidates);
+const decodeReviewerCandidates = Schema.decodeUnknownSync(ReviewerCandidates.result);
+const decodeReviewerTeams = Schema.decodeSync(ReviewerTeams.result);
 const decodePullRequestFilesViewedJson = through(
   PullRequestFilesViewed.result,
   toPullRequestFilesViewedPage,
@@ -1461,6 +1465,49 @@ describe("reviewer candidate decoding", () => {
         isRequested: false,
       },
     ]);
+  });
+
+  it("offers the organization's teams that can reach this repository, each once", () => {
+    const team = (slug: string, repositories: ReadonlyArray<string>) => ({
+      slug,
+      combinedSlug: `acme/${slug}`,
+      name: slug,
+      avatarUrl: null,
+      repositories: { nodes: repositories.map((nameWithOwner) => ({ nameWithOwner })) },
+    });
+    const teams = decodeReviewerTeams({
+      organization: {
+        teams: {
+          pageInfo: { hasNextPage: true },
+          nodes: [
+            team("reviewers", ["acme/web"]),
+            team("frontend", ["ACME/Web"]),
+            team("legacy", ["acme/web-legacy"]),
+          ],
+        },
+      },
+    });
+    const people = JSON.parse(
+      candidatesJson({
+        assignable: [{ login: "octocat" }],
+        requested: [{ slug: "reviewers", combinedSlug: "acme/reviewers", teamName: "Reviewers" }],
+      }),
+    ) as { readonly data: unknown };
+
+    const list = toReviewerCandidates(
+      decodeReviewerCandidates(people.data),
+      undefined,
+      toReviewerTeams(teams, "acme/web"),
+    );
+
+    expect(
+      list?.candidates.map(({ kind, login, isRequested }) => [kind, login, isRequested]),
+    ).toEqual([
+      ["team", "acme/reviewers", true],
+      ["team", "acme/frontend", false],
+      ["user", "octocat", false],
+    ]);
+    expect(list?.truncated).toBe(true);
   });
 });
 

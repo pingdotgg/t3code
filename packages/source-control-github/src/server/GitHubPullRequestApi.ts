@@ -99,6 +99,7 @@ import {
   toPullRequestWatchFingerprint,
   toReviewDismissalsPage,
   toReviewerCandidates,
+  toReviewerTeams,
   toReviewThreadCommentsPage,
   toLaterReviewThreadPage,
   toReviewThreadPage,
@@ -2385,13 +2386,25 @@ export const make = Effect.gen(function* () {
       function (input) {
         const { owner, name } = parseRepositorySelector(input.repository);
         const operation = "listReviewerCandidates";
-        return client
-          .ReviewerCandidates({ owner, name, number: input.number, query: input.query ?? null })
-          .pipe(
-            graphql({ ...input, operation, allowReserve: true }),
-            Effect.map((result) => toReviewerCandidates(result, input.query)),
-            Effect.flatMap(found({ ...input, operation })),
-          );
+        const target = { ...input, operation, allowReserve: true };
+        const query = input.query ?? null;
+        return Effect.all(
+          [
+            client
+              .ReviewerCandidates({ owner, name, number: input.number, query })
+              .pipe(graphql(target)),
+            client.ReviewerTeams({ owner, name, query }).pipe(
+              graphql(target),
+              Effect.map((result) => toReviewerTeams(result, `${owner}/${name}`)),
+              // Teams need `read:org` and an organization owner; people are still worth listing.
+              Effect.orElseSucceed(() => null),
+            ),
+          ],
+          { concurrency: "unbounded" },
+        ).pipe(
+          Effect.map(([people, teams]) => toReviewerCandidates(people, input.query, teams)),
+          Effect.flatMap(found({ ...input, operation })),
+        );
       },
     ),
 

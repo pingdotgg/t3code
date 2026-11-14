@@ -325,7 +325,7 @@ export const RequestedReviewerBot = Schema.Struct({
 export interface RequestedReviewerBot extends Schema.Struct.Type<typeof RequestedReviewerBot.fields> {}
 
 /** A team of users in an organization. */
-export const Team = Schema.Struct({
+export const RequestedReviewerTeam = Schema.Struct({
   __typename: Schema.Literal("Team"),
   /** The slug corresponding to the team. */
   slug: Schema.String,
@@ -336,7 +336,7 @@ export const Team = Schema.Struct({
   /** A URL pointing to the team's avatar. */
   teamAvatarUrl: Schema.NullOr(Shared.URI)
 })
-export interface Team extends Schema.Struct.Type<typeof Team.fields> {}
+export interface RequestedReviewerTeam extends Schema.Struct.Type<typeof RequestedReviewerTeam.fields> {}
 
 /** Types that can be requested reviewers. */
 export const RequestedReviewerOther = Schema.Struct({
@@ -350,7 +350,7 @@ export const PullRequestCoreRepositoryPullRequestReviewRequestsNodesReviewReques
   requestedReviewer: Schema.NullOr(Schema.Union([
     RequestedReviewerUser,
     RequestedReviewerBot,
-    Team,
+    RequestedReviewerTeam,
     RequestedReviewerOther
   ]))
 })
@@ -1199,7 +1199,7 @@ export const ReviewerCandidatesRepositoryPullRequestReviewRequestsNodesReviewReq
   /** The reviewer that is requested. */
   requestedReviewer: Schema.NullOr(Schema.Union([
     PullRequestPreviewRepositoryPullRequestAuthorUser,
-    Team,
+    RequestedReviewerTeam,
     NodesBot,
     RequestedReviewerOther
   ]))
@@ -1259,6 +1259,79 @@ export const ReviewerCandidates = GraphQL.query("ReviewerCandidates", {
 export declare namespace ReviewerCandidates {
   export type Variables = typeof ReviewerCandidates.variables.Type
   export type Result = typeof ReviewerCandidates.result.Type
+}
+
+/** A repository contains the content for a project. */
+export const NodesRepository = Schema.Struct({
+  /** The repository's name with owner. */
+  nameWithOwner: Schema.String
+})
+export interface NodesRepository extends Schema.Struct.Type<typeof NodesRepository.fields> {}
+
+/** The connection type for Repository. */
+export const TeamRepositoryConnection = Schema.Struct({
+  /** A list of nodes. */
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(NodesRepository)))
+})
+export interface TeamRepositoryConnection extends Schema.Struct.Type<typeof TeamRepositoryConnection.fields> {}
+
+/** A team of users in an organization. */
+export const NodesTeam = Schema.Struct({
+  /** The slug corresponding to the team. */
+  slug: Schema.String,
+  /** The slug corresponding to the organization and team. */
+  combinedSlug: Schema.String,
+  /** The name of the team. */
+  name: Schema.String,
+  /** A URL pointing to the team's avatar. */
+  avatarUrl: Schema.NullOr(Shared.URI),
+  /** A list of repositories this team has access to. */
+  repositories: TeamRepositoryConnection
+})
+export interface NodesTeam extends Schema.Struct.Type<typeof NodesTeam.fields> {}
+
+/** The connection type for Team. */
+export const TeamConnection = Schema.Struct({
+  /** Information to aid in pagination. */
+  pageInfo: AssignableUsersPageInfoPageInfo,
+  /** A list of nodes. */
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(NodesTeam)))
+})
+export interface TeamConnection extends Schema.Struct.Type<typeof TeamConnection.fields> {}
+
+/** An account on GitHub, with one or more owners, that has repositories, members and teams. */
+export const Organization = Schema.Struct({
+  /** A list of teams in this organization. */
+  teams: TeamConnection
+})
+export interface Organization extends Schema.Struct.Type<typeof Organization.fields> {}
+
+/** `query ReviewerTeams` */
+export const ReviewerTeams = GraphQL.query("ReviewerTeams", {
+  document: {
+    variables: [
+      { name: "owner", body: "String!" },
+      { name: "name", body: "String!" },
+      { name: "query", body: "String" }
+    ],
+    selections: [
+      { name: "organization", body: ["(login:$", "owner", "){teams(first:100 query:$", "query", "){pageInfo{hasNextPage}nodes{slug combinedSlug name avatarUrl repositories(query:$", "name", " first:100){nodes{nameWithOwner}}}}}"] }
+    ],
+    fragments: []
+  },
+  variables: {
+    owner: Schema.String,
+    name: Schema.String,
+    query: Schema.optional(Schema.NullOr(Schema.String))
+  },
+  result: Schema.Struct({
+    /** Lookup a organization by login. */
+    organization: Schema.NullOr(Organization)
+  })
+})
+export declare namespace ReviewerTeams {
+  export type Variables = typeof ReviewerTeams.variables.Type
+  export type Result = typeof ReviewerTeams.result.Type
 }
 
 /** The connection type for Label. */
@@ -1834,4 +1907,4 @@ export declare namespace PullRequestSourceBranch {
 }
 
 /** Every operation in pullRequestReads.graphql. */
-export const PullRequestReadsGraphQLGroup = GraphQLGroup.make(RoutingIdentityViewer, ActorAvatars, PullRequestCore, PullRequestCheckContexts, PullRequestPreview, PullRequestActivity, PullRequestCommitStats, PullRequestHeads, PullRequestNodeId, PullRequestSubject, ViewerPermissions, ReviewerCandidates, LabelCandidates, RepositoryLabels, RepositoryReferences, RepositoryAuthors, PullRequestFilesViewed, PullRequestFileStats, PullRequestMergeMessage, PullRequestActionState, PullRequestBranchToDelete, PullRequestSourceBranch)
+export const PullRequestReadsGraphQLGroup = GraphQLGroup.make(RoutingIdentityViewer, ActorAvatars, PullRequestCore, PullRequestCheckContexts, PullRequestPreview, PullRequestActivity, PullRequestCommitStats, PullRequestHeads, PullRequestNodeId, PullRequestSubject, ViewerPermissions, ReviewerCandidates, ReviewerTeams, LabelCandidates, RepositoryLabels, RepositoryReferences, RepositoryAuthors, PullRequestFilesViewed, PullRequestFileStats, PullRequestMergeMessage, PullRequestActionState, PullRequestBranchToDelete, PullRequestSourceBranch)

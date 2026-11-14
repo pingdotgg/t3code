@@ -4104,42 +4104,70 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("reads who may review and who already has in one request", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(
-        Effect.succeed(
-          output(
-            encodeJson({
-              data: {
-                repository: {
-                  assignableUsers: {
-                    pageInfo: { hasNextPage: false },
-                    nodes: ["bilal", "octocat", "hubot"].map((login) => ({
-                      login,
-                      name: null,
-                      avatarUrl: `https://avatars/${login}`,
-                    })),
-                  },
-                  pullRequest: {
-                    author: { __typename: "User", login: "bilal" },
-                    reviewRequests: {
-                      nodes: [
-                        {
-                          requestedReviewer: {
-                            __typename: "User",
-                            login: "octocat",
-                            name: null,
-                            avatarUrl: "https://avatars/octocat",
-                          },
-                        },
-                      ],
-                    },
-                  },
-                },
+  const reviewerTeam = {
+    slug: "web",
+    combinedSlug: "acme/web",
+    name: "Web",
+    avatarUrl: null,
+    repositories: { nodes: [{ nameWithOwner: "acme/web" }] },
+  };
+  const reviewerTeams = (teams: ReadonlyArray<typeof reviewerTeam>) => ({
+    data: { organization: { teams: { pageInfo: { hasNextPage: false }, nodes: teams } } },
+  });
+  const reviewerPeople = (assignable: ReadonlyArray<string>, requested: ReadonlyArray<string>) => ({
+    data: {
+      repository: {
+        assignableUsers: {
+          pageInfo: { hasNextPage: false },
+          nodes: assignable.map((login) => ({
+            login,
+            name: null,
+            avatarUrl: `https://avatars/${login}`,
+          })),
+        },
+        pullRequest: {
+          author: { __typename: "User", login: "bilal" },
+          reviewRequests: {
+            nodes: requested.map((login) => ({
+              requestedReviewer: {
+                __typename: "User",
+                login,
+                name: null,
+                avatarUrl: `https://avatars/${login}`,
               },
-            }),
-          ),
-        ),
+            })),
+          },
+        },
+      },
+    },
+  });
+
+  it.effect.each([
+    {
+      name: "lists teams with access beside the people",
+      teams: reviewerTeams([reviewerTeam]),
+      expected: [
+        ["octocat", true],
+        ["acme/web", false],
+        ["hubot", false],
+      ],
+    },
+    {
+      name: "still lists the people when the token cannot read the organization's teams",
+      teams: {
+        data: null,
+        errors: [{ type: "INSUFFICIENT_SCOPES", message: "Your token needs read:org." }],
+      },
+      expected: [
+        ["octocat", true],
+        ["hubot", false],
+      ],
+    },
+  ])("$name", ({ teams, expected }) =>
+    Effect.gen(function* () {
+      route(
+        ["ReviewerCandidates", reviewerPeople(["bilal", "octocat", "hubot"], ["octocat"])],
+        ["ReviewerTeams", teams],
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
@@ -4150,45 +4178,31 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
       });
 
-      assert.strictEqual(mockedExecute.mock.calls.length, 1);
-      expect(varsAt(0)).toMatchObject({ owner: "acme", name: "web", number: 7 });
-      expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual([
-        ["octocat", true],
-        ["hubot", false],
+      expect(variablesOf("ReviewerCandidates")).toMatchObject([
+        { owner: "acme", name: "web", number: 7 },
       ]);
+      expect(variablesOf("ReviewerTeams")).toMatchObject([{ owner: "acme", name: "web" }]);
+      expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual(
+        expected,
+      );
     }),
   );
 
   it.effect("asks GitHub to search everyone assignable when the reviewer menu has a query", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(
-        Effect.succeed(
-          output(
-            encodeJson({
-              data: {
-                repository: {
-                  assignableUsers: {
-                    pageInfo: { hasNextPage: false },
-                    nodes: [{ login: "octocat", name: null, avatarUrl: "https://avatars/octocat" }],
-                  },
-                  pullRequest: {
-                    author: { __typename: "User", login: "bilal" },
-                    reviewRequests: {
-                      nodes: ["octocat", "unrelated"].map((login) => ({
-                        requestedReviewer: {
-                          __typename: "User",
-                          login,
-                          name: null,
-                          avatarUrl: "https://avatars/user",
-                        },
-                      })),
-                    },
-                  },
-                },
-              },
-            }),
-          ),
-        ),
+      route(
+        ["ReviewerCandidates", reviewerPeople(["octocat"], ["octocat", "unrelated"])],
+        [
+          "ReviewerTeams",
+          reviewerTeams([
+            {
+              ...reviewerTeam,
+              slug: "octonauts",
+              combinedSlug: "acme/octonauts",
+              name: "Octonauts",
+            },
+          ]),
+        ],
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
@@ -4200,9 +4214,15 @@ layer("GitHubPullRequestApi.layer", (it) => {
         query: "octo",
       });
 
-      expect(varsAt(0)).toMatchObject({ owner: "acme", name: "web", number: 7, query: "octo" });
+      expect(variablesOf("ReviewerCandidates")).toMatchObject([
+        { owner: "acme", name: "web", number: 7, query: "octo" },
+      ]);
+      expect(variablesOf("ReviewerTeams")).toMatchObject([
+        { owner: "acme", name: "web", query: "octo" },
+      ]);
       expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual([
         ["octocat", true],
+        ["acme/octonauts", false],
       ]);
     }),
   );
