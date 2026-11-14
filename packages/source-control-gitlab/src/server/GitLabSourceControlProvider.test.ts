@@ -281,3 +281,61 @@ it.effect.each(["read", "decode"] as const)(
       else assert.propertyVal(error.cause, "_tag", "SchemaError");
     }),
 );
+
+it.effect.each([
+  { headSelector: "octocat:feature/fix", source: undefined, sourceProject: "octocat/t3code" },
+  {
+    headSelector: "feature/fix",
+    source: { owner: "team/subgroup", refName: "feature/fix" },
+    sourceProject: "team/subgroup/t3code",
+  },
+  {
+    headSelector: "feature/fix",
+    source: { repository: "octocat/renamed-fork", refName: "feature/fix" },
+    sourceProject: "octocat/renamed-fork",
+  },
+])("creates a fork MR from $sourceProject into the current project", (testCase) =>
+  Effect.gen(function* () {
+    const requests: ReadonlyArray<string>[] = [];
+    const host = TestSourceControlHost.layer({
+      process: {
+        run: (input) => {
+          requests.push(input.args);
+          if (input.args[1] === "projects/:fullpath") {
+            return Effect.succeed(processOutput(JSON.stringify({ id: 100, path: "t3code" })));
+          }
+          assert.deepStrictEqual(input.args, [
+            "api",
+            "--method",
+            "POST",
+            `projects/${encodeURIComponent(testCase.sourceProject)}/merge_requests`,
+            "--raw-field",
+            "source_branch=feature/fix",
+            "--raw-field",
+            "target_branch=main",
+            "--raw-field",
+            "target_project_id=100",
+            "--raw-field",
+            "title=Fix remote flow",
+            "--field",
+            "description=@/tmp/body.md",
+          ]);
+          return Effect.succeed(processOutput("{}"));
+        },
+      },
+    });
+    const provider = yield* GitLabSourceControlProvider.make.pipe(
+      Effect.provide(Layer.merge(host, GitLabCli.layer.pipe(Layer.provide(host)))),
+    );
+    yield* provider.createChangeRequest({
+      cwd: "/repo",
+      baseRefName: "main",
+      headSelector: testCase.headSelector,
+      ...(testCase.source ? { source: testCase.source } : {}),
+      title: "Fix remote flow",
+      bodyFile: "/tmp/body.md",
+    });
+    assert.strictEqual(requests.length, 2);
+    assert.deepStrictEqual(requests[0], ["api", "projects/:fullpath"]);
+  }),
+);

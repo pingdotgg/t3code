@@ -81,7 +81,7 @@ it.effect("publishes preceding snapshots before a control", () =>
     assert.deepEqual(yield* Queue.take(recorder.output), [event(2)]);
     assert.deepEqual(yield* Queue.take(recorder.output), [control]);
     yield* Fiber.join(consumer);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("publishes isolated snapshots without advancing the clock", () =>
@@ -104,7 +104,7 @@ it.effect("publishes isolated snapshots without advancing the clock", () =>
       assert.equal(published._tag, "Some");
       if (published._tag === "Some") assert.deepEqual(published.value, [raw]);
     }
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("bounds transactions by count and bytes, including the final partial group", () =>
@@ -148,7 +148,7 @@ it.effect("bounds transactions by count and bytes, including the final partial g
       );
       assert.deepEqual(batches.flat(), events);
     }
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("keeps updates immediate and ordered when batching is disabled", () =>
@@ -164,7 +164,7 @@ it.effect("keeps updates immediate and ordered when batching is disabled", () =>
       Effect.succeed(false),
     );
     assert.deepEqual(seen, [event(1), control, event(2)]);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect.each([
@@ -226,7 +226,7 @@ it.effect.each([
       );
       for (const input of inputs) yield* Queue.offer(input, control);
       yield* Effect.forEach(consumers, Fiber.join);
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect("does not hold the shared worker while one consumer checks background work", () =>
@@ -251,7 +251,7 @@ it.effect("does not hold the shared worker while one consumer checks background 
     );
     yield* Deferred.succeed(release, undefined);
     yield* Fiber.join(consumer);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect.each(["job", "commit"] as const)(
@@ -296,7 +296,7 @@ it.effect.each(["job", "commit"] as const)(
         yield* coordinator.barrier(Effect.fail("original error")).pipe(Effect.exit),
         Exit.fail("original error"),
       );
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect("keeps a transaction failure when rolling back one failed snapshot", () =>
@@ -315,7 +315,7 @@ it.effect("keeps a transaction failure when rolling back one failed snapshot", (
       .pipe(Effect.exit);
     assert.isTrue(Exit.isFailure(exit));
     if (Exit.isFailure(exit)) assert.strictEqual(Cause.squash(exit.cause), transactionError);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect(
@@ -353,7 +353,7 @@ it.effect(
       assert.isTrue(yield* Deferred.isDone(committed));
       yield* Fiber.join(command);
       yield* Fiber.join(consumer);
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect.each([false, true])(
@@ -401,7 +401,7 @@ it.effect.each([false, true])(
         [event(-1)],
         Array.from({ length: cancel ? 9 : 10 }, (_, index) => event(index + (cancel ? 1 : 0))),
       ]);
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect.each(["failure", "stop"] as const)(
@@ -430,7 +430,7 @@ it.effect.each(["failure", "stop"] as const)(
         yield* coordinator.barrier(Effect.succeed("still available")),
         "still available",
       );
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect("does not force a separate commit for every consumer that ends", () =>
@@ -458,7 +458,7 @@ it.effect("does not force a separate commit for every consumer that ends", () =>
       (yield* Queue.takeAll(coordinator.output)).map((batch) => batch.length),
       [10],
     );
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("settles calls made after the coordinator's scope closes", () =>
