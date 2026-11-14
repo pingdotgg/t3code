@@ -60,6 +60,31 @@ describe("scheduledTaskEditPatch", () => {
     });
   });
 
+  it("leaves an untouched webhook schedule out, so a concurrent signing change survives", () => {
+    const signature = {
+      header: "x-hub-signature-256",
+      encoding: "hex",
+      prefix: "sha256=",
+    } as const;
+    const hook: ScheduledTask = {
+      ...opened,
+      schedule: {
+        type: "webhook",
+        signature,
+        filters: [{ path: "headers.x-github-event", op: "equals", value: "push" }],
+      },
+    };
+    const save = editorSave({
+      title: "Renamed",
+      schedule: { type: "webhook", signature, maxDeliveryAgeMinutes: null, dedupe: {} },
+    });
+    expect(scheduledTaskEditPatch(hook, save)).toEqual({
+      id: opened.id,
+      projectId: opened.projectId,
+      title: "Renamed",
+    });
+  });
+
   it("sends a project change as a move from the opened project", () => {
     expect(
       scheduledTaskEditPatch(opened, editorSave({ projectId: ProjectId.make("project:other") })),

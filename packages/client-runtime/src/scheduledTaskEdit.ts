@@ -20,6 +20,20 @@ const canonical = (value: unknown): unknown =>
 const same = (left: unknown, right: unknown) =>
   JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 
+// Editors send no dedupe as `{}`, no age limit as null, and omit filters they left alone.
+const unchangedSchedule = (
+  save: ScheduledTaskUpsertInput["schedule"],
+  opened: ScheduledTask["schedule"],
+): unknown =>
+  save.type === "webhook" && opened.type === "webhook"
+    ? {
+        ...opened,
+        maxDeliveryAgeMinutes: opened.maxDeliveryAgeMinutes ?? null,
+        dedupe: opened.dedupe ?? {},
+        ...(save.filters === undefined ? { filters: undefined } : {}),
+      }
+    : opened;
+
 /**
  * The fields an editor's full save changed from the task it opened, so a save does not
  * overwrite what another client or an agent changed since.
@@ -35,7 +49,9 @@ export function scheduledTaskEditPatch(
     ...(save.title === opened.title ? {} : { title: save.title }),
     ...(save.prompt === opened.prompt ? {} : { prompt: save.prompt }),
     ...(save.enabled === opened.enabled ? {} : { enabled: save.enabled }),
-    ...(same(save.schedule, opened.schedule) ? {} : { schedule: save.schedule }),
+    ...(same(save.schedule, unchangedSchedule(save.schedule, opened.schedule))
+      ? {}
+      : { schedule: save.schedule }),
     ...(threadId === opened.threadId ? {} : { threadId }),
     ...(save.threadMode === undefined || save.threadMode === scheduledTaskThreadMode(opened)
       ? {}
