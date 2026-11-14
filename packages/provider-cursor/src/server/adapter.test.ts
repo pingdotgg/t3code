@@ -1753,6 +1753,9 @@ describe("CursorAdapterV2", () => {
         [
           { type: "thinking-delta", text: "Reading package.json." },
           { type: "thinking-completed", thinkingDurationMs: 1 },
+          { type: "text-delta", text: "Looking." },
+          { type: "step-completed", stepId: 1, stepDurationMs: 1 },
+          { type: "text-delta", text: "Reading it." },
           {
             type: "tool-call-started",
             modelCallId: "nested",
@@ -1771,16 +1774,17 @@ describe("CursorAdapterV2", () => {
               },
             },
           },
-          { type: "text-delta", text: "package.json is a fixture." },
         ],
         [
+          { assistantMessage: { text: "Looking." } },
+          { assistantMessage: { text: "Reading it." } },
           {
             toolCall: {
               toolCallId: "nested-read",
               readToolCall: { args: { path: "package.json" }, result: { success: {} } },
             },
           },
-          { assistantMessage: { text: "package.json is a fixture." } },
+          { assistantMessage: { text: "The name is fixture." } },
         ],
       );
       const taskCompletedAt = events.findIndex(
@@ -1809,8 +1813,10 @@ describe("CursorAdapterV2", () => {
         ),
         [
           { type: "reasoning", text: "Reading package.json." },
+          { type: "assistant_message", text: "Looking." },
+          { type: "assistant_message", text: "Reading it." },
           { type: "dynamic_tool", toolName: "Read" },
-          { type: "assistant_message", text: "package.json is a fixture." },
+          { type: "assistant_message", text: "The name is fixture." },
         ],
       );
     }).pipe(
@@ -1833,6 +1839,12 @@ describe("CursorAdapterV2", () => {
             toolCall: { type: "read", args: { path: "open.json" } },
           },
           {
+            type: "tool-call-started",
+            modelCallId: "nested",
+            callId: "lost",
+            toolCall: { type: "read", args: { path: "lost.json" } },
+          },
+          {
             type: "tool-call-completed",
             modelCallId: "nested",
             callId: "live",
@@ -1848,6 +1860,12 @@ describe("CursorAdapterV2", () => {
           { type: "step-completed", stepId: 1, stepDurationMs: 1 },
         ],
         [
+          {
+            toolCall: {
+              toolCallId: "open",
+              readToolCall: { args: { path: "open.json" }, result: { success: {} } },
+            },
+          },
           {
             toolCall: {
               toolCallId: "live",
@@ -1876,7 +1894,8 @@ describe("CursorAdapterV2", () => {
         }
       }
       assert.deepEqual(Object.fromEntries(finalItems), {
-        "Read open.json": "interrupted",
+        "Read open.json": "completed",
+        "Read lost.json": "interrupted",
         "Read live.json": "completed",
         "Read saved.json": "completed",
         "Saved answer.": "completed",

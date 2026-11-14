@@ -939,7 +939,7 @@ interface ActiveCursorSubagent {
   resultProjected: boolean;
   // Nested tools and text Cursor streamed live; the completion transcript fills in only the rest.
   readonly liveToolCallIds: Set<string>;
-  liveAssistantProjected: boolean;
+  streamedAssistantText: string;
   readonly tools: Map<string, ActiveCursorToolCall>;
   readonly assistant: ActiveCursorTextStream;
   readonly reasoning: ActiveCursorTextStream;
@@ -1720,12 +1720,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 ? "failed"
                 : "completed"
               : "running");
-          const resultText = [
+          const resultParts = [
             ...assistantTextsFromConversationSteps(result?.conversationSteps ?? []),
             ...(result?.resultSuffix === undefined ? [] : [result.resultSuffix]),
-          ]
-            .filter((part) => part.trim().length > 0)
-            .join("\n");
+          ].filter((part) => part.trim().length > 0);
+          const resultText = resultParts.join("\n");
           const nativeItemId = input.callId;
           const nodeId =
             existing?.task.id ??
@@ -1795,7 +1794,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             nextChildOrdinal: existing?.nextChildOrdinal ?? 100,
             resultProjected: existing?.resultProjected ?? false,
             liveToolCallIds: existing?.liveToolCallIds ?? new Set(),
-            liveAssistantProjected: existing?.liveAssistantProjected ?? false,
+            streamedAssistantText: existing?.streamedAssistantText ?? "",
             tools: existing?.tools ?? new Map(),
             assistant: existing?.assistant ?? { current: null, nextSegment: 0 },
             reasoning: existing?.reasoning ?? { current: null, nextSegment: 0 },
@@ -1940,22 +1939,27 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           if (input.completed && !subagent.resultProjected) {
             yield* completeSubagentReasoning(subagent);
             yield* completeSubagentAssistant(subagent);
-            // No completion event means the nested tool outcome is unknown.
+            // A tool with neither a live completion nor a saved step has an unknown outcome.
             const unfinishedStatus =
               status === "interrupted" || status === "failed" || status === "cancelled"
                 ? status
                 : "interrupted";
+            const savedTools = toolCallsFromConversationSteps(result?.conversationSteps ?? []);
             for (const tool of subagent.tools.values()) {
+              const saved = savedTools.find(
+                (nestedTool) => `${nativeItemId}:child-tool:${nestedTool.callId}` === tool.callId,
+              );
+              if (saved !== undefined) {
+                tool.toolCall = saved.toolCall;
+              }
               yield* emitToolArtifacts({
                 active: tool,
                 completed: true,
-                unfinishedStatus,
+                ...(saved === undefined ? { unfinishedStatus } : {}),
               });
             }
             subagent.tools.clear();
-            for (const [index, nestedTool] of toolCallsFromConversationSteps(
-              result?.conversationSteps ?? [],
-            ).entries()) {
+            for (const [index, nestedTool] of savedTools.entries()) {
               if (subagent.liveToolCallIds.has(nestedTool.callId)) {
                 continue;
               }
@@ -1971,12 +1975,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               };
               yield* emitToolArtifacts({ active, completed: true });
             }
-            // Streamed text already holds the answer; the saved result is the fallback.
-            if (
-              !subagent.liveAssistantProjected &&
-              task.result !== null &&
-              task.result.length > 0
-            ) {
+            const unstreamedResult = resultParts
+              .filter((part) => !subagent.streamedAssistantText.includes(part.trim()))
+              .join("\n");
+            if (unstreamedResult.length > 0) {
               const resultNativeId = `${nativeItemId}:result`;
               const resultArtifacts = makeSubagentConversationArtifacts({
                 messageId: idAllocator.derive.messageFromProviderItem({
@@ -1997,7 +1999,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   strength: "weak",
                 },
                 role: "assistant",
-                text: task.result,
+                text: unstreamedResult,
                 ordinal: ++subagent.nextChildOrdinal,
                 now,
               });
@@ -2065,7 +2067,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           const taskUpdate = update.taskUpdate;
           switch (taskUpdate.type) {
             case "text-delta":
-              subagent.liveAssistantProjected = true;
+              subagent.streamedAssistantText += taskUpdate.text;
               yield* completeSubagentReasoning(subagent);
               yield* appendSubagentText({
                 subagent,
@@ -2094,6 +2096,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               );
               return;
             case "thinking-completed":
+              yield* completeSubagentReasoning(subagent);
+              return;
+            case "step-completed":
+              yield* completeSubagentAssistant(subagent);
               yield* completeSubagentReasoning(subagent);
               return;
             case "tool-call-started":
