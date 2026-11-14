@@ -1,3 +1,10 @@
+import { describe, expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import { Action } from "@/Action";
 import * as Plan from "@/Plan";
 import * as Stack from "@/Stack";
@@ -9,13 +16,6 @@ import {
   type ActionState,
   type RanActionState,
 } from "@/State";
-import * as Test from "@/Test/Alchemy";
-import { describe, expect } from "alchemy-test";
-import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
 import { Bucket, TestLayers } from "./test.resources";
 
 const TEST_STACK = "task-test";
@@ -99,14 +99,10 @@ describe("Plan", { tags: ["unit", "local"] }, () => {
   test(
     "same input hash -> noop (skip)",
     Effect.gen(function* () {
-      const Sync = Action("Sync", (_: { table: string }) =>
-        Effect.succeed({ rows: 1 }),
-      );
+      const Sync = Action("Sync", (_: { table: string }) => Effect.succeed({ rows: 1 }));
 
       // Pre-seed a `ran` row with a hash that matches { table: "users" }.
-      const { hashInput } = yield* Effect.promise(
-        () => import("@/Util/sha256"),
-      );
+      const { hashInput } = yield* Effect.promise(() => import("@/Util/sha256"));
       const inputHash = yield* hashInput({ table: "users" });
       yield* seed({
         Sync: {
@@ -134,13 +130,9 @@ describe("Plan", { tags: ["unit", "local"] }, () => {
   test(
     "changed input hash -> run",
     Effect.gen(function* () {
-      const Sync = Action("Sync", (_: { table: string }) =>
-        Effect.succeed({ rows: 1 }),
-      );
+      const Sync = Action("Sync", (_: { table: string }) => Effect.succeed({ rows: 1 }));
 
-      const { hashInput } = yield* Effect.promise(
-        () => import("@/Util/sha256"),
-      );
+      const { hashInput } = yield* Effect.promise(() => import("@/Util/sha256"));
       const oldHash = yield* hashInput({ table: "users" });
       yield* seed({
         Sync: {
@@ -168,13 +160,9 @@ describe("Plan", { tags: ["unit", "local"] }, () => {
   test(
     "force flips noop -> run",
     Effect.gen(function* () {
-      const Sync = Action("Sync", (_: { table: string }) =>
-        Effect.succeed({ rows: 1 }),
-      );
+      const Sync = Action("Sync", (_: { table: string }) => Effect.succeed({ rows: 1 }));
 
-      const { hashInput } = yield* Effect.promise(
-        () => import("@/Util/sha256"),
-      );
+      const { hashInput } = yield* Effect.promise(() => import("@/Util/sha256"));
       const inputHash = yield* hashInput({ table: "users" });
       yield* seed({
         Sync: {
@@ -203,9 +191,7 @@ describe("Plan", { tags: ["unit", "local"] }, () => {
   test(
     "task removed from stack -> taskDeletions",
     Effect.gen(function* () {
-      const { hashInput } = yield* Effect.promise(
-        () => import("@/Util/sha256"),
-      );
+      const { hashInput } = yield* Effect.promise(() => import("@/Util/sha256"));
       const inputHash = yield* hashInput({ table: "users" });
       yield* seed({
         Sync: {
@@ -238,9 +224,7 @@ describe("Plan", { tags: ["unit", "local"] }, () => {
   test(
     "resource depends on task: task is upstream of resource",
     Effect.gen(function* () {
-      const Compute = Action("Compute", (_: {}) =>
-        Effect.succeed({ value: "computed" }),
-      );
+      const Compute = Action("Compute", (_: {}) => Effect.succeed({ value: "computed" }));
 
       const plan = yield* Effect.gen(function* () {
         const computed = yield* Compute({});
@@ -257,9 +241,7 @@ describe("Plan", { tags: ["unit", "local"] }, () => {
   test(
     "task depends on resource: resource is upstream of task",
     Effect.gen(function* () {
-      const Sync = Action("Sync", (_: { name: string }) =>
-        Effect.succeed({ ok: true }),
-      );
+      const Sync = Action("Sync", (_: { name: string }) => Effect.succeed({ ok: true }));
 
       const plan = yield* Effect.gen(function* () {
         const bucket = yield* Bucket("MyBucket", { name: "b" });
@@ -276,9 +258,7 @@ describe("Plan", { tags: ["unit", "local"] }, () => {
   test(
     "explicit logical id allows multiple instances",
     Effect.gen(function* () {
-      const Sync = Action("Sync", (_: { which: string }) =>
-        Effect.succeed({ ok: true }),
-      );
+      const Sync = Action("Sync", (_: { which: string }) => Effect.succeed({ ok: true }));
 
       const plan = yield* Effect.gen(function* () {
         yield* Sync("nightly", { which: "n" });
@@ -375,9 +355,7 @@ describe("Apply", { tags: ["unit", "local"] }, () => {
 
   test.provider("task output flows to downstream resource input", (stack) =>
     Effect.gen(function* () {
-      const Name = Action("Name", (_: {}) =>
-        Effect.succeed({ name: "computed-bucket-name" }),
-      );
+      const Name = Action("Name", (_: {}) => Effect.succeed({ name: "computed-bucket-name" }));
 
       const out = yield* stack.deploy(
         Effect.gen(function* () {
@@ -407,90 +385,81 @@ describe("Apply", { tags: ["unit", "local"] }, () => {
     }),
   );
 
-  test.provider(
-    "removing task from stack drops state without invoking body",
-    (stack) =>
-      Effect.gen(function* () {
-        const deleteSpy = yield* Ref.make(0);
-        const Sync = Action("Sync", (_: { n: number }) =>
-          Effect.succeed({ ok: true }),
-        );
+  test.provider("removing task from stack drops state without invoking body", (stack) =>
+    Effect.gen(function* () {
+      const deleteSpy = yield* Ref.make(0);
+      const Sync = Action("Sync", (_: { n: number }) => Effect.succeed({ ok: true }));
 
-        yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Sync({ n: 1 });
-          }),
-        );
+      yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Sync({ n: 1 });
+        }),
+      );
 
-        const state = yield* yield* State;
-        expect(
-          yield* state.get({
-            stack: stack.name,
-            stage: stack.stage,
-            fqn: "Sync",
-          }),
-        ).toMatchObject({ kind: "action", status: "ran" });
+      const state = yield* yield* State;
+      expect(
+        yield* state.get({
+          stack: stack.name,
+          stage: stack.stage,
+          fqn: "Sync",
+        }),
+      ).toMatchObject({ kind: "action", status: "ran" });
 
-        // Re-deploy WITHOUT the task — state should be dropped.
-        // (Use a tracker hook to confirm body wasn't called.)
-        yield* stack.deploy(Effect.succeed(undefined));
-        void deleteSpy;
+      // Re-deploy WITHOUT the task — state should be dropped.
+      // (Use a tracker hook to confirm body wasn't called.)
+      yield* stack.deploy(Effect.succeed(undefined));
+      void deleteSpy;
 
-        expect(
-          yield* state.get({
-            stack: stack.name,
-            stage: stack.stage,
-            fqn: "Sync",
-          }),
-        ).toBeUndefined();
-      }),
+      expect(
+        yield* state.get({
+          stack: stack.name,
+          stage: stack.stage,
+          fqn: "Sync",
+        }),
+      ).toBeUndefined();
+    }),
   );
 
-  test.provider(
-    "init captures a resource Output; body resolves it at apply",
-    (stack) =>
-      Effect.gen(function* () {
-        const out = yield* stack.deploy(
-          Effect.gen(function* () {
-            const bucket = yield* Bucket("Cap", { name: "cap-bucket" });
+  test.provider("init captures a resource Output; body resolves it at apply", (stack) =>
+    Effect.gen(function* () {
+      const out = yield* stack.deploy(
+        Effect.gen(function* () {
+          const bucket = yield* Bucket("Cap", { name: "cap-bucket" });
 
-            const Seed = Action(
-              "Seed",
-              Effect.gen(function* () {
-                // Capture the resource Output at init — before the bucket
-                // exists. `arn` is a deferred accessor.
-                const arn = yield* bucket.bucketArn;
-                const name = yield* bucket.name;
-                return Effect.fn(function* () {
-                  // Resolve at apply, after the bucket is materialized.
-                  return { arn: yield* arn, name: yield* name };
-                });
-              }),
-            );
+          const Seed = Action(
+            "Seed",
+            Effect.gen(function* () {
+              // Capture the resource Output at init — before the bucket
+              // exists. `arn` is a deferred accessor.
+              const arn = yield* bucket.bucketArn;
+              const name = yield* bucket.name;
+              return Effect.fn(function* () {
+                // Resolve at apply, after the bucket is materialized.
+                return { arn: yield* arn, name: yield* name };
+              });
+            }),
+          );
 
-            return yield* Seed({});
-          }),
-        );
+          return yield* Seed({});
+        }),
+      );
 
-        expect(out).toEqual({
-          arn: "arn:test:bucket:us-east-1:123456789:Cap",
-          name: "cap-bucket",
-        });
-      }),
+      expect(out).toEqual({
+        arn: "arn:test:bucket:us-east-1:123456789:Cap",
+        name: "cap-bucket",
+      });
+    }),
   );
 
   test.provider("init-effect form: deps satisfied at apply", (stack) =>
     Effect.gen(function* () {
-      class Multiplier extends Context.Service<Multiplier, number>()(
-        "test/Multiplier",
-      ) {}
+      class Multiplier extends Context.Service<Multiplier, number>()("test/Multiplier") {}
 
       const Sync = Action(
         "Sync",
         Effect.gen(function* () {
           const m = yield* Multiplier;
-          return (input: { n: number }) =>
-            Effect.succeed({ result: input.n * m });
+          return (input: { n: number }) => Effect.succeed({ result: input.n * m });
         }),
       );
 
@@ -506,35 +475,33 @@ describe("Apply", { tags: ["unit", "local"] }, () => {
     }),
   );
 
-  test.provider(
-    "tagged .make form: init captures a resource Output; body resolves it",
-    (stack) =>
-      Effect.gen(function* () {
-        interface SeedAction extends Action<"Seed", {}, { arn: string }> {}
-        const Seed = Action<SeedAction, {}, { arn: string }>()("Seed");
+  test.provider("tagged .make form: init captures a resource Output; body resolves it", (stack) =>
+    Effect.gen(function* () {
+      interface SeedAction extends Action<"Seed", {}, { arn: string }> {}
+      const Seed = Action<SeedAction, {}, { arn: string }>()("Seed");
 
-        const out = yield* stack.deploy(
-          Effect.gen(function* () {
-            const bucket = yield* Bucket("Cap", { name: "cap-bucket" });
+      const out = yield* stack.deploy(
+        Effect.gen(function* () {
+          const bucket = yield* Bucket("Cap", { name: "cap-bucket" });
 
-            // `.make` called inside the builder with `bucket` in scope, then
-            // provided locally — its init runs under the capture context.
-            const SeedLive = Seed.make(
-              Effect.gen(function* () {
-                const arn = yield* bucket.bucketArn;
-                return Effect.fn(function* () {
-                  return { arn: yield* arn };
-                });
-              }),
-            );
+          // `.make` called inside the builder with `bucket` in scope, then
+          // provided locally — its init runs under the capture context.
+          const SeedLive = Seed.make(
+            Effect.gen(function* () {
+              const arn = yield* bucket.bucketArn;
+              return Effect.fn(function* () {
+                return { arn: yield* arn };
+              });
+            }),
+          );
 
-            return yield* Seed({}).pipe(Effect.provide(SeedLive));
-          }),
-        );
+          return yield* Seed({}).pipe(Effect.provide(SeedLive));
+        }),
+      );
 
-        expect(out).toEqual({
-          arn: "arn:test:bucket:us-east-1:123456789:Cap",
-        });
-      }),
+      expect(out).toEqual({
+        arn: "arn:test:bucket:us-east-1:123456789:Cap",
+      });
+    }),
   );
 });

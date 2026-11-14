@@ -5,8 +5,14 @@ import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { AlertTriangleIcon, CopyIcon, FolderOpenIcon, InfoIcon } from "lucide-react";
-import { ChevronDown, ChevronRight } from "lucide";
+import {
+  AlertTriangleIcon,
+  CopyIcon,
+  FolderOpenIcon,
+  InfoIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+} from "lucide-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -29,7 +35,6 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -268,7 +273,11 @@ function ProcessNameCell({
           aria-label={isExpanded ? `Collapse ${name}` : `Expand ${name}`}
           onClick={() => onToggle(process.pid)}
         >
-          <MorphIcon className="size-3.5" icon={isExpanded ? ChevronDown : ChevronRight} />
+          {isExpanded ? (
+            <ChevronDownIcon className="size-3.5" />
+          ) : (
+            <ChevronRightIcon className="size-3.5" />
+          )}
         </Button>
       ) : (
         <span className="size-5 shrink-0" aria-hidden="true" />

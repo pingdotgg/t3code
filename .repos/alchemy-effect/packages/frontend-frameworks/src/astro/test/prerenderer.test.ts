@@ -1,15 +1,12 @@
-import { WORKER_ENTRY_PREFIX } from "@alchemy.run/cloudflare-runtime/rolldown/plugins";
 import * as NodeFsPromises from "node:fs/promises";
 import * as NodeOs from "node:os";
 import * as NodePath from "node:path";
+import { WORKER_ENTRY_PREFIX } from "@alchemy.run/cloudflare-runtime/rolldown/plugins";
 import type * as ViteModule from "vite";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  makeIntegrationPluginOptions,
-  SERVER_ENTRYPOINT,
-} from "../cloudflare.ts";
+import { makeIntegrationPluginOptions, SERVER_ENTRYPOINT } from "../cloudflare.ts";
 import { createWorkerdPrerenderEnvironmentPlugin } from "../prerender-environment.ts";
-import { collectOutputModules } from "../prerenderer.ts";
+import { collectOutputModules, withAsyncLocalStorage } from "../prerenderer.ts";
 
 describe("makeIntegrationPluginOptions (workerd prerendering)", () => {
   it("promotes prerender to a child worker environment during a workerd build", () => {
@@ -50,10 +47,7 @@ describe("makeIntegrationPluginOptions (workerd prerendering)", () => {
 });
 
 describe("createWorkerdPrerenderEnvironmentPlugin", () => {
-  const configEnvironment = (
-    plugin: ViteModule.Plugin,
-    name: string,
-  ): unknown => {
+  const configEnvironment = (plugin: ViteModule.Plugin, name: string): unknown => {
     const hook = plugin.configEnvironment;
     const handler = typeof hook === "function" ? hook : hook?.handler;
     if (!handler) throw new Error("configEnvironment hook missing");
@@ -83,12 +77,8 @@ describe("createWorkerdPrerenderEnvironmentPlugin", () => {
 describe("collectOutputModules", () => {
   let dir: string | undefined;
 
-  const makeOutputDir = async (
-    files: Record<string, string | Uint8Array>,
-  ): Promise<string> => {
-    dir = await NodeFsPromises.mkdtemp(
-      NodePath.join(NodeOs.tmpdir(), "astro-prerender-test-"),
-    );
+  const makeOutputDir = async (files: Record<string, string | Uint8Array>): Promise<string> => {
+    dir = await NodeFsPromises.mkdtemp(NodePath.join(NodeOs.tmpdir(), "astro-prerender-test-"));
     for (const [relative, content] of Object.entries(files)) {
       const absolute = NodePath.join(dir, relative);
       await NodeFsPromises.mkdir(NodePath.dirname(absolute), {
@@ -132,9 +122,7 @@ describe("collectOutputModules", () => {
     expect(byName.has("chunks/page_abc.mjs.map")).toBe(false);
     // Deterministic ordering after the entry.
     expect(modules.map((module) => module.name).slice(1)).toEqual(
-      [...byName.keys()]
-        .filter((name) => !name.startsWith("prerender-entry."))
-        .sort(),
+      [...byName.keys()].filter((name) => !name.startsWith("prerender-entry.")).sort(),
     );
   });
 
@@ -142,14 +130,34 @@ describe("collectOutputModules", () => {
     const output = await makeOutputDir({
       "chunks/page_abc.mjs": "export const page = 1;",
     });
-    await expect(collectOutputModules(output)).rejects.toThrow(
-      /prerender-entry/,
-    );
+    await expect(collectOutputModules(output)).rejects.toThrow(/prerender-entry/);
   });
 
   it("fails with a clear error when the output directory does not exist", async () => {
-    await expect(
-      collectOutputModules("/nonexistent/prerender-output"),
-    ).rejects.toThrow(/prerender build output/);
+    await expect(collectOutputModules("/nonexistent/prerender-output")).rejects.toThrow(
+      /prerender build output/,
+    );
+  });
+});
+
+describe("withAsyncLocalStorage", () => {
+  it("adds nodejs_als before Node compat is on by default", () => {
+    expect(withAsyncLocalStorage([], "2026-03-10")).toEqual(["nodejs_als"]);
+  });
+
+  it("leaves flags alone when the compatibility date turns Node compat on", () => {
+    expect(withAsyncLocalStorage([], "2026-08-31")).toEqual([]);
+  });
+
+  it("leaves flags alone when a flag already provides AsyncLocalStorage", () => {
+    expect(withAsyncLocalStorage(["nodejs_compat"], "2026-03-10")).toEqual(["nodejs_compat"]);
+    expect(withAsyncLocalStorage(["nodejs_als"], "2026-03-10")).toEqual(["nodejs_als"]);
+  });
+
+  it("adds nodejs_als when Node compat is opted out", () => {
+    expect(withAsyncLocalStorage(["no_nodejs_compat"], "2026-08-31")).toEqual([
+      "no_nodejs_compat",
+      "nodejs_als",
+    ]);
   });
 });

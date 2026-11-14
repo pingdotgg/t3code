@@ -1,18 +1,12 @@
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Neon from "@alchemy.run/neon";
+import { expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Neon from "alchemy/Neon";
-import * as Test from "alchemy/Test/Alchemy";
-import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { AuthHttpError, edgeRetry, getJson, postJson, toCookieHeader } from "../http.ts";
 import NeonAuthWorker from "./fixtures/neon-worker.ts";
-import {
-  AuthHttpError,
-  edgeRetry,
-  getJson,
-  postJson,
-  toCookieHeader,
-} from "../http.ts";
 
 const providers = Layer.mergeAll(Cloudflare.providers(), Neon.providers());
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -44,9 +38,7 @@ test(
       name: "Neon Worker User",
     }).pipe(
       Effect.filterOrFail(
-        (response) =>
-          response.status === 200 ||
-          response.body.includes("USER_ALREADY_EXISTS"),
+        (response) => response.status === 200 || response.body.includes("USER_ALREADY_EXISTS"),
         (response) => new AuthHttpError({ url, ...response }),
       ),
       edgeRetry,
