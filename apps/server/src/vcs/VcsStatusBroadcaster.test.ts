@@ -1360,7 +1360,10 @@ describe("VcsStatusBroadcaster", () => {
             const next = applyGitStatusStreamEvent(clientStates.at(-1) ?? null, event);
             clientStates.push(next);
             yield* Deferred.succeed(subscribed, undefined);
-            if (next.refName === "repro") yield* Deferred.succeed(checkedOut, undefined);
+            // The refresh ends with the new branch's remote, after its local update.
+            if (event._tag === "remoteUpdated" && event.remote && next.refName === "repro") {
+              yield* Deferred.succeed(checkedOut, undefined);
+            }
           }),
         ).pipe(Effect.forkScoped);
         yield* Deferred.await(subscribed);
@@ -1375,7 +1378,7 @@ describe("VcsStatusBroadcaster", () => {
 
         assert.deepStrictEqual(
           clientStates.filter((status) => status.refName === "repro").map((status) => status.pr),
-          [null],
+          [null, null],
         );
         // A checkout must not trigger a network fetch.
         assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues.slice(1), [false]);

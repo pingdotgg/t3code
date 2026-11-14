@@ -88,7 +88,7 @@ it.effect("names the remote's repository when reading the default branch", () =>
         remoteUrl,
       );
     }
-  }).pipe(Effect.provide(AzureDevOpsCli.layer.pipe(Layer.provide(support))));
+  }).pipe(Effect.provide(AzureDevOpsCli.layer.pipe(Layer.provideMerge(support))));
 });
 
 it.effect(
@@ -103,5 +103,12 @@ it.effect(
         }),
         { headSelectors: ["feature"], limit: 100 },
       );
-    }).pipe(Effect.provide(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
+          TestSourceControlHost.layer(),
+        ),
+      ),
+    ),
 );
