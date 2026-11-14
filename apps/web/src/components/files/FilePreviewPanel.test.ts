@@ -407,7 +407,7 @@ Third}`;
     },
   );
 
-  it.each(["odt", "odp"] as const)("reads %s text and rejects XML entities", async (kind) => {
+  it.each(["odt", "odp"] as const)("reads %s text and rejects unsupported XML", async (kind) => {
     const archive = new JSZip().file(
       "content.xml",
       `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"><office:body>${kind === "odt" ? "<office:text><text:p>Field notes</text:p></office:text>" : '<draw:page draw:name="Overview"><text:h>Launch plan</text:h></draw:page>'}</office:body></office:document-content>`,
@@ -416,11 +416,19 @@ Third}`;
     expect(result.type).toBe("document");
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html).toContain(kind === "odt" ? "Field notes" : "Launch plan");
-    archive.file(
-      "content.xml",
+    for (const source of [
       '<!DOCTYPE x [<!ENTITY external SYSTEM "file:///etc/passwd">]><x>&external;</x>',
-    );
-    await expect(openDocument(archive, kind)).rejects.toThrow("unsupported XML");
+      '<html><body><p title="<!--">x</p><!DOCTYPE x [<!ENTITY e "boom">]><b title="-->">&e;</b></body></html>',
+      '<html><body><p title="<![CDATA[">x</p><!DOCTYPE x [<!ENTITY e "boom">]><b title="]]>">&e;</b></body></html>',
+      '<!DOC<!DOCTYPE a>TYPE x [<!EN<!DOCTYPE a>TITY e "boom">]><x>&e;</x>',
+      '<?test <![CDATA[ ?><!DOCTYPE html [<!ENTITY e "boom">]><html><body><pre><![CDATA[x]]></pre></body></html>',
+      '<?test <!-- ?><!DOCTYPE html [<!ENTITY e "boom">]><html><body><!-- x --></body></html>',
+      "<html><body>" + "<!--".repeat(80_000) + "</body></html>",
+      "<html><body>" + "<![CDATA[".repeat(80_000) + "</body></html>",
+    ]) {
+      archive.file("content.xml", source);
+      await expect(openDocument(archive, kind)).rejects.toThrow("unsupported XML");
+    }
   });
 
   it("reads EPUB chapters in spine order and removes active and remote content", async () => {
@@ -439,7 +447,7 @@ Third}`;
       )
       .file(
         "Book/two&&&.xhtml",
-        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><pre><![CDATA[Use &amp; and &lt; literally]]></pre><img src="cover.png" alt="&copy; &NotEqualTilde;"/></body></html>',
+        '<?xml-stylesheet href="a<b.css"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><pre><![CDATA[Use &amp; and &lt; literally]]></pre><pre><![CDATA[<!DOCTYPE html><!ENTITY author "Ada">]]></pre><!-- <!ENTITY note "x"> --><img src="cover.png" alt="&lt; &copy; &NotEqualTilde;"/></body></html>',
       )
       .file(
         "Book/cover.png",
@@ -454,7 +462,10 @@ Third}`;
     expect(result.pages.map((page) => page.title)).toEqual(["Second", "First"]);
     expect(result.pages[0]!.html).toContain("A\u00a0B © — ≂̸ &amp;lt;");
     expect(result.pages[0]!.html).toContain("<pre>Use &amp;amp; and &amp;lt; literally</pre>");
-    expect(result.pages[0]!.html).toContain('alt="© ≂̸"');
+    expect(result.pages[0]!.html).toContain(
+      "<pre>&lt;!DOCTYPE html&gt;&lt;!ENTITY author &quot;Ada&quot;&gt;</pre>",
+    );
+    expect(result.pages[0]!.html).toContain('alt="&lt; © ≂̸"');
     expect(result.pages[1]!.html).toContain('src="data:image/png;base64,');
     expect(result.pages[1]!.html).not.toMatch(/https:|script|alert/);
   });
