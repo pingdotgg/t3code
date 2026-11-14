@@ -2495,6 +2495,42 @@ it.layer(
       }),
   );
 
+  it.effect.each([
+    { name: "Volta's script shim", script: "@echo off\r\nvolta run %~n0 %*\r\n", owned: true },
+    { name: "another script", script: "@echo off\r\necho package-tool\r\n", owned: false },
+  ])(
+    "updates Windows Volta installs from $name only when Volta has the package",
+    ({ script, owned }) =>
+      Effect.gen(function* () {
+        const voltaHome = NodePath.join(yield* makeTempDir("t3-volta-windows"), "Volta");
+        const shim = NodePath.join(voltaHome, "bin", "package-tool.CMD");
+        NodeFS.mkdirSync(NodePath.dirname(shim), { recursive: true });
+        NodeFS.writeFileSync(shim, script);
+        const resolve = resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+          binaryPath: shim,
+          env: { PATH: "" },
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        );
+
+        expect((yield* resolve).update).toBeNull();
+        NodeFS.mkdirSync(
+          NodePath.join(voltaHome, "tools", "image", "packages", "@example", "package-tool"),
+          { recursive: true },
+        );
+        const update = (yield* resolve).update;
+        if (owned) {
+          expect(update).toMatchObject({
+            command: "volta install @example/package-tool@latest",
+            lockKey: "volta",
+          });
+        } else {
+          expect(update).toBeNull();
+        }
+      }),
+  );
+
   it.effect.skipIf(windowsHost)("upgrades with the keg's own brew when brew is not on PATH", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-homebrew-keg-brew");
