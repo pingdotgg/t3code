@@ -3453,6 +3453,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
     readonly setPermissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setPermissionMode"];
+    readonly setModel?: (
+      model: string,
+      offerAndWait: (message: SDKMessage) => Effect.Effect<void>,
+    ) => Effect.Effect<void>;
     readonly renameSession?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["renameSession"];
     readonly applyFlagSettings?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["applyFlagSettings"];
     readonly stopTask?: (
@@ -3622,7 +3626,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 setModel: (model) =>
                   Effect.sync(() => {
                     liveSelectionChanges.push({ model });
-                  }),
+                  }).pipe(
+                    Effect.andThen(() => options?.setModel?.(model, offerAndWait) ?? Effect.void),
+                  ),
                 applyFlagSettings: (settings) =>
                   Effect.sync(() => {
                     liveSelectionChanges.push(settings);
@@ -13713,6 +13719,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   const openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame = Effect.fnUntraced(function* (
     name: string,
+    firstQueryExit: Stream.Stream<
+      SDKMessage,
+      ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError
+    > = Stream.empty,
   ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -13751,7 +13761,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               // The first CLI exits without writing a frame.
               messages:
                 opened === 1
-                  ? Stream.empty.pipe(Stream.ensuring(Deferred.succeed(deadStreamEnded, undefined)))
+                  ? firstQueryExit.pipe(
+                      Stream.ensuring(Deferred.succeed(deadStreamEnded, undefined)),
+                    )
                   : Stream.fromQueue(sdkMessages),
               offer: () => Effect.void,
               setModel: () => Effect.void,
@@ -13799,6 +13811,43 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       });
     return { runtime, turnInput };
   });
+
+  it.effect("shows Claude's root refusal when its query exits before the turn starts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
+          "claude-query-refuses-root-before-frame",
+          Stream.fail(
+            new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+              method: "fromAsyncIterable",
+              cause: new ClaudeAdapterV2.ClaudeCodeRootRefusalError({
+                cause: new Error("Claude Code process exited with code 1"),
+              }),
+            }),
+          ),
+        );
+        const started = yield* harness.runtime
+          .startTurn(harness.turnInput("a", 1))
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(started));
+        if (Exit.isFailure(started)) {
+          assert.strictEqual(
+            makeProviderFailure({ cause: started.cause, class: "transport_error" }).message,
+            "Claude Code exited before it started: --dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons",
+          );
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
 
   it.effect("fails a turn whose Claude query ends before its first frame", () =>
     Effect.gen(function* () {
@@ -16703,6 +16752,70 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(harness.terminalEvents()[0]?.status, "completed");
       assert.isTrue(hasMessageText(recoveryAssistantText));
       assert.isFalse(hasMessageText(staleResultText));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("does not count the echo of a live model switch as background work", () =>
+    Effect.gen(function* () {
+      const idleUserFrame = (uuid: string, content: string, isReplay: boolean) =>
+        claudeSdkFrame({
+          type: "user",
+          message: { role: "user", content },
+          parent_tool_use_id: null,
+          ...(isReplay ? { isReplay } : {}),
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+        });
+      // As the CLI does, answer setModel with its echo before the next turn attaches.
+      const harness = yield* makeWakeHarnessWithOptions({
+        setModel: (model, offerAndWait) =>
+          offerAndWait(
+            idleUserFrame(
+              "00000000-0000-4000-8000-000000000b01",
+              `<local-command-stdout>Set model to \`${model}\`</local-command-stdout>`,
+              true,
+            ),
+          ),
+      });
+      const now = yield* DateTime.now;
+      const turn = (ordinal: number, model: string) =>
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(`attempt-claude-model-switch-echo:${ordinal}`),
+          text: `Request ${ordinal}`,
+          attachments: [],
+          providerTurnOrdinal: ordinal,
+          modelSelection: { instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID, model },
+        });
+      const settle = Effect.gen(function* () {
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+      });
+      yield* harness.runtime.startTurn(turn(1, "claude-opus-5-5"));
+      yield* settle;
+      yield* harness.runtime.startTurn(turn(2, "claude-sonnet-4-6"));
+      yield* settle;
+
+      assert.deepInclude(harness.liveSelectionChanges, { model: "claude-sonnet-4-6" });
+      assert.lengthOf(harness.continuationRequests, 0);
+      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+
+      // A root user frame the CLI produced on its own still marks a wake.
+      yield* harness.offerAndWait(
+        idleUserFrame("00000000-0000-4000-8000-000000000b02", "A background task finished.", false),
+      );
+      assert.isTrue(yield* harness.hasPendingBackgroundWork);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
