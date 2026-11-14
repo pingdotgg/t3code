@@ -16,6 +16,7 @@ import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import {
+  emptyUsageReason,
   updatingProvidersLabel,
   usageEnvironmentProgress,
   usageLoadingState,
@@ -229,6 +230,7 @@ export function UsagePage() {
   const canReadDiagnostics = selectedEnvironments.some(
     (environment) => environment.canReadDiagnostics,
   );
+  const emptyReason = merged.models.length === 0 ? emptyUsageReason(selectedEnvironments) : null;
 
   const updatePreferences = (patch: Partial<UsagePagePreferences>) => {
     const nextPreferences = { ...preferences, ...patch };
@@ -522,9 +524,9 @@ export function UsagePage() {
                 hiddenProviders={hiddenProviders}
                 now={limitsNow}
               />
-            ) : shown === null ? (
+            ) : shown === null || emptyReason === "pending" ? (
               <UsageSkeleton />
-            ) : !canReadDiagnostics ? (
+            ) : !canReadDiagnostics || emptyReason === "failed" ? (
               <div className="space-y-2 py-12 text-center text-sm text-muted-foreground">
                 {selectedEnvironments.map((environment) => (
                   <p key={environment.environmentId}>

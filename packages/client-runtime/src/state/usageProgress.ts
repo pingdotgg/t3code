@@ -27,6 +27,22 @@ export function usageEnvironmentProgress(
     : ({ phase: "stale" } as const);
 }
 
+/**
+ * Why a merge with no usage is not yet a finished read: an environment has
+ * still to answer, or every read failed. Null means the window really is empty.
+ */
+export function emptyUsageReason(
+  environments: readonly Pick<UsageProgressEnvironment, "error" | "summary">[],
+): "pending" | "failed" | null {
+  if (
+    environments.some((environment) => environment.summary === null && environment.error === null)
+  )
+    return "pending";
+  return environments.length > 0 && environments.every((environment) => environment.error !== null)
+    ? "failed"
+    : null;
+}
+
 export function updatingProvidersLabel(
   providers: readonly UsageProviderKind[],
   providerLabel: (provider: UsageProviderKind) => string,
