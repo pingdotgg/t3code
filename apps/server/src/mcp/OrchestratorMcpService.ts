@@ -1315,13 +1315,19 @@ const make = Effect.gen(function* () {
         : Effect.fail(failure("target_required", missingMessage));
 
   const loadTargetThread = Effect.fn("OrchestratorMcpService.loadTargetThread")(function* (
+    scope: McpInvocationScope,
     threadId: ThreadId,
   ) {
     const shell = yield* threadManagement
       .getThreadShell(threadId)
       .pipe(Effect.mapError(threadManagementFailure));
     if (shell === null || shell.deletedAt !== null) {
-      return yield* threadNotFound(threadManagement, threadId, `Thread ${threadId} was not found.`);
+      return yield* threadNotFound(
+        threadManagement,
+        scope,
+        threadId,
+        `Thread ${threadId} was not found.`,
+      );
     }
     // Keeps legacy import and project validation; callers read only the thread row.
     return yield* threadManagement
@@ -1337,7 +1343,7 @@ const make = Effect.gen(function* () {
     const target: Pick<OrchestrationV2ThreadProjection, "thread"> =
       caller.parent !== undefined && threadId === caller.parent.thread.id
         ? caller.parent
-        : yield* loadTargetThread(threadId);
+        : yield* loadTargetThread(scope, threadId);
     return { ...caller, target } as const;
   });
 
@@ -1398,6 +1404,7 @@ const make = Effect.gen(function* () {
     if (shell === null || shell.deletedAt !== null) {
       return yield* threadNotFound(
         threadManagement,
+        scope,
         threadId,
         `Thread ${threadId} is no longer available.`,
       );

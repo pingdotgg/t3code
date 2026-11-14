@@ -29,7 +29,7 @@ export const callerLinkOrigin = (
     : undefined);
 
 /** The link that fences a caller, if any: one paired below full access. */
-const fencingLinkOrigin = (caller: Pick<Caller, "scope" | "caller">) => {
+export const fencingLinkOrigin = (caller: Pick<Caller, "scope" | "caller">) => {
   const origin = callerLinkOrigin(caller);
   return origin !== undefined && linkOriginIsFenced(origin) ? origin : undefined;
 };
