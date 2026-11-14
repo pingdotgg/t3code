@@ -37,6 +37,7 @@ import {
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadShell,
+  type RunId,
   type ServerProvider,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -568,6 +569,23 @@ export function ThreadRelationshipsPanel(props: {
       Object.hasOwn(resolvedThreadTitles, threadId),
   );
   const canDetach = projection ? canDetachThreadProviderSession(projection) : false;
+  // The latest batch stays in view after it finishes, until a later turn launches agents.
+  const runOrdinals = new Map(
+    (projection?.runs ?? [])
+      .filter((run) => run.status !== "rolled_back")
+      .map((run) => [run.id, run.ordinal]),
+  );
+  const latestBatchRunId = projected.reduce<RunId | null>(
+    (latest, agent) =>
+      agent.runId !== null &&
+      runOrdinals.has(agent.runId) &&
+      (latest === null || runOrdinals.get(agent.runId)! > runOrdinals.get(latest)!)
+        ? agent.runId
+        : latest,
+    null,
+  );
+  const isPreviousAgent = (status: string | null | undefined, runId: RunId | null | undefined) =>
+    isFinishedAgentStatus(status) && (latestBatchRunId === null || runId !== latestBatchRunId);
 
   const {
     related = [],
@@ -579,13 +597,16 @@ export function ThreadRelationshipsPanel(props: {
     if (!isParent && graph.nodes.get(threadId)?.thread?.lineage.sideChat === true)
       return "sideChats";
     if (edge.kind !== "subagent" || isParent) return "related";
-    return isFinishedAgentStatus(edge.status) ? "previous" : "active";
+    return isPreviousAgent(edge.status, subagentsByThreadId.get(threadId)?.runId)
+      ? "previous"
+      : "active";
   });
   const { remoteActive = [], remotePrevious = [] } = groupBy(
     (projection?.subagents ?? [])
       .filter((agent): agent is RemoteSubagent => agent.remoteChild !== undefined)
       .map((remote) => ({ remote })),
-    ({ remote }) => (isFinishedAgentStatus(remote.status) ? "remotePrevious" : "remoteActive"),
+    ({ remote }) =>
+      isPreviousAgent(remote.status, remote.runId) ? "remotePrevious" : "remoteActive",
   );
   const groups: ReadonlyArray<{
     id: string;
