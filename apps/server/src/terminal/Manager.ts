@@ -110,6 +110,8 @@ const PROCESS_TABLE_QUERY_TIMEOUT = "15 seconds";
 // closeIdle queries while holding the thread lock, so it keeps a short budget
 // rather than stalling other operations on that thread behind a slow table.
 const CLOSE_IDLE_QUERY_TIMEOUT = { posix: "1 second", win32: "1500 millis" } as const;
+// The native table's own timeout skips its stdin write, so a stalled sidecar could block a stop.
+const DESCENDANT_LOOKUP_TIMEOUT = "2 seconds";
 // Discover children started without terminal input or output.
 const QUIET_SUBPROCESS_SNAPSHOT_EVERY_TICKS = 30;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
@@ -768,8 +770,20 @@ function deriveSubprocessInspectResult(
   if (childPid === undefined) {
     return { hasRunningSubprocess: false, childCommand: null, processIds: [] };
   }
-  const processIds = new Set<number>([terminalPid]);
-  const pending = [terminalPid];
+  const normalized = commandName(childPid);
+  return {
+    hasRunningSubprocess: true,
+    childCommand: normalized ? truncateTerminalWireLabel(normalized) : null,
+    processIds: [terminalPid, ...descendantProcessIds(snapshot, terminalPid)],
+  };
+}
+
+function descendantProcessIds(
+  snapshot: TerminalProcessTableSnapshot,
+  rootPid: number,
+): ReadonlyArray<number> {
+  const processIds = new Set<number>([rootPid]);
+  const pending = [rootPid];
   while (pending.length > 0) {
     const parentPid = pending.pop();
     if (parentPid === undefined) continue;
@@ -779,12 +793,16 @@ function deriveSubprocessInspectResult(
       pending.push(pid);
     }
   }
-  const normalized = commandName(childPid);
-  return {
-    hasRunningSubprocess: true,
-    childCommand: normalized ? truncateTerminalWireLabel(normalized) : null,
-    processIds: [...processIds],
-  };
+  processIds.delete(rootPid);
+  return [...processIds];
+}
+
+function signalHostProcess(pid: number, signal: "SIGTERM" | "SIGKILL"): void {
+  try {
+    process.kill(pid, signal);
+  } catch {
+    // The process exited between the snapshot and the signal.
+  }
 }
 
 const POSIX_PS_ABSOLUTE_PATHS = ["/bin/ps", "/usr/bin/ps"] as const;
@@ -1606,6 +1624,7 @@ interface TerminalManagerOptions {
   >;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
+  signalProcess?: (pid: number, signal: "SIGTERM" | "SIGKILL") => void;
   maxRetainedInactiveSessions?: number;
   registerTerminalProcesses?: (input: {
     readonly threadId: string;
@@ -1814,6 +1833,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const subprocessPollIntervalMs =
     options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
   const processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
+  const signalProcess = options.signalProcess ?? signalHostProcess;
   const maxRetainedInactiveSessions =
     options.maxRetainedInactiveSessions ?? DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS;
   const registerTerminalProcesses = options.registerTerminalProcesses ?? (() => Effect.void);
@@ -2027,10 +2047,37 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
   });
 
+  // Background jobs sit in their own process groups, so the shell's hangup never reaches them.
+  // Windows needs no walk: node-pty already kills the whole tree there.
+  const terminalDescendantPids = Effect.fn("terminal.descendantPids")(function* (
+    terminalPid: number,
+  ) {
+    if (platform === "win32") return [];
+    const lookup = yield* fetchProcessTableSnapshot(CLOSE_IDLE_QUERY_TIMEOUT.posix).pipe(
+      Effect.timeoutOption(DESCENDANT_LOOKUP_TIMEOUT),
+    );
+    if (Option.isNone(lookup)) {
+      yield* Effect.logWarning("timed out snapshotting terminal descendants before stopping", {
+        terminalPid,
+      });
+      return [];
+    }
+    const { snapshot } = lookup.value;
+    if (Result.isFailure(snapshot)) {
+      yield* Effect.logWarning("failed to snapshot terminal descendants before stopping", {
+        terminalPid,
+        reason: snapshot.failure,
+      });
+      return [];
+    }
+    return descendantProcessIds(snapshot.success, terminalPid);
+  });
+
   const runKillEscalation = Effect.fn("terminal.runKillEscalation")(function* (
     process: PtyAdapter.PtyProcess,
     threadId: string,
     terminalId: string,
+    findDescendantPids: Effect.Effect<ReadonlyArray<number>> = Effect.succeed([]),
   ) {
     // Subscribe before SIGTERM to catch immediate exits; Effect.ensuring releases even on interruption, unlike JS finally.
     const exited = Deferred.makeUnsafe<void>();
@@ -2038,40 +2085,57 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Deferred.doneUnsafe(exited, Effect.void);
     });
     yield* Effect.gen(function* () {
-      const terminated = yield* Effect.try({
-        try: () => process.kill("SIGTERM"),
-        catch: (cause) =>
-          new TerminalProcessSignalError({
-            cause,
-            signal: "SIGTERM",
-            terminalPid: process.pid,
-          }),
-      }).pipe(
-        Effect.as(true),
-        Effect.catch((error) =>
-          Effect.logWarning("failed to kill terminal process", {
-            threadId,
-            terminalId,
-            signal: "SIGTERM",
-            cause: error,
-          }).pipe(Effect.as(false)),
-        ),
-      );
-      if (!terminated) {
-        return;
-      }
-
-      const exitedBeforeGrace = yield* Deferred.await(exited).pipe(
-        Effect.as(true),
-        Effect.timeoutOrElse({
-          duration: processKillGraceMs,
-          orElse: () => Effect.succeed(false),
+      // Shutdown may interrupt the lookup, but never the SIGTERMs that follow it.
+      const { descendantPids, terminated } = yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          // Read the tree first: a shell that exits on SIGTERM reparents its children out of it.
+          const lookup = yield* Effect.exit(restore(findDescendantPids));
+          const descendantPids = Exit.isSuccess(lookup) ? lookup.value : [];
+          for (const pid of descendantPids) signalProcess(pid, "SIGTERM");
+          const terminated = yield* Effect.try({
+            try: () => process.kill("SIGTERM"),
+            catch: (cause) =>
+              new TerminalProcessSignalError({
+                cause,
+                signal: "SIGTERM",
+                terminalPid: process.pid,
+              }),
+          }).pipe(
+            Effect.as(true),
+            Effect.catch((error) =>
+              Effect.logWarning("failed to kill terminal process", {
+                threadId,
+                terminalId,
+                signal: "SIGTERM",
+                cause: error,
+              }).pipe(Effect.as(false)),
+            ),
+          );
+          return { descendantPids, terminated };
         }),
       );
-      if (exitedBeforeGrace) {
+      const shellExitedBeforeGrace = terminated
+        ? Deferred.await(exited).pipe(
+            Effect.as(true),
+            Effect.timeoutOrElse({
+              duration: processKillGraceMs,
+              orElse: () => Effect.succeed(false),
+            }),
+          )
+        : Effect.succeed(true);
+      // Descendants get the full grace even when the shell exits early.
+      const [shellExited] = yield* Effect.all(
+        [
+          shellExitedBeforeGrace,
+          descendantPids.length > 0 ? Effect.sleep(processKillGraceMs) : Effect.void,
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      for (const pid of descendantPids) signalProcess(pid, "SIGKILL");
+      if (shellExited) {
         return;
       }
-
       yield* Effect.try({
         try: () => process.kill("SIGKILL"),
         catch: (cause) =>
@@ -2098,7 +2162,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     threadId: string,
     terminalId: string,
   ) {
-    const fiber = yield* runKillEscalation(process, threadId, terminalId).pipe(
+    const fiber = yield* runKillEscalation(
+      process,
+      threadId,
+      terminalId,
+      terminalDescendantPids(process.pid),
+    ).pipe(
       Effect.ensuring(
         modifyManagerState((state) => {
           if (!state.killFibers.has(process)) {

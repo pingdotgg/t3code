@@ -244,6 +244,7 @@ interface CreateManagerOptions {
   >;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
+  onSignal?: (pid: number, signal: string) => void;
   registerTerminalProcesses?: Parameters<
     typeof TerminalManager.makeWithOptions
   >[0]["registerTerminalProcesses"];
@@ -261,6 +262,7 @@ interface ManagerFixture {
   readonly baseDir: string;
   readonly logsDir: string;
   readonly ptyAdapter: FakePtyAdapter;
+  readonly signals: ReadonlyArray<{ readonly pid: number; readonly signal: string }>;
   readonly manager: TerminalManager.TerminalManager["Service"];
   readonly getEvents: Effect.Effect<ReadonlyArray<TerminalEvent>>;
 }
@@ -279,6 +281,8 @@ const createManager = (
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-terminal-" });
       const logsDir = join(baseDir, "userdata", "logs", "terminals");
       const ptyAdapter = options.ptyAdapter ?? new FakePtyAdapter();
+      // Fake PIDs can match real host processes, so tests never signal the host.
+      const signals: Array<{ pid: number; signal: string }> = [];
 
       const manager = yield* TerminalManager.makeWithOptions({
         logsDir,
@@ -297,6 +301,10 @@ const createManager = (
           ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
           : {}),
         processKillGraceMs: options.processKillGraceMs ?? 1,
+        signalProcess: (pid, signal) => {
+          signals.push({ pid, signal });
+          options.onSignal?.(pid, signal);
+        },
         ...(options.registerTerminalProcesses !== undefined
           ? { registerTerminalProcesses: options.registerTerminalProcesses }
           : {}),
@@ -324,6 +332,7 @@ const createManager = (
         logsDir,
         join,
         ptyAdapter,
+        signals,
         manager,
         getEvents: Ref.get(eventsRef),
       };
@@ -941,6 +950,121 @@ it.layer(
           true,
         ]);
       }),
+  );
+
+  it.effect.each([
+    ["linux", [300, 301, 302]],
+    ["win32", []],
+  ] as const)(
+    "closing a %s terminal also stops the shell's background jobs",
+    ([platform, descendants]) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter, signals } = yield* createManager(5, {
+          processTable: Effect.succeed([
+            { pid: 9000, ppid: 1, name: "zsh" },
+            { pid: 300, ppid: 9000, name: "sleep" },
+            { pid: 301, ppid: 9000, name: "ssh" },
+            { pid: 302, ppid: 301, name: "ssh" },
+            { pid: 500, ppid: 1, name: "node" },
+          ]),
+        }).pipe(Effect.provide(layerWithHostPlatform(platform)));
+        yield* manager.open(openInput());
+        const shell = ptyAdapter.processes[0]!;
+        const terminated = yield* Deferred.make<void>();
+        const killed = yield* Deferred.make<void>();
+        shell.onKill = (signal) =>
+          Deferred.doneUnsafe(signal === "SIGKILL" ? killed : terminated, Effect.void);
+
+        yield* manager.close({ threadId: "thread-1" });
+        yield* Deferred.await(terminated);
+        expect(signals).toEqual(descendants.map((pid) => ({ pid, signal: "SIGTERM" })));
+
+        yield* TestClock.adjust("1 millis");
+        yield* Deferred.await(killed);
+        expect(signals).toEqual([
+          ...descendants.map((pid) => ({ pid, signal: "SIGTERM" })),
+          ...descendants.map((pid) => ({ pid, signal: "SIGKILL" })),
+        ]);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("stops background jobs even when the shell exits on SIGTERM and orphans them", () =>
+    Effect.gen(function* () {
+      let shellTerminated = false;
+      const jobKilled = yield* Deferred.make<void>();
+      const { manager, ptyAdapter, signals } = yield* createManager(5, {
+        processTable: Effect.sync(() => [
+          { pid: 9000, ppid: 1, name: "bash" },
+          { pid: 300, ppid: shellTerminated ? 1 : 9000, name: "sleep" },
+        ]),
+        onSignal: (pid, signal) => {
+          if (pid === 300 && signal === "SIGKILL") Deferred.doneUnsafe(jobKilled, Effect.void);
+        },
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput());
+      const shell = ptyAdapter.processes[0]!;
+      const terminated = yield* Deferred.make<void>();
+      shell.onKill = () => {
+        shellTerminated = true;
+        shell.emitExit({ exitCode: 0, signal: 15 });
+        Deferred.doneUnsafe(terminated, Effect.void);
+      };
+
+      yield* manager.close({ threadId: "thread-1" });
+      yield* Deferred.await(terminated);
+      yield* TestClock.adjust("1 millis");
+      yield* Deferred.await(jobKilled);
+
+      expect(signals).toEqual([
+        { pid: 300, signal: "SIGTERM" },
+        { pid: 300, signal: "SIGKILL" },
+      ]);
+      expect(shell.killSignals).toEqual(["SIGTERM"]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("still stops the shell when the process-table lookup never answers", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, signals } = yield* createManager(5, {
+        processTable: Effect.never,
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput());
+      const shell = ptyAdapter.processes[0]!;
+      const terminated = yield* Deferred.make<void>();
+      shell.onKill = () => Deferred.doneUnsafe(terminated, Effect.void);
+
+      yield* manager.close({ threadId: "thread-1" });
+      yield* TestClock.adjust("2 seconds");
+      yield* Deferred.await(terminated);
+
+      expect(signals).toEqual([]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("still signals a stopping shell when the manager shuts down mid-lookup", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new FakePtyAdapter();
+      const lookupStarted = yield* Deferred.make<void>();
+      let stopping = false;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const { manager } = yield* createManager(5, {
+            ptyAdapter,
+            processTable: Effect.suspend(() =>
+              stopping
+                ? Deferred.succeed(lookupStarted, undefined).pipe(Effect.andThen(Effect.never))
+                : Effect.succeed([]),
+            ),
+          }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+          yield* manager.open(openInput());
+          stopping = true;
+          yield* manager.close({ threadId: "thread-1" });
+          yield* Deferred.await(lookupStarted);
+        }),
+      );
+
+      expect(ptyAdapter.processes[0]?.killSignals).toEqual(["SIGTERM"]);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("labels a running command by its whole process name, spaces included", () =>
@@ -2428,6 +2552,7 @@ it.layer(
       const providerInstanceId = ProviderInstanceId.make("codex_work");
       let providerSecret = "first-secret";
       const { manager, ptyAdapter } = yield* createManager(5, {
+        processTable: Effect.succeed([]),
         resolveProviderInstanceEnvironment: () =>
           Effect.succeed({ PROVIDER_SECRET: providerSecret }),
       });
