@@ -588,13 +588,6 @@ export const readSettledOpenCode2Catalog = <E>(
   );
 
 export interface OpenCode2Workspace {
-  readonly agents:
-    | ReadonlyArray<{
-        readonly id: string;
-        readonly mode: Agent["mode"];
-        readonly hidden: boolean;
-      }>
-    | undefined;
   readonly skills: ReadonlyArray<{
     readonly id: string;
     readonly name: string;

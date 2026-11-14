@@ -162,7 +162,8 @@ function workspaceModelsFor(
     : { models: cwdModels.value, workspaceModels: cwdModels.value };
 }
 
-// An unread agent list keeps the machine catalog's agent picker.
+// An unread agent list keeps the machine catalog's agent picker. OpenCode 2 turns pick their
+// agent from the interaction mode, so only OpenCode 1 publishes a workspace picker.
 function workspaceAgentsFor(
   agents: Parameters<typeof openCodeAgentOptionDescriptor>[0] | undefined,
 ) {
@@ -437,11 +438,6 @@ export const OpenCodeDriver: ProviderDriver<
           return yield* loadOpenCode2Workspace(
             Effect.all(
               {
-                agents: client.agent.list({ location }).pipe(
-                  Effect.map((list) => list.data),
-                  Effect.timeout("3 seconds"),
-                  Effect.catchCause(() => Effect.undefined),
-                ),
                 skills: client.skill.list({ location }).pipe(Effect.map((list) => list.data)),
                 commands: client.command.list({ location }).pipe(Effect.map((list) => list.data)),
               },
@@ -756,10 +752,9 @@ export const OpenCodeDriver: ProviderDriver<
                     ],
                     { concurrency: "unbounded" },
                   ).pipe(
-                    Effect.map(([machineSnapshot, cwdModels, { agents, skills, commands }]) => ({
+                    Effect.map(([machineSnapshot, cwdModels, { skills, commands }]) => ({
                       ...machineSnapshot,
                       ...workspaceModelsFor(machineSnapshot.models, cwdModels),
-                      ...workspaceAgentsFor(agents?.map((agent) => ({ ...agent, name: agent.id }))),
                       skills: openCode2SkillsToServerProviderSkills(skills),
                       slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
                       // A finished scan lists at least the built-ins. None means it

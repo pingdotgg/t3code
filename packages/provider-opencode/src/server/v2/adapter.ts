@@ -742,9 +742,7 @@ const sameModel = (left: ModelRef, right: ModelRef | undefined) =>
   (left.variant ?? "default") === (right?.variant ?? "default");
 
 const agentFor = (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
-  input.runtimePolicy.interactionMode === "plan"
-    ? "plan"
-    : (getModelSelectionStringOptionValue(input.modelSelection, "agent") ?? "build");
+  input.runtimePolicy.interactionMode === "plan" ? "plan" : "build";
 
 const commandOf = (text: string) => {
   const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
