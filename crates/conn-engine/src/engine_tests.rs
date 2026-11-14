@@ -3362,7 +3362,13 @@ async fn a_late_start_failure_after_force_stop_does_not_hold_the_queue() {
             .as_array()
             .unwrap()
             .iter()
-            .map(|r| (r["ordinal"].clone(), r["status"].clone(), r["queueHeld"] == true))
+            .map(|r| {
+                (
+                    r["ordinal"].clone(),
+                    r["status"].clone(),
+                    r["queueHeld"] == true,
+                )
+            })
             .collect();
         assert_eq!(
             runs,

@@ -408,7 +408,10 @@ struct RollbackProgress {
     refs_deleted: bool,
 }
 
-type ProviderUpdate = (Arc<crate::runner::LiveThread>, conn_contract::ProviderThread);
+type ProviderUpdate = (
+    Arc<crate::runner::LiveThread>,
+    conn_contract::ProviderThread,
+);
 
 impl RollbackFailure {
     fn detail(&self) -> String {

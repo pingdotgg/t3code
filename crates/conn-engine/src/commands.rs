@@ -1607,12 +1607,13 @@ pub(crate) fn finish_run(
     status: &str,
     failure: Option<Value>,
 ) -> StoreResult<()> {
-    finish_run_as(tx, thread_id, run_id, status, status, failure)
+    finish_run_as(tx, thread_id, run_id, status, status, failure).map(drop)
 }
 
 /// Ends a run's items with `status`, and the run and its root node with `persisted`: a
 /// completed provider turn whose checkpoint is still to be taken persists `waiting`, with no
-/// `completedAt` (`RunExecutionService.ts`).
+/// `completedAt` (`RunExecutionService.ts`). Returns whether it ended the run: `false` when
+/// the run is gone or already ended.
 pub(crate) fn finish_run_as(
     tx: &mut Tx<'_>,
     thread_id: &str,
@@ -1620,12 +1621,12 @@ pub(crate) fn finish_run_as(
     status: &str,
     persisted: &str,
     failure: Option<Value>,
-) -> StoreResult<()> {
+) -> StoreResult<bool> {
     let Some(mut run) = tx.entity(thread_id, "runs", run_id)? else {
-        return Ok(());
+        return Ok(false);
     };
     if !is_live(&run) {
-        return Ok(());
+        return Ok(false);
     }
     if status == "interrupted" {
         write_interrupt_result(tx, thread_id, &run, None)?;
@@ -1730,7 +1731,8 @@ pub(crate) fn finish_run_as(
         tx.append(draft("node.updated", node))?;
     }
     settle_provider_thread(tx, thread_id, &run, "idle")?;
-    tx.compact_streaming(thread_id)
+    tx.compact_streaming(thread_id)?;
+    Ok(true)
 }
 
 /// The run's provider thread goes back from `active` when the run ends: `idle`, or `error`

@@ -205,9 +205,11 @@ impl Inner {
                 } else {
                     status
                 };
-                finish_run_as(tx, &thread_id, &run_id, status, persisted, failure)?;
-                // A failure holds the queue, so queued messages do not hit the same wall.
-                if held_on_failure {
+                let ended = finish_run_as(tx, &thread_id, &run_id, status, persisted, failure)?;
+                // A failure holds the queue, so queued messages do not hit the same wall. A
+                // late end of a run that already ended (a start failing after Force stop)
+                // holds nothing.
+                if held_on_failure && ended {
                     hold_queue(tx, &thread_id)?;
                 }
                 if captured {
