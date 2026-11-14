@@ -1500,6 +1500,35 @@ describe("ClaudeAdapterV2 MCP elicitation acceptance", () => {
     }
   });
 
+  // mongodb-mcp-server's Elicitation.CONFIRMATION_SCHEMA (@mongodb-js/mcp-core 3.2.2).
+  it("answers a Yes/No confirmation form with the affirmative choice", () => {
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeMcpElicitationAcceptance(
+        form(
+          {
+            confirmation: {
+              type: "string",
+              title: "Would you like to confirm?",
+              description: "Would you like to confirm?",
+              enum: ["Yes", "No"],
+              enumNames: ["Yes, I confirm", "No, I do not confirm"],
+            },
+          },
+          ["confirmation"],
+        ),
+      ),
+      { action: "accept", content: { confirmation: "Yes" } },
+    );
+    for (const choice of ["yes", "Confirm", "Proceed", "OK", "continue"]) {
+      assert.deepEqual(
+        ClaudeAdapterV2.claudeMcpElicitationAcceptance(
+          form({ answer: { type: "string", enum: ["No", "Cancel", choice] } }, ["answer"]),
+        ),
+        { action: "accept", content: { answer: choice } },
+      );
+    }
+  });
+
   it("answers a persistence toggle with false", () => {
     assert.deepEqual(
       ClaudeAdapterV2.claudeMcpElicitationAcceptance(
@@ -1531,6 +1560,16 @@ describe("ClaudeAdapterV2 MCP elicitation acceptance", () => {
       form({ grant: { type: "string", enum: ["always", "session"] } }, ["grant"]),
       form({ grant: { type: "string", enum: ["deny", "always"], default: "always" } }, ["grant"]),
       form({ limit: { type: "number", default: 500 } }, ["limit"]),
+      form({ confirmation: { type: "string", enum: ["No", "Cancel"], default: "No" } }, [
+        "confirmation",
+      ]),
+      form({ grant: { type: "string", enum: ["No", "Yes always", "yes_for_session"] } }, ["grant"]),
+      form(
+        {
+          remember: { type: "string", title: "Always allow this application", enum: ["Yes", "No"] },
+        },
+        ["remember"],
+      ),
       { serverName: "deploys", message: "Deploy web?", mode: "form" },
     ] satisfies ReadonlyArray<ElicitationRequest>) {
       assert.isUndefined(ClaudeAdapterV2.claudeMcpElicitationAcceptance(request));
