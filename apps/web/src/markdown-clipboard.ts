@@ -229,10 +229,9 @@ function serializeAnchor(anchor: Element, inTableCell: boolean): string {
   if (!/^(?:https?:\/\/|mailto:)/i.test(href)) return content;
   const label = content.trim();
   if (!label) return "";
-  const cellHref = escapeTablePipes(href, inTableCell);
-  // A bare address is copied as shown, since GFM links it again.
+  // The label arrives escaped; a bare address goes out as shown, since GFM links it again.
   const shown = label.replace(ESCAPED_PUNCTUATION, "$1");
-  if (shown === href) return cellHref;
+  if (shown === href) return escapeTablePipes(href, inTableCell);
   // GFM autolinks a bare address only when it fits this shape.
   if (href === `mailto:${shown}` && /^[\w.+-]+@[\w-]+(?:\.[\w-]+)+(?<=[a-zA-Z])$/.test(shown))
     return shown;

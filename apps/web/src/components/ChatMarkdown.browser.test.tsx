@@ -709,16 +709,9 @@ describe("ChatMarkdown literal prose copy", () => {
     [...container.querySelectorAll(".chat-markdown p")].map((node) => node.textContent).join("\n");
 
   it.each([
-    ["Type \\*word\\* literally.", "Type \\*word\\* literally."],
-    [
-      "Type \\[label](https://example.com) literally.",
-      "Type \\[label](https://example.com) literally.",
-    ],
-    [
-      "Keep *real* emphasis, snake_case, 2 * 3 and https://example.com/_next/ as typed.",
-      "Keep *real* emphasis, snake_case, 2 * 3 and https://example.com/_next/ as typed.",
-    ],
-  ])("pastes and sends %j as it was shown", async (source, expectedCopy) => {
+    "Type \\*word\\* and \\[label](https://example.com) literally.",
+    "Keep *real* emphasis, snake_case, 2 * 3 and https://example.com/_next/ as typed.",
+  ])("pastes and sends %j as it was shown", async (source) => {
     setup();
     await using screen = await renderText(source);
     const shown = visibleText(screen.container);
@@ -733,7 +726,7 @@ describe("ChatMarkdown literal prose copy", () => {
         new ClipboardEvent("copy", { clipboardData, bubbles: true, cancelable: true }),
       );
     window.getSelection()!.removeAllRanges();
-    expect(clipboardData.getData("text/plain")).toBe(expectedCopy);
+    expect(clipboardData.getData("text/plain")).toBe(source);
 
     await screen.rerender(
       <ComposerPromptEditorTiptap
