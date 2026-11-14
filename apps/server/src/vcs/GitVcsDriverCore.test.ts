@@ -394,11 +394,11 @@ const initRepoWithCommit = (
     return { initialBranch: head.trim().replace(/^ref: refs\/heads\//, "") };
   });
 
-const commitInitialRepo = (cwd: string) =>
+const commitInitialRepo = (cwd: string, initArgs: ReadonlyArray<string> = []) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
-    yield* git(cwd, ["init"]);
+    yield* git(cwd, ["init", ...initArgs]);
     yield* fileSystem.writeFileString(
       pathService.join(cwd, ".git", "config"),
       "[user]\n\temail = test@test.com\n\tname = Test\n",
@@ -7196,8 +7196,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           if (refs === "reftable" && !gitHasReftable)
             return ctx.skip("Needs Git 2.45 or later for reftable.");
           const cwd = yield* makeTmpDir();
-          if (refs === "reftable") yield* git(cwd, ["init", "--ref-format=reftable"]);
-          yield* initRepoWithCommit(cwd);
+          if (refs === "reftable") yield* commitInitialRepo(cwd, ["--ref-format=reftable"]);
+          else yield* initRepoWithCommit(cwd);
           // Reftable leaves .git/HEAD as a stub, so ask Git for the branch.
           const initialBranch = yield* git(cwd, ["symbolic-ref", "--short", "HEAD"]);
           const driver = yield* GitVcsDriver.GitVcsDriver;
