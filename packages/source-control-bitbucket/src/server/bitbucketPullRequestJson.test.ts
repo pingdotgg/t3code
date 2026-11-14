@@ -180,17 +180,28 @@ describe("decodeCommentsJson", () => {
             pending: true,
           },
           { id: 4, content: { raw: "   " }, created_on: "2026-05-15T02:00:00+00:00" },
+          {
+            id: 6,
+            content: { raw: "New comment with a malformed update timestamp." },
+            created_on: "2026-05-15T04:00:00+00:00",
+            updated_on: "not-a-date",
+          },
         ]),
       ),
     );
 
-    expect(decoded.comments).toHaveLength(1);
+    expect(decoded.comments).toHaveLength(2);
     expect(decoded.comments[0]).toMatchObject({
       id: "797230941",
       kind: "issue-comment",
       author: { login: "Release Bot" },
       createdAt: "2026-05-15T01:58:38.220Z",
       editedAt: "2026-05-15T03:58:38.220Z",
+    });
+    expect(decoded.comments[1]).toMatchObject({
+      id: "6",
+      createdAt: "2026-05-15T04:00:00.000Z",
+      editedAt: null,
     });
   });
 

@@ -3,7 +3,9 @@ import {
   toIsoUtc,
 } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
@@ -357,7 +359,10 @@ export type BitbucketRawComment = Schema.Schema.Type<typeof RawCommentSchema>;
 function toEditedAt(comment: BitbucketRawComment): string | null {
   const updatedOn = trimmed(comment.updated_on);
   if (updatedOn === null) return null;
-  const editedAt = toIsoUtc(updatedOn);
+  const editedAt = Option.match(DateTime.make(updatedOn), {
+    onNone: () => null,
+    onSome: DateTime.formatIso,
+  });
   return editedAt === toIsoUtc(comment.created_on) ? null : editedAt;
 }
 
