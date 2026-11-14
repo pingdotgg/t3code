@@ -12,6 +12,7 @@ import { type OfficeWorkerResult, type NotebookCell } from "./officePreviewProto
 const ODS_PREVIEW_MAX_ROWS = 500;
 const ODS_PREVIEW_MAX_COLUMNS = 50;
 
+// `text` and `attrs` hold decoded values: escaped text is decoded once, CDATA stays literal.
 type XmlNode = { name: string; attrs: Record<string, string>; children: XmlNode[]; text: string };
 type OrderedXml = { [key: string]: OrderedXml[] | Record<string, string> | string };
 const escape = (value: string) =>
@@ -47,6 +48,7 @@ function parseXml(source: string): XmlNode {
     processEntities: false,
     trimValues: false,
     parseTagValue: false,
+    cdataPropName: "#cdata",
   });
   const ordered = parser.parse(source) as OrderedXml[];
   let count = 0;
@@ -60,6 +62,12 @@ function parseXml(source: string): XmlNode {
       if (++count > 100_000) throw new Error("This document has too much content to preview.");
       const name = Object.keys(item).find((key) => key !== ":@") ?? "#text";
       const value = item[name];
+      if (name === "#cdata") {
+        const literal = Array.isArray(value)
+          ? value.map((part) => part["#text"] ?? "").join("")
+          : "";
+        return { name: "#text", attrs: {}, children: [], text: literal };
+      }
       const attrs = Object.fromEntries(
         Object.entries((item[":@"] ?? {}) as Record<string, string>).map(([key, value]) => [
           key,
@@ -91,7 +99,7 @@ function parseXml(source: string): XmlNode {
           Object.entries(attrs).map(([key, value]) => [expanded(key, true), value]),
         ),
         children: Array.isArray(value) ? convert(value, depth + 1, namespaces) : [],
-        text: typeof value === "string" ? value : "",
+        text: typeof value === "string" ? decodeEntities(value) : "",
       };
     });
   }
@@ -116,7 +124,7 @@ function text(node: XmlNode): string {
   if (node.name === "text:s") return " ".repeat(repeat(node.attrs["text:c"], 100));
   if (node.name === "text:tab") return "\t";
   if (node.name === "text:line-break") return "\n";
-  return node.name === "#text" ? decodeEntities(node.text) : node.children.map(text).join("");
+  return node.name === "#text" ? node.text : node.children.map(text).join("");
 }
 function archivePath(base: string, href: string): string | null {
   if (/^(?:[a-z][a-z\d+.-]*:|\/|\\)/i.test(href)) return null;
