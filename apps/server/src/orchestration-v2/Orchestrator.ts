@@ -6656,6 +6656,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerTurnId: providerTurn.id,
           interruptedAttemptId,
           runId: targetRun.id,
+          messageId: input.messageId,
           ...(restartSessionTransition === null
             ? {}
             : { sessionTransition: restartSessionTransition }),

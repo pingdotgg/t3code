@@ -2356,6 +2356,111 @@ it.effect.each(["delivered", "failed"] as const)(
     }),
 );
 
+it.effect("keeps a pending self-settle across a promoted message delivered by restart", () =>
+  Effect.gen(function* () {
+    const name = "settle-after-promoted-restart";
+    const { events, started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+      name,
+      true,
+      false,
+    );
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const threadId = yield* startFirstTurn;
+      const runId = started[0]!.runId;
+      const settleRequest = yield* threadManagement
+        .settleAfterRun({ projectId: ProjectId.make(`project:${name}`), threadId, runId })
+        .pipe(Effect.forkChild);
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("queued"),
+        threadId,
+        messageId: MessageId.make("message:queued"),
+        text: "queued",
+        attachments: [],
+        modelSelection: runSelection,
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.status === "queued",
+      )!;
+      yield* orchestrator.dispatch({
+        type: "queued-message.promote-to-steer",
+        commandId: CommandId.make("promote"),
+        threadId,
+        queuedRunId: queuedRun.id,
+        targetRunId: runId,
+      });
+      yield* worker.drain();
+      const restarted = started[1]!;
+      assert.equal(restarted.runId, runId);
+
+      const ended = yield* orchestrator.streamDomainEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.id === runId &&
+            event.payload.status !== "running",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      const now = yield* DateTime.now;
+      const providerTurnId = ProviderTurnId.make(`provider-turn:${restarted.attemptId}`);
+      yield* Queue.offer(events, {
+        type: "provider_turn.updated",
+        driver,
+        providerTurn: {
+          id: providerTurnId,
+          providerThreadId: restarted.providerThread.id,
+          nodeId: restarted.rootNodeId,
+          runAttemptId: restarted.attemptId,
+          nativeTurnRef: { driver, nativeId: `native:${restarted.attemptId}`, strength: "strong" },
+          ordinal: restarted.providerTurnOrdinal,
+          status: "completed",
+          startedAt: now,
+          completedAt: now,
+        },
+      });
+      yield* Queue.offer(events, {
+        type: "turn.terminal",
+        driver,
+        providerThreadId: restarted.providerThread.id,
+        providerTurnId,
+        runOrdinal: restarted.runOrdinal,
+        status: "completed",
+        failure: null,
+        threadDisposition: "reusable",
+      });
+      yield* Fiber.join(ended);
+      yield* worker.drain();
+      yield* Fiber.join(settleRequest);
+
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        projection.runs.map((run) => run.status),
+        ["completed", "cancelled"],
+      );
+      assert.equal(projection.thread.settledOverride, "settled");
+    }).pipe(
+      Effect.provide(
+        ThreadManagementService.layer.pipe(
+          Layer.provideMerge(layer),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(
+            CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+          ),
+        ),
+      ),
+    );
+  }),
+);
+
 it.effect("steers a promoted scheduled delivery with the thread's current selection", () =>
   Effect.scoped(
     Effect.gen(function* () {

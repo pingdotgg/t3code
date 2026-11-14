@@ -75,6 +75,8 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     providerTurnId: ProviderTurnId,
     interruptedAttemptId: RunAttemptId,
     runId: RunId,
+    /** The steered message the restarted turn starts with. */
+    messageId: Schema.optional(MessageId),
     sessionTransition: Schema.optional(
       Schema.Union([
         Schema.Struct({
@@ -219,7 +221,7 @@ export interface EffectOutboxV2Shape {
   readonly listByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
-  /** The `messageIds` whose provider steer succeeded. */
+  /** The `messageIds` whose provider steer, native or by restarting the turn, succeeded. */
   readonly listSteeredMessageIds: (input: {
     readonly threadId: ThreadId;
     readonly messageIds: ReadonlyArray<MessageId>;
@@ -476,7 +478,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           FROM orchestration_v2_effect_outbox
           WHERE thread_id = ${threadId}
             AND status = 'succeeded'
-            AND effect_type = 'provider-turn.steer'
+            AND effect_type IN ('provider-turn.steer', 'provider-turn.restart')
             AND json_extract(payload_json, '$.messageId') IN (
               SELECT value FROM json_each(${JSON.stringify(messageIds)})
             )
