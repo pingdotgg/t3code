@@ -72,6 +72,7 @@ import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import { getProviderRestartNotice } from "../ProviderUpdateLaunchNotification.logic";
 import {
+  getProviderReinstallPresentation,
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
   getProviderStatusKey,
@@ -759,11 +760,14 @@ export function ProviderInstanceCard({
       ? (liveProvider.auth.label ?? liveProvider.auth.type ?? null)
       : null;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
-  const versionAdvisory = getProviderVersionAdvisoryPresentation(
-    liveProvider?.versionAdvisory,
-    liveProvider?.compatibilityAdvisory,
-    enabled,
-  );
+  const reinstall = enabled ? getProviderReinstallPresentation(liveProvider) : null;
+  const versionAdvisory =
+    getProviderVersionAdvisoryPresentation(
+      liveProvider?.versionAdvisory,
+      liveProvider?.compatibilityAdvisory,
+      enabled,
+    ) ?? reinstall;
+  const isReinstall = reinstall !== null && versionAdvisory === reinstall;
   const updateCommand = versionAdvisory?.updateCommand ?? null;
   const updateState = liveProvider?.updateState;
   const updateProgress = isUpdating
@@ -781,7 +785,8 @@ export function ProviderInstanceCard({
     compatibility !== undefined &&
     compatibility.status !== "supported" &&
     compatibility.status !== "unknown";
-  const VersionAdvisoryIcon = hasCompatibilityWarning ? AlertTriangleIcon : ArrowUpCircleIcon;
+  const VersionAdvisoryIcon =
+    hasCompatibilityWarning || isReinstall ? AlertTriangleIcon : ArrowUpCircleIcon;
   const onRunVersionAction = readOnly
     ? undefined
     : versionAdvisory?.targetVersion
@@ -999,7 +1004,7 @@ export function ProviderInstanceCard({
                     <VersionAdvisoryIcon
                       className={cn(
                         mode === "list" && "size-3.5",
-                        hasCompatibilityWarning && "text-warning",
+                        (hasCompatibilityWarning || isReinstall) && "text-warning",
                       )}
                     />
                   )}
@@ -1039,9 +1044,11 @@ export function ProviderInstanceCard({
               {isUpdating ? <Spinner /> : <DownloadIcon />}
               {isUpdating
                 ? "Updating"
-                : versionAdvisory.targetVersion
-                  ? `Install ${getProviderVersionLabel(versionAdvisory.targetVersion)}`
-                  : "Update now"}
+                : isReinstall
+                  ? "Reinstall"
+                  : versionAdvisory.targetVersion
+                    ? `Install ${getProviderVersionLabel(versionAdvisory.targetVersion)}`
+                    : "Update now"}
             </Button>
           ) : null}
           {updateProgress || updateProblem ? (
