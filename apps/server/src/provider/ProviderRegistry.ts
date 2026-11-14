@@ -20,6 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -479,6 +480,10 @@ export const layer = Layer.effect(
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>
     >(new Map());
+    const workspaceRescans = yield* Queue.unbounded<{
+      readonly instance: ProviderInstance;
+      readonly cwd: string;
+    }>();
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<
         ProviderInstanceId,
@@ -925,6 +930,11 @@ export const layer = Layer.effect(
           yield* Stream.runForEach(source.streamChanges, (provider) =>
             correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
           ).pipe(Effect.forkScoped);
+          if (instance.workspaceRescans) {
+            yield* Stream.runForEach(instance.workspaceRescans, (cwd) =>
+              Queue.offer(workspaceRescans, { instance, cwd }),
+            ).pipe(Effect.forkScoped);
+          }
         }
         yield* Effect.yieldNow;
 
@@ -1041,7 +1051,15 @@ export const layer = Layer.effect(
       readonly cwd: string;
       readonly scanCwd?: string;
       readonly fresh?: boolean;
+      // Set by an instance's own report that its workspace skills changed.
+      readonly rescan?: ProviderInstance;
     }) {
+      // A rescan waits for a running scan, which may have read files before the hook linked them.
+      // Claims are read before snapshots: a scan publishes before it releases its claim.
+      const runningScan = input.rescan
+        ? (yield* Ref.get(workspaceRefreshesRef)).get(input.rescan)?.get(input.cwd)
+        : undefined;
+      if (runningScan) yield* Deferred.await(runningScan);
       if (input.fresh) {
         yield* updateProviders((providers) =>
           providers.map((candidate) =>
@@ -1061,6 +1079,7 @@ export const layer = Layer.effect(
         !provider ||
         !provider.enabled ||
         (!input.fresh &&
+          !input.rescan &&
           scannedFrom &&
           !isProviderWorkspaceSnapshotPending(scannedFrom) &&
           isProviderWorkspaceSnapshotCurrent(scannedFrom, DateTime.toEpochMillis(now)))
@@ -1072,6 +1091,10 @@ export const layer = Layer.effect(
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       const snapshotForCwd = instance?.snapshotForCwd;
       if (!instance || !snapshotForCwd) return providers;
+      // A report never enrolls a cwd nobody requested, nor outlives the instance that made it.
+      if (input.rescan && (input.rescan !== instance || (!runningScan && !scannedFrom))) {
+        return providers;
+      }
       const token = yield* Deferred.make<void>();
       // A machine refresh can change this cwd's snapshot, so the scan publishes against the result.
       const refreshMachineSnapshot = input.fresh
@@ -1156,6 +1179,11 @@ export const layer = Layer.effect(
       }
       return yield* Fiber.join(claim.scan);
     });
+    yield* Stream.runForEach(Stream.fromQueue(workspaceRescans), ({ instance, cwd }) =>
+      refreshWorkspaceSnapshot({ instanceId: instance.instanceId, cwd, rescan: instance }).pipe(
+        Effect.ignoreCause({ log: true }),
+      ),
+    ).pipe(Effect.forkScoped);
 
     const invalidateModelCaches = Effect.fn("ProviderRegistry.invalidateModelCaches")(function* (
       input: Parameters<ProviderRegistry["Service"]["invalidateModelCaches"]>[0],
