@@ -40,7 +40,7 @@ import {
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
-import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
+import { HistoryNavigationButtons, SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 import { isAppModalPage } from "./sidebar/mainAppLocation";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
@@ -383,29 +383,34 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
     <div
       ref={appShellCommandsRef}
       className={cn(
-        "pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center",
+        "pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center gap-2",
         mobileSidebarSheetMounted && "hidden",
       )}
       data-sidebar-control=""
     >
       {showSidebar ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <SidebarTrigger
-                variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
-                className={cn(
-                  "pointer-events-auto",
-                  isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
-                )}
-                aria-label="Toggle main sidebar"
-              />
-            }
-          />
-          <TooltipPopup side="bottom">
-            Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
-          </TooltipPopup>
-        </Tooltip>
+        <>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <SidebarTrigger
+                  variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
+                  className={cn(
+                    "pointer-events-auto",
+                    isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
+                  )}
+                  aria-label="Toggle main sidebar"
+                />
+              }
+            />
+            <TooltipPopup side="bottom">
+              Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+            </TooltipPopup>
+          </Tooltip>
+          {isElectron && !isSidebarVisible ? (
+            <HistoryNavigationButtons className="pointer-events-auto" onBackdrop={false} />
+          ) : null}
+        </>
       ) : null}
     </div>
   );
@@ -456,6 +461,13 @@ export function AppSidebarLayout({
     "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, sidebarMinimumWidth, sidebarMaximumWidth)}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
     ...windowControlsInsetStyle,
+    // Clears the Back/Forward pair SidebarControl adds after its gap-2 when the sidebar is hidden.
+    ...(isElectron && showSidebar
+      ? {
+          "--workspace-titlebar-collapsed-content-left":
+            "calc(var(--workspace-titlebar-content-left) + 0.5rem + 2 * var(--workspace-titlebar-control-size))",
+        }
+      : {}),
   } as CSSProperties;
 
   return (

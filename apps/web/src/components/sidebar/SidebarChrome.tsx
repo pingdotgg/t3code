@@ -74,12 +74,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
       <div className="relative z-10 flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5">
         <div className="flex shrink-0 items-center gap-1">
           <SidebarBrand onBackdrop={backdropVariant !== null} />
-          {isElectron ? (
-            <div className="hidden items-center md:flex">
-              <HistoryNavigationButton direction="back" onBackdrop={backdropVariant !== null} />
-              <HistoryNavigationButton direction="forward" onBackdrop={backdropVariant !== null} />
-            </div>
-          ) : null}
+          {isElectron ? <HistoryNavigationButtons onBackdrop={backdropVariant !== null} /> : null}
         </div>
         {pillLabel ? (
           <div className="ml-1 flex h-7 items-center">
@@ -120,6 +115,21 @@ export function SidebarBrandWidthProbe({
   );
 }
 
+export function HistoryNavigationButtons({
+  className,
+  onBackdrop,
+}: {
+  className?: string;
+  onBackdrop: boolean;
+}) {
+  return (
+    <div className={cn("flex items-center", className)}>
+      <HistoryNavigationButton direction="back" onBackdrop={onBackdrop} />
+      <HistoryNavigationButton direction="forward" onBackdrop={onBackdrop} />
+    </div>
+  );
+}
+
 function HistoryNavigationButton({
   direction,
   onBackdrop,
@@ -129,6 +139,7 @@ function HistoryNavigationButton({
 }) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const enabled = useCanNavigateHistory(direction);
+  const { isMobile, setOpenMobile } = useSidebar();
   const label = direction === "back" ? "Go back" : "Go forward";
   const shortcutLabel = shortcutLabelForCommand(
     keybindings,
@@ -146,7 +157,10 @@ function HistoryNavigationButton({
               onBackdrop && "relative top-auto translate-y-0",
             )}
             disabled={!enabled}
-            onClick={() => navigateHistory(direction)}
+            onClick={() => {
+              if (isMobile) setOpenMobile(false);
+              navigateHistory(direction);
+            }}
             size="icon-sm"
             variant={onBackdrop ? "media-navigation" : "ghost"}
           />
