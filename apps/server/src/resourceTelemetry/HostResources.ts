@@ -10,9 +10,16 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import * as HostStorage from "./HostStorage.ts";
+
 export class HostResources extends Context.Service<
   HostResources,
-  { readonly read: Effect.Effect<HostResourcesSnapshot> }
+  {
+    /** CPU and memory only; load balancing polls this and must never wait on a filesystem. */
+    readonly read: Effect.Effect<HostResourcesSnapshot>;
+    /** Adds volumes and swap for views that show the whole machine. */
+    readonly readMachine: Effect.Effect<HostResourcesSnapshot>;
+  }
 >()("t3/resourceTelemetry/HostResources") {}
 
 // Linux CPU list syntax, as in Cpus_allowed_list: "0-3,8,10-11".
@@ -73,6 +80,7 @@ function cgroupNumber(text: string, pattern: RegExp): number | null {
 const make = Effect.fn("makeHostResources")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcess.Platform;
+  const storage = yield* HostStorage.HostStorage;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const readFile = (path: string) => fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
@@ -172,13 +180,18 @@ const make = Effect.fn("makeHostResources")(function* () {
         memoryMax - (memoryCurrent - reclaimable),
       );
     }
+    const cpuModel = NodeOS.cpus()[0]?.model.trim();
+    // Windows has no load average; os.loadavg() reports zeros there.
+    const [one = 0, five = 0, fifteen = 0] = platform === "win32" ? [] : NodeOS.loadavg();
     return {
       sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
       cpuUtilization,
       cpuCount,
       availableMemoryBytes: Math.min(totalMemoryBytes, Math.max(0, availableMemoryBytes)),
       totalMemoryBytes,
-    };
+      ...(cpuModel ? { cpuModel } : {}),
+      ...(platform === "win32" ? {} : { loadAverage: { one, five, fifteen } }),
+    } satisfies HostResourcesSnapshot;
   });
 
   const cache = yield* Cache.make({
@@ -186,7 +199,17 @@ const make = Effect.fn("makeHostResources")(function* () {
     lookup: (_key: "host") => sample(),
     timeToLive: "5 seconds",
   });
-  return HostResources.of({ read: Cache.get(cache, "host") });
+  const read = Cache.get(cache, "host");
+  return HostResources.of({
+    read,
+    readMachine: Effect.all([read, storage.read], { concurrency: 2 }).pipe(
+      Effect.map(([snapshot, machine]) => ({
+        ...snapshot,
+        storage: machine.storage,
+        ...(machine.swap ? { swap: machine.swap } : {}),
+      })),
+    ),
+  });
 });
 
 export const layer = Layer.effect(HostResources, make());

@@ -11,6 +11,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import * as HostResources from "./HostResources.ts";
+import * as HostStorage from "./HostStorage.ts";
 
 // An 8-CPU host; every cpus() call advances each CPU by 100 ms at `host.busy` utilization.
 const host = vi.hoisted(() => ({ busy: 0, reads: 0 }));
@@ -75,6 +76,15 @@ const linuxHost = (files: Record<string, ReadonlyArray<string>>) => {
           },
         }),
         Layer.succeed(HostProcess.Platform, "linux"),
+        Layer.succeed(
+          HostStorage.HostStorage,
+          HostStorage.HostStorage.of({
+            read: Effect.succeed({
+              storage: { sampledAt: 1, volumes: [] },
+              swap: { totalBytes: 8 * GiB, usedBytes: GiB },
+            }),
+          }),
+        ),
         Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make(() => Effect.die("HostResources spawned on linux")),
@@ -204,6 +214,24 @@ describe("HostResources.layer", () => {
       assert.strictEqual(snapshot.cpuCount, 8);
       assert.closeTo(snapshot.cpuUtilization ?? Number.NaN, 0.25, 1e-9);
       assert.strictEqual(snapshot.availableMemoryBytes, 2 * GiB);
+      assert.strictEqual(snapshot.cpuModel, "test");
+      assert.isDefined(snapshot.loadAverage);
+      // Load balancing reads stay free of filesystem work.
+      assert.notProperty(snapshot, "storage");
+    }).pipe(Effect.provide(linuxHost(unlimitedCgroup))),
+  );
+
+  it.effect("adds volumes and swap only to machine reads", () =>
+    Effect.gen(function* () {
+      setup(0.25);
+      const host = yield* HostResources.HostResources;
+      const fiber = yield* Effect.forkChild(host.readMachine);
+      yield* TestClock.adjust("200 millis");
+      const snapshot = yield* Fiber.join(fiber);
+
+      assert.deepStrictEqual(snapshot.storage, { sampledAt: 1, volumes: [] });
+      assert.deepStrictEqual(snapshot.swap, { totalBytes: 8 * GiB, usedBytes: GiB });
+      assert.strictEqual(snapshot.cpuCount, 8);
     }).pipe(Effect.provide(linuxHost(unlimitedCgroup))),
   );
 
