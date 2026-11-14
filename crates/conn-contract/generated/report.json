@@ -1,14 +1,14 @@
 {
-  "roots": 997,
-  "namedSchemas": 1788,
-  "references": 1456,
-  "rustItems": 1738,
-  "literalTypes": 501,
-  "methods": 235,
-  "methodsFullyTyped": 235,
+  "roots": 1009,
+  "namedSchemas": 1800,
+  "references": 1469,
+  "rustItems": 1751,
+  "literalTypes": 504,
+  "methods": 236,
+  "methodsFullyTyped": 236,
   "opaqueFallbacks": 0,
   "lax": 13,
-  "dedupedItems": 825,
+  "dedupedItems": 830,
   "passThroughLinksDropped": 9,
   "opaque": [],
   "laxDetails": [
@@ -49,7 +49,7 @@
       "why": "literals plus template literal decoded as any string"
     },
     {
-      "path": "ServerSettingsPatch.projectSettingsOverrides{}",
+      "path": "ClientServerSettingsPatch.projectSettingsOverrides{}",
       "why": "struct with index signature uses serde flatten"
     },
     {
@@ -66,15 +66,15 @@
     }
   ],
   "fixtures": {
-    "roots": 995,
-    "samples": 3045,
+    "roots": 1007,
+    "samples": 3070,
     "sampleFailures": 2,
     "encodeForbidden": 6,
     "failed": [
       "ChatAttachment#0: SampleError",
       "rpc::server::check_otlp_endpoint::Payload#0: SampleError"
     ],
-    "keys": 996
+    "keys": 1008
   },
   "methodTypes": [
     {
@@ -810,7 +810,7 @@
       "tag": "projects.listIgnoredFiles",
       "stream": false,
       "origin": "official",
-      "payload": "VcsPullInput",
+      "payload": "ProjectListIgnoredFilesInput",
       "success": "ProjectListIgnoredFilesResult",
       "error": "ProjectsListEntriesError",
       "typed": true
@@ -1263,6 +1263,15 @@
       "payload": "PullRequestSubmitReviewInput",
       "success": "()",
       "error": "PullRequestsActivityError",
+      "typed": true
+    },
+    {
+      "tag": "pullRequests.subscribeLinkedThreadRefreshes",
+      "stream": true,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "item": "i64",
+      "error": "EnvironmentAuthorizationError",
       "typed": true
     },
     {

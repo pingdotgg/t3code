@@ -144,6 +144,10 @@ pub(super) const SCOPES: &[(&str, &str)] = &[
     ("pullRequests.setThreadResolution", "source-control:write"),
     ("pullRequests.stack", "orchestration:read"),
     ("pullRequests.submitReview", "source-control:write"),
+    (
+        "pullRequests.subscribeLinkedThreadRefreshes",
+        "orchestration:read",
+    ),
     ("pullRequests.subscribeRefreshes", "orchestration:read"),
     ("pullRequests.summary", "orchestration:read"),
     ("pullRequests.threadComments", "orchestration:read"),

@@ -8,7 +8,7 @@ the T3 server (`apps/server` in the Conn monorepo, TypeScript on Effect) with a 
 memory footprint. We reproduce behaviour at three boundaries (the client contract, `/mcp`, the
 provider protocols). We do not translate the TypeScript.
 
-**Base:** Conn `origin/main` at `b685417bb6157408d3c3b78544dfd5bbc3e67753` (2026-11-13). `conn.pin` holds it.
+**Base:** Conn `origin/main` at `b12470dcadd6320324abb28f90d224660c9c04c8` (2026-11-14). `conn.pin` holds it.
 **Contract:** `crates/conn-contract/methods.json` records the commit in which `packages/contracts`
 last changed.
 
