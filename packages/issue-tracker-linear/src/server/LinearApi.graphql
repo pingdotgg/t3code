@@ -1,0 +1,275 @@
+fragment LinearUser on User {
+  id
+  name
+  displayName
+  email
+  avatarUrl
+}
+
+fragment LinearWorkflowState on WorkflowState {
+  id
+  name
+  type
+  position
+}
+
+fragment LinearLabel on IssueLabel {
+  id
+  name
+  color
+}
+
+fragment LinearTeamLabel on IssueLabel {
+  ...LinearLabel
+  description
+}
+
+fragment LinearReaction on Reaction {
+  id
+  emoji
+  user {
+    ...LinearUser
+  }
+}
+
+fragment LinearComment on Comment {
+  id
+  body
+  createdAt
+  url
+  user {
+    ...LinearUser
+  }
+  reactions {
+    ...LinearReaction
+  }
+}
+
+fragment LinearIssue on Issue {
+  id
+  identifier
+  number
+  title
+  url
+  description
+  createdAt
+  updatedAt
+  completedAt
+  canceledAt
+  state {
+    ...LinearWorkflowState
+  }
+  team {
+    key
+  }
+  creator {
+    ...LinearUser
+  }
+  assignee {
+    ...LinearUser
+  }
+  labels {
+    nodes {
+      ...LinearLabel
+    }
+  }
+}
+
+fragment LinearPageInfo on PageInfo {
+  hasNextPage
+  endCursor
+}
+
+query T3Viewer {
+  viewer {
+    ...LinearUser
+  }
+  teams(first: 250) {
+    nodes {
+      id
+      key
+      name
+    }
+  }
+}
+
+query T3Issues($first: Int!, $after: String, $filter: IssueFilter!) {
+  issues(first: $first, after: $after, filter: $filter, orderBy: updatedAt) {
+    nodes {
+      ...LinearIssue
+    }
+    pageInfo {
+      ...LinearPageInfo
+    }
+  }
+}
+
+query T3Issue($id: String!, $comments: Int!) {
+  issue(id: $id) {
+    ...LinearIssue
+    comments(first: $comments, orderBy: createdAt) {
+      nodes {
+        ...LinearComment
+      }
+      pageInfo {
+        ...LinearPageInfo
+      }
+    }
+    reactions {
+      ...LinearReaction
+    }
+    attachments(first: 50) {
+      nodes {
+        url
+        title
+        sourceType
+        metadata
+      }
+    }
+    history(first: 100, orderBy: createdAt) {
+      nodes {
+        id
+        createdAt
+        actor {
+          ...LinearUser
+        }
+        fromState {
+          ...LinearWorkflowState
+        }
+        toState {
+          ...LinearWorkflowState
+        }
+        fromAssignee {
+          ...LinearUser
+        }
+        toAssignee {
+          ...LinearUser
+        }
+        addedLabels {
+          ...LinearLabel
+        }
+        removedLabels {
+          ...LinearLabel
+        }
+        fromTitle
+        toTitle
+      }
+    }
+  }
+}
+
+query T3Comments($id: String!, $first: Int!, $after: String) {
+  issue(id: $id) {
+    comments(first: $first, after: $after, orderBy: createdAt) {
+      nodes {
+        ...LinearComment
+      }
+      pageInfo {
+        ...LinearPageInfo
+      }
+    }
+  }
+}
+
+query T3Team($key: String!) {
+  teams(first: 1, filter: { key: { eq: $key } }) {
+    nodes {
+      id
+      key
+      name
+      states(first: 100) {
+        nodes {
+          ...LinearWorkflowState
+        }
+        pageInfo {
+          ...LinearPageInfo
+        }
+      }
+      labels(first: 250) {
+        nodes {
+          ...LinearTeamLabel
+        }
+        pageInfo {
+          ...LinearPageInfo
+        }
+      }
+      members(first: 250) {
+        nodes {
+          ...LinearUser
+        }
+        pageInfo {
+          ...LinearPageInfo
+        }
+      }
+      templates {
+        nodes {
+          id
+          name
+          description
+          content
+          type
+          hasFormFields
+          templateData
+        }
+      }
+    }
+  }
+  issueLabels(first: 250, filter: { team: { null: true } }) {
+    nodes {
+      ...LinearTeamLabel
+    }
+    pageInfo {
+      ...LinearPageInfo
+    }
+  }
+}
+
+mutation T3IssueCreate($input: IssueCreateInput!) {
+  issueCreate(input: $input) {
+    success
+    issue {
+      identifier
+      url
+    }
+  }
+}
+
+mutation T3IssueUpdate($id: String!, $input: IssueUpdateInput!) {
+  issueUpdate(id: $id, input: $input) {
+    success
+  }
+}
+
+mutation T3CommentCreate($input: CommentCreateInput!) {
+  commentCreate(input: $input) {
+    success
+  }
+}
+
+mutation T3ReactionCreate($input: ReactionCreateInput!) {
+  reactionCreate(input: $input) {
+    success
+  }
+}
+
+mutation T3ReactionDelete($id: String!) {
+  reactionDelete(id: $id) {
+    success
+  }
+}
+
+query T3IssueReactions($id: String!) {
+  issue(id: $id) {
+    reactions {
+      ...LinearReaction
+    }
+  }
+}
+
+query T3CommentReactions($id: String!) {
+  comment(id: $id) {
+    reactions {
+      ...LinearReaction
+    }
+  }
+}
