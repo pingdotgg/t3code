@@ -132,11 +132,13 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-" });
       const child = yield* liveProcess;
       assert(child.pid !== undefined);
-      for (const [name, pid, mode, rejectRunningServer] of [
-        ["stale", 2_147_483_647, "web", true],
-        ["own-pid", process.pid, "web", true],
-        ["desktop", child.pid, "desktop", true],
-        ["serve", child.pid, "web", false],
+      for (const [name, pid, mode, rejectRunningServer, hostname] of [
+        ["stale", 2_147_483_647, "web", true, undefined],
+        ["own-pid", process.pid, "web", true, undefined],
+        // A recreated container or a machine sharing the home: the ownership lock decides.
+        ["foreign-host", child.pid, "web", true, `${NodeOS.hostname()}-peer`],
+        ["desktop", child.pid, "desktop", true, undefined],
+        ["serve", child.pid, "web", false, undefined],
       ] as const) {
         const baseDir = path.join(root, name);
         const stateDir = path.join(baseDir, "userdata");
@@ -146,6 +148,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           yield* encodeUnknownJson({
             version: 1,
             pid,
+            hostname,
             port: 3773,
             origin: "http://127.0.0.1:3773",
             startedAt: "2026-10-01T00:00:00.000Z",
@@ -324,43 +327,6 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           new RegExp(`pair --base-dir (${homePattern}|'${homePattern}')`),
         );
       }
-    }),
-  );
-
-  it.effect("refuses a manual web launch when the runtime record belongs to another machine", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-foreign-" });
-      const stateDir = path.join(baseDir, "userdata");
-      yield* fs.makeDirectory(stateDir, { recursive: true });
-      // The recorded pid is dead on this machine, which the preflight used to
-      // read as a stale local record and start over the other machine's state.
-      yield* fs.writeFileString(
-        path.join(stateDir, "server-runtime.json"),
-        yield* encodeUnknownJson({
-          version: 1,
-          pid: 2_147_483_647,
-          hostname: `${NodeOS.hostname()}-peer`,
-          port: 3773,
-          origin: "http://127.0.0.1:3773",
-          startedAt: "2026-10-01T00:00:00.000Z",
-        }),
-      );
-      const cwd = path.join(baseDir, "project");
-      const error = yield* resolveServerConfig(
-        { ...minimalWebFlags(baseDir), cwd: Option.some(cwd) },
-        Option.none(),
-        { rejectRunningServer: true },
-      ).pipe(
-        Effect.provide(
-          Layer.merge(NetService.layer, ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
-        ),
-        Effect.flip,
-      );
-      expect(String(error)).toContain("another machine");
-      expect(String(error)).toContain(`${NodeOS.hostname()}-peer`);
-      expect(yield* fs.exists(cwd)).toBe(false);
     }),
   );
 
