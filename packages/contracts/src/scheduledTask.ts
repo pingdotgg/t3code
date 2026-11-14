@@ -26,23 +26,47 @@ export const MIN_SCHEDULED_TASK_INTERVAL_MS = 60_000;
 
 const ScheduledTaskIntervalMs = Schema.Int.check(Schema.isGreaterThan(0));
 
+const ScheduledTaskWeekday = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: 6 }),
+).annotate({
+  description: "Weekday. 0 is Sunday, 6 is Saturday.",
+});
+
+const ScheduledTaskWeekdays = Schema.optional(
+  Schema.Array(ScheduledTaskWeekday).annotate({
+    description: "Default: every day.",
+  }),
+);
+
+function clockMinutes(value: string): number {
+  const [hour, minute] = value.split(":");
+  return Number(hour) * 60 + Number(minute);
+}
+
+const WindowClock = TrimmedNonEmptyString.check(Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/));
+
+const ScheduledTaskIntervalWindow = Schema.Struct({
+  start: WindowClock,
+  end: WindowClock,
+  weekdays: Schema.optional(
+    Schema.Array(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 6 }))),
+  ),
+}).check(
+  Schema.makeFilter(
+    (window) => clockMinutes(window.end) > clockMinutes(window.start) || "End must be after start.",
+  ),
+);
+
 const ScheduledTaskIntervalSchedule = Schema.Struct({
   type: Schema.Literal("interval"),
   everyMs: ScheduledTaskIntervalMs,
+  window: Schema.optional(ScheduledTaskIntervalWindow),
 });
 
 const ScheduledTaskFixedTimeSchedule = Schema.Struct({
   type: Schema.Literal("fixed_time"),
   timeOfDay: TimeOfDay,
-  weekdays: Schema.optional(
-    Schema.Array(
-      Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 6 })).annotate({
-        description: "Weekday. 0 is Sunday, 6 is Saturday.",
-      }),
-    ).annotate({
-      description: "Default: every day.",
-    }),
-  ),
+  weekdays: ScheduledTaskWeekdays,
 });
 
 const ISO_WITH_OFFSET =
@@ -207,6 +231,7 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
     ).annotate({
       description: "Min 60000.",
     }),
+    window: Schema.optional(ScheduledTaskIntervalWindow),
   }),
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskOnceSchedule,

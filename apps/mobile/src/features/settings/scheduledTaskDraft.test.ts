@@ -6,6 +6,7 @@ import {
   ProviderInstanceId,
   ProjectId,
 } from "@t3tools/contracts";
+import { formatScheduledTaskInterval } from "./scheduledTaskPresentation";
 import {
   scheduledTaskDefaultModel,
   DEFAULT_SCHEDULE,
@@ -17,7 +18,48 @@ describe("scheduleDraftForTask", () => {
   it("opens legacy sub-minute schedules at the writable minimum", () => {
     const draft = scheduleDraftForTask({ schedule: { type: "interval", everyMs: 30_000 } });
     expect(draft.intervalMinutes).toBe("1");
+    expect(draft.intervalWindowEnabled).toBe(false);
     expect(scheduleFromDraft(draft)).toEqual({ type: "interval", everyMs: 60_000 });
+    expect(scheduleFromDraft(draft)).not.toHaveProperty("window");
+  });
+
+  it("restores a stored interval window and leaves a missing window off", () => {
+    const open = scheduleDraftForTask({ schedule: { type: "interval", everyMs: 3_600_000 } });
+    expect(open.intervalWindowEnabled).toBe(false);
+    expect(open.weekdays).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(scheduleFromDraft(open)).toEqual({ type: "interval", everyMs: 3_600_000 });
+    expect(scheduleFromDraft({ ...open, intervalWindowEnabled: true })).toEqual({
+      type: "interval",
+      everyMs: 3_600_000,
+      window: { start: "10:00", end: "20:00" },
+    });
+
+    const limited = scheduleDraftForTask({
+      schedule: {
+        type: "interval",
+        everyMs: 3_600_000,
+        window: { start: "10:00", end: "20:00", weekdays: [5, 1, 4, 2, 3] },
+      },
+    });
+    expect(limited.intervalWindowEnabled).toBe(true);
+    expect(limited.intervalWindowStart).toBe("10:00");
+    expect(limited.intervalWindowEnd).toBe("20:00");
+    expect(limited.weekdays).toEqual([1, 2, 3, 4, 5]);
+    expect(scheduleFromDraft(limited)).toEqual({
+      type: "interval",
+      everyMs: 3_600_000,
+      window: { start: "10:00", end: "20:00", weekdays: [1, 2, 3, 4, 5] },
+    });
+
+    const daily = scheduleDraftForTask({
+      schedule: { type: "interval", everyMs: 3_600_000, window: { start: "09:00", end: "17:30" } },
+    });
+    expect(daily.weekdays).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(scheduleFromDraft(daily)).toEqual({
+      type: "interval",
+      everyMs: 3_600_000,
+      window: { start: "09:00", end: "17:30" },
+    });
   });
 
   it("round-trips dedupe settings and rejects invalid windows", () => {
@@ -107,6 +149,91 @@ describe("scheduleFromDraft", () => {
       ).toBeNull();
     },
   );
+
+  it("encodes an interval window and omits it while the window is off", () => {
+    const off = {
+      ...DEFAULT_SCHEDULE,
+      mode: "interval" as const,
+      intervalMinutes: "60",
+      intervalWindowStart: "20:00",
+      intervalWindowEnd: "10:00",
+    };
+    expect(scheduleFromDraft(off)).toEqual({ type: "interval", everyMs: 3_600_000 });
+    expect(scheduleFromDraft(off)).not.toHaveProperty("window");
+    expect(
+      scheduleFromDraft({
+        ...off,
+        intervalWindowEnabled: true,
+        intervalWindowStart: "10:00",
+        intervalWindowEnd: "20:00",
+      }),
+    ).toEqual({
+      type: "interval",
+      everyMs: 3_600_000,
+      window: { start: "10:00", end: "20:00", weekdays: [1, 2, 3, 4, 5] },
+    });
+  });
+
+  it("omits weekdays when an interval window covers every day", () => {
+    const base = {
+      ...DEFAULT_SCHEDULE,
+      mode: "interval" as const,
+      intervalMinutes: "60",
+      intervalWindowEnabled: true,
+      intervalWindowStart: "10:00",
+      intervalWindowEnd: "20:00",
+    };
+    expect(scheduleFromDraft({ ...base, weekdays: [] })).toBeNull();
+    for (const weekdays of [
+      [0, 1, 2, 3, 4, 5, 6],
+      [6, 5, 4, 3, 2, 1, 0, 0],
+    ]) {
+      expect(scheduleFromDraft({ ...base, weekdays })).toEqual({
+        type: "interval",
+        everyMs: 3_600_000,
+        window: { start: "10:00", end: "20:00" },
+      });
+    }
+  });
+
+  it("rejects an interval window that does not end after it starts", () => {
+    const base = {
+      ...DEFAULT_SCHEDULE,
+      mode: "interval" as const,
+      intervalMinutes: "60",
+      intervalWindowEnabled: true,
+    };
+    for (const [intervalWindowStart, intervalWindowEnd] of [
+      ["10:00", "10:00"],
+      ["20:00", "10:00"],
+      ["22:00", "06:00"],
+    ] as const) {
+      expect(scheduleFromDraft({ ...base, intervalWindowStart, intervalWindowEnd })).toBeNull();
+    }
+  });
+});
+
+describe("interval window summary", () => {
+  const window = { start: "10:00", end: "20:00" };
+
+  it("keeps the plain interval text until a window is set", () => {
+    expect(formatScheduledTaskInterval(3_600_000)).toBe("Every hour");
+    expect(formatScheduledTaskInterval(3_600_000, { ...window, weekdays: [1, 2, 3, 4, 5] })).toBe(
+      "Every 60 min, Mon–Fri 10:00–20:00",
+    );
+    expect(formatScheduledTaskInterval(3_600_000, window)).toBe(
+      "Every 60 min, every day 10:00–20:00",
+    );
+    expect(formatScheduledTaskInterval(3_600_000, { ...window, weekdays: [] })).toBe(
+      "Every 60 min, every day 10:00–20:00",
+    );
+    expect(
+      formatScheduledTaskInterval(3_600_000, { ...window, weekdays: [0, 1, 2, 3, 4, 5, 6] }),
+    ).toBe("Every 60 min, every day 10:00–20:00");
+    expect(formatScheduledTaskInterval(3_600_000, { ...window, weekdays: [6, 0, 3] })).toBe(
+      "Every 60 min, Wed, Sat, Sun 10:00–20:00",
+    );
+  });
 });
 
 describe("scheduled task model defaults", () => {
