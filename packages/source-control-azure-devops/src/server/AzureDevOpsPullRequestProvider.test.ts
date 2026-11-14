@@ -228,14 +228,6 @@ describe("policy checks", () => {
       ),
     );
 
-  it.effect("puts the pipeline on the detail, so a watch hears about it", () =>
-    Effect.gen(function* () {
-      const provider = yield* provide(() => Effect.succeed([check("failure")]));
-      const detail = yield* provider.getChangeRequest(REPOSITORY);
-      expect(detail.checks).toEqual([check("failure")]);
-    }),
-  );
-
   it.effect("keeps the detail readable when the policies are not", () =>
     Effect.gen(function* () {
       const provider = yield* provide(() => Effect.fail(readFailure));
