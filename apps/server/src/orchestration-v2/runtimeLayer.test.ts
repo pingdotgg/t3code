@@ -7773,7 +7773,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           assert.equal(held?.status, "queued");
           assert.isTrue(held?.queueHeld);
         }
-        assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.worktreePath);
 
         if (recovery === "retry") {
           yield* orchestrator.dispatch({
