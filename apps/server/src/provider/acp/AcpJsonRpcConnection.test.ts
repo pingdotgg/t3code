@@ -22,6 +22,7 @@ import { describe, expect } from "vite-plus/test";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
@@ -1083,6 +1084,157 @@ describe("AcpSessionRuntime", () => {
       Effect.scoped,
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
+  );
+
+  // Live clock: the replay-idle gap must elapse in real time against the mock agent process.
+  it.live("adopts config options from a session/load response that arrives after replay idle", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: {
+            T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
+            T3_ACP_LOAD_SESSION_DELAY_MS: "500",
+          },
+        },
+        resumeSessionId: "mock-session-1",
+        sessionLoadReplayIdleGap: "100 millis",
+      });
+      const started = yield* runtime.start();
+      expect(started.sessionSetupResult._meta).toMatchObject({ t3SessionLoadReady: "replay_idle" });
+
+      yield* runtime.getEvents().pipe(
+        Stream.filter((event) => event._tag === "ConfigOptionsUpdated"),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.timeoutOption("5 seconds"),
+      );
+
+      expect((yield* runtime.getConfigOptions).map((option) => option.id)).toEqual([
+        "mode",
+        "model",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live("drops a late session/load response when a selection was sent before it", () =>
+    Effect.gen(function* () {
+      const lateLoadLogged = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: {
+            T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
+            T3_ACP_LOAD_SESSION_DELAY_MS: "500",
+            T3_ACP_HOLD_SET_CONFIG_OPTION_UNTIL_LOAD_REPLY: "1",
+          },
+        },
+        resumeSessionId: "mock-session-1",
+        sessionLoadReplayIdleGap: "100 millis",
+        requestLogger: (event) =>
+          event.method === "session/load" &&
+          event.status === "succeeded" &&
+          (event.result as { readonly configOptions?: unknown } | undefined)?.configOptions !==
+            undefined
+            ? Deferred.succeed(lateLoadLogged, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      });
+      const started = yield* runtime.start();
+      // The agent answers the load before this request, so no config change
+      // is visible when the late response arrives.
+      yield* runtime.setConfigOption("model", "gpt-5.4");
+      yield* Deferred.await(lateLoadLogged).pipe(Effect.timeout("5 seconds"));
+
+      expect((yield* runtime.start()).sessionSetupResult).toBe(started.sessionSetupResult);
+      const model = (yield* runtime.getConfigOptions).find((option) => option.id === "model");
+      expect(model?.currentValue).toBe("gpt-5.4");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live("drops a late session/load response when the agent changed mode before it", () =>
+    Effect.gen(function* () {
+      const lateLoadLogged = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: {
+            T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
+            T3_ACP_LOAD_SESSION_DELAY_MS: "500",
+            T3_ACP_NOTIFY_MODE_BEFORE_LOAD_REPLY: "code",
+          },
+        },
+        resumeSessionId: "mock-session-1",
+        sessionLoadReplayIdleGap: "100 millis",
+        // The mock speaks ACP v2, which has no current_mode_update; decode it as a v1 agent's.
+        transformSessionUpdate: (notification) =>
+          notification.update.sessionUpdate === "_t3_unknown" &&
+          notification.update.originalSessionUpdate === "current_mode_update"
+            ? {
+                ...notification,
+                update: notification.update.raw as EffectAcpSchema.SessionNotification["update"],
+              }
+            : notification,
+        requestLogger: (event) =>
+          event.method === "session/load" &&
+          event.status === "succeeded" &&
+          (event.result as { readonly configOptions?: unknown } | undefined)?.configOptions !==
+            undefined
+            ? Deferred.succeed(lateLoadLogged, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      });
+      const started = yield* runtime.start();
+      // No mode metadata yet, so the notification leaves the mode state as is.
+      expect(yield* runtime.getModeState).toBeUndefined();
+      yield* Deferred.await(lateLoadLogged).pipe(Effect.timeout("5 seconds"));
+
+      expect((yield* runtime.start()).sessionSetupResult).toBe(started.sessionSetupResult);
+      expect(yield* runtime.getModeState).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live("drops a late session/load response that startup metadata superseded", () =>
+    Effect.gen(function* () {
+      const provisionalLogged = yield* Deferred.make<void>();
+      const allowStartup = yield* Deferred.make<void>();
+      const lateLoadLogged = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: {
+            T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
+            T3_ACP_LOAD_SESSION_DELAY_MS: "500",
+          },
+        },
+        resumeSessionId: "mock-session-1",
+        sessionLoadReplayIdleGap: "100 millis",
+        requestLogger: (event) => {
+          if (event.method !== "session/load" || event.status !== "succeeded") {
+            return Effect.void;
+          }
+          return (event.result as { readonly configOptions?: unknown } | undefined)
+            ?.configOptions === undefined
+            ? Deferred.succeed(provisionalLogged, undefined).pipe(
+                Effect.andThen(Deferred.await(allowStartup)),
+              )
+            : Deferred.succeed(lateLoadLogged, undefined).pipe(Effect.asVoid);
+        },
+      });
+      const startup = yield* runtime.start().pipe(Effect.forkChild);
+      yield* Deferred.await(provisionalLogged);
+      yield* runtime.request("_test/startup-metadata", {});
+      yield* Deferred.succeed(allowStartup, undefined);
+      yield* Fiber.join(startup);
+      yield* Deferred.await(lateLoadLogged).pipe(Effect.timeout("5 seconds"));
+
+      expect(yield* runtime.getModeState).toMatchObject({ currentModeId: "code" });
+      expect(
+        (yield* runtime.getConfigOptions).find((option) => option.category === "model"),
+      ).toMatchObject({ currentValue: "gpt-5.4" });
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("keeps active configuration after a candidate session load fails", () =>

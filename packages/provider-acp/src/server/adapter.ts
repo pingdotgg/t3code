@@ -807,6 +807,13 @@ export const AcpProviderCapabilitiesV2 = {
   },
 } satisfies OrchestrationV2ProviderCapabilities;
 
+function canSwitchModelInSession(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+  models: EffectAcpSchema.SessionModelState | null | undefined,
+): boolean {
+  return findModelConfigOption(configOptions) !== undefined || models != null;
+}
+
 const STEER_DELIVERY_BOUND = "2 seconds";
 
 /**
@@ -860,9 +867,7 @@ function negotiatedCapabilities(
   const session = agent.sessionCapabilities;
   const setup = started.sessionSetupResult;
   const canSwitchModel =
-    modelOptionArrivesLate ||
-    findModelConfigOption(setup.configOptions) !== undefined ||
-    setup.models != null;
+    modelOptionArrivesLate || canSwitchModelInSession(setup.configOptions, setup.models);
   const canLoad = agent.loadSession === true;
   const canFork = session?.fork != null;
   return {
@@ -2415,6 +2420,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           Queue.offer(events, event).pipe(Effect.asVoid);
         let scheduleDeferredFinalize: (context: ActiveAcpTurn) => Effect.Effect<void> = () =>
           Effect.void;
+        let refreshModelSwitchCapability: Effect.Effect<void> = Effect.void;
+        // openSession configures the session itself; a late setup that lands
+        // first waits here and is adopted once that configuration is in place.
+        const lateSessionSetup: {
+          openSessionConfigured: boolean;
+          pending: Effect.Effect<void> | null;
+        } = { openSessionConfigured: false, pending: null };
 
         const nativeLogging = options.nativeLogging?.(input.threadId);
         const promptInactivityTimeoutMillis =
@@ -6595,6 +6607,35 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
         });
 
+        // The adopted response never passes through the raw session-update
+        // handler, so this is its one catalog publication.
+        const adoptLateSessionSetup = Effect.fnUntraced(function* (
+          targetRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+          result: AcpSessionRuntime.AcpSessionRuntimeStartResult,
+        ) {
+          const current = yield* Ref.get(activeSessionSetup);
+          if (current === null || current.sessionId !== result.sessionId) {
+            return;
+          }
+          yield* Ref.set(activeSessionSetup, result);
+          // The selection was configured against the provisional setup's
+          // options, so the next turn re-applies it against the real ones.
+          yield* Ref.set(activeSelection, null);
+          yield* Ref.set(activeInteractionMode, null);
+          // The runtime only adopts when no mode or option changed since the
+          // provisional start, so no Plan switch was applied and any build
+          // snapshot holds the provisional state rather than the real one.
+          nativeBuildConfigurationBySessionId.delete(result.sessionId);
+          yield* refreshModelSwitchCapability;
+          yield* (
+            flavor.onSessionConfigurationUpdate?.(
+              yield* targetRuntime.getConfigOptions,
+              yield* targetRuntime.getModeState,
+              result.sessionSetupResult.models,
+            ) ?? Effect.void
+          );
+        });
+
         const wireAcpRuntimeHandlers = Effect.fnUntraced(function* (
           targetRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"],
           handlerGeneration: number,
@@ -6612,7 +6653,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               return runRuntimeCallbackAtGeneration(
                 handlerGeneration,
-                flavor.onSessionEvent?.(event) ?? Effect.void,
+                Effect.andThen(
+                  event._tag === "ConfigOptionsUpdated"
+                    ? refreshModelSwitchCapability
+                    : event._tag === "SessionSetupAdopted"
+                      ? Effect.suspend(() => {
+                          const adopt = adoptLateSessionSetup(targetRuntime, event.result);
+                          if (lateSessionSetup.openSessionConfigured) return adopt;
+                          lateSessionSetup.pending = adopt;
+                          return Effect.void;
+                        })
+                      : Effect.void,
+                  flavor.onSessionEvent?.(event) ?? Effect.void,
+                ),
               ).pipe(Effect.asVoid);
             }),
             Effect.forkIn(handlerOptions.scope ?? runtimeScope ?? sessionScope),
@@ -7683,18 +7736,60 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         yield* Ref.set(activeSelection, input.modelSelection);
         yield* Ref.set(activeInteractionMode, input.runtimePolicy.interactionMode);
         const createdAt = yield* DateTime.now;
-        const providerSession: OrchestrationV2ProviderSession = {
+        let providerSession: OrchestrationV2ProviderSession = {
           id: input.providerSessionId,
           driver,
           providerInstanceId: options.instanceId,
           status: "ready",
           cwd: input.runtimePolicy.cwd ?? process.cwd(),
           model: input.modelSelection.model,
-          capabilities,
+          capabilities: {
+            ...capabilities,
+            sessions: {
+              ...capabilities.sessions,
+              supportsModelSwitchInSession:
+                capabilities.sessions.supportsModelSwitchInSession ||
+                canSwitchModelInSession(
+                  yield* runtime.getConfigOptions,
+                  (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
+                ),
+            },
+          },
           createdAt,
           updatedAt: createdAt,
           lastError: null,
         };
+        // Config options can first offer a model after setup, e.g. when a
+        // session/load response arrives after replay idle. Upgrade-only: a
+        // later partial config update must not revoke the switch mid-session.
+        refreshModelSwitchCapability = Effect.gen(function* () {
+          const { capabilities } = providerSession;
+          if (capabilities.sessions.supportsModelSwitchInSession) {
+            return;
+          }
+          const supportsModelSwitchInSession = canSwitchModelInSession(
+            yield* runtime.getConfigOptions,
+            (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
+          );
+          if (!supportsModelSwitchInSession) {
+            return;
+          }
+          providerSession = {
+            ...providerSession,
+            capabilities: {
+              ...capabilities,
+              sessions: { ...capabilities.sessions, supportsModelSwitchInSession },
+            },
+            updatedAt: yield* DateTime.now,
+          };
+          yield* emitProviderEvent({ type: "provider_session.updated", driver, providerSession });
+        });
+        lateSessionSetup.openSessionConfigured = true;
+        const pendingLateSessionSetup = lateSessionSetup.pending;
+        lateSessionSetup.pending = null;
+        if (pendingLateSessionSetup !== null) {
+          yield* pendingLateSessionSetup;
+        }
 
         const providerTurnPayload = (
           context: ActiveAcpTurn,
@@ -8852,7 +8947,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           instanceId: options.instanceId,
           driver,
           providerSessionId: input.providerSessionId,
-          providerSession,
+          get providerSession() {
+            return providerSession;
+          },
           canResumeAfterRestart: canLoadSession || canResumeSession,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ...(flavor.getModelContextWindow === undefined
