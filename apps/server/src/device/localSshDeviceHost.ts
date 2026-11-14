@@ -19,6 +19,21 @@ export const LocalDeviceHostAddresses = Context.Reference<ReadonlySet<string>>(
   },
 );
 
+/** Unwraps IPv4-mapped IPv6 (`::ffff:127.0.0.1`, `::ffff:7f00:1`) to plain IPv4. */
+const unmapIPv4 = (address: string) => {
+  if (NodeNet.isIP(address) !== 6) return address;
+  let canonical: string;
+  try {
+    canonical = new URL(`http://[${address}]`).hostname;
+  } catch {
+    return address;
+  }
+  const match = /^\[::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/.exec(canonical);
+  if (!match) return address;
+  const [high, low] = [parseInt(match[1]!, 16), parseInt(match[2]!, 16)];
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff].join(".");
+};
+
 export const isLocalSshDeviceHost = Effect.fn("isLocalSshDeviceHost")(function* (
   host: SshDeviceHostConfig,
 ) {
@@ -57,9 +72,11 @@ export const isLocalSshDeviceHost = Effect.fn("isLocalSshDeviceHost")(function* 
   const localAddresses = yield* LocalDeviceHostAddresses;
   return (
     addresses.length > 0 &&
-    addresses.every(
-      (address) => localAddresses.has(address) || address === "::1" || address.startsWith("127."),
-    )
+    addresses
+      .map(unmapIPv4)
+      .every(
+        (address) => localAddresses.has(address) || address === "::1" || address.startsWith("127."),
+      )
   );
 });
 

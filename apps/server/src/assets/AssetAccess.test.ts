@@ -28,6 +28,7 @@ import { vi } from "vite-plus/test";
 import * as AssetSigner from "./AssetSigner.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
+import { makeFakeWslHost } from "../testUtils/fakeWsl.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
@@ -524,50 +525,82 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("resolves home-relative media paths independently of the workspace", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-home-" });
-      const home = path.join(directory, "var", "home", "alice");
-      const filePath = path.join(home, "Downloads", "repro.mp4");
-      yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
-      yield* fs.writeFileString(filePath, "recording bytes");
-      const canonicalFile = yield* fs.realPath(filePath);
-      yield* Effect.gen(function* () {
-        for (const workspaceRoot of [
-          path.join(home, "project"),
-          path.join(directory, "srv", "project"),
-          undefined,
-        ]) {
-          if (workspaceRoot) yield* fs.makeDirectory(workspaceRoot, { recursive: true });
-          for (const requestedPath of ["~/Downloads/repro.mp4", "~\\Downloads/repro.mp4"]) {
-            const result = yield* issueAssetUrl({
-              resource: {
-                _tag: "media-file",
-                threadId: ThreadId.make("thread-1"),
-                path: requestedPath,
-              },
-              ...(workspaceRoot ? { workspaceRoot } : {}),
-            });
-            const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
-            const separator = suffix.indexOf("/");
-            const asset = yield* resolveAsset(
-              suffix.slice(0, separator),
-              suffix.slice(separator + 1),
-            );
-            expect(asset).toMatchObject({
-              kind: "file",
-              path: canonicalFile,
-              mimeType: "video/mp4",
-            });
-            if (asset?.kind !== "file") throw new Error("Expected a resolved home media file");
-            const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
-            expect(yield* Effect.promise(() => response.text())).toBe("recording bytes");
+  it.effect.each(["media-file", "draft-workspace-file"] as const)(
+    "resolves home-relative %s paths independently of the workspace",
+    (tag) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-home-" });
+        const home = path.join(directory, "var", "home", "alice");
+        const filePath = path.join(home, "Downloads", "repro.mp4");
+        yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+        yield* fs.writeFileString(filePath, "recording bytes");
+        const canonicalFile = yield* fs.realPath(filePath);
+        yield* Effect.gen(function* () {
+          for (const workspaceRoot of [
+            path.join(home, "project"),
+            path.join(directory, "srv", "project"),
+            undefined,
+          ]) {
+            if (workspaceRoot) yield* fs.makeDirectory(workspaceRoot, { recursive: true });
+            for (const requestedPath of ["~/Downloads/repro.mp4", "~\\Downloads/repro.mp4"]) {
+              const result = yield* issueAssetUrl({
+                resource: {
+                  ...(tag === "media-file"
+                    ? { _tag: tag, threadId: ThreadId.make("thread-1") }
+                    : { _tag: tag, cwd: workspaceRoot ?? directory }),
+                  path: requestedPath,
+                },
+                ...(workspaceRoot ? { workspaceRoot } : {}),
+              });
+              const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+              const separator = suffix.indexOf("/");
+              const asset = yield* resolveAsset(
+                suffix.slice(0, separator),
+                suffix.slice(separator + 1),
+              );
+              expect(asset).toMatchObject({
+                kind: "file",
+                path: canonicalFile,
+                mimeType: "video/mp4",
+              });
+              if (asset?.kind !== "file") throw new Error("Expected a resolved home media file");
+              const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+              expect(yield* Effect.promise(() => response.text())).toBe("recording bytes");
+            }
           }
+        }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "resolves a Windows drive media path under WSL to where wslpath mounts it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { mountRoot, underWsl } = yield* makeFakeWslHost;
+        const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-wsl-root-" });
+        const filePath = path.join(mountRoot, "c", "Users", "me", "Pictures", "shot.png");
+        yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+        yield* fs.writeFile(filePath, screenshotPng);
+        const canonicalFile = yield* fs.realPath(filePath);
+        const drivePath = "C:\\Users\\me\\Pictures\\shot.png";
+
+        for (const resource of [
+          { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: drivePath },
+          { _tag: "draft-workspace-file", cwd: workspaceRoot, path: drivePath },
+        ] as const) {
+          const result = yield* underWsl(issueAssetUrl({ resource, workspaceRoot }));
+          expect(result.imageDimensions).toEqual({ width: 390, height: 844 });
+          const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const separator = suffix.indexOf("/");
+          expect(
+            yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)),
+          ).toMatchObject({ kind: "file", path: canonicalFile, mimeType: "image/png" });
         }
-      }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
-    }).pipe(Effect.provide(layerTest)),
+      }).pipe(Effect.provide(layerTest)),
   );
 
   // Resolving `file://attacker.test/share/cat.jpg` from an agent's markdown sent the
@@ -1566,10 +1599,7 @@ describe("AssetAccess", () => {
       // A pull request's own repository wins over the checkout it is shown in.
       yield* sourceControlMediaResponse({ ...asset, repository: "enterprise/private" }, {});
       expect(fetched.at(-1)?.repository).toBe("enterprise/private");
-    }).pipe(
-      Effect.provide(Layer.mergeAll(layerTest, layerDrivers, layerIdentities)),
-      Effect.scoped,
-    );
+    }).pipe(Effect.provide(Layer.mergeAll(layerTest, layerDrivers, layerIdentities)));
   });
 
   it.effect("refuses media no host keeps behind a credential, without echoing the URL", () =>
