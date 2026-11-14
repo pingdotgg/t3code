@@ -16,6 +16,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ReactNode,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -44,6 +45,7 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
 
 interface ChatHeaderProps {
+  cloudAction?: ReactNode;
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   activeThreadTitle: string;
@@ -69,6 +71,7 @@ function resolveRenameCommit(input: {
 }
 
 export const ChatHeader = memo(function ChatHeader({
+  cloudAction,
   activeThreadEnvironmentId,
   activeThreadId,
   activeThreadTitle,
@@ -393,6 +396,7 @@ export const ChatHeader = memo(function ChatHeader({
           ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {cloudAction}
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
     </div>
   );
