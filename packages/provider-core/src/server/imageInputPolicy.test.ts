@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, it } from "@effect/vitest";
 import type { ChatAttachment } from "@t3tools/contracts";
 import { modelImageInputSupport, shouldSendNativeImage } from "./imageInputPolicy.ts";
 
@@ -23,24 +23,24 @@ describe("modelImageInputSupport", () => {
     [{}, undefined],
     [undefined, undefined],
   ] as const)("detects image modality support from provider metadata", (model, expected) => {
-    expect(modelImageInputSupport(model)).toBe(expected);
+    assert.equal(modelImageInputSupport(model), expected);
   });
 });
 
 describe("shouldSendNativeImage", () => {
   it("blocks a valid image when the model is known to lack vision", () => {
-    expect(shouldSendNativeImage({ attachment: png, supportsImageInput: false })).toBe(false);
+    assert.isFalse(shouldSendNativeImage({ attachment: png, supportsImageInput: false }));
   });
 
   it("preserves native images for vision models", () => {
-    expect(shouldSendNativeImage({ attachment: png, supportsImageInput: true })).toBe(true);
+    assert.isTrue(shouldSendNativeImage({ attachment: png, supportsImageInput: true }));
   });
 
   it("preserves existing behavior for unknown capabilities", () => {
-    expect(shouldSendNativeImage({ attachment: png, supportsImageInput: undefined })).toBe(true);
+    assert.isTrue(shouldSendNativeImage({ attachment: png, supportsImageInput: undefined }));
   });
 
   it("never promotes an ordinary file into a native image", () => {
-    expect(shouldSendNativeImage({ attachment: pdf, supportsImageInput: true })).toBe(false);
+    assert.isFalse(shouldSendNativeImage({ attachment: pdf, supportsImageInput: true }));
   });
 });
