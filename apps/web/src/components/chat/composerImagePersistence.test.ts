@@ -77,6 +77,22 @@ describe("serializeComposerImages", () => {
     expect(readFileAsDataUrl).not.toHaveBeenCalled();
   });
 
+  it("keeps composer order when a later image finishes reading first", async () => {
+    const large = image("large");
+    const small = image("small");
+    let finishLargeRead = (_dataUrl: string) => {};
+    const largeRead = new Promise<string>((resolve) => {
+      finishLargeRead = resolve;
+    });
+    vi.mocked(readFileAsDataUrl).mockImplementation(async (file) =>
+      file === large.file ? largeRead : "data:image/png;base64,c21hbGw=",
+    );
+
+    const serialized = serializeComposerImages([large, small], []);
+    finishLargeRead("data:image/png;base64,bGFyZ2U=");
+    expect((await serialized).map(({ id }) => id)).toEqual(["large", "small"]);
+  });
+
   it("omits failed uncached reads while keeping successfully serialized images", async () => {
     const a = image("a");
     const b = image("b");
