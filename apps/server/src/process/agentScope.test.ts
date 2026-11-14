@@ -12,12 +12,20 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import { makeCodexAppServerSpawnCommand } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProviderProcesses from "./providerProcesses.ts";
 import { classifyScope, make, ownedAgentSlice, type ScopeState } from "./agentScope.ts";
+
+const GiB = 1024 ** 3;
+const host = vi.hoisted(() => ({ totalmem: 16 * 1024 ** 3 }));
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeOS>();
+  return { ...actual, totalmem: () => host.totalmem };
+});
 
 const running: ScopeState = {
   loadState: "loaded",
@@ -295,6 +303,7 @@ describe("AgentScope service", () => {
   it.effect("caps agent memory and yields CPU, disk, and tasks to the server", () =>
     withFakeSystemd(({ scope, calls }) =>
       Effect.gen(function* () {
+        host.totalmem = 16 * GiB;
         yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
         const setProperties = calls.filter(([, verb]) => verb === "set-property");
         expect(setProperties).toEqual([
@@ -315,6 +324,18 @@ describe("AgentScope service", () => {
             "IOWeight=10",
             "TasksMax=25%",
           ],
+        ]);
+
+        // A VM whose memory grows after startup (balloon, hotplug) gets limits for its new size.
+        host.totalmem = 42 * GiB;
+        yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "b" });
+        expect(calls.filter(([, verb]) => verb === "set-property").at(-1)).toEqual([
+          "--user",
+          "set-property",
+          "--runtime",
+          "app-t3code-agents.slice",
+          `MemoryHigh=${36 * GiB}`,
+          `MemoryMax=${38 * GiB}`,
         ]);
       }),
     ),
