@@ -211,9 +211,10 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
 
   if (
     provider.driver === ProviderDriverKind.make("grok") ||
-    provider.driver === ProviderDriverKind.make("cursor")
+    provider.driver === ProviderDriverKind.make("cursor") ||
+    provider.driver === ProviderDriverKind.make("muse")
   ) {
-    // Grok and Cursor report ready only after they discover a model list; the pending,
+    // Grok, Cursor, and Muse report ready only after they discover a model list; the pending,
     // failed, empty-inventory, and logged-out probes are warning/error.
     return !(provider.installed && provider.status === "ready");
   }

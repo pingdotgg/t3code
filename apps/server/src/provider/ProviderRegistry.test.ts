@@ -1309,6 +1309,45 @@ it.layer(
       );
     });
 
+    it("drops Muse models a completed catalog read no longer returns", () => {
+      const previousProvider = {
+        instanceId: ProviderInstanceId.make("muse"),
+        driver: ProviderDriverKind.make("muse"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "unknown" },
+        checkedAt: "2026-10-30T00:00:00.000Z",
+        version: "1.0.3",
+        models: [
+          { slug: "muse-current", name: "Current", isCustom: false, capabilities: null },
+          { slug: "muse-retired", name: "Retired", isCustom: false, capabilities: null },
+        ],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      const refreshedProvider = {
+        ...previousProvider,
+        checkedAt: "2026-10-30T00:01:00.000Z",
+        models: [previousProvider.models[0]],
+      } satisfies ServerProvider;
+      const failedProvider = {
+        ...refreshedProvider,
+        status: "error",
+        models: [],
+        message: "Muse Code SDK could not read the model catalog.",
+      } satisfies ServerProvider;
+
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+        [previousProvider.models[0]],
+      );
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, failedProvider).models,
+        [...previousProvider.models],
+      );
+    });
+
     it("retains stale OpenCode models when a refresh fails", () => {
       const previousProvider = {
         instanceId: ProviderInstanceId.make("opencode"),
