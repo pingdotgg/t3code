@@ -1594,6 +1594,10 @@ export const ServerSettings = Schema.Struct({
   threadDisplayModes: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /** The display mode id that new threads started by hand in the web or desktop app open in. */
+  newThreadDisplayMode: TrimmedNonEmptyString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("normal")),
+  ),
 
   /** Sent by the Usage tab with each summary request to this environment; edit in settings.json. Invalid values are ignored. */
   usageModelFilter: ForwardCompatibleOptional(UsageModelFilter),
@@ -1982,6 +1986,7 @@ export const ServerSettingsPatch = Schema.Struct({
   threadDisplayModes: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(TrimmedNonEmptyString)),
   ),
+  newThreadDisplayMode: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

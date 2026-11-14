@@ -299,6 +299,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
   },
   {
+    id: "new-thread-display-mode",
+    title: "Display mode",
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    searchTerms: ["new thread default display mode chat replies messages only dashboard normal"],
+    environmentOnly: true,
+  },
+  {
     id: "default-permissions",
     title: "Permissions",
     to: "/settings/threads",

@@ -199,6 +199,7 @@ import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as ThreadDashboard from "./fork/threadDashboard/ThreadDashboard.ts";
 import * as SubThreads from "./fork/subThreads/SubThreads.ts";
+import * as NewThreadDisplayMode from "./fork/displayModeWrap/NewThreadDisplayMode.ts";
 import { shownWindow } from "./fork/shownHistory/ShownHistory.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -2189,7 +2190,7 @@ export const layerWsRpc = (
                               }),
                           createdBy: "user",
                           creationSource: input.creationSource ?? "web",
-                        }),
+                        }).pipe(NewThreadDisplayMode.forClientLaunch(input)),
                       ),
                       Effect.provide(intakeContext),
                     ),

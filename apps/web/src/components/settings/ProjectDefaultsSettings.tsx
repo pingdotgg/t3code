@@ -8,6 +8,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 
+import { NewThreadDisplayModeSetting } from "../../fork/displayMode/NewThreadDisplayModeSetting";
 import { useClientSettings } from "../../hooks/useSettings";
 import {
   defaultModelSelectionsAreMixed,
@@ -406,6 +407,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             }
           />
           {workspaceRow}
+          {isProjectScope ? null : <NewThreadDisplayModeSetting />}
         </>
       ) : (
         <>
