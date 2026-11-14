@@ -2519,15 +2519,14 @@ it.layer(
           NodePath.join(voltaHome, "tools", "image", "packages", "@example", "package-tool"),
           { recursive: true },
         );
-        const update = (yield* resolve).update;
-        if (owned) {
-          expect(update).toMatchObject({
-            command: "volta install @example/package-tool@latest",
-            lockKey: "volta",
-          });
-        } else {
-          expect(update).toBeNull();
-        }
+        expect((yield* resolve).update).toEqual(
+          owned
+            ? expect.objectContaining({
+                command: "volta install @example/package-tool@latest",
+                lockKey: "volta",
+              })
+            : null,
+        );
       }),
   );
 

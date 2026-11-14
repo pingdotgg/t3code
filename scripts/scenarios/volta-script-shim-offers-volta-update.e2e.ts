@@ -54,14 +54,21 @@ const installVoltaOpenCode = Effect.gen(function* () {
 test(
   "OpenCode installed through a Volta script shim offers a Volta update",
   WEB,
-  async ({ t3, app, screen }) => {
+  async ({ t3, app, browser, screen }) => {
+    await browser.emulateMedia({ colorScheme: "dark" });
     await t3.project("demo");
     await runPromise(installVoltaOpenCode);
-    await t3.open("/settings/providers");
+    await t3.open("/settings/providers?instanceId=opencode");
 
-    const details = screen.getByRole("button", /view details/);
+    // The list row and the detail header both carry the button; take the header's.
+    const details = screen.getByRole("button", /view details/).last();
     await expect(details).toBeVisible({ timeout: 60_000 });
     await details.tap();
+    await expect(screen.getByRole("dialog", "Update available")).toBeVisible();
+    // Capture the settled popover, not its fade-in.
+    await browser.evaluate(async () => {
+      await Promise.all(document.getAnimations().map((animation) => animation.finished));
+    });
     await app.screenshot("update-details");
     await expect(screen.getByText("volta install @opencode/cli@latest")).toBeVisible();
   },
