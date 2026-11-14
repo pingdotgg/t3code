@@ -2027,58 +2027,22 @@ fn thread_mark_unread(tx: &mut Tx<'_>, command: Value) -> Outcome {
     })
 }
 
-fn pull_request_key(link: &Value) -> (Value, Value, Value) {
-    let lower = |v: &Value| json!(v.as_str().unwrap_or_default().to_lowercase());
-    (
-        lower(&link["host"]),
-        lower(&link["repository"]),
-        link["number"].clone(),
-    )
-}
-
+/// `thread.pull-request.link` and `unlink`: T3's decider (`pull_requests.rs`). T3 emits
+/// `thread.pull-request-synced` with the thread also when nothing changed.
 fn thread_pull_request_link(tx: &mut Tx<'_>, command: Value) -> Outcome {
-    let key = pull_request_key(&command);
-    let mut link = json!({
-        "host": command["host"],
-        "repository": command["repository"],
-        "number": command["number"],
-        "url": command["url"],
-        "source": command["source"],
-        "linkedAt": tx.now(),
-        "snapshot": null,
-        "stack": null,
-    });
-    if command["repositoryWebUrl"].is_string() {
-        link["repositoryWebUrl"] = command["repositoryWebUrl"].clone();
-    }
-    thread_patch(tx, &command, "thread.metadata-updated", |t, now| {
-        let mut links = t["pullRequests"].as_array().cloned().unwrap_or_default();
-        if links
-            .iter()
-            .any(|l| pull_request_key(l) == key && l["source"] != "stack-dismissed")
-        {
-            return Ok(());
-        }
-        links.retain(|l| pull_request_key(l) != key);
-        links.push(link);
-        t["pullRequests"] = json!(links);
-        t["updatedAt"] = json!(now);
-        Ok(())
-    })
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    let thread = live_thread(tx, &thread_id)?;
+    let now = tx.now().to_owned();
+    let updated = crate::pull_requests::decide(&thread, &command, &now).unwrap_or(thread);
+    let cid = command["commandId"].as_str().map(str::to_owned);
+    tx.append(
+        Draft::new(&thread_id, "thread.pull-request-synced", updated).command(cid.as_deref()),
+    )?;
+    Ok(vec![])
 }
 
 fn thread_pull_request_unlink(tx: &mut Tx<'_>, command: Value) -> Outcome {
-    let key = pull_request_key(&command);
-    thread_patch(tx, &command, "thread.metadata-updated", |t, now| {
-        let mut links = t["pullRequests"].as_array().cloned().unwrap_or_default();
-        let before = links.len();
-        links.retain(|l| pull_request_key(l) != key);
-        if links.len() != before {
-            t["pullRequests"] = json!(links);
-            t["updatedAt"] = json!(now);
-        }
-        Ok(())
-    })
+    thread_pull_request_link(tx, command)
 }
 
 /// Dismisses a pending user question without an answer: the provider gets an empty answer.
