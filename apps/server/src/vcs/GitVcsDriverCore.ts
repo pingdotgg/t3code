@@ -4577,6 +4577,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   )(function* (input, options) {
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.refName);
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.newRefName);
+    // Git reports the prefix from its physical cwd, so aliases and 8.3 names need no comparison.
+    const prefix = yield* executeGit(
+      "GitVcsDriver.createWorktree.checkRoot",
+      input.cwd,
+      ["rev-parse", "--show-prefix"],
+      { timeoutMs: 5_000 },
+    );
+    if (prefix.stdout.trim() !== "") {
+      const repositoryRoot = yield* readWorktreeRoot(input.cwd);
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.createWorktree",
+        command: "git worktree add",
+        cwd: input.cwd,
+        detail: `Cannot create a worktree from "${input.cwd}" because it is inside the Git repository at "${repositoryRoot ?? "an ancestor folder"}". Add the repository root as a project to create a worktree of that repository, or run git init in the project folder to give it its own repository.`,
+      });
+    }
     const targetBranch = input.newRefName ?? input.refName;
     // Resolve sub/.. before taking the basename.
     const repoName = path.basename(path.resolve(input.cwd));
