@@ -126,8 +126,24 @@ describe("new thread model fallback", () => {
     ).toBeDefined();
   });
   it.each([
-    ["cursor", ["autoPercentUsed"], "claude-opus-5-5", false, undefined, undefined],
-    ["cursor", ["autoPercentUsed"], "composer-2.5", false, undefined, undefined],
+    [
+      "cursor",
+      ["autoPercentUsed", "apiPercentUsed"],
+      "claude-opus-5-5",
+      false,
+      undefined,
+      undefined,
+      40,
+    ],
+    [
+      "cursor",
+      ["autoPercentUsed", "apiPercentUsed"],
+      "composer-2.5",
+      false,
+      undefined,
+      undefined,
+      40,
+    ],
     ["cursor", ["autoPercentUsed", "apiPercentUsed"], "composer-2.5", true, undefined, undefined],
     ["cursor", ["totalPercentUsed", "autoPercentUsed"], "composer-2.5", true, undefined, undefined],
     ["antigravity", ["gemini-weekly"], "claude-opus-5-5", false, undefined, undefined],
@@ -183,7 +199,7 @@ describe("new thread model fallback", () => {
     ["opencode", ["budget_all"], "opencode/model", false, undefined, []],
   ] as const)(
     "matches %s pools %s to %s",
-    (driver, ids, model, usesFallback, modelIds, providerIds) => {
+    (driver, ids, model, usesFallback, modelIds, providerIds, apiUsedPercent: number = 100) => {
       const defaultSelection = { ...selection, model };
       expect(
         resolveNewThreadModelSelection({
@@ -197,7 +213,7 @@ describe("new thread model fallback", () => {
                 windows: ids.map((id) => ({
                   ...window,
                   id,
-                  usedPercent: 100,
+                  usedPercent: id === "apiPercentUsed" ? apiUsedPercent : 100,
                   ...(modelIds === undefined ? {} : { modelIds }),
                   ...(providerIds === undefined ? {} : { providerIds }),
                 })),
