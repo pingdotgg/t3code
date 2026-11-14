@@ -314,6 +314,7 @@ function modelReconciliationHarness(
   const noPendingThreadIdsAtom = Atom.make((): ReadonlySet<ThreadId> => new Set());
   const shells = createEnvironmentThreadShellAtoms({
     catalogValueAtom,
+    connectionPhaseAtom: () => Atom.make("connected" as const),
     snapshotAtom: () => snapshotAtom,
     hiddenThreadTagsAtom: () => Atom.make(null),
   });

@@ -53,6 +53,7 @@ import {
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
+  UnplugIcon,
   UserRoundIcon,
   XIcon,
 } from "lucide-react";
@@ -530,6 +531,7 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 };
 
 const TOP_STATUS_ICONS = {
+  connection: UnplugIcon,
   working: CircleDashedIcon,
   waiting: CircleDotDashedIcon,
   input: MessageCircleQuestionIcon,
@@ -745,7 +747,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     isActive: props.isActive,
     isSelected,
   });
-  const topStatus =
+  const runStatus =
     status === "preparing" || status === "working"
       ? {
           label:
@@ -806,6 +808,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           className: "text-success-foreground",
                         }
                       : null;
+  const topStatus =
+    status === "connecting" || status === "reconnecting" || status === "offline"
+      ? {
+          label:
+            status === "connecting"
+              ? "Connecting"
+              : status === "reconnecting"
+                ? "Reconnecting"
+                : "Offline",
+          icon: "connection" as const,
+          className: "text-muted-foreground",
+        }
+      : runStatus;
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
