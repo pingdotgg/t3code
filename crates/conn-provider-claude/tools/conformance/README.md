@@ -24,6 +24,13 @@ every SDK, CLI or pinned-commit change. Exit 0 means no difference.
 - Both start from the same base environment (`env -i`, a throwaway `HOME`, an empty
   `CLAUDE_CONFIG_DIR`); `compare.mjs` diffs the records.
 
+An interrupt runs beside the turn's events on both sides (T3 forks `interruptTurn` with
+`requestRuntimeRestart`, as `ProviderTurnControlService` calls it), and the next step waits
+for it to finish. That is how T3's effect outbox orders a Stop and the next turn of a thread,
+so the reference does not depend on timing. The stub exits when its stdin ends, as the real
+CLI does: T3's `turn_interrupt_restart` transcript, recorded with the real CLI, shows a clean
+exit (`runtime_exit` success) after the interrupt and then a new `query.open`.
+
 Normalized in the comparison, and nothing else: uuids and the SDK's control request ids (random
 per run; numbered by first appearance), the stub's path, and the order of environment entries.
 A stdin line that differs only in JSON key order is reported as such and fails the check.
@@ -36,7 +43,8 @@ A stdin line that differs only in JSON key order is reported as such and fails t
 | `resumed_turn`             | a new provider session on the same thread (`--resume`)          |
 | `mcp_turn`                 | the `t3-code` MCP server: allow rule, system prompt, `mcp_set_servers` |
 | `permission`               | approval-required: two `can_use_tool` prompts, decline and accept |
-| `interrupt`                | `interrupt` during output, then a second turn                   |
+| `interrupt`                | `interrupt` during output, the CLI closed, then a second turn in a new CLI (`--resume`): 2 starts |
+| `interrupt_twice`          | the same twice: the resumed CLI is interrupted and closed too; 3 starts |
 | `model_change_live`        | a model change on a live CLI: `set_model`, `apply_flag_settings` |
 | `model_change_restart`     | a model change where the CLI opened in another mode: a new CLI |
 | `fork`                     | `forkSession` on disk, then the fork's first turn               |

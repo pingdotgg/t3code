@@ -31,6 +31,7 @@ import { describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -275,6 +276,9 @@ const runScenario = (scenario: Scenario) =>
       });
       const answers = [...(step.answers ?? [])];
       let interrupted = step.interrupt !== true;
+      // The Stop runs as T3's EffectWorker runs it, beside the turn's events. The outbox runs a
+      // thread's effects one at a time, so the next step waits for the Stop to finish.
+      let interrupting: Fiber.Fiber<void, unknown> | undefined;
       let liveSelection = step.liveSelection;
       for (;;) {
         const event = yield* Queue.take(session.events).pipe(Effect.timeout("60 seconds"));
@@ -294,8 +298,13 @@ const runScenario = (scenario: Scenario) =>
           }
           if (!interrupted && event.providerTurn.tokenUsage != null) {
             interrupted = true;
-            yield* session.runtime
-              .interruptTurn({ providerThread: thread, providerTurnId: event.providerTurn.id })
+            // As ProviderTurnControlService.interrupt calls it for a user's Stop.
+            interrupting = yield* session.runtime
+              .interruptTurn({
+                providerThread: thread,
+                providerTurnId: event.providerTurn.id,
+                requestRuntimeRestart: true,
+              })
               .pipe(Effect.forkIn(session.scope));
           }
         }
@@ -307,6 +316,7 @@ const runScenario = (scenario: Scenario) =>
         }
         if (event.type === "turn.terminal") {
           console.log(`${scenario.name}: turn ${n} ${event.status}`);
+          if (interrupting !== undefined) yield* Fiber.join(interrupting);
           break;
         }
       }

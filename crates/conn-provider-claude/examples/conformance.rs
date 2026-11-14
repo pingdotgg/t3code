@@ -14,9 +14,9 @@ use std::{path::PathBuf, time::Duration};
 
 use conn_contract::{from_json, to_json};
 use conn_provider::{
-    EnsureThreadInput, ForkThreadInput, InterruptInput, McpServer, OpenSessionInput, OpenedSession,
-    Provider, ProviderEvent, ResumeThreadInput, RuntimeRequestResponse, Session, TurnInput,
-    TurnMessage,
+    BoxFuture, EnsureThreadInput, ForkThreadInput, InterruptInput, McpServer, OpenSessionInput,
+    OpenedSession, Provider, ProviderEvent, ProviderResult, ResumeThreadInput,
+    RuntimeRequestResponse, Session, TurnInput, TurnMessage,
 };
 use conn_provider_claude::{ClaudeConfig, ClaudeProvider};
 use serde_json::{Value, json};
@@ -120,6 +120,14 @@ fn image_size(dir: &std::path::Path) -> u64 {
 async fn next(events: &mut mpsc::Receiver<ProviderEvent>) -> Option<Value> {
     let event = tokio::time::timeout(TIMEOUT, events.recv()).await.ok()??;
     Some(serde_json::to_value(&event).unwrap_or_default())
+}
+
+/// An interrupt in flight; pending forever when there is none.
+async fn interrupting(call: &mut Option<BoxFuture<'_, ProviderResult<()>>>) -> ProviderResult<()> {
+    match call {
+        Some(call) => call.await,
+        None => std::future::pending().await,
+    }
 }
 
 async fn open(
@@ -251,9 +259,20 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
             .collect();
         answers.reverse();
         let mut interrupted = step["interrupt"] != json!(true);
+        // Like the T3 harness: the interrupt runs beside the turn's events, and the next step
+        // waits for it, as T3's effect outbox holds a thread's next turn behind its Stop.
+        let mut interrupt: Option<BoxFuture<'_, ProviderResult<()>>> = None;
         let mut live_selection = step.get("liveSelection").cloned();
         loop {
-            let Some(event) = next(&mut events).await else {
+            let event = tokio::select! {
+                result = interrupting(&mut interrupt) => {
+                    interrupt = None;
+                    result.unwrap_or_else(|e| panic!("interrupt: {e}"));
+                    continue;
+                }
+                event = next(&mut events) => event,
+            };
+            let Some(event) = event else {
                 eprintln!("{name}: turn {n}: no provider event in time; scenario stopped");
                 break 'steps;
             };
@@ -283,13 +302,10 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
                     }
                     if !interrupted && turn["tokenUsage"].is_object() {
                         interrupted = true;
-                        session
-                            .interrupt_turn(InterruptInput {
-                                provider_thread: thread.clone(),
-                                provider_turn_id: turn["id"].as_str().unwrap_or_default().into(),
-                            })
-                            .await
-                            .unwrap_or_else(|e| panic!("interrupt: {e}"));
+                        interrupt = Some(session.interrupt_turn(InterruptInput {
+                            provider_thread: thread.clone(),
+                            provider_turn_id: turn["id"].as_str().unwrap_or_default().into(),
+                        }));
                     }
                     turns.retain(|t| t["id"] != turn["id"]);
                     turns.push(turn);
@@ -313,6 +329,9 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
                 }
                 Some("turn.terminal") => {
                     eprintln!("{name}: turn {n} {}", event["status"]);
+                    if let Some(call) = interrupt.take() {
+                        call.await.unwrap_or_else(|e| panic!("interrupt: {e}"));
+                    }
                     break;
                 }
                 _ => {}

@@ -54,6 +54,12 @@ result equal, byte for byte.
   `MCP_CONNECTION_NONBLOCKING=0` on resume, `T3CODE_THREAD_ID`. The SDK adds its own.
 - **Bypass downgrade:** when bypass is asked, the SDK's `resolveSettings` plus the home's and
   remote settings decide; settings that forbid bypass give `auto` (or `default`), as T3.
+- **Interrupt:** as `interruptTurn`: the SDK's `interrupt` (at most 10 s), then `close` (the
+  CLI's stdin ends; the SDK sends SIGTERM after 2 s), then up to 10 s
+  (`CLAUDE_STOP_CONFIRM_TIMEOUT_MS`) for the CLI to exit. Then the turn is `interrupted` and
+  the call returns; else `InterruptTimeout`, the turn stays open and the engine offers Force
+  stop. A turn start waits for a running interrupt, as T3's effect outbox holds a thread's
+  next effect, so the next turn resumes in a new CLI (`--resume`) after the old one exited.
 - **MCP servers:** taken at open (`OpenSessionInput::mcp_servers`) and registered with
   `setMcpServers` after `initializationResult`, as the query runner does;
   `Session::set_mcp_servers` changes them on a live query.
@@ -162,7 +168,8 @@ Normalized in the comparison:
   and nothing reaps after a restart.
 - **Wakes:** T3 tells a Claude Monitor event from finished work (`monitorEvent`) and shows a
   subagent that Claude resumes by itself as running again. Not followed here.
-- **Interrupt** returns when the CLI acknowledges; TS waits for the terminal.
+- **Stop without a running turn:** T3's `interruptTurn` with `requestRuntimeRestart` closes an
+  idle query that runs background work; our engine calls the provider only for a running turn.
 - **Elicitation:** only field-less forms; TS fills simple forms.
 - **No `/mcp` instructions text** in this crate: the server passes it as `mcp_instructions`.
 
