@@ -557,7 +557,8 @@ function planCapacity(account: LimitAccount, kind: ServerProviderUsageWindow["ki
     return CODEX_PLAN_CAPACITY[account.plan];
   }
   if (account.driver === "claudeAgent" && kind === "session") {
-    return CLAUDE_SESSION_CAPACITY[account.plan];
+    // Native auth labels read "Claude Max Subscription"; usage accounts report the bare "Max".
+    return CLAUDE_SESSION_CAPACITY[account.plan.replace(/^Claude (.+) Subscription$/, "$1")];
   }
   return undefined;
 }
