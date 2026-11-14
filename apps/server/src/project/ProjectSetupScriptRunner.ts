@@ -168,8 +168,15 @@ function lineEditorReading(text: string, previous: boolean): boolean {
 
 type CompletionShell = "posix" | "fish" | "nushell" | "powershell";
 
+function shellName(shell: string): string {
+  return (shell.split(/[/\\]/).at(-1) ?? shell).toLowerCase().replace(/\.exe$/, "");
+}
+
+// Unobserved runs type the raw command into unknown shells, which may not parse the posix wrapper.
+const POSIX_SHELL_NAMES = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+
 function resolveCompletionShell(shell: string): CompletionShell | null {
-  const name = (shell.split(/[/\\]/).at(-1) ?? shell).toLowerCase().replace(/\.exe$/, "");
+  const name = shellName(shell);
   if (name === "cmd") return null;
   if (name === "fish") return "fish";
   if (name === "nu") return "nushell";
@@ -198,11 +205,12 @@ function encodePosixScript(text: string): string {
 }
 
 // Line editors run each submitted line on its own, so every line must be a complete command.
-function wrapPosixCommand(command: string, sentinel: string): string {
+function wrapPosixCommand(command: string, sentinel: string | null): string {
   const normalized = command.replace(/\r\n/g, "\n");
-  // The `_` suffix keeps trailing newlines; the subshell contains exits and syntax errors.
+  const report = sentinel ? `; printf '\\n${sentinel}%s\\n' "$?"` : "";
+  // The `_` suffix keeps trailing newlines; the subshell contains exits, syntax errors and the color opt-outs.
   const evaluate = (payload: string) =>
-    `( __t3_command=$(printf '%b_' ${payload}); eval "\${__t3_command%_}" ); printf '\\n${sentinel}%s\\n' "$?"`;
+    `( export NO_COLOR=1 FORCE_COLOR=0 COLORTERM=; __t3_command=$(printf '%b_' ${payload}); eval "\${__t3_command%_}" )${report}`;
   const inline = evaluate(`'${encodePosixScript(normalized)}'`);
   if (utf8.encode(` ${inline}\r`).byteLength <= POSIX_MAX_LINE_BYTES) return inline;
 
@@ -228,17 +236,26 @@ function wrapPosixCommand(command: string, sentinel: string): string {
   return lines.join("\r ");
 }
 
-function wrapCommandForCompletion(
+// Color probes in tools such as Vite+ wait for terminal replies no client can send before one attaches.
+// Each wrapper scopes the opt-outs to the script, so the shell left open for the user keeps its colors.
+function wrapScriptCommand(
   command: string,
-  shell: CompletionShell,
-  sentinel: string,
+  shell: CompletionShell | null,
+  sentinel: string | null,
 ): string {
   const body = command.replace(/\r?\n/g, "\r");
   switch (shell) {
-    case "powershell":
-      return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
-    case "fish":
-      return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
+    case "powershell": {
+      const exitCode = sentinel
+        ? "; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }"
+        : "";
+      const report = sentinel ? `; Write-Host "${sentinel}$__t3c"` : "";
+      return `$__t3color = $env:NO_COLOR, $env:FORCE_COLOR, $env:COLORTERM; $env:NO_COLOR = '1'; $env:FORCE_COLOR = '0'; $env:COLORTERM = $null; $global:LASTEXITCODE = $null; & {\r${body}\r}${exitCode}; $env:NO_COLOR = $__t3color[0]; $env:FORCE_COLOR = $__t3color[1]; $env:COLORTERM = $__t3color[2]${report}`;
+    }
+    case "fish": {
+      const report = sentinel ? `; printf '\\n${sentinel}%s\\n' $status` : "";
+      return `begin\rset -lx NO_COLOR 1; set -lx FORCE_COLOR 0; set -lx COLORTERM ''\r${body}\rend${report}`;
+    }
     case "nushell": {
       const escaped = command.replace(/["\\\x00-\x1f]/g, (char) =>
         char === '"' || char === "\\" ? `\\${char}` : `\\u{${char.charCodeAt(0).toString(16)}}`,
@@ -247,14 +264,17 @@ function wrapCommandForCompletion(
       return [
         "$env.LAST_EXIT_CODE = 0",
         "let __t3f = try { mktemp --tmpdir-path $env.T3CODE_WORKTREE_PATH --suffix .nu .t3-setup-XXXXXXXX } catch {|e| print -e $e.msg; null }",
-        `if $__t3f == null { $env.LAST_EXIT_CODE = 1 } else { try { [$"rm --permanent ($__t3f | to nuon)" "${escaped}"] | str join (char newline) | save --force --raw $__t3f; ^$nu.current-exe --login --commands $"cd $env.T3CODE_WORKTREE_PATH; source ($__t3f | to nuon)" } catch {|e| if $e != null and $e.exit_code? == null { print -e $e.msg }; if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } } }`,
+        `if $__t3f == null { $env.LAST_EXIT_CODE = 1 } else { try { [$"rm --permanent ($__t3f | to nuon)" "${escaped}"] | str join (char newline) | save --force --raw $__t3f; ^$nu.current-exe --login --commands $"$env.NO_COLOR = '1'; $env.FORCE_COLOR = '0'; $env.COLORTERM = ''; cd $env.T3CODE_WORKTREE_PATH; source ($__t3f | to nuon)" } catch {|e| if $e != null and $e.exit_code? == null { print -e $e.msg }; if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } } }`,
         "let __t3c = $env.LAST_EXIT_CODE",
         "try { if $__t3f != null and ($__t3f | path exists) { rm --permanent $__t3f } } catch {|e| print -e $e.msg }",
-        `print $"\\n${sentinel}($__t3c)"`,
+        ...(sentinel ? [`print $"\\n${sentinel}($__t3c)"`] : []),
       ].join("; ");
     }
     case "posix":
       return wrapPosixCommand(command, sentinel);
+    case null:
+      // cmd has no block scope, so its opt-outs stay in the shell.
+      return `set "NO_COLOR=1" & set "FORCE_COLOR=0" & set "COLORTERM="\r${command}`;
   }
 }
 
@@ -498,14 +518,10 @@ export const make = Effect.gen(function* () {
         ? `settle-${script.id}-${(yield* random.uuidV4()).slice(0, 8)}`
         : `setup-${script.id}`;
     const cwd = input.worktreePath;
-    const env = {
-      ...projectScriptRuntimeEnv({
-        project: { cwd: project.workspaceRoot },
-        worktreePath: input.worktreePath,
-      }),
-      // Before client attachment, truecolor probes wait for terminal replies nobody can send.
-      COLORTERM: "",
-    };
+    const env = projectScriptRuntimeEnv({
+      project: { cwd: project.workspaceRoot },
+      worktreePath: input.worktreePath,
+    });
     const observe = input.observeCompletion;
     const completionToken = observe ? (yield* random.uuidV4()).replaceAll("-", "") : null;
     const echoedWrapperLines: string[] = [];
@@ -534,7 +550,7 @@ export const make = Effect.gen(function* () {
           stopOnSettle: script.stopOnSettle ?? false,
           cwd,
           worktreePath: input.worktreePath,
-          env: { ...env, NO_COLOR: "1", FORCE_COLOR: "0" },
+          env,
         })
         .pipe(
           Effect.andThen(() =>
@@ -556,18 +572,15 @@ export const make = Effect.gen(function* () {
         return { completionShell: null, commandLine: null };
       }
       const completionShell = resolveCompletionShell(shell);
-      let commandLine = script.command;
-      if (observe && completionToken) {
-        if (completionShell === null) {
-          yield* terminalManager.closeIdle({ threadId: input.threadId, terminalId });
-          return yield* new ProjectSetupScriptUnsupportedShellError({ shell });
-        }
-        commandLine = wrapCommandForCompletion(
-          script.command,
-          completionShell,
-          completionSentinel(completionToken),
-        );
+      if (completionToken && completionShell === null) {
+        yield* terminalManager.closeIdle({ threadId: input.threadId, terminalId });
+        return yield* new ProjectSetupScriptUnsupportedShellError({ shell });
       }
+      const sentinel = completionToken ? completionSentinel(completionToken) : null;
+      const commandLine =
+        sentinel === null && completionShell === "posix" && !POSIX_SHELL_NAMES.has(shellName(shell))
+          ? script.command
+          : wrapScriptCommand(script.command, completionShell, sentinel);
       echoedWrapperLines.push(...commandLine.split("\r").filter((line) => line.length > 0));
       return { completionShell, commandLine };
     }).pipe(

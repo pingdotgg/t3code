@@ -46,16 +46,22 @@ const makeHarness = Effect.fn(function* (options: {
   readonly history?: string;
   readonly opening?: Deferred.Deferred<void>;
   readonly shell?: string | null;
+  readonly observe?: boolean;
 }) {
   const listeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const writes = yield* Queue.unbounded<string>();
   const outputLines = yield* Queue.unbounded<string>();
+  const openedEnvs: Array<Record<string, string> | undefined> = [];
   const terminals = Layer.mock(TerminalManager.TerminalManager)({
-    open: () =>
-      (options.opening
-        ? Deferred.succeed(options.opening, undefined).pipe(Effect.andThen(Effect.never))
-        : Effect.void
-      ).pipe(Effect.as(openSnapshot(options.history ?? ""))),
+    open: (input) =>
+      Effect.sync(() => openedEnvs.push(input.env)).pipe(
+        Effect.andThen(
+          options.opening
+            ? Deferred.succeed(options.opening, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+        ),
+        Effect.as(openSnapshot(options.history ?? "")),
+      ),
     getShell: () =>
       options.shell === null
         ? Effect.fail(new TerminalNotRunningError({ threadId, terminalId }))
@@ -85,7 +91,9 @@ const makeHarness = Effect.fn(function* (options: {
   const start = runner.runForThread({
     threadId,
     worktreePath: "/repo/.t3/worktrees/feature",
-    observeCompletion: { onOutputLine: (line) => Queue.offer(outputLines, line) },
+    ...(options.observe === false
+      ? {}
+      : { observeCompletion: { onOutputLine: (line) => Queue.offer(outputLines, line) } }),
     project: {
       id: ProjectId.make("project-1"),
       workspaceRoot: "/repo",
@@ -102,7 +110,7 @@ const makeHarness = Effect.fn(function* (options: {
   });
   const emit = (terminalEvent: TerminalEvent) =>
     Effect.forEach([...listeners], (listener) => listener(terminalEvent), { discard: true });
-  return { start, listeners, writes, outputLines, emit };
+  return { start, listeners, writes, outputLines, openedEnvs, emit };
 });
 
 const setup = Effect.fn(function* (
@@ -146,12 +154,47 @@ describe("ProjectSetupScriptRunner", () => {
         ` ${[
           "$env.LAST_EXIT_CODE = 0",
           "let __t3f = try { mktemp --tmpdir-path $env.T3CODE_WORKTREE_PATH --suffix .nu .t3-setup-XXXXXXXX } catch {|e| print -e $e.msg; null }",
-          `if $__t3f == null { $env.LAST_EXIT_CODE = 1 } else { try { [$"rm --permanent ($__t3f | to nuon)" "${escaped}"] | str join (char newline) | save --force --raw $__t3f; ^$nu.current-exe --login --commands $"cd $env.T3CODE_WORKTREE_PATH; source ($__t3f | to nuon)" } catch {|e| if $e != null and $e.exit_code? == null { print -e $e.msg }; if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } } }`,
+          `if $__t3f == null { $env.LAST_EXIT_CODE = 1 } else { try { [$"rm --permanent ($__t3f | to nuon)" "${escaped}"] | str join (char newline) | save --force --raw $__t3f; ^$nu.current-exe --login --commands $"$env.NO_COLOR = '1'; $env.FORCE_COLOR = '0'; $env.COLORTERM = ''; cd $env.T3CODE_WORKTREE_PATH; source ($__t3f | to nuon)" } catch {|e| if $e != null and $e.exit_code? == null { print -e $e.msg }; if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } } }`,
           "let __t3c = $env.LAST_EXIT_CODE",
           "try { if $__t3f != null and ($__t3f | path exists) { rm --permanent $__t3f } } catch {|e| print -e $e.msg }",
           `print $"\\n${sentinel}($__t3c)"`,
         ].join("; ")}\r`,
       );
+    }),
+  );
+
+  it.effect.each([
+    { shell: "/bin/zsh", scoped: "( export NO_COLOR=1 FORCE_COLOR=0 COLORTERM=; " },
+    {
+      shell: "/opt/homebrew/bin/fish",
+      scoped: "begin\rset -lx NO_COLOR 1; set -lx FORCE_COLOR 0; set -lx COLORTERM ''\rvp i\rend",
+    },
+    { shell: "/opt/homebrew/bin/nu", scoped: "$env.NO_COLOR = '1'; $env.FORCE_COLOR = '0'" },
+    {
+      shell: "pwsh",
+      scoped: "$env:NO_COLOR = '1'; $env:FORCE_COLOR = '0'; $env:COLORTERM = $null;",
+    },
+  ])("disables color for the script but not the shell it leaves ($shell)", ({ shell, scoped }) =>
+    Effect.gen(function* () {
+      const { writes, openedEnvs, emit } = yield* setup({ shell });
+      yield* emit({ ...event, type: "output", data: "\x1b[?2004h" });
+      expect(yield* Queue.take(writes)).toContain(scoped);
+      expect(openedEnvs).toHaveLength(1);
+      expect(openedEnvs[0]).not.toHaveProperty("NO_COLOR");
+      expect(openedEnvs[0]).not.toHaveProperty("FORCE_COLOR");
+      expect(openedEnvs[0]).not.toHaveProperty("COLORTERM");
+    }),
+  );
+
+  it.effect.each([
+    { shell: "/bin/zsh", written: /^ \( export NO_COLOR=1 [^\r]*eval [^\r]* \)\r$/ },
+    { shell: "/usr/bin/xonsh", written: /^ vp i\r$/ },
+  ])("types an unobserved script without a sentinel ($shell)", ({ shell, written }) =>
+    Effect.gen(function* () {
+      const { start, writes } = yield* makeHarness({ shell, observe: false });
+      yield* start;
+      yield* TestClock.adjust("3 seconds");
+      expect(yield* Queue.take(writes)).toMatch(written);
     }),
   );
 
@@ -232,7 +275,7 @@ describe("ProjectSetupScriptRunner", () => {
   );
 });
 
-const runObservedSetup = Effect.fnUntraced(function* (command: string) {
+const runObservedSetup = Effect.fnUntraced(function* (command: string, after = "") {
   const { writes, outputLines, emit, completion } = yield* setup({ command });
   yield* emit({ ...event, type: "output", data: "\x1b[?2004h" });
   const submitted = yield* Queue.take(writes);
@@ -246,7 +289,7 @@ const runObservedSetup = Effect.fnUntraced(function* (command: string) {
     const handle = yield* spawner.spawn(
       ChildProcess.make(
         "/bin/bash",
-        ["--noprofile", "--norc", "-c", submitted.replaceAll("\r", "\n")],
+        ["--noprofile", "--norc", "-c", (submitted + after).replaceAll("\r", "\n")],
         {
           cwd,
           env: { PATH: env.PATH },
@@ -325,6 +368,14 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX setup co
       const result = yield* runObservedSetup("printf '%s\\n' direct\\\n");
       assert.deepEqual(result.lines, ["direct"]);
       assert.equal(result.exitCode, 0);
+    }),
+  );
+
+  it.live("scopes the color opt-outs to the script", () =>
+    Effect.gen(function* () {
+      const probe = `printf '%s|%s|%s\\n' "\${NO_COLOR-unset}" "\${FORCE_COLOR-unset}" "\${COLORTERM-unset}"`;
+      const result = yield* runObservedSetup(probe, `\r${probe}`);
+      assert.deepEqual(result.lines, ["1|0|", "unset|unset|unset"]);
     }),
   );
 
