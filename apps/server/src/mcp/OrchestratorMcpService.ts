@@ -31,6 +31,8 @@ import {
   type OrchestratorMcpScheduleTaskInput,
   type OrchestratorMcpScheduleTaskResult,
   type OrchestratorMcpTarget,
+  type OrchestratorMcpTaskReceiptInput,
+  type OrchestratorMcpTaskReceiptResult,
   type OrchestratorMcpTaskCancelInput,
   type OrchestratorMcpTaskCancelResult,
   type OrchestratorMcpUpdateScheduledTaskInput,
@@ -176,6 +178,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpDelegateTaskInput,
   ) => Effect.Effect<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure>;
+  readonly taskReceipt: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpTaskReceiptInput,
+  ) => Effect.Effect<OrchestratorMcpTaskReceiptResult, OrchestratorMcpFailure>;
   readonly taskStatus: (
     scope: McpInvocationScope,
     taskId: NodeId,
@@ -2695,6 +2701,109 @@ const make = Effect.gen(function* () {
       return yield* input.mode === "wait"
         ? awaitTask(scope, taskId, key, input.timeoutMs)
         : readTask(scope, taskId, false, true);
+    }),
+    taskReceipt: Effect.fn("OrchestratorMcpService.taskReceipt")(function* (scope, input) {
+      yield* requireCapability(scope);
+      let parentThreadId: ThreadId;
+      let requestNamespace: string;
+      if (scope.thread !== undefined) {
+        if (input.parentThreadId !== undefined || input.requestNamespace !== undefined) {
+          return yield* failure(
+            "capability_denied",
+            "Thread callers cannot override receipt scope.",
+          );
+        }
+        parentThreadId = scope.thread.threadId;
+        requestNamespace = scope.requestNamespace;
+      } else {
+        if (
+          scope.client === undefined ||
+          scope.client.linked ||
+          input.parentThreadId === undefined ||
+          input.requestNamespace === undefined
+        ) {
+          return yield* failure(
+            "capability_denied",
+            "Receipt recovery requires an authorized local client and the original scope.",
+          );
+        }
+        parentThreadId = input.parentThreadId;
+        requestNamespace = input.requestNamespace;
+      }
+      const commandId = stableCommandId({
+        scope: { ...scope, requestNamespace },
+        requestKey: input.clientRequestId,
+        operation: "delegate-task",
+      });
+      const receipt = yield* threadManagement
+        .getDelegationReceipt(commandId, parentThreadId)
+        .pipe(Effect.mapError(() => failure("orchestration_error", "Unable to read the receipt.")));
+      const empty = {
+        requestedAt: null,
+        queuedAt: null,
+        startedAt: null,
+        completedAt: null,
+        deliveredAt: null,
+        costCoverage: "unknown" as const,
+      };
+      if (receipt === null)
+        return {
+          ...empty,
+          acceptance: "unknown" as const,
+          status: "unknown" as const,
+          outcome: null,
+          binding: null,
+          acceptedAt: null,
+        };
+      const acceptedAt =
+        receipt.status === "accepted" ? DateTime.formatIso(receipt.acceptedAt) : null;
+      if (receipt.status === "rejected")
+        return {
+          ...empty,
+          acceptance: "rejected" as const,
+          status: "failed" as const,
+          outcome: null,
+          binding: null,
+          acceptedAt,
+        };
+      const run =
+        receipt.binding === null
+          ? null
+          : yield* threadManagement
+              .getReceiptChildRun(receipt.binding.childThreadId, receipt.binding.childRunId)
+              .pipe(
+                Effect.mapError(() =>
+                  failure("orchestration_error", "Unable to read the child run."),
+                ),
+              );
+      const rawStatus = run === null ? undefined : taskStatusForRun(run);
+      const outcome =
+        run?.status === "rolled_back"
+          ? ("rolled_back" as const)
+          : rawStatus === "cancelled" || rawStatus === "interrupted"
+            ? rawStatus
+            : null;
+      const status =
+        rawStatus === undefined
+          ? ("unknown" as const)
+          : rawStatus === "queued"
+            ? ("queued" as const)
+            : rawStatus === "completed"
+              ? ("completed" as const)
+              : rawStatus === "failed" || outcome !== null
+                ? ("failed" as const)
+                : ("running" as const);
+      return {
+        ...empty,
+        acceptance: "accepted" as const,
+        status,
+        outcome,
+        binding: receipt.binding,
+        acceptedAt,
+        requestedAt: run === null ? null : DateTime.formatIso(run.requestedAt),
+        startedAt: run?.startedAt == null ? null : DateTime.formatIso(run.startedAt),
+        completedAt: run?.completedAt == null ? null : DateTime.formatIso(run.completedAt),
+      };
     }),
     taskStatus: Effect.fn("OrchestratorMcpService.taskStatus")(function* (callerScope, taskId) {
       const scope = yield* requireThreadScope(callerScope, "task_status");

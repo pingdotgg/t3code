@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -23,6 +24,8 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Metric from "effect/Metric";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
@@ -33,6 +36,9 @@ import {
   orchestrationCommandDuration,
   orchestrationCommandsTotal,
 } from "../observability/Metrics.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
@@ -40,6 +46,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -1195,6 +1202,135 @@ it.effect("settles only the stopped run's background work, once", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("reopens a pruned delegation receipt without public projections", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "delegation-receipt-" });
+    const filename = path.join(directory, "statev2.sqlite");
+    const parentThreadId = ThreadId.make("thread:receipt-reopen");
+    // This is the command key for namespace "original scope" and clientRequestId "request/1".
+    const commandId = CommandId.make("command:mcp:original%20scope:delegate-task:request%2F1");
+    const makeLayer = () => {
+      const database = SqlitePersistence.layerFromPath(filename).pipe(
+        Layer.provide(NodeServices.layer),
+      );
+      const harness = ProviderReplayHarness.layerWithRegistry(
+        { name: "receipt-reopen" },
+        ProviderAdapterRegistry.layerFromAdapters([adapter]),
+        { databaseLayer: database, runEffectWorker: false },
+      );
+      return Layer.mergeAll(
+        database,
+        harness,
+        ProjectionStore.layer.pipe(Layer.provide(database)),
+        CommandReceiptStore.layer.pipe(Layer.provide(database)),
+      );
+    };
+    const binding = yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-receipt-reopen"),
+        threadId: parentThreadId,
+        projectId: ProjectId.make("project:receipt-reopen"),
+        title: "Parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("start-receipt-reopen"),
+        threadId: parentThreadId,
+        messageId: MessageId.make("message:receipt-reopen"),
+        text: "Delegate",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const parent = yield* projections.getThreadProjection(parentThreadId);
+      const run = parent.runs[0]!;
+      const result = yield* orchestrator.dispatch({
+        type: "delegated_task.request",
+        commandId,
+        parentThreadId,
+        parentRunId: run.id,
+        parentNodeId: run.rootNodeId!,
+        task: "Review",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const delegated = result.storedEvents.find(
+        ({ event }) => event.type === "subagent.updated" && event.payload.origin === "app_owned",
+      )?.event;
+      assert.isTrue(delegated?.type === "subagent.updated");
+      if (delegated?.type !== "subagent.updated" || delegated.payload.childThreadId === null)
+        return yield* Effect.die("Missing delegated child");
+      const childThreadId = delegated.payload.childThreadId;
+      const childRun = result.storedEvents.find(
+        ({ event }) => event.type === "run.created" && event.threadId === childThreadId,
+      )?.event;
+      if (childRun?.type !== "run.created") return yield* Effect.die("Missing child run");
+      const expected = {
+        taskId: delegated.payload.id,
+        childThreadId,
+        childRunId: childRun.payload.id,
+      };
+      yield* sql`DELETE FROM orchestration_events WHERE command_id = ${commandId}`;
+      const remaining =
+        yield* sql`SELECT sequence FROM orchestration_events WHERE command_id = ${commandId}`;
+      assert.deepEqual(remaining, []);
+      return expected;
+    }).pipe(Effect.provide(makeLayer()), Effect.scoped);
+
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+      const serviceLayer = ThreadManagementService.layer.pipe(
+        Layer.provide(
+          Layer.succeed(Orchestrator.OrchestratorV2, {
+            ...orchestrator,
+            getThreadRecords: () => Effect.die("Public projection unavailable"),
+          }),
+        ),
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(Layer.succeed(CommandReceiptStore.CommandReceiptStoreV2, receipts)),
+      );
+      const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+        Effect.provide(serviceLayer),
+      );
+      assert.deepEqual(yield* orchestrator.readCommandEvents(commandId), []);
+      assert.deepEqual(
+        (yield* service.getDelegationReceipt(commandId, parentThreadId))?.binding,
+        binding,
+      );
+      assert.equal(
+        (yield* service.getDelegationReceipt(commandId, parentThreadId))?.status,
+        "accepted",
+      );
+      assert.isNull(yield* service.getDelegationReceipt(commandId, ThreadId.make("thread:other")));
+      assert.isNull(
+        yield* service.getDelegationReceipt(
+          CommandId.make("command:mcp:other:delegate-task:request%2F1"),
+          parentThreadId,
+        ),
+      );
+    }).pipe(Effect.provide(makeLayer()), Effect.scoped);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("keeps delegated child pull-request links independent of the parent", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1240,8 +1376,8 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     });
     const parent = yield* projections.getThreadProjection(parentThreadId);
     const parentRun = parent.runs[0]!;
-    yield* orchestrator.dispatch({
-      type: "delegated_task.request",
+    const delegation = {
+      type: "delegated_task.request" as const,
       commandId: CommandId.make("delegate-parent-pr"),
       parentThreadId,
       parentRunId: parentRun.id,
@@ -1250,12 +1386,31 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
       modelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
-      createdBy: "agent",
-      creationSource: "mcp",
-    });
+      createdBy: "agent" as const,
+      creationSource: "mcp" as const,
+    } as const;
+    yield* orchestrator.dispatch(delegation);
     const updatedParent = yield* projections.getThreadProjection(parentThreadId);
     const childThreadId = updatedParent.subagents[0]!.childThreadId!;
     const child = yield* projections.getThreadProjection(childThreadId);
+    const sql = yield* SqlClient.SqlClient;
+    const [receipt] = yield* sql<{ readonly result_metadata: string | null }>`
+      SELECT result_metadata FROM orchestration_command_receipts WHERE command_id = ${"delegate-parent-pr"}
+    `;
+    assert.deepEqual(JSON.parse(receipt!.result_metadata!), {
+      taskId: updatedParent.subagents[0]!.id,
+      childThreadId,
+      childRunId: child.runs[0]!.id,
+    });
+    yield* sql`DELETE FROM orchestration_events WHERE command_id = ${delegation.commandId}`;
+    const retry = yield* orchestrator.dispatch(delegation);
+    assert.lengthOf(retry.storedEvents, 0);
+    const afterRetry = yield* projections.getThreadProjection(parentThreadId);
+    assert.lengthOf(afterRetry.subagents, 1);
+    const [retained] = yield* sql<{ readonly result_metadata: string | null }>`
+      SELECT result_metadata FROM orchestration_command_receipts WHERE command_id = ${delegation.commandId}
+    `;
+    assert.equal(retained!.result_metadata, receipt!.result_metadata);
     assert.isNull(child.thread.linkedPullRequest);
     assert.deepEqual(child.thread.pullRequests, []);
     assert.equal(child.thread.branch, parent.thread.branch);

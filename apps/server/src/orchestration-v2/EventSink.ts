@@ -241,6 +241,12 @@ export interface EventSinkV2Shape {
   }) => Stream.Stream<OrchestrationV2StoredEvent, EventSinkV2Error>;
 }
 
+const encodeReceiptMetadata = (binding: {
+  taskId: string;
+  childThreadId: string;
+  childRunId: string;
+}) => JSON.stringify(binding);
+
 export class EventSinkV2 extends Context.Service<EventSinkV2, EventSinkV2Shape>()(
   "t3/orchestration-v2/EventSink/EventSinkV2",
 ) {}
@@ -770,6 +776,33 @@ const layerBase: Layer.Layer<
           }
           const outcomes = yield* applyStoredEvents(storedEvents);
           yield* effectOutbox.enqueue(input.effects);
+          const delegated =
+            input.commandType === "delegated_task.request"
+              ? storedEvents.find(
+                  (stored) =>
+                    stored.event.type === "subagent.updated" &&
+                    stored.event.payload.origin === "app_owned",
+                )?.event
+              : undefined;
+          const childThreadId =
+            delegated?.type === "subagent.updated" ? delegated.payload.childThreadId : null;
+          const childRun =
+            childThreadId === null
+              ? undefined
+              : storedEvents.find(
+                  (stored) =>
+                    stored.event.type === "run.created" && stored.event.threadId === childThreadId,
+                )?.event;
+          const resultMetadata =
+            delegated?.type === "subagent.updated" &&
+            childThreadId !== null &&
+            childRun?.type === "run.created"
+              ? encodeReceiptMetadata({
+                  taskId: delegated.payload.id,
+                  childThreadId,
+                  childRunId: childRun.payload.id,
+                })
+              : null;
           const receipt: CommandReceiptStore.CommandReceiptV2 = {
             commandId: input.commandId,
             threadId: input.threadId,
@@ -778,6 +811,7 @@ const layerBase: Layer.Layer<
             resultSequence: sequence,
             status: "accepted",
             error: null,
+            resultMetadata,
           };
           yield* commandReceipts.upsert(receipt);
           const cancelledEffectIds =

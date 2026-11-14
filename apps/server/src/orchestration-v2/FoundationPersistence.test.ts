@@ -1532,6 +1532,31 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("retains delegated acceptance metadata in the command receipt", () =>
+    Effect.gen(function* () {
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+      const commandId = CommandId.make("command:receipt-binding");
+      const binding = JSON.stringify({
+        taskId: "task:one",
+        childThreadId: "thread:child",
+        childRunId: "run:child",
+      });
+      yield* receipts.upsert({
+        commandId,
+        threadId: ThreadId.make("thread:parent"),
+        commandType: "delegated_task.request",
+        acceptedAt: yield* DateTime.now,
+        resultSequence: 1,
+        status: "accepted",
+        error: null,
+        resultMetadata: binding,
+      });
+      const receipt = yield* receipts.getByCommandId(commandId);
+      assert.isTrue(Option.isSome(receipt));
+      if (Option.isSome(receipt)) assert.equal(receipt.value.resultMetadata, binding);
+    }),
+  );
+
   it.effect(
     "rolls back events, projections, receipts, and effects after a projection failure",
     () =>

@@ -249,6 +249,32 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
 
+export const OrchestratorMcpTaskReceiptBinding = Schema.Struct({
+  taskId: NodeId,
+  childThreadId: ThreadId,
+  childRunId: RunId,
+});
+export const OrchestratorMcpTaskReceiptInput = Schema.Struct({
+  clientRequestId: OrchestratorMcpClientRequestId,
+  parentThreadId: Schema.optional(ThreadId),
+  requestNamespace: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestratorMcpTaskReceiptInput = typeof OrchestratorMcpTaskReceiptInput.Type;
+export const OrchestratorMcpTaskReceiptResult = Schema.Struct({
+  acceptance: Schema.Literals(["accepted", "rejected", "unknown"]),
+  status: Schema.Literals(["queued", "running", "completed", "failed", "unknown"]),
+  outcome: Schema.NullOr(Schema.Literals(["cancelled", "interrupted", "rolled_back"])),
+  binding: Schema.NullOr(OrchestratorMcpTaskReceiptBinding),
+  requestedAt: Schema.NullOr(Schema.String),
+  acceptedAt: Schema.NullOr(Schema.String),
+  queuedAt: Schema.NullOr(Schema.String),
+  startedAt: Schema.NullOr(Schema.String),
+  completedAt: Schema.NullOr(Schema.String),
+  deliveredAt: Schema.NullOr(Schema.String),
+  costCoverage: Schema.Literal("unknown"),
+});
+export type OrchestratorMcpTaskReceiptResult = typeof OrchestratorMcpTaskReceiptResult.Type;
+
 export const OrchestratorMcpTaskStatusInput = Schema.Struct({
   taskId: NodeId,
 });
