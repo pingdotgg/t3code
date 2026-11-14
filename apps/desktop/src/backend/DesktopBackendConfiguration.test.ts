@@ -819,6 +819,53 @@ describe("DesktopBackendConfiguration", () => {
   );
 
   it.effect(
+    "resolveWsl strips lowercase t3code_home and forwards lowercase wslenv on Windows",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-backend-config-test-",
+        });
+
+        yield* Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          const config = yield* configuration.resolveWsl({ port: 5050, distro: null });
+
+          assert.notProperty(config.env, "t3code_home");
+          assert.notProperty(config.env, "T3CODE_HOME");
+          assert.notProperty(config.env, "wslenv");
+          assert.equal(
+            config.env.WSLENV,
+            "GOPATH/p:USER_CUSTOM/u:OPENAI_API_KEY:T3CODE_OTLP_HEADERS:T3CODE_OTLP_PROTOCOL",
+          );
+        }).pipe(
+          Effect.provide(
+            layerBackendConfiguration().pipe(
+              Layer.provideMerge(layerServerExposure),
+              Layer.provideMerge(DesktopAppSettings.layerTest()),
+              Layer.provideMerge(DesktopWslServerTree.layerTest()),
+              Layer.provideMerge(
+                DesktopWslEnvironment.layerTest({
+                  isAvailable: true,
+                  windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
+                  getDistroIp: () => Option.some("172.27.0.99"),
+                }),
+              ),
+              Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
+            ),
+          ),
+          Effect.provideService(HostProcess.Environment, {
+            t3code_home: "C:\\Users\\user\\.t3code-custom",
+            wslenv: "GOPATH/p:USER_CUSTOM/u",
+            OPENAI_API_KEY: "openai-key",
+            T3CODE_OTLP_HEADERS: 'authorization="Bearer%20my-token"',
+            T3CODE_OTLP_PROTOCOL: "http/protobuf",
+          }),
+        );
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect(
     "resolvePrimary falls back to the Windows primary when wsl-only but WSL is unavailable",
     () =>
       Effect.gen(function* () {
