@@ -1295,12 +1295,10 @@ describe("fast completion delivery", () => {
       yield* Effect.forEach(
         ["first", "second"],
         (jobId) =>
-          deliveries.processSignedJob(
-            signApnsDeliveryJob({
-              secret: config.apnsDeliveryJobSigningSecret,
-              payload: makeApnsDeliveryJobPayload({ ...payload, jobId }),
-            }),
-          ),
+          signApnsDeliveryJob({
+            secret: config.apnsDeliveryJobSigningSecret,
+            payload: makeApnsDeliveryJobPayload({ ...payload, jobId }),
+          }).pipe(Effect.flatMap(deliveries.processSignedJob)),
         { concurrency: 2 },
       );
       expect(requests).toHaveLength(2);

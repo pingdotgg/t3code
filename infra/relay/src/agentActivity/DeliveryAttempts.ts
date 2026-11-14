@@ -5,9 +5,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { and, eq, inArray, isNull, lt } from "drizzle-orm";
 import { QueryBuilder } from "drizzle-orm/pg-core";
+import { sha256 } from "@noble/hashes/sha2";
+import { bytesToHex } from "@noble/hashes/utils";
+import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
-import { stableStringify } from "@t3tools/shared/relaySigning";
 
 import * as RelayDb from "../db.ts";
 import { relayDeliveryAttempts } from "../persistence/schema.ts";
@@ -139,11 +141,8 @@ const make = Effect.gen(function* () {
             input.phase,
             input.runId ? ["run", input.runId] : ["updatedAt", input.updatedAt],
           ]);
-          const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(identity));
-          const sourceJobId = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(
-            "",
-          );
-          const id = yield* crypto.randomUUIDv4();
+          const sourceJobId = bytesToHex(sha256(new TextEncoder().encode(identity)));
+          const id = yield* random.uuidV4();
           const createdAt = DateTime.formatIso(yield* DateTime.now);
           // Reserve the sound before sending: an uncertain APNs response must not let another job ring again.
           const inserted = yield* db

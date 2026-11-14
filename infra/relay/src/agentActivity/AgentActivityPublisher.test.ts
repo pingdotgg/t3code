@@ -402,6 +402,7 @@ describe("AgentActivityPublisher", () => {
             }),
         }),
         Layer.succeed(DeliveryAttempts.DeliveryAttempts, {
+          claimActivityAlert: () => Effect.succeed(true),
           pruneExpired: Effect.succeed(0),
           claimSourceJob: () => Effect.succeed("claimed" as const),
           completeSourceJob: () => Effect.void,
