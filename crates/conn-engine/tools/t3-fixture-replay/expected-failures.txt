@@ -40,8 +40,12 @@ subagent_v2_approval/codex          provider: Codex subagents are not built (a c
 subagent_v2_nested/codex            provider: Codex subagents are not built
 subagent_v2_nested_approval/codex   provider: Codex subagents are not built
 
-# --- Claude provider: background roster, monitors and wakes are not built ---
-claude_background_subagent_after_root/claudeAgent    provider: no background_work.updated roster for Claude subagents; the subagent item never shows
+# --- Claude provider: timing in the engine ---
+# T3's wake run queues behind run 1 while run 1's checkpoint capture is still pending, so T3 stores
+# run.updated "starting" for it. Here the capture of run 1 ends before the subagent's idle frames
+# arrive through the fake SDK host, so the wake run is created "starting" and no run.updated
+# "starting" is stored. Every other assertion of the fixture holds.
+claude_background_subagent_after_root/claudeAgent    engine: the wake run starts unqueued (run 1's checkpoint capture ends first; see above)
 
 # --- The replay driver: steps it cannot run yet ---
 queued_cancelled_while_active/codex           driver: release_replay_gate / finish_held_run (the stub sends frames at once; no replay gate)

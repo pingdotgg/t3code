@@ -19,7 +19,7 @@ host's `request` (a callback the SDK made) gets a `response`.
 | `call`     | `sessionId`, `id`, `method`, `args`                                | A session method. `claude`: `interrupt`, `setModel`, `setPermissionMode`, `applyFlagSettings`, `setMcpServers`, `stopTask`, `backgroundTasks`, `initializationResult`, `mcpServerStatus`. |
 | `response` | `sessionId`, `id`, `value` or `error`                              | Answers a host `request`.                                                                                   |
 | `close`    | `sessionId`                                                        | Closes the session (`claude`: ends the prompt stream, `Query.close()`). An `end` follows.                  |
-| `fn`       | `driver`, `instanceId`, `id`, `name`, `args`, driver extras        | A call with no session. `claude`: `forkSession`, `getSessionMessages`, `getSubagentMessages`, `resolveSettings`; extra `configDir` runs it with that `CLAUDE_CONFIG_DIR` (such calls run one at a time). |
+| `fn`       | `driver`, `instanceId`, `id`, `name`, `args`, driver extras        | A call with no session. `claude`: `forkSession`, `getSessionMessages`, `getSubagentMessages`, `resolveSettings`, `probeCapabilities` (below); extra `configDir` runs it with that `CLAUDE_CONFIG_DIR` (such calls run one at a time). |
 | `shutdown` |                                                                    | Closes every session and exits once they ended (at most 15 s). EOF on stdin, SIGTERM and SIGINT do the same. |
 
 ## Host → server
@@ -68,3 +68,16 @@ Write `drivers/<name>.mjs` exporting `createDriver({describeError})`, which retu
   caught then (the descendant tracker lived in the host). Tested by
   `host_death_ends_sessions_and_children` in `conn-provider-support` (`sdk_host`).
 - Each `msg` write waits while stdout is full, so a slow server slows the SDK and the CLI.
+
+## `probeCapabilities` (`claude`)
+
+T3's `probeClaudeCapabilities`. `args`: `[options, extra]`. `options` is T3's
+`buildClaudeCapabilitiesProbeQueryOptions` as JSON; `extra` holds `includeStatus`,
+`unsetEnv` (variables T3 sets to undefined), `timeoutMs` (initialization), `graceMs` (gateway
+model discovery) and `spawnThroughEnv` (Linux: `env -C` enters the cwd). The SDK starts the CLI
+with a prompt that never yields, so the CLI initializes and no request reaches the API. The
+reply holds `account` (only `email`, `subscriptionType`, `tokenSource`, `apiKeySource`,
+`apiProvider`: never a token), `commands`, `models`, and with `includeStatus` `usage`
+(`rate_limits_available`, `rate_limits`) with `usageCheckedAt`, and `settings` (each source's
+`maxEffortLevel` and per-model caps only). The CLI is stopped before the reply (after
+`graceMs` on success). A failed initialization rejects.
