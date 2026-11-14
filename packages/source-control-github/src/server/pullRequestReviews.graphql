@@ -37,6 +37,11 @@ fragment ThreadComment on PullRequestReviewComment {
   createdAt
   lastEditedAt
   url
+  isMinimized
+  # A review link names the review, not its comments; this lets it find the comments it posted.
+  pullRequestReview {
+    url
+  }
   ...Reactions
 }
 
@@ -151,6 +156,7 @@ query ReviewThreads($owner: String!, $name: String!, $number: Int!, $requestedRe
       latestReviews(first: 50) {
         nodes {
           state
+          isMinimized
           author {
             __typename
             login
