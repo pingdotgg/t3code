@@ -3152,6 +3152,142 @@ describe("orchestration v2 provider switching", () => {
     }),
   );
 
+  // regression: a session kept by a queued hand-off is probed when a later change detaches it
+  it.live(
+    "refuses a later instance change while a retained hand-off session runs background work",
+    () =>
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("retained-session-background");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const codexBackgroundWork = yield* Ref.make(true);
+        const firstStarted = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const threadId = ThreadId.make("thread:retained-session-background");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const send = (ordinal: number, modelSelection: ModelSelection) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:retained-session-background:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`message:retained-session-background:${ordinal}`),
+              text: `Prompt ${ordinal}`,
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "queue_after_active" },
+            });
+          const selectGrok = (attempt: string) =>
+            orchestrator.dispatch({
+              type: "thread.model-selection.set",
+              commandId: CommandId.make(`command:retained-session-background:select:${attempt}`),
+              threadId,
+              modelSelection: GROK_MODEL_SELECTION,
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:retained-session-background:create"),
+            threadId,
+            projectId: ProjectId.make("project:retained-session-background"),
+            title: "Retained session with background work",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* send(1, CODEX_MODEL_SELECTION);
+          yield* Deferred.await(firstStarted);
+          yield* send(2, CLAUDE_MODEL_SELECTION);
+          yield* Deferred.succeed(releaseFirst, undefined);
+          yield* worker.drain();
+          const afterHandoff = yield* waitForIdle(threadId);
+          assert.deepEqual(
+            afterHandoff.runs.map((run) => [run.providerInstanceId, run.status]),
+            [
+              [CODEX_MODEL_SELECTION.instanceId, "completed"],
+              [CLAUDE_MODEL_SELECTION.instanceId, "completed"],
+            ],
+          );
+          // The queued hand-off kept the busy Codex session attached.
+          const codexSession = afterHandoff.providerSessions.find(
+            (session) => session.providerInstanceId === CODEX_MODEL_SELECTION.instanceId,
+          );
+          assert.equal(codexSession?.status, "ready");
+
+          const refused = yield* selectGrok("busy").pipe(Effect.flip);
+          assert.include(String(refused.cause), "still running background agents or commands");
+          yield* worker.drain();
+          const unchanged = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(unchanged.thread.providerInstanceId, CLAUDE_MODEL_SELECTION.instanceId);
+          assert.include(
+            unchanged.providerSessions.map((session) => session.id),
+            codexSession!.id,
+          );
+
+          yield* Ref.set(codexBackgroundWork, false);
+          yield* selectGrok("idle");
+          yield* worker.drain();
+          const switched = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(switched.thread.providerInstanceId, GROK_MODEL_SELECTION.instanceId);
+          assert.notInclude(
+            switched.providerSessions.map((session) => session.id),
+            codexSession!.id,
+          );
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "retained-session-background",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              ProviderAdapterRegistry.layerFromAdapters([
+                makeTestAdapter({
+                  instanceId: CODEX_MODEL_SELECTION.instanceId,
+                  driver: CODEX_DRIVER,
+                  capabilities: CodexProviderCapabilitiesV2,
+                  modelSelection: CODEX_MODEL_SELECTION,
+                  responseByRunOrdinal: { 1: "Codex started background work" },
+                  capturedTurns,
+                  pendingBackgroundWork: codexBackgroundWork,
+                  holdFirstTurn: firstStarted,
+                  releaseFirstTurn: releaseFirst,
+                }),
+                makeTestAdapter({
+                  instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+                  driver: CLAUDE_DRIVER,
+                  capabilities: ClaudeProviderCapabilitiesV2,
+                  modelSelection: CLAUDE_MODEL_SELECTION,
+                  responseByRunOrdinal: { 2: "Claude complete" },
+                  capturedTurns,
+                }),
+                makeTestAdapter({
+                  instanceId: GROK_MODEL_SELECTION.instanceId,
+                  driver: GROK_DRIVER,
+                  capabilities: AcpProviderCapabilitiesV2,
+                  modelSelection: GROK_MODEL_SELECTION,
+                  responseByRunOrdinal: {},
+                  capturedTurns,
+                }),
+              ]),
+            ),
+          ),
+        );
+      }),
+  );
+
   it.live.each(["immediately", "behind a running turn"] as const)(
     "starts a fresh provider session %s and never hands earlier runs to a later provider",
     (variant) =>
