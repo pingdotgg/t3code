@@ -35,7 +35,7 @@ function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
     env,
     source: execScriptSource({
       scriptPath: mockAgentPath,
-      expectedArgs: ["agent", "stdio"],
+      expectedArgs: ["--permission-mode", "default", "agent", "stdio"],
     }),
   });
 }
@@ -58,14 +58,19 @@ function withFakeAcpGrok<A, E, R>(
   }).pipe(Effect.scoped);
 }
 
-function readJsonRpcRequests(
-  filePath: string,
-): ReadonlyArray<{ readonly method?: string; readonly params?: Record<string, unknown> }> {
+function readJsonRpcRequests(filePath: string): ReadonlyArray<{
+  readonly id?: unknown;
+  readonly method?: string;
+  readonly params?: Record<string, unknown>;
+}> {
   return NodeFS.readFileSync(filePath, "utf8")
     .trim()
     .split("\n")
     .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
+    .map(
+      (line) =>
+        JSON.parse(line) as { id?: unknown; method?: string; params?: Record<string, unknown> },
+    );
 }
 
 it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
@@ -78,6 +83,7 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
     return withFakeAcpGrok(
       {
         T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        T3_ACP_REQUEST_PERMISSION: "1",
         T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
           subject: "Add Grok provider",
           body: "Wire up the ACP runtime and headless text generation path.",
@@ -110,6 +116,9 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
                 request.params?.modelId === "grok-mock-alt",
             ),
           ).toBe(true);
+          expect(requests.find((request) => request.id === 9001)).toMatchObject({
+            result: { outcome: { outcome: "cancelled" } },
+          });
         }),
     );
   });
