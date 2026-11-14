@@ -78,6 +78,7 @@ import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
+import { NODE_MINIMUM } from "./sshDeviceScript.ts";
 import * as EasDeviceHost from "./EasDeviceHost.ts";
 import * as SimlockDeviceHost from "./SimlockDeviceHost.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -88,6 +89,15 @@ import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 export const DEVICE_HUB_ROUTE_PREFIX = "/api/device-hub";
 
 const isSshCommandError = Schema.is(SshCommandError);
+
+// Only known bootstrap diagnostics are safe to expose; their details stay in the cause.
+const sshProbeDiagnostics = [
+  [/^Node is missing from/u, "Node is not on this host's PATH for non-interactive SSH commands."],
+  [/^Node [\d.]+ or newer/u, `this host's Node is older than ${NODE_MINIMUM}.`],
+  [/^npm is missing/u, "npm is not on this host's PATH for non-interactive SSH commands."],
+  [/^No compatible Node/u, `this host has no npm compatible with Node ${NODE_MINIMUM}+.`],
+  [/^npm probe failed/u, "npm failed to run on this host."],
+] as const;
 
 const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
   const windows = SshDeviceHost.isSshWindowsHostError(error.cause) ? error.cause : null;
@@ -100,14 +110,9 @@ const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
   )
     return "Could not connect to this host over SSH.";
 
-  // Only the known bootstrap diagnostic is safe to expose as Node guidance.
-  if (
-    cause.exitCode === 1 &&
-    cause.stderr
-      .split(/\r?\n/u)
-      .some((line) => line.trim() === "Node is missing from the non-interactive SSH PATH")
-  )
-    return "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.";
+  const lines = cause.exitCode === 1 ? cause.stderr.split(/\r?\n/u).map((line) => line.trim()) : [];
+  const known = sshProbeDiagnostics.find(([pattern]) => lines.some((line) => pattern.test(line)));
+  if (known) return `Connected over SSH, but ${known[1]}`;
   if (windows) return windows.message;
 
   return `Connected over SSH, but the device host check failed (exit code ${cause.exitCode}).`;

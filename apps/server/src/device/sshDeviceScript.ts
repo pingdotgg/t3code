@@ -3,6 +3,11 @@ import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 export const quoteRemoteArg = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
 
+export const NODE_MINIMUM = "22.12";
+const [nodeMajor, nodeMinor] = NODE_MINIMUM.split(".");
+// Shared by the SSH shell setup and the remote script, so it must not contain single quotes.
+const nodeSupported = `((version) => { const [major, minor] = version.split(".").map(Number); return major > ${nodeMajor} || (major === ${nodeMajor} && minor >= ${nodeMinor}); })`;
+
 // Shells drop NUL, and Git for Windows sh drops CR, while reading script source.
 const printfEscaped = (value: string) =>
   value.replaceAll("\\", "\\\\").replaceAll("\r", "\\0015").replaceAll("\0", "\\0000");
@@ -28,7 +33,7 @@ export const remoteDeviceCommand = (
 export const remoteDeviceEnvironment = (
   options?: RemoteDeviceOptions,
 ) => `export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
-${options?.nodeBootstrap ? `node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 12) ? 0 : 1)' 2>/dev/null || export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"` : ""}
+${options?.nodeBootstrap ? `node -e 'process.exit(${nodeSupported}(process.versions.node) ? 0 : 1)' 2>/dev/null || export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"` : ""}
 if [ -z "$ANDROID_HOME" ]; then
   if [ -n "$ANDROID_SDK_ROOT" ]; then export ANDROID_HOME="$ANDROID_SDK_ROOT";
   elif [ -d "$HOME/Library/Android/sdk" ]; then export ANDROID_HOME="$HOME/Library/Android/sdk";
@@ -63,6 +68,7 @@ const net = require('node:net');
 const { spawn, spawnSync } = require('node:child_process');
 const root = path.join(os.homedir(), '.t3', 'device');
 const state = path.join(root, 'hosts', owner);
+const nodeSupported = ${nodeSupported};
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', timeout: 30000, ...options });
 // Windows cannot spawn npm.cmd directly. Keep npm paired with a compatible Node,
 // including lifecycle children, without putting paths or arguments in a shell.
@@ -96,14 +102,14 @@ const runNpm = (args, options) => {
         continue;
       }
       const nodeVersion = version ? version.stdout.trim() : process.versions.node;
-      if (!semver.satisfies(nodeVersion, '>=22.12') || !semver.satisfies(nodeVersion, npm.engines.node)) {
+      if (!nodeSupported(nodeVersion) || !semver.satisfies(nodeVersion, npm.engines.node)) {
         failures.push('npm ' + npm.version + ' at ' + entry + ' requires Node ' + npm.engines.node + '; found ' + nodeVersion + ' at ' + node);
         continue;
       }
       return run(node, [entry, ...args], { ...options, env: { ...env, PATH: path.dirname(node) + path.delimiter + inheritedPath } });
     }
   }
-  if (failures.length) throw Error('No compatible Node 22.12+ and npm pair: ' + failures.join('; '));
+  if (failures.length) throw Error('No compatible Node ${NODE_MINIMUM}+ and npm pair: ' + failures.join('; '));
   throw Error('npm is missing: could not find node_modules/npm/bin/npm-cli.js beside Node or on the non-interactive SSH PATH.');
 };
 const commandFailure = result => [
@@ -229,8 +235,7 @@ async function install(name, version, entry) {
     { platform: 'android', available: android, ...(!android ? { reason: androidReason } : {}) },
   ];
   if (mode === 'probe') {
-    const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
-    if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 12)) throw Error('Node 22.12 or newer is required on the device host. Found ' + process.versions.node + ' at ' + process.execPath + '.');
+    if (!nodeSupported(process.versions.node)) throw Error('Node ${NODE_MINIMUM} or newer is required on the device host. Found ' + process.versions.node + ' at ' + process.execPath + '.');
     const npm = runNpm(['--version']);
     if (npm.error || npm.status !== 0) throw Error(npm.error?.code === 'ENOENT' ? 'npm is missing from the non-interactive SSH PATH: ' + npm.error.message : 'npm probe failed: ' + commandFailure(npm));
     console.log(JSON.stringify({ nodePath: process.execPath, platforms, tools: versions() })); return;

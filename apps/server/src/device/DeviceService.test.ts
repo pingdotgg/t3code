@@ -464,6 +464,29 @@ describe("device setup consent", () => {
       expected:
         "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.",
     },
+    ...[
+      [
+        "Node 22.12 or newer is required. Found 22.11.0 at C:/private",
+        "this host's Node is older than 22.12.",
+      ],
+      [
+        "npm is missing: could not find C:/private/npm-cli.js",
+        "npm is not on this host's PATH for non-interactive SSH commands.",
+      ],
+      [
+        "No compatible Node 22.12+ and npm pair: C:/private",
+        "this host has no npm compatible with Node 22.12+.",
+      ],
+      [
+        "npm probe failed: spawn C:/private EACCES: signal SIGTERM",
+        "npm failed to run on this host.",
+      ],
+    ].map(([diagnostic, expected]) => ({
+      name: `a Windows host reporting ${diagnostic}`,
+      exitCode: 1,
+      stderr: `private diagnostics\n${diagnostic}`,
+      expected: `Connected over SSH, but ${expected}`,
+    })),
   ])(
     "reports SSH probe failure on $name through readiness and host status",
     ({ exitCode, stderr, expected }) =>
