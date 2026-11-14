@@ -448,14 +448,14 @@ describe("device setup consent", () => {
       exitCode: 1,
       stderr: "private diagnostics",
       expected:
-        "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+        "Connected over SSH, but the device host check failed on this Windows host. Windows SSH device hosts need a POSIX sh, such as Git for Windows, on the PATH for non-interactive SSH commands. To use this machine's devices without one, run T3 Code on it and connect to that environment.",
     },
     {
       name: "a Windows host returning 9009",
       exitCode: 9009,
       stderr: "private diagnostics",
       expected:
-        "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+        "Connected over SSH, but the device host check failed on this Windows host. Windows SSH device hosts need a POSIX sh, such as Git for Windows, on the PATH for non-interactive SSH commands. To use this machine's devices without one, run T3 Code on it and connect to that environment.",
     },
     {
       name: "missing Node on a Windows host with a POSIX shell",
@@ -729,12 +729,12 @@ it.effect.each([1, 9009])(
         hostId: "windows",
         hostLabel: "Windows test",
         reason:
-          "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+          "Connected over SSH, but the device host check failed on this Windows host. Windows SSH device hosts need a POSIX sh, such as Git for Windows, on the PATH for non-interactive SSH commands. To use this machine's devices without one, run T3 Code on it and connect to that environment.",
       });
       const codec = Schema.fromJsonString(DeviceError);
       const decoded = yield* Schema.decodeEffect(codec)(yield* Schema.encodeEffect(codec)(error));
       expect(decoded.message).toBe(
-        "Windows test is unavailable: Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+        "Windows test is unavailable: Connected over SSH, but the device host check failed on this Windows host. Windows SSH device hosts need a POSIX sh, such as Git for Windows, on the PATH for non-interactive SSH commands. To use this machine's devices without one, run T3 Code on it and connect to that environment.",
       );
       expect(decoded.message).not.toContain("private SSH diagnostics");
     }).pipe(

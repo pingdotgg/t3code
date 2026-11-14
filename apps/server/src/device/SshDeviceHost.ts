@@ -26,7 +26,7 @@ import * as ServerConfig from "../config.ts";
 import { releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
-import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
+import { quoteRemoteArg, remoteDeviceCommand, remoteDeviceScript } from "./sshDeviceScript.ts";
 
 const UNHEALTHY_PROBE_LIMIT = 3;
 
@@ -36,7 +36,7 @@ export class SshWindowsHostError extends Schema.TaggedError<SshWindowsHostError>
   { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.";
+    return "Connected over SSH, but the device host check failed on this Windows host. Windows SSH device hosts need a POSIX sh, such as Git for Windows, on the PATH for non-interactive SSH commands. To use this machine's devices without one, run T3 Code on it and connect to that environment.";
   }
 }
 export const isSshWindowsHostError = Schema.is(SshWindowsHostError);
@@ -67,11 +67,6 @@ const targetFor = (config: SshDeviceHostConfig) => ({
 });
 const identityArgs = (config: SshDeviceHostConfig) =>
   config.identityFile ? ["-i", config.identityFile] : [];
-const commandArgs = (script: string) => [
-  "sh",
-  "-c",
-  quoteRemoteArg(remoteDeviceEnvironment + script),
-];
 const bootstrap = (
   config: SshDeviceHostConfig,
   owner: string,
@@ -79,10 +74,11 @@ const bootstrap = (
 ) =>
   runSshCommand(targetFor(config), {
     preHostArgs: identityArgs(config),
-    remoteCommandArgs: commandArgs(
+    ...remoteDeviceCommand(
       'command -v node >/dev/null 2>&1 || { echo "Node is missing from the non-interactive SSH PATH" >&2; exit 1; }; exec node',
+      remoteDeviceScript(owner, mode),
+      { nodeBootstrap: true },
     ),
-    stdin: remoteDeviceScript(owner, mode),
     timeoutMs: mode === "start" || mode === "agent-start" ? 1_300_000 : 45_000,
   }).pipe(
     Effect.mapError(
@@ -237,11 +233,11 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       runSshCommand(targetFor(config), {
         preHostArgs: identityArgs(config),
         // Match the hub cwd so relative executables and PATH entries resolve identically.
-        remoteCommandArgs: commandArgs(
+        ...remoteDeviceCommand(
           `cd "$HOME/.t3/device/hosts/${owner}" && exec ${[command, ...args].map(quoteRemoteArg).join(" ")}`,
+          options?.stdin,
         ),
         keepErrorOutputTail: true,
-        ...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
         ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       }),
     ).pipe(
