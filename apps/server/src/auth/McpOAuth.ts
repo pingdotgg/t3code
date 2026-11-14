@@ -15,6 +15,7 @@ import {
   AuthOrchestrationReadScope,
   MCP_PEER_LINK_SOFTWARE_ID,
   mcpClientScopes,
+  parseMcpApprovalCode,
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
@@ -36,13 +37,13 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import * as PayloadSigner from "./PayloadSigner.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
   base64UrlDecodeUtf8,
   base64UrlEncode,
   deriveAuthClientMetadata,
-  signPayload,
   timingSafeEqualBase64Url,
 } from "./utils.ts";
 import { requestUrl } from "../requestUrl.ts";
@@ -205,7 +206,8 @@ export class McpOAuth extends Context.Service<
       readonly urls: McpOAuthUrls;
       readonly request: AuthMcpAuthorizationRequest;
     }) => Effect.Effect<AuthorizationRequest, McpOAuthPageError | McpOAuthRedirectError>;
-    readonly approvingBrowserSession: (
+    /** A browser cookie session, or a T3 Connect session from the hosted app, that may approve. */
+    readonly approvingSession: (
       request: HttpServerRequest.HttpServerRequest,
       authorization: AuthorizationRequest,
     ) => Effect.Effect<
@@ -261,32 +263,32 @@ const make = Effect.gen(function* () {
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
-  const signingKey = yield* secretStore
-    .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
-    .pipe(Effect.orDie);
+  const signer = yield* PayloadSigner.fromSecret(
+    yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(Effect.orDie),
+  );
   const codes = yield* Ref.make<ReadonlyMap<string, PendingCode>>(new Map());
 
-  const sign = (domain: string, payload: string) => signPayload(`${domain}.${payload}`, signingKey);
+  const sign = (domain: string, payload: string) => signer.sign(`${domain}.${payload}`);
 
   const signClientId = (name: string, redirectUris: ReadonlyArray<string>, peerLink: boolean) => {
     const body = base64UrlEncode(
       JSON.stringify({ v: 1, n: name, r: redirectUris, ...(peerLink ? { p: 1 } : {}) }),
     );
-    return `${body}.${sign("mcp-client-id", body)}`;
+    return sign("mcp-client-id", body).pipe(Effect.map((signature) => `${body}.${signature}`));
   };
 
-  const parseClientId = (clientId: string): McpOAuthClient | undefined => {
+  // Untraced: only called inside the traced McpOAuth methods below.
+  const parseClientId = Effect.fnUntraced(function* (
+    clientId: string,
+  ): Effect.fn.Return<McpOAuthClient | undefined> {
     const [body, signature, extra] = clientId.split(".");
     if (!body || !signature || extra !== undefined) return undefined;
-    if (!timingSafeEqualBase64Url(signature, sign("mcp-client-id", body))) return undefined;
-    let json: string;
-    try {
-      json = base64UrlDecodeUtf8(body);
-    } catch {
-      return undefined;
-    }
+    const verified = yield* signer.verify(`mcp-client-id.${body}`, signature);
+    if (!verified) return undefined;
+    const json = Option.liftThrowable(base64UrlDecodeUtf8)(body);
+    if (Option.isNone(json)) return undefined;
     return Option.getOrUndefined(
-      decodeClientIdPayload(json).pipe(
+      decodeClientIdPayload(json.value).pipe(
         Option.map((payload) => ({
           clientId,
           name: payload.n,
@@ -295,7 +297,7 @@ const make = Effect.gen(function* () {
         })),
       ),
     );
-  };
+  });
 
   const pkceVerifies = (verifier: string, challenge: string) =>
     CODE_VERIFIER_PATTERN.test(verifier)
@@ -305,11 +307,11 @@ const make = Effect.gen(function* () {
         )
       : Effect.succeed(false);
 
-  const csrfToken = (sessionId: string, authorization: AuthorizationRequest) =>
+  const csrfToken = (holder: string, authorization: AuthorizationRequest) =>
     sign(
       "mcp-csrf",
       JSON.stringify([
-        sessionId,
+        holder,
         authorization.client.clientId,
         authorization.redirectUri,
         authorization.codeChallenge,
@@ -347,7 +349,7 @@ const make = Effect.gen(function* () {
         });
       }
       return {
-        clientId: signClientId(name, redirectUris, peerLink),
+        clientId: yield* signClientId(name, redirectUris, peerLink),
         name,
         redirectUris,
         peerLink,
@@ -358,7 +360,7 @@ const make = Effect.gen(function* () {
   const validateAuthorization: McpOAuth["Service"]["validateAuthorization"] = Effect.fn(
     "McpOAuth.validateAuthorization",
   )(function* ({ urls, request }) {
-    const client = parseClientId(request.client_id ?? "");
+    const client = yield* parseClientId(request.client_id ?? "");
     if (client === undefined) {
       return yield* new McpOAuthPageError({
         description: "This sign-in link names an unknown app. Start the sign-in again from it.",
@@ -405,17 +407,20 @@ const make = Effect.gen(function* () {
     } satisfies AuthorizationRequest;
   });
 
-  const approvingBrowserSession: McpOAuth["Service"]["approvingBrowserSession"] = (
-    request,
-    authorization,
-  ) =>
-    environmentAuth.authenticateBrowserSession(request).pipe(
-      Effect.map((session) =>
+  const approvingSession: McpOAuth["Service"]["approvingSession"] = (request, authorization) =>
+    environmentAuth.authenticateHttpRequest(request).pipe(
+      Effect.flatMap((session) =>
         // Approving manages access, and a session may only hand out scopes it holds.
         session.scopes.includes(AuthAccessWriteScope) &&
         session.scopes.includes(AuthOrchestrationReadScope)
-          ? { csrfToken: csrfToken(session.sessionId, authorization), scopes: session.scopes }
-          : undefined,
+          ? // The hosted app may get a fresh credential per call, all bound to one browser key.
+            csrfToken(
+              session.proofKeyThumbprint === undefined
+                ? session.sessionId
+                : `dpop:${session.proofKeyThumbprint}`,
+              authorization,
+            ).pipe(Effect.map((token) => ({ csrfToken: token, scopes: session.scopes })))
+          : Effect.undefined,
       ),
       Effect.orElseSucceed(() => undefined),
     );
@@ -445,8 +450,15 @@ const make = Effect.gen(function* () {
 
   const approve: McpOAuth["Service"]["approve"] = Effect.fn("McpOAuth.approve")(function* (input) {
     const { decision } = input;
+    let access = decision.access;
     if (decision._tag === "pairing-code") {
-      yield* environmentAuth.consumeMcpApprovalCode(decision.code, decision.access).pipe(
+      // An approval code is for one app's sign-in, never for linking another environment.
+      if (input.authorization.client.peerLink && parseMcpApprovalCode(decision.code)) {
+        return yield* new McpOAuthPageError({
+          description: "Linking needs a plain pairing code, not an app approval code.",
+        });
+      }
+      access = yield* environmentAuth.consumeMcpApprovalCode(decision.code, decision.access).pipe(
         Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (cause) =>
           Effect.logError("MCP approval code check failed.", { cause }).pipe(
             Effect.andThen(
@@ -460,7 +472,7 @@ const make = Effect.gen(function* () {
         ),
       );
     } else {
-      const session = yield* approvingBrowserSession(input.request, input.authorization);
+      const session = yield* approvingSession(input.request, input.authorization);
       if (
         session === undefined ||
         !timingSafeEqualBase64Url(decision.csrfToken, session.csrfToken) ||
@@ -471,10 +483,10 @@ const make = Effect.gen(function* () {
         });
       }
     }
-    const code = yield* mintCode(input.authorization, decision.access);
+    const code = yield* mintCode(input.authorization, access);
     yield* Effect.logInfo("Approved an MCP client sign-in.", {
       client: input.authorization.client.name,
-      access: decision.access,
+      access,
       method: decision._tag,
     });
     return redirectWith(input.authorization.redirectUri, {
@@ -507,7 +519,7 @@ const make = Effect.gen(function* () {
           "code, redirect_uri, client_id and code_verifier are required.",
         );
       }
-      if (parseClientId(clientId) === undefined) {
+      if ((yield* parseClientId(clientId)) === undefined) {
         return yield* fail("invalid_client", "The client is unknown.");
       }
       // A presented code is spent even when a later check fails (RFC 6749 §4.1.2).
@@ -564,7 +576,7 @@ const make = Effect.gen(function* () {
         : { organization: managedPolicy.organization, maxRuntimeMode },
     register,
     validateAuthorization,
-    approvingBrowserSession,
+    approvingSession,
     approve,
     deny,
     exchangeCode,
