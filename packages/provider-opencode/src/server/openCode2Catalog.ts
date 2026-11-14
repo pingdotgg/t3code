@@ -19,12 +19,16 @@ const readCatalog = <E>(
   providers: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly name: string }>, E>,
 ): Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError> =>
   Effect.all(
-    { models: client.model.list({ location: { directory } }), providers },
+    {
+      // Callers bound the read: a busy host can hold it past OpenCode's own activation wait.
+      models: client.model.list({ location: { directory } }).pipe(Effect.map((list) => list.data)),
+      providers,
+    },
     { concurrency: "unbounded" },
   ).pipe(
     Effect.map(({ models, providers }) => {
       const providerNames = new Map(providers.map((provider) => [provider.id, provider.name]));
-      return models.data.map((model) => {
+      return models.map((model) => {
         const providerName = providerNames.get(model.providerID);
         return {
           providerID: model.providerID,

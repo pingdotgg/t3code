@@ -31,6 +31,12 @@ const resolved = await Effect.gen(function* () {
     appDir: path.resolve(scripts, env.T3_SCENARIO_APP_DIR ?? ".."),
     home,
     startApp: path.join(scripts, "scenarios/start-app.ts"),
+    // e2e gives the app only PATH, HOME and the temp directory. A scenario that needs more names
+    // it here: exact names or prefixes ending in `*`, separated by commas.
+    inheritEnv: (env.T3_SCENARIO_INHERIT_ENV ?? "")
+      .split(",")
+      .map((name) => name.trim())
+      .filter((name) => name !== ""),
     mobile: {
       host: host || "127.0.0.1",
       // A mobile target has no `app.url`, so e2e cannot pick these ports.
@@ -80,6 +86,15 @@ const simlock = (device: string): DeviceProvider => {
     const daemon = yield* connect(request.env);
     const client = createAgentDeviceClient(daemon);
     const platform = request.platform === "android" ? "android" : "ios";
+    // A cache miss builds the dev client, which outlasts a test and can outlast a lease.
+    request.log(`preparing the ${platform} dev client`);
+    yield* run(
+      resolved.node,
+      ["scripts/mobile-native-client.ts", "ensure", platform, "--prepare"],
+      {
+        cwd: APP_DIR,
+      },
+    );
     const scope = { tenant: "t3-scenarios", runId: `${request.runId}-${request.slot}` };
     // Simlock takes the lease id from the caller: 32 hex characters.
     const leaseId = (yield* (yield* SecureRandom.SecureRandom).uuidV4()).replaceAll("-", "");
@@ -115,7 +130,10 @@ const simlock = (device: string): DeviceProvider => {
   return {
     name: "simlock",
     acquire: (request) =>
-      acquire(request).pipe(Effect.provide(NodeCrypto.layer), Effect.runPromise),
+      acquire(request).pipe(
+        Effect.provide([NodeCrypto.layer, NodeServices.layer]),
+        Effect.runPromise,
+      ),
     release: (lease, context) =>
       connect(context.env).pipe(
         Effect.flatMap((daemon) =>
@@ -143,6 +161,7 @@ export default {
           executable: resolved.node,
           args: [startApp, "web", T3_HOME, LOOPBACK, "{port}"],
           cwd: APP_DIR,
+          inheritEnv: resolved.inheritEnv,
           startupTimeout: 300_000,
           log: ".e2e/app.log",
         },
@@ -170,6 +189,7 @@ export default {
             MOBILE.host,
           ],
           cwd: APP_DIR,
+          inheritEnv: resolved.inheritEnv,
           startupTimeout: 300_000,
           log: ".e2e/mobile-app.log",
         },
