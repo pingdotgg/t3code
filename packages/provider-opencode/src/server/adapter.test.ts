@@ -664,6 +664,189 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
+  it.effect.each([false, true])(
+    "restores a child's policy after OpenCode appends a parent policy change (nested=%s)",
+    (nested) =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        const root = "ses_root";
+        const child = "ses_child";
+        const fullAccess = runtimePolicy("full-access");
+        const inherited = openCodePermissionRules(runtimePolicy("approval-required"));
+        const taskDeny = { permission: "task", pattern: "*", action: "deny" as const };
+        const agentDeny = {
+          permission: "codesearch",
+          pattern: "secret/*",
+          action: "deny" as const,
+        };
+        const childTaskRule = nested ? { ...taskDeny, action: "allow" as const } : taskDeny;
+        const nativePermissions = new Map([
+          [root, inherited],
+          [
+            child,
+            [
+              ...inherited.filter(
+                (rule) => rule.action === "deny" || rule.permission === "external_directory",
+              ),
+              childTaskRule,
+              agentDeny,
+            ],
+          ],
+        ]);
+        const harness = yield* makeOpenCodeRuntimeHarness("appended-child-policy", root, {
+          // OpenCode omits the child's bash deny because the inherited supervised seed matches it.
+          config: { get: async () => ({ data: { experimental: { primary_tools: ["bash"] } } }) },
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+            get: async ({ sessionID }: { sessionID: string }) => ({
+              data: {
+                id: sessionID,
+                ...(sessionID === child ? { parentID: root } : {}),
+                permission: nativePermissions.get(sessionID),
+                time: { created: 1, updated: 2 },
+              },
+            }),
+            // OpenCode's update endpoint appends rules rather than replacing them.
+            update: async (input: {
+              sessionID: string;
+              permission: ReturnType<typeof openCodePermissionRules>;
+            }) => {
+              const permission = [
+                ...(nativePermissions.get(input.sessionID) ?? []),
+                ...input.permission,
+              ];
+              nativePermissions.set(input.sessionID, permission);
+              return {
+                data: { id: input.sessionID, permission, time: { created: 1, updated: 2 } },
+              };
+            },
+            promptAsync: async () => ({ data: true }),
+            abort: async () => ({ data: true }),
+            children: async () => ({ data: [] }),
+          },
+        });
+        yield* harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+          runtimePolicy: fullAccess,
+        });
+        yield* harness.startTurn();
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.part.updated",
+            properties: {
+              sessionID: root,
+              part: {
+                id: "prt_task",
+                sessionID: root,
+                messageID: "msg_assistant",
+                type: "tool",
+                tool: "task",
+                callID: "call_task",
+                state: {
+                  status: "running",
+                  input: {
+                    description: "Research",
+                    prompt: "read and research",
+                    subagent_type: "general",
+                  },
+                  title: "Research",
+                  metadata: { parentSessionId: root, sessionId: child },
+                  time: { start: 3 },
+                },
+              },
+            },
+          }),
+        );
+        const permission = nativePermissions.get(child)!;
+        assert.equal(permissionAction(permission, "read"), "allow");
+        assert.equal(permissionAction(permission, "webfetch"), "allow");
+        assert.equal(permissionAction(permission, "edit"), "allow");
+        assert.equal(permissionAction(permission, "task"), nested ? "allow" : "deny");
+        assert.equal(permissionAction(permission, "bash"), "deny");
+        assert.deepEqual(permission.at(-1), agentDeny);
+        for (const policy of [
+          fullAccess,
+          runtimePolicy("approval-required"),
+          fullAccess,
+          fullAccess,
+        ]) {
+          yield* harness.runtime.resumeThread({
+            providerThread: harness.providerThread,
+            runtimePolicy: policy,
+          });
+          const updated = nativePermissions.get(child)!;
+          assert.equal(permissionAction(updated, "read"), "allow");
+          assert.equal(
+            permissionAction(updated, "webfetch"),
+            policy.runtimeMode === "full-access" ? "allow" : "ask",
+          );
+          assert.equal(permissionAction(updated, "task"), nested ? "allow" : "deny");
+          assert.equal(permissionAction(updated, "bash"), "deny");
+          assert.deepEqual(updated.at(-1), agentDeny);
+        }
+        const ruleCount = nativePermissions.get(child)!.length;
+        yield* harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+          runtimePolicy: fullAccess,
+        });
+        assert.equal(nativePermissions.get(child)!.length, ruleCount);
+        if (nested) {
+          const grandchild = "ses_grandchild";
+          nativePermissions.set(grandchild, [
+            ...nativePermissions
+              .get(child)!
+              .filter((rule) => rule.action === "deny" || rule.permission === "external_directory"),
+            taskDeny,
+          ]);
+          yield* Effect.promise(() =>
+            nativeEvents.push({
+              type: "message.updated",
+              properties: {
+                sessionID: child,
+                info: { id: "msg_child", sessionID: child, role: "user", time: { created: 4 } },
+              },
+            }),
+          );
+          yield* Effect.promise(() =>
+            nativeEvents.push({
+              type: "message.part.updated",
+              properties: {
+                sessionID: child,
+                part: {
+                  id: "prt_nested_task",
+                  sessionID: child,
+                  messageID: "msg_child_assistant",
+                  type: "tool",
+                  tool: "task",
+                  callID: "call_nested",
+                  state: {
+                    status: "running",
+                    input: {
+                      description: "Nested research",
+                      prompt: "read",
+                      subagent_type: "general",
+                    },
+                    title: "Nested research",
+                    metadata: { parentSessionId: child, sessionId: grandchild },
+                    time: { start: 5 },
+                  },
+                },
+              },
+            }),
+          );
+          const nestedPermission = nativePermissions.get(grandchild)!;
+          assert.equal(permissionAction(nestedPermission, "read"), "allow");
+          assert.equal(permissionAction(nestedPermission, "bash"), "deny");
+          assert.deepEqual(nestedPermission.at(-2), agentDeny);
+          assert.equal(permissionAction(nestedPermission, "task"), "deny");
+        }
+      }).pipe(
+        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+        Effect.scoped,
+      ),
+  );
+
   it.effect("applies a changed runtime policy to existing subagent sessions", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
