@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Executes the shipped Pi extension at its native JavaScript boundary.
+import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
@@ -95,6 +96,7 @@ export async function loadMcpBridge(
       },
     },
     AbortSignal,
+    NodeCrypto,
     NodePath,
     Type: { Unsafe: (schema: unknown) => schema },
     fetch: async (
@@ -125,6 +127,7 @@ export async function loadMcpBridge(
     },
     pi: {
       on: (name: string, handler: AgentStartHook) => handlers.set(name, handler),
+      registerCommand: () => {},
       registerTool: (tool: RegisteredTool) => {
         if (options.allowsTool && !options.allowsTool(tool.name)) return;
         const index = tools.findIndex((current) => current.name === tool.name);
