@@ -32,7 +32,6 @@ import {
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   supportsDesktopAppUpdate,
-  supportsServerUpdateThreadContinuation,
 } from "../../versionSkew";
 
 export type EnvironmentUnavailableState = {
@@ -85,7 +84,11 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
     ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   );
   const handleReconnectActiveEnvironment = async (environmentId: EnvironmentId) => {
-    const result = await retryEnvironment(environmentId);
+    // A retry does nothing while the environment is switched off.
+    const result =
+      activeEnvironment?.entry.enabled === false
+        ? await setEnvironmentEnabled({ environmentId, enabled: true })
+        : await retryEnvironment(environmentId);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add(
@@ -141,7 +144,6 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
   const versionMismatchSelfUpdate = resolveServerSelfUpdateCapability(serverConfig);
   const versionMismatchInstallation = serverConfig?.environment.capabilities.serverInstallation;
   const versionMismatchDesktopAppUpdate = supportsDesktopAppUpdate(serverConfig);
-  const versionMismatchThreadContinuation = supportsServerUpdateThreadContinuation(serverConfig);
   const serverUpdateState = useAtomValue(
     serverEnvironment.updateStateAtom(serverUpdateEnvironmentId),
   );
@@ -175,8 +177,11 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       unavailableConnection !== null &&
       (unavailableConnection.phase === "connecting" ||
         unavailableConnection.phase === "reconnecting");
+    const awaitingApproval = unavailableConnection?.awaitingApproval === true;
     const suppressUnavailableBanner =
-      environmentReconnecting && (updateRunning || !reconnectWarningGraceElapsed);
+      environmentReconnecting &&
+      !awaitingApproval &&
+      (updateRunning || !reconnectWarningGraceElapsed);
     const showUnavailableBanner =
       activeEnvironmentUnavailableState !== null &&
       unavailableConnection !== null &&
@@ -187,13 +192,17 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         variant: unavailableConnection.phase === "error" ? "error" : "warning",
         group: "environment",
         icon: <WifiOffIcon />,
-        title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
-        description: activeEnvironment ? (
+        title: awaitingApproval
+          ? `${activeEnvironmentUnavailableState.label} is waiting to approve this device`
+          : `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
+        description: awaitingApproval ? (
+          (unavailableConnection.error ?? undefined)
+        ) : activeEnvironment ? (
           <ConnectionDiagnosisHeadline environment={activeEnvironment} />
         ) : undefined,
         actions: (
           <>
-            {!environmentReconnecting ? (
+            {unavailableConnection.phase !== "connecting" ? (
               <Button
                 size="xs"
                 variant="ghost"
@@ -203,7 +212,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
                   )
                 }
               >
-                Reconnect
+                {environmentReconnecting ? "Retry now" : "Reconnect"}
               </Button>
             ) : null}
             {disconnectAction}
@@ -241,7 +250,6 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
             selfUpdate={versionMismatchSelfUpdate}
             installation={versionMismatchInstallation}
             desktopAppUpdate={versionMismatchDesktopAppUpdate}
-            threadContinuation={versionMismatchThreadContinuation}
             targetVersion={versionMismatch.clientVersion}
             label="Retry"
             variant="ghost"

@@ -31,6 +31,7 @@ import {
   supportsSharedSettingsSync,
 } from "@t3tools/client-runtime/state/shared-settings";
 import { ensureLocalApi } from "~/localApi";
+import { subscribeBrowserClientSettingsWrites } from "~/clientPersistenceStorage";
 import {
   getThemeDefinition,
   getThemePreviewSidebarArtwork,
@@ -75,6 +76,7 @@ let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
 let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
 let deferredClientSettingsPatchCount = 0;
+let unsubscribeOtherTabClientSettings: (() => void) | null = null;
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -152,6 +154,9 @@ async function hydrateClientSettings(): Promise<void> {
       if (persistedSettings) {
         replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
       }
+      unsubscribeOtherTabClientSettings ??= subscribeBrowserClientSettingsWrites(
+        refreshClientSettingsFromOtherTab,
+      );
       setClientSettingsHydrationStatus("ready");
     } catch (error) {
       if (hydrationGeneration === clientSettingsHydrationGeneration) {
@@ -173,6 +178,20 @@ async function hydrateClientSettings(): Promise<void> {
   clientSettingsHydrationPromise = hydrationPromise;
 
   return clientSettingsHydrationPromise;
+}
+
+function refreshClientSettingsFromOtherTab(): void {
+  void enqueueClientSettingsPersistence(async () => {
+    const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
+    if (persistedSettings) {
+      replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
+    }
+  }).catch((error) => {
+    console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} refresh failed`, {
+      operation: "refresh",
+      ...safeErrorLogAttributes(error),
+    });
+  });
 }
 
 const defaultClientSettingsPersistence = (settings: ClientSettings): Promise<void> =>
@@ -205,10 +224,16 @@ export function persistClientSettingsPatch(
         if (clientSettingsHydrationStatus !== "ready") {
           await hydrateClientSettings();
         }
-        replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
       } finally {
         deferredClientSettingsPatchCount -= 1;
       }
+    }
+    // Also reapplies an optimistic patch that a refresh from another tab replaced.
+    const current = getClientSettingsSnapshot();
+    if (
+      !Object.entries(patch).every(([key, value]) => current[key as keyof ClientSettings] === value)
+    ) {
+      replaceClientSettingsSnapshot({ ...current, ...patch });
     }
     await persist(getClientSettingsSnapshot());
   }).catch((error) => {
@@ -383,14 +408,15 @@ export function useMergedSettings<T = UnifiedSettings>(
   });
 }
 
-export function resolveEnvironmentIdentificationMode(input: {
+function resolveEnvironmentIdentificationMode(input: {
   mode: EnvironmentIdentificationMode;
   settingsHydrated: boolean;
   paletteThemeActive?: boolean;
   paletteThemeAllowsArtwork?: boolean;
 }): EnvironmentIdentificationMode {
   if (!input.settingsHydrated) return "none";
-  return input.paletteThemeActive && !input.paletteThemeAllowsArtwork && input.mode === "artwork"
+  const isArtwork = input.mode !== "pill" && input.mode !== "none";
+  return input.paletteThemeActive && !input.paletteThemeAllowsArtwork && isArtwork
     ? "pill"
     : input.mode;
 }
@@ -412,13 +438,6 @@ export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMod
     paletteThemeActive: previewSidebarArtwork !== null || activeThemeDefinition !== null,
     paletteThemeAllowsArtwork: previewSidebarArtwork ?? themeAllowsSidebarArtwork(activeTheme),
   });
-}
-
-/** Wait for hydration: swapping sidebar implementations after mount remounts the whole tree. */
-export function useLegacySidebarEnabled(): boolean {
-  const settingsHydrated = useClientSettingsHydrated();
-  const legacySidebarEnabled = useClientSettings((settings) => settings.legacySidebarEnabled);
-  return settingsHydrated && legacySidebarEnabled;
 }
 
 export async function prepareModelPreferencesPatch(
@@ -573,7 +592,7 @@ function useSharedSettingsSyncTargetIds(includePending = false): ReadonlyArray<E
     if (includePending && result._tag === "Initial") {
       return [environmentId];
     }
-    const session = result._tag === "Failure" ? null : Option.getOrNull(AsyncResult.value(result));
+    const session = result._tag === "Failure" ? null : AsyncResult.getOrElse(result, () => null);
     return session !== null && sessionGrantsScope(session, AuthSettingsWriteScope)
       ? [environmentId]
       : [];
@@ -587,8 +606,12 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
     reportFailure: false,
   });
   const { environments } = useEnvironments();
-  const persistServerSettings = async (request: Parameters<typeof persist>[0]) => {
+  const persistServerSettings = async (
+    request: Parameters<typeof persist>[0],
+    onFailed?: () => void,
+  ) => {
     const result = await persist(request);
+    if (result._tag === "Failure") onFailed?.();
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const label =
         environments.find((environment) => environment.environmentId === request.environmentId)
@@ -603,7 +626,10 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
     return result;
   };
   const sharedSettingsSyncTargetIds = useSharedSettingsSyncTargetIds(true);
-  const updateSettings = (patch: UnifiedSettingsPatch) => {
+  const updateSettings = (
+    patch: UnifiedSettingsPatch,
+    options?: { readonly onFailed?: () => void; readonly onSaved?: () => void },
+  ) => {
     const { serverPatch, clientPatch } = splitPatch(patch);
 
     const canWriteServerPatch =
@@ -612,6 +638,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
         readEnvironmentScope(environmentId, scope),
       );
     if (Object.keys(serverPatch).length > 0 && !canWriteServerPatch) {
+      options?.onFailed?.();
       toastManager.add({
         type: "warning",
         title: "Setting not saved",
@@ -621,17 +648,21 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
     if (Object.keys(serverPatch).length > 0 && canWriteServerPatch) {
       const { sharedPatch, localPatch } = splitSharedServerPatch(serverPatch);
       // Dropping the write silently leaves the control looking saved.
-      const warnUnsaved = (description = PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE) =>
-        toastManager.add({
+      const warnUnsaved = (description = PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE) => {
+        options?.onFailed?.();
+        return toastManager.add({
           type: "warning",
           title: "Setting not saved",
           description,
         });
+      };
       if (Object.keys(localPatch).length > 0) {
         if (environmentId) {
-          void persistServerSettings({
-            environmentId,
-            input: { patch: localPatch },
+          void persistServerSettings(
+            { environmentId, input: { patch: localPatch } },
+            options?.onFailed,
+          ).then((result) => {
+            if (result._tag === "Success") options?.onSaved?.();
           });
         } else {
           warnUnsaved();
@@ -650,7 +681,6 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           const target = environments.find((candidate) => candidate.environmentId === targetId);
           const targetPatch = filterSharedServerPatch(
             sharedPatch,
-            target?.serverConfig?.environment.capabilities,
             target?.serverConfig?.settings,
             sourceSettings,
             targetId === environmentId,
@@ -688,6 +718,12 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
               result: await persist(request),
             })),
           ).then((outcomes) => {
+            if (
+              deniedLabels.length > 0 ||
+              outcomes.some(({ result }) => result._tag === "Failure")
+            ) {
+              options?.onFailed?.();
+            }
             const failures = outcomes.flatMap(({ label, result }) => {
               if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return [];
               const error = squashAtomCommandFailure(result);
@@ -695,6 +731,12 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
                 `Could not save on ${label}: ${error instanceof Error ? error.message : "The save failed. Try reconnecting and saving again."}`,
               ];
             });
+            if (
+              deniedLabels.length === 0 &&
+              outcomes.every(({ result }) => result._tag === "Success")
+            ) {
+              options?.onSaved?.();
+            }
             if (failures.length === 0) return;
             const saved = outcomes
               .filter(({ result }) => result._tag === "Success")
@@ -738,6 +780,8 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationPromise = null;
   clientSettingsPersistenceQueue = Promise.resolve();
   deferredClientSettingsPatchCount = 0;
+  unsubscribeOtherTabClientSettings?.();
+  unsubscribeOtherTabClientSettings = null;
   clientSettingsListeners.clear();
   clientSettingsHydrationListeners.clear();
 }

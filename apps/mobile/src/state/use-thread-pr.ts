@@ -7,12 +7,16 @@ import {
 import type { EnvironmentId, PullRequestSummary } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { Atom } from "effect/reactivity";
-import { useMemo } from "react";
+import { use, useMemo } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "./atom-registry";
 import { serverEnvironment } from "./server";
+import { environmentThreadShells } from "./threads";
 import { useEnvironmentQuery } from "./query";
+import { ThreadPrDemandContext } from "./thread-pr-demand";
 import {
+  knownPullRequestSummary,
   rememberBounded,
   resolveThreadPrSource,
   presentThreadPr,
@@ -56,16 +60,28 @@ const pullRequestSummaryAtom = createLinkedPullRequestSummaryAtomFamily(
     ),
 );
 
-export {
-  presentThreadPr,
-  type ThreadPr,
-  type ThreadPrPresentation,
-} from "./thread-pr-presentation";
+export { type ThreadPr, type ThreadPrPresentation } from "./thread-pr-presentation";
+
+/** Seeds a pull request page with a summary already in memory, never another pull request's. */
+export function withKnownPullRequestSummary<
+  Params extends { readonly host?: string; readonly repository: string; readonly number: number },
+>(params: Params) {
+  const initialSummary =
+    params.host === undefined
+      ? undefined
+      : knownPullRequestSummary(
+          { host: params.host, repository: params.repository, number: params.number },
+          appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+          appAtomRegistry.get(pullRequestSnapshotsAtom).values(),
+        );
+  return initialSummary === undefined ? params : { ...params, initialSummary };
+}
 
 export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentation | null {
+  const demand = use(ThreadPrDemandContext);
   const supportsLinks = useAtomValue(
     serverEnvironment.configValueAtom(thread.environmentId),
-    (config) => config?.environment.capabilities.threadPullRequests === true,
+    (config) => config !== null,
   );
   const { linkedPresentation, pullRequestRef } = useMemo(
     () =>
@@ -75,7 +91,7 @@ export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentatio
           linkedPullRequest: thread.linkedPullRequest,
           branchPullRequest: thread.branchPullRequest,
         },
-        { threadPullRequests: supportsLinks },
+        supportsLinks,
       ),
     [thread.pullRequests, thread.linkedPullRequest, thread.branchPullRequest, supportsLinks],
   );
@@ -85,7 +101,7 @@ export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentatio
     key === null ? undefined : current.get(key),
   );
   const pullRequestSummary = useEnvironmentQuery(
-    pullRequestRef === null
+    pullRequestRef === null || !demand
       ? null
       : pullRequestSummaryAtom({
           environmentId: thread.environmentId,
@@ -98,16 +114,13 @@ export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentatio
   );
   const summary = pullRequestRef === null ? undefined : (pullRequestSummary.data ?? snapshot);
   // Rows pass `pr` into callbacks; a fresh object per render would invalidate them.
-  const summaryPresentation = useMemo(
-    () =>
-      summary === undefined
-        ? null
-        : presentThreadPr(pullRequestDetailToVcsStatus(summary), {
-            kind: summary.provider,
-            name: summary.provider,
-            baseUrl: "",
-          }),
-    [summary],
-  );
+  const summaryPresentation =
+    summary === undefined
+      ? null
+      : presentThreadPr(pullRequestDetailToVcsStatus(summary), {
+          kind: summary.provider,
+          name: summary.provider,
+          baseUrl: "",
+        });
   return linkedPresentation ?? summaryPresentation;
 }

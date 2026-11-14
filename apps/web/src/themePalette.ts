@@ -1,4 +1,5 @@
-import type { EnvironmentTheme } from "@t3tools/contracts";
+import { pipe } from "effect/Function";
+import { THEME_CSS_MAX_LENGTH, type EnvironmentTheme } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -22,9 +23,15 @@ import {
   type ThemeDefinition,
   type ThemeVariants,
 } from "@t3tools/shared/themePalettes";
+import {
+  CONTEXT_CHIP_ACCENTS,
+  contextChipColorVariable,
+  type ContextChipAccentKind,
+} from "./lib/contextChipAccents";
 
 import { appAtomRegistry, subscribeAtomChanges } from "./rpc/atomRegistry";
-import { primaryServerEnvironmentThemesAtom } from "./state/server";
+import { applyThemeCss } from "./themeCss";
+import { themeServerEnvironmentThemesAtom } from "./state/server";
 
 export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
@@ -39,6 +46,7 @@ export const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
 export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
 export const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
 export const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+export const ENVIRONMENT_THEMES_STORAGE_KEY = "t3code:environment-themes:v1";
 
 const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 
@@ -59,6 +67,7 @@ export type ThemeFile = Readonly<{
   variants?: ThemeVariantOverrides;
   collection?: ThemeCollection;
   managed?: boolean;
+  css?: string;
 }>;
 
 const customThemeListeners = new Set<() => void>();
@@ -112,6 +121,10 @@ function isThemeId(value: unknown): value is string {
 
 function isThemeLabel(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 48;
+}
+
+function isThemeCss(value: unknown): value is string {
+  return typeof value === "string" && value.length <= THEME_CSS_MAX_LENGTH;
 }
 
 function parseThemeCollection(value: unknown): ThemeCollection | undefined {
@@ -178,6 +191,7 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
     ...(variants ? { variants } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
+    ...(isThemeCss(value.css) && value.css.length > 0 ? { css: value.css } : {}),
   };
 }
 
@@ -281,6 +295,7 @@ function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
     theme.variants === undefined
       ? { managed: true }
       : {}),
+    ...(theme.css ? { css: theme.css } : {}),
   };
 }
 
@@ -308,20 +323,44 @@ export function publishedThemeDefinitions(
 
 // Every reconnect snapshot delivers a fresh but usually identical array; keeping the
 // previous one skips regenerating palettes and repainting the document for it.
-const publishedThemesAtom = Atom.make((get): ReadonlyArray<EnvironmentTheme> => {
-  const next = get(primaryServerEnvironmentThemesAtom);
-  const previous = Option.getOrNull(get.self<ReadonlyArray<EnvironmentTheme>>());
+const publishedThemesAtom = Atom.make((get): ReadonlyArray<EnvironmentTheme> | null => {
+  const next = get(themeServerEnvironmentThemesAtom);
+  const previous = Option.getOrNull(get.self<ReadonlyArray<EnvironmentTheme> | null>());
   return previous !== null && Equal.equals(previous, next) ? previous : next;
 }).pipe(Atom.withLabel("web-published-environment-themes"));
 
+function readStoredEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
+  try {
+    const parsed: unknown = JSON.parse(
+      window.localStorage.getItem(ENVIRONMENT_THEMES_STORAGE_KEY) ?? "null",
+    );
+    return Array.isArray(parsed) ? parseStoredThemes(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
- * The environment's palettes are not saved: they are republished by the server
- * on every change and would go stale the moment the machine's theme moved on.
- * Kept alive because theme lookups read it outside React on every repaint.
+ * Falls back to the last published set while the server connects, so boot and the
+ * first render paint the selected palette. Kept alive because theme lookups read it
+ * outside React on every repaint.
  */
-export const environmentThemeDefinitionsAtom = Atom.make((get) =>
-  publishedThemeDefinitions(get(publishedThemesAtom)),
-).pipe(Atom.keepAlive, Atom.withLabel("web-environment-theme-definitions"));
+export const environmentThemeDefinitionsAtom = Atom.make((get) => {
+  const published = get(publishedThemesAtom);
+  const definitions =
+    published === null ? readStoredEnvironmentThemes() : publishedThemeDefinitions(published);
+  const previous = Option.getOrNull(get.self<ReadonlyArray<ThemeDefinition>>());
+  return previous !== null && Equal.equals(previous, definitions) ? previous : definitions;
+}).pipe(Atom.keepAlive, Atom.withLabel("web-environment-theme-definitions"));
+
+export function storePublishedEnvironmentThemes(definitions: ReadonlyArray<ThemeDefinition>) {
+  if (appAtomRegistry.get(publishedThemesAtom) === null) return;
+  try {
+    window.localStorage.setItem(ENVIRONMENT_THEMES_STORAGE_KEY, JSON.stringify(definitions));
+  } catch {
+    // Without the stored copy the next launch paints stock colors until connect.
+  }
+}
 
 function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
   return appAtomRegistry.get(environmentThemeDefinitionsAtom);
@@ -390,9 +429,23 @@ function legacyThemeMode(theme: ThemePreference): ThemeAppearance | null {
 
 export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors {
   if (appearance === "dark") {
-    return (standardDarkThemeColors ??= decodeThemeColors(T3_CODE_DARK_THEME_COLORS));
+    return (standardDarkThemeColors ??= decodeThemeColors({
+      ...T3_CODE_DARK_THEME_COLORS,
+      canvas: "#000000",
+    }));
   }
   return (standardLightThemeColors ??= decodeThemeColors(T3_CODE_LIGHT_THEME_COLORS));
+}
+
+// index.css paints the light bubble a step darker than the shared palette mobile uses.
+const STANDARD_WEB_PAINTED_COLORS: Record<ThemeAppearance, Partial<ThemeColors>> = {
+  light: { messageSurface: "#ebebed" },
+  dark: { canvas: "#000000", messageSurface: "#1e1e1e" },
+};
+
+/** The standard theme as index.css paints it, for solves that measure the page. */
+export function getStandardPaintedThemeColors(appearance: ThemeAppearance): ThemeColors {
+  return { ...getStandardThemeColors(appearance), ...STANDARD_WEB_PAINTED_COLORS[appearance] };
 }
 
 type ThemeRgbColor = {
@@ -541,9 +594,10 @@ function srgbChannelToLinear(channel: number): number {
   return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
 }
 
-function linearChannelToSrgb(channel: number): number {
+function linearChannelToSrgb(channel: number, round = true): number {
   const c = channel <= 0.0031308 ? channel * 12.92 : 1.055 * channel ** (1 / 2.4) - 0.055;
-  return Math.round(Math.min(1, Math.max(0, c)) * 255);
+  const srgb = Math.min(1, Math.max(0, c)) * 255;
+  return round ? Math.round(srgb) : srgb;
 }
 
 function themeRgbToOklch(color: ThemeRgbColor): ThemeOklch {
@@ -597,12 +651,12 @@ function mapThemeOklchToSrgbGamut(color: ThemeOklch): ThemeOklch {
   return { ...color, C: low };
 }
 
-function themeOklchToRgb(color: ThemeOklch): ThemeRgbColor {
+function themeOklchToRgb(color: ThemeOklch, round = true): ThemeRgbColor {
   const linear = oklchToRgbUnclamped(mapThemeOklchToSrgbGamut(color));
   return {
-    r: linearChannelToSrgb(linear.r),
-    g: linearChannelToSrgb(linear.g),
-    b: linearChannelToSrgb(linear.b),
+    r: linearChannelToSrgb(linear.r, round),
+    g: linearChannelToSrgb(linear.g, round),
+    b: linearChannelToSrgb(linear.b, round),
   };
 }
 
@@ -612,19 +666,20 @@ function themeOklchToThemeColor(color: ThemeOklch): string {
 
 function solveOklchLightness(
   base: ThemeOklch,
-  against: ThemeRgbColor,
+  against: ReadonlyArray<ThemeRgbColor>,
   minContrast: number,
   direction: "lighter" | "darker",
 ): ThemeOklch {
+  const contrastOf = (color: ThemeOklch) =>
+    Math.min(...against.map((surface) => themeContrastRatio(themeOklchToRgb(color), surface)));
   let low = direction === "lighter" ? base.L : 0;
   let high = direction === "lighter" ? 1 : base.L;
   let candidate = { ...base };
-  if (themeContrastRatio(themeOklchToRgb(candidate), against) >= minContrast) return candidate;
+  if (contrastOf(candidate) >= minContrast) return candidate;
   for (let step = 0; step < 18; step += 1) {
     const mid = (low + high) / 2;
     candidate = { ...base, L: mid };
-    const contrast = themeContrastRatio(themeOklchToRgb(candidate), against);
-    if (contrast >= minContrast) {
+    if (contrastOf(candidate) >= minContrast) {
       if (direction === "lighter") high = mid;
       else low = mid;
     } else {
@@ -648,10 +703,72 @@ export function readableThemeColorOn(color: string, surface: string, minContrast
     return color;
   }
   const direction = themeRelativeLuminance(surfaceRgb) < 0.179 ? "lighter" : "darker";
-  const solved = solveOklchLightness(parsedColor.color, surfaceRgb, minContrast, direction);
+  const solved = solveOklchLightness(parsedColor.color, [surfaceRgb], minContrast, direction);
   // Return the 8-bit color the solver measured: the unrounded OKLCH can round
   // to a neighbor just under the target once it is stored and read back.
   return themeRgbToHexColor(themeOklchToRgb(solved));
+}
+
+/** A chip kind's per-theme contrast-solved lightness with `color`'s hue and chroma. */
+export function contextChipAccentWithHueOf(
+  kind: ContextChipAccentKind,
+  color: string,
+): string | null {
+  const parsed = parseThemeColor(color);
+  if (!parsed) return null;
+  const { C, h } = parsed.color;
+  return `oklch(from var(${contextChipColorVariable(kind)}) l ${formatThemeColorNumber(C, 4)} ${formatThemeColorNumber(h, 2)})`;
+}
+
+const CONTEXT_CHIP_CONTRAST = 5;
+const CONTEXT_CHIP_MESSAGE_VARIABLE = "--context-chip-message";
+const CONTEXT_CHIP_INVALID_VARIABLE = "--context-chip-invalid";
+
+export function contextChipVariables(colors: ThemeColors): Readonly<Record<string, string>> {
+  // CSS paints surfaces from their unrounded OKLCH, so measure them unrounded.
+  const parsedCanvas = parseThemeColor(colors.canvas);
+  const canvas = parsedCanvas ? themeOklchToRgb(parsedCanvas.color, false) : THEME_WHITE_FOREGROUND;
+  const onCanvas = (value: string) => {
+    const parsed = parseThemeColor(value);
+    return parsed
+      ? mixThemeRgbColors(canvas, themeOklchToRgb(parsed.color, false), parsed.alpha)
+      : canvas;
+  };
+  const isDark = (color: ThemeRgbColor) => themeRelativeLuminance(color) < 0.179;
+  const messageMatchesCanvas = isDark(onCanvas(colors.messageSurface)) === isDark(canvas);
+  const surfaces = [canvas, onCanvas(colors.surface), onCanvas(colors.surfaceRaised)];
+  if (messageMatchesCanvas) surfaces.push(onCanvas(colors.messageSurface));
+  const contrastOnSurfaces = (color: ThemeRgbColor) =>
+    Math.min(...surfaces.map((surface) => themeContrastRatio(color, surface)));
+  const blackContrast = contrastOnSurfaces(THEME_BLACK_FOREGROUND);
+  const whiteContrast = contrastOnSurfaces(THEME_WHITE_FOREGROUND);
+  const direction = blackContrast >= whiteContrast ? "darker" : "lighter";
+  const minContrast = Math.min(CONTEXT_CHIP_CONTRAST, Math.max(blackContrast, whiteContrast));
+  const accents: Array<[string, string]> = [
+    ...(Object.entries(CONTEXT_CHIP_ACCENTS) as Array<[ContextChipAccentKind, string]>).map(
+      ([kind, accent]): [string, string] => [contextChipColorVariable(kind), accent],
+    ),
+    [CONTEXT_CHIP_INVALID_VARIABLE, colors.errorForeground],
+  ];
+  const variables: Record<string, string> = Object.fromEntries(
+    accents.flatMap(([variable, accent]) => {
+      const parsed = parseThemeColor(accent);
+      if (!parsed) return [];
+      const solved = solveOklchLightness(parsed.color, surfaces, minContrast, direction);
+      return [[variable, themeRgbToHexColor(themeOklchToRgb(solved))]];
+    }),
+  );
+  if (!messageMatchesCanvas) variables[CONTEXT_CHIP_MESSAGE_VARIABLE] = colors.messageForeground;
+  return variables;
+}
+
+function applyContextChipVariables(root: HTMLElement, colors: ThemeColors): void {
+  const variables = contextChipVariables(colors);
+  root.style.removeProperty(CONTEXT_CHIP_MESSAGE_VARIABLE);
+  root.style.removeProperty(CONTEXT_CHIP_INVALID_VARIABLE);
+  for (const [variable, value] of Object.entries(variables)) {
+    root.style.setProperty(variable, value);
+  }
 }
 
 const STANDARD_STATUS_COLORS = {
@@ -683,13 +800,12 @@ function standardStatusColors(canvas: ThemeRgbColor): {
   const surfaceOf = (value: string) =>
     mixThemeRgbColors(canvas, parseThemeRgbColor(value, canvas), surfaceMix);
   const readableOn = (foreground: string, surface: ThemeRgbColor) =>
-    themeOklchToThemeColor(
-      solveOklchLightness(
-        themeRgbToOklch(parseThemeRgbColor(foreground, canvas)),
-        surface,
-        4.6,
-        appearance === "dark" ? "lighter" : "darker",
-      ),
+    pipe(
+      parseThemeRgbColor(foreground, canvas),
+      themeRgbToOklch,
+      (color) =>
+        solveOklchLightness(color, [surface], 4.6, appearance === "dark" ? "lighter" : "darker"),
+      themeOklchToThemeColor,
     );
   const errorSurface = surfaceOf(standard.error);
   const warningSurface = surfaceOf(standard.warning);
@@ -734,7 +850,7 @@ export function createVividThemeColors(
     C: Math.min(0.035, accent.C * 0.25),
     h: hue,
   };
-  const text = solveOklchLightness(textBase, canvasRgb, 7, dark ? "lighter" : "darker");
+  const text = solveOklchLightness(textBase, [canvasRgb], 7, dark ? "lighter" : "darker");
   const textRgb = themeOklchToRgb(text);
   const textMutedRgb = standardMutedThemeText(canvasRgb, textRgb);
 
@@ -768,7 +884,7 @@ export function createVividThemeColors(
 
   const foregroundOn = (surfaceRgb: ThemeRgbColor): string =>
     themeOklchToThemeColor(
-      solveOklchLightness(textBase, surfaceRgb, 4.6, dark ? "lighter" : "darker"),
+      solveOklchLightness(textBase, [surfaceRgb], 4.6, dark ? "lighter" : "darker"),
     );
   const mutedForeground = themeRgbToThemeColor(readableThemeText(mutedRgb, textRgb, 1, 4.6));
   const placeholder = themeRgbToThemeColor(readableThemeText(surfaceRaisedRgb, textRgb, 1, 4.6));
@@ -930,7 +1046,7 @@ export function updateThemeColorFamily(
     themeOklchToThemeColor(
       solveOklchLightness(
         parsedSelected.color,
-        background,
+        [background],
         4.6,
         themeRelativeLuminance(background) < 0.179 ? "lighter" : "darker",
       ),
@@ -1148,13 +1264,20 @@ export function getThemePreferenceMode(theme: ThemePreference): ThemeAppearance 
 }
 
 export function themeIdFromName(name: string): string {
-  const normalized = name
-    .trim()
-    .toLowerCase()
+  const label = name.trim().toLowerCase();
+  const normalized = label
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
-  return normalized || "custom-theme";
+  if (normalized || !label) return normalized || "custom-theme";
+
+  // Names without ASCII letters or digits still need independent, stable ids.
+  let hash = 2_166_136_261;
+  for (let index = 0; index < label.length; index += 1) {
+    hash ^= label.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return `theme-${(hash >>> 0).toString(36)}`;
 }
 
 export class ThemeLibraryStorageError extends Schema.TaggedError<ThemeLibraryStorageError>()(
@@ -1406,6 +1529,10 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     throw new Error("Theme collections need a valid id and label.");
   }
 
+  if (value.css !== undefined && !isThemeCss(value.css)) {
+    throw new Error(`Theme CSS must be text of ${THEME_CSS_MAX_LENGTH} characters or fewer.`);
+  }
+
   const fallback = getDefaultThemeColors(appearance);
   const variants: Partial<Record<ThemeAppearance, ThemeColors>> = {};
   if (value.variants !== undefined) {
@@ -1433,6 +1560,7 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
+    ...(value.css ? { css: value.css } : {}),
   };
 }
 
@@ -1447,6 +1575,7 @@ export function serializeThemeFile(theme: ThemeDefinition): string {
     ...(canonicalTheme.variants ? { variants: canonicalTheme.variants } : {}),
     ...(canonicalTheme.collection ? { collection: canonicalTheme.collection } : {}),
     ...(canonicalTheme.managed ? { managed: true } : {}),
+    ...(canonicalTheme.css ? { css: canonicalTheme.css } : {}),
   };
   return `${JSON.stringify(file, null, 2)}\n`;
 }
@@ -1522,7 +1651,11 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
 export const THEME_PREVIEW_ID = "__preview";
 
 /** Callers must restore the stored theme with refreshTheme when the draft closes. */
-export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeAppearance): void {
+export function applyThemeColorPreview(
+  colors: ThemeColors,
+  appearance: ThemeAppearance,
+  css?: string,
+): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   if (!root?.style) return;
@@ -1532,6 +1665,8 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
+  applyContextChipVariables(root, colors);
+  applyThemeCss(css);
   setThemePreviewAppearance(appearance);
 }
 
@@ -1543,6 +1678,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
 
   setThemePreviewAppearance(null);
   const palette = getThemeDefinition(theme);
+  applyThemeCss(palette?.css);
 
   if (palette) {
     root.dataset.themeId = palette.id;
@@ -1551,6 +1687,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
     for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
       root.style.setProperty(APP_THEME_VARIABLES[role], value);
     }
+    applyContextChipVariables(root, colors);
     return;
   }
 
@@ -1558,6 +1695,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }
+  applyContextChipVariables(root, getStandardPaintedThemeColors(appearance ?? "light"));
 }
 
 export function resolveThemeAppearance(

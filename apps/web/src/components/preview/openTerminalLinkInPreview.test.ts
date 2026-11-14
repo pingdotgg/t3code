@@ -1,8 +1,10 @@
-import type { PreviewOpenInput, ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
+import * as previewRuntime from "~/browser/previewRuntime";
 import { openTerminalLinkInPreview } from "./openTerminalLinkInPreview";
 
 vi.mock("~/previewStateStore", () => ({
@@ -22,13 +24,6 @@ const browserDefaultsMocks = vi.hoisted(() => ({
 
 vi.mock("~/browser/browserDefaults", () => ({
   resolveBrowserDefaults: browserDefaultsMocks.resolve,
-  browserDefaultOpenViewport: (defaults: { viewport: unknown }) => defaults.viewport,
-  browserDefaultOpenProfileId: (defaults: { profileId: string }) => defaults.profileId,
-}));
-
-vi.mock("~/browser/previewRuntime", () => ({
-  isPreviewAvailableFor: () => true,
-  previewRuntimeFor: () => "server",
 }));
 
 const linkTargetMocks = vi.hoisted(() => ({
@@ -43,6 +38,7 @@ vi.mock("~/browser/browserLinkTarget", () => ({
 const hydratedDefaults = {
   viewport: { _tag: "fixed", width: 1280, height: 720 } as const,
   profileId: "work",
+  zoomFactor: 0.8,
   appearance: "dark",
 };
 
@@ -78,20 +74,23 @@ describe("openTerminalLinkInPreview", () => {
     expect(fallbackToBrowser).not.toHaveBeenCalled();
   });
 
-  it("opens the link at the saved default appearance", async () => {
-    const colorSchemes: Array<PreviewOpenInput["colorScheme"]> = [];
+  it("opens a server tab with the default zoom and appearance", async () => {
+    vi.spyOn(previewRuntime, "previewRuntimeFor").mockReturnValue("server");
+    const openPreview = vi.fn<OpenPreviewMutation>(async () =>
+      AsyncResult.failure(Cause.interrupt()),
+    );
 
     await openTerminalLinkInPreview({
-      url: "http://localhost:5173/",
+      url: "https://t3.chat/",
       threadRef,
-      openPreview: async (request) => {
-        colorSchemes.push(request.input.colorScheme);
-        return AsyncResult.failure(Cause.interrupt());
-      },
+      openPreview,
       fallbackToBrowser: vi.fn(),
       forceBrowser: false,
     });
 
-    expect(colorSchemes).toEqual(["dark"]);
+    expect(openPreview).toHaveBeenCalledExactlyOnceWith({
+      environmentId: threadRef.environmentId,
+      input: expect.objectContaining({ runtime: "server", zoomFactor: 0.8, colorScheme: "dark" }),
+    });
   });
 });

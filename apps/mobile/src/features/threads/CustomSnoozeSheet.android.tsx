@@ -33,14 +33,16 @@ import { AppState, useWindowDimensions } from "react-native";
 import { OverlayPortal } from "../../components/ui/OverlayPortal";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
-import type { CustomSnoozeSheet as SharedCustomSnoozeSheet } from "./CustomSnoozeSheet.shared";
 import {
   applySnoozePickerDate,
   applySnoozePickerTime,
   snoozeDateToPickerDate,
 } from "./customSnoozeDate";
 
-type Props = Parameters<typeof SharedCustomSnoozeSheet>[0];
+type Props = {
+  readonly onClose: () => void;
+  readonly onSnooze: (snoozedUntil: string) => void;
+};
 
 const roundedCorner = Shape.RoundedCorner;
 
@@ -61,6 +63,7 @@ function systemUses24HourClock() {
 export function CustomSnoozeSheet(props: Props) {
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const [is24Hour, setIs24Hour] = useState(systemUses24HourClock);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to AppState to re-read the native 24-hour clock setting when the app resumes
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") setIs24Hour(systemUses24HourClock());
@@ -291,7 +294,10 @@ function SnoozeDateTimePicker(props: {
       is24Hour={props.is24Hour}
       showVariantToggle={false}
       elementColors={props.colors}
-      onDateSelected={props.onChange}
+      // Null marks incomplete input; keep the last valid date.
+      onDateSelected={(date) => {
+        if (date) props.onChange(date);
+      }}
     />
   );
 }

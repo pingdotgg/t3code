@@ -7,6 +7,11 @@ const parse = (url: string) => definition.parseChangeRequestUrl(new URL(url));
 
 describe("Bitbucket change request URLs", () => {
   it("reads a pull request on Bitbucket hosts", () => {
+    expect(
+      definition.isChangeRequestReference(
+        "https://bitbucket.org/workspace/repo/pull-requests/5/diff",
+      ),
+    ).toBe(true);
     expect(parse("https://bitbucket.org/workspace/repo/pull-requests/5/diff")).toEqual({
       host: "bitbucket.org",
       repository: "workspace/repo",
@@ -21,6 +26,14 @@ describe("Bitbucket change request URLs", () => {
 
   it("leaves other hosts alone", () => {
     expect(parse("https://scm.example.test/workspace/repo/pull-requests/5")).toBeNull();
+    expect(
+      definition.isChangeRequestReference(
+        "https://scm.example.test/workspace/repo/pull-requests/5",
+      ),
+    ).toBe(false);
+    expect(
+      definition.isChangeRequestReference("https://bitbucket.org/workspace/repo/src/main"),
+    ).toBe(false);
   });
 
   it("builds pull request URLs below the repository", () => {
@@ -35,6 +48,17 @@ describe("Bitbucket change request URLs", () => {
         webUrl: "https://bitbucket.org/w/repo",
       }),
     ).toBe("https://bitbucket.org/w/repo/pull-requests/5");
+  });
+});
+
+describe("Bitbucket repository pages", () => {
+  it("reads the repository from a source view on Bitbucket hosts only", () => {
+    const repositoryUrl = (url: string) => definition.repositoryUrlFromPage?.(new URL(url));
+    expect(repositoryUrl("https://bitbucket.org/workspace/repo/src/main/")).toBe(
+      "https://bitbucket.org/workspace/repo",
+    );
+    expect(repositoryUrl("https://bitbucket.org/workspace/repo")).toBeNull();
+    expect(repositoryUrl("https://scm.example.test/workspace/repo/src/main/")).toBeNull();
   });
 });
 

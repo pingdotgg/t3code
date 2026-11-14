@@ -17,18 +17,19 @@ export interface ClaudeSkillDispatch {
   readonly leadingText: string | undefined;
   /** `/name` plus the trailing text, ready to be the message's last text block. */
   readonly commandText: string;
-  readonly skillName: string;
 }
 
 export function planClaudeSkillDispatch(
   prompt: string,
   skills: ReadonlyMap<string, ClaudeSkillTarget>,
+  /** Mentions before this offset, such as inline handoff history, stay plain text. */
+  mentionsFrom = 0,
 ): ClaudeSkillDispatch | undefined {
   const mentions = [...prompt.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
     const name = match[2] ?? "";
     const skill = skills.get(name);
-    if (!skill) return [];
     const start = (match.index ?? 0) + (match[1]?.length ?? 0);
+    if (!skill || start < mentionsFrom) return [];
     return [{ name, skill, start, end: (match.index ?? 0) + match[0].length }];
   });
   const last = mentions.at(-1);
@@ -55,6 +56,5 @@ export function planClaudeSkillDispatch(
     leadingText:
       prompt.slice(0, last.start).trim().length > 0 ? promptWithInlineSlashes : undefined,
     commandText: `/${last.name}${prompt.slice(last.end)}`.trimEnd(),
-    skillName: last.name,
   };
 }
