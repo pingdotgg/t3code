@@ -895,14 +895,19 @@ const make = Effect.fn("makeWithDatabase")(function* (
   }));
   let activeWriter: ConnectionOwner | undefined;
   // Callers must run route uninterruptibly and pass `claimed` a finalizer that runs `release` once.
-  const route = (claimed: (release: Effect.Effect<void>) => Effect.Effect<void>) =>
+  // Standalone reads pass their own `restore`: readOnly's may have been captured inside a mask.
+  const route = (
+    claimed: (release: Effect.Effect<void>) => Effect.Effect<void>,
+    restore?: typeof Effect.interruptible,
+  ) =>
     Effect.withFiber((fiber): Effect.Effect<Target, SqlError> => {
-      const restore = Context.get(fiber.context, ReadOnly);
-      if (readers.length === 0 || readerPool.unavailable || restore === undefined) {
+      const readOnlyRestore = Context.get(fiber.context, ReadOnly);
+      if (readers.length === 0 || readerPool.unavailable || readOnlyRestore === undefined) {
         return writer;
       }
+      const admit = restore ?? fiber.getRef(TransactionAcquire)?.restore ?? readOnlyRestore;
       const claim = Effect.andThen(
-        (fiber.getRef(TransactionAcquire)?.restore ?? restore)(readerAdmission.take(1)),
+        admit(readerAdmission.take(1)),
         Effect.suspend(() => {
           // Holding a permit leaves a slot idle; the lowest wins, so idle slots never start a worker.
           const reader = readers.find((slot) => !slot.claimed)!;
@@ -951,7 +956,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
       // Started before routing, so lock wait includes waiting for reader admission.
       return Effect.withFiber((fiber) => {
         const start = fiber.getRef(Clock.Clock).monotonicTimeNanosUnsafe();
-        return Effect.flatMap(route(claimed), (target) =>
+        return Effect.flatMap(route(claimed, restore), (target) =>
           restore(borrowTarget(target, use, start)),
         );
       }).pipe(Effect.ensuring(Effect.suspend(() => release)));

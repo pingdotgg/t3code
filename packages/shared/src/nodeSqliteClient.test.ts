@@ -450,6 +450,10 @@ it.effect("gives a queued read the first reader that frees up", () =>
         SqliteClient.readOnly(restore(sql.withTransaction(countEntries(sql)))),
       ).pipe((effect) => Effect.forkChild(effect, { startImmediately: true }));
       yield* Fiber.interrupt(cancelled);
+      const cancelledRead = yield* Effect.uninterruptibleMask((restore) =>
+        SqliteClient.readOnly(restore(countEntries(sql))),
+      ).pipe((effect) => Effect.forkChild(effect, { startImmediately: true }));
+      yield* Fiber.interrupt(cancelledRead);
       const queuedSpan = yield* Deferred.make<Tracer.Span>();
       const observeQueued: Statement.Transformer = (statement, _sql, _fiber, span) =>
         Deferred.succeed(queuedSpan, span).pipe(Effect.as(statement));
