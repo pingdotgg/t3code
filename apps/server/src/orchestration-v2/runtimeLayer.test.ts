@@ -11717,15 +11717,28 @@ describe("subagent lifecycle cascade", () => {
       const f = yield* fixture;
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const store = yield* ProjectionStore.ProjectionStoreV2;
-      // "foreign" moved to another project after the walk found it.
+      // "foreign" moved to another project, with its own subagent, after the walk found it.
+      const { projectId } = yield* store.getThread(parent);
+      const foreign = ThreadId.make("foreign");
+      yield* f.set(ThreadId.make("foreign-child"), {
+        lineage: {
+          rootThreadId: parent,
+          parentThreadId: foreign,
+          relationshipToParent: "subagent",
+        },
+        projectId: ProjectId.make("foreign"),
+      });
       const children = orchestrator.getSubagentChildThreads;
-      const foreign = store.getThread(ThreadId.make("foreign")).pipe(Effect.orDie);
+      const stale = store.getThread(foreign).pipe(
+        Effect.orDie,
+        Effect.map((thread) => ({ ...thread, projectId })),
+      );
       using _stale = vi
         .spyOn(orchestrator, "getSubagentChildThreads")
         .mockImplementation((id) =>
-          id === parent ? Effect.zipWith(children(id), foreign, (c, t) => [...c, t]) : children(id),
+          id === parent ? Effect.zipWith(children(id), stale, (c, t) => [...c, t]) : children(id),
         );
-      const all = [native, app, grandchild, "fork", "fork-child", "foreign"];
+      const all = [native, app, grandchild, "fork", "fork-child", "foreign", "foreign-child"];
       for (const operation of ["archive", "unarchive", "delete"] as const) {
         // A deleted intermediate must not hide surviving descendants from deletion.
         if (operation === "delete") yield* f.set(app, { deletedAt: f.now });
@@ -11734,7 +11747,7 @@ describe("subagent lifecycle cascade", () => {
         const field = operation === "delete" ? "deletedAt" : "archivedAt";
         assert.equal(
           yield* f.state(field, ...all),
-          operation === "unarchive" ? "000000" : "111000",
+          operation === "unarchive" ? "0000000" : "1110000",
         );
         const effects = yield* f.outbox.listByCommandId(
           CommandId.make(`${operation}:parent:subagent:native`),

@@ -1697,7 +1697,11 @@ const make = Effect.gen(function* () {
       if (input.operation !== "thread.delete" && receipt?.status !== "accepted") return;
       const source = input.operation === "thread.delete" ? undefined : receipt;
       const visit: (
-        thread: { readonly id: ThreadId; readonly deletedAt: unknown },
+        thread: {
+          readonly id: ThreadId;
+          readonly deletedAt: unknown;
+          readonly projectId?: unknown;
+        },
         commandId: CommandId,
         path: ReadonlyArray<ThreadId>,
       ) => ReturnType<ThreadManagementServiceShape["cascadeSubagentLifecycle"]> = Effect.fn(
@@ -1719,9 +1723,10 @@ const make = Effect.gen(function* () {
         yield* threadDispatch.withLock(
           thread.id,
           Effect.gen(function* () {
-            // A deleted thread, a thread above the caller's limit or a newer choice keeps its subtree.
+            // A deleted or moved thread, one above the caller's limit or a newer choice keeps its subtree.
             const limit = yield* DispatchModeLimit;
             const current = (yield* orchestrator.getThreadRecords(thread.id, [])).thread;
+            if (path.length > 0 && current.projectId !== thread.projectId) return;
             if (limit && exceededDispatchModeLimit(limit, current)) return;
             if (source && current.deletedAt !== null) return;
             const latest = source ? yield* receipts.getLatestLifecycle(thread.id) : null;
