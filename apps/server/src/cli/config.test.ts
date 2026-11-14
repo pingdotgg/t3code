@@ -30,6 +30,7 @@ import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
 } from "../cloud/serviceProtocol.ts";
+import { BootstrapFdStatError } from "../bootstrap.ts";
 import { deriveServerPaths } from "../config.ts";
 import { resolveServerConfig } from "./config.ts";
 
@@ -753,6 +754,37 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     tailscaleServePort: Option.none<number>(),
     lan: Option.none<boolean>(),
   });
+
+  it.effect("rejects an unavailable bootstrap fd before creating server state", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-bootstrap-required-" });
+      const baseDir = path.join(root, "server-home");
+      const fd = 2_147_483_647;
+
+      const error = yield* resolveServerConfig(
+        {
+          ...minimalWebFlags(baseDir),
+          mode: Option.none(),
+          bootstrapFd: Option.some(fd),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NetService.layer,
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+          ),
+        ),
+        Effect.flip,
+      );
+
+      assert.instanceOf(error, BootstrapFdStatError);
+      assert.equal(error.fd, fd);
+      expect(yield* fs.exists(baseDir)).toBe(false);
+    }),
+  );
 
   it.effect("uses the automatic port selector only when no port is configured", () =>
     Effect.gen(function* () {
