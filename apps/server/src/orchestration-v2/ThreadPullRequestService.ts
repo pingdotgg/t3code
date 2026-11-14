@@ -3,6 +3,7 @@ import {
   type OrchestrationProjectShell,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
+  type PullRequestSummary,
   type ThreadId,
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
@@ -10,10 +11,12 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -23,9 +26,11 @@ import * as GitManager from "../git/GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import { makeLinkedThreadsChangeDetector } from "../pullRequest/linkedThreads.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import { makeNoPullRequestRechecks } from "./noPullRequestRechecks.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 class ThreadPullRequestServiceV2 extends Context.Service<
@@ -47,6 +52,19 @@ function samePullRequest(
     left.number === right.number &&
     left.url === right.url
   );
+}
+
+function pullRequestPredatesThread(
+  pullRequest: Pick<PullRequestSummary, "state" | "closedAt" | "mergedAt">,
+  createdAt: DateTime.Utc,
+): boolean {
+  const terminalAt =
+    pullRequest.state === "merged"
+      ? pullRequest.mergedAt
+      : pullRequest.state === "closed"
+        ? pullRequest.closedAt
+        : null;
+  return terminalAt != null && Date.parse(terminalAt) < DateTime.toEpochMillis(createdAt);
 }
 
 function pullRequestMatchesProject(
@@ -106,6 +124,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const pendingBackfill = new Map<ThreadId, number>();
+  const noPullRequestRechecks = makeNoPullRequestRechecks();
 
   const finishBackfill = (threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>) => {
     for (const thread of threads) pendingBackfill.delete(thread.id);
@@ -139,6 +158,7 @@ export const make = Effect.gen(function* () {
           )
         : threadSnapshot.threads;
     const projects = new Map(projectShells.map((project) => [project.id, project]));
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     if (request.backfill) {
       for (const thread of snapshotThreads) {
         if (
@@ -168,13 +188,34 @@ export const make = Effect.gen(function* () {
       JSON.stringify([thread.projectId, thread.worktreePath, thread.branch]),
     );
 
+    // A thread's own events and a backfill read at once; only scheduled sweeps wait.
+    const scheduled = new Map(
+      request.threadId !== null
+        ? []
+        : [...groups].filter(
+            ([, group]) =>
+              group[0]!.branch !== null &&
+              group.every(
+                (thread) => thread.branchPullRequest == null && !pendingBackfill.has(thread.id),
+              ),
+          ),
+    );
+    const scheduledLookups = noPullRequestRechecks.select(
+      nowMs,
+      Array.from(scheduled, ([key, group]) => ({
+        key,
+        activityAtMs: Math.max(...group.map((thread) => DateTime.toEpochMillis(thread.updatedAt))),
+      })),
+    );
+
     yield* Effect.forEach(
-      groups.values(),
-      (group) =>
+      groups,
+      ([key, group]) =>
         Effect.gen(function* () {
           const first = group[0]!;
           const project = projects.get(first.projectId);
           if (project === undefined) return finishBackfill(group);
+          if (scheduled.has(key) && !scheduledLookups.has(key)) return;
           const { project: resolvedProject, repository } =
             yield* resolveProjectForPullRequestDiscovery(project, repositoryIdentities, {
               refresh: request.refresh,
@@ -189,13 +230,15 @@ export const make = Effect.gen(function* () {
               .pipe(Effect.orElseSucceed(() => true)))
               ? first.worktreePath
               : project.workspaceRoot;
+          // A detected PR is confirmed against fresh git state before it is saved.
           const detected =
             first.branch === null
               ? null
               : yield* git.branchPullRequest(
                   { cwd, branch: first.branch },
-                  { refresh: request.refresh },
+                  { refresh: request.refresh, confirmTerminal: false },
                 );
+          if (first.branch !== null) noPullRequestRechecks.record(key, nowMs, detected !== null);
           if (detected !== null && !pullRequestMatchesProject(detected, resolvedProject)) {
             return finishBackfill(group);
           }
@@ -209,9 +252,22 @@ export const make = Effect.gen(function* () {
                 }
               : null;
 
+          // Only a new association is refused: a thread keeps a PR it already saved, and a PR the
+          // user checked out stays with the threads made for it, however long ago it closed.
+          const isHistoricalFor = (thread: (typeof group)[number]) =>
+            detected !== null &&
+            pullRequestPredatesThread(detected, thread.createdAt) &&
+            !samePullRequest(thread.branchPullRequest, detectedReference);
+          const dropsHistorical =
+            detected !== null &&
+            first.branch !== null &&
+            group.some(isHistoricalFor) &&
+            !(yield* git.checkedOutPullRequest({ cwd, branch: first.branch, url: detected.url }));
+
           const plans = yield* Effect.forEach(group, (thread) =>
             Effect.gen(function* () {
-              let branchPullRequest = detectedReference;
+              let branchPullRequest =
+                dropsHistorical && isHistoricalFor(thread) ? null : detectedReference;
               if (
                 branchPullRequest === null &&
                 thread.branch !== null &&
@@ -344,6 +400,7 @@ export const make = Effect.gen(function* () {
       // Batch concurrent branch lookups into one GitHub GraphQL document.
       { concurrency: 32, discard: true },
     );
+    if (request.threadId === null) noPullRequestRechecks.retain(groups);
   });
 
   // At most one queued request per thread, so a turn end's events share one lookup.
@@ -378,7 +435,26 @@ export const make = Effect.gen(function* () {
       return worker.enqueue(request);
     });
 
-  const processEvent = (event: OrchestrationV2DomainEvent) => {
+  const linkedThreadsChange = makeLinkedThreadsChangeDetector();
+  // A running linked thread can reorder its answers on every event, so reorders refresh readers at
+  // most once per 10s, the cadence clients used to poll at.
+  const linkedThreadReorders = yield* Queue.dropping<void>(1);
+
+  const notifyLinkedThreads = (event: OrchestrationV2DomainEvent) => {
+    switch (linkedThreadsChange(event)) {
+      case "changed":
+        return pullRequests.notifyLinkedThreadsChanged;
+      case "reordered":
+        return Queue.offer(linkedThreadReorders, undefined).pipe(Effect.asVoid);
+      case null:
+        return Effect.void;
+    }
+  };
+
+  const processEvent = (event: OrchestrationV2DomainEvent) =>
+    Effect.andThen(notifyLinkedThreads(event), refreshForEvent(event));
+
+  const refreshForEvent = (event: OrchestrationV2DomainEvent) => {
     switch (event.type) {
       case "thread.created":
       case "thread.unarchived":
@@ -405,6 +481,13 @@ export const make = Effect.gen(function* () {
     "ThreadPullRequestServiceV2.start",
   )(function* () {
     yield* forkParked(Stream.runForEach(orchestrator.streamDomainEvents, processEvent));
+    yield* forkParked(
+      Queue.take(linkedThreadReorders).pipe(
+        Effect.andThen(pullRequests.notifyLinkedThreadsChanged),
+        Effect.andThen(Effect.sleep("10 seconds")),
+        Effect.forever,
+      ),
+    );
     yield* forkParked(
       Effect.gen(function* () {
         yield* worker.enqueue({ threadId: null, refresh: false, backfill: true });
