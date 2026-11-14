@@ -177,7 +177,7 @@ const PI_STDERR_LINE_MAX_CHARS = 240;
 const PI_STDERR_ERROR_LINE = /^[\w$.]*(?:Error|Exception)(?: \[[\w-]+\])?:/;
 // The shared redactor covers `key=value`; extension errors can also echo `--api-key value` argv.
 const PI_STDERR_CREDENTIAL_FLAG =
-  /(--?[\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)\s+)(?:"[^"]*"|'[^']*'|\S+)/giu;
+  /((?<![\w-])--?[\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)\s+)(?:"[^"]*"|'[^']*'|\S+)/giu;
 
 // Only the last error line and its first stack frame: free-form stderr may echo prompts.
 function piStderrCause(stderrTail: string): string | undefined {
@@ -187,10 +187,10 @@ function piStderrCause(stderrTail: string): string | undefined {
     const frame = lines[index + 1];
     return [lines[index]!, ...(frame?.startsWith("at ") ? [frame] : [])]
       .map((line) =>
-        redactProviderFailureText(
-          line
-            .slice(0, PI_STDERR_LINE_MAX_CHARS)
-            .replace(PI_STDERR_CREDENTIAL_FLAG, "$1[REDACTED]"),
+        // Redact before truncating so a cut cannot split a quoted value out of its match.
+        redactProviderFailureText(line.replace(PI_STDERR_CREDENTIAL_FLAG, "$1[REDACTED]")).slice(
+          0,
+          PI_STDERR_LINE_MAX_CHARS,
         ),
       )
       .join(" ");

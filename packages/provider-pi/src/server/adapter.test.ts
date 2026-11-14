@@ -6084,8 +6084,7 @@ describe("PiRpc early process exit", () => {
 
   it.effect("includes Pi's stderr cause when it exits nonzero", () =>
     Effect.gen(function* () {
-      const cause =
-        "Error: This extension ctx is stale after session replacement --api-key super-secret\n";
+      const cause = `Error: This extension ctx is stale after session replacement --api-key super-secret --token "quoted leaked-word ${"y".repeat(240)}"\n`;
       const spawner = ChildProcessSpawner.make(() =>
         Effect.succeed(
           makeHandle({
@@ -6107,6 +6106,7 @@ describe("PiRpc early process exit", () => {
       assert.include(error.message, "This extension ctx is stale after session replacement");
       assert.include(error.message, "--api-key [REDACTED]");
       assert.isFalse(error.message.includes("super-secret"));
+      assert.isFalse(error.message.includes("leaked-word"));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
