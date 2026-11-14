@@ -27,6 +27,7 @@ import {
   type PullRequestSummary,
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
+  pullRequestConversationThreads,
 } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
@@ -1144,14 +1145,14 @@ export function PullRequestDetailPanel({
 
   /**
    * Brings a remark into the composer beside this panel, with the pull request it belongs to,
-   * and nothing else: what to ask about it is the reader's to write. A remark on a line travels
-   * as its whole conversation, the way fixing one does.
+   * and nothing else: what to ask about it is the reader's to write. A remark in a thread travels
+   * as its whole conversation, so a reply arrives with what it answers.
    */
   const addCommentToChat = (subject: PullRequestChatSubject) => {
     if (!detail || attachTarget === null) return;
     const thread =
       subject.kind === "comment"
-        ? detail.reviewThreads.find((candidate) =>
+        ? pullRequestConversationThreads(detail).find((candidate) =>
             candidate.comments.some((comment) => comment.id === subject.comment.id),
           )
         : undefined;

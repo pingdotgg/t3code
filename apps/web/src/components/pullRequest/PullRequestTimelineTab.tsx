@@ -235,7 +235,6 @@ function ConversationCard({
   onOpen,
   reactions,
   showPath = true,
-  reply = false,
 }: {
   event: PullRequestTimelineEvent;
   editable: PullRequestComment | null;
@@ -243,8 +242,6 @@ function ConversationCard({
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
   showPath?: boolean;
-  /** A reply goes with its conversation, from the card that heads it. */
-  reply?: boolean;
 }) {
   const canReact = reactions.canReact(event);
   const [editing, setEditing] = useState(false);
@@ -303,7 +300,7 @@ function ConversationCard({
           {editable !== null && !editing ? (
             <PullRequestEditButton aria-label="Edit comment" onClick={() => setEditing(true)} />
           ) : null}
-          {event.body && event.comment && !reply ? (
+          {event.body && event.comment ? (
             <AddToChatButton comment={event.comment} reactions={reactions} />
           ) : null}
           {canReact || event.reactions.length > 0 ? (
@@ -551,7 +548,6 @@ function ReviewThreadEvent({
                   onOpen={onOpen}
                   reactions={reactions}
                   showPath={false}
-                  reply
                 />
               ))}
             </div>

@@ -14,6 +14,7 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
 import {
+  COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   GitCommandError,
   PullRequestDetail,
   PullRequestOperationError,
@@ -703,6 +704,38 @@ function readableBody(raw: string): string | null {
 }
 
 /**
+ * A body too long for the bound, with collapsed `<details>` sections moved after the text a
+ * reader sees so the bound keeps that text. Details shown inside code are source and stay put.
+ */
+function visibleTextFirst(body: string): string {
+  if (body.length <= FINDING_BODY_MAX_LENGTH) return body;
+  const codeLines = new Set<number>();
+  const visit = (node: MdastNodes) => {
+    if (node.type === "code" && node.position !== undefined) {
+      for (let line = node.position.start.line; line <= node.position.end.line; line += 1) {
+        codeLines.add(line);
+      }
+    }
+    if ("children" in node) for (const child of node.children) visit(child);
+  };
+  visit(fromMarkdown(body));
+  const shown: string[] = [];
+  const folded: string[] = [];
+  // Whether each open section starts collapsed; `<details open>` reads as visible text.
+  const sections: boolean[] = [];
+  for (const [index, line] of body.split("\n").entries()) {
+    const inCode = codeLines.has(index + 1);
+    const opener = inCode ? null : /^\s*<details(?=[\s>])([^>]*)/iu.exec(line);
+    // Quoted values are dropped first so `title="open logs"` does not read as the attribute.
+    const attributes = opener?.[1]?.replace(/"[^"]*"|'[^']*'/gu, "") ?? "";
+    if (opener) sections.push(!/(?:^|\s)open(?:[\s=/]|$)/iu.test(attributes));
+    (sections.includes(true) ? folded : shown).push(line);
+    if (!inCode && sections.length > 0 && /<\/details>/iu.test(line)) sections.pop();
+  }
+  return folded.length === 0 ? body : [...shown, "", ...folded].join("\n").trim();
+}
+
+/**
  * Merged wins over closed: GitHub sets both timestamps on a merge, and reporting "closed" for a
  * merged pull request would misstate what happened.
  */
@@ -1250,8 +1283,34 @@ export function buildPullRequestContext(input: PullRequestContextMetadata): Revi
   return pullRequestContextComment(input, []);
 }
 
-/** A remark the reader can bring into the chat: a conversation on a line, or one comment. */
-export type PullRequestChatSubject = Extract<PullRequestFinding, { kind: "thread" | "comment" }>;
+/**
+ * A conversation's lines within what the composer sends. Earlier replies give way first, since a
+ * reader reaches for the latest one, and the agent is told what it is not seeing.
+ */
+function threadText(lines: ReadonlyArray<string>, moreOnHost: boolean): string {
+  const tail = moreOnHost ? ["(More replies are on the host and not included here.)"] : [];
+  let kept = lines;
+  let omitted = 0;
+  const join = () =>
+    [
+      ...kept.slice(0, 1),
+      ...(omitted > 0
+        ? [`(${omitted} earlier ${omitted === 1 ? "reply" : "replies"} omitted.)`]
+        : []),
+      ...kept.slice(1),
+      ...tail,
+    ].join("\n");
+  while (kept.length > 2 && join().length > COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS) {
+    kept = [kept[0]!, ...kept.slice(2)];
+    omitted += 1;
+  }
+  return join();
+}
+
+/** A remark the reader can bring into the chat: a whole conversation, or one comment. */
+export type PullRequestChatSubject =
+  | { readonly kind: "thread"; readonly thread: PullRequestConversationThread }
+  | { readonly kind: "comment"; readonly comment: PullRequestComment };
 
 /**
  * A remark or conversation brought into the chat to talk about, not to fix. Its id carries the
@@ -1262,30 +1321,45 @@ export function buildPullRequestCommentContext(
   subject: PullRequestChatSubject,
 ): ReviewCommentContext | null {
   const pullRequestNumber = pullRequest.number;
-  if (subject.kind === "thread") {
-    const context = reviewThreadContext(subject.thread, pullRequestNumber);
-    return context.text === ""
-      ? null
-      : { ...context, id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}` };
+  const comments = subject.kind === "thread" ? subject.thread.comments : [subject.comment];
+  // Bounded per comment so a long bot report cannot crowd the replies out of the thread.
+  const lines = comments.flatMap((comment) => {
+    const body = readableBody(comment.body);
+    return body === null
+      ? []
+      : [bounded(`${comment.author?.login ?? "ghost"}: ${visibleTextFirst(body)}`)];
+  });
+  const first = comments[0];
+  if (lines.length === 0 || first === undefined) return null;
+  const text = threadText(
+    lines,
+    subject.kind === "thread" &&
+      ((subject.thread.commentCount ?? 0) > comments.length ||
+        subject.thread.nextCommentsCursor !== undefined),
+  );
+  if (subject.kind === "thread" && subject.thread.path !== null) {
+    return {
+      ...reviewThreadContext(subject.thread, pullRequestNumber),
+      id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}`,
+      text,
+    };
   }
-  const comment = subject.comment;
-  const body = readableBody(comment.body);
-  if (body === null) return null;
-  const author = comment.author?.login ?? "ghost";
+  const path = subject.kind === "comment" ? subject.comment.path : null;
   return {
-    id: `pr-comment:${pullRequest.url}:comment:${comment.id}`,
+    id:
+      subject.kind === "thread"
+        ? `pr-comment:${pullRequest.url}:thread:${subject.thread.id}`
+        : `pr-comment:${pullRequest.url}:comment:${subject.comment.id}`,
     sectionId: `pull-request:${pullRequestNumber}`,
     sectionTitle: `PR #${pullRequestNumber} conversation`,
-    // The chip wears `filePath rangeLabel`: the file a remark names, or who wrote one that names none.
-    filePath: comment.path ?? `@${author}`,
+    // The chip wears `filePath rangeLabel`: the file a remark names, or who opened one that names none.
+    filePath: path ?? `@${first.author?.login ?? "ghost"}`,
     startIndex: 0,
     endIndex: 0,
-    rangeLabel: "comment",
-    text: bounded(`${author}: ${body}`),
+    rangeLabel: subject.kind === "thread" ? "thread" : "comment",
+    text,
     diff: "",
-    ...(comment.path === null
-      ? {}
-      : { fenceLanguage: inferReviewCommentFenceLanguage(comment.path) }),
+    ...(path === null ? {} : { fenceLanguage: inferReviewCommentFenceLanguage(path) }),
   };
 }
 

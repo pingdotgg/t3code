@@ -1,5 +1,6 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
+  COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   GitCommandError,
   ProjectId,
   type PullRequestCheck,
@@ -1098,6 +1099,116 @@ describe("adding a remark to the chat", () => {
 
     expect(context && reviewCommentContextLabel(context)).toBe("#42 @octocat comment");
     expect(context?.text).toBe("octocat: Why not reuse the existing parser?");
+  });
+
+  it("brings an overview thread's replies along with its opening remark", () => {
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "thread",
+      thread: {
+        id: "t1",
+        path: null,
+        line: null,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments: [
+          remark("c1", "Does this skip the prompt?"),
+          {
+            ...remark("c2", "One concern remains."),
+            author: { login: "coderabbit", name: null, avatarUrl: null },
+          },
+        ],
+      },
+    });
+
+    expect(context && reviewCommentContextLabel(context)).toBe("#42 @octocat thread");
+    expect(context?.text).toBe(
+      "octocat: Does this skip the prompt?\ncoderabbit: One concern remains.",
+    );
+  });
+
+  it("keeps a reply when the remark it answers runs past the length bound", () => {
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "thread",
+      thread: {
+        id: "t1",
+        path: "src/app.ts",
+        line: 3,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments: [remark("c1", "x".repeat(5_000)), remark("c2", "One concern remains.")],
+      },
+    });
+
+    expect(context?.text).toMatch(/\.\.\.\noctocat: One concern remains\.$/u);
+  });
+
+  it("puts a remark's visible text ahead of its collapsed details", () => {
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "comment",
+      comment: remark(
+        "c1",
+        `<details title="open logs">\n<summary>Analysis chain</summary>\n\n${"script ".repeat(400)}\n</details>\n\nOne concern remains.`,
+      ),
+    });
+
+    expect(context?.text).toMatch(/^octocat: One concern remains\.\n\n<details title/u);
+  });
+
+  it("closes a details section whose closing tag has text after it", () => {
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "comment",
+      comment: remark("c1", `<details>\n${"script ".repeat(400)}</details> Tail.\nVisible.`),
+    });
+
+    expect(context?.text).toMatch(/^octocat: Visible\./u);
+  });
+
+  it("gives way to the newest replies when a thread outgrows what the composer sends", () => {
+    const comments = Array.from({ length: 20 }, (_, index) =>
+      remark(`c${index}`, `${index} ${"x".repeat(990)}`),
+    );
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "thread",
+      thread: {
+        id: "t1",
+        path: null,
+        line: null,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments,
+        nextCommentsCursor: "more",
+      },
+    });
+
+    expect(context?.text.length).toBeLessThanOrEqual(COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS);
+    expect(context?.text).toMatch(/^octocat: 0 /u);
+    expect(context?.text).toMatch(/\n\(5 earlier replies omitted\.\)\noctocat: 6 /u);
+    expect(context?.text).toMatch(/octocat: 19 x+\.\.\.\n\(More replies are on the host/u);
+  });
+
+  it("keeps a details section that starts open in place", () => {
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "comment",
+      comment: remark(
+        "c1",
+        `<details open>\n<summary>Finding</summary>\n\nRename x.\n</details>\n\n${"Context. ".repeat(200)}`,
+      ),
+    });
+
+    expect(context?.text).toMatch(/^octocat: <details open>/u);
+  });
+
+  it("leaves a details tag shown inside code where it is", () => {
+    const body = `\`\`\`html\n<details>\n<summary>Example</summary>\n</details>\n\`\`\`\n${"Explanation. ".repeat(100)}`;
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "comment",
+      comment: remark("c1", body),
+    });
+
+    expect(context?.text).toMatch(/^octocat: ```html\n<details>/u);
   });
 
   it("keeps every added remark when a later hand-off lands", () => {
