@@ -838,6 +838,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               if (
                 closed ||
                 stopRequested ||
+                unsolicitedActivityDetected ||
                 (error.operation !== "read" && error.operation !== "write")
               )
                 return yield* error;
