@@ -368,10 +368,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }));
     yield* Ref.set(activeGrantCheck, { session: undefined, retry: undefined });
     const active = yield* SubscriptionRef.get(prepared);
-    const activeId = Option.isSome(active) ? connectionRouteId(active.value.target) : undefined;
     yield* Ref.update(routeGrants, (grants) => {
-      const kept = activeId === undefined ? undefined : grants.get(activeId);
-      return kept === undefined ? new Map() : new Map([[activeId!, kept]]);
+      if (Option.isNone(active)) return new Map();
+      const activeId = connectionRouteId(active.value.target);
+      const kept = grants.get(activeId);
+      return kept === undefined ? new Map() : new Map([[activeId, kept]]);
     });
   });
   // An answer asked for before a reset could repopulate what the reset cleared.
