@@ -296,6 +296,18 @@ describe("GhosttyTerminalCore snapshots", () => {
     expect(core.snapshot()).toEqual(reference.snapshot());
   });
 
+  it("answers an OSC 11 background query with the theme background", async () => {
+    const replies: string[] = [];
+    const core = await createCore((data) => replies.push(data));
+    core.setTheme({
+      foreground: { r: 0, g: 0, b: 0 },
+      background: { r: 255, g: 255, b: 255 },
+      cursor: { r: 0, g: 0, b: 0 },
+    });
+    core.write("\x1b]11;?\x1b\\");
+    expect(replies.join("")).toMatch(/^\x1b\]11;rgb:ffff\/ffff\/ffff(\x07|\x1b\\)$/);
+  });
+
   it("answers a live VT query when batched reads cross a chunk compaction", async () => {
     const replies: string[] = [];
     const core = await createCore((data) => replies.push(data));
