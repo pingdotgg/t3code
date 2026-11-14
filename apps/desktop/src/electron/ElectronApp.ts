@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Relaunch runs synchronously inside electron-updater's install too.
+import * as NodeChildProcess from "node:child_process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -173,10 +175,9 @@ export const make = ElectronApp.of({
       Electron.app.exit(code);
     });
   }),
-  relaunch: Effect.fn("ElectronApp.relaunch")(function (options) {
-    return Effect.sync(() => {
-      Electron.app.relaunch(options);
-    });
+  relaunch: Effect.fn("ElectronApp.relaunch")(function* (options) {
+    const relaunch = yield* makeRelaunch;
+    relaunch(options);
   }),
   setPath: Effect.fn("ElectronApp.setPath")(function (name, path) {
     return Effect.sync(() => {
@@ -250,6 +251,45 @@ export const make = ElectronApp.of({
     });
   }),
   on: addScopedAppListener,
+});
+
+export const CLOSE_INHERITED_FDS =
+  'for fd in /proc/self/fd/*; do fd=${fd##*/}; case $fd in *[!0-9]*|[012]) ;; *) eval "exec $fd>&-" ;; esac; done';
+
+// stdin reaches EOF when this process exits, so the new instance can take the single-instance lock.
+const WAIT_FOR_PARENT_EXIT_THEN_EXEC = `${CLOSE_INHERITED_FDS}; while read -r _; do :; done; exec "$@" </dev/null`;
+
+// Electron's Linux relauncher sets PR_SET_NO_NEW_PRIVS (electron/electron#41463). It is inherited
+// and irreversible, so sudo, pkexec and setuid helpers fail in the backend, terminals and agents.
+// Returns a plain function because electron-updater relaunches synchronously from its install.
+export const makeRelaunch = Effect.gen(function* () {
+  const platform = yield* HostProcess.Platform;
+  const { APPIMAGE, APPDIR } = yield* HostProcess.Environment;
+  const currentExecPath = yield* HostProcess.ExecutablePath;
+  const currentArgs = (yield* HostProcess.Arguments).slice(1);
+  return (options: Electron.RelaunchOptions = {}): void => {
+    if (platform !== "linux") return Electron.app.relaunch(options);
+    const execPath = options.execPath ?? currentExecPath;
+    // The AppImage mount goes away with this process, so start the AppImage itself.
+    const fromAppImage = APPIMAGE && APPDIR && execPath.startsWith(`${APPDIR}/`);
+    const child = NodeChildProcess.spawn(
+      "bash",
+      [
+        "-p",
+        "-c",
+        WAIT_FOR_PARENT_EXIT_THEN_EXEC,
+        "t3code-relaunch",
+        fromAppImage ? APPIMAGE : execPath,
+        ...(options.args ?? currentArgs),
+      ],
+      { detached: true, stdio: ["pipe", "inherit", "inherit"] },
+    );
+    if (child.pid === undefined) {
+      child.on("error", () => undefined);
+      return Electron.app.relaunch(options);
+    }
+    child.unref();
+  };
 });
 
 export const layer = Layer.succeed(ElectronApp, make);
