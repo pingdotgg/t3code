@@ -46,8 +46,10 @@ adds one fixture for what e2e cannot know about T3 Code:
 - `t3.open(path)` opens the app, already signed in, at a path. `t3.open(thread)` opens it on a
   thread.
 
-State is created through the app's own CLI, so it is real events and works on a base commit
-whose schema differs. New threads default to the replay agent's `showcase` recording: type a
+State is created through the server's own API and CLI, so it is real events and works on a base
+commit whose database schema differs. Projects go through the HTTP API, since each CLI call
+starts a process that takes about 0.7 s; the run issues one session for it through the CLI.
+A base older than the projects API (`/api/projects/mutate`) cannot run a scenario. New threads default to the replay agent's `showcase` recording: type a
 message and send it. To play something else, add a recording to the
 [replay agent](development.md#replay-provider).
 
