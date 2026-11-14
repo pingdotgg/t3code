@@ -1,10 +1,10 @@
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
+import * as SQL from "@alchemy.run/sql/Postgres";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { Client } from "pg";
 import { Network } from "./Network.ts";
 
 export class SqlError extends Data.TaggedError("SqlError")<{
@@ -37,52 +37,24 @@ export const DatabaseAurora = Layer.effect(
       securityGroupIds: [databaseSecurityGroup.groupId],
     });
 
+    // `Connect` resolves credentials per invocation; the pool opens on the
+    // first query and closes when the invocation settles.
+    const sql = yield* SQL.Postgres({
+      url: connect.pipe(Effect.map((connection) => connection.url)),
+    });
+
     return Database.of({
       query: <Row extends Record<string, unknown>>(
         statement: string,
         values: ReadonlyArray<unknown> = [],
-      ): Effect.Effect<ReadonlyArray<Row>, SqlError, RuntimeContext> =>
-        connect.pipe(
-          Effect.catch((cause) =>
-            Effect.fail(
+      ) =>
+        sql.unsafe<Row>(statement, values).pipe(
+          Effect.mapError(
+            (cause) =>
               new SqlError({
-                message: "Failed to resolve Aurora connection settings",
+                message: `Failed to execute SQL statement: ${statement}`,
                 cause,
               }),
-            ),
-          ),
-          Effect.flatMap((connection: AWS.RDS.ConnectionInfo) =>
-            Effect.tryPromise({
-              try: async () => {
-                const client = new Client({
-                  host: connection.host,
-                  port: connection.port,
-                  database: connection.database,
-                  user: connection.username,
-                  password: connection.password,
-                  // Example-only SSL posture for private Aurora connections.
-                  ssl: connection.ssl
-                    ? { rejectUnauthorized: false }
-                    : undefined,
-                });
-
-                await client.connect();
-                try {
-                  const result = await client.query<Row>({
-                    text: statement,
-                    values: [...values],
-                  });
-                  return result.rows as ReadonlyArray<Row>;
-                } finally {
-                  await client.end();
-                }
-              },
-              catch: (cause) =>
-                new SqlError({
-                  message: `Failed to execute SQL statement: ${statement}`,
-                  cause,
-                }),
-            }),
           ),
         ),
     });

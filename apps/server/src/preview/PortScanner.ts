@@ -24,6 +24,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
+import * as WindowsTcpListeners from "../process/windowsTcpListeners.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 export class PortDiscovery extends Context.Service<
@@ -55,6 +56,13 @@ export class PortDiscovery extends Context.Service<
      * outside Effect.
      */
     readonly trackAgent: () => () => void;
+    /**
+     * Tells an agent CLI's adapter which of its commands a user stop is about to signal, so the
+     * exit is not reported to the agent as the command finishing by itself.
+     */
+    readonly watchAgentCommandStops: (
+      watcher: AgentCommandStopWatcher,
+    ) => Effect.Effect<void, never, Scope.Scope>;
     /** Stops a listed server's process group, never this server, an agent CLI, or a shell. */
     readonly stopServer: (
       input: PreviewStopLocalServerInput,
@@ -68,13 +76,22 @@ export class PortDiscovery extends Context.Service<
  */
 export const AGENT_THREAD_ENV = "T3CODE_THREAD_ID";
 
+export interface AgentCommandStopWatcher {
+  /** The variable the CLI sets on each command it starts, naming that command. */
+  readonly variable: string;
+  readonly onStop: (command: string) => Effect.Effect<void>;
+  /** The signal never reached the command, so it is still running or ended by itself. */
+  readonly onStopAbandoned: (command: string) => Effect.Effect<void>;
+}
+
+/** `0` turns off listener discovery; configured preview URLs are still probed. */
+const PORT_DISCOVERY_ENV = "T3CODE_PORT_DISCOVERY";
+
 const POLL_INTERVAL = Duration.seconds(3);
 const LSOF_TIMEOUT_MS = 5_000;
 const PROC_FD_WALK_LIMIT = 50_000;
 const SOCKET_OWNER_ATTEMPTS = 3;
 const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
-/** `netstat -ano` lists every connection, not just listeners; ~80 bytes per row, sized for ~200k rows. */
-const WINDOWS_NETSTAT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const WEB_PROBE_TIMEOUT = Duration.seconds(1);
 const WEB_PROBE_CACHE_TTL_MS = Duration.toMillis(Duration.seconds(15));
 /** Bounds how long a cached Windows image name can outlive its process if Windows reuses the PID. */
@@ -132,8 +149,8 @@ interface WebProbeCacheEntry {
 
 interface WebProbeGroup {
   readonly server: DiscoveredLocalServer;
-  readonly urls: ReadonlyArray<string>;
-  readonly configuredKey: string | null;
+  readonly url: string;
+  readonly configuredKey: string;
 }
 
 interface WebProbeSnapshot {
@@ -189,17 +206,22 @@ const projectWebProbeSnapshot = (
   configuredUrls: ReadonlyArray<string>,
 ): ReadonlyArray<DiscoveredLocalServer> => {
   const visibleByServer = new Map<string, DiscoveredLocalServer>();
+  const firstConfiguredByServer = new Map<string, string>();
   for (const raw of normalizeConfiguredUrls(configuredUrls)) {
     const url = new URL(raw);
     const port = urlPort(url);
     const serverKey = localServerKey(url.hostname, port);
+    if (!firstConfiguredByServer.has(serverKey)) firstConfiguredByServer.set(serverKey, raw);
     if (visibleByServer.has(serverKey)) continue;
     const configured = snapshot.configured.get(webProbeCacheKey(raw));
     if (configured) visibleByServer.set(serverKey, { ...configured, url: raw });
   }
+  // An owned listener whose configured check failed still opens at this caller's configured URL.
   for (const server of snapshot.discovered) {
     const key = localServerKey(server.host, server.port);
-    if (!visibleByServer.has(key)) visibleByServer.set(key, server);
+    if (visibleByServer.has(key)) continue;
+    const configuredUrl = firstConfiguredByServer.get(key);
+    visibleByServer.set(key, configuredUrl ? { ...server, url: configuredUrl } : server);
   }
   return [...visibleByServer.values()].toSorted((left, right) => left.port - right.port);
 };
@@ -264,53 +286,6 @@ const parsePortFromLsofName = (name: string): number | null => {
   return port;
 };
 
-const parseWindowsListenerLine = (
-  line: string,
-): {
-  readonly host: string;
-  readonly port: number;
-  readonly pid: number | null;
-  readonly processName: string | null;
-} | null => {
-  const trimmed = line.trim();
-  if (trimmed.length === 0) return null;
-
-  if (trimmed.includes("|")) {
-    const [hostRaw, portRaw, pidRaw, processNameRaw] = trimmed.split("|", 4);
-    const host = hostRaw?.trim() ?? "";
-    if (!LSOF_LOCAL_HOST_TOKENS.has(host) && host !== "::") return null;
-    const port = Number(portRaw);
-    const pid = Number(pidRaw);
-    if (!Number.isInteger(port) || port <= 0 || port >= 65536) return null;
-    return {
-      host,
-      port,
-      pid: Number.isInteger(pid) && pid > 0 ? pid : null,
-      processName: processNameRaw?.trim() || null,
-    };
-  }
-
-  // Foreign port `:0` identifies a listening TCP socket regardless of Windows locale.
-  const fields = trimmed.split(/\s+/);
-  if (fields.length < 4 || fields[0]?.toUpperCase() !== "TCP") return null;
-  const localEndpoint = fields[1] ?? "";
-  const foreignEndpoint = fields[2] ?? "";
-  if (!foreignEndpoint.endsWith(":0")) return null;
-  const lastColon = localEndpoint.lastIndexOf(":");
-  if (lastColon <= 0) return null;
-  const host = localEndpoint.slice(0, lastColon);
-  if (!LSOF_LOCAL_HOST_TOKENS.has(host) && host !== "::") return null;
-  const port = Number(localEndpoint.slice(lastColon + 1));
-  if (!Number.isInteger(port) || port <= 0 || port >= 65536) return null;
-  const pid = Number(fields.at(-1));
-  return {
-    host,
-    port,
-    pid: Number.isInteger(pid) && pid > 0 ? pid : null,
-    processName: null,
-  };
-};
-
 const exitedWithError = (result: ProcessRunner.ProcessRunOutput): boolean =>
   result.code !== null && result.code !== 0;
 
@@ -322,16 +297,13 @@ const parseTasklistProcessName = (raw: string, pid: number): string | null => {
   return null;
 };
 
-const parseWindowsListenerOutput = (
-  raw: string,
-  owners: ReadonlyMap<number, ServerOwner> = new Map(),
+const discoveredWindowsListeners = (
+  listeners: ReadonlyArray<WindowsTcpListeners.WindowsTcpListener>,
+  owners: ReadonlyMap<number, ServerOwner>,
 ): ReadonlyArray<DiscoveredLocalServer> => {
   const seen = new Map<number, DiscoveredLocalServer>();
-  for (const line of raw.split(/\r?\n/g)) {
-    const parsed = parseWindowsListenerLine(line);
-    if (!parsed) continue;
-    const { port, pid: normalizedPid, processName } = parsed;
-    const owner = normalizedPid === null ? undefined : owners.get(normalizedPid);
+  for (const { port, pid } of listeners) {
+    const owner = pid === null ? undefined : owners.get(pid);
     const existing = seen.get(port);
     if (existing) {
       if (owner === undefined) seen.set(port, { ...existing, ...UNOWNED });
@@ -341,8 +313,8 @@ const parseWindowsListenerOutput = (
       host: "localhost",
       port,
       url: `http://localhost:${port}`,
-      processName,
-      pid: normalizedPid,
+      processName: null,
+      pid,
       ...(owner ?? UNOWNED),
     });
   }
@@ -354,7 +326,7 @@ const PROC_TCP_LISTEN = "0A";
 /** Each 32-bit word of the hex address is little-endian. */
 const procLocalAddress = (hex: string): boolean => {
   if (hex.length === 8) {
-    return hex === "00000000" || hex.endsWith("7F");
+    return hex === "00000000" || hex === "0100007F";
   }
   if (hex.length !== 32) return false;
   if (hex === "0".repeat(32) || hex === `${"0".repeat(24)}01000000`) return true;
@@ -423,6 +395,42 @@ const parsePsEnvironmentThreads = (raw: string): ReadonlyMap<number, ThreadId | 
     threads.set(Number(match[1]), value ? ThreadId.make(value) : null);
   }
   return threads;
+};
+
+/** Splits `/proc/<pid>/environ` on NUL, or the environment macOS `ps -E` appends on spaces. */
+const parseEnvironmentVariables = (
+  raw: string,
+  separator: "\0" | RegExp,
+  names: ReadonlyArray<string>,
+): ReadonlyMap<string, string> => {
+  const variables = new Map<string, string>();
+  for (const entry of raw.split(separator)) {
+    const name = names.find((candidate) => entry.startsWith(`${candidate}=`));
+    if (name !== undefined && !variables.has(name)) {
+      variables.set(name, entry.slice(name.length + 1));
+    }
+  }
+  return variables;
+};
+
+/**
+ * The agent commands that signaling a group stops, by the variable naming each. A CLI starts a
+ * command as a group leader and names it in the command's environment, which the CLI itself does
+ * not carry. A job the command moved to its own group inherits the name from its parent, and
+ * stopping that job does not end the command.
+ */
+export const agentCommandsInGroup = (
+  variables: ReadonlyMap<number, ReadonlyMap<string, string>>,
+  leader: ProcessTableRow,
+): ReadonlyMap<string, string> => {
+  const commands = new Map<string, string>();
+  const parent = variables.get(leader.ppid);
+  // An unreadable parent cannot rule out an inherited name.
+  if (parent === undefined) return commands;
+  for (const [name, command] of variables.get(leader.pid) ?? []) {
+    if (command !== "" && parent.get(name) !== command) commands.set(name, command);
+  }
+  return commands;
 };
 
 const parseProcessTable = (raw: string): ReadonlyMap<number, ProcessTableRow> => {
@@ -498,6 +506,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcess.Platform;
+  const listenerDiscovery = (yield* HostProcess.Environment)[PORT_DISCOVERY_ENV] !== "0";
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const stateRef = yield* Ref.make<ScannerState>({
     listeners: new Map(),
@@ -518,6 +527,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // environment, so a pid is read once while it listens. Cleared while no client retains the
   // scanner, since unscanned pids can be reused.
   const agentThreadsRef = yield* Ref.make<ReadonlyMap<number, ThreadId | null>>(new Map());
+  const agentCommandStopWatchers = new Set<AgentCommandStopWatcher>();
   let runningAgents = 0;
   // An agent that exited, or a cache cleared with a marked listener, owes one listener read: the
   // servers it left may still run. So does startup, for agents that ran before a restart.
@@ -585,11 +595,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     inodes: ReadonlySet<string>,
   ) {
     const owners = new Map<string, { pid: number; processName: string | null }>();
-    const pids = (yield* fileSystem
-      .readDirectory("/proc")
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter((entry) =>
-      /^\d+$/.test(entry),
-    );
+    const entries = yield* fileSystem.readDirectory("/proc").pipe(Effect.option);
+    if (Option.isNone(entries)) return null;
+    const pids = entries.value.filter((entry) => /^\d+$/.test(entry));
     let budget = PROC_FD_WALK_LIMIT;
     for (const pidText of pids) {
       if (owners.size === inodes.size || budget <= 0) break;
@@ -613,7 +621,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       );
       for (const inode of matched) owners.set(inode, { pid: Number(pidText), processName });
     }
-    return owners;
+    const lsofMissing = yield* Ref.get(lsofMissingRef);
+    return budget <= 0 && owners.size < inodes.size && !lsofMissing ? null : owners;
   });
 
   const scanProcListeners = Effect.fn("PortDiscovery.scanProcListeners")(function* (
@@ -621,12 +630,27 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   ) {
     if (hostPlatform !== "linux") return null;
     const tables = yield* Effect.forEach(["/proc/net/tcp", "/proc/net/tcp6"], (path) =>
-      fileSystem.readFileString(path).pipe(Effect.option),
+      fileSystem.readFileString(path).pipe(
+        // Kernels without IPv6 omit tcp6; a denied table can hide listeners on a shared port.
+        Effect.catchIf(
+          (error) => error.reason._tag === "NotFound",
+          () => Effect.succeed(null),
+        ),
+        Effect.option,
+      ),
     );
-    if (tables.every(Option.isNone)) return null;
-    const listeners = tables.flatMap((table) =>
-      Option.isSome(table) ? parseProcNetTcp(table.value) : [],
+    if (tables.some(Option.isNone)) return null;
+    const readable = tables.flatMap((table) =>
+      Option.isSome(table) && table.value !== null ? [table.value] : [],
     );
+    if (
+      readable.length === 0 ||
+      readable.some(
+        (table) => !/^\s*sl\s+local_address\s+(?:rem|remote)_address\s+st\s/.test(table),
+      )
+    )
+      return null;
+    const listeners = readable.flatMap(parseProcNetTcp);
     const known = yield* Ref.get(socketOwnersRef);
     const knownMisses = yield* Ref.get(socketOwnerMissesRef);
     const inodes = new Set(listeners.map((listener) => listener.inode));
@@ -637,6 +661,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       ),
     );
     const found = unseen.size === 0 ? new Map() : yield* findSocketOwners(unseen);
+    if (found === null) return null;
     const owners = new Map([...known, ...found].filter(([inode]) => inodes.has(inode)));
     const misses = new Map([...knownMisses].filter(([inode]) => inodes.has(inode)));
     for (const inode of unseen) {
@@ -715,102 +740,56 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           pid: null,
           terminal: null,
         },
-        urls: [raw],
+        url: raw,
         configuredKey: resourceKey,
-      });
-    }
-
-    for (const server of servers) {
-      // Never probe an unidentified listener with HTTP or TLS; binary RPC servers can crash on it.
-      if (!isOwned(server)) continue;
-      groups.push({
-        server,
-        urls: [`http://${server.host}:${server.port}`, `https://${server.host}:${server.port}`],
-        configuredKey: null,
       });
     }
 
     return groups;
   };
 
-  const probeWebServers = Effect.fn("PortDiscovery.probeWebServers")(function* (
+  // Only configured URLs are requested. Owned listeners are listed as plain HTTP without a
+  // request: owning a process says nothing about its protocol, and HTTP or TLS bytes break
+  // binary ones such as Unity's test runner or Steam's IPC.
+  // Idle polls omit this span; requested scans and uncached probes retain their own spans.
+  const probeWebServers = Effect.fnUntraced(function* (
     servers: ReadonlyArray<DiscoveredLocalServer>,
     configuredUrls: ReadonlyArray<string>,
   ) {
     const nowMillis = yield* Clock.currentTimeMillis;
     const cached = yield* Ref.get(webProbeCacheRef);
     const groups = makeWebProbeGroups(servers, configuredUrls);
-    const batchProbes = new Map<
-      string,
-      Effect.Effect<{ readonly probe: WebProbeCacheEntry; readonly fresh: boolean }>
-    >();
-    const batchProbeSemaphore = yield* Semaphore.make(1);
-    const getProbe = (url: string, pid: number | null) => {
-      const key = webProbeCacheKey(url);
-      const identity = `${key}\u0000${pid ?? ""}`;
-      return batchProbeSemaphore
-        .withPermits(1)(
-          Effect.gen(function* () {
-            const existing = batchProbes.get(identity);
-            if (existing) return [existing] as const;
-            const cachedProbe = cached.get(key);
-            const cachedIsCurrent =
-              cachedProbe?.pid === pid && cachedProbe.expiresAtMillis > nowMillis;
-            const memoized = yield* Effect.cached(
-              cachedIsCurrent
-                ? Effect.succeed({ probe: cachedProbe, fresh: false })
-                : probeWebUrl(url).pipe(
-                    Effect.map((result) => ({
-                      probe: { pid, isWeb: result !== null, expiresAtMillis: 0 },
-                      fresh: true,
-                    })),
-                  ),
-            );
-            batchProbes.set(identity, memoized);
-            return [memoized] as const;
-          }),
-        )
-        .pipe(Effect.flatMap(([probe]) => probe));
-    };
     const probed = yield* Effect.forEach(
       groups,
-      (group) =>
-        Effect.gen(function* () {
-          const probes: Array<readonly [string, WebProbeCacheEntry, boolean]> = [];
-          let visibleUrl: string | null = null;
-          for (const url of group.urls) {
-            const key = webProbeCacheKey(url);
-            const { probe, fresh } = yield* getProbe(url, group.server.pid);
-            probes.push([key, probe, fresh]);
-            if (probe.isWeb) {
-              visibleUrl = url;
-              break;
-            }
-          }
-          return { group, probes, visibleUrl };
-        }),
+      (group) => {
+        const { pid } = group.server;
+        const cachedProbe = cached.get(group.configuredKey);
+        return cachedProbe?.pid === pid && cachedProbe.expiresAtMillis > nowMillis
+          ? Effect.succeed({ group, probe: cachedProbe, fresh: false })
+          : probeWebUrl(group.url).pipe(
+              Effect.map((result) => ({
+                group,
+                probe: { pid, isWeb: result !== null, expiresAtMillis: 0 },
+                fresh: true,
+              })),
+            );
+      },
       { concurrency: WEB_PROBE_CONCURRENCY },
     );
     const completedAtMillis = yield* Clock.currentTimeMillis;
     const nextCache = new Map(
       [...cached].filter(([, probe]) => probe.expiresAtMillis > completedAtMillis),
     );
-    const discovered: DiscoveredLocalServer[] = [];
     const configured = new Map<string, DiscoveredLocalServer>();
-    for (const { group, probes, visibleUrl } of probed) {
-      for (const [key, probe, fresh] of probes) {
-        nextCache.set(
-          key,
-          fresh ? { ...probe, expiresAtMillis: completedAtMillis + WEB_PROBE_CACHE_TTL_MS } : probe,
-        );
-      }
-      if (visibleUrl === null) continue;
-      const server = { ...group.server, url: visibleUrl };
-      if (group.configuredKey === null) discovered.push(server);
-      else configured.set(group.configuredKey, server);
+    for (const { group, probe, fresh } of probed) {
+      nextCache.set(
+        group.configuredKey,
+        fresh ? { ...probe, expiresAtMillis: completedAtMillis + WEB_PROBE_CACHE_TTL_MS } : probe,
+      );
+      if (probe.isWeb) configured.set(group.configuredKey, { ...group.server, url: group.url });
     }
     yield* Ref.set(webProbeCacheRef, nextCache);
-    return { discovered, configured } satisfies WebProbeSnapshot;
+    return { discovered: servers.filter(isOwned), configured } satisfies WebProbeSnapshot;
   });
 
   // tasklist costs 200-300ms per PID; query visible servers with bounded concurrency and cache names.
@@ -870,9 +849,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         platform: hostPlatform,
       }).pipe(Effect.as(null));
 
-  const scanUnlocked = Effect.fn("PortDiscovery.scanUnlocked")(function* (
-    configuredUrls: ReadonlyArray<string>,
-  ) {
+  // Routine polling helpers share operation/probe spans instead of tracing every tick.
+  const scanUnlocked = Effect.fnUntraced(function* (configuredUrls: ReadonlyArray<string>) {
+    if (!listenerDiscovery) return yield* probeWebServers([], configuredUrls);
     const state = yield* Ref.get(stateRef);
     const terminalOwners = new Map<number, ServerOwner>();
     for (const registration of state.terminalProcesses.values()) {
@@ -894,21 +873,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       agentsPossible ? withAgentOwners(terminalOwners, pids) : Effect.succeed(terminalOwners);
     if (hostPlatform === "win32") {
       const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");
-      const runNetstat = (protocol: "tcp" | "tcpv6") =>
-        processRunner.run({
-          command: "netstat.exe",
-          args: ["-ano", "-p", protocol],
-          timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
-          maxOutputBytes: WINDOWS_NETSTAT_MAX_OUTPUT_BYTES,
-        });
-      const listeners = yield* Effect.all([runNetstat("tcp"), runNetstat("tcpv6")], {
-        concurrency: 2,
-      }).pipe(
-        // Failed queries can hide other IPv4/IPv6 listeners on the port; fall back to configured URLs.
-        Effect.map(([tcp4, tcp6]) =>
-          exitedWithError(tcp4) || exitedWithError(tcp6)
-            ? null
-            : parseWindowsListenerOutput(`${tcp4.stdout}\n${tcp6.stdout}`, terminalOwners),
+      const listeners = yield* WindowsTcpListeners.queryWindowsTcpListeners(
+        processRunner,
+        "netstat.exe",
+      ).pipe(
+        Effect.map((snapshot) =>
+          snapshot === null ? null : discoveredWindowsListeners(snapshot, terminalOwners),
         ),
         Effect.catchTags({
           ProcessSpawnError: recoverWindowsProbeFailure,
@@ -922,11 +892,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         yield* probeWebServers(listeners ?? [], configuredUrls),
       );
     }
+    const fromProc = yield* scanProcListeners(resolveOwners);
+    if (fromProc !== null) return yield* probeWebServers(fromProc, configuredUrls);
     const recoverLsofProbeFailure = recoverProcessProbeFailure("lsof");
-    if (yield* Ref.get(lsofMissingRef)) {
-      const fromProc = yield* scanProcListeners(resolveOwners);
-      return yield* probeWebServers(fromProc ?? [], configuredUrls);
-    }
+    if (yield* Ref.get(lsofMissingRef)) return yield* probeWebServers([], configuredUrls);
     const lsofResult = yield* processRunner
       .run({
         command: "lsof",
@@ -953,23 +922,25 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         }),
       );
     if (lsofResult !== null) return yield* probeWebServers(lsofResult, configuredUrls);
-    const fromProc = yield* scanProcListeners(resolveOwners);
-    return yield* probeWebServers(fromProc ?? [], configuredUrls);
+    // A missing lsof makes a bounded, partial /proc owner walk the only available discovery.
+    const withoutLsof = (yield* Ref.get(lsofMissingRef))
+      ? yield* scanProcListeners(resolveOwners)
+      : null;
+    return yield* probeWebServers(withoutLsof ?? [], configuredUrls);
   });
 
-  const scanSnapshot = Effect.fn("PortDiscovery.scanSnapshot")(
-    (configuredUrls: ReadonlyArray<string>) =>
-      scanSemaphore.withPermits(1)(scanUnlocked(configuredUrls)),
-  );
+  const scanSnapshot = (configuredUrls: ReadonlyArray<string>) =>
+    scanSemaphore.withPermits(1)(scanUnlocked(configuredUrls));
 
   const scanOnce: PortDiscovery["Service"]["scan"] = (configuredUrls = []) => {
     const normalized = normalizeConfiguredUrls(configuredUrls);
     return scanSnapshot(normalized).pipe(
       Effect.map((snapshot) => projectWebProbeSnapshot(snapshot, normalized)),
+      Effect.withSpan("PortDiscovery.scan"),
     );
   };
 
-  const pollTick = Effect.fn("PortDiscovery.pollTick")(
+  const pollTick = Effect.fnUntraced(
     function* () {
       const configuredUrls = [
         ...new Set(
@@ -1020,8 +991,14 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       return [retainCount === 0, { ...state, retainCount }];
     });
     if (!idle) return;
-    const threads = yield* Ref.getAndSet(agentThreadsRef, new Map());
-    if ([...threads.values()].some((threadId) => threadId !== null)) agentScanPending = true;
+    yield* scanSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        yield* Ref.set(socketOwnersRef, new Map());
+        yield* Ref.set(socketOwnerMissesRef, new Map());
+        const threads = yield* Ref.getAndSet(agentThreadsRef, new Map());
+        if ([...threads.values()].some((threadId) => threadId !== null)) agentScanPending = true;
+      }),
+    );
   });
 
   const retain: PortDiscovery["Service"]["retain"] = Effect.acquireRelease(
@@ -1091,6 +1068,62 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     };
   };
 
+  const watchAgentCommandStops: PortDiscovery["Service"]["watchAgentCommandStops"] = (watcher) =>
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        agentCommandStopWatchers.add(watcher);
+      }),
+      () => Effect.sync(() => agentCommandStopWatchers.delete(watcher)),
+    );
+
+  /** Each process's launch values for `names`; a process that cannot be read is left out. */
+  const readEnvironmentVariables = Effect.fn("PortDiscovery.readEnvironmentVariables")(function* (
+    pids: ReadonlyArray<number>,
+    names: ReadonlyArray<string>,
+  ) {
+    if (hostPlatform === "linux") {
+      const read = yield* Effect.forEach(pids, (pid) =>
+        fileSystem.readFileString(`/proc/${pid}/environ`).pipe(
+          Effect.map((raw) => [pid, parseEnvironmentVariables(raw, "\0", names)] as const),
+          Effect.option,
+        ),
+      );
+      return new Map(read.flatMap(Option.toArray));
+    }
+    const result = yield* processRunner
+      .run({
+        command: "ps",
+        args: ["-E", "-ww", "-o", "pid=,command=", "-p", pids.join(",")],
+        timeout: Duration.millis(PS_TIMEOUT_MS),
+        maxOutputBytes: PS_MAX_OUTPUT_BYTES,
+      })
+      .pipe(Effect.option);
+    const variables = new Map<number, ReadonlyMap<string, string>>();
+    for (const line of Option.isSome(result) ? result.value.stdout.split("\n") : []) {
+      const match = /^\s*(\d+)\s(.*)$/.exec(line);
+      if (match) {
+        variables.set(Number(match[1]), parseEnvironmentVariables(match[2]!, /\s+/, names));
+      }
+    }
+    return variables;
+  });
+
+  const agentCommandStops = Effect.fn("PortDiscovery.agentCommandStops")(function* (
+    leader: ProcessTableRow | undefined,
+  ) {
+    const watchers = [...agentCommandStopWatchers];
+    if (leader === undefined || watchers.length === 0) return [];
+    const names = [...new Set(watchers.map((watcher) => watcher.variable))];
+    const commands = agentCommandsInGroup(
+      yield* readEnvironmentVariables([leader.pid, leader.ppid], names),
+      leader,
+    );
+    return watchers.flatMap((watcher) => {
+      const command = commands.get(watcher.variable);
+      return command === undefined ? [] : [{ watcher, command }];
+    });
+  });
+
   // Fails when `ps` does, so an empty table never reads as every process having exited.
   const readProcessTable = Effect.suspend(() =>
     processRunner.run({
@@ -1151,7 +1184,19 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             : Effect.fail(new PreviewStopLocalServerError({ reason: "signal-failed", cause }));
         }
       });
-    if (!(yield* signalGroup("SIGTERM"))) return;
+    // Told before the signal, since the CLI can report the exit before a later step runs.
+    const commandStops = yield* agentCommandStops(table.get(group));
+    yield* Effect.forEach(commandStops, ({ watcher, command }) => watcher.onStop(command), {
+      discard: true,
+    });
+    const abandonCommandStops = Effect.forEach(
+      commandStops,
+      ({ watcher, command }) => watcher.onStopAbandoned(command),
+      { discard: true },
+    );
+    if (!(yield* signalGroup("SIGTERM").pipe(Effect.tapError(() => abandonCommandStops)))) {
+      return yield* abandonCommandStops;
+    }
     // While one of the group's original members is still in it, the group has not been reused,
     // so SIGKILL goes only to the job that ignored SIGTERM.
     const members = [...table.values()].filter((row) => row.pgid === group).map((row) => row.pid);
@@ -1178,6 +1223,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     registerTerminalProcesses,
     unregisterTerminal,
     trackAgent,
+    watchAgentCommandStops,
     stopServer,
   });
 }).pipe(Effect.withSpan("PortDiscovery.make"));
@@ -1185,4 +1231,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 export const layer = Layer.effect(PortDiscovery, make);
 
 /** A scanner that tracks nothing, for tests that build provider runners without a host. */
-export const layerTest = Layer.mock(PortDiscovery)({ trackAgent: () => () => undefined });
+export const layerTest = Layer.mock(PortDiscovery)({
+  trackAgent: () => () => undefined,
+  watchAgentCommandStops: () => Effect.void,
+});

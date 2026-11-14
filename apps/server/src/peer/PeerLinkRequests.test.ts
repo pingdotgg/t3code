@@ -164,7 +164,7 @@ const makeLaptopWith = (
       Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
     );
     const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
-      Layer.provideMerge(McpServer.McpServer.layer),
+      Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
       Layer.provideMerge(PeerLinkRequests.layer),
       Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
       Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
@@ -482,18 +482,43 @@ it.live("the agent asks without waiting, and the user links the box after its tu
       // The call returns at once: no tool call outlives a provider's timeout.
       expect(asked.isError).toBe(false);
       expect(asked.structuredContent).toEqual({ status: "pending", turnItemId: card.id });
-      // The card names the box, found by asking its address.
       expect(card).toMatchObject({
         url: b.url,
         reason: "Run the suite on the box.",
-        environmentId: box.environmentId,
-        label: "Box",
         requestedAccess: "approval-required",
       });
+      // Anything can answer at an address as the box, so the card names no machine.
+      expect(card.environmentId).toBeUndefined();
+      expect(card.label).toBeUndefined();
       // The agent waits on the user, so the thread asks for input.
       expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toMatchObject(
         { kind: "user_input" },
       );
+
+      for (const secretStatus of ["pending", "saved"] as const) {
+        yield* a.orchestrator.dispatch({
+          type: "secret_request.record",
+          commandId: CommandId.make("command:secret-" + secretStatus),
+          threadId,
+          runId,
+          nodeId: rootNode,
+          turnItemId: TurnItemId.make("turn-item:snoozed-secret"),
+          label: "Credential",
+          reason: "Connect",
+          secretStatus,
+        });
+        if (secretStatus === "pending") {
+          yield* a.orchestrator.dispatch({
+            type: "thread.snooze",
+            commandId: CommandId.make("command:snooze-secret"),
+            threadId,
+            snoozedUntil: "2099-01-01T00:00:00.000Z",
+          });
+          expect((yield* a.projections.getThread(threadId)).snoozedUntil).not.toBeNull();
+        } else {
+          expect((yield* a.projections.getThread(threadId)).snoozedUntil).toBeNull();
+        }
+      }
 
       // The agent ends its turn; the card stays answerable, and the thread still asks.
       yield* endRun(a);
@@ -508,6 +533,52 @@ it.live("the agent asks without waiting, and the user links the box after its tu
       ).toMatchObject({ kind: "user_input" });
       expect(yield* a.projections.getSettlementCandidates(threadId)).toEqual([]);
 
+      // Once the user writes in the thread again, the card stops asking but stays answerable.
+      const wroteAt = DateTime.add(card.startedAt!, { seconds: 1 });
+      yield* a.sink.write({
+        commandId: CommandId.make("command:user-writes:laptop"),
+        events: [
+          {
+            id: EventId.make("event:user-writes"),
+            type: "message.updated",
+            threadId,
+            occurredAt: wroteAt,
+            payload: {
+              createdBy: "user",
+              creationSource: "web",
+              id: MessageId.make("message:user-writes"),
+              threadId,
+              runId: null,
+              nodeId: null,
+              role: "user",
+              text: "Something else",
+              attachments: [],
+              streaming: false,
+              createdAt: wroteAt,
+              updatedAt: wroteAt,
+            },
+          },
+        ],
+      });
+      expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toBeNull();
+      expect(
+        ProjectionStore.threadShellFromProjection(
+          yield* a.orchestrator.getThreadProjection(threadId),
+        ).pendingRuntimeRequest,
+      ).toBeNull();
+      expect(
+        (yield* a.projections.getSettlementCandidates(threadId)).map((thread) => thread.id),
+      ).toEqual([threadId]);
+      expect(yield* cardOf(a)).toMatchObject({ status: "waiting", linkStatus: "pending" });
+
+      yield* a.orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make("command:snooze-link"),
+        threadId,
+        snoozedUntil: "2099-01-01T00:00:00.000Z",
+      });
+      expect((yield* a.projections.getThread(threadId)).snoozedUntil).not.toBeNull();
+
       // The user's client mints a code on the box and picks more than the agent suggested.
       const pairing = yield* b.auth.issuePairingCredential();
       yield* a.requests.answer({
@@ -515,6 +586,8 @@ it.live("the agent asks without waiting, and the user links the box after its tu
         turnItemId: card.id,
         answer: { type: "link", urls: [b.url], access: "auto", pairingCode: pairing.credential },
       });
+
+      expect((yield* a.projections.getThread(threadId)).snoozedUntil).toBeNull();
 
       const link = yield* a.links.get(box.environmentId);
       expect(Option.getOrUndefined(link)?.access).toBe("auto");
@@ -615,7 +688,7 @@ it.live("a declined request links nothing and tells the agent", () =>
       const { messages } = yield* outcomeMessages(a);
       expect(messages).toHaveLength(1);
       expect(messages[0]).toMatchObject({
-        notification: { outcome: "cancelled", summary: "Declined to link Box" },
+        notification: { outcome: "cancelled", summary: `Declined to link ${b.url}` },
       });
       expect(messages[0]!.text).toContain("declined");
     }),
@@ -844,6 +917,45 @@ it.live("a code the box refuses fails the request with its reason, and links not
   ),
 );
 
+it.live("a card an older server left naming a machine beside its address links no machine", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      yield* a.orchestrator.dispatch({
+        type: "link_request.record",
+        commandId: CommandId.make("command:pending:older"),
+        threadId,
+        runId,
+        nodeId: rootNode,
+        turnItemId: TurnItemId.make("turn-item:link-request:older"),
+        url: b.url,
+        environmentId: box.environmentId,
+        label: "Box",
+        reason: "",
+        linkStatus: "pending",
+      });
+      const card = yield* pendingCard(a);
+      // An older client takes the machine from the card and mints a code on it.
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.requests.answer({
+        threadId,
+        turnItemId: card.id,
+        answer: {
+          type: "link",
+          environmentId: box.environmentId,
+          label: "Box",
+          urls: [b.url],
+          access: "auto",
+          pairingCode: pairing.credential,
+        },
+      });
+      expect(yield* cardOf(a)).toMatchObject({ linkStatus: "failed" });
+      expect(Option.isNone(yield* a.links.get(box.environmentId))).toBe(true);
+      expect(yield* b.linkedSessions).toEqual([]);
+    }),
+  ),
+);
+
 it.live("an agent below full access may not ask, and no card is shown", () =>
   withBoth((a, b) =>
     Effect.gen(function* () {
@@ -925,6 +1037,35 @@ it.live("naming a machine that is already linked returns the link at once, with 
       // Not both: the address could name another machine than the id.
       const both = yield* a.call({ environmentId: box.environmentId, url: b.url });
       expect(errorOf(both)).toMatchObject({ code: "invalid_request" });
+    }),
+  ),
+);
+
+it.live("a retry naming a machine linked meanwhile closes the card it left as linked", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      yield* a.call({ url: b.url, clientRequestId: "link-box" });
+      yield* pendingCard(a);
+      // Linked from Settings meanwhile, not through the card.
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+
+      const retried = yield* a.call({
+        environmentId: box.environmentId,
+        clientRequestId: "link-box",
+      });
+      expect(retried.structuredContent).toEqual({
+        status: "linked",
+        environmentId: box.environmentId,
+        label: "Box",
+        access: "auto",
+      });
+      expect(yield* cardOf(a)).toMatchObject({
+        linkStatus: "linked",
+        linkedEnvironmentId: box.environmentId,
+      });
+      expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toBeNull();
     }),
   ),
 );
@@ -1023,53 +1164,6 @@ const linkBox = (a: Laptop, b: ServedPeer, cardId: TurnItemId) =>
     return pairing.credential;
   });
 
-it.live("linking the machine an older card asked for by hint ends that card too", () =>
-  withBoth((a, b) =>
-    Effect.gen(function* () {
-      yield* seedThread(a);
-      // The agent first asks by the user's word, then again by the box's address.
-      const older = yield* ask(a, {
-        reason: "Delegate to the box.",
-        hint: "Box",
-        requestedAccess: "full-access",
-        clientRequestId: "by-hint",
-      });
-      const newer = yield* ask(a, {
-        url: b.url,
-        reason: "Delegate to the box.",
-        hint: "Box",
-        requestedAccess: "full-access",
-        clientRequestId: "by-url",
-      });
-      const credential = yield* linkBox(a, b, newer.id);
-
-      const cards = yield* linkCards(a);
-      expect(cards.find((card) => card.id === newer.id)).toMatchObject({
-        status: "completed",
-        linkStatus: "linked",
-        linkedEnvironmentId: box.environmentId,
-      });
-      // The older card keeps what it asked and ends; it no longer asks the user.
-      expect(cards.find((card) => card.id === older.id)).toMatchObject({
-        status: "cancelled",
-        linkStatus: "cancelled",
-        hint: "Box",
-        reason: "Delegate to the box.",
-        requestedAccess: "full-access",
-      });
-      expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toBeNull();
-      expect(
-        ProjectionStore.threadShellFromProjection(
-          yield* a.orchestrator.getThreadProjection(threadId),
-        ).pendingRuntimeRequest,
-      ).toBeNull();
-      // The agent hears of the one link it made, and nothing about the card that link ended.
-      expect((yield* outcomeMessages(a)).messages).toHaveLength(1);
-      expect(yield* storedText(a)).not.toContain(credential);
-    }),
-  ),
-);
-
 const recordCard = (
   a: Laptop,
   key: string,
@@ -1096,28 +1190,61 @@ const recordCard = (
     return id;
   });
 
-it.live("a link ends older cards for the same machine by id or address", () =>
+it.live("a link ends older cards that asked for the same machine by hint, id or address", () =>
   withBoth((a, b) =>
     Effect.gen(function* () {
       yield* seedThread(a);
+      // The agent first asks by the user's word, then again by the box's address.
+      const older = yield* ask(a, {
+        reason: "Delegate to the box.",
+        hint: "Box",
+        requestedAccess: "full-access",
+        clientRequestId: "by-hint",
+      });
       const byId = yield* ask(a, {
         environmentId: box.environmentId,
         requestedAccess: "full-access",
+        clientRequestId: "by-id",
       });
-      expect(byId.environmentId).toBe(box.environmentId);
       const byAddress = yield* recordCard(a, "by-address", {
         url: b.url,
         requestedAccess: "full-access",
       });
-      const newer = yield* ask(a, { url: b.url, requestedAccess: "full-access" });
-      yield* linkBox(a, b, newer.id);
+      const newer = yield* ask(a, {
+        url: b.url,
+        reason: "Delegate to the box.",
+        hint: "Box",
+        requestedAccess: "full-access",
+        clientRequestId: "by-url",
+      });
+      const credential = yield* linkBox(a, b, newer.id);
 
       const cards = yield* linkCards(a);
-      expect(cards.find((card) => card.id === byId.id)).toMatchObject({ linkStatus: "cancelled" });
-      expect(cards.find((card) => card.id === byAddress)).toMatchObject({
-        linkStatus: "cancelled",
+      expect(cards.find((card) => card.id === newer.id)).toMatchObject({
+        status: "completed",
+        linkStatus: "linked",
+        linkedEnvironmentId: box.environmentId,
       });
+      // The older card keeps what it asked and ends; it no longer asks the user.
+      expect(cards.find((card) => card.id === older.id)).toMatchObject({
+        status: "cancelled",
+        linkStatus: "cancelled",
+        hint: "Box",
+        reason: "Delegate to the box.",
+        requestedAccess: "full-access",
+      });
+      for (const id of [byId.id, byAddress]) {
+        expect(cards.find((card) => card.id === id)).toMatchObject({ linkStatus: "cancelled" });
+      }
+      expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toBeNull();
+      expect(
+        ProjectionStore.threadShellFromProjection(
+          yield* a.orchestrator.getThreadProjection(threadId),
+        ).pendingRuntimeRequest,
+      ).toBeNull();
+      // The agent hears of the one link it made, and nothing about the card that link ended.
       expect((yield* outcomeMessages(a)).messages).toHaveLength(1);
+      expect(yield* storedText(a)).not.toContain(credential);
     }),
   ),
 );
