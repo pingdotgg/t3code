@@ -1077,14 +1077,29 @@ it.effect("does not continue a run the user asked to stop before the restart", (
   }),
 );
 
-it.effect("does not continue a cut /compact or /logout turn", () =>
+it.effect("compacts again after a cut /compact turn, and does not continue a cut /logout", () =>
   Effect.gen(function* () {
-    for (const text of ["/compact", " /LOGOUT "]) {
-      const texts = yield* continuationTexts({
+    for (const [text, creationSource, expected] of [
+      [" /Compact ", "mcp", ["user:/compact"]],
+      // Servers before `idleCompaction` marked their own compaction this way.
+      ["/compact", "server", ["agent:/compact"]],
+      [" /LOGOUT ", "mcp", []],
+    ] as const) {
+      const sent = yield* continuationDispatches({
         ...cutMidTurn(),
-        messages: [{ id: MessageId.make("message:user"), text, attachments: [] }],
+        messages: [
+          {
+            id: MessageId.make("message:user"),
+            role: "user",
+            createdBy: "agent",
+            creationSource,
+            text,
+            attachments: [],
+          },
+        ],
       } as unknown as OrchestrationV2ThreadProjection);
-      assert.deepEqual(texts, [], text);
+      const texts = sent.map((command) => `${command.createdBy}:${command.text}`);
+      assert.deepEqual(texts, [...expected], text);
     }
     const texts = yield* continuationTexts({
       ...cutMidTurn(),
