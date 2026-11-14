@@ -338,6 +338,8 @@ async fn stream(
     window: Window,
 ) -> Option<Failure> {
     let mut pending: VecDeque<usize> = VecDeque::new();
+    // A value taken from `items` that did not fit the last chunk's byte budget.
+    let mut held: Option<Value> = None;
     loop {
         if let Some(acks) = acks.as_mut() {
             while acks.try_recv().is_ok() {
@@ -349,15 +351,32 @@ async fn stream(
                 pending.pop_front();
             }
         }
-        let mut values = match items.recv().await {
-            None => return None,
-            Some(Err(failure)) => return Some(failure),
-            Some(Ok(value)) => vec![value],
+        let first = match held.take() {
+            Some(value) => value,
+            None => match items.recv().await {
+                None => return None,
+                Some(Err(failure)) => return Some(failure),
+                Some(Ok(value)) => value,
+            },
         };
+        // A byte-windowed chunk holds at most `MAX_PENDING_BYTES` of events, by T3's charge,
+        // unless one event alone is larger (`takeBatch` in `OutputProtocol.ts`).
+        let mut bytes = ack_window::queued_size(&first);
+        let mut values = vec![first];
         let mut failure = None;
         while values.len() < MAX_CHUNK_VALUES {
             match items.try_recv() {
-                Ok(Ok(value)) => values.push(value),
+                Ok(Ok(value)) => {
+                    if window == Window::Bytes {
+                        let size = ack_window::queued_size(&value);
+                        if bytes + size > ack_window::MAX_PENDING_BYTES {
+                            held = Some(value);
+                            break;
+                        }
+                        bytes += size;
+                    }
+                    values.push(value);
+                }
                 Ok(Err(error)) => {
                     failure = Some(error);
                     break;
@@ -366,12 +385,13 @@ async fn stream(
             }
         }
         if acks.is_some() {
-            let count = values.len();
+            // T3 charges a byte-windowed chunk by its events (`chunkSize`), not its encoding.
+            let size = (window == Window::Bytes).then(|| ack_window::chunk_size(&values));
             let text = encode_server_frame(&FromServer::Chunk {
                 request_id: id.clone(),
                 values,
             });
-            pending.push_back(text.len() + count * ack_window::VALUE_OVERHEAD_BYTES);
+            pending.push_back(size.unwrap_or(text.len()));
             let chunk = Out::Chunk {
                 id: id.clone(),
                 text,
