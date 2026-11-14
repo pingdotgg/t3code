@@ -612,6 +612,8 @@ export interface DesktopPreviewTabState {
   controller: "human" | "agent" | "none";
   /** A screenshot or stream of the guest is pending, so the client keeps it painting while hidden. */
   capturing: boolean;
+  /** A streamed viewer's panel size, which a fill tab takes while no desktop window shows it. */
+  viewerSize: { readonly width: number; readonly height: number } | null;
   favicon?: DesktopPreviewFavicon;
   updatedAt: string;
 }

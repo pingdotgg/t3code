@@ -414,6 +414,7 @@ let desktopAttachesLate = false;
 let desktopAttachWaiting = Promise.withResolvers<void>();
 const shownDesktopTabs = new Set<string>();
 const releasedDesktopTabs: Array<string> = [];
+const desktopViewerSizes: Array<string | null> = [];
 const desktopLoadFailures = new Map<string, PreviewAutomationLoadError>();
 const desktopTurns = new NodeEvents.EventEmitter();
 const desktopConnections: Array<{
@@ -510,6 +511,8 @@ const dependencies = Layer.mergeAll(
         }),
       ),
     pointer: () => Effect.void,
+    viewerSize: (_key, size) =>
+      Effect.sync(() => desktopViewerSizes.push(size && `${size.width}x${size.height}`)),
     turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
   }),
   PreviewAgentActivity.layer,
@@ -591,6 +594,7 @@ beforeEach(() => {
   desktopDetachReady = Promise.withResolvers<void>();
   desktopReleased = Promise.withResolvers<void>();
   releasedDesktopTabs.length = 0;
+  desktopViewerSizes.length = 0;
   desktopConnections.length = 0;
 });
 
@@ -2850,6 +2854,38 @@ it.effect(
           "1000x600",
           "1000x600",
         ]);
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.effect(
+  "a desktop tab offers the desktop its newest viewer's size while the setting is fill",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const browser = yield* ServerBrowser.ServerBrowser;
+        const first = yield* Scope.make();
+        const { tabId, viewer } = yield* openDesktopViewer.pipe(Scope.provide(first));
+        yield* viewer.input({ type: "resize", width: 1200, height: 900 });
+        yield* viewer.input({
+          type: "viewport",
+          setting: { _tag: "freeform", width: 390, height: 844 },
+        });
+        // A fixed setting wins, and the viewer's size waits until fill returns.
+        yield* viewer.input({ type: "resize", width: 1000, height: 700 });
+        yield* viewer.input({ type: "viewport", setting: { _tag: "fill" } });
+        const [second, third] = [yield* Scope.make(), yield* Scope.make()];
+        yield* browser.attachViewer(viewerInput(tabId, false)).pipe(Scope.provide(second));
+        yield* browser.attachViewer(viewerInput(tabId, false)).pipe(Scope.provide(third));
+        yield* Scope.close(second, Exit.void);
+        yield* Scope.close(first, Exit.void);
+        expect(desktopViewerSizes).toEqual(["1200x900", null, "1000x700", "1000x700", null]);
+        // A released tab holds no size, so a viewer leaving after it offers none.
+        yield* Effect.promise(() => desktopDetachReady.promise);
+        desktopDetaches.emit("detach", { threadId: scope.thread.threadId, tabId });
+        yield* Effect.promise(() => desktopReleased.promise);
+        yield* Scope.close(third, Exit.void);
+        expect(desktopViewerSizes).toHaveLength(5);
       }),
     ).pipe(Effect.provide(layer)),
 );

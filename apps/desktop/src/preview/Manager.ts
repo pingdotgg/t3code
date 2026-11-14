@@ -118,6 +118,7 @@ export interface PreviewTabState {
   audible: boolean;
   controller: "human" | "agent" | "none";
   capturing: boolean;
+  viewerSize: { readonly width: number; readonly height: number } | null;
   favicon?: DesktopPreviewFavicon;
   serverTab?: { readonly threadId: string; readonly tabId: string };
   updatedAt: string;
@@ -1748,6 +1749,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           audible: false,
           controller: "none",
           capturing: false,
+          viewerSize: null,
           updatedAt,
         };
         return [
@@ -1823,6 +1825,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       audible: false,
       controller: "none",
       capturing: false,
+      viewerSize: null,
       updatedAt,
     };
     yield* emit(tabId, closed);
@@ -2086,6 +2089,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         audible: current?.audible ?? false,
         controller: current?.controller ?? "none",
         capturing: current?.capturing ?? false,
+        viewerSize: current?.viewerSize ?? null,
         ...(current?.favicon ? { favicon: current.favicon } : {}),
         ...(current?.serverTab ? { serverTab: current.serverTab } : {}),
         updatedAt,
@@ -3498,6 +3502,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }
     },
   );
+  const updateServerTabViewerSize = Effect.fn("PreviewManager.updateServerTabViewerSize")(
+    function* (viewer: {
+      readonly key: { readonly threadId: string; readonly tabId: string };
+      readonly size: { readonly width: number; readonly height: number } | null;
+    }) {
+      const tab = [...(yield* SynchronizedRef.get(tabsRef)).values()].find(
+        (candidate) =>
+          candidate.serverTab?.threadId === viewer.key.threadId &&
+          candidate.serverTab.tabId === viewer.key.tabId,
+      );
+      if (tab) yield* update(tab.tabId, { viewerSize: viewer.size });
+    },
+  );
   let browserHostStarted = false;
   // Subscribes before the attach that follows, so no event falls between the two.
   const listenToBrowserHost = Effect.suspend(() => {
@@ -3508,6 +3525,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       [
         browserHost.pointers.pipe(Stream.runForEach(emitAgentPointer), listen),
         browserHost.painting.pipe(Stream.runForEach(updateServerTabCapturing), listen),
+        browserHost.viewerSizes.pipe(Stream.runForEach(updateServerTabViewerSize), listen),
       ],
       { discard: true },
     );

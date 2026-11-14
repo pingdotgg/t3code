@@ -54,6 +54,10 @@ export class DesktopBrowserChannel extends Context.Service<
       key: DesktopTabKey,
       pointer: { readonly phase: "move" | "click"; readonly x: number; readonly y: number },
     ) => Effect.Effect<void>;
+    readonly viewerSize: (
+      key: DesktopTabKey,
+      size: { readonly width: number; readonly height: number } | null,
+    ) => Effect.Effect<void>;
     /** Never fails. A failed write means a broken channel; the next backend starts with no turns. */
     readonly turn: (threadId: string, active: boolean) => Effect.Effect<void>;
   }
@@ -89,6 +93,9 @@ const make = Effect.gen(function* () {
         return Effect.void;
       }),
       pointer: Effect.fn("DesktopBrowserChannel.pointer")(function () {
+        return Effect.void;
+      }),
+      viewerSize: Effect.fn("DesktopBrowserChannel.viewerSize")(function () {
         return Effect.void;
       }),
       isShown: () => false,
@@ -260,6 +267,9 @@ const make = Effect.gen(function* () {
     }),
     pointer: Effect.fn("DesktopBrowserChannel.pointer")(function (key, pointer) {
       return command({ type: "pointer", ...key, ...pointer });
+    }),
+    viewerSize: Effect.fn("DesktopBrowserChannel.viewerSize")(function (key, size) {
+      return command({ type: "viewerSize", ...key, size });
     }),
   });
 });

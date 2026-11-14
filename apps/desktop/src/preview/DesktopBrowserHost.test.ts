@@ -169,6 +169,20 @@ const watchPainting = (host: DesktopBrowserHost.DesktopBrowserHost["Service"]) =
     return painting;
   });
 
+/** The viewer sizes the host hands the renderer, each time one changes. */
+const watchViewerSizes = (host: DesktopBrowserHost.DesktopBrowserHost["Service"]) =>
+  Effect.gen(function* () {
+    const sizes: Array<string | null> = [];
+    yield* host.viewerSizes.pipe(
+      Stream.runForEach(({ size }) =>
+        Effect.sync(() => sizes.push(size && `${size.width}x${size.height}`)),
+      ),
+      Effect.forkScoped,
+    );
+    yield* Effect.yieldNow;
+    return sizes;
+  });
+
 describe("DesktopBrowserHost", () => {
   it.effect("announces tabs already attached to a backend that starts later", () =>
     Effect.gen(function* () {
@@ -281,6 +295,32 @@ describe("DesktopBrowserHost", () => {
         { type: "attached", ...other },
       ]);
     }),
+  );
+
+  it.effect(
+    "hands the renderer the viewer size until the server lets go, exits, or the guest goes",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        const sizes = yield* watchViewerSizes(host);
+        const backend = yield* host.events.pipe(Stream.runDrain, Effect.forkScoped);
+        yield* Effect.yieldNow;
+        host.attach(key, makeDebuggee().tab);
+        const viewerSize = (size: { width: number; height: number } | null) =>
+          host.handleCommandLine(encodeJson({ type: "viewerSize", ...key, size }));
+
+        yield* viewerSize({ width: 1200, height: 900 });
+        yield* viewerSize({ width: 1200, height: 900 });
+        yield* viewerSize({ width: 1000, height: 700 });
+        yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
+        yield* viewerSize({ width: 800, height: 600 });
+        yield* Fiber.interrupt(backend);
+        yield* viewerSize({ width: 700, height: 500 });
+        host.detach(key);
+        yield* Effect.yieldNow;
+
+        expect(sizes).toEqual(["1200x900", "1000x700", null, "800x600", null, "700x500", null]);
+      }),
   );
 
   it.effect("drops replies from a relay the server released", () =>

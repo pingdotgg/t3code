@@ -2207,7 +2207,7 @@ describe("PreviewManager", () => {
   );
 
   effectIt.effect(
-    "asks the client to paint a navigated server tab while the agent captures it",
+    "asks the client to paint a navigated server tab while the agent captures it, and to size it for a viewer",
     () =>
       Effect.gen(function* () {
         const host = yield* DesktopBrowserHost.DesktopBrowserHost;
@@ -2229,9 +2229,16 @@ describe("PreviewManager", () => {
         fromId.mockReturnValue(contents);
         const manager = yield* PreviewManager.PreviewManager;
         const capturing = yield* Queue.unbounded<boolean>();
+        const sizes = yield* Queue.unbounded<PreviewManager.PreviewTabState["viewerSize"]>();
+        let size: PreviewManager.PreviewTabState["viewerSize"] = null;
         yield* manager.subscribeStateChanges((_tabId, state) =>
-          Queue.offer(capturing, state.capturing).pipe(Effect.asVoid),
+          Effect.gen(function* () {
+            yield* Queue.offer(capturing, state.capturing);
+            if (state.viewerSize !== size) yield* Queue.offer(sizes, (size = state.viewerSize));
+          }),
         );
+        const viewerSize = (next: PreviewManager.PreviewTabState["viewerSize"]) =>
+          host.handleCommandLine(JSON.stringify({ type: "viewerSize", ...serverTab, size: next }));
         const attached = yield* Deferred.make<void>();
         yield* host.events.pipe(
           Stream.runForEach((line) =>
@@ -2244,6 +2251,8 @@ describe("PreviewManager", () => {
         yield* manager.createTab("tab_1", { serverTab });
         yield* manager.registerWebview("tab_1", 42);
         yield* Deferred.await(attached);
+        yield* viewerSize({ width: 1200, height: 900 });
+        expect(yield* Queue.take(sizes)).toEqual({ width: 1200, height: 900 });
         // Navigating rebuilds the tab's state, which must keep the server tab it answers for.
         yield* manager.navigate("tab_1", "https://example.com/next");
         yield* Queue.clear(capturing);
@@ -2262,6 +2271,11 @@ describe("PreviewManager", () => {
         expect(yield* Queue.take(capturing)).toBe(true);
         screenshot.resolve({ data: "" });
         expect(yield* Queue.take(capturing)).toBe(false);
+        // Navigating kept the size, so the next change is the next size.
+        yield* viewerSize({ width: 1000, height: 700 });
+        expect(yield* Queue.take(sizes)).toEqual({ width: 1000, height: 700 });
+        yield* host.handleCommandLine(JSON.stringify({ type: "release", ...serverTab }));
+        expect(yield* Queue.take(sizes)).toBeNull();
       }).pipe(Effect.provide(managerLayer())),
   );
 

@@ -12,6 +12,7 @@ import {
   takeThumbButtonNavigation,
 } from "~/components/preview/thumbButtons";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
+import { useThreadPreviewState } from "~/previewStateStore";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
 import { cn, isMacPlatform } from "~/lib/utils";
 
@@ -105,6 +106,7 @@ export function HostedBrowserWebview(props: {
   );
   const recordingActive = useActiveBrowserRecordingTabIds().has(runtimeTabId);
   usePreviewBridge({ threadRef, tabId, runtimeTabId, serverDriven });
+  const viewerSize = useThreadPreviewState(threadRef).desktopByTabId[tabId]?.viewerSize ?? null;
 
   const serverColorScheme = serverRendering?.colorScheme;
   const serverZoomFactor = serverRendering?.zoomFactor;
@@ -232,18 +234,24 @@ export function HostedBrowserWebview(props: {
     setAspectRatioLocked(aspectRatio !== null);
   };
   const content = presentation.content;
+  // A streamed viewer's size is a page size at zoom 1, as a server-rendered tab applies it.
+  const watchedSize = shown ? null : viewerSize;
   const hiddenWidth =
     viewport._tag !== "fill"
       ? viewport.width * layoutZoomFactor
-      : content
-        ? content.width / content.scale
-        : (lastRect?.width ?? 1280);
+      : watchedSize
+        ? (watchedSize.width / zoomFactor) * layoutZoomFactor
+        : content
+          ? content.width / content.scale
+          : (lastRect?.width ?? 1280);
   const hiddenHeight =
     viewport._tag !== "fill"
       ? viewport.height * layoutZoomFactor
-      : content
-        ? content.height / content.scale
-        : (lastRect?.height ?? 800);
+      : watchedSize
+        ? (watchedSize.height / zoomFactor) * layoutZoomFactor
+        : content
+          ? content.height / content.scale
+          : (lastRect?.height ?? 800);
   // Build from primitives on each side of the resize hook to keep both objects cached.
   const containerSize =
     active && lastRect ? lastRect : { width: hiddenWidth, height: hiddenHeight };
@@ -274,7 +282,8 @@ export function HostedBrowserWebview(props: {
 
   const syncContentPresentation = () => {
     const wrapper = wrapperRef.current;
-    if (!wrapper) return;
+    // The hidden fallback reads content back, so a viewer-sized layout would outlive the viewer.
+    if (!wrapper || watchedSize) return;
     useBrowserSurfaceStore.getState().presentContent(runtimeTabId, {
       x: layout.viewportX,
       y: layout.viewportY,
