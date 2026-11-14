@@ -931,7 +931,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               <Animated.View
                 style={[
                   compactEditor.editorStyle,
-                  showsCompactDictation ? { display: "none" } : undefined,
+                  // iOS destroys a view under display: none; the editor would lose its focus and caret.
+                  Platform.OS === "android" && showsCompactDictation
+                    ? { display: "none" }
+                    : undefined,
                 ]}
               >
                 <ComposerEditor
