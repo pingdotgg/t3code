@@ -31,9 +31,19 @@ export class CommandReceiptStoreReadError extends Schema.TaggedError<CommandRece
   }
 }
 
+class CommandReceiptStoreLifecycleError extends Schema.TaggedError<CommandReceiptStoreLifecycleError>()(
+  "CommandReceiptStoreLifecycleError",
+  { threadId: ThreadId, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Failed to read orchestration V2 lifecycle receipt for thread ${this.threadId}.`;
+  }
+}
+
 export const CommandReceiptStoreV2Error = Schema.Union([
   CommandReceiptStoreWriteError,
   CommandReceiptStoreReadError,
+  CommandReceiptStoreLifecycleError,
 ]);
 export type CommandReceiptStoreV2Error = typeof CommandReceiptStoreV2Error.Type;
 
@@ -65,6 +75,9 @@ export type ProjectCommandReceiptV2 = typeof ProjectCommandReceiptV2.Type;
 type AnyCommandReceiptV2 = CommandReceiptV2 | ProjectCommandReceiptV2;
 
 export interface CommandReceiptStoreV2Shape {
+  readonly getLatestLifecycle: (
+    threadId: ThreadId,
+  ) => Effect.Effect<CommandReceiptV2 | null, CommandReceiptStoreV2Error>;
   readonly insertIfAbsent: (
     receipt: AnyCommandReceiptV2,
   ) => Effect.Effect<boolean, CommandReceiptStoreV2Error>;
@@ -137,6 +150,13 @@ const layerBase: Layer.Layer<
     const receipts = yield* OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository;
 
     return CommandReceiptStoreV2.of({
+      getLatestLifecycle: (threadId) =>
+        receipts.getLatestLifecycle({ threadId }).pipe(
+          Effect.flatMap((receipt) =>
+            Option.isSome(receipt) ? fromApplicationReceipt(receipt.value) : Effect.succeed(null),
+          ),
+          Effect.mapError((cause) => new CommandReceiptStoreLifecycleError({ threadId, cause })),
+        ),
       insertIfAbsent: (receipt) =>
         receipts.insertIfAbsent(toApplicationReceipt(receipt)).pipe(
           Effect.mapError(
@@ -200,3 +220,52 @@ const layerBase: Layer.Layer<
 export const layer = layerBase.pipe(Layer.provide(OrchestrationCommandReceipts.layer));
 
 export const layerFromApplicationReceipts = layerBase;
+
+/** Rejections are permanent, so a cascade retry takes the first unused or accepted suffix. */
+export const cascadeCommandId = Effect.fn("CommandReceiptStore.cascadeCommandId")(function* (
+  receipts: CommandReceiptStoreV2Shape,
+  base: CommandId,
+) {
+  for (let retry = 0; retry < 32; retry++) {
+    const id = retry === 0 ? base : CommandId.make(`${base}:retry:${retry}`);
+    const receipt = yield* receipts.getByCommandId(id);
+    if (Option.isNone(receipt) || receipt.value.status === "accepted") return id;
+  }
+  return undefined;
+});
+
+/** A lifecycle choice made after the cascade's source command, other than `ownCommandId`. */
+export const supersedesCascade = (
+  latest: CommandReceiptV2 | null,
+  source: CommandReceiptV2,
+  ownCommandId: CommandId,
+) =>
+  latest !== null &&
+  latest.resultSequence > source.resultSequence &&
+  latest.commandId !== ownCommandId;
+
+/** Whether a cascade from an archive of `rootThreadId`, along `path`, archived this thread. */
+export const archivedByCascade = Effect.fn("CommandReceiptStore.archivedByCascade")(function* (
+  receipts: CommandReceiptStoreV2Shape,
+  latest: CommandReceiptV2 | null,
+  rootThreadId: ThreadId,
+  path: ReadonlyArray<ThreadId>,
+) {
+  if (latest?.commandType !== "thread.archive") return false;
+  let rootCommandId: string = latest.commandId;
+  for (const threadId of path.toReversed()) {
+    const segment = `:subagent:${threadId}`;
+    if (!rootCommandId.endsWith(segment)) rootCommandId = rootCommandId.replace(/:retry:\d+$/, "");
+    if (!rootCommandId.endsWith(segment)) return false;
+    rootCommandId = rootCommandId.slice(0, -segment.length);
+  }
+  const root = Option.getOrNull(yield* receipts.getByCommandId(CommandId.make(rootCommandId)));
+  const valid = root?.status === "accepted" && root.threadId === rootThreadId;
+  // Derive the IDs again, so a user ID only shaped like a cascade retry is not counted.
+  let derived = valid && root.commandType === "thread.archive" ? root.commandId : undefined;
+  for (const threadId of path) {
+    if (derived === undefined) return false;
+    derived = yield* cascadeCommandId(receipts, CommandId.make(`${derived}:subagent:${threadId}`));
+  }
+  return derived === latest.commandId && (root?.resultSequence ?? 0) <= latest.resultSequence;
+});

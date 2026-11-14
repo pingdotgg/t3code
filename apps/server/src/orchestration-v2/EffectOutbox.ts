@@ -12,7 +12,9 @@ import {
   ProviderUserInputAnswers,
   ProviderThreadId,
   ProviderTurnId,
+  ProviderInteractionMode,
   RunId,
+  RuntimeMode,
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -30,6 +32,13 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { forkParked } from "../serverActivation.ts";
+import type { CommandReceiptV2 } from "./CommandReceiptStore.ts";
+
+/** Set while a cascade dispatches a descendant's lifecycle command; delete needs no source. */
+export const SubagentCascade = Context.Reference<
+  | { readonly source: CommandReceiptV2 | undefined; readonly path: ReadonlyArray<ThreadId> }
+  | undefined
+>("t3/orchestration-v2/SubagentCascade", { defaultValue: () => undefined });
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
@@ -119,6 +128,13 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     attachmentIds: Schema.Array(Schema.String),
   }),
   Schema.Struct({
+    type: Schema.Literal("subagent-threads.cascade"),
+    operation: Schema.Literals(["thread.archive", "thread.unarchive", "thread.delete"]),
+    limit: Schema.optional(
+      Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
+    ),
+  }),
+  Schema.Struct({
     type: Schema.Literal("thread-title.generate"),
     kind: Schema.Union([
       Schema.Struct({ type: Schema.Literal("initial"), messageId: MessageId }),
@@ -141,6 +157,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "terminal.cleanup",
   "preview.cleanup",
   "attachment.cleanup",
+  "subagent-threads.cascade",
   "thread-title.generate",
   "delegated-tasks.stop",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;

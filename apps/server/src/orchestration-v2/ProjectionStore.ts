@@ -611,6 +611,10 @@ export interface ProjectionStoreV2Shape {
   readonly getThread: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2AppThread, ProjectionStoreV2Error>;
+  /** Direct subagents, archived and deleted included. */
+  readonly getSubagentChildThreads: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2AppThread>, ProjectionStoreV2Error>;
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
@@ -5570,6 +5574,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
     );
 
+    // Subagents inherit the parent's immutable project. Use its index to bound the scan.
+    const getSubagentChildThreads: ProjectionStoreV2Shape["getSubagentChildThreads"] = (threadId) =>
+      sql<PayloadRow>`
+        SELECT child.payload_json FROM orchestration_v2_projection_threads AS child
+        JOIN orchestration_v2_projection_threads AS parent
+          ON parent.thread_id = ${threadId} AND child.project_id = parent.project_id
+        WHERE json_extract(child.payload_json, '$.lineage.parentThreadId') = ${threadId}
+          AND json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+        ORDER BY child.created_at ASC, child.thread_id ASC
+      `.pipe(
+        Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+        Effect.flatMap(decodeRows(decodeThreadPayload, threadId)),
+      );
+
     const requireThread = Effect.fn("ProjectionStore.requireThread")(function* (
       threadId: ThreadId,
     ) {
@@ -9079,6 +9097,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadLinkMetadata: readOnReader(getThreadLinkMetadata),
       getThreadWorktreePaths: readOnReader(getThreadWorktreePaths),
       getOpenRemoteDelegatedTasks: getOpenRemoteDelegatedTasks.pipe(NodeSqliteClient.readOnly),
+      getSubagentChildThreads: readOnReader(getSubagentChildThreads),
       getThreadProjection: readOnReader(getThreadProjection),
       getTurnStartContext: readOnReader(getTurnStartContext),
       getTurnStartHistory: readOnReader(getTurnStartHistory),
