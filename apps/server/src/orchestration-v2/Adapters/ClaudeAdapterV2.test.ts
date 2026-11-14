@@ -243,6 +243,10 @@ function makeClaudeTestAppThread(input: {
   };
 }
 
+function buildLogLines(count: number): string {
+  return Array.from({ length: count }, (_, index) => `build log line ${index + 1}`).join("\n");
+}
+
 function makeClaudeTestTurnInput(input: {
   readonly threadId: ThreadId;
   readonly providerThread: OrchestrationV2ProviderThread;
@@ -13895,6 +13899,143 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           McpProviderSessions.layer,
           NodeServices.layer,
           NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    {
+      case: "not when the whole file fits",
+      fullOutput: buildLogLines(10_000),
+      writeFile: true,
+      firstLine: /^build log line 1$/,
+      lastLine: /^build log line 10000$/,
+    },
+    {
+      case: "only when its start is cut",
+      fullOutput: buildLogLines(20_000),
+      writeFile: true,
+      firstLine: /^\[\.\.\. \d+ bytes of earlier output omitted \.\.\.\]$/,
+      lastLine: /^build log line 20000$/,
+    },
+    {
+      // 300,002 bytes put the cut inside a three-byte character.
+      case: "without splitting a character when no line break is in reach",
+      fullOutput: `${"\u20ac".repeat(100_000)}ab`,
+      writeFile: true,
+      firstLine: /^\[\.\.\. \d+ bytes of earlier output omitted \.\.\.\]$/,
+      lastLine: /^\u20ac+ab$/,
+    },
+    {
+      case: "when its file cannot be read",
+      fullOutput: buildLogLines(20_000),
+      writeFile: false,
+      firstLine: /^build log line 1$/,
+      lastLine: /^\[\.\.\. \d+ bytes of later output omitted \.\.\.\]$/,
+    },
+  ])("marks a persisted Bash output $case", ({ fullOutput, writeFile, firstLine, lastLine }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const toolResultsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-tool-results-",
+        });
+        const persistedOutputPath = NodePath.join(toolResultsDir, "b3k9x2m1q.txt");
+        if (writeFile) yield* fileSystem.writeFileString(persistedOutputPath, fullOutput);
+        const bashToolUseId = "toolu_01BashPersistedOutputCut";
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-bash-persisted-output-cut"),
+            text: "Build it.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_bash_persisted_output_cut",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: bashToolUseId,
+                  name: "Bash",
+                  input: { command: "seq 1 20000 | sed 's/^/build log line /'" },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-0000000007b0",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: bashToolUseId,
+                  content: `<persisted-output>\nOutput too large. Full output saved to: ${persistedOutputPath}\n</persisted-output>`,
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-0000000007b1",
+            session_id: WAKE_NATIVE_SESSION,
+            tool_use_result: {
+              stdout: fullOutput.slice(0, 30_000),
+              stderr: "",
+              interrupted: false,
+              isImage: false,
+              noOutputExpected: false,
+              persistedOutputPath,
+              persistedOutputSize: Buffer.byteLength(fullOutput),
+            },
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-0000000007b2", result: "Built." }),
+        );
+        yield* harness.awaitTerminal(1);
+
+        const bash = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === bashToolUseId,
+        );
+        const output =
+          bash?.type === "turn_item.updated" && bash.turnItem.type === "command_execution"
+            ? (bash.turnItem.output ?? "")
+            : "";
+        const lines = output.split("\n");
+        assert.match(lines.at(0) ?? "", firstLine);
+        assert.match(lines.at(-1) ?? "", lastLine);
+        assert.notInclude(output, "\ufffd");
+        // A detail read keeps the first 256 KiB, so a longer output would lose its end.
+        assert.isAtMost(Buffer.byteLength(output), 256 * 1024);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),

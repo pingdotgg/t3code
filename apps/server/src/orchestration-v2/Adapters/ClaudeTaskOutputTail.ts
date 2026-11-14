@@ -124,3 +124,35 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
     last = yield* pause;
   }
 });
+
+/** Reads at most `maxBytes` from the end of a finished output file. A cut starts on a line
+ * when one is in reach, and never inside a UTF-8 character. `omittedBytes` counts the bytes
+ * before `text`. */
+export const readClaudeOutputFileTail = Effect.fn("ClaudeTaskOutputTail.readFileTail")(function* (
+  filePath: string,
+  maxBytes: number,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const info = yield* fileSystem.stat(filePath);
+  // Opening a FIFO would block until a writer appears.
+  if (info.type !== "File") return Option.none();
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const handle = yield* fileSystem.open(filePath, { flag: "r" });
+      const size = Number((yield* handle.stat).size);
+      const start = Math.max(0, size - maxBytes);
+      yield* handle.seek(BigInt(start), "start");
+      const bytes = Option.getOrElse(yield* handle.readAlloc(size - start), () => new Uint8Array());
+      let skip = 0;
+      if (start > 0) {
+        const newline = bytes.indexOf(0x0a);
+        if (newline !== -1 && newline + 1 < bytes.byteLength) skip = newline + 1;
+        else while (skip < bytes.byteLength && ((bytes[skip] ?? 0) & 0xc0) === 0x80) skip += 1;
+      }
+      return Option.some({
+        text: new TextDecoder().decode(bytes.subarray(skip)),
+        omittedBytes: start + skip,
+      });
+    }),
+  );
+});

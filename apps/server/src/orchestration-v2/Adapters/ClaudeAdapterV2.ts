@@ -5,7 +5,11 @@ import {
   toolOutputImages,
 } from "@t3tools/shared/toolOutput";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
-import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
+import {
+  claudeTaskOutputRoot,
+  readClaudeOutputFileTail,
+  tailClaudeTaskOutput,
+} from "./ClaudeTaskOutputTail.ts";
 import {
   dynamicToolTitle,
   formatReadToolLabel,
@@ -3776,6 +3780,62 @@ function claudeFileChangeText(output: ClaudeNativeToolOutput): string {
         };
   return patch.hunks.length === 0 ? "" : formatPatch(patch, FILE_HEADERS_ONLY);
 }
+
+const decodeClaudePersistedBashResult = Schema.decodeUnknownOption(
+  Schema.Struct({
+    stdout: Schema.String,
+    stderr: Schema.optional(Schema.String),
+    persistedOutputPath: Schema.String,
+    persistedOutputSize: Schema.optional(Schema.Number),
+  }),
+);
+
+/** Leaves room for the omission marker within the 256 KiB a detail read returns. */
+const PERSISTED_COMMAND_OUTPUT_TAIL_BYTES = 255 * 1024;
+
+/** Over 30,000 characters, Claude keeps only the head in `stdout` and saves the whole
+ * output, stderr included, to a file. Rows show its end, marked when earlier output is cut. */
+const withPersistedClaudeCommandOutput = Effect.fn("ClaudeAdapterV2.persistedCommandOutput")(
+  function* (output: ClaudeNativeToolOutput) {
+    if (output.type !== "structured_tool_use_result") return output;
+    const result = Option.getOrUndefined(decodeClaudePersistedBashResult(output.value));
+    if (result === undefined) return output;
+    const path = yield* Path.Path;
+    const tail = path.isAbsolute(result.persistedOutputPath)
+      ? yield* readClaudeOutputFileTail(
+          result.persistedOutputPath,
+          PERSISTED_COMMAND_OUTPUT_TAIL_BYTES,
+        ).pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning("Failed to read Claude's saved command output.", { cause }),
+          ),
+          Effect.orElseSucceed(() => Option.none()),
+        )
+      : Option.none();
+    if (Option.isSome(tail) && tail.value.text.length > 0) {
+      const { text, omittedBytes } = tail.value;
+      return {
+        type: "structured_tool_use_result",
+        value: {
+          stdout:
+            omittedBytes === 0
+              ? text
+              : `[... ${omittedBytes} bytes of earlier output omitted ...]\n${text}`,
+          stderr: "",
+        },
+      } satisfies ClaudeNativeToolOutput;
+    }
+    const missingBytes = (result.persistedOutputSize ?? 0) - Buffer.byteLength(result.stdout);
+    if (missingBytes <= 0) return output;
+    return {
+      type: "structured_tool_use_result",
+      value: {
+        stdout: `${result.stdout}\n[... ${missingBytes} bytes of later output omitted ...]`,
+        stderr: result.stderr ?? "",
+      },
+    } satisfies ClaudeNativeToolOutput;
+  },
+);
 
 function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
@@ -8390,6 +8450,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             input.toolResult.tool_use_id,
           );
           yield* stopTaskOutputTail(toolCall.nativeItemId);
+          const output =
+            toolCall.classification.itemType === "command_execution"
+              ? yield* withPersistedClaudeCommandOutput(input.output).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
+                  Effect.provideService(Path.Path, path),
+                )
+              : input.output;
           yield* emitToolCallArtifacts(
             buildToolCallArtifacts({
               context: input.context,
@@ -8402,7 +8469,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               rootNodeId: toolCall.rootNodeId,
               parentNodeId: toolCall.parentNodeId,
               ordinal: toolCall.ordinal,
-              output: input.output,
+              output,
               status:
                 toolNonExecutionKind === "cancelled" || toolNonExecutionKind === "interrupted"
                   ? toolNonExecutionKind
