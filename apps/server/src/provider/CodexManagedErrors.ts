@@ -105,7 +105,8 @@ export function classifyCodexManagedError(value: unknown) {
         message:
           "Codex sent a tool namespace that ChatGPT sharing does not support. Use another provider for this request.",
       };
-    if (text.includes("additional_tools"))
+    // ChatGPT lists `additional tools` as supported and says "Remove unsupported input items".
+    if (text.includes("input item"))
       return {
         ...failure,
         message:
