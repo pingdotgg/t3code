@@ -1017,6 +1017,21 @@ export const LINUX_FILE_EXCLUSIONS = [
 ] as const;
 
 // node-pty bundles both Darwin architectures; only universal apps need both.
+// electron-builder rejects identity names that keep Apple's certificate-type prefix.
+const APPLE_CERTIFICATE_PREFIXES = [
+  "Developer ID Application:",
+  "Developer ID Installer:",
+  "3rd Party Mac Developer Application:",
+  "3rd Party Mac Developer Installer:",
+] as const;
+
+export function resolveLocalSigningIdentity(value: string | undefined): string | undefined {
+  let identity = value?.trim();
+  const prefix = APPLE_CERTIFICATE_PREFIXES.find((candidate) => identity?.startsWith(candidate));
+  if (prefix) identity = identity?.slice(prefix.length).trim();
+  return identity || undefined;
+}
+
 export function resolveMacFileExclusions(arch?: typeof BuildArch.Type) {
   if (arch === undefined || arch === "universal") {
     return [...MAC_FILE_EXCLUSIONS];
@@ -2833,7 +2848,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // A persistent local identity keeps Keychain approvals valid across fork rebuilds.
     const localSigningIdentity = signed
       ? undefined
-      : loadRepoEnv({ repoRoot }).T3CODE_DESKTOP_LOCAL_SIGNING_IDENTITY?.trim();
+      : resolveLocalSigningIdentity(
+          loadRepoEnv({ repoRoot }).T3CODE_DESKTOP_LOCAL_SIGNING_IDENTITY,
+        );
     buildConfig.mac = {
       ...(localSigningIdentity
         ? {
@@ -3824,7 +3841,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
 
   const localSigningIdentity =
     options.platform === "mac" && !options.signed
-      ? loadRepoEnv({ repoRoot }).T3CODE_DESKTOP_LOCAL_SIGNING_IDENTITY?.trim()
+      ? resolveLocalSigningIdentity(loadRepoEnv({ repoRoot }).T3CODE_DESKTOP_LOCAL_SIGNING_IDENTITY)
       : undefined;
   if (localSigningIdentity) {
     // With a custom signer set, electron-builder skips a missing or expired identity silently.

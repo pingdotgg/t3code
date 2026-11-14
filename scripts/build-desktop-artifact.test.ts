@@ -28,6 +28,7 @@ import {
   BuildCommandFailedError,
   parseWslRuntimeArchiveMembers,
   readWorkspaceConfig,
+  resolveLocalSigningIdentity,
   createBuildConfig,
   DESKTOP_FILE_EXCLUSIONS,
   InvalidMacPasskeyRpDomainError,
@@ -564,6 +565,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }
     }),
   );
+
+  it("strips Apple certificate prefixes from the local signing identity", () => {
+    assert.strictEqual(
+      resolveLocalSigningIdentity(" Developer ID Application: Example (ABCDEFGHIJ) "),
+      "Example (ABCDEFGHIJ)",
+    );
+    assert.strictEqual(resolveLocalSigningIdentity("T3 Code Local"), "T3 Code Local");
+    assert.strictEqual(resolveLocalSigningIdentity("Developer ID Application:"), undefined);
+    assert.strictEqual(resolveLocalSigningIdentity("  "), undefined);
+  });
 
   it("stages only the externals of both bundles in merged packages", () => {
     assert.deepStrictEqual(
