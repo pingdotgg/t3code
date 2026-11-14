@@ -656,7 +656,6 @@ export interface ProjectionStoreV2Shape {
       | "runs"
       | "attempts"
       | "nodes"
-      | "subagents"
       | "providerSessions"
       | "providerThreads"
       | "providerTurns"
@@ -665,7 +664,14 @@ export interface ProjectionStoreV2Shape {
       | "contextHandoffs"
       | "contextTransfers"
       | "turnItems"
-    > & { readonly hasConversation: boolean },
+    > & {
+      readonly hasConversation: boolean;
+      /** Child and provider thread ids of the thread's completed subagents. */
+      readonly subagentRoutes: ReadonlyArray<{
+        readonly childThreadId: ThreadId | null;
+        readonly providerThreadId: ProviderThreadId | null;
+      }>;
+    },
     ProjectionStoreV2Error
   >;
   readonly getTurnStartHistory: (
@@ -5067,8 +5073,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     );
 
     // SQLite trim defaults to ASCII spaces; compact recognition uses JavaScript trim.
-    const javascriptTrimWhitespace =
-      " \t\n\r\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+    const JAVASCRIPT_TRIM_WHITESPACE =
+      "char(32, 9, 10, 13, 11, 12, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279)";
+    const COMPACT_COMMAND_TEXT = `lower(trim(json_extract(payload_json, '$.text'), ${JAVASCRIPT_TRIM_WHITESPACE})) = '/compact'`;
+    // Must match migration 090's partial index exactly for SQLite to use it.
+    const TURN_START_COMMAND_MESSAGE = sql.literal(
+      `role = 'user' AND (
+      ${COMPACT_COMMAND_TEXT}
+      OR trim(json_extract(payload_json, '$.text'), ${JAVASCRIPT_TRIM_WHITESPACE}) GLOB '/goal*'
+    )`,
+    );
 
     const getTurnStartContext: ProjectionStoreV2Shape["getTurnStartContext"] = (threadId, runId) =>
       sql
@@ -5089,10 +5103,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               INDEXED BY sqlite_autoindex_orchestration_v2_projection_nodes_1
               WHERE thread_id = ${threadId} AND node_id IN (SELECT json_extract(payload_json, '$.rootNodeId') FROM orchestration_v2_projection_runs WHERE thread_id = ${threadId} AND run_id = ${runId}) ORDER BY node_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeNodePayload, threadId)));
-            const subagents = yield* sql<PayloadRow>`
-              SELECT payload_json FROM orchestration_v2_projection_subagents
-              WHERE thread_id = ${threadId} AND status NOT IN ('interrupted','failed','cancelled') ORDER BY subagent_id ASC
-            `.pipe(Effect.flatMap(decodeRows(decodeSubagentPayload, threadId)));
+            // Turn start routes only completed subagents (RunExecutionService.canRouteRelatedSubagent).
+            const subagentRoutes = yield* sql<{
+              readonly child_thread_id: ThreadId | null;
+              readonly provider_thread_id: ProviderThreadId | null;
+            }>`
+              SELECT child_thread_id, provider_thread_id FROM orchestration_v2_projection_subagents
+              INDEXED BY orchestration_v2_projection_subagents_routing_idx
+              WHERE thread_id = ${threadId} AND status = 'completed' ORDER BY subagent_id ASC
+            `;
             const providerThreads = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_provider_threads
               WHERE thread_id = ${threadId} ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
@@ -5111,7 +5130,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `.pipe(Effect.flatMap(decodeRows(decodeContextHandoffPayload, threadId)));
             const contextTransfers = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_context_transfers
-              WHERE source_thread_id = ${threadId} OR target_thread_id = ${threadId} ORDER BY rowid ASC
+              -- Turn start reads forks into this thread and the transfers its handoffs reference.
+              WHERE (target_thread_id = ${threadId} AND type = 'fork')
+                OR context_transfer_id IN (SELECT json_extract(payload_json, '$.transferId') FROM orchestration_v2_projection_context_handoffs WHERE thread_id = ${threadId})
+              ORDER BY rowid ASC
             `.pipe(Effect.flatMap(decodeRows(decodeContextTransferPayload, threadId)));
             const turnItems = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_turn_items
@@ -5127,20 +5149,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ORDER BY sessions.updated_at ASC, sessions.provider_session_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeProviderSessionPayload, threadId)));
             const messages = yield* sql<PayloadRow>`
-              SELECT payload_json FROM orchestration_v2_projection_messages
-              WHERE thread_id = ${threadId} AND (
-                message_id IN (SELECT json_extract(payload_json, '$.userMessageId') FROM orchestration_v2_projection_runs
-                  WHERE thread_id = ${threadId} AND run_id = ${runId})
-                OR (role = 'user' AND lower(trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace})) = '/compact')
-                -- Earlier /goal turns defer context too; parseGoalCommand narrows this prefix match.
-                OR (role = 'user' AND trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace}) GLOB '/goal*')
-              ) ORDER BY created_at ASC, message_id ASC
+              SELECT payload_json, created_at, message_id FROM orchestration_v2_projection_messages
+              INDEXED BY sqlite_autoindex_orchestration_v2_projection_messages_1
+              WHERE thread_id = ${threadId} AND message_id IN (SELECT json_extract(payload_json, '$.userMessageId') FROM orchestration_v2_projection_runs
+                WHERE thread_id = ${threadId} AND run_id = ${runId})
+              UNION
+              -- Earlier /compact and /goal turns defer context too; parseGoalCommand narrows the prefix match.
+              SELECT payload_json, created_at, message_id FROM orchestration_v2_projection_messages
+              INDEXED BY orchestration_v2_projection_messages_turn_start_command_idx
+              WHERE thread_id = ${threadId} AND ${TURN_START_COMMAND_MESSAGE}
+              ORDER BY created_at ASC, message_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeMessagePayload, threadId)));
             const conversation = yield* sql<{ present: number }>`
               SELECT EXISTS(
                 SELECT 1 FROM orchestration_v2_projection_messages
                 WHERE thread_id = ${threadId} AND role = 'user'
-                    AND (lower(trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace})) <> '/compact'
+                    AND (NOT (${sql.literal(COMPACT_COMMAND_TEXT)})
                       OR json_array_length(payload_json, '$.attachments') > 0)
               ) AS present
             `;
@@ -5152,7 +5176,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               runs,
               attempts,
               nodes,
-              subagents,
+              subagentRoutes: subagentRoutes.map((route) => ({
+                childThreadId: route.child_thread_id,
+                providerThreadId: route.provider_thread_id,
+              })),
               providerSessions,
               providerThreads,
               providerTurns,
@@ -5178,6 +5205,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       function* (threadId, runIds) {
         const rows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_turn_items
+          -- Without planner statistics SQLite would test run_id on every item via the ordinal index.
+          ${runIds === undefined ? sql`` : sql`INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx`}
           WHERE thread_id = ${threadId}
             AND type IN ('user_message','assistant_message','command_execution','error',
               'run_interrupt_result','file_change','proposed_plan')

@@ -179,6 +179,7 @@ function startWithMissingWorktree(
             projectionReadCount += 1;
             return Effect.succeed({
               ...projection,
+              subagentRoutes: [],
               hasConversation: projection.messages.some(
                 (m) =>
                   m.role === "user" &&
@@ -1020,6 +1021,7 @@ function makeLocalCommandHarness(input: {
   const getTurnStartContext = vi.fn(() =>
     Effect.succeed({
       ...projection,
+      subagentRoutes: [],
       hasConversation: projection.messages.some(
         (m) =>
           m.role === "user" &&
