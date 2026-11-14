@@ -4449,9 +4449,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         session.status !== "stopped" &&
         session.status !== "error",
     );
-    if (command.type !== "thread.archive" && command.type !== "thread.settle") {
+    if (
+      command.type !== "thread.archive" &&
+      command.type !== "thread.settle" &&
+      liveSessions.length > 0
+    ) {
+      // The provider context holds only the active and target provider threads; a session kept
+      // busy by an earlier queued hand-off owns neither, so probe every thread of this one.
+      const { providerThreads } = yield* projectionStore
+        .getThreadRecords(command.threadId, ["providerThreads"], {
+          omitSettledSubagentRecords: true,
+        })
+        .pipe(mapDispatchError(command));
       for (const session of liveSessions) {
-        if (yield* sessionHasBackgroundWork(session, providerContext!.providerThreads)) {
+        if (yield* sessionHasBackgroundWork(session, providerThreads)) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
