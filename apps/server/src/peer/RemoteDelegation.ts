@@ -19,6 +19,7 @@ import {
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -53,6 +54,8 @@ import * as PeerLinks from "./PeerLinks.ts";
 const FOLLOW_WAIT_MS = 10 * 60 * 1_000;
 /** A linked environment that stops answering is retried, backing off to this. */
 const FOLLOW_MAX_BACKOFF = Duration.minutes(5);
+/** A follower that hits this many defects in a row fails its task instead of retrying. */
+const FOLLOW_MAX_DEFECTS = 3;
 /** How a follower retries; tests step it by hand. */
 export const FollowRetrySchedule = Context.Reference<Schedule.Schedule<unknown>>(
   "t3/peer/RemoteDelegation/FollowRetrySchedule",
@@ -613,6 +616,7 @@ const make = Effect.gen(function* () {
         view: failed ? "activity" : "messages",
         limit: 100,
         runLimit: 50,
+        maxCharsPerItem: 20_000,
         ...(afterPosition === undefined ? {} : { afterPosition }),
       });
       run ??= read.recentRuns.find((candidate) => candidate.runId === runId);
@@ -638,7 +642,7 @@ const make = Effect.gen(function* () {
         threadId: remote.threadId,
         itemId: reply.itemId,
         textOffset,
-        maxCharsPerItem: 50_000,
+        maxCharsPerItem: 20_000,
       });
       const part = rest.items[0];
       if (part === undefined) break;
@@ -672,26 +676,54 @@ const make = Effect.gen(function* () {
   /**
    * Waits for the task's run there to end, completes the task here, and stops it there if it
    * ended here first. A revoked, expired or forgotten link, or a thread or run gone there,
-   * fails the task with nothing left to stop; anything else (the other machine asleep, a
-   * dropped route) is retried with back-off, and so is completing.
+   * fails the task with nothing left to stop; repeated defects here fail it too. Anything else
+   * (the other machine asleep, a dropped route) is retried with back-off, and so is completing.
    */
   const follow = (parentThreadId: ThreadId, taskId: NodeId): Effect.Effect<void> =>
-    followOnce(parentThreadId, taskId).pipe(
-      // `false` means it is still running there: follow again straight away.
-      Effect.repeat({ while: (done) => !done }),
-      Effect.catchTags({
-        OrchestratorMcpFailure: Effect.fn("RemoteDelegation.followFailed")(function* (error) {
-          const reason = yield* finalReason(parentThreadId, taskId, error);
-          if (reason === undefined) return yield* error;
-          // Gone there, or no link to reach it by: nothing left to stop there.
-          const { task } = yield* readTask(parentThreadId, taskId);
-          const stopCount = task?.remoteChild?.stopCount;
-          yield* complete(parentThreadId, taskId, "failed", reason, "stopped", stopCount);
+    Effect.suspend(() => {
+      let defects = 0;
+      const noDefect = Effect.sync(() => {
+        defects = 0;
+      });
+      return followOnce(parentThreadId, taskId).pipe(
+        Effect.tap(noDefect),
+        // `false` means it is still running there: follow again straight away.
+        Effect.repeat({ while: (done) => !done }),
+        Effect.catchTags({
+          OrchestratorMcpFailure: Effect.fn("RemoteDelegation.followFailed")(function* (error) {
+            const reason = yield* finalReason(parentThreadId, taskId, error);
+            if (reason === undefined) return yield* error;
+            // Gone there, or no link to reach it by: nothing left to stop there.
+            const { task } = yield* readTask(parentThreadId, taskId);
+            const stopCount = task?.remoteChild?.stopCount;
+            yield* complete(parentThreadId, taskId, "failed", reason, "stopped", stopCount);
+          }),
         }),
-      }),
-      Effect.retry(followRetry),
-      Effect.ignoreCause({ log: true }),
-    );
+        Effect.tapError(() => noDefect),
+        Effect.tapDefect(() =>
+          Effect.sync(() => {
+            defects += 1;
+          }),
+        ),
+        failOnDefect,
+        Effect.retry({ schedule: followRetry, while: () => defects < FOLLOW_MAX_DEFECTS }),
+        Effect.catch(
+          Effect.fn("RemoteDelegation.followGaveUp")(
+            function* () {
+              const { task } = yield* readTask(parentThreadId, taskId);
+              const remote = task?.remoteChild;
+              // A task with its result keeps it; completing it again would owe another stop there.
+              if (remote === undefined || task?.result !== null) return;
+              const result = `Following the thread ${remote.threadId} in ${remote.label} failed repeatedly, so it may still run there (task_cancel stops it).`;
+              yield* complete(parentThreadId, taskId, "failed", result, undefined);
+            },
+            failOnDefect,
+            Effect.retry(followRetry),
+          ),
+        ),
+        Effect.ignoreCause({ log: true }),
+      );
+    });
 
   /**
    * One wait on the task's thread there; true once the task here is done.
@@ -974,6 +1006,14 @@ const make = Effect.gen(function* () {
 
   return RemoteDelegation.of({ delegate, followUp, cancel, start });
 });
+
+/** A defect, logged, as a failure, so a retry covers it. */
+const failOnDefect = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.catchDefect(effect, (defect) =>
+    Effect.logWarning("A remote task's follower hit a defect", Cause.die(defect)).pipe(
+      Effect.andThen(Effect.fail(new Cause.UnknownError(defect, "A follower hit a defect."))),
+    ),
+  );
 
 const isTerminal = (status: string) =>
   status === "completed" ||
