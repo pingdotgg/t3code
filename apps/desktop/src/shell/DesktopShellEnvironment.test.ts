@@ -507,7 +507,7 @@ describe("DesktopShellEnvironment", () => {
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
-        PATH: "/Users/test/.local/bin:/usr/bin",
+        PATH: " /Users/test/.local/bin:/usr/bin",
       };
       const commands: ChildProcess.Command[] = [];
 
@@ -517,7 +517,7 @@ describe("DesktopShellEnvironment", () => {
         handler: (command) => {
           commands.push(command);
           return envOutput({
-            PATH: "/opt/homebrew/bin:/usr/bin",
+            PATH: "/opt/homebrew/bin:/usr/bin:/opt/bin ",
             SSH_AUTH_SOCK: "/tmp/secretive.sock",
             HOMEBREW_PREFIX: "/opt/homebrew",
           });
@@ -526,7 +526,7 @@ describe("DesktopShellEnvironment", () => {
 
       assert.equal(commands.length, 1);
       assert.equal(commands[0]?._tag === "StandardCommand" ? commands[0].command : "", "/bin/zsh");
-      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/Users/test/.local/bin");
+      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/opt/bin : /Users/test/.local/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");
       assert.isTrue(prepared);
@@ -601,6 +601,39 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect.each([
+    {
+      name: "hydrates both Android SDK names when neither is inherited",
+      inherited: {},
+      expected: { ANDROID_HOME: "/shell/android-home", ANDROID_SDK_ROOT: "/shell/android-root" },
+    },
+    {
+      // The device host reads ANDROID_HOME before ANDROID_SDK_ROOT, so a shell
+      // ANDROID_HOME next to an inherited ANDROID_SDK_ROOT would change the SDK.
+      name: "keeps an inherited ANDROID_SDK_ROOT selected over a login-shell ANDROID_HOME",
+      inherited: { ANDROID_SDK_ROOT: "/inherited/android-sdk" },
+      expected: { ANDROID_HOME: undefined, ANDROID_SDK_ROOT: "/inherited/android-sdk" },
+    },
+  ])("$name", ({ inherited, expected }) =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin", ...inherited };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/usr/bin",
+            ANDROID_HOME: "/shell/android-home",
+            ANDROID_SDK_ROOT: "/shell/android-root",
+          }),
+      });
+
+      assert.equal(env.ANDROID_HOME, expected.ANDROID_HOME);
+      assert.equal(env.ANDROID_SDK_ROOT, expected.ANDROID_SDK_ROOT);
+    }),
+  );
+
   it.effect("keeps mise's PATH record with the login shell PATH", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
@@ -646,35 +679,16 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it.effect(
-    "leaves macOS preparation incomplete when no login shell returns a PATH, then retries",
-    () =>
-      Effect.gen(function* () {
-        const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
-        let shellReady = false;
-        yield* runShellEnvironment({
-          env,
-          platform: "darwin",
-          handler: (command) =>
-            shellReady && command._tag === "StandardCommand" && command.command === "/bin/zsh"
-              ? envOutput({ PATH: "/fresh/bin" })
-              : "",
-          use: (service) =>
-            Effect.gen(function* () {
-              assert.isFalse(yield* service.awaitDiscovery);
-              assert.equal(env.PATH, "/usr/bin");
+  it.effect("leaves macOS preparation incomplete when no login shell returns a PATH", () =>
+    Effect.gen(function* () {
+      const prepared = yield* runShellEnvironment({
+        env: { SHELL: "/bin/zsh", PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
+        platform: "darwin",
+        handler: () => "",
+      });
 
-              yield* TestClock.adjust("30 seconds");
-              assert.equal(env.PATH, "/usr/bin");
-
-              // A Mac that slept during launch answers a later probe.
-              shellReady = true;
-              yield* TestClock.adjust("30 seconds");
-              assert.equal(env.PATH, "/fresh/bin:/usr/bin");
-              return true;
-            }),
-        });
-      }),
+      assert.isFalse(prepared);
+    }),
   );
 
   it.effect("retries the user's shell when only the fallback shell answered", () =>
@@ -790,6 +804,52 @@ describe("DesktopShellEnvironment", () => {
             return true;
           }),
       });
+    }),
+  );
+
+  it.effect("recovers the login-shell PATH when the first probe outlasts the timeout", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
+      const output = envOutput({ PATH: "/opt/homebrew/bin:/usr/bin" });
+      let shellProbes = 0;
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () => "",
+        processSpawner: ChildProcessSpawner.make((command) => {
+          if (command._tag !== "StandardCommand" || command.command !== "/bin/zsh") {
+            return Effect.succeed(makeProcess(""));
+          }
+          shellProbes += 1;
+          if (shellProbes > 1) return Effect.succeed(makeProcess(output));
+          // A cold start: the first login shell answers, but only after 7s.
+          const slow = Effect.sleep("7 seconds");
+          const stdout = Stream.fromEffect(slow.pipe(Effect.as(textEncoder.encode(output))));
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(125),
+              stdout,
+              stderr: Stream.empty,
+              all: stdout,
+              exitCode: slow.pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.void,
+              stdin: Sink.drain,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            }),
+          );
+        }),
+        use: (service) =>
+          Effect.gen(function* () {
+            yield* service.installIntoProcess;
+            yield* TestClock.adjust("10 minutes");
+            return true;
+          }),
+      }).pipe(Effect.provide(Logger.layer([])));
+
+      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin");
     }),
   );
 
