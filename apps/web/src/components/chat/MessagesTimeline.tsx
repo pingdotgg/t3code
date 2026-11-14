@@ -87,6 +87,7 @@ import {
   TIMELINE_MINIMAP_TARGET_OFFSET,
   timelineTurnFoldRunIdsByEntryId,
   liveAnswerPreview,
+  timelineRowIsOwnUserMessage,
   type MessagesTimelineRow,
   type TimelineLatestRun,
 } from "./MessagesTimeline.logic";
@@ -310,6 +311,8 @@ interface MessagesTimelineProps {
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
   contentInsetEndAdjustment: number;
   onIsAtEndChange: (isAtEnd: boolean) => void;
+  /** Whether the last user message's top is scrolled above the viewport; reported on every refresh. */
+  onLastUserMessageAboveChange?: (above: boolean) => void;
   /** Disable while reading history to prevent LegendList re-pinning near the bottom. */
   liveFollowEnabled: boolean;
   /** Receives the list's viewport when it mounts; the returned cleanup runs when it goes away. */
@@ -411,6 +414,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onAnchorSizeChanged,
   contentInsetEndAdjustment,
   onIsAtEndChange,
+  onLastUserMessageAboveChange,
   liveFollowEnabled,
   onViewportAttach,
   onFooterGrow,
@@ -771,6 +775,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = deriveTimelineMinimapItems(rows);
   const minimapRowIndices = minimapItems.map((item) => item.rowIndex);
+  const lastOwnUserRowIndex = rows.findLastIndex(timelineRowIsOwnUserMessage);
   const restoreRowIndex =
     restoringThreadPosition && rememberedPosition?.atEnd === false
       ? rows.findIndex((row) => row.id === rememberedPosition.rowId)
@@ -916,6 +921,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || state?.data !== rows) return;
     if (!state || minimapItems.length === 0) {
+      onLastUserMessageAboveChange?.(false);
       return;
     }
 
@@ -962,6 +968,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setMinimapCurrentIndex((current) =>
       current === nextCurrentIndex ? current : nextCurrentIndex,
     );
+    const lastUserRowTop =
+      lastOwnUserRowIndex < 0 ? undefined : state.positionAtIndex(lastOwnUserRowIndex);
+    onLastUserMessageAboveChange?.(lastUserRowTop !== undefined && lastUserRowTop < scroll);
     // The exact bottom, not the follow re-arm zone: Next can still scroll inside that zone.
     setMinimapAtEnd(
       viewport !== undefined &&
@@ -1289,6 +1298,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
       }
       listRef.current = null;
       registerTimeline?.(null);
+      // With no list, there is nothing to jump back to.
+      onLastUserMessageAboveChange?.(false);
     };
   });
 

@@ -2365,7 +2365,7 @@ export function deriveMessagesTimelineRows(input: {
   });
 }
 
-function timelineRowIsOwnUserMessage(
+export function timelineRowIsOwnUserMessage(
   row: MessagesTimelineRow | undefined,
 ): row is Extract<MessagesTimelineRow, { kind: "message" }> {
   return (
