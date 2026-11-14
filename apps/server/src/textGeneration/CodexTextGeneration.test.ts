@@ -503,7 +503,6 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             })
             .pipe(Effect.flip);
           expect(error.detail).toBe("Codex CLI command failed with code 1.");
-          expect(error.detail).not.toContain("Unauthorized");
           expect(error.cause).toEqual(
             new Error("unexpected status 401 Unauthorized: Missing bearer authentication"),
           );
