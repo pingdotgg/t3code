@@ -1669,11 +1669,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       return thread && thread.settledOverride !== "settled" ? [thread] : [];
     });
     if (!checkThreadOperations(settlingThreads)) return;
-    settleThreads(
-      settlingThreads.map((thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      ),
-    );
+    settleThreads(threadKeys);
     clearSelection();
   };
   const attemptUnsettle = (threadRef: ScopedThreadRef) => {
