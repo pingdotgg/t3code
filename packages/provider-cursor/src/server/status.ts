@@ -19,6 +19,7 @@ import {
   buildBooleanOptionDescriptor,
   buildSelectOptionDescriptor,
   buildServerProvider,
+  COMPACT_SLASH_COMMAND,
   providerModelsFromSettings,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
@@ -62,6 +63,7 @@ export const buildInitialCursorProviderSnapshot = Effect.fn(
     enabled: true,
     checkedAt,
     models,
+    slashCommands: [COMPACT_SLASH_COMMAND],
     probe: {
       installed: true,
       version: null,
@@ -234,6 +236,7 @@ export function buildCursorProviderSnapshot(input: {
       input.cursorSettings.customModels,
       EMPTY_CAPABILITIES,
     ),
+    slashCommands: [COMPACT_SLASH_COMMAND],
     probe: {
       installed: true,
       version: input.parsed.version,
