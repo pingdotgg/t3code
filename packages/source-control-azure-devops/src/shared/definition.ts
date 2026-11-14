@@ -15,7 +15,18 @@ const CHANGE_REQUEST_PATH = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:
 const COMMIT_PATH = /^\/((?:[^/]+\/)*_git\/[^/]+)\/commit\/([0-9a-f]+)\/?$/iu;
 const CHECKOUT_COMMAND = /^az\s+repos\s+pr\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
-  /^https:\/\/(?:dev\.azure\.com\/[^/\s]+\/[^/\s]+|[^/\s]+\.visualstudio\.com\/[^/\s]+)\/_git\/[^/\s]+\/pullrequest\/(\d+)(?:[/?#].*)?$/i;
+  /^https:\/\/(?:dev\.azure\.com\/[^/\s]+\/[^/\s]+|[^/\s]+\.visualstudio\.com\/(?:DefaultCollection\/)?[^/\s]+)\/_git\/[^/\s]+\/pullrequest\/(\d+)(?:[/?#].*)?$/i;
+
+// `ssh.dev.azure.com` is the default SSH clone host (git@ssh.dev.azure.com:v3/org/project/repo),
+// so any `*.dev.azure.com` subdomain is Azure. Legacy hosts stay under `.visualstudio.com`,
+// including `vs-ssh.visualstudio.com`.
+function isAzureHostname(hostname: string): boolean {
+  return (
+    hostname === "dev.azure.com" ||
+    hostname.endsWith(".dev.azure.com") ||
+    hostname.endsWith(".visualstudio.com")
+  );
+}
 
 /**
  * Azure alone addresses one repository under two names that share no part: `ssh.dev.azure.com` and
@@ -26,7 +37,10 @@ const CHANGE_REQUEST_REFERENCE =
 function repositoryKeyFromRemote(key: string): string | null {
   const match =
     /^(ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com)\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/u.exec(key);
-  if (match === null) return null;
+  if (match === null) {
+    // Azure takes a name as written, so its keys keep the `.git` other hosts drop.
+    return isAzureHostname(key.split("/", 1)[0]!) ? key : null;
+  }
   const [, host, organization, project, repository] = match;
   return host === "ssh.dev.azure.com"
     ? `dev.azure.com/${organization}/${project}/_git/${repository}`
@@ -125,13 +139,8 @@ export const definition = defineSourceControl({
   },
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
   checkoutChangeRequestHost: () => null,
-  // `ssh.dev.azure.com` is the default SSH clone host (git@ssh.dev.azure.com:v3/org/project/repo),
-  // so any `*.dev.azure.com` subdomain is Azure. Legacy hosts stay under `.visualstudio.com`,
-  // including `vs-ssh.visualstudio.com`.
   recognizeRemote: ({ host, hostname }) =>
-    hostname === "dev.azure.com" ||
-    hostname.endsWith(".dev.azure.com") ||
-    hostname.endsWith(".visualstudio.com")
+    isAzureHostname(hostname)
       ? { kind: KIND, name: "Azure DevOps", baseUrl: `https://${host}` }
       : null,
   /**

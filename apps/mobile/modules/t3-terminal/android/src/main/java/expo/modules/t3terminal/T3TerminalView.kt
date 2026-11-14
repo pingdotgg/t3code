@@ -10,6 +10,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -21,11 +22,19 @@ import kotlin.math.max
 class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
   private val container = FrameLayout(context)
   private val terminalCanvas = TerminalCanvasView(context)
+  private val sentText = TerminalSentText()
 
   // Newer Android can request autofill even with importantForAutofill=no.
   // Reporting no autofill type keeps terminal input out of credential autofill.
   private val inputView = object : EditText(context) {
     override fun getAutofillType(): Int = View.AUTOFILL_TYPE_NONE
+
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? =
+      super.onCreateInputConnection(outAttrs)?.let { connection ->
+        TerminalInputConnection(connection, sentText, { !readOnly }) { count ->
+          if (!readOnly) onInput(mapOf("data" to "\u007F".repeat(count)))
+        }
+      }
   }
   private val onInput by EventDispatcher()
   private val onResize by EventDispatcher()
@@ -58,6 +67,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private var streamedOutput: TerminalOutputBuffer? = null
   private var cols = 0
   private var rows = 0
+  private var cellSize = 0 to 0
   private var measuredCols = 0
   private var measuredRows = 0
   private var clearingInput = false
@@ -277,11 +287,14 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
         onInput(mapOf("data" to "\r"))
       },
     )
+    val navigationKeys = TerminalNavigationKeyListener { onInput(mapOf("data" to it)) }
     inputView.setOnKeyListener { _, keyCode, event ->
       if (readOnly) return@setOnKeyListener true
+      if (navigationKeys.onKey(inputView, keyCode, event)) return@setOnKeyListener true
       if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
       when {
         keyCode == KeyEvent.KEYCODE_DEL -> {
+          sentText.removeCodePoints(1)
           onInput(mapOf("data" to "\u007F"))
           true
         }
@@ -304,6 +317,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
           val end = (start + count).coerceAtMost(s.length)
           if (start < end) {
             val insertedText = s.subSequence(start, end).toString()
+            sentText.append(insertedText)
             onInput(mapOf("data" to insertedText))
           }
         }
@@ -343,25 +357,24 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     applyGrid()
   }
 
+  @Suppress("ComplexCondition")
   private fun applyGrid() {
     if (measuredCols <= 0 || measuredRows <= 0 || isCleanedUp) return
     val shared = sharedGrid.takeIf { it.size == 2 && it[0] > 0 && it[1] > 0 }
     val nextCols = shared?.get(0)?.coerceAtMost(measuredCols) ?: measuredCols
     val nextRows = shared?.get(1)?.coerceAtMost(measuredRows) ?: measuredRows
-    if (nextCols == cols && nextRows == rows && terminalHandle != 0L) return
+    val nextCellSize = terminalCanvas.cellWidthPx.toInt() to terminalCanvas.cellHeightPx.toInt()
+    if (nextCols == cols && nextRows == rows && nextCellSize == cellSize && terminalHandle != 0L) {
+      return
+    }
     cols = nextCols
     rows = nextRows
+    cellSize = nextCellSize
     val response = if (terminalHandle == 0L) {
       createTerminal()
       ByteArray(0)
     } else {
-      GhosttyBridge.nativeResize(
-        terminalHandle,
-        cols,
-        rows,
-        terminalCanvas.cellWidthPx.toInt(),
-        terminalCanvas.cellHeightPx.toInt(),
-      )
+      GhosttyBridge.nativeResize(terminalHandle, cols, rows, cellSize.first, cellSize.second)
     }
     emitResponse(response)
     if (!hasPendingBuffer) feedPendingBuffer()
@@ -374,8 +387,8 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     terminalHandle = GhosttyBridge.nativeCreate(
       cols,
       rows,
-      terminalCanvas.cellWidthPx.toInt(),
-      terminalCanvas.cellHeightPx.toInt(),
+      cellSize.first,
+      cellSize.second,
       foregroundColorValue,
       backgroundColorValue,
       cursorColorValue,
