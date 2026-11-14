@@ -39,7 +39,8 @@ export type {
 
 export interface OptimisticProjectFile {
   readonly data: ProjectReadFileResult;
-  readonly confirmedAgainst: object | null | undefined;
+  /** Unsaved while undefined; once saved, the read value the save was confirmed against. */
+  readonly confirmedAgainst: ProjectReadFileResult | null | undefined;
 }
 
 export interface OptimisticProjectFileTarget {

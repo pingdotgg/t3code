@@ -1,6 +1,8 @@
 import type { ProjectReadFileResult } from "@t3tools/contracts";
 import { EnvironmentId } from "@t3tools/contracts";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 const registryTasks = vi.hoisted(() => new Set<() => void>());
@@ -26,6 +28,7 @@ import {
   clearProjectFileQueryData,
   confirmProjectFileQueryData,
   getOptimisticProjectFileQueryData,
+  getProjectFileContents,
   getUnsavedProjectFileQueryData,
   resolveProjectFileQueryData,
   setProjectFileQueryData,
@@ -52,6 +55,48 @@ describe("project files queries", () => {
     drainRegistryTasks();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("shows a newer read after a save whose confirmation read failed", () => {
+    const file = (contents: string): ProjectReadFileResult => ({
+      relativePath: "convex.json",
+      contents,
+      byteLength: contents.length,
+      truncated: false,
+    });
+    const beforeSave = AsyncResult.success(file("before save"));
+    const read = Atom.make<AsyncResult.AsyncResult<ProjectReadFileResult, Error>>(beforeSave);
+    using _read = vi.spyOn(projectEnvironment, "readFile").mockReturnValue(read);
+    const contentsNow = () => getProjectFileContents(environmentId, "/repo", "convex.json");
+    const closePreview = appAtomRegistry.mount(optimisticFile);
+    try {
+      setProjectFileQueryData(environmentId, "/repo", "convex.json", "saved draft");
+      expect(
+        confirmProjectFileQueryData(environmentId, "/repo", "convex.json", "saved draft"),
+      ).toBe(true);
+      expect(getUnsavedProjectFileQueryData(environmentId, "/repo", "convex.json")).toBeNull();
+
+      appAtomRegistry.set(read, AsyncResult.waiting(beforeSave));
+      expect(contentsNow()).toBe("saved draft");
+      appAtomRegistry.set(
+        read,
+        AsyncResult.failure(Cause.fail(new Error("read disconnected")), {
+          previousSuccess: Option.some(beforeSave),
+        }),
+      );
+      expect(contentsNow()).toBe("saved draft");
+
+      const external = file("external update");
+      appAtomRegistry.set(read, AsyncResult.success(external));
+      expect(contentsNow()).toBe("external update");
+      expect(resolveProjectFileQueryData(environmentId, "/repo", "convex.json", external)).toBe(
+        external,
+      );
+      appAtomRegistry.set(read, AsyncResult.waiting(AsyncResult.success(external)));
+      expect(contentsNow()).toBe("external update");
+    } finally {
+      closePreview();
+    }
   });
 
   it("resumes an unsaved draft after closing the preview and restoring write access", async () => {

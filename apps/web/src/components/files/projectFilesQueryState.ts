@@ -15,7 +15,6 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { projectEnvironment } from "~/state/projects";
 import { useProjectPathSearch } from "~/state/queries";
-import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import { revisionedQuery } from "~/state/revisionedQuery";
 
 const EMPTY_PROJECT_FILE_PATH = "";
@@ -102,12 +101,26 @@ export function setProjectFileQueryData(
   });
 }
 
+// Saved contents stand in for the file until a read returns contents newer than the save.
+function visibleOptimisticFile(
+  optimistic: Atom.Type<ReturnType<typeof optimisticFileAtom>>,
+  read: AsyncResult.AsyncResult<ProjectReadFileResult, unknown>,
+): ProjectReadFileResult | null {
+  if (!optimistic) return null;
+  if (optimistic.confirmedAgainst === undefined) return optimistic.data;
+  const current = Option.getOrNull(AsyncResult.value(read));
+  return current === null || current === optimistic.confirmedAgainst ? optimistic.data : null;
+}
+
 export function getOptimisticProjectFileQueryData(
   environmentId: EnvironmentId,
   cwd: string,
   relativePath: string,
 ): ProjectReadFileResult | null {
-  return appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath))?.data ?? null;
+  return visibleOptimisticFile(
+    appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath)),
+    appAtomRegistry.get(getProjectFileQueryAtom(environmentId, cwd, relativePath)),
+  );
 }
 
 export function getProjectFileContents(
@@ -142,21 +155,12 @@ export function confirmProjectFileQueryData(
   if (optimisticFile?.data.contents !== contents) return false;
 
   const queryAtom = getProjectFileQueryAtom(environmentId, cwd, relativePath);
-  const confirmed = {
+  appAtomRegistry.set(atom, {
     ...optimisticFile,
-    confirmedAgainst: appAtomRegistry.get(queryAtom),
-  };
-  appAtomRegistry.set(atom, confirmed);
+    confirmedAgainst: Option.getOrNull(AsyncResult.value(appAtomRegistry.get(queryAtom))),
+  });
   releaseUnsavedFile(atom);
   appAtomRegistry.refresh(queryAtom);
-  void executeAtomQuery(appAtomRegistry, queryAtom, {
-    reportDefect: false,
-    reportFailure: false,
-  }).then((result) => {
-    if (result._tag === "Success" && appAtomRegistry.get(atom) === confirmed) {
-      appAtomRegistry.set(atom, null);
-    }
-  });
   return true;
 }
 
@@ -167,7 +171,7 @@ export function resolveProjectFileQueryData(
   data: ProjectReadFileResult | null,
 ): ProjectReadFileResult | null {
   if (relativePath === null) return data;
-  return appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath))?.data ?? data;
+  return getOptimisticProjectFileQueryData(environmentId, cwd, relativePath) ?? data;
 }
 
 export function clearProjectFileQueryData(
@@ -268,10 +272,11 @@ export function useProjectFileQuery(
   const optimisticResult = useAtomValue(
     optimisticFileAtom(environmentId, cwd, relativePath ?? EMPTY_PROJECT_FILE_PATH),
   );
-  const optimisticFile = relativePath === null ? null : optimisticResult;
+  const optimisticFile =
+    relativePath === null ? null : visibleOptimisticFile(optimisticResult, result);
   const cause = failureCause(result);
   const readError = isProjectReadFileError(cause) ? cause : null;
-  const data = canReadFiles ? (optimisticFile?.data ?? (isMissing ? null : readData)) : null;
+  const data = canReadFiles ? (optimisticFile ?? (isMissing ? null : readData)) : null;
   const isNotFile = readError?.failure === "path_not_file";
 
   return {
