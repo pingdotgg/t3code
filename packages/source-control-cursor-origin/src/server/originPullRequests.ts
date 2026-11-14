@@ -274,6 +274,7 @@ export function preparedMergeability(pullRequest: OriginPullRequest): PullReques
 export const OriginMergeabilitySchema = Schema.Struct({
   verdict: OptionalString,
   headSha: OptionalString,
+  baseSha: OptionalString,
   blockers: Schema.optional(Schema.NullOr(Schema.Array(Schema.Struct({ kind: OptionalString })))),
 });
 
