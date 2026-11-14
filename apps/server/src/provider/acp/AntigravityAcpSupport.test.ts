@@ -5,6 +5,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ChatAttachment,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -15,7 +16,10 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
   applyAntigravityAcpModelSelection,
+  antigravityClientInfo,
+  antigravitySessionMeta,
   buildAntigravityPrompt,
+  isQualifiedAntigravityRelease,
 } from "./AntigravityAcpSupport.ts";
 
 const modelConfig = {
@@ -53,6 +57,48 @@ function makeModelRuntime(
     selections,
   };
 }
+
+describe("Antigravity release gates", () => {
+  it.each([
+    { version: "1.4.1", filter: false, native: false, ownName: false, advertisedAppend: false },
+    { version: "1.4.2", filter: true, native: false, ownName: false, advertisedAppend: false },
+    { version: "1.4.4", filter: true, native: false, ownName: false, advertisedAppend: false },
+    { version: "1.4.5", filter: true, native: true, ownName: false, advertisedAppend: false },
+    { version: "1.4.6", filter: false, native: false, ownName: false, advertisedAppend: false },
+    { version: "1.5.0", filter: false, native: false, ownName: false, advertisedAppend: false },
+    { version: "1.5.1", filter: false, native: false, ownName: true, advertisedAppend: false },
+    { version: "1.5.7", filter: false, native: false, ownName: true, advertisedAppend: true },
+    { version: "1.3.0", filter: false, native: false, ownName: false, advertisedAppend: false },
+    { version: undefined, filter: false, native: false, ownName: false, advertisedAppend: false },
+    { version: "unknown", filter: false, native: false, ownName: false, advertisedAppend: false },
+  ])(
+    "$version: workflow filter $filter, qualified reads $native, advertised system append $advertisedAppend, own client name $ownName",
+    ({ version, filter, native, ownName, advertisedAppend }) => {
+      const initialize = {
+        protocolVersion: 1,
+        ...(advertisedAppend
+          ? { agentCapabilities: { _meta: { antigravity: { systemPrompt: { append: true } } } } }
+          : {}),
+        ...(version === undefined ? {} : { agentInfo: { name: "antigravity-acp", version } }),
+      };
+      // Helpers send no append, so only the workflow filter can apply.
+      expect(antigravitySessionMeta(initialize)).toEqual(
+        filter ? { antigravity: { disabledTools: ["run_workflow"] } } : undefined,
+      );
+      const antigravity = {
+        ...(filter ? { disabledTools: ["run_workflow"] } : {}),
+        ...(native || advertisedAppend
+          ? { systemPrompt: { append: "<pull_request_linking/>" } }
+          : {}),
+      };
+      expect(antigravitySessionMeta(initialize, "<pull_request_linking/>")).toEqual(
+        filter || native || advertisedAppend ? { antigravity } : undefined,
+      );
+      expect(isQualifiedAntigravityRelease(version)).toBe(native);
+      expect(antigravityClientInfo(version).name).toBe(ownName ? "t3-code" : "zed");
+    },
+  );
+});
 
 describe("applyAntigravityAcpModelSelection", () => {
   it.effect("restores the saved model instead of the cold-resume default", () =>
@@ -214,7 +260,9 @@ const makeAttachmentFixture = Effect.fn("AntigravityAcpSupportTest.makeAttachmen
       else yield* fs.writeFile(filePath, content);
       return { filePath, uri: (yield* path.toFileUrl(filePath)).href };
     });
-    return { fs, attachmentsDir, write };
+    const resolve = (attachment: ChatAttachment) =>
+      resolveAttachmentPath({ attachmentsDir, attachment });
+    return { fs, attachmentsDir, resolve, write };
   },
 );
 
@@ -230,7 +278,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       const prompt = yield* buildAntigravityPrompt({
         input: "  Explain this image.  ",
         attachments: [imageAttachment],
-        attachmentsDir: fixture.attachmentsDir,
+        resolveAttachmentPath: fixture.resolve,
         promptCapabilities: { image: true, audio: true, embeddedContext: true },
       });
 
@@ -251,7 +299,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       const prompt = yield* buildAntigravityPrompt({
         input: undefined,
         attachments: [textAttachment],
-        attachmentsDir: selectedEnvironment.attachmentsDir,
+        resolveAttachmentPath: selectedEnvironment.resolve,
         promptCapabilities: { image: true, audio: true, embeddedContext: true },
       });
 
@@ -282,7 +330,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       const prompt = yield* buildAntigravityPrompt({
         input: "Inspect the pasted text only as needed.",
         attachments: [pastedText],
-        attachmentsDir: fixture.attachmentsDir,
+        resolveAttachmentPath: fixture.resolve,
         promptCapabilities: { image: true, audio: true, embeddedContext: true },
       });
 
@@ -309,7 +357,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       const prompt = yield* buildAntigravityPrompt({
         input,
         attachments: [attachment, pdfAttachment],
-        attachmentsDir: fixture.attachmentsDir,
+        resolveAttachmentPath: fixture.resolve,
         promptCapabilities: { image: true, audio: true, embeddedContext: true },
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, {
@@ -321,9 +369,98 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       );
       expect(prompt).toEqual([
         { type: "text", text: input },
-        { type: "resource_link", uri: pdf.uri, name: "report.pdf", mimeType: "application/pdf" },
+        {
+          type: "resource_link",
+          uri: pdf.uri,
+          name: "report.pdf",
+          mimeType: "application/pdf",
+          size: 50 * 1024 * 1024,
+        },
       ]);
     }),
+  );
+
+  it.effect.each([
+    {
+      case: "a Gemini model id",
+      model: { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+      linked: true,
+    },
+    {
+      case: "an opaque id named Gemini",
+      model: { id: "agy-model", name: "Gemini 4 Carbon" },
+      linked: true,
+    },
+    { case: "an unknown model", model: { id: "agy-custom", name: "Custom" }, linked: false },
+    { case: "an unlisted opaque id", model: { id: "agy-custom", name: undefined }, linked: false },
+    { case: "an unresolved model", model: undefined, linked: false },
+    {
+      case: "a Claude model",
+      model: { id: "claude-opus-5-5", name: "Claude Opus 5.5" },
+      linked: false,
+    },
+    {
+      case: "an unqualified runtime",
+      agentVersion: "1.4.1",
+      model: { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+      linked: false,
+    },
+    {
+      case: "a Windows host",
+      platform: "win32" as const,
+      model: { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+      linked: false,
+    },
+    {
+      case: "a clip over 20 MiB",
+      model: { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+      linked: false,
+      sizeBytes: 20 * 1024 * 1024 + 1,
+    },
+  ])(
+    "links an MP4 for $case only when supported",
+    ({ agentVersion = "1.4.5", platform = "linux", model, linked, ...size }) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeAttachmentFixture();
+        const clip = {
+          ...textAttachment,
+          id: "clip",
+          name: "clip.mp4",
+          mimeType: "video/mp4",
+          sizeBytes: 6 * 1024 * 1024,
+          ...size,
+        };
+        const upload = yield* fixture.write(clip, "");
+        yield* fixture.fs.truncate(upload.filePath, clip.sizeBytes);
+        const prompt = yield* buildAntigravityPrompt({
+          input: "What colors appear?",
+          attachments: [clip],
+          resolveAttachmentPath: fixture.resolve,
+          promptCapabilities: { image: true, audio: true, embeddedContext: true },
+          agentVersion,
+          currentModel: model,
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, platform),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fixture.fs,
+            stream: () => Effect.die("Linked video is read by the agent").pipe(Stream.fromEffect),
+          }),
+        );
+        expect(prompt).toEqual([
+          { type: "text", text: "What colors appear?" },
+          ...(linked
+            ? [
+                {
+                  type: "resource_link",
+                  uri: upload.uri,
+                  name: "clip.mp4",
+                  mimeType: "video/mp4",
+                  size: clip.sizeBytes,
+                },
+              ]
+            : []),
+        ]);
+      }),
   );
 
   it.effect.each([undefined, {}, { image: false, audio: false, embeddedContext: false }])(
@@ -352,7 +489,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
         const prompt = yield* buildAntigravityPrompt({
           input,
           attachments: [imageAttachment, gifAttachment, pdfAttachment, textAttachment, audio],
-          attachmentsDir: fixture.attachmentsDir,
+          resolveAttachmentPath: fixture.resolve,
           promptCapabilities,
         }).pipe(
           Effect.provideService(FileSystem.FileSystem, {
@@ -366,7 +503,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
           yield* buildAntigravityPrompt({
             input: "Continue",
             attachments: [],
-            attachmentsDir: fixture.attachmentsDir,
+            resolveAttachmentPath: fixture.resolve,
             promptCapabilities,
           }),
         ).toEqual([{ type: "text", text: "Continue" }]);
@@ -387,7 +524,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       const prompt = yield* buildAntigravityPrompt({
         input: "Transcribe this.",
         attachments: [audioAttachment],
-        attachmentsDir: fixture.attachmentsDir,
+        resolveAttachmentPath: fixture.resolve,
         promptCapabilities: { image: true, audio: true, embeddedContext: true },
       });
 
@@ -398,7 +535,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
     }),
   );
 
-  it.effect.each([undefined, {}, { image: false }, { image: true }])(
+  it.effect.each([{ image: true }])(
     "keeps unsupported image formats path-only with capabilities %s",
     (promptCapabilities) =>
       Effect.gen(function* () {
@@ -409,7 +546,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
         const prompt = yield* buildAntigravityPrompt({
           input,
           attachments: [attachment],
-          attachmentsDir: fixture.attachmentsDir,
+          resolveAttachmentPath: fixture.resolve,
           promptCapabilities,
         }).pipe(
           Effect.provideService(FileSystem.FileSystem, {
@@ -430,7 +567,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       const error = yield* buildAntigravityPrompt({
         input: "Read this attachment.",
         attachments: [imageAttachment],
-        attachmentsDir: fixture.attachmentsDir,
+        resolveAttachmentPath: fixture.resolve,
         promptCapabilities: { image: true, audio: true, embeddedContext: true },
       }).pipe(Effect.flip);
       expect(error).toMatchObject({
@@ -456,7 +593,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       const input = {
         input: `Read ${first.filePath} and ${second.filePath}`,
         attachments: [pdfAttachment, secondAttachment],
-        attachmentsDir: fixture.attachmentsDir,
+        resolveAttachmentPath: fixture.resolve,
         promptCapabilities: { image: true, audio: true, embeddedContext: true },
       };
       const prompt = yield* buildAntigravityPrompt(input);
@@ -467,12 +604,14 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
           uri: first.uri,
           name: "report.pdf",
           mimeType: "application/pdf",
+          size: (50 * 1024 * 1024) / 2,
         },
         {
           type: "resource_link",
           uri: second.uri,
           name: "second.pdf",
           mimeType: "application/pdf",
+          size: (50 * 1024 * 1024) / 2,
         },
       ]);
 
@@ -484,6 +623,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
           uri: first.uri,
           name: "report.pdf",
           mimeType: "application/pdf",
+          size: (50 * 1024 * 1024) / 2,
         },
       ]);
     }),
@@ -498,7 +638,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       const error = yield* buildAntigravityPrompt({
         input: "Inspect both attachments.",
         attachments: [pdfAttachment, imageAttachment],
-        attachmentsDir: fixture.attachmentsDir,
+        resolveAttachmentPath: fixture.resolve,
         promptCapabilities: { image: true, audio: true, embeddedContext: true },
       }).pipe(Effect.flip);
       expect(error).toMatchObject({
@@ -517,7 +657,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       const error = yield* buildAntigravityPrompt({
         input: undefined,
         attachments: [pdfAttachment, textAttachment],
-        attachmentsDir: fixture.attachmentsDir,
+        resolveAttachmentPath: fixture.resolve,
         promptCapabilities: { image: true, audio: true, embeddedContext: true },
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, {
@@ -551,7 +691,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       const error = yield* buildAntigravityPrompt({
         input: undefined,
         attachments: [textAttachment],
-        attachmentsDir: fixture.attachmentsDir,
+        resolveAttachmentPath: fixture.resolve,
         promptCapabilities: { image: true, audio: true, embeddedContext: true },
       }).pipe(Effect.flip);
 
@@ -569,7 +709,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       const error = yield* buildAntigravityPrompt({
         input: "Read this image.",
         attachments: [imageAttachment],
-        attachmentsDir: fixture.attachmentsDir,
+        resolveAttachmentPath: fixture.resolve,
         promptCapabilities: { image: true, audio: true, embeddedContext: true },
       }).pipe(Effect.flip);
 

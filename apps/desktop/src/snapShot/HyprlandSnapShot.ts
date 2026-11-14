@@ -171,11 +171,11 @@ export async function captureHyprlandWindow(
   let state = await setup.state();
   if (state.status === "update-required") {
     await setup.perform("install-hyprland-helper").catch((cause: unknown) => {
-      throw new CaptureSetupRequiredError(state.message, { cause });
+      throw new CaptureSetupRequiredError({ state: state.message, cause });
     });
     state = await setup.state();
   }
-  if (state.status !== "ready") throw new CaptureSetupRequiredError(state.message);
+  if (state.status !== "ready") throw new CaptureSetupRequiredError({ state: state.message });
   const executable = hyprlandCaptureExecutable(paths);
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-hyprland-capture-"));
   const cleanup = () => NodeFSP.rm(directory, { recursive: true, force: true });

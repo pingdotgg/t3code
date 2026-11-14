@@ -1,8 +1,10 @@
+import * as NodeCrypto from "node:crypto";
+import { createRequire } from "node:module";
 /**
  * Alchemy Worker source provider for Astro projects.
  *
  * The default export implements alchemy's `WorkerSourceModule` contract
- * (`packages/alchemy/src/Cloudflare/Workers/Source.ts`) **structurally** —
+ * (`packages/cloudflare/src/Workers/Source.ts`) **structurally** —
  * this package deliberately does not depend on `alchemy`, so the types
  * below mirror the shapes of `SourceProvider` / `SourceContext` /
  * `DevContext` / `SourceBuildOutput` / `SourceHash` / `SourceDevHandle`
@@ -28,23 +30,21 @@
  * project sources are unchanged.
  */
 import type { CloudflareVitePluginOptions } from "@alchemy.run/cloudflare-runtime/vite";
-import { runBuildChild } from "../core/BuildChild.ts";
-import * as FrameworkCore from "../core/index.ts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Redacted from "effect/Redacted";
 import type { PlatformError } from "effect/PlatformError";
+import * as Redacted from "effect/Redacted";
 import type * as Scope from "effect/Scope";
-import * as NodeCrypto from "node:crypto";
-import { createRequire } from "node:module";
+import { resolveBuildEnv, runBuildChild } from "../core/BuildChild.ts";
+import * as FrameworkCore from "../core/index.ts";
 import * as Astro from "./Astro.ts";
 import cloudflareTarget from "./cloudflare.ts";
 
 // ─────────────────────────────────────────────────────────────────────
 // Structural mirrors of alchemy's source-provider contract
-// (packages/alchemy/src/Cloudflare/Workers/Source.ts). Keep in sync.
+// (packages/cloudflare/src/Workers/Source.ts). Keep in sync.
 // ─────────────────────────────────────────────────────────────────────
 
 /** Mirror of alchemy's `SourceHash`. */
@@ -107,10 +107,17 @@ export interface DevContext extends SourceContext {
     readonly bindings: PluginWorker["bindings"];
     readonly durableObjectNamespaces: PluginWorker["durableObjectNamespaces"];
     readonly hyperdrives: PluginWorker["hyperdrives"];
-    readonly queueConsumers: Effect.Effect<
-      Exclude<PluginWorker["queueConsumers"], undefined>
-    >;
+    readonly queueConsumers: Effect.Effect<Exclude<PluginWorker["queueConsumers"], undefined>>;
     readonly assets: PluginWorker["assets"] | undefined;
+    /**
+     * The Worker's other runtime settings (crons, Workflows, tail consumers,
+     * Cache API, `request.cf`, zone, Access), spread whole into the runtime
+     * Worker.
+     */
+    readonly options: Pick<
+      PluginWorker,
+      "workflows" | "crons" | "tails" | "streamingTails" | "cache" | "cf" | "zone" | "access"
+    >;
   };
   readonly runtimeContext: CloudflareVitePluginOptions["context"];
 }
@@ -141,6 +148,7 @@ type SourceServices = FileSystem.FileSystem | Path.Path;
 /** Mirror of alchemy's `SourceProvider` (with this module's closed error/requirement channels). */
 export interface SourceProvider {
   readonly ownsAssets: boolean;
+  readonly devAssetsBinding?: boolean;
   readonly build: (
     ctx: SourceContext,
   ) => Effect.Effect<SourceBuildOutput, SourceError, SourceServices>;
@@ -150,11 +158,7 @@ export interface SourceProvider {
   ) => Effect.Effect<Partial<SourceHash>, SourceError, SourceServices>;
   readonly dev: (
     ctx: DevContext,
-  ) => Effect.Effect<
-    SourceDevHandle,
-    SourceError,
-    SourceServices | Scope.Scope
-  >;
+  ) => Effect.Effect<SourceDevHandle, SourceError, SourceServices | Scope.Scope>;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -187,6 +191,15 @@ export interface MemoOptions {
 export interface AstroSourceOptions {
   /** Astro project root. Defaults to the process working directory. */
   readonly rootDir?: string;
+  /**
+   * The user's own Worker entry (the user-entry seam): a module that wraps
+   * the Astro handler — imported from
+   * `@alchemy.run/frontend-frameworks/astro/entrypoints/server` — and adds
+   * exports of its own (Durable Object classes, a `scheduled` handler). A
+   * path resolves against the root; a bare specifier resolves as a package
+   * import. When unset, the vendored Astro server entrypoint is deployed.
+   */
+  readonly main?: string;
   /** Rebuild-scope configuration (see {@link MemoOptions}). */
   readonly memo?: MemoOptions & {
     /**
@@ -194,9 +207,7 @@ export interface AstroSourceOptions {
      * auto-detects workspaces from the build's module graph; an explicit
      * array pins them.
      */
-    readonly workspaces?:
-      | "auto"
-      | Array<MemoOptions & { readonly cwd: string }>;
+    readonly workspaces?: "auto" | Array<MemoOptions & { readonly cwd: string }>;
   };
   /**
    * The name of the KV binding injected into Astro's session config
@@ -273,20 +284,14 @@ const packageVersion = packageMeta.version;
 // ─────────────────────────────────────────────────────────────────────
 
 const sha256Hex = (input: string | Uint8Array): Effect.Effect<string> =>
-  Effect.sync(() =>
-    NodeCrypto.createHash("sha256").update(input).digest("hex"),
-  );
+  Effect.sync(() => NodeCrypto.createHash("sha256").update(input).digest("hex"));
 
 /** Recursively sort object keys so JSON.stringify is order-stable. */
 const stableValue = (value: unknown): unknown => {
   if (Array.isArray(value)) {
     return value.map(stableValue);
   }
-  if (
-    value !== null &&
-    typeof value === "object" &&
-    !ArrayBuffer.isView(value)
-  ) {
+  if (value !== null && typeof value === "object" && !ArrayBuffer.isView(value)) {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
         .sort(([a], [b]) => a.localeCompare(b))
@@ -307,8 +312,7 @@ const sha256Object = (input: unknown): Effect.Effect<string> =>
 // glob + gitignore semantics alchemy's `hashDirectory` uses)
 // ─────────────────────────────────────────────────────────────────────
 
-const escapeRegex = (char: string): string =>
-  /[\\^$.|+()[\]{}]/.test(char) ? `\\${char}` : char;
+const escapeRegex = (char: string): string => (/[\\^$.|+()[\]{}]/.test(char) ? `\\${char}` : char);
 
 /**
  * Convert a glob body (no negation/anchoring — handled by callers) to a
@@ -389,9 +393,7 @@ const compileIgnoreRule = (raw: string): IgnoreRule | undefined => {
 };
 
 const compileIgnoreRules = (rules: ReadonlyArray<string>): Array<IgnoreRule> =>
-  rules
-    .map(compileIgnoreRule)
-    .filter((rule): rule is IgnoreRule => rule !== undefined);
+  rules.map(compileIgnoreRule).filter((rule): rule is IgnoreRule => rule !== undefined);
 
 /**
  * Gitignore matching: the LAST matching rule wins; `dirOnly` rules only
@@ -432,13 +434,7 @@ const matchesAny = (regexes: ReadonlyArray<RegExp>, path: string): boolean =>
 // hashed together — machine-independent, never hashes absolute paths)
 // ─────────────────────────────────────────────────────────────────────
 
-const LOCKFILES = [
-  "bun.lock",
-  "bun.lockb",
-  "package-lock.json",
-  "pnpm-lock.yaml",
-  "yarn.lock",
-];
+const LOCKFILES = ["bun.lock", "bun.lockb", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"];
 
 const readGitIgnoreRules = (
   cwd: string,
@@ -448,9 +444,7 @@ const readGitIgnoreRules = (
     const path = yield* Path.Path;
     const rules = yield* fs.readFileString(path.join(cwd, ".gitignore")).pipe(
       Effect.map((file) => file.split("\n")),
-      Effect.catchTag("PlatformError", () =>
-        Effect.succeed([] as Array<string>),
-      ),
+      Effect.catchTag("PlatformError", () => Effect.succeed([] as Array<string>)),
     );
     const parent = path.dirname(cwd);
     if (parent === cwd || (yield* fs.exists(path.join(cwd, ".git")))) {
@@ -504,9 +498,7 @@ const listFiles = (
           const rel = relative === "" ? entry : `${relative}/${entry}`;
           const stat = yield* fs
             .stat(path.join(cwd, rel))
-            .pipe(
-              Effect.catchTag("PlatformError", () => Effect.succeed(undefined)),
-            );
+            .pipe(Effect.catchTag("PlatformError", () => Effect.undefined));
           if (stat === undefined) continue;
           if (stat.type === "Directory") {
             if (
@@ -522,10 +514,7 @@ const listFiles = (
           if (stat.type !== "File") continue;
           if (isIgnored(options.ignoreRules, rel, false)) continue;
           if (matchesAny(options.exclude, rel)) continue;
-          if (
-            options.include !== undefined &&
-            !matchesAny(options.include, rel)
-          ) {
+          if (options.include !== undefined && !matchesAny(options.include, rel)) {
             continue;
           }
           files.push(rel);
@@ -580,16 +569,15 @@ const hashDirectory = (
  * The `input` hash: root tree + workspace trees + this package's
  * version. Mirrors alchemy's `hashViteInput` recipe (workspace hashes
  * are `${relativePath}:${hash}`, sorted) with the provider version as
- * extra material so integration upgrades bust the memo.
+ * extra material so integration upgrades bust the memo. A custom Worker
+ * entry (`main`) is build-affecting material too; it is only mixed in when
+ * set, so the default hash is unchanged.
  */
 const hashAstroInput = (
   rootDir: string,
   memo: AstroSourceOptions["memo"],
-  additionalWorkspaces: Effect.Effect<
-    Iterable<string>,
-    PlatformError,
-    SourceServices
-  >,
+  main: string | undefined,
+  additionalWorkspaces: Effect.Effect<Iterable<string>, PlatformError, SourceServices>,
 ): Effect.Effect<
   { hash: string; workspaces: Array<string> | undefined },
   PlatformError,
@@ -597,26 +585,21 @@ const hashAstroInput = (
 > =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    const salt = `${PROVIDER}@${packageVersion}`;
+    const salt = [`${PROVIDER}@${packageVersion}`, ...(main === undefined ? [] : [`main:${main}`])];
     // Normalize workspace directories to a root-relative, `/`-separated
     // form so the hash label is identical whether the workspace came
     // from the build (absolute) or from persisted state (relative) —
     // and machine-independent (never hashes absolute paths).
     const toRelative = (cwd: string): string =>
-      (path.isAbsolute(cwd)
-        ? path.relative(rootDir, cwd)
-        : path.normalize(cwd)
-      ).replaceAll("\\", "/");
-    const hashWorkspaceDirectory = (
-      cwdRelative: string,
-      options?: MemoOptions,
-    ) =>
+      (path.isAbsolute(cwd) ? path.relative(rootDir, cwd) : path.normalize(cwd)).replaceAll(
+        "\\",
+        "/",
+      );
+    const hashWorkspaceDirectory = (cwdRelative: string, options?: MemoOptions) =>
       hashDirectory(path.resolve(rootDir, cwdRelative), options).pipe(
         Effect.map((hash) => `${cwdRelative}:${hash}`),
       );
-    const hashRoot = hashDirectory(rootDir, memo).pipe(
-      Effect.map((hash) => `:${hash}`),
-    );
+    const hashRoot = hashDirectory(rootDir, memo).pipe(Effect.map((hash) => `:${hash}`));
     if (Array.isArray(memo?.workspaces)) {
       const [root, ...workspaces] = yield* Effect.all(
         [
@@ -627,15 +610,12 @@ const hashAstroInput = (
         ],
         { concurrency: "unbounded" },
       );
-      const hash = yield* sha256Object([salt, root, ...workspaces.sort()]);
+      const hash = yield* sha256Object([...salt, root, ...workspaces.sort()]);
       return { hash, workspaces: undefined };
     }
-    const [root, workspaces] = yield* Effect.all(
-      [hashRoot, additionalWorkspaces],
-      {
-        concurrency: "unbounded",
-      },
-    );
+    const [root, workspaces] = yield* Effect.all([hashRoot, additionalWorkspaces], {
+      concurrency: "unbounded",
+    });
     // Exclude this integration package's own tree from auto-detected
     // workspaces (it escapes the collector's node_modules filter when
     // workspace-linked): its influence on the build is covered by the
@@ -643,10 +623,7 @@ const hashAstroInput = (
     const isOwnPackage = (cwd: string): boolean => {
       if (packageMeta.root === undefined) return false;
       const resolved = path.resolve(rootDir, cwd);
-      return (
-        resolved === packageMeta.root ||
-        resolved.startsWith(packageMeta.root + path.sep)
-      );
+      return resolved === packageMeta.root || resolved.startsWith(packageMeta.root + path.sep);
     };
     const relativeWorkspaces = [
       ...new Set(
@@ -660,7 +637,7 @@ const hashAstroInput = (
       (cwd) => hashWorkspaceDirectory(cwd),
       { concurrency: "unbounded" },
     );
-    const hash = yield* sha256Object([salt, root, ...workspaceHashes.sort()]);
+    const hash = yield* sha256Object([...salt, root, ...workspaceHashes.sort()]);
     return { hash, workspaces: relativeWorkspaces };
   });
 
@@ -674,13 +651,9 @@ const hashAstroInput = (
 const MAX_ASSET_SIZE = 1024 * 1024 * 25; // 25MB
 const MAX_ASSET_COUNT = 20_000;
 
-const maybeReadString = (
-  file: string,
-): Effect.Effect<string | undefined, never, SourceServices> =>
+const maybeReadString = (file: string): Effect.Effect<string | undefined, never, SourceServices> =>
   Effect.flatMap(FileSystem.FileSystem, (fs) =>
-    fs
-      .readFileString(file)
-      .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(undefined))),
+    fs.readFileString(file).pipe(Effect.catchTag("PlatformError", () => Effect.undefined)),
   );
 
 const readClientAssets = (
@@ -771,10 +744,7 @@ export const applyWorkerEnvToProcess = (
     for (const [key, value] of Object.entries(env ?? {})) {
       if (typeof value === "string") {
         process.env[key] = value;
-      } else if (
-        Redacted.isRedacted(value) &&
-        typeof Redacted.value(value) === "string"
-      ) {
+      } else if (Redacted.isRedacted(value) && typeof Redacted.value(value) === "string") {
         process.env[key] = Redacted.value(value) as string;
       } else if (typeof value === "number" || typeof value === "boolean") {
         process.env[key] = String(value);
@@ -787,10 +757,7 @@ const failWith =
   (cause: unknown): SourceProviderError =>
     new SourceProviderError({
       provider: PROVIDER,
-      message:
-        cause instanceof Error && cause.message
-          ? `${message}: ${cause.message}`
-          : message,
+      message: cause instanceof Error && cause.message ? `${message}: ${cause.message}` : message,
       cause,
     });
 
@@ -806,30 +773,6 @@ const assetConfigFromProps = (
 };
 
 /**
- * Resolve the Worker env into the plain strings the build child applies to
- * its `process.env` — same filter as {@link applyWorkerEnvToProcess}, but
- * producing JSON-safe data that can cross the process boundary.
- */
-const resolveBuildEnv = (
-  env: Record<string, unknown> | undefined,
-): Record<string, string> => {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env ?? {})) {
-    if (typeof value === "string") {
-      out[key] = value;
-    } else if (
-      Redacted.isRedacted(value) &&
-      typeof Redacted.value(value) === "string"
-    ) {
-      out[key] = Redacted.value(value) as string;
-    } else if (typeof value === "number" || typeof value === "boolean") {
-      out[key] = String(value);
-    }
-  }
-  return out;
-};
-
-/**
  * The production build runs in a disposable child process with
  * `cwd = project root` (see `core/BuildChild.ts`): the natively-loaded
  * `astro.config.*` executes user plugins/integrations that may read the
@@ -840,6 +783,7 @@ const resolveBuildEnv = (
  */
 export interface AstroBuildChildConfig {
   readonly rootDir: string;
+  readonly main: string | undefined;
   readonly compatibilityDate: string;
   readonly compatibilityFlags: Array<string>;
   readonly env: Record<string, string>;
@@ -866,6 +810,7 @@ export const buildInChild = (config: AstroBuildChildConfig) =>
           root: config.rootDir,
           target: cloudflareTarget({
             worker: {
+              ...(config.main === undefined ? {} : { main: config.main }),
               compatibilityDate: config.compatibilityDate,
               compatibilityFlags: config.compatibilityFlags,
             },
@@ -882,9 +827,7 @@ export const buildInChild = (config: AstroBuildChildConfig) =>
     return yield* astro.build({ root: config.rootDir });
   });
 
-const makeAstroSourceProvider = (
-  options: AstroSourceOptions,
-): SourceProvider => {
+const makeAstroSourceProvider = (options: AstroSourceOptions): SourceProvider => {
   /** Canonical absolute project root (a relative `rootDir` resolves from cwd). */
   const resolveRoot = Effect.map(Path.Path, (path) =>
     path.resolve(options.rootDir ?? process.cwd()),
@@ -899,7 +842,7 @@ const makeAstroSourceProvider = (
           // it constructs the Cloudflare deploy target directly (as a value)
           // rather than resolving the default specifier.
           target: cloudflareTarget({
-            worker: vite,
+            worker: options.main === undefined ? vite : { ...vite, main: options.main },
             sessionKVBindingName: options.sessionKVBindingName,
             sessions: options.sessions,
             sessionDevKV: options.sessionDevKV,
@@ -913,6 +856,8 @@ const makeAstroSourceProvider = (
 
   return {
     ownsAssets: true,
+    // Dev runs the Worker in workerd with the Vite plugin's assets service.
+    devAssetsBinding: true,
 
     build: (ctx) =>
       Effect.gen(function* () {
@@ -924,6 +869,7 @@ const makeAstroSourceProvider = (
           framework: "astro",
           config: {
             rootDir,
+            main: options.main,
             compatibilityDate: ctx.compatibility.date,
             compatibilityFlags: ctx.compatibility.flags,
             env: resolveBuildEnv(ctx.env),
@@ -934,32 +880,25 @@ const makeAstroSourceProvider = (
             astro: options.astro,
             config: options.config,
           } satisfies AstroBuildChildConfig,
-        }).pipe(
-          Effect.mapError((error) =>
-            failWith("Astro build failed")(error.cause ?? error),
-          ),
-        );
-        const files = (output.serverModules ?? []).map(
-          (module): BundleFile => ({
-            path: module.name,
-            content: module.content,
-            hash: module.hash,
-          }),
-        );
+        }).pipe(Effect.mapError((error) => failWith("Astro build failed")(error.cause ?? error)));
+        const files = (output.serverModules ?? []).map((module): BundleFile => ({
+          path: module.name,
+          content: module.content,
+          hash: module.hash,
+        }));
         const [bundleHash, assets, input] = yield* Effect.all(
           [
-            sha256Object(
-              files.map((file) => ({ path: file.path, hash: file.hash })),
-            ),
+            sha256Object(files.map((file) => ({ path: file.path, hash: file.hash }))),
             output.clientDirectory
               ? readClientAssets(
                   path.resolve(rootDir, output.clientDirectory),
                   assetConfigFromProps(ctx.assets),
                 )
-              : Effect.succeed(undefined),
+              : Effect.undefined,
             hashAstroInput(
               rootDir,
               options.memo,
+              options.main,
               Effect.succeed(output.externalWorkspaces ?? []),
             ),
           ],
@@ -996,6 +935,7 @@ const makeAstroSourceProvider = (
         const { hash, workspaces } = yield* hashAstroInput(
           rootDir,
           options.memo,
+          options.main,
           Effect.succeed(previous?.additionalWorkspaces ?? []),
         );
         return { input: hash, additionalWorkspaces: workspaces };
@@ -1010,6 +950,7 @@ const makeAstroSourceProvider = (
           compatibilityDate: ctx.compatibility.date,
           compatibilityFlags: ctx.compatibility.flags,
           worker: {
+            ...ctx.worker.options,
             name: ctx.workerName,
             bindings: ctx.worker.bindings,
             durableObjectNamespaces: ctx.worker.durableObjectNamespaces,
@@ -1038,8 +979,6 @@ const makeAstroSourceProvider = (
 const make = (
   options: unknown,
 ): Effect.Effect<SourceProvider, SourceProviderError, SourceServices> =>
-  Effect.sync(() =>
-    makeAstroSourceProvider((options ?? {}) as AstroSourceOptions),
-  );
+  Effect.sync(() => makeAstroSourceProvider((options ?? {}) as AstroSourceOptions));
 
 export default { make };
