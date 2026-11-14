@@ -677,7 +677,7 @@ describe("ChatMarkdown inline code selection", () => {
   });
 });
 
-describe("ChatMarkdown alert copy", () => {
+describe("ChatMarkdown copy", () => {
   it("copies a fully selected callout as alert Markdown and a partial one as text", async () => {
     setup();
     await using screen = await renderText("> [!WARNING]\n> Back up first.");
@@ -698,6 +698,19 @@ describe("ChatMarkdown alert copy", () => {
       "> [!WARNING]\n> Back up first.",
     );
     expect(select(labelText, bodyText, "Back up".length)).toBe("Warning\n\nBack up");
+  });
+
+  it("copies part of inline code without prose escapes", async () => {
+    setup();
+    await using screen = await renderText("Read `items[0]*_x` and a*b*c.");
+    const code = screen.container.querySelector("p code")!.firstChild!;
+    const range = document.createRange();
+    range.setStart(code, 0);
+    range.setEnd(code, "items[0]*_".length);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(chatMarkdownClipboardPayload(selection)?.text).toBe("items[0]*_");
   });
 });
 
