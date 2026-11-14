@@ -3345,10 +3345,7 @@ export const layerWsRpc = (
               );
               const providerStatuses = Stream.zipLatestWith(
                 // Seed the changes-only stream so early source refreshes pair with current providers.
-                Stream.concat(
-                  Stream.fromEffect(providerRegistry.getProviders),
-                  providerChanges,
-                ),
+                Stream.concat(Stream.fromEffect(providerRegistry.getProviders), providerChanges),
                 usageLimitSources.streamChanges.pipe(
                   Stream.changesWith(
                     usageLimitsCommand ? sameUsageLimitCommandCoverage : () => true,
