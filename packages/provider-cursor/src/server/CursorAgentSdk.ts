@@ -16,11 +16,15 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as CursorSdk from "./CursorSdk.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -410,6 +414,36 @@ function subscribeShellStreamOutput(listener: (output: CursorShellStreamOutput) 
   };
 }
 
+// The SDK settles a run only after Cursor's server closes the turn's stream, and
+// a server that keeps it open after turn-ended looks the same from outside as a
+// stop hook at work. patches/@cursor__sdk@1.2.0.patch publishes the close here.
+const TURN_STREAM_CLOSED_HOOK = Symbol.for("@cursor/sdk.turnStreamClosed");
+const turnStreamClosedListeners = new Set<(conversationId: unknown) => void>();
+const turnStreamClosed = { type: "turn-stream-closed" } as const;
+
+function subscribeTurnStreamClosed(listener: (conversationId: unknown) => void) {
+  const hooks = globalThis as Record<symbol, unknown>;
+  hooks[TURN_STREAM_CLOSED_HOOK] ??= (closed: { readonly conversationId?: unknown }) => {
+    for (const notify of turnStreamClosedListeners) notify(closed.conversationId);
+  };
+  turnStreamClosedListeners.add(listener);
+  return () => {
+    turnStreamClosedListeners.delete(listener);
+  };
+}
+
+/** Closing takes well under a second; hooks and background agents only start after it. */
+const TURN_STREAM_CLOSE_TIMEOUT = Duration.minutes(2);
+
+/** Updates that mean the agent is working again after a `turn-ended`. */
+export const startsCursorTurnWork = (update: InteractionUpdate) =>
+  update.type === "step-started" ||
+  update.type === "user-message-appended" ||
+  update.type === "text-delta" ||
+  update.type === "thinking-delta" ||
+  update.type === "partial-tool-call" ||
+  update.type === "tool-call-started";
+
 export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(function* (
   protocolLoggerFor: (input: CursorAgentSdkOpenInput) => CursorAgentSdkProtocolLogger | undefined,
 ) {
@@ -530,15 +564,21 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
           });
 
           let callbacksReady = false;
-          const pendingUpdates: Array<InteractionUpdate> = [];
+          const pendingUpdates: Array<InteractionUpdate | typeof turnStreamClosed> = [];
           let callbackFailure: { readonly cause: unknown } | undefined;
           let callbackChain = Promise.resolve();
           let runId = "";
-          const dispatchUpdate = (update: InteractionUpdate): Promise<void> => {
+          const turnStream = yield* SubscriptionRef.make<"open" | "ended" | "closed">("open");
+          const dispatchUpdate = (
+            update: InteractionUpdate | typeof turnStreamClosed,
+          ): Promise<void> => {
             callbackChain = callbackChain
               .then(() => {
                 if (callbackFailure !== undefined) {
                   return;
+                }
+                if (update.type === "turn-stream-closed") {
+                  return Effect.runPromiseWith(context)(SubscriptionRef.set(turnStream, "closed"));
                 }
                 return Effect.runPromiseWith(context)(
                   log({
@@ -549,7 +589,16 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
                       runId,
                       update,
                     },
-                  }).pipe(Effect.andThen(sendInput.onDelta?.(update) ?? Effect.void)),
+                  }).pipe(
+                    Effect.andThen(
+                      update.type === "turn-ended"
+                        ? SubscriptionRef.set(turnStream, "ended")
+                        : startsCursorTurnWork(update)
+                          ? SubscriptionRef.set(turnStream, "open")
+                          : Effect.void,
+                    ),
+                    Effect.andThen(sendInput.onDelta?.(update) ?? Effect.void),
+                  ),
                 );
               })
               .catch((cause) => {
@@ -558,6 +607,18 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
             return callbackChain;
           };
 
+          const receiveUpdate = (update: InteractionUpdate | typeof turnStreamClosed) => {
+            if (!callbacksReady) {
+              pendingUpdates.push(update);
+              return Promise.resolve();
+            }
+            return dispatchUpdate(update);
+          };
+          const unsubscribeTurnStreamClosed = subscribeTurnStreamClosed((conversationId) => {
+            if (conversationId === agent.agentId) {
+              void receiveUpdate(turnStreamClosed);
+            }
+          });
           const startRun = () =>
             Effect.tryPromise({
               try: () =>
@@ -565,13 +626,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
                   ? agent.summarize()
                   : agent.send(sendInput.message, {
                       ...sendInput.options,
-                      onDelta: async ({ update }) => {
-                        if (!callbacksReady) {
-                          pendingUpdates.push(update);
-                          return;
-                        }
-                        await dispatchUpdate(update);
-                      },
+                      onDelta: ({ update }) => receiveUpdate(update),
                     }),
               catch: (cause) => runnerError(cause, "run.start"),
             });
@@ -622,6 +677,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
                   return yield* startRun();
                 }),
             ),
+            Effect.onError(() => Effect.sync(unsubscribeTurnStreamClosed)),
           );
           abandonedRunRecoveryAvailable = false;
           runId = run.id;
@@ -635,6 +691,8 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
             },
           });
           callbacksReady = true;
+          // Queued before anything live can arrive, so a stream close cannot overtake a buffered turn-ended.
+          const replayed = Promise.all(pendingUpdates.map(dispatchUpdate));
           const unsubscribeShellOutput = subscribeShellStreamOutput((output) => {
             if (output.conversationId !== agent.agentId || typeof output.toolCallId !== "string") {
               return;
@@ -644,28 +702,88 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
               event: { ...output.event, toolCallId: output.toolCallId },
             });
           });
-          for (const update of pendingUpdates) {
-            yield* Effect.tryPromise({
-              try: () => dispatchUpdate(update),
-              catch: (cause) => runnerError(cause, "run.onDelta"),
-            });
-          }
+          yield* Effect.tryPromise({
+            try: () => replayed,
+            catch: (cause) => runnerError(cause, "run.onDelta"),
+          });
+
+          const cancel = log({
+            direction: "outgoing",
+            stage: "decoded",
+            payload: {
+              type: "run.cancel",
+              runId: run.id,
+            },
+          }).pipe(
+            Effect.andThen(
+              Effect.tryPromise({
+                try: async () => {
+                  try {
+                    await run.cancel();
+                  } catch (cause) {
+                    if (!isCursorCancellationError(cause)) {
+                      throw cause;
+                    }
+                  }
+                },
+                catch: (cause) => runnerError(cause, "run.cancel"),
+              }),
+            ),
+          );
+          let turnStreamAbandoned = false;
+          const abandonOpenTurnStream = SubscriptionRef.changes(turnStream).pipe(
+            Stream.switchMap((state) =>
+              state === "ended"
+                ? Stream.fromEffect(Effect.sleep(TURN_STREAM_CLOSE_TIMEOUT))
+                : Stream.never,
+            ),
+            Stream.runHead,
+            Effect.andThen(
+              Effect.logWarning("cursor-agent-sdk.turn-stream-open-after-turn-ended", {
+                runId: run.id,
+              }),
+            ),
+            Effect.andThen(
+              Effect.sync(() => {
+                turnStreamAbandoned = true;
+              }),
+            ),
+            Effect.andThen(cancel),
+            Effect.catch((cause) =>
+              Effect.logWarning("cursor-agent-sdk.turn-stream-abandon-failed", {
+                runId: run.id,
+                cause,
+              }),
+            ),
+          );
 
           return {
             runId: run.id,
             agentId: run.agentId,
-            wait: Effect.tryPromise({
-              try: async () => {
-                const result = await run.wait();
-                await callbackChain;
-                if (callbackFailure !== undefined) {
-                  throw callbackFailure.cause;
-                }
-                return result;
-              },
-              catch: (cause) => runnerError(cause, "run.wait"),
+            wait: Effect.gen(function* () {
+              const watchdog = yield* Effect.forkChild(abandonOpenTurnStream);
+              const result = yield* Effect.tryPromise({
+                try: async () => {
+                  const result = await run.wait();
+                  await callbackChain;
+                  if (callbackFailure !== undefined) {
+                    throw callbackFailure.cause;
+                  }
+                  return result;
+                },
+                catch: (cause) => runnerError(cause, "run.wait"),
+              }).pipe(Effect.ensuring(Fiber.interrupt(watchdog)));
+              // The turn had ended; the cancellation only closed its stream.
+              return turnStreamAbandoned && result.status === "cancelled"
+                ? { ...result, status: "finished" as const }
+                : result;
             }).pipe(
-              Effect.ensuring(Effect.sync(unsubscribeShellOutput)),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  unsubscribeShellOutput();
+                  unsubscribeTurnStreamClosed();
+                }),
+              ),
               Effect.tap((result) =>
                 log({
                   direction: "incoming",
@@ -706,29 +824,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
                 ),
               ),
             ),
-            cancel: log({
-              direction: "outgoing",
-              stage: "decoded",
-              payload: {
-                type: "run.cancel",
-                runId: run.id,
-              },
-            }).pipe(
-              Effect.andThen(
-                Effect.tryPromise({
-                  try: async () => {
-                    try {
-                      await run.cancel();
-                    } catch (cause) {
-                      if (!isCursorCancellationError(cause)) {
-                        throw cause;
-                      }
-                    }
-                  },
-                  catch: (cause) => runnerError(cause, "run.cancel"),
-                }),
-              ),
-            ),
+            cancel,
           } satisfies CursorAgentSdkRun;
         }),
         listMessages: log({

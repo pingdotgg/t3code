@@ -2046,14 +2046,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             if (update.usage !== undefined) {
               context.usage = addCursorTurnUsage(context.usage, update.usage);
             }
-          } else if (
-            update.type === "step-started" ||
-            update.type === "user-message-appended" ||
-            update.type === "text-delta" ||
-            update.type === "thinking-delta" ||
-            update.type === "partial-tool-call" ||
-            update.type === "tool-call-started"
-          ) {
+          } else if (CursorAgentSdk.startsCursorTurnWork(update)) {
             context.turnEnded = false;
           }
           switch (update.type) {

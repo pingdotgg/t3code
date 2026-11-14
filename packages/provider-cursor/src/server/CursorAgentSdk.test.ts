@@ -3,10 +3,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -320,6 +322,81 @@ describe("CursorAgentSdkRunner", () => {
           },
         ],
       );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    {
+      reason: "abandons a turn stream Cursor leaves open after turn-ended",
+      closes: "never",
+      cancellations: 1,
+    },
+    {
+      // Stop hooks and background agents run after the stream closes, for as long as they like.
+      reason: "leaves a run alone once its turn stream has closed",
+      closes: "after turn-ended",
+      cancellations: 0,
+    },
+    {
+      reason: "keeps a close that arrives while buffered updates replay behind their turn-ended",
+      closes: "during replay",
+      cancellations: 0,
+    },
+  ] as const)("$reason", ({ closes, cancellations }) =>
+    Effect.gen(function* () {
+      cursorSdkMock.runCancel.mockClear();
+      const settled = Promise.withResolvers<"finished" | "cancelled">();
+      cursorSdkMock.runWait.mockImplementationOnce(async () => ({
+        id: "run-cursor-agent-sdk-test",
+        requestId: "request-cursor-agent-sdk-test",
+        status: await settled.promise,
+        result: "The answer.",
+        model: { id: "default" },
+        durationMs: 1,
+      }));
+      const closeTurnStream = () =>
+        (Reflect.get(globalThis, Symbol.for("@cursor/sdk.turnStreamClosed")) as Function)({
+          conversationId: "agent-cursor-agent-sdk-test",
+        });
+      if (closes === "never") {
+        cursorSdkMock.runCancel.mockImplementationOnce(async () => {
+          settled.resolve("cancelled");
+        });
+      }
+      cursorSdkMock.send.mockImplementationOnce(async (_message, options) => {
+        await options.onDelta?.({ update: { type: "text-delta", text: "The answer." } });
+        await options.onDelta?.({ update: { type: "turn-ended" } });
+        if (closes === "after turn-ended") closeTurnStream();
+        return {
+          id: "run-cursor-agent-sdk-test",
+          agentId: "agent-cursor-agent-sdk-test",
+          wait: cursorSdkMock.runWait,
+          cancel: cursorSdkMock.runCancel,
+          steer: cursorSdkMock.runSteer,
+        };
+      });
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+      const session = yield* runner.open({
+        operation: "create",
+        options: {},
+        threadId: ThreadId.make("thread-cursor-agent-sdk-turn-stream"),
+        providerSessionId: ProviderSessionId.make("provider-session-cursor-agent-sdk-turn-stream"),
+      });
+      const run = yield* session.send({
+        message: "answer",
+        onDelta: (update) =>
+          closes === "during replay" && update.type === "text-delta"
+            ? Effect.sync(closeTurnStream)
+            : Effect.void,
+      });
+      const waiting = yield* Effect.forkChild(run.wait);
+
+      yield* TestClock.adjust("119 seconds");
+      assert.strictEqual(cursorSdkMock.runCancel.mock.calls.length, 0);
+      yield* TestClock.adjust("10 minutes");
+      assert.strictEqual(cursorSdkMock.runCancel.mock.calls.length, cancellations);
+      settled.resolve("finished");
+      assert.strictEqual((yield* Fiber.join(waiting)).status, "finished");
     }).pipe(Effect.provide(layerTest)),
   );
 
