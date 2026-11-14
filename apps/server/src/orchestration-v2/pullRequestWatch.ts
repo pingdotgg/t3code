@@ -3,11 +3,12 @@ import type {
   PullRequestCheck,
   PullRequestComment,
   PullRequestDetail,
+  PullRequestReviewDecision,
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-/** Bounds consecutive comment-only wakes to stop bot reply loops; check, conflict, or push news resets it. */
+/** Bounds consecutive comment-only wakes to stop bot reply loops; any other news or a push resets it. */
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
 /** How long a head may go without any check before the agent is told none reported. */
 export const PULL_REQUEST_WATCH_NO_CHECKS_MS = 15 * 60_000;
@@ -21,7 +22,11 @@ export type PullRequestWatchChange =
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
   | { readonly kind: "conflicting" }
-  | { readonly kind: "merge-queue-removed"; readonly reason: string | null };
+  | { readonly kind: "merge-queue-removed"; readonly reason: string | null }
+  | {
+      readonly kind: "approval-changed";
+      readonly reviewDecision: PullRequestReviewDecision | null;
+    };
 
 export interface PullRequestWatchReport {
   readonly changes: ReadonlyArray<PullRequestWatchChange>;
@@ -47,6 +52,7 @@ export function evaluatePullRequestWatch(
     | "viewer"
     | "author"
     | "mergeQueueRemoval"
+    | "reviewDecision"
   >,
   remarks: ReadonlyArray<PullRequestComment> | null,
   now: number,
@@ -222,6 +228,13 @@ export function evaluatePullRequestWatch(
   // Null records an empty baseline; historical IDs are saved without waking the watch.
   const mergeQueueRemovalId = removal?.id ?? watch.mergeQueueRemovalId ?? null;
 
+  // A read that cannot judge approval keeps the last answer; the first answer is only recorded.
+  const approved =
+    detail.reviewDecision === undefined ? watch.approved : detail.reviewDecision === "approved";
+  if (watch.approved !== undefined && approved !== watch.approved) {
+    changes.push({ kind: "approval-changed", reviewDecision: detail.reviewDecision ?? null });
+  }
+
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
   const progress = headMoved || (changes.length > 0 && !commentsOnly);
   const wakes = (progress ? 0 : watch.wakes) + (commentsOnly ? 1 : 0);
@@ -240,6 +253,7 @@ export function evaluatePullRequestWatch(
       remarkIds,
       conflicting,
       mergeQueueRemovalId,
+      ...(approved !== undefined && { approved }),
       wakes,
       // Only a read that cannot be trusted to show the checks leaves the baseline to the next one.
       ...(checksBaseline &&
@@ -270,6 +284,13 @@ function listed<T>(items: ReadonlyArray<T>, line: (item: T) => string): Array<st
   if (items.length > LISTED_ITEMS) lines.push(`  - and ${items.length - LISTED_ITEMS} more`);
   return lines;
 }
+
+const APPROVAL_LINE: Record<PullRequestReviewDecision | "none", string> = {
+  approved: "- It is now approved.",
+  "changes-requested": "- It is no longer approved: a reviewer requested changes.",
+  "review-required": "- It is no longer approved and needs review again.",
+  none: "- It is no longer approved.",
+};
 
 function changeLines(
   change: PullRequestWatchChange,
@@ -314,18 +335,31 @@ function changeLines(
       return [
         `- It was removed from the merge queue without merging${change.reason === null ? "" : `: ${change.reason}`}.`,
       ];
+    case "approval-changed":
+      return [APPROVAL_LINE[change.reviewDecision ?? "none"]];
   }
 }
 
-const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
-  "checks-failed": "checks failed",
-  "checks-passed": "checks passed",
-  "checks-awaiting-approval": "checks await approval",
-  remarks: "new comments",
-  "no-checks": "no checks reported",
-  conflicting: "merge conflict",
-  "merge-queue-removed": "removed from merge queue",
-};
+function summaryOf(change: PullRequestWatchChange): string {
+  switch (change.kind) {
+    case "checks-failed":
+      return "checks failed";
+    case "checks-passed":
+      return "checks passed";
+    case "checks-awaiting-approval":
+      return "checks await approval";
+    case "remarks":
+      return "new comments";
+    case "no-checks":
+      return "no checks reported";
+    case "conflicting":
+      return "merge conflict";
+    case "merge-queue-removed":
+      return "removed from merge queue";
+    case "approval-changed":
+      return change.reviewDecision === "approved" ? "approved" : "approval withdrawn";
+  }
+}
 
 const WATCHING_CLOSING =
   "Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.";
@@ -390,7 +424,7 @@ export function pullRequestWatchMessage(input: {
       change.kind === "conflicting" ||
       change.kind === "merge-queue-removed",
   );
-  const summary = changes.map((change) => SUMMARY[change.kind]);
+  const summary = changes.map(summaryOf);
   if (exhausted) summary.push("stopped watching");
   return {
     text,
@@ -398,7 +432,11 @@ export function pullRequestWatchMessage(input: {
       source: { kind: "monitor" },
       outcome: failed
         ? "failed"
-        : changes.every((change) => change.kind === "checks-passed")
+        : changes.every(
+              (change) =>
+                change.kind === "checks-passed" ||
+                (change.kind === "approval-changed" && change.reviewDecision === "approved"),
+            )
           ? "completed"
           : "updated",
       summary: `#${input.number}: ${summary.join(", ")}`,

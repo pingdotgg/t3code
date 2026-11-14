@@ -113,7 +113,7 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
       yield* provider.searchRepositoryAuthors(reference);
       yield* provider.runAction({ ...reference, action });
 
-      expect(readHosts).toEqual(Array(action === "merge" ? 14 : 13).fill(selectedHost));
+      expect(readHosts).toEqual(Array(action === "merge" ? 15 : 14).fill(selectedHost));
       expect({ url: detail.url, mutatedHosts: mergedHosts }).toEqual({
         url: `https://${selectedHost}/acme/web/-/merge_requests/7`,
         mutatedHosts: [selectedHost],
@@ -224,6 +224,8 @@ describe("getChangeRequest base freshness", () => {
     divergence: { readonly divergedCommits?: number },
     stats: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["listMergeRequestStats"] = () =>
       Effect.succeed([]),
+    listStates: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["getListStates"] = () =>
+      Effect.succeed(new Map()),
   ) =>
     Effect.gen(function* () {
       const provider = yield* make;
@@ -240,6 +242,7 @@ describe("getChangeRequest base freshness", () => {
           getProjectMergeCapabilities: () =>
             Effect.succeed({ merge: true, squash: true, rebase: true }),
           listMergeRequestStats: stats,
+          getListStates: listStates,
         }),
       ),
     );
@@ -270,6 +273,27 @@ describe("getChangeRequest base freshness", () => {
 
       expect(changeRequest.additions).toBe(40);
       expect(changeRequest.deletions).toBe(2);
+    }),
+  );
+
+  it.effect("carries the approval state and stays readable when GitLab will not give it", () =>
+    Effect.gen(function* () {
+      const approved = yield* readWith({}, undefined, () =>
+        Effect.succeed(new Map([[7, { reviewDecision: "approved" as const, checksState: null }]])),
+      );
+      expect(approved.reviewDecision).toBe("approved");
+
+      const unjudged = yield* readWith({}, undefined, () =>
+        Effect.fail(
+          new GitLabCli.GitLabCliAuthenticationError({
+            operation: "execute",
+            command: "glab",
+            cwd: "/w",
+            cause: null,
+          }),
+        ),
+      );
+      expect(unjudged).not.toHaveProperty("reviewDecision");
     }),
   );
 

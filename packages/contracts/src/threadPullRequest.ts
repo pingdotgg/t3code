@@ -99,6 +99,8 @@ export const ThreadPullRequestWatch = Schema.Struct({
   conflicting: Schema.Boolean,
   /** Last removal seen; null after an empty read, absent before the first read. */
   mergeQueueRemovalId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** Whether the last read that could judge it found the pull request approved; absent before one. */
+  approved: Schema.optional(Schema.Boolean),
   /** Consecutive comment-only wakes; limited to prevent bot loops. */
   wakes: NonNegativeInt,
   /**

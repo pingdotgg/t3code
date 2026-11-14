@@ -96,6 +96,8 @@ query PullRequestWatchFingerprint(
       state
       mergeable
       headRefOid
+      # Dismissing a review or changing the review rules moves this without any new review.
+      reviewDecision
       comments(first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) {
         totalCount
         nodes {

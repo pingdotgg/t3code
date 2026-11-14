@@ -1012,6 +1012,7 @@ export function toPullRequestWatchFingerprint(
       pr.state,
       pr.mergeable,
       pr.headRefOid,
+      pr.reviewDecision,
       stateCounts(contexts?.checkRunCountsByState ?? null),
       stateCounts(contexts?.statusContextCountsByState ?? null),
       pr.mergeQueueRemovals?.filteredCount ?? 0,

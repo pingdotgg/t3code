@@ -800,16 +800,84 @@ describe("evaluatePullRequestWatch", () => {
     assert.equal(read.next.mergeQueueRemovalId, "landed");
   });
 
-  it("does not spend the comment wake limit on check results", () => {
-    const tired = watch({ headSha: "aaaaaaaaaa", wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
-    const result = evaluatePullRequestWatch(
-      tired,
-      detail({ checks: [check("lint", "failure")] }),
+  it("records approval on the first read, then reports each change in it once", () => {
+    const wake = (report: ReturnType<typeof evaluatePullRequestWatch>) =>
+      pullRequestWatchMessage({
+        number: 1,
+        url: "https://gitlab.com/o/r/-/merge_requests/1",
+        baseBranch: "main",
+        headSha: report.next.headSha,
+        report,
+      });
+    const first = evaluatePullRequestWatch(
+      watch(),
+      detail({ reviewDecision: "approved" }),
       noRemarks,
     );
-    assert.isFalse(result.exhausted);
-    assert.equal(result.next.wakes, 0);
+    assert.deepEqual(first.changes, []);
+    assert.isTrue(first.next.approved);
+
+    const watching = evaluatePullRequestWatch(
+      watch(),
+      detail({ reviewDecision: "review-required" }),
+      noRemarks,
+    ).next;
+    const approved = evaluatePullRequestWatch(
+      watching,
+      detail({ reviewDecision: "approved" }),
+      noRemarks,
+    );
+    assert.deepEqual(approved.changes, [{ kind: "approval-changed", reviewDecision: "approved" }]);
+    assert.deepEqual(wake(approved).notification, {
+      source: { kind: "monitor" },
+      outcome: "completed",
+      summary: "#1: approved",
+    });
+    // A read that cannot judge approval keeps the answer it had.
+    const unjudged = evaluatePullRequestWatch(approved.next, detail(), noRemarks);
+    assert.deepEqual(unjudged.changes, []);
+    assert.isTrue(unjudged.next.approved);
+
+    const reset = evaluatePullRequestWatch(
+      unjudged.next,
+      detail({ headSha: "bbbbbbbbbb", reviewDecision: "review-required" }),
+      noRemarks,
+    );
+    assert.include(wake(reset).text, "- It is no longer approved and needs review again.");
+    // Without review rules, GitHub has no decision to report.
+    const ruleless = evaluatePullRequestWatch(
+      approved.next,
+      detail({ reviewDecision: null }),
+      noRemarks,
+    );
+    assert.include(wake(ruleless).text, "- It is no longer approved.\n");
+    // A review that leaves the rules unsatisfied is not approval news.
+    assert.deepEqual(
+      evaluatePullRequestWatch(
+        reset.next,
+        detail({ headSha: "bbbbbbbbbb", reviewDecision: "changes-requested" }),
+        noRemarks,
+      ).changes,
+      [],
+    );
   });
+
+  it.each([
+    { news: "check results", read: { checks: [check("lint", "failure")] } },
+    { news: "approval", read: { reviewDecision: "approved" } },
+  ] satisfies ReadonlyArray<{ news: string; read: Partial<Detail> }>)(
+    "does not spend the comment wake limit on $news",
+    ({ read }) => {
+      const tired = watch({
+        headSha: "aaaaaaaaaa",
+        approved: false,
+        wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1,
+      });
+      const result = evaluatePullRequestWatch(tired, detail(read), noRemarks);
+      assert.isFalse(result.exhausted);
+      assert.equal(result.next.wakes, 0);
+    },
+  );
 
   it("stops after the wake limit unless the head moves", () => {
     const comments = [remark("reviewer", "2026-10-02T12:10:00Z")];

@@ -651,6 +651,8 @@ export const PullRequestDetail = Schema.Struct({
   state: PullRequestState,
   isDraft: Schema.Boolean,
   mergeability: PullRequestMergeability,
+  /** Absent when the host's approval state could not be judged. */
+  reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
   changedFiles: NonNegativeInt,

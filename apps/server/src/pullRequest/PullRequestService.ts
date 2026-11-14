@@ -1880,6 +1880,9 @@ export const make = Effect.gen(function* () {
             state: changeRequest.state,
             isDraft: changeRequest.isDraft,
             mergeability: changeRequest.mergeability,
+            ...(changeRequest.reviewDecision === undefined
+              ? {}
+              : { reviewDecision: changeRequest.reviewDecision }),
             additions: changeRequest.additions,
             deletions: changeRequest.deletions,
             changedFiles: changeRequest.changedFiles,
@@ -3304,8 +3307,9 @@ export const make = Effect.gen(function* () {
     detail: PullRequestDetail,
     previous: PullRequestSummary | undefined,
   ): PullRequestSummary => ({
-    // Detail does not carry review/check summaries. Keep the last summary observation.
+    // Detail does not carry check summaries, nor review ones where it cannot judge approval.
     ...previous,
+    ...(detail.reviewDecision !== undefined && { reviewDecision: detail.reviewDecision }),
     provider: detail.provider,
     projectId: detail.projectId,
     repository: detail.repository,
