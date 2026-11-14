@@ -137,6 +137,27 @@ describe("OrbitPendingThreadView", () => {
     expect(gateway.cancelOperation).toHaveBeenCalledWith(100);
   });
 
+  it("Cancel after the create succeeded cancels its completion, before the thread opens", async () => {
+    setup(
+      start({
+        createStartedAt: 1,
+        createFinishedAt: 2,
+        createKey: "k",
+        createOperationId: 100,
+        instanceId: 41,
+        environmentId: "env-41",
+        connectStartedAt: 3,
+        completionOperationId: 101,
+        completionStatus: "queued",
+      }),
+    );
+    gateway.cancelOperation.mockResolvedValue({ id: 101, status: "running" });
+    await using screen = await render(view(), { router: "/orbit/s1" });
+    await screen.getByRole("button", { name: "Cancel" }).click();
+    await vi.waitFor(() => expect(readStored()).toEqual([]));
+    expect(gateway.cancelOperation.mock.calls).toEqual([[101]]);
+  });
+
   it("Cancel before the create was sent only drops the saved start", async () => {
     setup(start({ createStartedAt: 1 }));
     await using screen = await render(view(), { router: "/orbit/s1" });

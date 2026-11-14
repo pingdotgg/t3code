@@ -1,8 +1,11 @@
 import {
   admitOrbitCompletion,
+  cancelOrbitCompletion,
+  cancelOrbitCreate,
   followOrbitCompletion,
   markOrbitCompletionRetry,
   newOrbitThreadStart,
+  OPERATION_TERMINAL_STATUSES,
   type OrbitCompletionPorts,
   orbitThreadStartHasNoMessage,
   orbitThreadStartCreatedInstance,
@@ -140,10 +143,9 @@ export function dismissOrbitThreadStart(id: string): void {
 }
 
 /**
- * Cancels Orbit's admitted create, then drops the start; a failed cancel keeps it and throws.
- * Once a create was sent but not answered, in any window, it only marks the start (`requested`):
- * the main window's runner repeats the admission under the same key, cancels the Operation and
- * drops the start. An admitted Instance stays, as on a failed create.
+ * Cancels Orbit's admitted create, or its completion once it succeeded, then drops the start; a
+ * failed cancel keeps it and throws. A create sent but not answered only marks the start
+ * (`requested`): the main window's runner cancels it once admitted. The Instance stays.
  */
 export async function cancelOrbitThreadStart(
   client: OrbitGatewayClient | null,
@@ -160,11 +162,30 @@ export async function cancelOrbitThreadStart(
     return { instanceStays: true, requested: true };
   }
   if (start.createOperationId !== null && start.environmentId === null) {
-    if (client === null) throw new Error("Conn cannot reach the Orbit Gateway from this window.");
-    await client.cancelOperation(start.createOperationId);
+    if (client === null) throw new Error(NO_GATEWAY_TEXT);
+    await cancelOrbitCreate(client, start.createOperationId);
+  } else if (completionStillRuns(start)) {
+    // The create succeeded but the thread has not opened: its completion is what still runs.
+    if (client === null) throw new Error(NO_GATEWAY_TEXT);
+    await cancelOrbitCompletion(client, start.completionOperationId!);
   }
   dismissOrbitThreadStart(id);
   return { instanceStays: orbitThreadStartCreatedInstance(start), requested: false };
+}
+
+const NO_GATEWAY_TEXT = "Conn cannot reach the Orbit Gateway from this window.";
+
+/**
+ * A Cancel before the thread opened, after the create succeeded. The saved status stays "queued"
+ * until the thread opens; a completion that ended meanwhile is read back by the cancel.
+ */
+function completionStillRuns(start: OrbitThreadStart): boolean {
+  return (
+    start.environmentId !== null &&
+    start.sentAt == null &&
+    typeof start.completionOperationId === "number" &&
+    (start.completionStatus == null || !OPERATION_TERMINAL_STATUSES.has(start.completionStatus))
+  );
 }
 
 const cancelRequested = (id: string) =>

@@ -538,6 +538,52 @@ function isTargetBusy(error: unknown): boolean {
   );
 }
 
+type OrbitCancelClient = Pick<OrbitGatewayClient, "cancelOperation" | "operation">;
+
+/**
+ * Asks Orbit to stop an Operation. A refusal because it already ended reads it: the read
+ * Operation is returned when it ended; else the refusal stands.
+ */
+async function cancelOrRead(
+  client: OrbitCancelClient,
+  operationId: number,
+): Promise<OrbitGatewayOperation> {
+  try {
+    return await client.cancelOperation(operationId);
+  } catch (error) {
+    const read = await client.operation(operationId).catch(() => null);
+    if (read === null || !OPERATION_TERMINAL_STATUSES.has(read.status)) throw error;
+    return read;
+  }
+}
+
+/**
+ * Cancels a start's `instance.complete` (Orbit release 2063). A completion that already ended is
+ * left as it is; any other refusal throws.
+ */
+export async function cancelOrbitCompletion(
+  client: OrbitCancelClient,
+  completionOperationId: number,
+): Promise<void> {
+  await cancelOrRead(client, completionOperationId);
+}
+
+/**
+ * Cancels a start's create (Orbit release 2063). A create that already succeeded has admitted its
+ * completion (`result.completion_operation_id`): that one is cancelled too. A create that ended
+ * otherwise needs nothing more; a refusal of a create that still runs (such as an older
+ * Gateway's 404) throws.
+ */
+export async function cancelOrbitCreate(
+  client: OrbitCancelClient,
+  createOperationId: number,
+): Promise<void> {
+  const create = await cancelOrRead(client, createOperationId);
+  if (create.status === "succeeded" && typeof create.completionOperationId === "number") {
+    await cancelOrbitCompletion(client, create.completionOperationId);
+  }
+}
+
 /** Conn: the start's text for an asleep Instance when Conn cannot wake it (no port, older Gateway). */
 const ORBIT_CLONE_ASLEEP_TEXT = "The clone is asleep. Conn cannot wake it yet.";
 
@@ -687,7 +733,7 @@ export async function runOrbitThreadStart(
   const cancelIfRequested = async (operationId: number) => {
     if (!ports.cancelRequested?.()) return;
     try {
-      await ports.client.cancelOperation(operationId);
+      await cancelOrbitCreate(ports.client, operationId);
     } catch (error) {
       throw stepFailed(
         `Orbit could not cancel the create: ${error instanceof Error ? error.message : String(error)}`,

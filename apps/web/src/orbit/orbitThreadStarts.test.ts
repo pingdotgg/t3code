@@ -309,6 +309,123 @@ describe("cancelOrbitThreadStart", () => {
     expect(readStored()).toEqual([]);
   });
 
+  /** Saves the draft start as the runner leaves it at a given step. */
+  const savedAt = (patch: Partial<OrbitThreadStart>) => {
+    const id = saveDraftStart();
+    updateStarts((starts) =>
+      starts.map((entry) =>
+        entry.id === id
+          ? { ...entry, createKey: "key-1", createOperationId: 100, instanceId: 41, ...patch }
+          : entry,
+      ),
+    );
+    return id;
+  };
+  const operation = (
+    id: number,
+    status: OrbitGatewayOperation["status"],
+    extra: Partial<OrbitGatewayOperation> = {},
+  ): OrbitGatewayOperation => ({
+    id,
+    kind: id === 100 ? "instance.create" : "instance.complete",
+    status,
+    targetId: 41,
+    errorCode: null,
+    pollAfterSeconds: null,
+    ...extra,
+  });
+  /** The create succeeded; the thread has not opened (the card's connect and agent steps). */
+  const created = {
+    environmentId: "env-41",
+    completionOperationId: 101,
+    completionStatus: "queued",
+  };
+
+  it("cancels the completion when the create already succeeded and the thread has not opened", async () => {
+    const id = savedAt({ ...created, connected: true } as Partial<OrbitThreadStart>);
+    const cancelOperation = vi.fn(async (opId: number) =>
+      operation(opId, "running", { cancelRequested: true }),
+    );
+    const gateway = { cancelOperation } as unknown as OrbitGatewayClient;
+    expect(await cancelOrbitThreadStart(gateway, id)).toEqual({
+      instanceStays: true,
+      requested: false,
+    });
+    expect(cancelOperation.mock.calls).toEqual([[101]]);
+    expect(readStored()).toEqual([]);
+  });
+
+  it("drops the start when the completion ended before the Cancel (the saved status still says queued)", async () => {
+    const id = savedAt({ ...created } as Partial<OrbitThreadStart>);
+    const cancelOperation = vi.fn(async () => {
+      throw new Error("The Operation already ended.");
+    });
+    const read = vi.fn(async (opId: number) => operation(opId, "succeeded"));
+    const gateway = { cancelOperation, operation: read } as unknown as OrbitGatewayClient;
+    expect(await cancelOrbitThreadStart(gateway, id)).toEqual({
+      instanceStays: true,
+      requested: false,
+    });
+    expect(read.mock.calls).toEqual([[101]]);
+    expect(readStored()).toEqual([]);
+  });
+
+  it("keeps the start and throws when Orbit refuses the completion's cancel while it runs", async () => {
+    const id = savedAt({ ...created } as Partial<OrbitThreadStart>);
+    const refusal = new Error("Operation not found.");
+    const cancelOperation = vi.fn(async () => {
+      throw refusal;
+    });
+    const read = vi.fn(async (opId: number) => operation(opId, "running"));
+    const gateway = { cancelOperation, operation: read } as unknown as OrbitGatewayClient;
+    await expect(cancelOrbitThreadStart(gateway, id)).rejects.toBe(refusal);
+    expect(readStored()).toHaveLength(1);
+  });
+
+  it("cancels the completion of a create that succeeded as the Cancel arrived", async () => {
+    const id = savedAt({});
+    const cancelOperation = vi.fn(async (opId: number) =>
+      opId === 100
+        ? operation(100, "succeeded", { completionOperationId: 101 })
+        : operation(101, "running", { cancelRequested: true }),
+    );
+    const gateway = { cancelOperation } as unknown as OrbitGatewayClient;
+    expect(await cancelOrbitThreadStart(gateway, id)).toEqual({
+      instanceStays: true,
+      requested: false,
+    });
+    expect(cancelOperation.mock.calls).toEqual([[100], [101]]);
+    expect(readStored()).toEqual([]);
+  });
+
+  it("keeps the start and throws when Orbit refuses the cancel (404)", async () => {
+    const id = savedAt({});
+    const refusal = new Error("Operation not found.");
+    const cancelOperation = vi.fn(async () => {
+      throw refusal;
+    });
+    const read = vi.fn(async () => operation(100, "running"));
+    const gateway = { cancelOperation, operation: read } as unknown as OrbitGatewayClient;
+    await expect(cancelOrbitThreadStart(gateway, id)).rejects.toBe(refusal);
+    expect(readStored()).toHaveLength(1);
+    // A second click asks again and changes nothing else.
+    await expect(cancelOrbitThreadStart(gateway, id)).rejects.toBe(refusal);
+    expect(cancelOperation.mock.calls).toEqual([[100], [100]]);
+    expect(readStored()).toHaveLength(1);
+  });
+
+  it("a second click after a cancel is harmless: the start is gone, no Gateway call", async () => {
+    const id = savedAt({ ...created } as Partial<OrbitThreadStart>);
+    const cancelOperation = vi.fn(async (opId: number) => operation(opId, "running"));
+    const gateway = { cancelOperation } as unknown as OrbitGatewayClient;
+    await cancelOrbitThreadStart(gateway, id);
+    expect(await cancelOrbitThreadStart(gateway, id)).toEqual({
+      instanceStays: false,
+      requested: false,
+    });
+    expect(cancelOperation).toHaveBeenCalledTimes(1);
+  });
+
   it("drops a start whose create was never sent at once, without a Gateway call", async () => {
     const id = saveDraftStart();
     expect(readStored()[0]!.createKey).toBeNull();

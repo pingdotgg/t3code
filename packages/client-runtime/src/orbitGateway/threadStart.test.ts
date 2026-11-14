@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -10,6 +11,8 @@ import {
   type OrbitGatewayOperation,
 } from "./client.ts";
 import {
+  cancelOrbitCompletion,
+  cancelOrbitCreate,
   newOrbitThreadStart,
   orbitThreadStartHasNoMessage,
   orbitThreadInstanceName,
@@ -20,6 +23,8 @@ import {
   runOrbitThreadStart,
   type OrbitThreadStart,
 } from "./threadStart.ts";
+
+const isGatewayError = Schema.is(OrbitGatewayError);
 
 const project = { id: 3, slug: "mealou", name: "Mealou", nodeId: 7, nodeName: "beast" };
 
@@ -515,6 +520,115 @@ describe("runOrbitThreadStart", () => {
         errorCode: "operation.not_cancellable",
         error: expect.stringContaining("could not cancel"),
       });
+    });
+  });
+
+  describe("Cancel of a create that already succeeded (Orbit release 2063)", () => {
+    /** Each cancel and read answers from `answers` by Operation id; an Error is thrown. */
+    const fake = (
+      answers: Record<string, OrbitGatewayOperation | OrbitGatewayError>,
+    ): { client: OrbitGatewayClient; calls: string[] } => {
+      const calls: string[] = [];
+      const answer = (key: string) => {
+        calls.push(key);
+        const value = answers[key];
+        if (value === undefined) throw new Error(`unexpected ${key}`);
+        if (isGatewayError(value)) throw value;
+        return value;
+      };
+      const client = {
+        cancelOperation: async (id: number) => answer(`cancel ${id}`),
+        operation: async (id: number) => answer(`operation ${id}`),
+      } as unknown as OrbitGatewayClient;
+      return { client, calls };
+    };
+    const notFound = new OrbitGatewayError({
+      code: "operation.not_found",
+      message: "Not found.",
+      status: 404,
+      details: {},
+    });
+    const ended = new OrbitGatewayError({
+      code: "operation.not_cancellable",
+      message: "The Operation already ended.",
+      status: 409,
+      details: {},
+    });
+
+    it("cancels the completion the succeeded create names", async () => {
+      const { client, calls } = fake({
+        "cancel 100": { ...op(100, 41, "succeeded"), completionOperationId: 101 },
+        "cancel 101": { ...op(101, 41, "running"), cancelRequested: true },
+      });
+      await cancelOrbitCreate(client, 100);
+      expect(calls).toEqual(["cancel 100", "cancel 101"]);
+    });
+
+    it("stops after a running or cancelled create: nothing else is cancelled", async () => {
+      const running = fake({ "cancel 100": { ...op(100, 41, "running"), cancelRequested: true } });
+      await cancelOrbitCreate(running.client, 100);
+      expect(running.calls).toEqual(["cancel 100"]);
+      // A second click: Orbit answers the create cancelled again.
+      const again = fake({ "cancel 100": op(100, 41, "cancelled") });
+      await cancelOrbitCreate(again.client, 100);
+      expect(again.calls).toEqual(["cancel 100"]);
+    });
+
+    it("reads a create whose cancel was refused because it ended, and cancels its completion", async () => {
+      const { client, calls } = fake({
+        "cancel 100": ended,
+        "operation 100": { ...op(100, 41, "succeeded"), completionOperationId: 101 },
+        "cancel 101": op(101, 41, "running"),
+      });
+      await cancelOrbitCreate(client, 100);
+      expect(calls).toEqual(["cancel 100", "operation 100", "cancel 101"]);
+    });
+
+    it("keeps a refusal of a create that still runs, such as an older Gateway's 404", async () => {
+      const { client, calls } = fake({
+        "cancel 100": notFound,
+        "operation 100": op(100, 41, "running"),
+      });
+      await expect(cancelOrbitCreate(client, 100)).rejects.toBe(notFound);
+      expect(calls).toEqual(["cancel 100", "operation 100"]);
+      // Another Node's Operation: the read is refused too, and the cancel's refusal stands.
+      const foreign = fake({ "cancel 100": notFound, "operation 100": notFound });
+      await expect(cancelOrbitCreate(foreign.client, 100)).rejects.toBe(notFound);
+    });
+
+    it("leaves a completion that already ended, and keeps a refusal of one that runs", async () => {
+      const done = fake({ "cancel 101": ended, "operation 101": op(101, 41, "succeeded") });
+      await cancelOrbitCompletion(done.client, 101);
+      expect(done.calls).toEqual(["cancel 101", "operation 101"]);
+      const refused = fake({ "cancel 101": notFound, "operation 101": op(101, 41, "running") });
+      await expect(cancelOrbitCompletion(refused.client, 101)).rejects.toBe(notFound);
+    });
+
+    it("the runner cancels the completion of a create that succeeded as the Cancel arrived", async () => {
+      const { client, calls } = gateway({});
+      const cancelled: string[] = [];
+      const run = ports(client);
+      const cancels: number[] = [];
+      const racing = {
+        ...client,
+        cancelOperation: async (id: number) => {
+          cancels.push(id);
+          return id === 100
+            ? { ...op(100, 41, "succeeded"), completionOperationId: 101 }
+            : op(101, 41, "running");
+        },
+      } as OrbitGatewayClient;
+      expect(
+        await runOrbitThreadStart(fresh(), {
+          ...run.ports,
+          client: racing,
+          cancelRequested: () => true,
+          cancelled: () => cancelled.push("x"),
+        }),
+      ).toBe(false);
+      expect(calls).toEqual(["create 3 fix-the-login-bug-on-ios-k3j9"]);
+      expect(cancels).toEqual([100, 101]);
+      expect(cancelled).toHaveLength(1);
     });
   });
 
