@@ -414,6 +414,25 @@ export const layer: Layer.Layer<
               );
             }
           }
+          // Pins on rolled-back runs would point at hidden messages.
+          const rolledBackRunIds = new Set(runsToRollback.map((run) => run.id));
+          const thread = yield* projections.getThread(input.threadId);
+          const entryPins = thread.entryPins ?? [];
+          const keptPins = entryPins.filter(
+            (pin) => pin.runId === null || !rolledBackRunIds.has(pin.runId),
+          );
+          if (keptPins.length !== entryPins.length) {
+            events.push(
+              yield* makeEvent({
+                type: "thread.entry-pins-updated",
+                threadId: input.threadId,
+                providerInstanceId: thread.providerInstanceId,
+                occurredAt: now,
+                // The snapshot predates this batch, whose run updates already moved updatedAt to now.
+                payload: { ...thread, entryPins: keptPins, updatedAt: now },
+              }),
+            );
+          }
           yield* eventSink.write({ events });
         }),
       );

@@ -29,6 +29,7 @@ import { MessageId, RunId } from "@t3tools/contracts";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
+  resolveTimelineRevealedMessageId,
   timelineTurnFoldRunIdsByEntryId,
   liveAnswerPreview,
   deriveMessagesTimelineRowsWithState,
@@ -37,6 +38,56 @@ import {
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
 import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
+
+describe("resolveTimelineRevealedMessageId", () => {
+  it("lets a pinned message replace a citation that is still in the URL", () => {
+    const citationId = MessageId.make("cited");
+    const pinnedId = MessageId.make("pinned");
+    expect(resolveTimelineRevealedMessageId(citationId, pinnedId)).toBe(pinnedId);
+    expect(resolveTimelineRevealedMessageId(citationId, null)).toBe(citationId);
+    expect(resolveTimelineRevealedMessageId(null, null)).toBeNull();
+  });
+
+  it("keeps a pinned earlier assistant message visible in zen mode", () => {
+    const at = "2026-01-01T00:00:00Z";
+    const runId = RunId.make("turn-zen-pin");
+    const earlierId = MessageId.make("assistant-earlier");
+    const laterId = MessageId.make("assistant-later");
+    const message = (id: MessageId, text: string): TimelineEntry => ({
+      kind: "message",
+      id,
+      createdAt: at,
+      message: {
+        id,
+        role: "assistant",
+        text,
+        runId,
+        streaming: false,
+        createdAt: at,
+        updatedAt: at,
+      },
+    });
+    const timelineEntries = [message(earlierId, "First"), message(laterId, "Last")];
+    const base = {
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      toolCallVisibility: "zen" as const,
+    };
+    const messageIds = (revealedMessageId: MessageId | null) =>
+      deriveMessagesTimelineRows({ ...base, revealedMessageId })
+        .filter((row) => row.kind === "message")
+        .map((row) => row.id);
+
+    expect(messageIds(resolveTimelineRevealedMessageId(laterId, earlierId))).toEqual([
+      earlierId,
+      laterId,
+    ]);
+    expect(messageIds(resolveTimelineRevealedMessageId(laterId, null))).toEqual([laterId]);
+  });
+});
 
 describe("resolveAssistantMessageCopyState", () => {
   it("copies the rendered representation of Codex directives", () => {

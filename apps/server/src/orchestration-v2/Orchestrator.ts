@@ -22,7 +22,9 @@ import {
   legacyThreadPullRequestKey,
 } from "../sourceControl/threadPullRequests.ts";
 import {
+  MAX_THREAD_ENTRY_PINS,
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
+  THREAD_ENTRY_PIN_LABEL_LENGTH,
   type ChatAttachment,
   CommandId,
   type GuestMessageId,
@@ -62,6 +64,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2ThreadEntryPin,
   latestProviderTurnForAttempt,
   parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
@@ -81,6 +84,8 @@ import {
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
+import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
@@ -615,6 +620,56 @@ export function threadHasUnfinishedWork(records: {
   );
 }
 
+function entryPinLabel(text: string): string {
+  const line = text
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+\.)\s+/gm, "")
+    .replace(/\*\*|~~|`/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return line.length <= THREAD_ENTRY_PIN_LABEL_LENGTH
+    ? line
+    : `${line.slice(0, THREAD_ENTRY_PIN_LABEL_LENGTH - 1).trimEnd()}…`;
+}
+
+function messagePinLabel(message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<{ readonly name: string }>;
+}): string {
+  const fromText = entryPinLabel(message.text);
+  if (fromText.length > 0) return fromText;
+  return entryPinLabel(message.attachments.map((attachment) => attachment.name).join(", "));
+}
+
+/** The pin for a finished message, HTML render, or proposed plan; undefined when the entry cannot be pinned. */
+function resolveEntryPin(
+  entryId: string,
+  messages: ReadonlyArray<OrchestrationV2ConversationMessage>,
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+): OrchestrationV2ThreadEntryPin | undefined {
+  const message = messages.find((candidate) => candidate.id === entryId);
+  if (message !== undefined) {
+    if (message.role === "system" || message.streaming) return undefined;
+    return {
+      entryId,
+      runId: message.runId,
+      kind: message.role === "user" ? "user_message" : "assistant_message",
+      label: messagePinLabel(message),
+    };
+  }
+  const item = turnItems.find((candidate) => candidate.id === entryId);
+  if (item?.type === "proposed_plan") {
+    if (item.streaming) return undefined;
+    const title = proposedPlanTitle(item.markdown) ?? "Proposed plan";
+    return { entryId, runId: item.runId, kind: "proposed_plan", label: entryPinLabel(title) };
+  }
+  if (item?.type !== "dynamic_tool" || item.status !== "completed") return undefined;
+  const htmlRender = htmlRenderFromToolItem(item);
+  return htmlRender === undefined
+    ? undefined
+    : { entryId, runId: item.runId, kind: "html_render", label: entryPinLabel(htmlRender.title) };
+}
+
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   switch (command.type) {
     case "thread.create":
@@ -637,6 +692,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pin.reorder":
     case "thread.active.reorder":
     case "thread.tag.set":
+    case "thread.entry-pin.set":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
@@ -4050,6 +4106,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.unpin"
           | "thread.pin.reorder"
           | "thread.tag.set"
+          | "thread.entry-pin.set"
           | "thread.active.reorder"
           | "thread.mark-unread"
           | "thread.metadata.update"
@@ -4218,6 +4275,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.type === "thread.unpin" ||
         command.type === "thread.pin.reorder" ||
         command.type === "thread.active.reorder" ||
+        command.type === "thread.entry-pin.set" ||
         command.type === "thread.pull-request.sync") &&
       thread.archivedAt !== null
     ) {
@@ -4559,6 +4617,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       snoozedUntil = parsedSnoozedUntil.value;
     }
+    let entryPins = thread.entryPins ?? [];
+    if (command.type === "thread.entry-pin.set") {
+      const alreadyPinned = entryPins.some((pin) => pin.entryId === command.entryId);
+      if (!command.pinned) {
+        entryPins = entryPins.filter((pin) => pin.entryId !== command.entryId);
+      } else if (!alreadyPinned) {
+        const { messages, turnItems } = yield* loadProjectionForCommand(
+          command,
+          ["messages", "turnItems"],
+          {
+            messageIds: [MessageId.make(command.entryId)],
+            turnItemIds: [TurnItemId.make(command.entryId)],
+          },
+        );
+        const pin = resolveEntryPin(command.entryId, messages, turnItems);
+        if (pin === undefined) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Entry ${command.entryId} is not a finished message, HTML render, or plan in thread ${command.threadId}.`,
+          });
+        }
+        if (entryPins.length >= MAX_THREAD_ENTRY_PINS) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} already has ${MAX_THREAD_ENTRY_PINS} pinned entries.`,
+          });
+        }
+        entryPins = [...entryPins, pin];
+      }
+    }
     let markUnreadVisitedAt: DateTime.Utc | null = null;
     if (command.type === "thread.mark-unread") {
       const shell = yield* projectionStore
@@ -4704,6 +4794,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : current.filter((tag) => tag !== command.tag),
           };
         }
+        case "thread.entry-pin.set":
+          return { ...thread, entryPins };
         case "thread.mark-unread": {
           // Retire the wake before rewinding the visit, preserving its settlement timer.
           const snoozeExpired =
@@ -5123,6 +5215,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.active-reordered" as const;
         case "thread.tag.set":
           return "thread.tags-updated" as const;
+        case "thread.entry-pin.set":
+          return "thread.entry-pins-updated" as const;
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
         case "thread.metadata.update":
@@ -14904,6 +14998,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pin.reorder":
       case "thread.active.reorder":
       case "thread.tag.set":
+      case "thread.entry-pin.set":
       case "thread.mark-unread":
       case "thread.pull-request.link":
       case "thread.pull-request.unlink":

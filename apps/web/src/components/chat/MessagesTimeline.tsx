@@ -77,6 +77,7 @@ import { type AssistantCitationRequest } from "./AssistantCitationSource";
 import { useAssistantCitationTarget } from "./useAssistantCitationTarget";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveCitationPhase, type CitedHistory } from "./citationProcedure";
+import { useEntryRevealRequest } from "./entryReveal";
 import {
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
@@ -86,6 +87,7 @@ import {
   resolveTimelineMinimapHitStripWidth,
   TIMELINE_MINIMAP_TARGET_OFFSET,
   timelineTurnFoldRunIdsByEntryId,
+  resolveTimelineRevealedMessageId,
   liveAnswerPreview,
   type MessagesTimelineRow,
   type TimelineLatestRun,
@@ -638,7 +640,16 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
   const toolCallVisibility =
     findActive && preferredToolCallVisibility === "zen" ? "hideAll" : preferredToolCallVisibility;
-  const revealedMessageId = citationRequest?.citation.messageId ?? null;
+  const entryReveal = useEntryRevealRequest(routeThreadKey);
+  const revealedMessageEntry = entryReveal
+    ? timelineEntries.find(
+        (entry) => entry.kind === "message" && entry.message.id === entryReveal.entryId,
+      )
+    : undefined;
+  const revealedMessageId = resolveTimelineRevealedMessageId(
+    citationRequest?.citation.messageId,
+    revealedMessageEntry?.kind === "message" ? revealedMessageEntry.message.id : null,
+  );
   // Imported turns and post-steer work fold under synthetic keys, not the entries' run ids.
   const findFoldRunIds = findActive
     ? timelineTurnFoldRunIdsByEntryId({
@@ -704,6 +715,38 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (citedAttempt?.status === "superseded") {
       setExpandedAttemptIds((previous) =>
         previous.has(citedAttempt.id) ? previous : new Set(previous).add(citedAttempt.id),
+      );
+    }
+  }
+  // A revealed pinned entry opens the fold it sits in once per request, as a citation does.
+  const [revealExpandedFor, setRevealExpandedFor] = useState<number | null>(null);
+  const revealedEntry =
+    entryReveal && revealExpandedFor !== entryReveal.key
+      ? timelineEntries.find((entry) => entry.id === entryReveal.entryId)
+      : undefined;
+  if (entryReveal && revealedEntry) {
+    setRevealExpandedFor(entryReveal.key);
+    const revealedRunId = (
+      findFoldRunIds ??
+      timelineTurnFoldRunIdsByEntryId({
+        timelineEntries,
+        latestRun,
+        runningRunId,
+        isWorking,
+        runlessWorkActive,
+        toolCallVisibility,
+        revealedMessageId,
+      })
+    ).get(revealedEntry.id);
+    if (revealedRunId) {
+      setExpandedRunIds((previous) =>
+        previous.has(revealedRunId) ? previous : new Set(previous).add(revealedRunId),
+      );
+    }
+    const revealedAttempt = revealedEntry.attempt;
+    if (revealedAttempt?.status === "superseded") {
+      setExpandedAttemptIds((previous) =>
+        previous.has(revealedAttempt.id) ? previous : new Set(previous).add(revealedAttempt.id),
       );
     }
   }
@@ -792,6 +835,22 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const listOpenedOn = nextOpening.mounted ? nextOpening.identity : null;
   const viewportRef = useRef<TimelineViewport | null>(null);
   const navigateTimeline = () => viewportRef.current?.navigate({ releasesFollow: true });
+  const revealRowIndex = entryReveal ? rows.findIndex((row) => row.id === entryReveal.entryId) : -1;
+  const scrolledRevealKeyRef = useRef<number | null>(null);
+  const scrollToRevealedRow = useEffectEvent((key: number, index: number) => {
+    if (scrolledRevealKeyRef.current === key) return;
+    scrolledRevealKeyRef.current = key;
+    navigateTimeline();
+    void listRef.current?.scrollToIndex({
+      index,
+      animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+      viewOffset: 24,
+    });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls LegendList imperatively once a revealed pinned entry has a row
+  useEffect(() => {
+    if (entryReveal && revealRowIndex >= 0) scrollToRevealedRow(entryReveal.key, revealRowIndex);
+  }, [entryReveal, revealRowIndex]);
   const restoreReady = restoringThreadPosition && rows.length > 0;
   // Z: syncs LegendList's scroll position with which thread it shows. The list
   // is not keyed per thread and reports no "new data" event, and the restore

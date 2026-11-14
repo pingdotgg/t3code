@@ -369,6 +369,7 @@ export interface ProjectionRecordFilter {
   readonly subagentRunIds?: ReadonlyArray<RunId>;
   readonly nodeIds?: ReadonlyArray<NodeId>;
   readonly turnItemRequestIds?: ReadonlyArray<RuntimeRequestId>;
+  readonly turnItemIds?: ReadonlyArray<TurnItemId>;
   readonly turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
   readonly turnItemStatuses?: ReadonlyArray<OrchestrationV2TurnItem["status"]>;
   readonly omitSettledLeafNodes?: boolean;
@@ -925,6 +926,7 @@ export function applyToProjection(
     // Reordering and PR refreshes preserve the orchestrator's activity timestamp.
     case "thread.active-reordered":
     case "thread.tags-updated":
+    case "thread.entry-pins-updated":
     case "thread.pull-request-synced":
       return {
         ...base,
@@ -2299,6 +2301,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "thread.pin-reordered":
             case "thread.active-reordered":
             case "thread.tags-updated":
+            case "thread.entry-pins-updated":
             case "thread.visited":
             case "thread.marked-unread":
             case "thread.metadata-updated":
@@ -3116,6 +3119,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.pin-reordered" &&
             event.type !== "thread.active-reordered" &&
             event.type !== "thread.tags-updated" &&
+            event.type !== "thread.entry-pins-updated" &&
             event.type !== "thread.visited" &&
             event.type !== "thread.visit-recorded" &&
             event.type !== "thread.marked-unread" &&
@@ -3525,20 +3529,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               `;
     });
 
+    // An id filter reads by primary key. `+` keeps SQLite off the thread index, which walks
+    // every row of the thread to find the few ids.
+    const threadColumn = (ids: ReadonlyArray<unknown> | undefined, column = "thread_id") =>
+      sql.literal(ids === undefined ? column : `+${column}`);
+
     const turnItemMatch = (threadId: ThreadId, filter: ProjectionRecordFilter | undefined) => sql`
-      thread_id = ${threadId}
+      ${threadColumn(filter?.turnItemIds)} = ${threadId}
         ${filter?.turnItemRequestIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.requestId') IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRequestIds)}))`}
         ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
         ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
         ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
         ${filter?.turnItemNodeIds === undefined ? sql`` : sql`AND node_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemNodeIds)}))`}
+        ${filter?.turnItemIds === undefined ? sql`` : sql`AND turn_item_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemIds)}))`}
         ${filter?.turnItemRunIds === undefined ? sql`` : sql`AND (run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))})) OR (${filter.turnItemRunIds.includes(null) ? 1 : 0} = 1 AND run_id IS NULL))`}
     `;
-
-    // An id filter reads by primary key. `+` keeps SQLite off the thread index, which walks
-    // every row of the thread to find the few ids.
-    const threadColumn = (ids: ReadonlyArray<unknown> | undefined, column = "thread_id") =>
-      sql.literal(ids === undefined ? column : `+${column}`);
 
     /** The runs whose records a new message reads. Null when nothing was compacted. */
     const runIdsSinceLastCompaction = Effect.fn("ProjectionStore.runIdsSinceLastCompaction")(
@@ -3624,6 +3629,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           (window === undefined &&
             matchesNothing(
               filter?.turnItemRequestIds,
+              filter?.turnItemIds,
               filter?.turnItemTypes,
               filter?.turnItemStatuses,
               filter?.turnItemRunIds,

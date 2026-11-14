@@ -463,6 +463,34 @@ const OrchestrationV2LastTitleRegeneration = Schema.Struct({
   completedAt: Schema.DateTimeUtc,
 });
 
+export const MAX_THREAD_ENTRY_PINS = 50;
+export const THREAD_ENTRY_PIN_LABEL_LENGTH = 160;
+
+export const OrchestrationV2ThreadEntryPinKind = Schema.Literals([
+  "user_message",
+  "assistant_message",
+  "html_render",
+  "proposed_plan",
+]);
+export type OrchestrationV2ThreadEntryPinKind = typeof OrchestrationV2ThreadEntryPinKind.Type;
+
+/**
+ * A timeline entry the user pinned. `entryId` is the message id for messages and the turn item id
+ * otherwise, as timeline entries and history paging key them. `label` lists it before its history loads.
+ */
+export const OrchestrationV2ThreadEntryPin = Schema.Struct({
+  entryId: TrimmedNonEmptyString,
+  runId: Schema.NullOr(RunId),
+  kind: OrchestrationV2ThreadEntryPinKind,
+  label: Schema.String,
+});
+export type OrchestrationV2ThreadEntryPin = typeof OrchestrationV2ThreadEntryPin.Type;
+
+// Pins only help navigation, so a shape this build cannot read becomes empty instead of failing the thread.
+const StoredThreadEntryPins = Schema.Array(OrchestrationV2ThreadEntryPin).pipe(
+  Schema.catchDecoding(() => Effect.succeedSome([])),
+);
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -514,6 +542,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Absent on threads written before tags existed; read as empty. */
   tags: Schema.optional(StoredThreadTags),
+  /** Oldest pin first. */
+  entryPins: Schema.optional(StoredThreadEntryPins),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1997,6 +2027,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.pin-reordered",
       "thread.active-reordered",
       "thread.tags-updated",
+      "thread.entry-pins-updated",
       "thread.visited",
       "thread.marked-unread",
       "thread.metadata-updated",
@@ -2941,6 +2972,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.pin-reordered",
       "thread.active-reordered",
       "thread.tags-updated",
+      "thread.entry-pins-updated",
       "thread.visited",
       "thread.marked-unread",
       "thread.pull-request-synced",
@@ -3210,6 +3242,13 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     tag: ThreadTag,
     tagged: Schema.Boolean,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.entry-pin.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    entryId: TrimmedNonEmptyString,
+    pinned: Schema.Boolean,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pin.reorder"),

@@ -633,6 +633,7 @@ type MessagesTimelineRowContent =
       kind: "proposed-plan";
       id: string;
       createdAt: string;
+      streaming: boolean;
       proposedPlan: ProposedPlan;
     }
   | {
@@ -1469,6 +1470,17 @@ function runningSubagentsAtRunTail(entries: ReadonlyArray<TimelineEntry>, runId:
   return running;
 }
 
+/**
+ * Zen mode hides every assistant message except the turn's last one, unless this id
+ * exempts it. A pin the user just chose wins over a citation that is still in the URL.
+ */
+export function resolveTimelineRevealedMessageId(
+  citationMessageId: MessageId | null | undefined,
+  pinnedMessageId: MessageId | null | undefined,
+): MessageId | null {
+  return pinnedMessageId ?? citationMessageId ?? null;
+}
+
 function timelineRowEntries(
   input: Pick<
     MessagesTimelineRowsInput,
@@ -2138,6 +2150,7 @@ export function deriveMessagesTimelineRows(input: {
         kind: "proposed-plan",
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
+        streaming: timelineEntry.streaming,
         proposedPlan: timelineEntry.proposedPlan,
       });
       continue;
@@ -2525,7 +2538,7 @@ function replaceStreamingMessageRows(
   }
   const replacements = new Map<ChatMessage, Extract<TimelineEntry, { kind: "message" }>>();
   const thoughts = new Map<string, WorkLogEntry>();
-  const plans = new Map<string, ProposedPlan>();
+  const plans = new Map<string, Extract<TimelineEntry, { kind: "proposed-plan" }>>();
   for (let index = 0; index < timelineEntries.length; index += 1) {
     const entry = timelineEntries[index]!;
     const previousEntry = previousEntries[index]!;
@@ -2547,7 +2560,7 @@ function replaceStreamingMessageRows(
       const { planMarkdown: _before, updatedAt: _beforeAt, ...before } = previousEntry.proposedPlan;
       const { planMarkdown: _after, updatedAt: _afterAt, ...after } = entry.proposedPlan;
       if (!shallow(before, after)) return null;
-      plans.set(entry.id, entry.proposedPlan);
+      plans.set(entry.id, entry);
       continue;
     }
     if (entry.kind !== "message" || previousEntry.kind !== "message") return null;
@@ -2595,8 +2608,8 @@ function replaceStreamingMessageRows(
   const patchedLiveThoughtIds = new Set<string>();
   const rows = previous.rows.map((row): MessagesTimelineRow => {
     if (row.kind === "proposed-plan") {
-      const proposedPlan = plans.get(row.id);
-      return proposedPlan ? { ...row, proposedPlan } : row;
+      const plan = plans.get(row.id);
+      return plan ? { ...row, streaming: plan.streaming, proposedPlan: plan.proposedPlan } : row;
     }
     if (row.kind === "work-live") {
       const groupedEntries = patchGroup(row.groupedEntries);
@@ -2750,7 +2763,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     }
 
     case "proposed-plan":
-      return a.proposedPlan === (b as typeof a).proposedPlan;
+      return (
+        a.streaming === (b as typeof a).streaming && a.proposedPlan === (b as typeof a).proposedPlan
+      );
 
     case "viewed-images": {
       const bv = b as typeof a;

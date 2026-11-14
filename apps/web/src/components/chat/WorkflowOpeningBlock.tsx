@@ -23,6 +23,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
 import { AgentElapsed } from "./AgentElapsed";
 import { findRevealRef } from "./markdownFindContext";
+import { useExpandRevealedEntry } from "./entryReveal";
 import { useTallEnoughToFold } from "./useTallEnoughToFold";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { EnvironmentSubagentAvatar } from "./V2LifecycleRow";
@@ -97,7 +98,7 @@ export function WorkflowOpeningBlock(props: {
       {opening.group && opening.group.unphasedMembers.length > 0 ? (
         <ul className="m-0 list-none p-0">{opening.group.unphasedMembers.map(memberRow)}</ul>
       ) : null}
-      <WorkflowScript script={opening.script} />
+      <WorkflowScript entryId={opening.messageId} script={opening.script} />
     </section>
   );
 }
@@ -201,8 +202,10 @@ function WorkflowMemberRow(props: {
   );
 }
 
-function WorkflowScript(props: { readonly script: string }) {
+function WorkflowScript(props: { readonly entryId: string; readonly script: string }) {
+  const revealExpansion = useExpandRevealedEntry(props.entryId);
   const [expanded, setExpanded] = useState(false);
+  if (revealExpansion && !expanded) setExpanded(true);
   const revealRef = findRevealRef(() => setExpanded(true));
   const { ref: contentRef, tallEnough: canFold } = useTallEnoughToFold();
   const folded = canFold && !expanded;

@@ -18,7 +18,11 @@ import {
   parseThreadKey,
   threadKey,
 } from "@t3tools/client-runtime/state/entities";
-import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ThreadEntryPin,
+  ScopedProjectRef,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import type {
   EnvironmentId,
   OrchestrationV2ProjectedTurnItem,
@@ -73,6 +77,9 @@ const EMPTY_ASSISTANT_MESSAGE_TEXT_ATOM = Atom.make<string | null>(null).pipe(
 );
 const EMPTY_LAST_VISITED_AT_ATOM = Atom.make<DateTime.Utc | null>(null).pipe(
   Atom.withLabel("web-thread-last-visited:empty"),
+);
+const EMPTY_ENTRY_PINS_ATOM = Atom.make<ReadonlyArray<OrchestrationV2ThreadEntryPin>>([]).pipe(
+  Atom.withLabel("web-thread-entry-pins:empty"),
 );
 const EMPTY_UPDATED_AT_ATOM = Atom.make<DateTime.Utc | null>(null).pipe(
   Atom.withLabel("web-thread-updated-at:empty"),
@@ -193,6 +200,14 @@ export function useQuietThreadProjection(
 export function useThreadLastVisitedAt(ref: ScopedThreadRef | null): DateTime.Utc | null {
   return useAtomValue(
     ref === null ? EMPTY_LAST_VISITED_AT_ATOM : environmentThreadDetails.lastVisitedAtAtom(ref),
+  );
+}
+
+export function useThreadEntryPins(
+  ref: ScopedThreadRef | null,
+): ReadonlyArray<OrchestrationV2ThreadEntryPin> {
+  return useAtomValue(
+    ref === null ? EMPTY_ENTRY_PINS_ATOM : environmentThreadDetails.entryPinsAtom(ref),
   );
 }
 

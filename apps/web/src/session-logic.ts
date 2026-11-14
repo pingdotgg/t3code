@@ -118,6 +118,7 @@ export type TimelineEntry = (
       readonly id: string;
       readonly kind: "proposed-plan";
       readonly createdAt: string;
+      readonly streaming: boolean;
       readonly proposedPlan: ProposedPlan;
     }
   | {
@@ -643,6 +644,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         id: item.id,
         kind: "proposed-plan",
         createdAt,
+        streaming: item.streaming,
         proposedPlan,
         ...attemptMetadata,
       });
