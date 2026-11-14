@@ -51,6 +51,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
@@ -148,6 +149,7 @@ const layerTest = GuestShareService.layer.pipe(
   Layer.provide(layerConnect),
   Layer.provideMerge(layerAnalytics),
   Layer.provide(ServerSecretStore.layer),
+  Layer.provide(DocumentText.layer),
   Layer.provideMerge(layerConfig),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
@@ -731,6 +733,11 @@ it.effect("refuses too many files, too many bytes, and images that are not what 
           contentType: "text/html",
           bytes: new TextEncoder().encode("<b>"),
         },
+        {
+          name: "notes.rtf",
+          contentType: "application/rtf",
+          bytes: new TextEncoder().encode(String.raw`{\rtf1 Available}`),
+        },
       ]),
     );
     const [message] = yield* waitingMessages;
@@ -744,7 +751,18 @@ it.effect("refuses too many files, too many bytes, and images that are not what 
       [
         { type: "image", name: "screen.png", mimeType: "image/png", sizeBytes: PNG.length },
         { type: "file", name: "notes_fdp.html", mimeType: "text/html", sizeBytes: 3 },
+        { type: "file", name: "notes.rtf", mimeType: "application/rtf", sizeBytes: 17 },
       ],
+    );
+    // Agents read a guest's documents through the same extracted text as the owner's uploads.
+    const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+    const document = resolveAttachmentPath({
+      attachmentsDir,
+      attachment: message!.attachments![2]!,
+    });
+    assert.equal(
+      yield* (yield* FileSystem.FileSystem).readFileString(`${document}.txt`),
+      "Available",
     );
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
@@ -752,18 +770,27 @@ it.effect("refuses too many files, too many bytes, and images that are not what 
 it.effect("caps the bytes of files waiting in one share", () =>
   Effect.gen(function* () {
     const { guestShares, session, shareId } = yield* joinedGuest;
-    const submit = (sizeBytes: number) =>
+    const submit = (sizeBytes: number, ...more: Parameters<typeof uploadsOf>[0]) =>
       Effect.gen(function* () {
         return guestShares.submit(
           session,
           { shareId, text: "Look" },
-          yield* uploadsOf([png("big.png", sizeBytes)]),
+          yield* uploadsOf([png("big.png", sizeBytes), ...more]),
         );
       }).pipe(Effect.flatten);
     yield* submit(9 * MIB);
     yield* submit(9 * MIB);
-    const error = yield* Effect.flip(submit(9 * MIB));
+    const before = yield* storedFiles;
+    const error = yield* Effect.flip(
+      submit(9 * MIB, {
+        name: "notes.rtf",
+        contentType: "application/rtf",
+        bytes: new TextEncoder().encode(String.raw`{\rtf1 Available}`),
+      }),
+    );
     assert.equal(error.reason, "files_busy");
+    // The refused message keeps neither its files nor their extracted text.
+    assert.deepEqual(yield* storedFiles, before);
     // Text alone still goes through.
     yield* guestShares.submit(session, { shareId, text: "One more thing" }, []);
     assert.equal((yield* waitingMessages).length, 3);
