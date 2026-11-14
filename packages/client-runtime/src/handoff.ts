@@ -11,7 +11,7 @@ import {
   getModelSelectionStringOptionValue,
   getProviderOptionCurrentValue,
 } from "@t3tools/shared/model";
-import { isAutoModelSelection, resolveAutoModelSelection } from "@t3tools/shared/autoModel";
+import { isAutoModelSlug, resolveAutoModelSelection } from "@t3tools/shared/autoModel";
 
 import { isReasoningSelect } from "./modelTraits.ts";
 import type { ThreadStructure } from "./state/models.ts";
@@ -42,7 +42,7 @@ export function resolvePendingHandoff(
   )?.modelSelection;
   if (from === undefined || selection == null) return null;
   // The server swaps Auto for a concrete model per message, keeping the current one while it fits.
-  if (isAutoModelSelection(selection)) {
+  if (isAutoModelSlug(selection.model)) {
     const route = resolveAutoModelSelection({
       selection,
       providers,

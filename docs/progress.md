@@ -66,3 +66,11 @@
 - Why: in the real hub2 UI, every Auto thread showed "Context handoff pending: Sonnet 5.5 (AB) → Auto Low (CL)" after each turn, while the server log showed the next message stay on `claudeAutoB` (sticky).
 - Numbers: handoff + contextWindow tests 39/39 (the new case failed before); client-runtime, web and mobile typecheck clean. Deployed on hub2 as a web-only build (51 s), no restart.
 - Next: link hub and run the same checks there; rebuild the PC desktop app.
+
+## 2026-11-14: Threads routed by Auto stay on Auto
+
+- What: the model Auto picks carries an `auto` option with its level. The server treats it as Auto on the next command (sticky while under 90%), and web and mobile show the thread's composer as "Auto Low · now Sonnet 5.5 (B)" instead of "Sonnet 5.5 Low".
+- Why: Tomáš saw "Sonnet 5.5 Low" in a thread started on Auto Low. The server stored only the concrete model, so Auto showed only where a local draft remembered it, and clients without the fork's composer sent the concrete model, ending Auto for that thread.
+- Numbers: autoModel 12/12, handoff + contextWindow 39/39 (a recursion the stamp caused was caught by the handoff test); shared, client-runtime, web, mobile and server typecheck clean. Checked in a clean incognito browser on a scratch copy of hub2's data: a thread started on Auto Low over the CLI shows Auto Low in the composer.
+- Deploy: service now runs from `~/.t3/fork-current` (a symlink to the deploy checkout), so a new build goes into a fresh checkout and the restart flips the link.
+- Next: hub (link it first) and a fork build of the PC desktop app; the stock app still shows the concrete model.

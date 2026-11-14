@@ -13,6 +13,8 @@ import { exhaustedUsageWindow } from "./usageLimits.ts";
  * live usage limits. The level (`low` | `medium` | `high`) rides in the `effort` option.
  */
 const AUTO_MODEL_SLUG = "auto";
+/** Stamped on the model Auto picks, holding the level, so the thread stays on Auto. */
+const AUTO_OPTION_ID = "auto";
 const AUTO_LEVELS = ["low", "medium", "high"] as const;
 type AutoLevel = (typeof AUTO_LEVELS)[number];
 const DEFAULT_LEVEL: AutoLevel = "medium";
@@ -119,11 +121,28 @@ export const AUTO_LEVEL_MODELS: ReadonlyArray<{ readonly slug: string; readonly 
     name: `Auto ${level[0]!.toUpperCase()}${level.slice(1)}`,
   }));
 
+function stampedLevel(selection: ModelSelection | null | undefined): AutoLevel | undefined {
+  const value = selection?.options?.find((option) => option.id === AUTO_OPTION_ID)?.value;
+  return AUTO_LEVELS.find((level) => level === value);
+}
+
 export function isAutoModelSelection(selection: ModelSelection | null | undefined): boolean {
-  return isAutoModelSlug(selection?.model);
+  return isAutoModelSlug(selection?.model) || stampedLevel(selection) !== undefined;
+}
+
+/** A routed thread's model as the Auto level it came from, for pickers; others unchanged. */
+export function autoLevelSelection<T extends ModelSelection | null | undefined>(
+  selection: T,
+): T | ModelSelection {
+  const level = stampedLevel(selection);
+  return selection && level
+    ? { instanceId: selection.instanceId, model: `${AUTO_MODEL_SLUG}-${level}` }
+    : selection;
 }
 
 function autoLevelOf(selection: ModelSelection): AutoLevel {
+  const stamped = stampedLevel(selection);
+  if (stamped) return stamped;
   const fixed = AUTO_LEVELS.find((level) => selection.model === `${AUTO_MODEL_SLUG}-${level}`);
   if (fixed) return fixed;
   const value = selection.options?.find((option) => option.id === "effort")?.value;
@@ -204,12 +223,15 @@ function effortOptions(provider: ServerProvider, candidate: AutoCandidate) {
     : undefined;
 }
 
-function toSelection(provider: ServerProvider, candidate: AutoCandidate): ModelSelection {
-  const options = effortOptions(provider, candidate);
+function toSelection(
+  provider: ServerProvider,
+  candidate: AutoCandidate,
+  level: AutoLevel,
+): ModelSelection {
   return {
     instanceId: provider.instanceId,
     model: candidate.model,
-    ...(options ? { options } : {}),
+    options: [...(effortOptions(provider, candidate) ?? []), { id: AUTO_OPTION_ID, value: level }],
   };
 }
 
@@ -235,7 +257,7 @@ export function resolveAutoModelSelection(input: {
   const candidates = AUTO_CANDIDATES[level];
 
   const current = input.current;
-  if (current && !isAutoModelSelection(current)) {
+  if (current && !isAutoModelSlug(current.model)) {
     const provider = input.providers.find((entry) => entry.instanceId === current.instanceId);
     const candidate = candidates.find(
       (entry) => entry.driver === provider?.driver && entry.model === current.model,
@@ -246,7 +268,7 @@ export function resolveAutoModelSelection(input: {
       usable(provider, candidate.model, input.now) &&
       peakUsedPercent(provider) < STICKY_MAX_USED_PERCENT
     ) {
-      return { selection: toSelection(provider, candidate), level, sticky: true };
+      return { selection: toSelection(provider, candidate, level), level, sticky: true };
     }
   }
 
@@ -260,7 +282,9 @@ export function resolveAutoModelSelection(input: {
       // A copy: `filter` already returned a new array, and Hermes has no `toSorted`.
       .sort(compareInstances);
     const provider = instances[0];
-    if (provider) return { selection: toSelection(provider, candidate), level, sticky: false };
+    if (provider) {
+      return { selection: toSelection(provider, candidate, level), level, sticky: false };
+    }
   }
   return null;
 }
