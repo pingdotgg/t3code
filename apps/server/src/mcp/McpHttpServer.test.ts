@@ -976,10 +976,11 @@ it.effect("bounds page text made of wide characters before dropping locators", (
   ).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("terminates HTTP MCP sessions with DELETE", () =>
+it.effect("terminates HTTP MCP sessions with DELETE only for the credential that opened them", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const token = "providerTokenWithoutDots";
+      const foreignToken = "foreignProviderToken";
       const scope: McpInvocationContext.McpInvocationScope = {
         environmentId,
         requestNamespace: "provider-session",
@@ -1000,7 +1001,12 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
               Effect.succeed(
                 presented === token
                   ? (scope as McpInvocationContext.McpThreadInvocationScope)
-                  : undefined,
+                  : presented === foreignToken
+                    ? ({
+                        ...scope,
+                        requestNamespace: "foreign-session",
+                      } as McpInvocationContext.McpThreadInvocationScope)
+                    : undefined,
               ),
           }),
         ),
@@ -1009,9 +1015,21 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
         disableListenLog: true,
         disableLogger: true,
       }).pipe(Layer.build);
-      const httpClient = (yield* HttpClient.HttpClient).pipe(
+      const baseClient = yield* HttpClient.HttpClient;
+      const httpClient = baseClient.pipe(
         HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
       );
+      const foreignClient = baseClient.pipe(
+        HttpClient.mapRequest(HttpClientRequest.bearerToken(foreignToken)),
+      );
+      const ping = (client: HttpClient.HttpClient, session: string) =>
+        client.post("/mcp", {
+          headers: { accept: "application/json, text/event-stream", "mcp-session-id": session },
+          body: HttpBody.text(
+            `{"jsonrpc":"2.0","id":2,"method":"ping","params":{}}`,
+            "application/json",
+          ),
+        });
 
       const initializeResponse = yield* httpClient.post("/mcp", {
         headers: { accept: "application/json, text/event-stream" },
@@ -1032,22 +1050,18 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
       });
       expect(unknownSessionResponse.status).toBe(404);
 
+      const sessionHeaders = { accept: "text/event-stream", "mcp-session-id": sessionId! };
+      expect((yield* ping(foreignClient, sessionId!)).status).toBe(404);
+      expect((yield* foreignClient.get("/mcp", { headers: sessionHeaders })).status).toBe(404);
+      expect((yield* foreignClient.del("/mcp", { headers: sessionHeaders })).status).toBe(404);
+      expect((yield* ping(httpClient, sessionId!)).status).toBe(200);
+
       const terminateResponse = yield* httpClient.del("/mcp", {
         headers: { "mcp-session-id": sessionId! },
       });
       expect(terminateResponse.status).toBe(204);
 
-      const reusedSessionResponse = yield* httpClient.post("/mcp", {
-        headers: {
-          accept: "application/json, text/event-stream",
-          "mcp-session-id": sessionId!,
-        },
-        body: HttpBody.text(
-          `{"jsonrpc":"2.0","id":2,"method":"ping","params":{}}`,
-          "application/json",
-        ),
-      });
-      expect(reusedSessionResponse.status).toBe(404);
+      expect((yield* ping(httpClient, sessionId!)).status).toBe(404);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
