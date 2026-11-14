@@ -6,6 +6,12 @@ import {
   VcsListRefsResult,
   WorktreeMcpHandoffInput,
   WorktreeMcpHandoffResult,
+  WorktreeMcpRepoDetachInput,
+  WorktreeMcpRepoDetachResult,
+  WorktreeMcpRepoEnsureInput,
+  WorktreeMcpRepoEnsureResult,
+  WorktreeMcpRepoSetSubmoduleInput,
+  WorktreeMcpRepoSetSubmoduleResult,
   WorktreeMcpStatusResult,
   ThreadId,
 } from "@t3tools/contracts";
@@ -82,8 +88,56 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
+const RepoWorktreeEnsureTool = Tool.make("t3_repo_worktree_ensure", {
+  description:
+    "For a project with Multi-Repository Project Folder on. Attaches a worktree of one Git repository in the project folder to this thread: reuses the worktree on this exact branch with its uncommitted edits as they are, or creates one. `repository` is a path relative to the folder, such as 'service/framework'. A new branch needs `baseRef`. Work in the returned `worktreePath`.",
+  parameters: WorktreeMcpRepoEnsureInput,
+  success: WorktreeMcpRepoEnsureResult,
+  failure: WorktreeToolFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Create or reuse a repository worktree")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true);
+
+const RepoWorktreeDetachTool = Tool.make("t3_repo_worktree_detach", {
+  description:
+    "Detaches a repository worktree from this thread. Its folder, branch, and edits stay.",
+  parameters: WorktreeMcpRepoDetachInput,
+  success: WorktreeMcpRepoDetachResult,
+  failure: WorktreeToolFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Detach a repository worktree")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+const RepoWorktreeSetSubmoduleTool = Tool.make("t3_repo_worktree_set_submodule", {
+  description:
+    "Points `submodulePath` in the parent repository worktree `worktreePath` at a commit (default HEAD) of `sourceWorktreePath`, the submodule's own worktree; both attached to this thread. Fetches it locally when missing (no push or remote change), checks it out detached, and stages the gitlink. Refuses a submodule with uncommitted changes.",
+  parameters: WorktreeMcpRepoSetSubmoduleInput,
+  success: WorktreeMcpRepoSetSubmoduleResult,
+  failure: WorktreeToolFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Pin a submodule to a worktree commit")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 export const WorktreeToolkit = Toolkit.make(
   WorktreeHandoffTool,
   WorktreeStatusTool,
   WorktreeListTool,
+  RepoWorktreeEnsureTool,
+  RepoWorktreeDetachTool,
+  RepoWorktreeSetSubmoduleTool,
 );

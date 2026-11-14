@@ -24,6 +24,8 @@ const state = vi.hoisted(() => ({
   statusRefreshes: 0,
   readRefs: vi.fn(),
   cachedRefs: [] as VcsListRefsResult["refs"],
+  repoWorktree: null as { worktreePath: string } | null,
+  createRefCwds: [] as string[],
 }));
 
 vi.mock("react", () => ({
@@ -47,6 +49,10 @@ vi.mock("./use-selected-thread-worktree", () => ({
   useSelectedThreadWorktree: () => ({
     selectedThreadCwd: "/repo",
     selectedThreadWorktreePath: null,
+  }),
+  useSelectedThreadSourceControl: () => ({
+    sourceControlCwd: state.repoWorktree?.worktreePath ?? "/repo",
+    repoWorktree: state.repoWorktree,
   }),
 }));
 vi.mock("./queries", () => ({
@@ -93,7 +99,8 @@ vi.mock("./vcs", () => ({
       state.afterGitAction?.();
       return AsyncResult.success({ refName: state.branch });
     },
-    createRef: async ({ input }: { input: { refName: string } }) => {
+    createRef: async ({ input }: { input: { cwd: string; refName: string } }) => {
+      state.createRefCwds.push(input.cwd);
       state.branch = input.refName;
       state.afterGitAction?.();
       return AsyncResult.success({ refName: state.branch });
@@ -140,6 +147,8 @@ describe("thread Git mutation permissions", () => {
     state.results = [];
     state.afterGitAction = undefined;
     state.statusRefreshes = 0;
+    state.repoWorktree = null;
+    state.createRefCwds = [];
   });
 
   it.each([false, true])(
@@ -159,6 +168,20 @@ describe("thread Git mutation permissions", () => {
       expect(state.thread.branch).toBe(canOperate ? "feature/task" : "main");
     },
   );
+
+  it("creates a pending action's feature branch where the action runs", async () => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    state.repoWorktree = { worktreePath: "/worktrees/alpha" };
+    const actions = useSelectedThreadGitActions();
+    await actions.onCreateSelectedThreadBranch("feature/task", { sourceControl: true });
+    state.repoWorktree = null;
+    await useSelectedThreadGitActions().onCreateSelectedThreadBranch("feature/own", {
+      sourceControl: true,
+    });
+    expect(state.createRefCwds).toEqual(["/worktrees/alpha", "/repo"]);
+    // Only the thread's own workspace branch is the thread's branch.
+    expect(state.metadataRequests.map((request) => request.branch)).toEqual(["feature/own"]);
+  });
 
   it("keeps ordinary commits and pushes available without task permission", async () => {
     const actions = useSelectedThreadGitActions();

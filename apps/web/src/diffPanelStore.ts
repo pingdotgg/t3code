@@ -30,6 +30,8 @@ interface DiffPanelStoreState {
   selectToolCall: (ref: ScopedThreadRef, target: ToolCallDiffTarget) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
   selectCommit: (ref: ScopedThreadRef, sha: string) => void;
+  /** Back to Automatic: a base ref or commit picked in one checkout may not exist in another. */
+  clearGitComparison: (ref: ScopedThreadRef) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -121,6 +123,21 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
               [threadKey]: { kind: "commit", sha, baseRef },
             },
             branchBaseRefByThreadKey: { ...state.branchBaseRefByThreadKey, [threadKey]: baseRef },
+          };
+        }),
+      clearGitComparison: (ref) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const previous = state.byThreadKey[threadKey];
+          const pinned = previous?.kind === "branch" || previous?.kind === "commit";
+          if (!pinned && !(threadKey in state.branchBaseRefByThreadKey)) return state;
+          const { [threadKey]: _removedBaseRef, ...branchBaseRefByThreadKey } =
+            state.branchBaseRefByThreadKey;
+          return {
+            byThreadKey: pinned
+              ? { ...state.byThreadKey, [threadKey]: DEFAULT_SELECTION }
+              : state.byThreadKey,
+            branchBaseRefByThreadKey,
           };
         }),
       reconcileTurnSelection: (ref, availableTurnIds) =>

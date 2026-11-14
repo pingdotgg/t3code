@@ -37,7 +37,7 @@ import {
   useAdaptiveWorkspaceLayout,
   useWorkspacePaneState,
 } from "../layout/AdaptiveWorkspaceLayout";
-import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useSelectedThreadSourceControl } from "../../state/use-selected-thread-worktree";
 import { useReviewCacheForThread } from "./reviewState";
 import {
   isNativeReviewDiffDrawEvent,
@@ -355,7 +355,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const { draftMessage, draftContext } = useThreadDraftForThread({ environmentId, threadId });
   const reviewCache = useReviewCacheForThread({ environmentId, threadId });
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const { sourceControlCwd: selectedThreadCwd } = useSelectedThreadSourceControl();
   const topContentInset = useContentTopInset();
   const bottomContentInset = useSheetContentBottomInset();
 

@@ -1,5 +1,7 @@
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   CommandId,
   latestProviderTurnForAttempt,
@@ -64,6 +66,7 @@ import {
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import { repoWorktreeNote } from "./RepoWorktreeNote.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -165,6 +168,9 @@ export const layer: Layer.Layer<
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    // Optional so harnesses without MCP start turns unchanged.
+    const mcpSessions = yield* Effect.serviceOption(McpProviderSessions.McpProviderSessions);
 
     // Build draining callbacks outside startup scope so they cannot retain full thread history.
     const makeRunControls = (input: {
@@ -722,6 +728,7 @@ export const layer: Layer.Layer<
         appThread: projection.thread,
         run,
         checkpointScope,
+        runs: projection.runs,
       });
       const sessionResult = yield* Effect.result(
         providerSessions.open({
@@ -810,6 +817,22 @@ export const layer: Layer.Layer<
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork);
+      const hasT3Mcp =
+        Option.isSome(mcpSessions) &&
+        (yield* mcpSessions.value.read(projection.thread.id)) !== undefined;
+      const repoNote = repoWorktreeNote({
+        userText,
+        hasT3Mcp,
+        settings: hasT3Mcp
+          ? yield* serverSettings.getSettings.pipe(
+              Effect.map(
+                (current) => resolveProjectSettings(current, projection.thread.projectId).settings,
+              ),
+              Effect.orElseSucceed(() => null),
+            )
+          : null,
+        repoWorktrees: projection.thread.repoWorktrees ?? [],
+      });
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );
@@ -955,7 +978,9 @@ export const layer: Layer.Layer<
             return handoffBudget({
               tokenCap,
               modelContextWindow,
-              userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
+              userText: [restartNote, repoNote, userText]
+                .filter((part) => part !== "")
+                .join("\n\n"),
               attachments: providerMessage.attachments,
               providerThread: budgetProviderThread,
               nativeContextEstimate:
@@ -1675,7 +1700,7 @@ export const layer: Layer.Layer<
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          const context = [delivery.context, sideChatContext, restartNote]
+          const context = [delivery.context, sideChatContext, restartNote, compact ? "" : repoNote]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -1754,6 +1779,7 @@ export const layer: Layer.Layer<
         retryHandoff.length === 0 &&
         sideChatHandoff === undefined &&
         restartNote === "" &&
+        repoNote === "" &&
         !noteContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);
@@ -1763,6 +1789,7 @@ export const layer: Layer.Layer<
         providerSessionId,
         session: deliverySession,
         run: runningRun,
+        runs: projection.runs,
         rootNode: runningRootNode,
         checkpointScope,
         providerThread: runningProviderThread,

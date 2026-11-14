@@ -4,6 +4,7 @@ import type {
   CheckpointScopeId,
   MessageId,
   OrchestrationV2CheckpointFileTotals,
+  OrchestrationV2CheckpointRepository,
   OrchestrationV2ThreadProjection,
   RunId,
 } from "@t3tools/contracts";
@@ -24,8 +25,36 @@ export interface ThreadCheckpointSummary {
     readonly deletions: number;
   }>;
   readonly filesTotal?: OrchestrationV2CheckpointFileTotals;
+  /** Repository worktrees in this turn; their paths in `files` start with each `pathPrefix`. */
+  readonly repositories?: ReadonlyArray<OrchestrationV2CheckpointRepository>;
   readonly assistantMessageId: MessageId | null;
   readonly completedAt: string;
+}
+
+/**
+ * Where a path from a checkpoint's files or diff lives: in a repository
+ * worktree when it starts with that worktree's prefix, otherwise in the
+ * thread's own workspace.
+ */
+export function resolveCheckpointFilePath(
+  repositories:
+    | ReadonlyArray<Pick<OrchestrationV2CheckpointRepository, "pathPrefix" | "worktreePath">>
+    | undefined,
+  filePath: string,
+): { readonly worktreePath: string; readonly relativePath: string } | null {
+  let match: { readonly worktreePath: string; readonly relativePath: string } | null = null;
+  let matchedLength = -1;
+  for (const repository of repositories ?? []) {
+    const prefix = `${repository.pathPrefix}/`;
+    if (filePath.startsWith(prefix) && prefix.length > matchedLength) {
+      matchedLength = prefix.length;
+      match = {
+        worktreePath: repository.worktreePath,
+        relativePath: filePath.slice(prefix.length),
+      };
+    }
+  }
+  return match;
 }
 
 export function deriveThreadCheckpointSummaries(
@@ -70,6 +99,7 @@ export function deriveThreadCheckpointSummaries(
         status: checkpoint.status,
         files: checkpoint.files,
         ...(checkpoint.filesTotal === undefined ? {} : { filesTotal: checkpoint.filesTotal }),
+        ...(checkpoint.repositories === undefined ? {} : { repositories: checkpoint.repositories }),
         assistantMessageId,
         completedAt: DateTime.formatIso(checkpoint.capturedAt),
       },

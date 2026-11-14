@@ -31,9 +31,13 @@ import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
-import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
+import {
+  useSelectedThreadSourceControl,
+  useSelectedThreadWorktree,
+} from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
 import { menuItemIconName, statusSummary } from "./gitSheetComponents";
+import { RepoWorktreesGroup } from "./RepoWorktreesGroup";
 import {
   LinkedPullRequestRow,
   linkedPullRequestKey,
@@ -76,7 +80,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     replace: presentation === "sheet",
     context: selectedThread ?? undefined,
   });
-  const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const { selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const sourceControl = useSelectedThreadSourceControl();
+  const selectedThreadCwd = sourceControl.sourceControlCwd;
   const linkedPrLines = useLinkedPullRequestLines(selectedThread, selectedEnvironmentRuntime);
   const linkedPrActions = useLinkedPullRequestActions({
     thread: selectedThread,
@@ -96,7 +102,15 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       : null,
   );
 
-  const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
+  // The thread's branch names its own checkout, never a selected repository worktree.
+  const currentBranchLabel =
+    gitStatus.data?.refName ??
+    (sourceControl.repoWorktree === null
+      ? selectedThread?.branch
+      : gitStatus.data === null
+        ? sourceControl.repoWorktree.branch
+        : null) ??
+    "Detached HEAD";
   const currentStatusSummary = statusSummary(gitStatus.data);
   const currentWorktreePath = selectedThreadWorktreePath;
   const gitOperationLabel = gitState.gitOperationLabel;
@@ -269,7 +283,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           icon="text.bubble"
           label="Review changes"
           description="Inspect changes, uncommitted edits, and turn diffs"
-          disabled={busy || !isRepo}
+          disabled={busy || (!isRepo && sourceControl.repoWorktrees.length === 0)}
           onPress={() => {
             const params = { environmentId, threadId };
             if (presentation === "sheet") {
@@ -281,24 +295,27 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             }
           }}
         />
-        <ListRow
-          icon="point.topleft.down.curvedto.point.bottomright.up"
-          label="Branches & worktrees"
-          description={
-            canChangeThreadBranch
-              ? "Switch branch, create branch, or move to a worktree"
-              : "View branches and worktrees"
-          }
-          disabled={busy || !isRepo}
-          onPress={() =>
-            presentRoute(() =>
-              navigation.navigate("GitBranches", {
-                environmentId: String(environmentId),
-                threadId: String(threadId),
-              }),
-            )
-          }
-        />
+        {/* The thread's own branch; a repository worktree keeps its branch. */}
+        {sourceControl.repoWorktree === null ? (
+          <ListRow
+            icon="point.topleft.down.curvedto.point.bottomright.up"
+            label="Branches & worktrees"
+            description={
+              canChangeThreadBranch
+                ? "Switch branch, create branch, or move to a worktree"
+                : "View branches and worktrees"
+            }
+            disabled={busy || !isRepo}
+            onPress={() =>
+              presentRoute(() =>
+                navigation.navigate("GitBranches", {
+                  environmentId: String(environmentId),
+                  threadId: String(threadId),
+                }),
+              )
+            }
+          />
+        ) : null}
         {linkedPrActions.canLink ? (
           <ListRow
             icon="link"
@@ -323,6 +340,14 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           ))}
         </ListSection>
       ) : null}
+
+      <RepoWorktreesGroup
+        environmentId={environmentId}
+        threadId={threadId}
+        selected={sourceControl.repoWorktree}
+        workspaceLabel={selectedThreadWorktreePath ? "Thread worktree" : "Project folder"}
+        onSelect={sourceControl.select}
+      />
 
       {currentWorktreePath ? (
         <ListSection title="Worktree">

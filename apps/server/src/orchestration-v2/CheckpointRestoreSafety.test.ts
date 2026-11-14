@@ -9,6 +9,7 @@ import {
   ProviderThreadId,
   ThreadId,
 } from "@t3tools/contracts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -17,7 +18,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
-import { isCheckpointRestoreIsolated } from "./CheckpointRestoreSafety.ts";
+import { isCheckpointRestoreIsolated, planCheckpointRestore } from "./CheckpointRestoreSafety.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
@@ -34,6 +35,8 @@ it.effect.each([
   "sibling",
   "shared-provider",
   "conversation",
+  "repository-worktree",
+  ...(symlinksSupported ? (["aliased-repository-worktree"] as const) : []),
 ] as const)("preserves overlapping workspace files, owner=%s", (owner) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -46,6 +49,15 @@ it.effect.each([
     yield* fs.makeDirectory(sibling);
     const otherFile = path.join(nested, "other-thread.txt");
     yield* fs.writeFileString(otherFile, "other thread's uncommitted work");
+    const alias = path.join(parent, "alias");
+    if (owner === "aliased-repository-worktree") yield* fs.symlink(cwd, alias);
+    // A folder thread reused this thread's own checkout as a repository worktree.
+    const repositoryAttachment =
+      owner === "repository-worktree"
+        ? cwd
+        : owner === "aliased-repository-worktree"
+          ? alias
+          : null;
     const threadId = ThreadId.make("restore-current");
     const otherId = ThreadId.make("restore-other");
     const projectId = ProjectId.make("restore-project");
@@ -119,6 +131,12 @@ it.effect.each([
                 checkpoints: [],
                 checkpointScopes: [],
               }),
+            getThreadRepoWorktreePaths: () =>
+              Effect.succeed(
+                repositoryAttachment === null
+                  ? []
+                  : [{ threadId: otherId, title: "Folder", worktreePath: repositoryAttachment }],
+              ),
             getThreadProviderContext: () =>
               Effect.succeed({
                 thread: otherThread as never,
@@ -196,12 +214,152 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
         path,
         projections: {
           getShellSnapshot: () => Effect.succeed({ threads: [], archivedThreads: [] }),
+          getThreadRepoWorktreePaths: () => Effect.succeed([]),
         } as never,
         projects: {} as never,
       },
     );
     assert.isTrue(isolated);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// The service worktree was saved at both turns.
+it.effect.each([
+  {
+    refusal: "the thread worktree's snapshot failed at the target",
+    owner: "thread worktree",
+    target: "error",
+    later: "ready",
+    otherAttached: false,
+    expected: "workspace-unavailable",
+  },
+  {
+    refusal: "the project folder's snapshot failed after the target",
+    owner: "project folder",
+    target: "ready",
+    later: "error",
+    otherAttached: false,
+    expected: "shared-workspace",
+  },
+  {
+    refusal: "the project folder's snapshot failed at the target and a later turn edited it",
+    owner: "project folder",
+    target: "error",
+    later: "ready",
+    otherAttached: false,
+    laterFolderEdit: true,
+    expected: "shared-workspace",
+  },
+  {
+    refusal: "the project folder changed after the target but no later turn listed its files",
+    owner: "project folder",
+    target: "ready",
+    later: "ready",
+    otherAttached: false,
+    workspaceChanged: true,
+    expected: "shared-workspace",
+  },
+  {
+    refusal: "another thread has the removed service worktree attached",
+    owner: "project folder",
+    target: "ready",
+    later: "ready",
+    otherAttached: true,
+    expected: "shared-repository",
+  },
+  ...(symlinksSupported
+    ? ([
+        {
+          refusal: "another thread has the removed service worktree attached through a link",
+          owner: "project folder",
+          target: "ready",
+          later: "ready",
+          otherAttached: true,
+          attachedThroughLink: true,
+          expected: "shared-repository",
+        },
+      ] as const)
+    : []),
+] as const)(
+  "refuses file restore when $refusal",
+  ({ owner, target: targetStatus, later, otherAttached, expected, ...row }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-v2-restore-error-" });
+      const worktreePath = path.join(parent, "worktree");
+      const scopeId = CheckpointScopeId.make("restore-error-scope");
+      const repository = {
+        repository: "service",
+        repositoryPath: path.join(parent, "service"),
+        worktreePath: path.join(parent, "service-work"),
+        branch: "work",
+        pathPrefix: "service",
+        ref: "refs/t3/test/service",
+        status: "ready",
+      };
+      const file = (filePath: string) => ({
+        path: filePath,
+        kind: "modified",
+        additions: 1,
+        deletions: 1,
+      });
+      const checkpoint = (
+        ordinal: number,
+        workspaceStatus: "ready" | "error",
+        folderEdit = false,
+      ) =>
+        ({
+          id: CheckpointId.make(`restore-error-checkpoint-${ordinal}`),
+          scopeId,
+          status: "ready",
+          workspaceStatus,
+          ordinalWithinScope: ordinal,
+          ref: `refs/t3/test/workspace-${ordinal}`,
+          repositories: [repository],
+          files: [file("service/index.ts"), ...(folderEdit ? [file("README.md")] : [])],
+        }) as never;
+      const target = checkpoint(1, targetStatus);
+      let attachedPath = repository.worktreePath;
+      if ("attachedThroughLink" in row) {
+        yield* fileSystem.symlink(parent, path.join(parent, "link"));
+        attachedPath = path.join(parent, "link", "service-work");
+      }
+      const plan = yield* planCheckpointRestore(
+        {
+          thread: {
+            id: ThreadId.make("restore-error"),
+            worktreePath: owner === "thread worktree" ? worktreePath : null,
+            repoWorktrees: [],
+          },
+          scope: { id: scopeId, cwd: worktreePath },
+          checkpoint: target,
+          checkpoints: [target, checkpoint(2, later, "laterFolderEdit" in row)],
+        },
+        {
+          fileSystem,
+          path,
+          projections: {
+            getShellSnapshot: () => Effect.succeed({ threads: [], archivedThreads: [] }),
+            // The service worktree folder does not exist.
+            getThreadRepoWorktreePaths: () =>
+              Effect.succeed(
+                otherAttached
+                  ? [
+                      {
+                        threadId: ThreadId.make("other-thread"),
+                        worktreePath: attachedPath,
+                      },
+                    ]
+                  : [],
+              ),
+          } as never,
+          projects: {} as never,
+          workspaceChanged: () => Effect.succeed("workspaceChanged" in row),
+        },
+      );
+      assert.equal(plan._tag, expected);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect.each([
@@ -245,6 +403,7 @@ it.effect.each([
               }),
             getCheckpointContext: () => Effect.succeed({ checkpointScopes: [] }),
             getThreadProviderContext: () => Effect.succeed({ providerSessions: [] }),
+            getThreadRepoWorktreePaths: () => Effect.succeed([]),
           } as never,
           projects: {} as never,
         },

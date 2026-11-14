@@ -4,6 +4,7 @@ import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as RepoWorktreeService from "../git/RepoWorktreeService.ts";
 import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
@@ -118,8 +119,10 @@ const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
   ),
 );
 
+// One instance serializes checkpoint Git work per checkout for every caller,
+// repository worktree attachment included.
 const layerCheckpointServiceProvided = CheckpointService.layer.pipe(
-  Layer.provide(IdAllocator.layer),
+  Layer.provide(Layer.merge(IdAllocator.layer, GitVcsDriver.layer)),
 );
 const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
   Layer.provide(IdAllocator.layer),
@@ -280,6 +283,17 @@ export const layerProjectSetupScriptRunner = ProjectSetupScriptRunner.layer.pipe
 const layerManagedProjectFoldersProvided = ManagedProjectFolders.layer.pipe(
   Layer.provide(layerProjectService),
 );
+// One instance for launches, WebSocket, and MCP, so per-worktree submodule
+// pins stay serialized across every caller.
+const layerRepoWorktreeProvided = RepoWorktreeService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerThreadManagementProvided,
+      ProjectionStore.layer,
+      layerCheckpointServiceProvided,
+    ).pipe(Layer.provideMerge(layerProjectService)),
+  ),
+);
 const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -288,6 +302,7 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
       layerThreadManagementProvided,
       layerCommandReceiptStoreProvided,
       layerEventSink,
+      layerRepoWorktreeProvided,
       IdAllocator.layer,
     ).pipe(Layer.provideMerge(layerProjectService)),
   ),
@@ -391,6 +406,7 @@ export const layerProduction = Layer.mergeAll(
   ),
   layer,
   layerManagedProjectFoldersProvided,
+  layerRepoWorktreeProvided,
   layerThreadLaunchProvided,
   layerScheduledTaskProvided,
   layerScratchThreadPromotionProvided,

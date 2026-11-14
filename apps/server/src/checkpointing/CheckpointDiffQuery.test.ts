@@ -65,6 +65,7 @@ function layerFor(input: {
       ),
     ),
     Layer.provideMerge(NodeCrypto.layer),
+    Layer.provideMerge(NodeServices.layer),
   );
 }
 
@@ -81,6 +82,7 @@ it.effect("excludes ready checkpoints from rolled-back runs", () => {
           ...projection.checkpoints[0]!,
           scopeId: firstScopeId,
           runId: firstRunId,
+          ordinalWithinScope: 1,
           appRunOrdinal: 1,
           ref: CheckpointRef.make("refs/t3/test/first"),
         },
@@ -189,6 +191,58 @@ it.effect.each([false, true])(
     }).pipe(Effect.provide(layer));
   },
 );
+
+it.effect("keeps a repository worktree detached before the last turn in the full diff", () => {
+  const alpha = (ordinal: number) => ({
+    repository: "alpha",
+    repositoryPath: "/folder/alpha",
+    worktreePath: "/worktrees/alpha/work",
+    branch: "work",
+    pathPrefix: "alpha",
+    ref: CheckpointRef.make(`refs/t3/test/alpha/${ordinal}`),
+    status: "ready" as const,
+  });
+  const checkpoint = (ordinalWithinScope: number, runId: RunId | null) => ({
+    scopeId: firstScopeId,
+    runId,
+    ordinalWithinScope,
+    appRunOrdinal: runId === null ? null : ordinalWithinScope,
+    status: "ready" as const,
+    ref: CheckpointRef.make(`refs/t3/test/ordinal/${ordinalWithinScope}`),
+  });
+  const diffCheckpoints = vi.fn((input: CheckpointStore.DiffCheckpointsInput) =>
+    Effect.succeed(`diff from ${input.cwd}\n`),
+  );
+  const layer = layerFor({
+    projection: Effect.succeed({
+      runs: [
+        { id: firstRunId, ordinal: 1, status: "completed" },
+        { id: secondRunId, ordinal: 2, status: "completed" },
+      ],
+      checkpointScopes: [{ id: firstScopeId, runId: secondRunId, kind: "root_run", cwd: "/repo" }],
+      // The thread detached alpha after turn 1, so turn 2 lists no repositories.
+      checkpoints: [
+        { ...checkpoint(0, null), workspaceStatus: "ready", repositories: [alpha(0)] },
+        { ...checkpoint(1, firstRunId), workspaceStatus: "ready", repositories: [alpha(1)] },
+        checkpoint(2, secondRunId),
+      ],
+    } satisfies ProjectionCheckpointContext),
+    diffCheckpoints,
+  });
+
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    const result = yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
+
+    assert.strictEqual(result.diff, "diff from /repo\ndiff from /folder/alpha\n");
+    assert.deepEqual(
+      diffCheckpoints.mock.calls
+        .filter(([input]) => input.pathPrefix !== undefined)
+        .map(([input]) => [input.fromCheckpointRef, input.toCheckpointRef]),
+      [["refs/t3/test/alpha/0", "refs/t3/test/alpha/1"]],
+    );
+  }).pipe(Effect.provide(layer));
+});
 
 const layerVcsProcess = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
 const layerStore = CheckpointStore.layer.pipe(

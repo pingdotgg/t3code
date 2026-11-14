@@ -33,6 +33,35 @@ describe("WebSocket RPC contracts", () => {
         }),
       ),
     ).toBe(true);
+    // Only the server attaches a repository worktree; clients may detach one.
+    expect(
+      Exit.isFailure(
+        decode({
+          type: "thread.repo-worktree.attach",
+          commandId: "forged-attach",
+          threadId: "thread-1",
+          repoWorktree: {
+            repository: "service",
+            repositoryPath: "/folder/service",
+            worktreePath: "/anywhere",
+            branch: "feature",
+            baseRef: null,
+            origin: "created",
+            attachedAt: "2026-11-04T00:00:00.000Z",
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isSuccess(
+        decode({
+          type: "thread.repo-worktree.detach",
+          commandId: "detach-1",
+          threadId: "thread-1",
+          worktreePath: "/worktrees/service/feature",
+        }),
+      ),
+    ).toBe(true);
   });
 
   it("lets the server pick a new worktree's folder", () => {

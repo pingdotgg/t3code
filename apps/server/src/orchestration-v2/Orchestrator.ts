@@ -39,6 +39,7 @@ import {
   type OrchestrationV2ServerCommand,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
+  type ThreadRepoWorktree,
   type OrchestrationV2AppThread,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ContextSourcePoint,
@@ -104,8 +105,10 @@ import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
 import {
-  isCheckpointRestoreIsolated,
+  planCheckpointRestore,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
+  sharedRepositoryRestoreMessage,
+  WORKSPACE_SNAPSHOT_FAILED_MESSAGE,
 } from "./CheckpointRestoreSafety.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import {
@@ -647,6 +650,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pull-request-watch.sync":
     case "thread.pull-request-watch.checks-reopen":
     case "thread.pull-request.sync":
+    case "thread.repo-worktree.attach":
+    case "thread.repo-worktree.detach":
     case "thread.title.regeneration.complete":
     case "thread.project.adopt-folder":
     case "thread.runtime-mode.set":
@@ -3915,6 +3920,69 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         events,
         effects,
       );
+    },
+  );
+
+  // Reuses thread.metadata-updated, whose payload is the whole thread, so
+  // clients that predate repoWorktrees keep decoding the stream.
+  const dispatchRepoWorktreeMutation = Effect.fn("orchestrationV2.dispatch.repoWorktreeMutation")(
+    function* (
+      command: Extract<
+        OrchestrationV2ServerCommand,
+        { readonly type: "thread.repo-worktree.attach" | "thread.repo-worktree.detach" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const thread = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      if (thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is deleted.`,
+        });
+      }
+      const current = thread.repoWorktrees ?? [];
+      let repoWorktrees: ReadonlyArray<ThreadRepoWorktree>;
+      if (command.type === "thread.repo-worktree.attach") {
+        if (thread.archivedAt !== null && command.relabelOnly !== true) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} is archived.`,
+          });
+        }
+        const listed = current.find(
+          (entry) => entry.worktreePath === command.repoWorktree.worktreePath,
+        );
+        // A relabel read before a detach must not attach the worktree again.
+        if (listed === undefined && command.relabelOnly === true) return;
+        if (listed?.branch === command.repoWorktree.branch) return;
+        // A listed path is relabeled in place after its checkout switched branch.
+        repoWorktrees =
+          listed === undefined
+            ? [...current, command.repoWorktree]
+            : current.map((entry) => (entry === listed ? command.repoWorktree : entry));
+      } else {
+        repoWorktrees = current.filter((entry) => entry.worktreePath !== command.worktreePath);
+        if (repoWorktrees.length === current.length) return;
+      }
+      const now = yield* DateTime.now;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: { ...thread, repoWorktrees, updatedAt: now },
+      });
     },
   );
 
@@ -13735,12 +13803,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       if (command.restoreFiles !== false) {
-        const isolated = yield* isCheckpointRestoreIsolated(projection.thread, targetScope, {
-          projects,
-          path,
-          fileSystem,
-          projections: projectionStore,
-        }).pipe(
+        const plan = yield* planCheckpointRestore(
+          {
+            thread: projection.thread,
+            scope: targetScope,
+            checkpoint: targetCheckpoint,
+            checkpoints: projection.checkpoints,
+          },
+          { projects, path, fileSystem, projections: projectionStore },
+        ).pipe(
           Effect.mapError(
             (cause) =>
               new OrchestratorDispatchError({
@@ -13750,11 +13821,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
-        if (!isolated)
+        if (plan._tag !== "restore")
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
-            cause: SHARED_WORKSPACE_RESTORE_MESSAGE,
+            cause:
+              plan._tag === "shared-workspace"
+                ? SHARED_WORKSPACE_RESTORE_MESSAGE
+                : plan._tag === "workspace-unavailable"
+                  ? WORKSPACE_SNAPSHOT_FAILED_MESSAGE
+                  : sharedRepositoryRestoreMessage(plan.repository),
           });
       }
 
@@ -14898,6 +14974,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pull-request-watch.sync":
         yield* dispatchPullRequestWatchSync(command, events, effects);
         break;
+      case "thread.repo-worktree.attach":
+      case "thread.repo-worktree.detach":
+        yield* dispatchRepoWorktreeMutation(command, events);
+        break;
       case "thread.guest-share.open":
       case "thread.guest-share.redeem":
       case "thread.guest-share.close":
@@ -15248,6 +15328,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
+          // Attaching or detaching again, or after another client did, is not an error.
+          command.type === "thread.repo-worktree.attach" ||
+          command.type === "thread.repo-worktree.detach" ||
           (command.type === "thread.delete" && command.onlyIfUnused === true),
         (_planned) =>
           new OrchestratorDispatchError({

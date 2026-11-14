@@ -10,6 +10,8 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 export interface CaptureCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  /** See `VcsCaptureCheckpointInput.baseline`. */
+  readonly baseline?: boolean;
   /** The checkpoint this one follows, so a turn that switched branches starts where it landed. */
   readonly previousCheckpointRef?: CheckpointRef;
 }
@@ -31,6 +33,8 @@ export interface DiffCheckpointsInput {
   readonly maxOutputBytes?: number;
   /** Limits the diff to these exact paths. An empty list yields an empty diff. */
   readonly filePaths?: ReadonlyArray<string>;
+  /** Shown before every patch path, so patches from several repositories stay apart. */
+  readonly pathPrefix?: string;
 }
 
 export interface ListAuthoredPathsInput {
@@ -54,6 +58,11 @@ export class CheckpointStore extends Context.Service<
     ) => Effect.Effect<void, CheckpointStoreError>;
 
     readonly hasCheckpointRef: (
+      input: Omit<RestoreCheckpointInput, "fallbackToHead">,
+    ) => Effect.Effect<boolean, CheckpointStoreError>;
+
+    /** False when the ref is missing or was not captured as a baseline. */
+    readonly isBaselineCheckpoint: (
       input: Omit<RestoreCheckpointInput, "fallbackToHead">,
     ) => Effect.Effect<boolean, CheckpointStoreError>;
 
@@ -110,6 +119,13 @@ export const make = Effect.gen(function* () {
     return yield* checkpoints.hasCheckpointRef(input);
   });
 
+  const isBaselineCheckpoint: CheckpointStore["Service"]["isBaselineCheckpoint"] = Effect.fn(
+    "isBaselineCheckpoint",
+  )(function* (input) {
+    const checkpoints = yield* resolveCheckpoints(input.cwd);
+    return yield* checkpoints.isBaselineCheckpoint(input);
+  });
+
   const restoreCheckpoint: CheckpointStore["Service"]["restoreCheckpoint"] = Effect.fn(
     "restoreCheckpoint",
   )(function* (input) {
@@ -142,6 +158,7 @@ export const make = Effect.gen(function* () {
     isGitRepository,
     captureCheckpoint,
     hasCheckpointRef,
+    isBaselineCheckpoint,
     restoreCheckpoint,
     diffCheckpoints,
     listAuthoredPaths,

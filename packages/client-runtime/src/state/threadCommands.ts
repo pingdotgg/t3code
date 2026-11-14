@@ -30,6 +30,7 @@ import {
   cancelQueuedRun,
   createThread,
   deleteThread,
+  detachThreadRepoWorktree,
   editQueuedRun,
   interruptThreadTurn,
   forkSideChat,
@@ -277,6 +278,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     unlinkPullRequest: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unlink-pull-request",
       execute: unlinkThreadPullRequest,
+      scheduler,
+      concurrency,
+    }),
+    detachRepoWorktree: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:detach-repo-worktree",
+      execute: detachThreadRepoWorktree,
       scheduler,
       concurrency,
     }),

@@ -13,7 +13,7 @@ import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
-import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
+import { useSelectedThreadSourceControl } from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
 
 type GitCommitSheetProps = StaticScreenProps<{
@@ -24,10 +24,12 @@ type GitCommitSheetProps = StaticScreenProps<{
 export function GitCommitSheet(_props: GitCommitSheetProps) {
   const navigation = useNavigation();
   const { selectedThread } = useThreadSelection();
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const { sourceControlCwd: selectedThreadCwd, repoWorktree } = useSelectedThreadSourceControl();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
+  // A repository worktree's new branch is not the thread's, so it needs only source control.
+  const canCreateFeatureBranch = repoWorktree === null ? canChangeThreadBranch : true;
 
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -52,7 +54,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const selectedDeletions = selectedFiles.reduce((sum, file) => sum + file.deletions, 0);
 
   const runCommitAction = async (featureBranch: boolean) => {
-    if (!canWriteSourceControl || (featureBranch && !canChangeThreadBranch)) return;
+    if (!canWriteSourceControl || (featureBranch && !canCreateFeatureBranch)) return;
     const commitMessage = dialogCommitMessage.trim();
     navigation.goBack();
     await gitActions.onRunSelectedThreadGitAction({
@@ -202,7 +204,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           icon="arrow.branch"
           tone="text"
           fullWidth
-          disabled={!canWriteSourceControl || !canChangeThreadBranch || noneSelected || busy}
+          disabled={!canWriteSourceControl || !canCreateFeatureBranch || noneSelected || busy}
           onPress={() => void runCommitAction(true)}
         />
       </View>

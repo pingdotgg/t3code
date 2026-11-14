@@ -1,4 +1,5 @@
-// Client-supplied worktrees count only under managed folders or when Git lists them for the project.
+// Client-supplied worktrees count only under managed folders or when Git lists them for the
+// project, or for a repository in the project's folder that a thread attached.
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
@@ -101,34 +102,66 @@ export const make = Effect.gen(function* () {
         NodeSqliteClient.readOnly,
         Effect.orElseSucceed(() => []),
       );
-      const projectWorktrees = new Map<string, ReadonlyArray<string>>();
-      const isProjectWorktree = Effect.fnUntraced(function* (
-        projectId: string,
-        worktreePath: string,
-      ) {
-        const project = projects.find((candidate) => candidate.id === projectId);
-        if (project === undefined) return false;
-        let listed = projectWorktrees.get(projectId);
+      // Keyed by repository path: a folder project holds several repositories.
+      const listedWorktrees = new Map<string, ReadonlyArray<string>>();
+      const isListedWorktree = Effect.fnUntraced(function* (repository: string, worktree: string) {
+        let listed = listedWorktrees.get(repository);
         if (listed === undefined) {
-          listed = yield* git.listWorktreePaths(project.workspaceRoot).pipe(
+          listed = yield* git.listWorktreePaths(repository).pipe(
             Effect.flatMap((paths) => Effect.forEach(paths, resolveRoot)),
             Effect.map((paths) => paths.filter((listedPath) => listedPath !== null)),
             Effect.orElseSucceed((): ReadonlyArray<string> => []),
           );
-          projectWorktrees.set(projectId, listed);
+          listedWorktrees.set(repository, listed);
         }
-        const real = yield* resolveRoot(worktreePath);
-        return real !== null && listed.includes(real);
+        return listed.includes(worktree);
       });
+      const projectRoot = (projectId: string) => {
+        const project = projects.find((candidate) => candidate.id === projectId);
+        return project === undefined ? Effect.succeed(null) : resolveRoot(project.workspaceRoot);
+      };
       for (const { worktreePath, projectId } of threads) {
         // Relative paths use server cwd; managed paths still need resolution to reject symlinks elsewhere.
         if (!path.isAbsolute(worktreePath)) continue;
-        if (!within(yield* resolveRoot(worktreePath))) continue;
+        const worktree = yield* resolveRoot(worktreePath);
+        if (worktree === null || !within(worktree)) continue;
         const lexical = path.resolve(worktreePath);
         if (managedDirectories.some((directory) => isWithinRoot(path, lexical, directory))) {
           return true;
         }
-        if (yield* isProjectWorktree(projectId, worktreePath)) return true;
+        const project = projects.find((candidate) => candidate.id === projectId);
+        if (project !== undefined && (yield* isListedWorktree(project.workspaceRoot, worktree))) {
+          return true;
+        }
+      }
+
+      const attachments = yield* sql<{
+        readonly repositoryPath: string;
+        readonly worktreePath: string;
+        readonly projectId: string;
+      }>`
+        SELECT DISTINCT
+          json_extract(r.value, '$.repositoryPath') AS "repositoryPath",
+          json_extract(r.value, '$.worktreePath') AS "worktreePath",
+          t.project_id AS "projectId"
+        FROM orchestration_v2_projection_threads t, json_each(t.payload_json, '$.repoWorktrees') r
+        WHERE t.deleted_at IS NULL
+          AND json_extract(r.value, '$.repositoryPath') IS NOT NULL
+          AND json_extract(r.value, '$.worktreePath') IS NOT NULL
+      `.pipe(
+        NodeSqliteClient.readOnly,
+        Effect.orElseSucceed(() => []),
+      );
+      // The record alone grants nothing: its repository must sit in the project's
+      // folder, and Git must list the worktree for that repository.
+      for (const { repositoryPath, worktreePath, projectId } of attachments) {
+        if (!path.isAbsolute(repositoryPath) || !path.isAbsolute(worktreePath)) continue;
+        const worktree = yield* resolveRoot(worktreePath);
+        if (worktree === null || !within(worktree)) continue;
+        const root = yield* projectRoot(projectId);
+        const repository = yield* resolveRoot(repositoryPath);
+        if (root === null || repository === null || !isWithinRoot(path, repository, root)) continue;
+        if (yield* isListedWorktree(repository, worktree)) return true;
       }
       return false;
     },

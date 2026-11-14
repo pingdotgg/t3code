@@ -42,6 +42,7 @@ import {
 } from "@t3tools/shared/git";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as RepoWorktreeService from "../git/RepoWorktreeService.ts";
 import { parseGitCloneProgressLine } from "../project/gitCloneProgress.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -244,6 +245,7 @@ const make = Effect.gen(function* () {
   const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
   const terminals = yield* TerminalManager.TerminalManager;
   const git = yield* GitWorkflow.GitWorkflowService;
+  const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -906,10 +908,12 @@ const make = Effect.gen(function* () {
             const removedPath = createdWorktreePath;
             const removedBranch = createdBranch;
             // Forget worktrees only after removal succeeds; failed removals must not reuse partially written checkouts.
-            yield* git
+            // A folder thread may attach the new branch's checkout during setup; the guard then
+            // keeps the checkout and its branch for that thread, and this thread still lets it go.
+            yield* repoWorktrees
               .removeWorktree({ cwd: project.workspaceRoot, path: removedPath, force: true })
               .pipe(
-                Effect.andThen(
+                Effect.andThen(() =>
                   removedBranch === null
                     ? Effect.void
                     : git
@@ -920,6 +924,15 @@ const make = Effect.gen(function* () {
                         })
                         .pipe(Effect.ignoreCause({ log: true })),
                 ),
+                Effect.catchTags({
+                  RepoWorktreeInUseError: (inUse) =>
+                    Effect.logInfo("Kept an abandoned thread worktree another thread works in", {
+                      commandId: input.commandId,
+                      threadId,
+                      path: removedPath,
+                      attachedThreadId: inUse.threadId,
+                    }),
+                }),
                 Effect.andThen(
                   threads
                     .dispatch({
