@@ -8,30 +8,12 @@ import {
 } from "@t3tools/client-runtime/state/terminal";
 
 import {
-  shouldClearTerminalSelectionAction,
   shouldHandleTerminalExit,
   synchronizeTerminalOutput,
   synchronizeTerminalSession,
 } from "./ThreadTerminalDrawer";
 
 describe("terminal selection actions", () => {
-  it("does not let an old selection popup cancel its replacement right-click menu", () => {
-    expect(
-      shouldClearTerminalSelectionAction({
-        actionPending: false,
-        openMenuRequestId: 3,
-        currentRequestId: 4,
-      }),
-    ).toBe(false);
-    expect(
-      shouldClearTerminalSelectionAction({
-        actionPending: false,
-        openMenuRequestId: null,
-        currentRequestId: 4,
-      }),
-    ).toBe(false);
-  });
-
   it("handles an exit that lands while the terminal surface is still loading", () => {
     expect(shouldHandleTerminalExit("exited", "running", false, 1)).toBe(true);
     expect(shouldHandleTerminalExit("exited", "exited", false, 1)).toBe(false);
@@ -40,7 +22,13 @@ describe("terminal selection actions", () => {
 });
 
 it("retains visible output and selection until a replacement subscription receives its snapshot", () => {
-  const terminal = { resetAndWrite: vi.fn(), write: vi.fn(), clearSelection: vi.fn() };
+  const terminal = {
+    resetAndWrite: vi.fn(),
+    write: vi.fn(),
+    getSelection: vi.fn(() => "selected"),
+    getSelectionCellCount: vi.fn(() => 8),
+    clearSelection: vi.fn(),
+  };
   const snapshot = {
     threadId: "thread",
     terminalId: "term-1",
@@ -85,12 +73,20 @@ it("retains visible output and selection until a replacement subscription receiv
     threadId: "thread",
     terminalId: "term-1",
   });
+  terminal.resetAndWrite.mockClear();
   synchronizeTerminalOutput(terminal, cleared, observedCursor);
-  expect(terminal.resetAndWrite).toHaveBeenLastCalledWith("");
+  expect(terminal.resetAndWrite).not.toHaveBeenCalled();
+  expect(terminal.write).toHaveBeenLastCalledWith("\u001b[H\u001b[2J\u001b[3J");
 });
 
 it("reports an attach failure that leaves the output unchanged", () => {
-  const terminal = { resetAndWrite: vi.fn(), write: vi.fn(), clearSelection: vi.fn() };
+  const terminal = {
+    resetAndWrite: vi.fn(),
+    write: vi.fn(),
+    getSelection: vi.fn(() => "selected"),
+    getSelectionCellCount: vi.fn(() => 8),
+    clearSelection: vi.fn(),
+  };
   const previous = { ...EMPTY_TERMINAL_BUFFER_STATE, error: null };
   const failed = { ...previous, error: "Terminal attach failed" };
 
@@ -99,5 +95,7 @@ it("reports an attach failure that leaves the output unchanged", () => {
   ).toBe(INITIAL_TERMINAL_OUTPUT_CURSOR);
   expect(terminal.write).toHaveBeenCalledWith("\r\n[terminal] Terminal attach failed\r\n");
   expect(terminal.resetAndWrite).not.toHaveBeenCalled();
+  expect(terminal.getSelection).not.toHaveBeenCalled();
+  expect(terminal.getSelectionCellCount).not.toHaveBeenCalled();
   expect(terminal.clearSelection).not.toHaveBeenCalled();
 });

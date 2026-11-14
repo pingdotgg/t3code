@@ -45,9 +45,11 @@ describe("resolveEffortGlyph", () => {
     });
   });
 
-  it("falls back to the word when the value is unknown or the scale has one level", () => {
+  it("falls back to the word when the value is unknown or the scale is too short or long", () => {
     expect(resolveEffortGlyph(claude, "unknown")).toBeNull();
     expect(resolveEffortGlyph(descriptor(["high"]), "high")).toBeNull();
+    const levels = Array.from({ length: 8 }, (_, index) => `level${index}`);
+    expect(resolveEffortGlyph(descriptor(levels), "level0")).toBeNull();
   });
 });
 
