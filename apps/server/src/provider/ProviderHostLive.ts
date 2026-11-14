@@ -5,8 +5,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
+import { persistChatAttachments } from "../assets/ChatAttachments.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
@@ -24,6 +26,7 @@ export const layer = Layer.effect(
     const secrets = yield* ServerSecretStore.ServerSecretStore;
     const digest = yield* Digest.Digest;
     const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     // Optional so standalone provider layers in tests probe at once.
     const lifecycleEvents = yield* Effect.serviceOption(
       ServerLifecycleEvents.ServerLifecycleEvents,
@@ -49,6 +52,15 @@ export const layer = Layer.effect(
       }),
       resolveAttachmentPath: (attachment) =>
         resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }),
+      // ChatAttachments owns the persistence span.
+      persistChatAttachments: Effect.fnUntraced(
+        function* (input) {
+          return yield* persistChatAttachments(input);
+        },
+        Effect.provideService(ServerConfig.ServerConfig, config),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ),
       // DocumentText owns the path-resolution span.
       resolveExtractedTextPath: Effect.fnUntraced(
         function* (path) {

@@ -1158,8 +1158,23 @@ function deriveTurnFolds(input: {
       : group.entries.length;
     // Folded dividers lose their place in the turn, so only the latest stays visible.
     const visibleCompactionId = group.entries.findLast(timelineEntryIsCompaction)?.id;
+    const responseBoundaryIndex =
+      group.steerSegments.findLast(({ startIndex }) => startIndex <= terminalEntryIndex)
+        ?.startIndex ?? 0;
+    let responseStartIndex = terminalEntryIndex;
+    let responseHasImages = false;
+    // Inline images split one reply into consecutive text and attachment messages.
+    for (let index = terminalEntryIndex; index >= responseBoundaryIndex; index--) {
+      const entry = group.entries[index];
+      if (entry?.kind !== "message" || entry.message.role !== "assistant") break;
+      responseStartIndex = index;
+      if (entry.message.attachments?.some((attachment) => attachment.type === "image")) {
+        responseHasImages = true;
+      }
+    }
+    if (!responseHasImages) responseStartIndex = terminalEntryIndex;
     for (const [index, entry] of group.entries.entries()) {
-      if (entry.id === group.terminalEntry?.id) {
+      if (index >= responseStartIndex && index <= terminalEntryIndex) {
         continue;
       }
       const isCompaction = timelineEntryIsCompaction(entry);

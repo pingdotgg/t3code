@@ -3,7 +3,7 @@ import { type RunId, type TurnItemId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { agentWorkingDirectories } from "@t3tools/client-runtime/workspace-basename-lookup";
 import { memo, use, useState } from "react";
-import { type ChatMessage, type TurnDiffSummary } from "../../types";
+import { isImageAttachment, type ChatMessage, type TurnDiffSummary } from "../../types";
 import ChatMarkdown from "../ChatMarkdown";
 import { GitForkIcon, ReplyIcon } from "lucide-react";
 import { captureAssistantMessageOpening } from "~/lib/assistantTextSelection";
@@ -32,6 +32,10 @@ import { readThreadTurnItems } from "../../state/entities";
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
 import { MESSAGE_HEADING_LEVEL, MessageAuthorHeading } from "./TimelineRowParts";
+import { GuestMessageAttachments } from "./GuestMessageAttachments";
+import { selectMessageImageResources } from "../../session-logic";
+import { useAssetUrls } from "../../assets/assetUrls";
+import { buildExpandedImagePreview } from "./ExpandedImagePreview";
 
 export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
@@ -42,7 +46,15 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
   );
   const text = liveText ?? row.message.text;
   const messageText =
-    text || (row.message.streaming || row.suppressEmptyResponse ? "" : "(empty response)");
+    text ||
+    (row.message.streaming || row.suppressEmptyResponse || row.message.attachments?.length
+      ? ""
+      : "(empty response)");
+  const resources = selectMessageImageResources(row.message.attachments);
+  const urls = useAssetUrls(ctx.activeThreadEnvironmentId, resources);
+  const urlsById = new Map(
+    resources.map((resource, index) => [resource.attachmentId, urls[index]]),
+  );
 
   return (
     <>
@@ -75,6 +87,22 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
               onImageExpand={ctx.onImageExpand}
             />
           </AssistantCitationSource>
+        </div>
+        <div className="w-fit">
+          <GuestMessageAttachments
+            attachments={row.message.attachments ?? []}
+            imageUrl={(attachment) => urlsById.get(attachment.id) ?? undefined}
+            onOpenImage={(attachment) => {
+              const preview = buildExpandedImagePreview(
+                (row.message.attachments ?? []).filter(isImageAttachment).map((image) => {
+                  const previewUrl = urlsById.get(image.id);
+                  return previewUrl ? { ...image, previewUrl } : image;
+                }),
+                attachment.id,
+              );
+              if (preview) ctx.onImageExpand(preview);
+            }}
+          />
         </div>
         {ctx.onOpenTurnDiff ? (
           <AssistantChangedFilesSection
