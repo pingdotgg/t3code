@@ -50,7 +50,6 @@ export type VoiceDraftSnapshot = {
   readonly ownerKey: string;
   readonly text: string;
   readonly selection: { readonly start: number; readonly end: number };
-  readonly revision: number;
 };
 
 export type VoiceRecorderStatus = {
@@ -107,18 +106,39 @@ type TranscriptCommitResult =
   | { readonly kind: "stale" }
   | { readonly kind: "empty" };
 
+const WORD_SPACELESS_LANGUAGES = new Set(["ja", "zh", "yue", "th", "lo", "km", "my"]);
+
+const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
+const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+
+// Where `position` in `before` lands in `text`, placed after anything inserted at it.
+function mapPosition(before: string, text: string, position: number, suffixFirst: boolean) {
+  const shared = Math.min(before.length, text.length);
+  const matchesFromEnd = (offset: number) =>
+    before[before.length - 1 - offset] === text[text.length - 1 - offset];
+  let prefix = 0;
+  let suffix = 0;
+  // Matching is per UTF-16 unit; never let a boundary split a surrogate pair.
+  const scanSuffix = (limit: number) => {
+    while (suffix < limit && matchesFromEnd(suffix)) suffix += 1;
+    if (suffix > 0 && isLowSurrogate(before.charCodeAt(before.length - suffix))) suffix -= 1;
+  };
+  if (suffixFirst) scanSuffix(shared);
+  while (prefix < shared - suffix && before[prefix] === text[prefix]) prefix += 1;
+  if (prefix > 0 && isHighSurrogate(before.charCodeAt(prefix - 1))) prefix -= 1;
+  if (!suffixFirst) scanSuffix(shared - prefix);
+  if (position < prefix) return position;
+  if (position >= before.length - suffix) return position + text.length - before.length;
+  return text.length - suffix;
+}
+
 export function resolveTranscriptCommit(
   captured: VoiceDraftSnapshot,
   current: VoiceDraftSnapshot | null,
   transcript: string,
   locale: string,
 ): TranscriptCommitResult {
-  if (
-    !current ||
-    current.ownerKey !== captured.ownerKey ||
-    current.text !== captured.text ||
-    current.revision !== captured.revision
-  ) {
+  if (!current || current.ownerKey !== captured.ownerKey) {
     return { kind: "stale" };
   }
 
@@ -127,33 +147,38 @@ export function resolveTranscriptCommit(
     return { kind: "empty" };
   }
 
-  const isEmptySelection = captured.selection.start === captured.selection.end;
-  const normalizedLocale = locale.replaceAll("_", "-").toLowerCase();
-  const usesEnglishSpacing = normalizedLocale === "en" || normalizedLocale.startsWith("en-");
+  const { text } = current;
+  // An edit made while recording (a citation, a paste) is never replaced. The edit's position is
+  // ambiguous over repeated text, so insert after the selection under both extreme alignments.
+  const unchanged = text === captured.text;
+  const end = unchanged
+    ? captured.selection.end
+    : Math.max(
+        mapPosition(captured.text, text, captured.selection.end, false),
+        mapPosition(captured.text, text, captured.selection.end, true),
+      );
+  const start = unchanged ? captured.selection.start : end;
+  const isEmptySelection = start === end;
+  const language = locale.split(/[-_]/)[0]!.toLowerCase();
   let insertion = replacement;
-  const autoSpacing = normalizedLocale === "auto";
-  if (isEmptySelection && (usesEnglishSpacing || autoSpacing)) {
-    const left = captured.text[captured.selection.start - 1];
-    const right = captured.text[captured.selection.start];
+  if (isEmptySelection && !WORD_SPACELESS_LANGUAGES.has(language)) {
+    const auto = language === "auto";
+    const left = text.slice(Math.max(0, start - 2), start);
+    const right = text.slice(start, start + 2);
+    const leftEdge = auto ? /[A-Za-z0-9.!?,:;)\]}'"]$/ : /(?:\p{L}|\p{M}|\p{N}|[.!?,:;)\]}'"])$/u;
+    const rightEdge = auto ? /^[A-Za-z0-9([{'"]/ : /^[\p{L}\p{M}\p{N}([{'"]/u;
     const leftNeedsBoundary =
-      (!autoSpacing || /^[\p{Script=Latin}\p{N}]/u.test(replacement)) &&
-      left !== undefined &&
-      /[A-Za-z0-9.!?,:;)\]}'"]/.test(left) &&
-      (right === undefined || /\s/.test(right));
+      (!auto || /^[\p{Script=Latin}\p{N}]/u.test(replacement)) &&
+      leftEdge.test(left) &&
+      (!right || /^\s/.test(right));
     const rightNeedsBoundary =
-      (!autoSpacing || /[\p{Script=Latin}\p{N}]$/u.test(replacement)) &&
-      right !== undefined &&
-      /[A-Za-z0-9([{'"]/.test(right) &&
-      (left === undefined || /\s/.test(left));
+      (!auto || /(?:\p{Script=Latin}|\p{N})$/u.test(replacement)) &&
+      rightEdge.test(right) &&
+      (!left || /\s$/.test(left));
     insertion = `${leftNeedsBoundary ? " " : ""}${replacement}${rightNeedsBoundary ? " " : ""}`;
   }
 
-  const result = replaceTextRange(
-    captured.text,
-    captured.selection.start,
-    captured.selection.end,
-    insertion,
-  );
+  const result = replaceTextRange(text, start, end, insertion);
   return {
     kind: "commit",
     text: result.text,
@@ -234,7 +259,7 @@ export class VoiceInputController {
   private operationToken = 0;
   private sessionToken: VoiceInputSession | null = null;
   private transcription: PreparedVoiceTranscription | null = null;
-  private liveTranscription: Promise<{ text: string } | { error: unknown }> | null = null;
+  private liveTranscription: Promise<{ text: string | null } | { error: unknown }> | null = null;
   private transcriptionAbortController: AbortController | null = null;
   private postProcessingAbortController: AbortController | null = null;
   private skipPostProcessingRequested = false;
@@ -502,17 +527,15 @@ export class VoiceInputController {
       const capturedDraft = this.capturedDraft;
       let transcript: string;
       try {
-        if (this.liveTranscription) {
-          const result = await this.liveTranscription;
-          if ("error" in result) throw result.error;
-          transcript = result.text;
-        } else {
-          transcript = await runTranscriptionOperation(() =>
+        const live = this.liveTranscription ? await this.liveTranscription : null;
+        if (live && "error" in live) throw live.error;
+        transcript =
+          live?.text ??
+          (await runTranscriptionOperation(() =>
             transcription.streaming
               ? transcription.streaming.finish({ signal })
               : transcription.transcribe(recordingUri!, { signal }),
-          );
-        }
+          ));
       } catch (error) {
         if (this.isCurrent(operationToken)) {
           if (

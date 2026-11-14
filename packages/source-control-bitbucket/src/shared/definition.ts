@@ -14,6 +14,7 @@ import {
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
   parseCommitPath,
+  repositoryUrlFromPagePath,
   projectChangeRequestHost,
 } from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
@@ -23,6 +24,7 @@ const repositoryName = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
 const CHANGE_REQUEST_PATH = /^\/([^/]+\/[^/]+)\/pull-requests\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/([^/]+\/[^/]+)\/commits\/([0-9a-f]+)\/?$/iu;
+const REPOSITORY_PAGE_PATH = /^\/([^/]+\/[^/]+)\/src\/[^/]/u;
 
 const KIND = SourceControlProviderKind.make("bitbucket");
 
@@ -96,6 +98,8 @@ export const definition = defineSourceControl({
   commitUrl: (input) => buildCommitUrl(input, "commits"),
   parseCommitUrl: (url) =>
     isBitbucketHost(url.hostname) ? parseCommitPath(url, COMMIT_PATH) : null,
+  repositoryUrlFromPage: (url) =>
+    isBitbucketHost(url.hostname) ? repositoryUrlFromPagePath(url, REPOSITORY_PAGE_PATH) : null,
   changeRequestUrlFromReferenceAutolink: () => null,
   // No endpoint reopens a declined pull request, and nothing documented moves one in or out of
   // draft, so neither is offered rather than failing when pressed.
