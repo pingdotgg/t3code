@@ -257,14 +257,14 @@ function snoozePresetDaysAhead(
   return (WEEKDAY_INDEX[setting.day] - now.getDay() + 7) % 7 || 7;
 }
 
-/** Labels follow the actual day gap, so a Monday option on a Sunday reads "Tomorrow". */
+/** Keep named weekdays recognizable even when they fall tomorrow. */
 function snoozePresetLabel(setting: SnoozePresetSetting, daysAhead: number): string {
   if (setting.kind === "after") return `In ${formatSnoozeDuration(setting.minutes)}`;
   if (daysAhead === 0) {
     const hour = Number(setting.time.slice(0, 2));
     return hour < 12 ? "This morning" : hour < 17 ? "This afternoon" : "This evening";
   }
-  if (daysAhead === 1) return "Tomorrow";
+  if (daysAhead === 1) return capitalize(setting.day);
   if (setting.day === "monday") return "Next week";
   return daysAhead === 7 ? `Next ${capitalize(setting.day)}` : capitalize(setting.day);
 }
@@ -311,21 +311,23 @@ export function resolveSnoozePresets(
   now: Date,
   options: SnoozePresetOptions = {},
 ): ReadonlyArray<SnoozePreset> {
-  // By minute, so a duration (which keeps the clock's seconds) and a set time in the same
-  // minute tie, and the stable sort keeps whichever comes first in settings.
+  // Durations keep the clock's seconds; ties within a minute keep the first setting's wake.
   const wakeMinute = (preset: SnoozePreset) => Math.floor(Date.parse(preset.snoozedUntil) / 60_000);
-  const seen = new Set<number>();
-  return (
-    (options.presets ?? DEFAULT_SNOOZE_PRESETS)
-      .flatMap((setting) => resolveSnoozePreset(setting, now, options.formatTime) ?? [])
-      // flatMap returned a new array; Hermes has no `toSorted`.
-      .sort((a, b) => wakeMinute(a) - wakeMinute(b))
-      .filter((preset) => {
-        if (seen.has(wakeMinute(preset))) return false;
-        seen.add(wakeMinute(preset));
-        return true;
-      })
-  );
+  const presets = (options.presets ?? DEFAULT_SNOOZE_PRESETS)
+    .flatMap((setting) => resolveSnoozePreset(setting, now, options.formatTime) ?? [])
+    // flatMap returned a new array; Hermes has no `toSorted`.
+    .sort((a, b) => wakeMinute(a) - wakeMinute(b));
+  const groups = new Map<number, SnoozePreset[]>();
+  for (const preset of presets) {
+    const minute = wakeMinute(preset);
+    const group = groups.get(minute);
+    if (group) group.push(preset);
+    else groups.set(minute, [preset]);
+  }
+  return [...groups.values()].map((group) => ({
+    ...group[0]!,
+    label: [...new Set(group.map((preset) => preset.label))].join(" · "),
+  }));
 }
 
 /**
