@@ -19,6 +19,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import * as Effect from "effect/Effect";
+import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Option from "effect/Option";
@@ -181,8 +182,21 @@ interface ApplicationEventRow {
 const decodeV2EventJson = Schema.decodeUnknownEffect(OrchestrationV2DomainEventJson);
 const encodeV2EventJson = Schema.encodeEffect(OrchestrationV2DomainEventJson);
 const decodeV2StoredEvent = Schema.decodeUnknownEffect(OrchestrationV2StoredEvent);
+// Rows carry an event decodeV2EventJson already validated; revalidating it nearly doubled replay cost.
+const decodeV2StoredEventHeader = Schema.decodeUnknownEffect(
+  OrchestrationV2StoredEvent.mapFields(({ event: _event, ...fields }) => fields),
+);
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+// Same result as decodeJson; only malformed input pays for the schema's error.
+const parseJson = (json: string) => {
+  if (typeof json !== "string") return decodeJson(json);
+  try {
+    return Effect.succeed<unknown>(JSON.parse(json));
+  } catch {
+    return decodeJson(json);
+  }
+};
 
 function metadataForV2Event(event: OrchestrationV2DomainEvent): Record<string, unknown> {
   return {
@@ -196,11 +210,10 @@ function metadataForV2Event(event: OrchestrationV2DomainEvent): Record<string, u
   };
 }
 
-const rowToV2StoredEvent = Effect.fn("OrchestrationEventStore.rowToV2StoredEvent")(function* (
-  row: ApplicationEventRow,
-) {
-  const payload = yield* decodeJson(row.payload_json);
-  const metadata = yield* decodeJson(row.metadata_json);
+// Replay decodes rows one by one; a span per row would trace every replayed event.
+const rowToV2StoredEvent = Effect.fnUntraced(function* (row: ApplicationEventRow) {
+  const payload = yield* parseJson(row.payload_json);
+  const metadata = yield* parseJson(row.metadata_json);
   const values =
     typeof metadata === "object" && metadata !== null ? (metadata as Record<string, unknown>) : {};
   const event = yield* decodeV2EventJson({
@@ -217,16 +230,14 @@ const rowToV2StoredEvent = Effect.fn("OrchestrationEventStore.rowToV2StoredEvent
       : { providerInstanceId: values.providerInstanceId }),
     ...(values.rawEventId === undefined ? {} : { rawEventId: values.rawEventId }),
   });
-  return yield* decodeV2StoredEvent({
+  const { sequence, commandId } = yield* decodeV2StoredEventHeader({
     sequence: row.sequence,
     commandId: row.command_id,
-    event,
   });
+  return { sequence, commandId, event };
 });
 
-const rowToProjectEvent = Effect.fn("OrchestrationEventStore.rowToProjectEvent")(function* (
-  row: ApplicationEventRow,
-) {
+const rowToProjectEvent = Effect.fnUntraced(function* (row: ApplicationEventRow) {
   return yield* decodeProjectEvent({
     sequence: row.sequence,
     eventId: row.event_id,
@@ -237,8 +248,8 @@ const rowToProjectEvent = Effect.fn("OrchestrationEventStore.rowToProjectEvent")
     commandId: row.command_id,
     causationEventId: row.causation_event_id,
     correlationId: row.correlation_id,
-    payload: yield* decodeJson(row.payload_json),
-    metadata: yield* decodeJson(row.metadata_json),
+    payload: yield* parseJson(row.payload_json),
+    metadata: yield* parseJson(row.metadata_json),
   });
 });
 
@@ -250,11 +261,12 @@ function rowToApplicationStoredEvent(
 
 const isKnownProjectEventType = Schema.is(ProjectEventType);
 
-const keepReplayRow = (row: ApplicationEventRow, skipUnknownEventTypes?: boolean) =>
-  skipUnknownEventTypes !== true ||
-  (row.aggregate_kind === "project"
-    ? isKnownProjectEventType(row.event_type)
-    : isKnownOrchestrationV2EventType(row.event_type))
+const keepKnownEventTypeRow = (row: ApplicationEventRow) =>
+  (
+    row.aggregate_kind === "project"
+      ? isKnownProjectEventType(row.event_type)
+      : isKnownOrchestrationV2EventType(row.event_type)
+  )
     ? Effect.succeed(true)
     : Effect.logWarning("Skipping an application event row with an unknown event type", {
         aggregateKind: row.aggregate_kind,
@@ -581,7 +593,9 @@ const makeEventStore = Effect.gen(function* () {
         );
       },
     ).pipe(
-      Stream.filterEffect((row) => keepReplayRow(row, input?.skipUnknownEventTypes)),
+      // Query the next page on the reader while this one decodes.
+      Stream.bufferArray({ capacity: 1 }),
+      input?.skipUnknownEventTypes === true ? Stream.filterEffect(keepKnownEventTypeRow) : identity,
       Stream.mapEffect((row) =>
         rowToV2StoredEvent(row).pipe(
           Effect.mapError(
@@ -589,6 +603,7 @@ const makeEventStore = Effect.gen(function* () {
           ),
         ),
       ),
+      Stream.withSpan("OrchestrationEventStore.readAgentEvents"),
     );
   };
 
@@ -716,7 +731,9 @@ const makeEventStore = Effect.gen(function* () {
         }),
       ),
     ).pipe(
-      Stream.filterEffect((row) => keepReplayRow(row, input.skipUnknownEventTypes)),
+      // Query the next page on the reader while this one decodes.
+      Stream.bufferArray({ capacity: 1 }),
+      input.skipUnknownEventTypes === true ? Stream.filterEffect(keepKnownEventTypeRow) : identity,
       Stream.mapEffect((row) =>
         rowToApplicationStoredEvent(row).pipe(
           Effect.mapError(
@@ -724,6 +741,7 @@ const makeEventStore = Effect.gen(function* () {
           ),
         ),
       ),
+      Stream.withSpan("OrchestrationEventStore.readApplicationEvents"),
     );
 
   const streamProjectedApplicationEvents: OrchestrationEventStore["Service"]["streamProjectedApplicationEvents"] =
