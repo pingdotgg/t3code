@@ -317,6 +317,17 @@ describe("resolveIdleCompaction", () => {
   });
 });
 
+describe("ClientSettings chat font size", () => {
+  it("preserves inherited sizes for older settings and round-trips explicit sizes and reset", () => {
+    const legacy = decodeClientSettings({});
+    expect(legacy.fontSizeChat).toBeNull();
+    for (const fontSizeChat of [32, null]) {
+      const stored = encodeClientSettings({ ...legacy, fontSizeChat });
+      expect(decodeClientSettings(stored).fontSizeChat).toBe(fontSizeChat);
+    }
+  });
+});
+
 describe("ClientSettings notifications", () => {
   it("requires opt-in when existing settings omit notification preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");
