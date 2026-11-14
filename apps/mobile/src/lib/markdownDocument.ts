@@ -548,16 +548,19 @@ export function markdownWithFileEmbeds(
     // After a paragraph break, a line indented this far would become a code block.
     if (linePrefixes.some((linePrefix) => /(?:^|>) ?(?: {4}| {0,3}\t)/.test(linePrefix)))
       return null;
-    const before = markdown.slice(first, start);
+    // Text between two split embeds becomes a paragraph of its own, so check only that text.
+    const afterPrevious = lastSplit?.paragraph === paragraph;
+    const before = markdown.slice(afterPrevious ? lastSplit!.end : first, start);
     const after = markdown.slice(end, last);
     if (!staysParagraphs(before) || !staysParagraphs(after)) return null;
+    // The text after the embed moves to a new line behind the paragraph's own indentation.
+    const movedIndent = /^[ \t>]*(?=\S)/.exec(prefix + after)?.[0];
+    if (movedIndent !== undefined && /(?:^|>) ?(?: {4}| {0,3}\t)/.test(movedIndent)) return null;
     // A paragraph break would leave a backslash hard break as a literal backslash.
     if (/\\\r?\n[ \t>]*$/.test(before) || /^\\\r?\n/.test(after)) return null;
     const blank = prefix.trimEnd();
     const breaks: MarkdownEdit[] = [];
-    const afterPrevious =
-      lastSplit?.paragraph === paragraph && /^\s*$/.test(markdown.slice(lastSplit.end, start));
-    if (start > first && !afterPrevious) {
+    if (start > first && !(afterPrevious && /^\s*$/.test(before))) {
       const lineStart = markdown.lastIndexOf("\n", start - 1) + 1;
       breaks.push(
         /^[ \t>]*$/.test(markdown.slice(lineStart, start))

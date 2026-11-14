@@ -343,6 +343,12 @@ describe("file embeds in native thread and file Markdown", () => {
         `${video}\n\n![u](C:/path/y.mp4)`,
         ["root:C:/path/x.mp4", "root:C:/path/y.mp4"],
       ],
+      [
+        "trailing spaces on an indented line",
+        `   text\n   ${video}  \n   tail`,
+        `   text\n\n   ${video}\n  \n   tail`,
+        ["root:C:/path/x.mp4"],
+      ],
       ["audio", `text\n${audio}`, `text\n\n${audio}`, ["root:C:/path/s.mp3"]],
       ["alone in a block quote", `> ${video}`, `> ${video}`, ["blockquote:C:/path/x.mp4"]],
       [
@@ -399,12 +405,23 @@ describe("file embeds in native thread and file Markdown", () => {
       ],
       ["a next line that would open a list", `${video}\n2. next`, `${link}\n2. next`],
       ["a table cell", `| a |\n| --- |\n| ${video} |`, `| a |\n| --- |\n| ${link} |`],
+      [
+        "an indented line whose prefix would push the text after it into a code block",
+        `   see ${video} here`,
+        `   see ${link} here`,
+      ],
       ["a link", `text [${video}](https://example.com)`, "text [x.mp4](https://example.com)"],
       ["a PDF", `text\n![d](C:/path/x.pdf)`, "text\n[x.pdf](<C:/path/x.pdf>)"],
     ])("keeps a filename link for an embed in %s", async (_, source, expected) => {
       const converted = convert(source);
       expect(converted.markdown).toBe(expected);
       expect(await slots(converted.markdown)).toEqual([]);
+    });
+
+    it("keeps a filename link when text between two videos would become a thematic break", async () => {
+      const converted = convert(`${video} --- ![u](C:/path/y.mp4)`);
+      expect(converted.markdown).toBe(`${video}\n\n --- [y.mp4](<C:/path/y.mp4>)`);
+      expect(await slots(converted.markdown)).toEqual(["root:C:/path/x.mp4"]);
     });
   });
 
