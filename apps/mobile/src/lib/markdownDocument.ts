@@ -81,7 +81,7 @@ function attribute(tag: string, name: string): string | null {
 }
 
 function markdownDestination(url: string): string {
-  return `<${url.replace(/&/g, "\\&").replace(/</g, "%3C").replace(/>/g, "%3E").replace(/\|/g, "%7C").replace(/\n/g, "")}>`;
+  return `<${url.replace(/&/g, "&amp;").replace(/</g, "%3C").replace(/>/g, "%3E").replace(/\|/g, "%7C").replace(/\n/g, "")}>`;
 }
 
 const ANCHOR_TAG = /^<\/?a[\s/>]/i;
@@ -454,9 +454,9 @@ interface DestinationToken {
 }
 
 /**
- * Markdown reads `C:\work\.t3` as `C:\work.t3`. Web keeps authored Windows destinations
- * literally (see `remarkKeepWindowsPaths` in shared), so escape their backslashes to give
- * both parsers here the same path. `\&` stays an escape, as `markdownWithHtml` emits it.
+ * Markdown reads `C:\work\.t3` as `C:\work.t3`. Escape every Windows destination
+ * backslash so both parsers here preserve separators while decoding character references,
+ * matching `remarkKeepWindowsPaths` in shared.
  * Expects authored Markdown: already escaped output would be escaped twice.
  */
 function markdownWithWindowsPathDestinations(markdown: string): string {

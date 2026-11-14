@@ -8,9 +8,9 @@ interface DestinationCompileContext {
   sliceSerialize(token: unknown): string;
 }
 
-/** Escapes a Windows path's backslashes for a Markdown destination; `\&` stays an escape. */
+/** Escapes every Windows path separator for a Markdown destination. */
 export function escapeWindowsPathBackslashes(path: string): string {
-  return path.replace(/\\(?!&)/g, "\\\\");
+  return path.replace(/\\/g, "\\\\");
 }
 
 function keepWindowsPathDestination(this: DestinationCompileContext, token: unknown) {
@@ -72,7 +72,8 @@ export function remarkKeepWindowsProsePaths(this: Processor) {
 /**
  * CommonMark reads the `\.` in `C:\me\.t3\shot.png` as an escape. Every backslash in a
  * Windows path is a separator, so link, image, and definition destinations that are
- * Windows paths keep the text as written, and so do escapes inside drive paths.
+ * Windows paths keep their separators while character references decode. Escapes inside
+ * drive paths in prose keep their backslashes too.
  */
 export function remarkKeepWindowsPaths(this: Processor) {
   (this.data().fromMarkdownExtensions ??= []).push({

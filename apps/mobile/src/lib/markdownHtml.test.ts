@@ -20,7 +20,7 @@ describe("HTML in native Markdown", () => {
       markdownHtmlContent(
         '<img width="900" alt="Before > after [settings]" src="https://example.com/before.png?a=1&amp;b=2" />',
       ),
-    ).toBe("![Before > after \\[settings\\]](<https://example.com/before.png?a=1\\&b=2>)");
+    ).toBe("![Before > after \\[settings\\]](<https://example.com/before.png?a=1&amp;b=2>)");
     expect(
       markdownHtmlContent(
         "<a href='https://example.com'><img src='https://example.com/banner.svg' alt='Review' /></a>",
@@ -28,11 +28,11 @@ describe("HTML in native Markdown", () => {
     ).toBe("[![Review](<https://example.com/banner.svg>)](<https://example.com>)");
   });
 
-  it("decodes HTML attributes once and preserves entity-shaped query values through Markdown", () => {
+  it("decodes HTML attributes once and preserves entity-shaped query values through Markdown", async () => {
     const markdown =
       '<img alt="&amp;lt;" src="https://example.com/shot.png?label=&amp;lt;&amp;sig=a%26b">';
     expect(markdownWithHtml(markdown)).toBe(
-      "![\\&lt;](<https://example.com/shot.png?label=\\&lt;\\&sig=a%26b>)",
+      "![\\&lt;](<https://example.com/shot.png?label=&amp;lt;&amp;sig=a%26b>)",
     );
     expect(markdownImageSources(markdown)).toEqual([
       "https://example.com/shot.png?label=&lt;&sig=a%26b",
@@ -41,6 +41,23 @@ describe("HTML in native Markdown", () => {
     expect(paragraph?.type).toBe("paragraph");
     if (paragraph?.type === "paragraph")
       expect(paragraph.children[0]).toMatchObject({ type: "image", alt: "&lt;" });
+    const anchor = '<a href="https://example.com/shot.png?label=&amp;lt;&amp;sig=a%26b">Open</a>';
+    for (const [source, type] of [
+      [markdown, "Image"],
+      [anchor, "Link"],
+    ] as const) {
+      expect(
+        (await parseMarkdown(markdownForNativeRendering(source, ENRICHED_INLINE_FILE_LINK_REGEX)))
+          .children,
+      ).toMatchObject([
+        {
+          type: "Paragraph",
+          children: [
+            { type, attributes: { url: "https://example.com/shot.png?label=&lt;&sig=a%26b" } },
+          ],
+        },
+      ]);
+    }
   });
 
   it("ignores code delimiters in HTML attributes and comments when collecting screenshots", () => {
@@ -380,6 +397,10 @@ describe("Windows paths in native Markdown", () => {
       `<img src="${image}">`,
       String.raw`![amp](C:\R&D\.t3\a&amp;b.png)`,
       String.raw`<img src="C:\R&amp;D\.t3\b.png">`,
+      String.raw`![separator](<C:\work\&stuff\x.png>)`,
+      String.raw`![unc](<\\server\share\&amp;stuff\x.png>)`,
+      String.raw`<img src="C:\work\&amp;stuff\x.png">`,
+      String.raw`<img src="C:\work\&amp;lt;\x.png">`,
       "> ![quoted](\n> " + image + ")",
     ].join("\n\n");
 
@@ -395,8 +416,31 @@ describe("Windows paths in native Markdown", () => {
     const paren = String.raw`C:\a\)b.png`;
     const amp = String.raw`C:\R&D\.t3\a&b.png`;
     const htmlAmp = String.raw`C:\R&D\.t3\b.png`;
-    expect(urls).toEqual([image, paren, link, image, amp, htmlAmp, image]);
-    expect(markdownImageSources(markdown)).toEqual([image, paren, amp, htmlAmp]);
+    const separator = String.raw`C:\work\&stuff\x.png`;
+    const unc = String.raw`\\server\share\&stuff\x.png`;
+    const htmlEntity = String.raw`C:\work\&lt;\x.png`;
+    expect(urls).toEqual([
+      image,
+      paren,
+      link,
+      image,
+      amp,
+      htmlAmp,
+      separator,
+      unc,
+      separator,
+      htmlEntity,
+      image,
+    ]);
+    expect(markdownImageSources(markdown)).toEqual([
+      image,
+      paren,
+      amp,
+      htmlAmp,
+      separator,
+      unc,
+      htmlEntity,
+    ]);
   });
 });
 
