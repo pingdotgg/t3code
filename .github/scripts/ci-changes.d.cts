@@ -24,5 +24,6 @@ export function decide(
     rust: boolean;
     release_smoke: boolean;
     mobile_native: boolean;
+    linux_arm64_package: boolean;
   };
 };
