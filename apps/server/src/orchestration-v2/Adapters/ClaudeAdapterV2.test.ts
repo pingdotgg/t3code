@@ -3871,6 +3871,45 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
 
+    it.effect(
+      "a rename blocked past the deadline still offers the prompt and retries next turn",
+      () =>
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<void>();
+          let attempts = 0;
+          const harness = yield* makeWakeHarnessWithOptions({
+            renameSession: () =>
+              ++attempts === 1
+                ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
+                : Effect.void,
+          });
+          const firstTurn = yield* Effect.forkScoped(startTurn(harness, "First title", 1, true));
+          yield* Deferred.await(entered);
+          yield* TestClock.adjust("10 seconds");
+          yield* Fiber.join(firstTurn);
+          assert.deepEqual(harness.renameCalls, ["First title"]);
+          assert.equal(harness.offeredMessages.length, 1);
+          assert.equal(attempts, 1);
+
+          yield* finishTurn(harness, 1);
+          assert.deepEqual(harness.renameCalls, ["First title"]);
+
+          yield* startTurn(harness, "First title", 2, true);
+          assert.deepEqual(harness.renameCalls, ["First title", "First title"]);
+          assert.equal(attempts, 2);
+          yield* finishTurn(harness, 2);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+    );
+
     it.effect("renames when reverting to an earlier title after a failed or timed out update", () =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarnessWithOptions({
