@@ -234,9 +234,10 @@ export function ResetCredits(props: {
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
   readonly provider: string;
+  readonly account: string;
   readonly dense?: boolean;
 }) {
-  const { environmentId, input, credits, now, provider, dense = false } = props;
+  const { environmentId, input, credits, now, provider, account, dense = false } = props;
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
     reportFailure: false,
@@ -264,10 +265,14 @@ export function ResetCredits(props: {
 
   const confirm = (choice: ResetCreditChoice) => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
-    Dialog.alert(`Use a reset credit on ${provider}?`, choice.confirmDescription, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Use credit", onPress: () => void redeem(choice) },
-    ]);
+    Dialog.alert(
+      `Use a reset credit on ${provider}?`,
+      `${account}\n\n${choice.confirmDescription}`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Use credit", onPress: () => void redeem(choice) },
+      ],
+    );
   };
 
   return (

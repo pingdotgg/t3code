@@ -62,6 +62,7 @@ export function ComposerUsageLimits({
                   <ResetCredits
                     dense
                     provider={driverLabel}
+                    account={account.label}
                     environmentId={environmentId}
                     input={resetCreditInput}
                     credits={account.limits.resetCredits}

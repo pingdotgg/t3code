@@ -247,6 +247,7 @@ export function useResetCredit(environmentId: EnvironmentId) {
     readonly environmentId: EnvironmentId;
     readonly choice: ResetCreditChoice;
   } | null>(null);
+  const canConfirm = useEnvironmentScope(target?.environmentId ?? null, AuthProvidersManageScope);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -280,6 +281,7 @@ export function useResetCredit(environmentId: EnvironmentId) {
 
   return {
     canManageProviders,
+    canConfirm,
     choice: target?.choice ?? null,
     confirming,
     setConfirming,
@@ -345,8 +347,17 @@ export function ResetCredits({
   readonly provider: string;
   readonly account: ReactNode;
 }) {
-  const { canManageProviders, choice, confirming, setConfirming, confirm, busy, status, redeem } =
-    useResetCredit(environmentId);
+  const {
+    canManageProviders,
+    canConfirm,
+    choice,
+    confirming,
+    setConfirming,
+    confirm,
+    busy,
+    status,
+    redeem,
+  } = useResetCredit(environmentId);
   if (credits.availableCount === 0 && status === null) return null;
   return (
     <div className="flex flex-col gap-1 text-xs text-muted-foreground">
@@ -373,7 +384,7 @@ export function ResetCredits({
         account={account}
         choice={choice}
         onConfirm={() => void redeem()}
-        disabled={!canManageProviders}
+        disabled={!canConfirm}
       />
     </div>
   );

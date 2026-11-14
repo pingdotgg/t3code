@@ -11,12 +11,12 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 import { render } from "../../../test/render";
 
-const testState = vi.hoisted(() => ({ consume: vi.fn() }));
+const testState = vi.hoisted(() => ({ consume: vi.fn(), readOnlyEnvironments: new Set<string>() }));
 
 vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
-  useEnvironmentScope: (() => true) as never,
-  readEnvironmentScope: (() => true) as never,
+  useEnvironmentScope: ((id: string) => !testState.readOnlyEnvironments.has(id)) as never,
+  readEnvironmentScope: ((id: string) => !testState.readOnlyEnvironments.has(id)) as never,
 }));
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
@@ -28,6 +28,7 @@ import { UsageLimitsPooled } from "./UsageLimitsPooled";
 const checkedAt = "2026-10-25T16:00:00.000Z";
 
 function setup() {
+  testState.readOnlyEnvironments.clear();
   testState.consume.mockReset();
   testState.consume.mockResolvedValue({ _tag: "Success", value: { outcome: "reset" } });
 }
@@ -173,33 +174,50 @@ describe("UsageLimitsPooled reset credits", () => {
     });
   });
 
-  it("redeems where the confirm was opened when a refresh moves the account's credits", async () => {
-    setup();
-    const now = Date.parse(checkedAt);
-    const laptopFresh = environments(
-      ["laptop", "Laptop", [redeemable("codex", "codex", "Codex", "2026-10-25T16:05:00.000Z")]],
-      ["desk", "Desk", [redeemable("codex_personal", "codex", "Codex")]],
-    );
-    const deskFresh = environments(
-      ["laptop", "Laptop", [redeemable("codex", "codex", "Codex")]],
-      [
-        "desk",
-        "Desk",
-        [redeemable("codex_personal", "codex", "Codex", "2026-10-25T16:10:00.000Z")],
-      ],
-    );
-    await using screen = await render(<UsageLimitsPooled presentations={laptopFresh} now={now} />);
+  it.each([false, true])(
+    "keeps confirmation permissions and redemption on the captured environment (next environment read-only: %s)",
+    async (readOnlyNext) => {
+      setup();
+      if (readOnlyNext) testState.readOnlyEnvironments.add("desk");
+      const now = Date.parse(checkedAt);
+      const laptopFresh = environments(
+        ["laptop", "Laptop", [redeemable("codex", "codex", "Codex", "2026-10-25T16:05:00.000Z")]],
+        ["desk", "Desk", [redeemable("codex_personal", "codex", "Codex")]],
+      );
+      const deskFresh = environments(
+        ["laptop", "Laptop", [redeemable("codex", "codex", "Codex")]],
+        [
+          "desk",
+          "Desk",
+          [redeemable("codex_personal", "codex", "Codex", "2026-10-25T16:10:00.000Z")],
+        ],
+      );
+      await using screen = await render(
+        <UsageLimitsPooled presentations={laptopFresh} now={now} />,
+      );
 
-    await userEvent.click(screen.getByRole("button", { name: /^Codex:/ }));
-    await userEvent.click(page.getByRole("dialog").getByRole("button", { name: "Use reset" }));
-    const confirm = page.getByRole("alertdialog");
-    await expect.element(confirm).toBeVisible();
-    await screen.rerender(<UsageLimitsPooled presentations={deskFresh} now={now} />);
-    await userEvent.click(confirm.getByRole("button", { name: "Use credit" }));
+      await userEvent.click(screen.getByRole("button", { name: /^Codex:/ }));
+      await userEvent.click(page.getByRole("dialog").getByRole("button", { name: "Use reset" }));
+      const confirm = page.getByRole("alertdialog");
+      await expect.element(confirm).toBeVisible();
+      await screen.rerender(<UsageLimitsPooled presentations={new Map(deskFresh)} now={now} />);
+      const useCredit = confirm.getByRole("button", { name: "Use credit" });
+      await expect.element(useCredit).toBeEnabled();
 
-    expect(testState.consume).toHaveBeenCalledExactlyOnceWith({
-      environmentId: "laptop",
-      input: { instanceId: "codex" },
-    });
-  });
+      testState.readOnlyEnvironments.add("laptop");
+      await screen.rerender(<UsageLimitsPooled presentations={new Map(deskFresh)} now={now} />);
+      await expect.element(useCredit).toBeDisabled();
+      expect(testState.consume).not.toHaveBeenCalled();
+
+      testState.readOnlyEnvironments.delete("laptop");
+      await screen.rerender(<UsageLimitsPooled presentations={new Map(deskFresh)} now={now} />);
+      await expect.element(useCredit).toBeEnabled();
+      await userEvent.click(useCredit);
+
+      expect(testState.consume).toHaveBeenCalledExactlyOnceWith({
+        environmentId: "laptop",
+        input: { instanceId: "codex" },
+      });
+    },
+  );
 });

@@ -323,7 +323,7 @@ function RedeemableSegment({
         account={<AccountHeading account={props.account} />}
         choice={redeem.choice}
         onConfirm={() => void redeem.redeem()}
-        disabled={!redeem.canManageProviders}
+        disabled={!redeem.canConfirm}
       />
       {/* The popover closed before the confirm, so progress and the outcome need a home outside it. */}
       {redeem.busy || redeem.status ? (
