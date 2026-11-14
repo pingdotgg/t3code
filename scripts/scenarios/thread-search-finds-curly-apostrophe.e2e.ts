@@ -5,8 +5,7 @@ import { test, WEB } from "./t3.ts";
 test(
   "Thread search finds a curly apostrophe next to a two-character Chinese word",
   WEB,
-  async ({ t3, app, browser, screen }) => {
-    await browser.emulateMedia({ colorScheme: "dark" });
+  async ({ t3, app, screen }) => {
     const project = await t3.project("demo");
     const thread = await t3.thread({ project, title: "Weekly notes", messages: ["Start"] });
     await t3.open(thread);
