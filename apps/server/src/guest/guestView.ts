@@ -4,6 +4,7 @@ import type {
   OrchestrationV2AppThread,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
+  OrchestrationV2ProviderThread,
   OrchestrationV2Run,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestrationV2ThreadProjection,
@@ -39,6 +40,14 @@ const guestThread = (thread: OrchestrationV2AppThread): OrchestrationV2AppThread
 const guestProviderSession = (
   session: OrchestrationV2ProviderSession,
 ): OrchestrationV2ProviderSession => ({ ...session, cwd: HIDDEN });
+// Cursor records its workspace as `cursorStoreCwd`; clients read only `modelSelection` here.
+const guestProviderThread = (
+  thread: OrchestrationV2ProviderThread,
+): OrchestrationV2ProviderThread => {
+  if (thread.nativeMetadata?.cursorStoreCwd === undefined) return thread;
+  const { cursorStoreCwd: _hidden, ...nativeMetadata } = thread.nativeMetadata;
+  return { ...thread, nativeMetadata };
+};
 // Clients read only the strategy's type.
 const guestWorkspacePreparation = (
   preparation: OrchestrationV2ThreadLaunchWorkspaceStrategy,
@@ -69,6 +78,7 @@ export function projectThreadProjectionForGuest(
     thread: guestThread(projection.thread),
     runs: projection.runs.map(guestRun),
     subagents: [],
+    providerThreads: projection.providerThreads.map(guestProviderThread),
     providerSessions: projection.providerSessions.map(guestProviderSession),
     checkpointScopes: [],
     checkpoints: [],
@@ -114,6 +124,8 @@ export function projectDomainEventForGuest(
     case "run.created":
     case "run.updated":
       return { ...event, payload: guestRun(event.payload) };
+    case "provider-thread.updated":
+      return { ...event, payload: guestProviderThread(event.payload) };
     case "provider-session.attached":
     case "provider-session.updated":
       return { ...event, payload: guestProviderSession(event.payload) };
@@ -123,7 +135,6 @@ export function projectDomainEventForGuest(
     case "run-attempt.updated":
     case "node.updated":
     case "provider-session.detached":
-    case "provider-thread.updated":
     case "provider-turn.updated":
     case "runtime-request.updated":
     case "message.updated":

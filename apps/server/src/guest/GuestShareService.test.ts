@@ -19,6 +19,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderThreadId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -335,6 +336,31 @@ it.effect("sends the guest no owner paths, branches, checkpoint files or subagen
           lastError: null,
         },
       });
+    const cursorThread = ownerEvent("event:provider-thread:owner", {
+      type: "provider-thread.updated",
+      payload: {
+        id: ProviderThreadId.make("provider-thread:owner"),
+        driver: ProviderDriverKind.make("cursor"),
+        providerInstanceId: ProviderInstanceId.make("cursor"),
+        providerSessionId: null,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        // Active, so the windowed snapshot includes it.
+        status: "active",
+        firstRunOrdinal: null,
+        lastRunOrdinal: null,
+        handoffIds: [],
+        forkedFrom: null,
+        pendingBackgroundTasks: [],
+        contextUsage: null,
+        nativeMetadata: { cursorStoreCwd: worktreePath, title: "Cursor chat" },
+        goal: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
     const runId = yield* ownerRun;
     const checkpointScope = (id: string) =>
       ownerEvent(`event:${id}`, {
@@ -464,6 +490,7 @@ it.effect("sends the guest no owner paths, branches, checkpoint files or subagen
     yield* eventSink.write({
       events: [
         providerSession("provider-session.attached"),
+        cursorThread,
         checkpointScope("scope:before"),
         preparedRun("run:before", { type: "existing_worktree", worktreePath, branch }),
         linkedPullRequest("pr:before", "Fix the login bug"),
@@ -482,6 +509,7 @@ it.effect("sends the guest no owner paths, branches, checkpoint files or subagen
     yield* eventSink.write({
       events: [
         providerSession("provider-session.updated"),
+        { ...cursorThread, id: EventId.make("event:provider-thread:live") },
         checkpointScope("scope:live"),
         preparedRun("run:live", { type: "worktree", baseRef: branch, branch }),
         linkedPullRequest("pr:live", "Fix the login bug, take two"),
@@ -503,6 +531,7 @@ it.effect("sends the guest no owner paths, branches, checkpoint files or subagen
       return assert.fail("Expected a thread snapshot.");
     }
     assert.equal(snapshot.item.projection.providerSessions.length, 1);
+    assert.equal(snapshot.item.projection.providerThreads[0]?.nativeMetadata?.title, "Cursor chat");
     assert.equal(snapshot.item.projection.runs[0]?.workspacePreparation?.type, "existing_worktree");
     assert.equal(snapshot.item.projection.thread.pullRequests?.[0]?.snapshot?.state, "open");
     assert.lengthOf(snapshot.item.projection.subagents, 0);
@@ -514,6 +543,7 @@ it.effect("sends the guest no owner paths, branches, checkpoint files or subagen
     assert.includeMembers(liveTypes, [
       "thread.metadata-updated",
       "provider-session.updated",
+      "provider-thread.updated",
       "run.updated",
       "thread.pull-request-link-updated",
     ]);
