@@ -244,6 +244,7 @@ it("a question that opens while a stashed file is checked keeps a machine stash"
 });
 
 it("imports Pi conversations through the environment RPC and can retry a changed project", async () => {
+  await using _viewport = await appViewport();
   using _environment = installFakeEnvironment([], { acceptCommands: true });
   const scan = vi.fn(() =>
     Effect.succeed({
@@ -294,10 +295,20 @@ it("imports Pi conversations through the environment RPC and can retry a changed
       })),
     ),
   );
+  // Reconnect with this test's import handlers rather than a previous app's live lease.
+  appAtomRegistry.reset();
+  using _registry = { [Symbol.dispose]: () => appAtomRegistry.reset() };
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   const router = getRouter(createMemoryHistory({ initialEntries: ["/welcome"] }));
   await router.load();
-  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    container: appContainer(),
+    router: false,
+  });
+  await expect
+    .element(page.getByRole("button", { name: "Review all 1", exact: true }))
+    .toBeVisible();
   await page.getByRole("button", { name: "Review all 1", exact: true }).click();
   await expect.element(page.getByRole("img", { name: "Pi", exact: true })).toBeVisible();
   await expect.element(page.getByRole("img", { name: "Claude Code", exact: true })).toBeVisible();

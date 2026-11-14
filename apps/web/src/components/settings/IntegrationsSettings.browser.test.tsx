@@ -139,7 +139,9 @@ it.each([
     false,
   );
   // Profiles save for this device in every scope, but the default profile is a device preference.
-  await expect.element(screen.getByRole("button", { name: "Add profile" })).toBeEnabled();
+  await userEvent.click(screen.getByRole("button", { name: "More import and profile options" }));
+  await expect.element(page.getByRole("menuitem", { name: "Blank profile" })).toBeEnabled();
+  await userEvent.keyboard("{Escape}");
   await userEvent.click(screen.getByRole("button", { name: "Work options" }));
   await expect
     .element(page.getByRole("menuitem", { name: "Set as default" }))
