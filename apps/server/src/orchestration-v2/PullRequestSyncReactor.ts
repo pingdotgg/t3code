@@ -366,7 +366,8 @@ export const make = Effect.gen(function* () {
   // linking dozens of pull requests) is read together and shares the summary batches.
   let requestedSweepQueued = false;
   const retryStacks = new Set<string>();
-  // Group keys the host answered not-found for; they are read on the slow cadence until found.
+  // Group keys the host answered not-found for, or this server cannot read (no CLI, signed out,
+  // unsupported host); they are read on the slow cadence until a read succeeds.
   const missing = new Set<string>();
   // Pause per project and host because credentials are project-specific; leave paused PRs due until reset.
   const pausedUntil = new Map<string, number>();
@@ -510,9 +511,10 @@ export const make = Effect.gen(function* () {
       if (invalidated) yield* pullRequests.invalidate({ reference: ref });
       const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false }).pipe(
         Effect.tapError((error) =>
-          error.reason === "not-found"
+          error.reason === "not-found" || error._tag === "PullRequestUnavailableError"
             ? Effect.sync(() => {
-                // Not-found is a host answer: it consumes the refresh and starts the backoff.
+                // Not-found, or a host this server cannot read, won't change by asking again
+                // next sweep: it consumes the refresh and starts the backoff.
                 missing.add(key);
                 lastSyncedAt.set(key, nowMs);
                 requested.delete(key);
