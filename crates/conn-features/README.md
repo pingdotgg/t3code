@@ -8,7 +8,7 @@ with its state and what it needs from outside the server.
 
 | Area | RPC methods | `/mcp` tools | Not served, and why |
 | --- | --- | --- | --- |
-| Scheduled tasks | `scheduledTasks.subscribe`, `upsert`, `setEnabled`, `delete`, `runNow` | `schedule_task`, `list_scheduled_tasks`, `delete_scheduled_task`, `run_scheduled_task_now` | Webhook tasks (`rotateWebhookToken`, `listWebhookDeliveries`, `getWebhookDelivery` stay unregistered; a webhook save is refused); `fresh_session` tasks (refused: the engine cannot start a fresh provider session on a send) |
+| Scheduled tasks | `scheduledTasks.subscribe`, `upsert`, `setEnabled`, `delete`, `runNow` | `schedule_task`, `list_scheduled_tasks`, `delete_scheduled_task`, `run_scheduled_task_now` | Webhook tasks (`rotateWebhookToken`, `listWebhookDeliveries`, `getWebhookDelivery` stay unregistered; a webhook save is refused). `fresh_session` tasks are served: each bound run is sent with `freshContext` |
 | Annotations | `annotations.subscribe`, `create`, `remove` | `annotations_list`, `annotations_claim`, `annotations_complete`, `annotations_release` | |
 | Panels | none | none | `panels.requests` and `panels.respond` stay unregistered, as the T3 server leaves them unmounted (`wsFork.ts`); this server used to answer `panels.requests` with an empty open stream |
 
@@ -70,7 +70,7 @@ with its state and what it needs from outside the server.
 
 - A run started by `runNow` goes on when the caller stops waiting, and always records its end.
   T3 cancels it and records it as failed.
-- No webhook tasks and no `fresh_session` tasks (see the table). No managed policy, so no
+- No webhook tasks (see the table). No managed policy, so no
   `blockedByPolicy` and no runtime-mode ceiling.
 - The timer runs a task at its due time; T3 runs it on the next 5-second poll.
 - `upsert` also refuses a 501st task.

@@ -14,6 +14,11 @@ workspace README describes the trait's first methods and the wire.
 | `TitleGenerator`, `TitleRequest`, `TitleKind` | `generateTitle` and `regenerateTitle` through a small model         |
 | `TurnObserver`, `TurnPoint`                   | Turn start and end (`/mcp` touch, VCS refresh)                      |
 | `EngineConfig::checkpoints`                   | Git checkpoints per turn, diffs, rollback (`src/checkpoint.rs`)     |
+| `EngineConfig::clock` (`Clock`, `SystemClock`, `ManualClock`) | Every stored timestamp and the idle release; a replay runs on a `ManualClock` at the epoch, as T3's `TestClock` |
+| `SqliteEngine::release_idle_sessions`         | The idle check now, for a moved `ManualClock`                       |
+| `SqliteEngine::stored_events`                 | The whole event log, paged (`OrchestrationV2StoredEvent` rows); never pruned |
+| `EngineConfig::runtime_policy_override`       | Laid over every turn's policy (`RuntimePolicy.layerWithOverride`); the replay sets the fixture's |
+| `EngineConfig::command_output_tap`            | Sees every live command output chunk (T3's `CommandOutputRecorder`) |
 
 `calls.rs` lists the tags `call` and `open_stream` serve. The server registers them with their
 contract types (`methods/orchestration.rs`, `methods/projects.rs`), so a result that does not
@@ -81,6 +86,23 @@ all 23 are.
   native fork) is not built: such a message is refused, and a failed native fork fails the
   turn.
 
+- **Visible items** (`src/visibility.rs`). `visibleTurnItems` follows T3's timeline rule
+  (`createOrchestrationV2TurnItemVisibility`): a rolled-back run's items, a queued message
+  until its run starts, and an unpaired interrupt result of a superseded attempt are hidden.
+  A compact snapshot omits the local rows only when they are the first turn items.
+- **Fresh context** (`src/fresh.rs`). A `message.dispatch` with `freshContext` never steers
+  (steer and restart queue), is refused while a fork is pending or while the session holds
+  background work (unless a schedule sent it), releases the live session and starts a new
+  provider thread. A schedule's fresh run is a side conversation: the next plain message
+  continues the thread's own provider thread (`conversationProviderThread`).
+- **Provider thread at turn start.** The engine writes `firstRunOrdinal` and `lastRunOrdinal`
+  and hands that row to the provider (T3's `runningProviderThread`). T3 also marks it
+  `active`; our Codex provider sends no thread updates to mark it `idle` again, so the status
+  stays the provider's.
+- **Session release.** A closed session (idle, provider switch, fresh start) writes its row as
+  `stopped` and expires the requests only it could answer (`writeReleasedSessionEvents`).
+- **Rollback order.** A turn start waits while a rollback of its thread is in flight, as T3's
+  effect outbox runs them in order.
 - **Busy thread.** While a run is active, a message queues (`queue_after_active`, or any start)
   or steers (`steer_active`, or the client's `deliveryIntent` steer). A steer before the
   provider turn runs waits as a queued run with `steerWhenReadyRunId`; a steer the provider
@@ -153,6 +175,12 @@ server crate and an `Engine` method for a page.
 ## Checks
 
 - `cargo test -p conn-engine`: commands, streams, restart, families, reads, titles, observer.
+- `tools/t3-fixture-replay/check.mjs`: T3's own testkit fixtures through this engine and the
+  Claude and Codex providers on stand-ins, judged by T3's own assertions (the vitest file is
+  placed in the monorepo for the run and removed; only the scenario runner is mocked). 33 of
+  159 variants pass; `expected-failures.txt` lists the rest by cause. The Rust half is
+  `examples/t3_fixture_replay.rs`. About 3 minutes; `--only <fixture>/<driver>` runs one,
+  `--keep` keeps the work folder (each fixture's plan, stub log, database and result).
 - `tools/client-check.mjs`: the client's own decoders and reducers over
   `examples/export_turn.rs` output. Needs the Conn monorepo in `CONN_MONOREPO`. From the
   repository root:
