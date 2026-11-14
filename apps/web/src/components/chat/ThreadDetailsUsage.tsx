@@ -36,7 +36,7 @@ export interface ThreadDetailsUsageInput {
   readonly providers: readonly ServerProvider[];
   readonly sources: UsageLimitSourceSnapshots;
   readonly contextWindow: ContextWindowSnapshot | null;
-  readonly onOpenUsageLimits: () => void;
+  readonly onOpenUsageLimits: (() => void) | undefined;
 }
 
 type UsageTone = "error" | "warning" | null;
@@ -68,7 +68,8 @@ export function ThreadDetailsUsage({
   );
   if (!limits && !hasHubLimits) return null;
   const notice = limits ? limitsNotice(limits) : null;
-  const showHubLimits = hasHubLimits && (!limits || notice !== null);
+  const showHubLimits =
+    onOpenUsageLimits !== undefined && hasHubLimits && (!limits || notice !== null);
 
   return (
     <ThreadDetailsSection

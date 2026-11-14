@@ -58,6 +58,19 @@ it("opens available hub limits without attributing a hub account's quota to the 
   await screen.getByRole("button", { name: "View hub limits" }).click();
   expect(onOpenUsageLimits).toHaveBeenCalledOnce();
 
+  await screen.rerender(
+    <ThreadDetailsUsage
+      providerInstanceId={provider.instanceId}
+      providers={[provider]}
+      sources={sources}
+      onOpenUsageLimits={undefined}
+    />,
+  );
+  await expect.element(screen.getByText("Unavailable", { exact: true })).toBeVisible();
+  await expect
+    .element(screen.getByRole("button", { name: "View hub limits" }))
+    .not.toBeInTheDocument();
+
   for (const unavailableSources of [
     [],
     [
