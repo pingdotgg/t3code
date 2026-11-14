@@ -182,7 +182,7 @@ function NoticeCard({
         <ComposerBanner.Icon className="h-(--composer-banner-icon-column) self-start">
           {item.icon}
         </ComposerBanner.Icon>
-        <ComposerBanner.Content className="whitespace-nowrap">
+        <ComposerBanner.Content className="items-baseline whitespace-nowrap">
           <NoticeText
             detailsLabel={
               typeof item.title === "string"
