@@ -2493,6 +2493,34 @@ describe("UsageService", () => {
     }),
   );
 
+  it.effect("keeps default-home history after the default account moves to a custom home", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const defaultHome = NodePath.join(home, "default-claude");
+      const defaultProjects = NodePath.join(defaultHome, "projects", "proj");
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(transcript, claudeLine(1, 5));
+        await NodeFSP.mkdir(defaultProjects, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(defaultProjects, "earlier.jsonl"),
+          claudeLine(2, 7, "claude-fable-5", "earlier-session"),
+        );
+      });
+      const summary = yield* UsageService.make.pipe(
+        Effect.flatMap((service) => service.readSummary(WINDOW)),
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-default-home-test",
+            home,
+            environment: { CLAUDE_CONFIG_DIR: defaultHome },
+            settings,
+          }),
+        ),
+      );
+      assert.strictEqual(totalOutputTokens(summary), 12);
+    }),
+  );
+
   it.effect(
     "uses explicit account settings before environment and default homes, then refreshes them",
     () =>
