@@ -66,8 +66,12 @@ test(
     await details.tap();
     await expect(screen.getByRole("dialog", "Update available")).toBeVisible();
     // Capture the settled popover, not its fade-in.
-    await browser.evaluate(async () => {
-      await Promise.all(document.getAnimations().map((animation) => animation.finished));
+    await browser.evaluate(() => {
+      const popover = document.querySelector('[role="dialog"][aria-label="Update available"]');
+      for (const animation of popover?.getAnimations({ subtree: true }) ?? []) {
+        if (Number.isFinite(animation.effect?.getComputedTiming().endTime)) animation.finish();
+      }
+      return null;
     });
     await app.screenshot("update-details");
     await expect(screen.getByText("volta install @opencode/cli@latest")).toBeVisible();

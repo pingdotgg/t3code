@@ -1122,9 +1122,15 @@ const isVoltaPackageInstall = Effect.fn("isVoltaPackageInstall")(function* (
   if (!(yield* fileSystem.exists(packageDir).pipe(Effect.orElseSucceed(() => false)))) {
     return false;
   }
+  if (/^volta-shim(?:\.exe)?$/.test(path.basename(normalizeCommandPath(context.realCommandPath)))) {
+    return true;
+  }
+  const script = (yield* readWrapperScript(context.realCommandPath))
+    .replace(/\r\n/g, "\n")
+    .replace(/\n$/, "");
   return (
-    /^volta-shim(?:\.exe)?$/.test(path.basename(normalizeCommandPath(context.realCommandPath))) ||
-    /^volta run /m.test(yield* readWrapperScript(context.realCommandPath))
+    script === "@echo off\nvolta run %~n0 %*" ||
+    script === '#!/bin/bash\nvolta run "$(basename $0)" "$@"'
   );
 });
 
