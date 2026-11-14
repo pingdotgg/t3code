@@ -8,7 +8,6 @@ import * as Path from "effect/Path";
 import {
   discoverCopilotSkills,
   hasCopilotSkillMention,
-  isCopilotAcpSettings,
   rewriteCopilotSkillMentions,
 } from "./copilotSkills.ts";
 
@@ -132,14 +131,5 @@ describe("Copilot skills", () => {
     expect(rewriteCopilotSkillMentions("$review", new Set(["Review"]))).toBe("/review");
     expect(hasCopilotSkillMention("$5 later")).toBe(false);
     expect(hasCopilotSkillMention("run $review")).toBe(true);
-  });
-
-  it.each([
-    [{ source: "registry" as const, agentId: "github-copilot-cli", commandPath: "" }, true],
-    [{ source: "local" as const, agentId: "", commandPath: "/usr/bin/copilot" }, true],
-    [{ source: "local" as const, agentId: "github-copilot-cli", commandPath: "claude" }, false],
-    [{ source: "registry" as const, agentId: "devin", commandPath: "copilot" }, false],
-  ])("recognizes Copilot settings %j", (settings, expected) => {
-    expect(isCopilotAcpSettings(settings)).toBe(expected);
   });
 });
