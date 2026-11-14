@@ -40,6 +40,7 @@ export class DirectEndpoints extends Context.Service<
 >()("t3/environment/DirectEndpoints") {}
 
 // Credentials travel over HTTP; public IPs leak them and hostnames can resolve differently per client.
+// Wildcard binds stay IPv4: the private-network listener check accepts only IPv4 peers.
 const isAdvertisableAddress = (address: string): boolean =>
   NodeNet.isIPv4(address) && !address.startsWith("127.") && isPrivateNetworkAddress(address);
 
@@ -79,7 +80,10 @@ export function resolveBoundEndpoints(input: {
             !(input.platform === "win32" && WINDOWS_HOST_ADAPTER_MAC.test(entry.mac)),
         )
         .map((entry) => entry.address)
-    : [input.host!].filter(isAdvertisableAddress);
+    : [input.host!].filter(
+        (address) =>
+          isAdvertisableAddress(address) || (NodeNet.isIPv6(address) && isTailnetHost(address)),
+      );
   return [...new Set(addresses)]
     .filter((address) => !input.onCloudVm || tailscaleAddresses.has(address))
     .map((address) => ({

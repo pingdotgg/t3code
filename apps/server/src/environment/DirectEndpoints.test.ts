@@ -216,6 +216,17 @@ describe("resolveBoundEndpoints", () => {
     ).toEqual([{ kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" }]);
   });
 
+  it("reports an explicit bind to Tailscale's IPv6 address as the tailnet route", () => {
+    expect(
+      resolveBoundEndpoints({
+        platform: "linux",
+        host: "fd7a:115c:a1e0::1",
+        port: 3773,
+        interfaces: INTERFACES,
+      }),
+    ).toEqual([{ kind: "tailnet", httpBaseUrl: "http://[fd7a:115c:a1e0::1]:3773/" }]);
+  });
+
   it("never reports an IPv4-mapped host, which can name the client's own loopback", () => {
     expect(
       resolveBoundEndpoints({
