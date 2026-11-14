@@ -3782,6 +3782,67 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a controlling viewer gets the page cursor at its latest point, once per change", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const session = contexts[0]!.sessions.at(-1)!;
+      const send = session.send.getMockImplementation()!;
+      const asked = yield* Queue.unbounded<{
+        readonly expression: string;
+        readonly answer: PromiseWithResolvers<string>;
+        readonly consumed: PromiseWithResolvers<void>;
+      }>();
+      session.send.mockImplementation(async (method, input) => {
+        const expression = String((input as { expression?: unknown } | undefined)?.expression);
+        if (method !== "Runtime.evaluate" || !expression.includes("getComputedStyle"))
+          return send(method, input);
+        const answer = Promise.withResolvers<string>();
+        const consumed = Promise.withResolvers<void>();
+        Queue.offerUnsafe(asked, { expression, answer, consumed });
+        const value = await answer.promise;
+        return {
+          result: {
+            get value() {
+              // Reading the response resolves the sampler's chained promise before this acknowledgement.
+              queueMicrotask(() => queueMicrotask(consumed.resolve));
+              return value;
+            },
+          },
+        };
+      });
+      const hover = (x: number) =>
+        viewer.input({ type: "mouse", action: "move", x, y: 5, button: "none", buttons: 0 });
+      const nextCursor = Effect.gen(function* () {
+        while (true) {
+          const output = yield* Queue.take(viewer.output);
+          if (output._tag === "cursor") return output.cursor;
+        }
+      });
+
+      yield* hover(10);
+      const superseded = yield* Queue.take(asked);
+      yield* hover(20);
+      yield* hover(30);
+      superseded.answer.resolve("pointer");
+      const latest = yield* Queue.take(asked);
+      expect(latest.expression).toContain("(30, 5)");
+      latest.answer.resolve("text");
+      expect(yield* nextCursor).toBe("text");
+
+      yield* hover(40);
+      const repeated = yield* Queue.take(asked);
+      repeated.answer.resolve("text");
+      yield* Effect.promise(() => repeated.consumed.promise);
+      yield* hover(50);
+      (yield* Queue.take(asked)).answer.resolve("-webkit-grab");
+      expect(yield* nextCursor).toBe("default");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 const certificateError = {
   url: "https://device.local/",
   code: -202,
