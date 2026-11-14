@@ -8,6 +8,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { acquireServiceSelectionLock } from "./cloud/serviceSelectionLock.ts";
+import { isNoCopyOnWrite, markNoCopyOnWrite } from "./noCopyOnWrite.ts";
 
 import type {
   PendingServiceUpdate,
@@ -326,14 +327,18 @@ async function syncDirectory(directory: string): Promise<void> {
   }
 }
 
-function runCp(args: ReadonlyArray<string>): Promise<boolean> {
+function runCp(args: ReadonlyArray<string>, signal?: AbortSignal): Promise<boolean> {
   return new Promise((resolve) => {
-    NodeChildProcess.execFile("cp", args, (error) => resolve(error === null));
+    NodeChildProcess.execFile("cp", args, { signal }, (error) => resolve(error === null));
   });
 }
 
 // macOS fs.copyFile clone flags fall back to full copies.
-async function copyDatabaseFile(source: string, destination: string): Promise<void> {
+async function copyDatabaseFile(
+  source: string,
+  destination: string,
+  signal?: AbortSignal,
+): Promise<void> {
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const platform = process.platform;
   // cp -c replaces files and breaks hard links; copy into hard-linked destinations instead.
@@ -346,7 +351,9 @@ async function copyDatabaseFile(source: string, destination: string): Promise<vo
       : platform === "linux"
         ? ["--reflink=auto", source, destination]
         : undefined;
-  if (args === undefined || !(await runCp(args))) await NodeFSP.copyFile(source, destination);
+  if (args !== undefined && (await runCp(args, signal))) return;
+  signal?.throwIfAborted();
+  await NodeFSP.copyFile(source, destination);
 }
 
 const GIB = 1024 ** 3;
@@ -432,6 +439,7 @@ export async function databaseBackupBlocker(
   const { readFreeBytes, canClone } = { ...filesystemBackupSpaceProbe, ...probe };
   const backupRoot = NodePath.join(baseDir, "runtime", "db-backup");
   await NodeFSP.mkdir(backupRoot, { recursive: true, mode: 0o700 });
+  if (await isNoCopyOnWrite(dbPath)) await markNoCopyOnWrite(backupRoot);
   await removeAbandonedBackupCopies(backupRoot);
   const [files, free] = await Promise.all([statDatabaseFiles(dbPath), readFreeBytes(backupRoot)]);
   const size = files.reduce((total, file) => total + file.size, 0);
@@ -525,7 +533,11 @@ async function startOnlineDatabaseBackup(
 }
 
 // Preserve completed backups; restarted trials may already have changed the live database.
-async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate): Promise<void> {
+async function backupDatabaseOnce(
+  baseDir: string,
+  pending: PendingServiceUpdate,
+  signal: AbortSignal,
+): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, pending.id);
   if (await pathExists(backupDir)) return;
 
@@ -534,10 +546,11 @@ async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate
   await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
   try {
     for (const suffix of DB_FILE_SUFFIXES) {
+      signal.throwIfAborted();
       const source = `${pending.dbPath}${suffix}`;
       if (suffix !== "" && !(await pathExists(source))) continue;
       const destination = databaseBackupFile(stagingDir, suffix);
-      await copyDatabaseFile(source, destination);
+      await copyDatabaseFile(source, destination, signal);
       await syncFile(destination);
     }
     await NodeFSP.rename(stagingDir, backupDir);
@@ -830,6 +843,7 @@ export class Launcher {
   #timer: NodeJS.Timeout | undefined;
   #transitions: Promise<void> = Promise.resolve();
   #stopRequested = false;
+  readonly #stopSignal = new AbortController();
   #stopping = false;
   #done = false;
   readonly #completion = Promise.withResolvers<void>();
@@ -948,6 +962,7 @@ export class Launcher {
       return;
     }
     this.#stopRequested = true;
+    this.#stopSignal.abort();
     this.#clearTimer();
     this.#enqueue(async () => {
       // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
@@ -1043,11 +1058,14 @@ export class Launcher {
 
   async #startTrial(pending: PendingServiceUpdate): Promise<void> {
     try {
-      await backupDatabaseOnce(this.#baseDir, pending);
+      await backupDatabaseOnce(this.#baseDir, pending, this.#stopSignal.signal);
     } catch {
+      // A stop aborts the copy and leaves the update pending for the next start.
+      if (this.#stopRequested) return;
       await this.#returnToPrevious(pending, "failed", "db-backup-failed");
       return;
     }
+    if (this.#stopRequested) return;
     try {
       await this.#startChild(pending.targetVersion, "trial", pending);
     } catch {
@@ -1202,8 +1220,6 @@ export class Launcher {
     this.#child = null;
     await this.#terminate(child.process);
     await finishOnlineBackup?.();
-    // A stop during a minutes-long copy should not start a trial; restart resumes the pending update.
-    if (this.#stopRequested) return;
     await this.#startTrial(pending);
   }
 
