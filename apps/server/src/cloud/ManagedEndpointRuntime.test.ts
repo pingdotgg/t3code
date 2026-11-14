@@ -1,6 +1,8 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
+import type * as NodeDgram from "node:dgram";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
@@ -31,6 +33,44 @@ import * as ServerConfig from "../config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as RelayClientLedger from "./RelayClientLedger.ts";
+
+// The local address the host would use to reach Cloudflare's tunnel edge; `null` when offline.
+const routeSource = vi.hoisted(() => ({ address: "" as string | null }));
+vi.mock("node:dgram", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeDgram>();
+  const { EventEmitter } = await import("node:events");
+  // Connecting a UDP socket only performs a route lookup; nothing is sent.
+  class RouteProbeSocket extends EventEmitter {
+    connect(_port: number, ...rest: ReadonlyArray<unknown>) {
+      const callback = rest.find((arg) => typeof arg === "function");
+      if (callback) this.once("connect", callback as () => void);
+      process.nextTick(() =>
+        routeSource.address === null
+          ? this.emit(
+              "error",
+              Object.assign(new Error("connect ENETUNREACH"), { code: "ENETUNREACH" }),
+            )
+          : this.emit("connect"),
+      );
+    }
+    address() {
+      return { address: routeSource.address, family: "IPv4", port: 53_000 };
+    }
+    close(callback?: () => void) {
+      if (callback) this.once("close", callback);
+      process.nextTick(() => this.emit("close"));
+      return this;
+    }
+    ref() {
+      return this;
+    }
+    unref() {
+      return this;
+    }
+  }
+  const createSocket = () => new RouteProbeSocket();
+  return { ...actual, createSocket, default: { ...actual, createSocket } };
+});
 
 const layerRelayClientAvailable = Layer.succeed(
   RelayClient.RelayClient,
@@ -557,6 +597,138 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(fixture.spawned[0]!.args).not.toContain("--protocol");
       expect(fixture.spawned[0]!.options.env?.TUNNEL_TRANSPORT_PROTOCOL).toBe("quic");
     }),
+  );
+
+  it.effect(
+    "restarts a ready QUIC connector when the host route to the tunnel edge changes before its first readiness check",
+    () =>
+      Effect.gen(function* () {
+        routeSource.address = "192.168.1.20";
+        const readinessChecks = yield* Queue.unbounded<number>();
+        let readinessCheckCount = 0;
+        const httpClient = HttpClient.make((request) =>
+          Effect.gen(function* () {
+            if (!request.url.endsWith("/ready")) {
+              return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
+            }
+            readinessCheckCount += 1;
+            // A VPN becomes the default route while this check is in flight.
+            if (readinessCheckCount === 1) routeSource.address = "10.8.0.2";
+            yield* Queue.offer(readinessChecks, readinessCheckCount);
+            // cloudflared keeps reporting ready: its probed QUIC MTU no longer fits the new path.
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({ status: 200, readyConnections: 1 }),
+            );
+          }),
+        );
+        const fixture = yield* makeTransportSpawner();
+        const runtime = yield* buildCloudManagedEndpointRuntime(
+          fixture.spawner,
+          layerRelayClientAvailable,
+          httpClient,
+        );
+        yield* runtime.applyConfig(tunnelConfig);
+        expect(yield* Queue.take(fixture.started)).toBe(0);
+        yield* fixture.emit(
+          0,
+          "2026-10-30T10:00:00Z INF Starting metrics server on 127.0.0.1:20241/metrics\n" +
+            "2026-10-30T10:00:01Z INF Registered tunnel connection connIndex=0 connection=8f2c event=0 ip=198.41.192.7 location=ams01 protocol=quic\n",
+        );
+        yield* Stream.runHead(runtime.tunnelConnected);
+
+        const outcome = yield* Effect.raceFirst(
+          Queue.take(fixture.started).pipe(Effect.as("connector replaced" as const)),
+          Effect.gen(function* () {
+            for (const check of [1, 2, 3]) {
+              yield* TestClock.adjust(Duration.seconds(30));
+              expect(yield* Queue.take(readinessChecks)).toBe(check);
+            }
+            return "connector kept running after the route changed" as const;
+          }),
+        );
+        expect({
+          outcome,
+          killed: [...new Set(fixture.killed)],
+          spawned: fixture.spawned.length,
+        }).toEqual({
+          outcome: "connector replaced",
+          killed: [800],
+          spawned: 2,
+        });
+      }),
+  );
+
+  it.effect(
+    "keeps the connector across an unchanged route and offline gaps until the route changes",
+    () =>
+      Effect.gen(function* () {
+        // Wi-Fi, offline, the same Wi-Fi, offline again, then a VPN.
+        const routeByCheck = ["192.168.1.20", null, "192.168.1.20", null, "10.8.0.2", "10.8.0.2"];
+        routeSource.address = routeByCheck[0]!;
+        const readinessChecks = yield* Queue.unbounded<number>();
+        let readinessCheckCount = 0;
+        const httpClient = HttpClient.make((request) =>
+          Effect.gen(function* () {
+            if (!request.url.endsWith("/ready")) {
+              return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
+            }
+            routeSource.address = routeByCheck[readinessCheckCount]!;
+            readinessCheckCount += 1;
+            yield* Queue.offer(readinessChecks, readinessCheckCount);
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({ status: 200, readyConnections: 1 }),
+            );
+          }),
+        );
+        const fixture = yield* makeTransportSpawner();
+        const runtime = yield* buildCloudManagedEndpointRuntime(
+          fixture.spawner,
+          layerRelayClientAvailable,
+          httpClient,
+        );
+        yield* runtime.applyConfig(tunnelConfig);
+        expect(yield* Queue.take(fixture.started)).toBe(0);
+        yield* fixture.emit(
+          0,
+          "2026-10-30T10:00:00Z INF Starting metrics server on 127.0.0.1:20241/metrics\n" +
+            "2026-10-30T10:00:01Z INF Registered tunnel connection connIndex=0 connection=8f2c event=0 ip=198.41.192.7 location=ams01 protocol=quic\n",
+        );
+        yield* Stream.runHead(runtime.tunnelConnected);
+
+        // Reaching check 4 means the route lookups after checks 1-3 have all run.
+        const outcome = yield* Effect.raceFirst(
+          Queue.take(fixture.started).pipe(Effect.as("connector replaced" as const)),
+          Effect.gen(function* () {
+            for (const check of [1, 2, 3, 4]) {
+              yield* TestClock.adjust(Duration.seconds(30));
+              expect(yield* Queue.take(readinessChecks)).toBe(check);
+            }
+            return "connector kept" as const;
+          }),
+        );
+        expect({ outcome, killed: fixture.killed }).toEqual({
+          outcome: "connector kept",
+          killed: [],
+        });
+
+        // The VPN follows an offline reading, which must not have cleared the Wi-Fi baseline.
+        const afterVpn = yield* Effect.raceFirst(
+          Queue.take(fixture.started).pipe(Effect.as("connector replaced" as const)),
+          Effect.gen(function* () {
+            for (const check of [5, 6]) {
+              yield* TestClock.adjust(Duration.seconds(30));
+              expect(yield* Queue.take(readinessChecks)).toBe(check);
+            }
+            return "connector kept after the VPN came up" as const;
+          }),
+        );
+        expect({ afterVpn, killed: [...new Set(fixture.killed)] }).toEqual({
+          afterVpn: "connector replaced",
+          killed: [800],
+        });
+      }),
   );
 
   it.effect(
