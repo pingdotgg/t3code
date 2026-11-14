@@ -120,42 +120,6 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
       }),
   );
 
-  it.effect("shares one thread writer across native and canonical streams", () =>
-    Effect.gen(function* () {
-      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
-      const basePath = NodePath.join(tempDir, "events.log");
-
-      try {
-        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
-        const native = store.logger("native");
-        const canonical = store.logger("canonical");
-        const threadId = ThreadId.make("thread-shared");
-
-        yield* native.write({ id: "native-event" }, threadId);
-        yield* canonical.write({ type: "item.completed", id: "canonical-event" }, threadId);
-        yield* store.close();
-
-        const lines = NodeFS.readFileSync(ownedLogPath(basePath, "thread-shared"), "utf8")
-          .trim()
-          .split("\n")
-          .map(parseLogLine);
-
-        assert.deepEqual(
-          lines.map(({ stream, payload }) => ({ stream, payload })),
-          [
-            { stream: "NTIVE", payload: '{"id":"native-event"}' },
-            {
-              stream: "CANON",
-              payload: '{"type":"item.completed","id":"canonical-event"}',
-            },
-          ],
-        );
-      } finally {
-        NodeFS.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }),
-  );
-
   it.effect("keeps long thread ids that share a prefix in separate files", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));

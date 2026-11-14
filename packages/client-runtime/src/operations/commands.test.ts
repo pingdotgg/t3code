@@ -25,15 +25,18 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
+import { RpcClientError } from "effect/rpc";
 
 import {
   AVAILABLE_CONNECTION_STATE,
   PrimaryConnectionTarget,
   type PreparedConnection,
+  type SupervisorConnectionState,
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
@@ -42,11 +45,9 @@ import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFix
 import {
   archiveThread,
   interruptThreadTurn,
-  MessageDispatchUnansweredError,
   revertThreadCheckpoint,
   resumeThreadQueue,
   startThreadTurn,
-  type StartThreadTurnInput,
 } from "./commands.ts";
 
 const layerTestRandom = Layer.succeed(
@@ -61,6 +62,12 @@ const TARGET = new PrimaryConnectionTarget({
   wsBaseUrl: "wss://environment.example.test",
 });
 
+const CONNECTED_STATE: SupervisorConnectionState = {
+  ...AVAILABLE_CONNECTION_STATE,
+  desired: true,
+  phase: "connected",
+};
+
 const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(function* (input: {
   readonly commands: OrchestrationV2Command[];
   readonly projects: ProjectMutation[];
@@ -68,25 +75,13 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseThreadStop?: boolean;
-  readonly stalled?: { readonly release: Deferred.Deferred<void>; interrupted: boolean };
 }) {
-  const answer = <A>(result: A) =>
-    input.stalled === undefined
-      ? Effect.succeed(result)
-      : Deferred.await(input.stalled.release).pipe(
-          Effect.as(result),
-          Effect.onInterrupt(() =>
-            Effect.sync(() => {
-              input.stalled!.interrupted = true;
-            }),
-          ),
-        );
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
       Effect.sync(() => {
         input.commands.push(command);
         return { sequence: input.commands.length };
-      }).pipe(Effect.andThen(answer)),
+      }),
     [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (requestInput: {
       readonly threadId: ThreadId;
     }) =>
@@ -102,7 +97,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
           projection: input.projection ?? v2Projection,
           resumed: false,
         };
-      }).pipe(Effect.andThen(answer)),
+      }),
     [WS_METHODS.projectsMutate]: (mutation: ProjectMutation) =>
       Effect.sync(() => {
         input.projects.push(mutation);
@@ -139,7 +134,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   };
   return EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: TARGET,
-    state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+    state: yield* SubscriptionRef.make(CONNECTED_STATE),
     session: yield* SubscriptionRef.make(Option.some(session)),
     prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
     connect: Effect.void,
@@ -311,64 +306,271 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestRandom)),
   );
 
-  const expectUnansweredAfterTwoMinutes = Effect.fn("TestEnvironmentCommands.expectUnanswered")(
-    function* (bootstrap: StartThreadTurnInput["bootstrap"]) {
+  // A dead socket reaches the caller as a protocol error, or as an interrupt when
+  // the supervisor closes the session before the protocol reports the error.
+  it.effect.each([
+    [
+      "protocol error",
+      new RpcClientError.RpcClientError({
+        reason: new RpcClientError.RpcClientDefect({
+          message: "socket closed",
+          cause: new Error("socket closed"),
+        }),
+      }),
+    ],
+    ["session close", Effect.failCause(Cause.interrupt())],
+  ] as const)("retries a message dispatch lost to a %s with the same command id", ([, loss]) =>
+    Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
-      const launches: OrchestrationV2ThreadLaunchInput[] = [];
-      const stalled = { release: yield* Deferred.make<void>(), interrupted: false };
-      const supervisor = yield* makeSupervisor({ commands, launches, projects: [], stalled });
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const healthySession = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      const firstAttemptLost = yield* Deferred.make<void>();
+      const lostClient = {
+        ...healthySession.client,
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
+          Effect.gen(function* () {
+            commands.push(command);
+            yield* SubscriptionRef.set(supervisor.session, Option.none());
+            yield* Deferred.succeed(firstAttemptLost, undefined);
+            return yield* loss;
+          }),
+      } as unknown as WsRpcProtocolClient;
+      yield* SubscriptionRef.set(
+        supervisor.session,
+        Option.some({ ...healthySession, client: lostClient }),
+      );
 
-      const send = yield* startThreadTurn({
+      const sendFiber = yield* startThreadTurn({
+        commandId: CommandId.make("command-lost-ack"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-lost-ack"),
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(firstAttemptLost);
+      yield* SubscriptionRef.set(supervisor.session, Option.some(healthySession));
+      const exit = yield* Fiber.await(sendFiber);
+
+      expect(commands.map((command) => [command.type, command.commandId])).toEqual([
+        ["message.dispatch", "command-lost-ack"],
+        ["message.dispatch", "command-lost-ack"],
+      ]);
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  it.effect("stops resending a message whose dispatch keeps losing the socket", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const healthySession = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      const dyingClient: WsRpcProtocolClient = {
+        ...healthySession.client,
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
+          Effect.gen(function* () {
+            commands.push(command);
+            yield* SubscriptionRef.set(
+              supervisor.session,
+              Option.some({ ...healthySession, client: dyingClient }),
+            );
+            return yield* new RpcClientError.RpcClientError({
+              reason: new RpcClientError.RpcClientDefect({
+                message: "socket closed",
+                cause: new Error("socket closed"),
+              }),
+            });
+          }),
+      } as unknown as WsRpcProtocolClient;
+      yield* SubscriptionRef.set(
+        supervisor.session,
+        Option.some({ ...healthySession, client: dyingClient }),
+      );
+
+      const error = yield* startThreadTurn({
+        commandId: CommandId.make("command-socket-killer"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-socket-killer"),
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.flip,
+      );
+
+      expect(commands.map((command) => command.commandId)).toEqual([
+        "command-socket-killer",
+        "command-socket-killer",
+        "command-socket-killer",
+      ]);
+      expect(error._tag).toBe("RpcClientError");
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  it.effect("fails a message dispatch the host never answers on a live socket", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const healthySession = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      const silentClient = {
+        ...healthySession.client,
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
+          Effect.sync(() => commands.push(command)).pipe(Effect.andThen(Effect.never)),
+      } as unknown as WsRpcProtocolClient;
+      yield* SubscriptionRef.set(
+        supervisor.session,
+        Option.some({ ...healthySession, client: silentClient }),
+      );
+
+      const sendFiber = yield* startThreadTurn({
         commandId: CommandId.make("command-unanswered"),
         threadId: v2ThreadId,
         message: {
           messageId: MessageId.make("message-unanswered"),
           role: "user",
-          text: "Are you there?",
+          text: "hello",
           attachments: [],
         },
         runtimeMode: "full-access",
         interactionMode: "default",
-        ...(bootstrap === undefined ? {} : { bootstrap }),
       }).pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("1 minute");
+
+      expect(sendFiber.pollUnsafe()).toBeDefined();
+      expect((yield* Fiber.join(sendFiber))._tag).toBe("EnvironmentRpcUnavailableError");
+      expect(commands.map((command) => command.commandId)).toEqual(["command-unanswered"]);
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  it.effect("fails a first-message launch the host never answers without cancelling it", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [] });
+      const healthySession = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      let interrupted = false;
+      const silentClient = {
+        ...healthySession.client,
+        [ORCHESTRATION_V2_WS_METHODS.launchThread]: () =>
+          Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => (interrupted = true)))),
+      } as unknown as WsRpcProtocolClient;
+      yield* SubscriptionRef.set(
+        supervisor.session,
+        Option.some({ ...healthySession, client: silentClient }),
+      );
+
+      const sendFiber = yield* startThreadTurn({
+        commandId: CommandId.make("command-launch-unanswered"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-launch-unanswered"),
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project-1"),
+            title: "Thread",
+            modelSelection: v2Projection.thread.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-06-20T00:00:00.000Z",
+          },
+        },
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.flip,
         Effect.forkChild,
       );
       yield* TestClock.adjust("119 seconds");
-      expect(send.pollUnsafe()).toBeUndefined();
+      expect(sendFiber.pollUnsafe()).toBeUndefined();
       yield* TestClock.adjust("1 second");
 
-      expect(commands.length + launches.length).toBe(1);
-      const exit = send.pollUnsafe();
-      expect(exit !== undefined && Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit).toEqual(
-        new MessageDispatchUnansweredError({
-          message:
-            "The server did not confirm this message. It may still arrive; check the thread before sending it again.",
-        }),
-      );
-      // A launch commits in several steps, so the late request must finish rather than be cut.
-      expect(stalled.interrupted).toBe(false);
-      yield* Deferred.succeed(stalled.release, undefined);
-    },
+      expect((yield* Fiber.join(sendFiber))._tag).toBe("EnvironmentRpcUnavailableError");
+      // The server commits a launch in several steps, so the late request keeps running.
+      expect(interrupted).toBe(false);
+    }).pipe(Effect.provide(layerTestRandom)),
   );
 
-  it.effect(
-    "fails a message send the server never answers while the connection stays healthy",
-    () => expectUnansweredAfterTwoMinutes(undefined).pipe(Effect.provide(layerTestRandom)),
-  );
+  it.effect("holds a lost message through reconnect backoff until disconnect", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const healthySession = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      const lostClient = {
+        ...healthySession.client,
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
+          Effect.gen(function* () {
+            commands.push(command);
+            yield* SubscriptionRef.set(supervisor.session, Option.none());
+            return yield* new RpcClientError.RpcClientError({
+              reason: new RpcClientError.RpcClientDefect({
+                message: "socket closed",
+                cause: new Error("socket closed"),
+              }),
+            });
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const send = (resendAfterSocketLoss: boolean) =>
+        Effect.gen(function* () {
+          yield* SubscriptionRef.set(
+            supervisor.session,
+            Option.some({ ...healthySession, client: lostClient }),
+          );
+          return yield* startThreadTurn({
+            commandId: CommandId.make(`command-host-gone-${resendAfterSocketLoss}`),
+            threadId: v2ThreadId,
+            message: {
+              messageId: MessageId.make(`message-host-gone-${resendAfterSocketLoss}`),
+              role: "user",
+              text: "hello",
+              attachments: [],
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            resendAfterSocketLoss,
+          }).pipe(
+            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+            Effect.flip,
+            Effect.forkChild,
+          );
+        });
 
-  it.effect("fails a first-message launch the server never answers", () =>
-    expectUnansweredAfterTwoMinutes({
-      createThread: {
-        projectId: ProjectId.make("project-1"),
-        title: "Thread",
-        modelSelection: v2Projection.thread.modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        createdAt: "2026-06-20T00:00:00.000Z",
-      },
+      const optedOut = yield* send(false);
+      expect((yield* Fiber.join(optedOut))._tag).toBe("RpcClientError");
+
+      const waiting = yield* send(true);
+      yield* SubscriptionRef.set(supervisor.state, {
+        ...CONNECTED_STATE,
+        phase: "backoff" as const,
+      });
+      yield* TestClock.adjust("2 minutes");
+      expect(waiting.pollUnsafe()).toBeUndefined();
+      yield* SubscriptionRef.set(supervisor.state, AVAILABLE_CONNECTION_STATE);
+      expect((yield* Fiber.join(waiting))._tag).toBe("RpcClientError");
+      expect(commands.map((command) => command.commandId)).toEqual([
+        "command-host-gone-false",
+        "command-host-gone-true",
+      ]);
     }).pipe(Effect.provide(layerTestRandom)),
   );
 
