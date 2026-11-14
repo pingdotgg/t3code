@@ -85,6 +85,28 @@ describe("scheduledTaskEditPatch", () => {
     });
   });
 
+  it.each([
+    [
+      { type: "fixed_time", timeOfDay: "9:00", weekdays: [0, 1, 2, 3, 4, 5, 6] },
+      { type: "fixed_time", timeOfDay: "09:00" },
+    ],
+    [
+      { type: "fixed_time", timeOfDay: "09:00", weekdays: [5, 1] },
+      { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 5] },
+    ],
+    [
+      { type: "once", runAt: "2026-12-01T09:00:00.000Z" },
+      { type: "once", runAt: "2026-12-01T10:00:00+01:00" },
+    ],
+  ] as const)("leaves an untouched schedule out when it is spelled differently", (stored, sent) => {
+    expect(
+      scheduledTaskEditPatch(
+        { ...opened, schedule: stored },
+        editorSave({ title: "Renamed", schedule: sent }),
+      ),
+    ).toEqual({ id: opened.id, projectId: opened.projectId, title: "Renamed" });
+  });
+
   it("leaves an untouched workspace out, so a concurrent base ref change survives", () => {
     const task: ScheduledTask = {
       ...opened,

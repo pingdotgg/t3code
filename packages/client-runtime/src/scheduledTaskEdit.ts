@@ -20,19 +20,40 @@ const canonical = (value: unknown): unknown =>
 const same = (left: unknown, right: unknown) =>
   JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 
-// Editors send no dedupe as `{}`, no age limit as null, and omit filters they left alone.
-const unchangedSchedule = (
-  save: ScheduledTaskUpsertInput["schedule"],
-  opened: ScheduledTask["schedule"],
-): unknown =>
-  save.type === "webhook" && opened.type === "webhook"
-    ? {
-        ...opened,
-        maxDeliveryAgeMinutes: opened.maxDeliveryAgeMinutes ?? null,
-        dedupe: opened.dedupe ?? {},
-        ...(save.filters === undefined ? { filters: undefined } : {}),
-      }
-    : opened;
+type Schedule = ScheduledTaskUpsertInput["schedule"] | ScheduledTask["schedule"];
+
+// Editors and stored rows spell the same schedule differently (weekday order, "every day" as
+// none or all seven, an unpadded time, `{}` for no dedupe), so compare what each one means.
+const scheduleMeaning = (schedule: Schedule, keepFilters: boolean): unknown => {
+  switch (schedule.type) {
+    case "interval":
+      return schedule;
+    case "fixed_time": {
+      const weekdays = [...new Set(schedule.weekdays ?? [])].sort((x, y) => x - y);
+      return {
+        type: schedule.type,
+        timeOfDay: schedule.timeOfDay.padStart(5, "0"),
+        weekdays: weekdays.length === 0 || weekdays.length === 7 ? null : weekdays,
+      };
+    }
+    case "once":
+      return { type: schedule.type, runAt: Date.parse(schedule.runAt) };
+    case "webhook":
+      return {
+        ...schedule,
+        signature: schedule.signature ?? null,
+        maxDeliveryAgeMinutes: schedule.maxDeliveryAgeMinutes ?? null,
+        dedupe: schedule.dedupe ?? {},
+        // Editors omit filters they left alone; the server keeps the stored ones then.
+        filters: keepFilters ? (schedule.filters ?? []) : undefined,
+      };
+  }
+};
+
+const sameSchedule = (save: ScheduledTaskUpsertInput["schedule"], opened: Schedule) => {
+  const keepFilters = save.type !== "webhook" || save.filters !== undefined;
+  return same(scheduleMeaning(save, keepFilters), scheduleMeaning(opened, keepFilters));
+};
 
 // Editors rebuild the workspace from its type, base ref and origin toggle (unset reads as off).
 const unchangedWorkspace = (opened: ScheduledTask["workspaceStrategy"]) =>
@@ -61,9 +82,7 @@ export function scheduledTaskEditPatch(
     ...(save.title === opened.title ? {} : { title: save.title }),
     ...(save.prompt === opened.prompt ? {} : { prompt: save.prompt }),
     ...(save.enabled === opened.enabled ? {} : { enabled: save.enabled }),
-    ...(same(save.schedule, unchangedSchedule(save.schedule, opened.schedule))
-      ? {}
-      : { schedule: save.schedule }),
+    ...(sameSchedule(save.schedule, opened.schedule) ? {} : { schedule: save.schedule }),
     ...(threadId === opened.threadId ? {} : { threadId }),
     ...(save.threadMode === undefined || save.threadMode === scheduledTaskThreadMode(opened)
       ? {}
