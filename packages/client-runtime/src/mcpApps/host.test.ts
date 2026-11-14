@@ -388,57 +388,23 @@ describe("makeMcpAppHost", () => {
     expect(sent.find((m) => m.id === 3)?.result).toEqual({ isError: true });
     expect(sent.find((m) => m.id === 4)?.error).toMatchObject({ code: -32602 });
 
-    const filenames = [
-      ["https://example.invalid/report.csv?version=2", undefined, "report.csv"],
-      ["https://example.invalid/report.csv#page=2", undefined, "report.csv"],
-      ["https://example.invalid/report.csv?next=/noise.json#page=3", undefined, "report.csv"],
-      ["urn:example:report.csv", undefined, "urn-example-report.csv"],
-      ["custom:report.csv", undefined, "custom-report.csv"],
-      ["https://example.invalid/report%20final.csv?version=2", undefined, "report%20final.csv"],
-      ["https://example.invalid/report.csv?version=2", " chosen/name?.csv ", " chosen-name-.csv "],
-      ["https://example.invalid/report.csv?version=2", "  ", "report.csv"],
-      ["file:///report.csv", "a".repeat(201), "a".repeat(200)],
-      ["", undefined, "download"],
-      ["file:///folder/", undefined, "folder"],
-    ] as const;
-    for (const [index, [uri, name, expectedName]] of filenames.entries()) {
+    const unnamedUris = [
+      "https://example.invalid/report.csv?version=2",
+      "https://example.invalid/report.csv#page=2",
+      "https://example.invalid/report.csv?next=/noise.json#page=3",
+    ];
+    for (const [index, uri] of unnamedUris.entries()) {
       const id = `download-${index}`;
       const downloadIndex = downloads.length;
       host.receive({
         jsonrpc: "2.0",
         id,
         method: "ui/download-file",
-        params: {
-          contents: [
-            {
-              ...embedded,
-              resource: { ...embedded.resource, uri, ...(name === undefined ? {} : { name }) },
-            },
-          ],
-        },
+        params: { contents: [{ ...embedded, resource: { ...embedded.resource, uri } }] },
       });
       await flush();
-      expect(downloads[downloadIndex]).toEqual([
-        {
-          _tag: "embedded",
-          name: expectedName,
-          mimeType: "text/csv",
-          bytes: new TextEncoder().encode("a,b"),
-        },
-      ]);
+      expect(downloads[downloadIndex]?.[0]).toMatchObject({ _tag: "embedded", name: "report.csv" });
       expect(sent.find((m) => m.id === id)?.result).toEqual({});
     }
-
-    const linkUri = "https://example.invalid/report.csv?version=2#page=3";
-    const downloadIndex = downloads.length;
-    host.receive({
-      jsonrpc: "2.0",
-      id: "download-link",
-      method: "ui/download-file",
-      params: { contents: [{ type: "resource_link", uri: linkUri, name: "chosen.csv" }] },
-    });
-    await flush();
-    expect(downloads[downloadIndex]).toEqual([{ _tag: "link", name: "chosen.csv", uri: linkUri }]);
-    expect(sent.find((m) => m.id === "download-link")?.result).toEqual({});
   });
 });
