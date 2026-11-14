@@ -247,10 +247,14 @@ export interface ThreadComposerProps {
   readonly onStopThread: () => void;
   /** Present while the thread's queue is held. */
   readonly onResumeQueue: (() => Promise<void>) | null;
-  /** `stillSendable` reports whether the draft is unchanged after any wait before sending. */
+  /**
+   * `stillSendable` reports whether the draft is unchanged after any wait before sending.
+   * `keepFocus` is set for hardware-keyboard submits, which expect to keep typing.
+   */
   readonly onSendMessage: (
     followUp?: ActiveTurnComposerAction,
     stillSendable?: () => boolean,
+    keepFocus?: boolean,
   ) => Promise<MessageId | null>;
   readonly onShowUsageLimits: (report: UsageLimitsReport | null) => void;
   readonly canSwitchProvider: boolean;
@@ -668,7 +672,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     settingsSheetPresentation.onEditorFocusChange(false);
     onEditorFocusChange?.(false);
   };
-  const handleSend = async (followUp?: ActiveTurnComposerAction) => {
+  const handleSend = async (followUp?: ActiveTurnComposerAction, keepFocus = false) => {
     if (
       isSubmissionLocked ||
       sendBlockedReason !== null ||
@@ -697,7 +701,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         )
       );
     };
-    const sent = await settlePromise(() => onSendMessage(followUp, stillSendable));
+    const sent = await settlePromise(() => onSendMessage(followUp, stillSendable, keepFocus));
     inFlightThreadIdsRef.current.delete(threadKey);
     if (AsyncResult.isFailure(sent)) {
       console.error("[composer] send failed", squashAtomCommandFailure(sent));
@@ -1049,6 +1053,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                       alternate && sendPresentation.alternate !== null
                         ? sendPresentation.alternate
                         : undefined,
+                      true,
                     )
                   }
                   submitTitle={sendPresentation.label}
