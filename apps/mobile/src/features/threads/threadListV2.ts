@@ -9,6 +9,10 @@ import {
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+import type {
+  ConnectionAttemptError,
+  EnvironmentConnectionPresentation,
+} from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
 import {
@@ -134,6 +138,78 @@ export function resolveThreadListV2SwipeActions(input: {
     primary,
     secondary: input.snoozeSupported && input.snoozable ? "snooze" : null,
   };
+}
+
+export type ThreadListV2ConnectionIssue =
+  | "offline"
+  | "reconnecting"
+  | "unreachable"
+  | "unsupported"
+  | "disconnected"
+  | "signed-out";
+
+export const THREAD_LIST_V2_CONNECTION_ISSUE_LABEL: Record<ThreadListV2ConnectionIssue, string> = {
+  offline: "Offline",
+  reconnecting: "Reconnecting…",
+  unreachable: "Can't connect",
+  unsupported: "Unsupported",
+  disconnected: "Not connected",
+  "signed-out": "Sign in again",
+};
+
+// Cached shells keep listing a host's threads after it drops; the row says so
+// instead of silently refusing swipes and menus.
+export function resolveThreadListV2ConnectionIssue(
+  connection: Pick<EnvironmentConnectionPresentation, "phase" | "error"> | null,
+  failure: Pick<ConnectionAttemptError, "reason" | "hop" | "via"> | null = null,
+): ThreadListV2ConnectionIssue | null {
+  if (
+    connection?.phase === "error" &&
+    failure?.reason === "authentication" &&
+    failure.hop === "server" &&
+    failure.via === "direct"
+  )
+    return "signed-out";
+  switch (connection?.phase) {
+    case undefined:
+    case "connected":
+    // Every host passes through its first attempt at launch; labelling it would
+    // flash on each row. A failed attempt moves on to "reconnecting".
+    case "connecting":
+      return null;
+    case "reconnecting":
+      return connection.error === null ? "reconnecting" : "unreachable";
+    case "error":
+      return "unreachable";
+    case "unsupported":
+      return "unsupported";
+    case "offline":
+      return "offline";
+    case "available":
+      return "disconnected";
+  }
+}
+
+export function resolveThreadListV2LockedReason(input: {
+  readonly access: "denied" | "signed-out" | "unknown";
+  readonly connectionIssue: ThreadListV2ConnectionIssue | null;
+  readonly environmentLabel: string | null;
+}): string {
+  const environment = input.environmentLabel ?? "this environment";
+  if (input.access === "signed-out" || input.connectionIssue === "signed-out") {
+    return `This device is no longer signed in to ${environment}. Pair again to change threads.`;
+  }
+  if (input.access === "denied") {
+    return `This device can view threads on ${environment} but not change them.`;
+  }
+  if (input.connectionIssue === "unsupported") {
+    return `${environment} and this app need compatible versions before threads can be changed.`;
+  }
+  if (input.connectionIssue !== null) {
+    return `Thread actions are unavailable until ${environment} reconnects.`;
+  }
+  // Covers both a host still connecting and a session lookup that failed on a live socket.
+  return `Thread actions are unavailable until ${environment} confirms this device's access.`;
 }
 
 // Nested keeps iOS menus short: UIKit scrolls a taller menu, and that scroll
