@@ -1662,11 +1662,32 @@ it.effect(
         finish.resolve({ result: { value: "finished" } });
         expect(yield* Fiber.join(running)).toBe("finished");
         yield* Fiber.join(takeover);
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(status.control).toMatchObject({ owner: "human", ownedByCaller: true });
+        const observed = yield* broker.invoke<PreviewAutomationSnapshot>({
+          scope,
+          tabId,
+          operation: "snapshot",
+          input: {},
+        });
+        const observedRef = /\[ref=([^\]]+)\]/.exec(String(observed.accessibilityTree))![1]!;
         yield* viewer.input({ type: "releaseControl" });
-        const stale = yield* broker
-          .invoke<void>({ scope, tabId, operation: "click", input: { locator: `aria-ref=${ref}` } })
-          .pipe(Effect.flip);
-        expect(stale._tag).toBe("PreviewAutomationInvalidSelectorError");
+        for (const staleRef of [ref, observedRef]) {
+          const stale = yield* broker
+            .invoke<void>({
+              scope,
+              tabId,
+              operation: "click",
+              input: { locator: `aria-ref=${staleRef}` },
+            })
+            .pipe(Effect.flip);
+          expect(stale._tag).toBe("PreviewAutomationInvalidSelectorError");
+        }
         expect(contexts[0]!.page.locator).not.toHaveBeenCalled();
         expect(
           yield* broker.invoke({
