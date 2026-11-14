@@ -234,6 +234,7 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
         truncated: false,
       });
       expect(grep).toHaveBeenCalledTimes(2);
+      expect(grep.mock.calls[0]?.[0]).toBe(String.raw`(?:^|\W)needle(?:\W|$)`);
       expect(grep.mock.calls[1]?.[1]?.cursor).toBe(nextCursor);
     }),
   ).pipe(Effect.provide(testLayer)),
@@ -482,6 +483,107 @@ it.effect("finds symlinks in folders past the first page of the index", () =>
   ).pipe(Effect.provide(testLayer)),
 );
 
+function grepMatch(relativePath: string, lineContent: string): GrepResult["items"][number] {
+  return {
+    ...fileItem(relativePath),
+    isBinary: false,
+    lineNumber: 1,
+    col: 0,
+    byteOffset: 0,
+    lineContent,
+    matchRanges: [[0, lineContent.length]],
+  };
+}
+
+function contentFinder(grepAsync: (query: string, options?: GrepOptions) => Promise<unknown>) {
+  const finder = {
+    destroy: vi.fn(),
+    waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+    getScanProgressAsync: async () => ({ ok: true as const, value: { isScanning: false } }),
+    watch: () => ({ ok: true as const, value: () => undefined }),
+    grepAsync,
+  } as unknown as FileFinder;
+  vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+}
+
+it.effect("pages past empty time-budget pages to a late match", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const clock = vi.spyOn(performance, "now").mockReturnValue(0);
+      const cursors = [1, 2].map(
+        (offset) => ({ __brand: "GrepCursor", _offset: offset }) as GrepCursor,
+      );
+      const grep = vi.fn(async (_query: string, options?: GrepOptions) => {
+        const page = options?.cursor ? cursors.indexOf(options.cursor) + 1 : 0;
+        // Each page outlasts any overall deadline; paging must still reach the end.
+        clock.mockReturnValue((page + 1) * 1_000);
+        const items = page === 2 ? [grepMatch("src/late.ts", "needle")] : [];
+        const value: GrepResult = {
+          items,
+          totalMatched: items.length,
+          totalFilesSearched: 1,
+          totalFiles: 3,
+          filteredFileCount: 3,
+          nextCursor: cursors[page] ?? null,
+        };
+        return { ok: true as const, value };
+      });
+      contentFinder(grep);
+
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
+      const result = yield* searchIndex.searchContents({
+        query: "needle",
+        limit: 10,
+        caseSensitive: true,
+        wholeWord: false,
+        useRegex: false,
+      });
+
+      expect(result.matches.map((match) => match.path)).toEqual(["src/late.ts"]);
+      expect(result.truncated).toBe(false);
+      expect(grep.mock.calls.map(([, options]) => options?.enforceTimeBudget)).toEqual([
+        true,
+        true,
+        true,
+      ]);
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect.each([0, 1])(
+  "reruns an empty enforced fallback page whose constraint matched %i files",
+  (constrainedFileCount) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const grep = vi.fn(async (_query: string, options?: GrepOptions) => {
+          const fellBack = options?.enforceTimeBudget === false;
+          const items = fellBack ? [grepMatch("zzzz.txt", "*.ts needle")] : [];
+          const value: GrepResult = {
+            items,
+            totalMatched: items.length,
+            totalFilesSearched: fellBack ? 3 : constrainedFileCount,
+            totalFiles: 3,
+            filteredFileCount: fellBack ? 3 : constrainedFileCount,
+            nextCursor: null,
+          };
+          return { ok: true as const, value };
+        });
+        contentFinder(grep);
+
+        const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
+        const result = yield* searchIndex.searchContents({
+          query: "*.ts needle",
+          limit: 10,
+          caseSensitive: true,
+          wholeWord: false,
+          useRegex: false,
+        });
+
+        expect(result.matches.map((match) => match.path)).toEqual(["zzzz.txt"]);
+      }),
+    ).pipe(Effect.provide(testLayer)),
+);
+
 // fff reads HOME on Linux and macOS but the user profile on Windows, so a temp HOME cannot stand in there.
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "refuses to index a workspace rooted at the home directory",
@@ -511,4 +613,38 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         expect(result).toBe("WorkspaceSearchIndexCreateFailed");
       }),
     ).pipe(Effect.provide(testLayer)),
+);
+
+// Real fff: it parses glob and path syntax out of the query, which a native whole-word prefilter must not break.
+it.effect.each([
+  { query: "*.ts needle", expected: ["words.ts:2"] },
+  { query: "*.ts", expected: ["notes.md:1"] },
+  { query: "needle", expected: ["notes.md:1", "words.ts:2"] },
+])("matches whole words in a real workspace for $query", ({ query, expected }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-whole-word-" });
+      yield* fileSystem.writeFileString(
+        path.join(cwd, "words.ts"),
+        "needleSuffix\nneedle\ntrailer\n",
+      );
+      yield* fileSystem.writeFileString(path.join(cwd, "notes.md"), "needle *.ts\n");
+
+      const searchIndex = yield* WorkspaceSearchIndex.make(cwd, "content");
+      const result = yield* searchIndex.searchContents({
+        query,
+        limit: 500,
+        caseSensitive: true,
+        wholeWord: true,
+        useRegex: false,
+      });
+
+      expect(result.regexFallbackError).toBeUndefined();
+      expect(result.matches.map((match) => `${match.path}:${match.lineNumber}`).toSorted()).toEqual(
+        expected,
+      );
+    }),
+  ).pipe(Effect.provide(testLayer)),
 );

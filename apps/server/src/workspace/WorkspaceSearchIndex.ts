@@ -47,7 +47,7 @@ const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
 const WORKSPACE_INDEX_SCAN_TIMEOUT = "15 seconds";
 const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
 const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
-const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
+const CONTENT_SEARCH_TIME_BUDGET_MS = 25;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
 const SYMLINK_SCAN_CONCURRENCY = 16;
 // A scan no watcher can invalidate is reused this long, so typing does not rescan every folder.
@@ -237,6 +237,7 @@ function mapMixedSearchResult(
 }
 
 const WORD_CHARACTER = /[\p{Letter}\p{Mark}\p{Number}_]/u;
+const ASCII_WORD = /^\w+$/;
 
 function codePointAt(line: string, index: number): string | undefined {
   const codePoint = line.codePointAt(index);
@@ -252,6 +253,24 @@ function codePointBefore(line: string, index: number): string | undefined {
 }
 
 function buildContentSearchQuery(input: Omit<ProjectSearchContentsInput, "cwd">): {
+  readonly searchQuery: string;
+  readonly regexMode: boolean;
+  readonly wholeWordPrefilter: boolean;
+} {
+  // Without a native prefilter every substring hit crosses into JS, which takes seconds on large repos.
+  // Only plain ASCII words qualify: fff rewrites queries with glob or path syntax even in regex mode, and its
+  // bytewise `\W` also accepts non-ASCII, so the JS whole-word check below stays authoritative.
+  if (input.wholeWord && !input.useRegex && ASCII_WORD.test(input.query)) {
+    return {
+      searchQuery: `${input.caseSensitive ? "" : "(?i)"}(?:^|\\W)${input.query}(?:\\W|$)`,
+      regexMode: true,
+      wholeWordPrefilter: true,
+    };
+  }
+  return { ...buildPlainOrRegexQuery(input), wholeWordPrefilter: false };
+}
+
+function buildPlainOrRegexQuery(input: Omit<ProjectSearchContentsInput, "cwd">): {
   readonly searchQuery: string;
   readonly regexMode: boolean;
 } {
@@ -272,6 +291,18 @@ function mapContentMatchRanges(
   return byteRanges.map(([startByte, endByte]) => ({
     start: toStringIndex(startByte),
     end: toStringIndex(endByte),
+  }));
+}
+
+function findWordQueryRanges(
+  line: string,
+  query: string,
+  caseSensitive: boolean,
+): Array<{ readonly start: number; readonly end: number }> {
+  const pattern = new RegExp(query, caseSensitive ? "gu" : "giu");
+  return Array.from(line.matchAll(pattern), (match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
   }));
 }
 
@@ -996,8 +1027,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(
     "WorkspaceSearchIndex.searchContents",
   )(function* (input) {
-    let { searchQuery, regexMode } = buildContentSearchQuery(input);
-    const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
+    let { searchQuery, regexMode, wholeWordPrefilter } = buildContentSearchQuery(input);
     // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.
     const rawPageSize = input.wholeWord
       ? Math.max(input.limit, CONTENT_SEARCH_MAX_MATCHES_PER_FILE)
@@ -1007,31 +1037,45 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     let regexFallbackError: string | undefined;
     let retryLiterally = false;
 
-    do {
-      const remainingTimeBudgetMs = Math.max(1, Math.ceil(deadline - performance.now()));
-      const result = yield* runSearch(input.query, input.limit, "grep", () =>
+    const grepPage = (enforceTimeBudget: boolean) =>
+      runSearch(input.query, input.limit, "grep", () =>
         finder.grepAsync(searchQuery, {
           mode: regexMode ? "regex" : "plain",
           smartCase: !input.caseSensitive && !regexMode,
           maxMatchesPerFile: Math.min(CONTENT_SEARCH_MAX_MATCHES_PER_FILE, rawPageSize),
           pageSize: rawPageSize,
           cursor: nextCursor,
-          timeBudgetMs: remainingTimeBudgetMs,
+          timeBudgetMs: CONTENT_SEARCH_TIME_BUDGET_MS,
+          enforceTimeBudget,
         }),
       );
+
+    do {
+      let result = yield* grepPage(true);
+      // fff 0.11 drops the cursor when an enforced raw-query fallback page (after a constraint like `*.ts` finds nothing)
+      // times out, so an empty enforced page that claims the scan ended is rerun without enforcement.
+      if (result.items.length === 0 && result.nextCursor === null) {
+        result = yield* grepPage(false);
+      }
       // fff searches an invalid pattern as a literal, which would keep the `(?i)` prefix.
       retryLiterally = regexMode && !input.caseSensitive && result.regexFallbackError !== undefined;
       if (retryLiterally) {
         regexFallbackError = result.regexFallbackError;
-        ({ searchQuery, regexMode } = buildContentSearchQuery({ ...input, useRegex: false }));
+        ({ searchQuery, regexMode, wholeWordPrefilter } = buildContentSearchQuery({
+          ...input,
+          useRegex: false,
+          wholeWord: false,
+        }));
         continue;
       }
 
       for (const match of result.items) {
         if (isIgnoredPath(ignoredPaths, match.relativePath, hostIsWindows)) continue;
-        const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
-          (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
-        );
+        const matchRanges = (
+          wholeWordPrefilter
+            ? findWordQueryRanges(match.lineContent, input.query, input.caseSensitive)
+            : mapContentMatchRanges(match.lineContent, match.matchRanges)
+        ).filter((range) => !input.wholeWord || isWholeWordRange(match.lineContent, range));
         // fff reports hits past its 512-char lineContent cap with no ranges, so whole words can't be verified there.
         if (input.wholeWord && matchRanges.length === 0) continue;
         matches.push({
@@ -1043,10 +1087,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       }
       nextCursor = result.nextCursor;
       regexFallbackError ??= result.regexFallbackError;
-    } while (
-      retryLiterally ||
-      (matches.length < input.limit && nextCursor !== null && performance.now() < deadline)
-    );
+      // The RPC has no resume cursor, so page to the limit; short enforced pages keep each native call brief.
+    } while (retryLiterally || (matches.length < input.limit && nextCursor !== null));
 
     return {
       matches: matches.slice(0, input.limit),
