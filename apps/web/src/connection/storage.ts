@@ -42,9 +42,11 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { projectFaviconCache } from "../assets/projectFaviconCache";
+import { toastManager } from "../components/ui/toast";
 
 const DATABASE_NAME = "t3code:connection-runtime";
 const DATABASE_VERSION = 5;
+const OPEN_TIMEOUT = "5 seconds";
 const CATALOG_STORE_NAME = "catalog";
 const SHELL_STORE_NAME = "shell";
 const THREAD_STORE_NAME = "thread";
@@ -138,6 +140,10 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
     }
     try {
       const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
+      // An abandoned open that succeeds later must not hold a connection that blocks other tabs.
+      const closeLateOpen = Effect.sync(() =>
+        request.addEventListener("success", () => request.result.close()),
+      );
       request.addEventListener("upgradeneeded", () => {
         if (!request.result.objectStoreNames.contains(CATALOG_STORE_NAME)) {
           request.result.createObjectStore(CATALOG_STORE_NAME);
@@ -166,10 +172,18 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
       request.addEventListener("success", () => {
         resume(Effect.succeed(request.result));
       });
+      return closeLateOpen;
     } catch (cause) {
       resume(Effect.fail(catalogError("open", cause)));
     }
-  });
+  }).pipe(
+    // A deleteDatabase held up by another connection leaves this open without any event.
+    Effect.timeoutOrElse({
+      duration: OPEN_TIMEOUT,
+      orElse: () =>
+        Effect.fail(catalogError("open", `IndexedDB did not open within ${OPEN_TIMEOUT}.`)),
+    }),
+  );
 });
 
 interface DatabaseHandle {
@@ -180,6 +194,8 @@ interface DatabaseHandle {
 const makeDatabaseHandle = Effect.fn("web.connectionStorage.makeDatabaseHandle")(function* () {
   const lock = yield* Semaphore.make(1);
   let current: IDBDatabase | null = null;
+  // Retrying would make every later operation wait out another timeout.
+  let openFailure: ConnectionTransientError | null = null;
   const forget = (database: IDBDatabase) => {
     if (current === database) current = null;
   };
@@ -189,7 +205,27 @@ const makeDatabaseHandle = Effect.fn("web.connectionStorage.makeDatabaseHandle")
       : lock.withPermits(1)(
           Effect.gen(function* () {
             if (current !== null) return current;
-            const opened = yield* openDatabase();
+            if (openFailure !== null) return yield* openFailure;
+            const opened = yield* openDatabase().pipe(
+              Effect.tapError((error) =>
+                Effect.sync(() => {
+                  openFailure = error;
+                  toastManager.add({
+                    type: "warning",
+                    title: "Browser storage is unavailable",
+                    description:
+                      "Connections you add on this page will be forgotten when it reloads.",
+                  });
+                }).pipe(
+                  Effect.andThen(
+                    Effect.logWarning(
+                      "Browser storage is unavailable, so connections and caches will not be saved until the page is reloaded.",
+                      { error: error.message },
+                    ),
+                  ),
+                ),
+              ),
+            );
             current = opened;
             opened.addEventListener("close", () => forget(opened));
             // Another tab upgrading the schema waits on this connection.
@@ -511,11 +547,27 @@ export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
     };
   }
 
+  // Without a database the catalog lives in memory for this page load, so connecting still works
+  // and a stored catalog that becomes reachable later is never overwritten.
+  const unlessUnopenable = <A>(
+    operation: Effect.Effect<A, ConnectionTransientError>,
+    inMemory: A,
+  ) =>
+    database.get.pipe(
+      Effect.matchEffect({ onFailure: () => Effect.succeed(inMemory), onSuccess: () => operation }),
+    );
   return {
-    read: readDatabaseValue(database, CATALOG_STORE_NAME, CATALOG_KEY).pipe(
-      Effect.map((value) => (typeof value === "string" ? value : null)),
+    read: unlessUnopenable(
+      readDatabaseValue(database, CATALOG_STORE_NAME, CATALOG_KEY).pipe(
+        Effect.map((value) => (typeof value === "string" ? value : null)),
+      ),
+      null,
     ),
-    write: (raw) => writeDatabaseValue(database, CATALOG_STORE_NAME, CATALOG_KEY, raw),
+    write: (raw) =>
+      unlessUnopenable(
+        writeDatabaseValue(database, CATALOG_STORE_NAME, CATALOG_KEY, raw),
+        undefined,
+      ),
     quarantine: (raw) =>
       writeDatabaseValue(database, CATALOG_STORE_NAME, `${CATALOG_KEY}:corrupt:${Date.now()}`, raw),
   };
