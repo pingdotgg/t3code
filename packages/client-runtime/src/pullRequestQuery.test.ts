@@ -75,10 +75,13 @@ describe("reading qualifiers out of a typed query", () => {
   it("cuts a typed query back to what the contract carries", () => {
     const many = Array.from({ length: 14 }, (_, index) => `l${index}`).join(",");
     const long = "x".repeat(240);
-    const parsed = parsePullRequestQuery(`label:${many} label:${long} author:${long}`);
+    const parsed = parsePullRequestQuery(
+      `label:${many} label:${long} author:${long} ${"fix ".repeat(80)}`,
+    );
     expect(parsed.filters.labels?.[0]).toHaveLength(10);
     expect(parsed.filters.labels?.[1]).toEqual(["x".repeat(200)]);
     expect(parsed.filters.author).toBe("x".repeat(200));
+    expect(parsed.text).toBe("fix ".repeat(50).trim());
   });
 });
 

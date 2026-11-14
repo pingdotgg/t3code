@@ -3,11 +3,9 @@ import {
   EnvironmentId,
   ProjectId,
   SourceControlProviderKind,
-  PullRequestListInput,
   type PullRequestListEntry,
   type PullRequestListResult,
 } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
 import {
   appendPullRequestListPage,
   DEFAULT_PR_LIST_CONTROLS,
@@ -31,8 +29,6 @@ import {
   withoutScratchProjectScope,
   pullRequestProjectChoices,
 } from "./pullRequestList";
-
-const isPullRequestListInput = Schema.is(PullRequestListInput);
 
 function entry(number: number, patch: Partial<PullRequestListEntry> = {}): PullRequestListEntry {
   return {
@@ -283,9 +279,6 @@ describe("mobile PR scan and filters", () => {
       limit: PR_LIST_PAGE_SIZE,
       query: "fix",
     });
-    // The iOS header search bar has no maxLength, so a long query reaches here whole.
-    const long = pullRequestListInput(DEFAULT_PR_LIST_CONTROLS, `draft:false ${"fix ".repeat(80)}`);
-    expect(isPullRequestListInput(long)).toBe(true);
     const rows = [
       entry(1, { title: "Fix parser" }),
       entry(2, { title: "Fix drafts", isDraft: true }),
