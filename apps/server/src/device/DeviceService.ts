@@ -1430,8 +1430,9 @@ export const make = Effect.gen(function* () {
           (cause) =>
             new DeviceOperationError({
               operation: "update device tool",
-              reason: "command_failed",
-              // Only the exit code goes into the shown message; npm's stderr can carry registry credentials.
+              reason:
+                cause.reason === "npm_not_found" ? "package_manager_missing" : "command_failed",
+              // npm's stderr can carry registry credentials; expose only the reason and exit code.
               ...(cause.exitCode !== undefined ? { exitCode: cause.exitCode } : {}),
               cause,
             }),
