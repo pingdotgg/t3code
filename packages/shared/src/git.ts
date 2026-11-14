@@ -124,6 +124,23 @@ export function isTemporaryWorktreeBranch(refName: string): boolean {
 
 const stripGitSuffix = (path: string) => path.replace(/\.git$/i, "");
 
+function canonicalPathSegment(segment: string): string {
+  try {
+    // Lowercase before encoding: lowercasing the escape `%C3%84` never reaches the `Ä` it names.
+    return encodeURIComponent(decodeURIComponent(segment).toLowerCase()).toLowerCase();
+  } catch {
+    return segment.toLowerCase();
+  }
+}
+
+/**
+ * A repository path in one lower-case spelling. Remotes, browsers and agents escape a name
+ * differently (`a%20(b)`, `a%20%28b%29`, `a (b)`), and keys built from them are compared as text.
+ */
+export function canonicalRepositoryPath(path: string): string {
+  return path.split("/").map(canonicalPathSegment).join("/");
+}
+
 function lowerCaseRemote(value: string, dropSuffix = stripGitSuffix): string {
   return dropSuffix(value.trim().replace(/\/+$/g, "")).toLowerCase();
 }
@@ -148,7 +165,7 @@ export function parseGitRemoteRepository(
         .split("/")
         .filter((segment) => segment.length > 0);
       if (url.hostname && repositorySegments.length > 1) {
-        return { host: url.hostname, path: repositorySegments.join("/") };
+        return { host: url.hostname, path: canonicalRepositoryPath(repositorySegments.join("/")) };
       }
     } catch {
       return null;
@@ -164,10 +181,11 @@ export function parseGitRemoteRepository(
   const scpHost = scpStyleHostAndPath?.[1];
   const scpPath = scpStyleHostAndPath?.[2];
   if (!scpHost || !scpPath) return null;
-  if (!scpHost.startsWith("[")) return { host: scpHost, path: scpPath };
+  const path = canonicalRepositoryPath(scpPath);
+  if (!scpHost.startsWith("[")) return { host: scpHost, path };
   try {
     // Spell an IPv6 host as the URL branch does, so `[::1]:a/b` and `ssh://[::1]/a/b` share a key.
-    return { host: new URL(`ssh://${scpHost}`).hostname, path: scpPath };
+    return { host: new URL(`ssh://${scpHost}`).hostname, path };
   } catch {
     return null;
   }
