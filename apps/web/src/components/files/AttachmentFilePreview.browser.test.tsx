@@ -85,13 +85,20 @@ import type { OfficeWorkerResult } from "./officePreviewProtocol";
 describe("bounded binary previews", () => {
   it("preserves length-delimited local and global PAX attributes", async () => {
     const encode = (value: string) => new TextEncoder().encode(value);
-    const block = (name: string, content: Uint8Array, type = "0", size = content.length) => {
+    const block = (
+      name: string,
+      content: Uint8Array,
+      type = "0",
+      size = content.length,
+      linkname = "",
+    ) => {
       const bytes = new Uint8Array(512 + Math.ceil(content.length / 512) * 512);
       const write = (offset: number, value: string) => bytes.set(encode(value), offset);
       write(0, name);
       write(124, size.toString(8).padStart(11, "0") + "\0");
       bytes.fill(32, 148, 156);
       write(156, type);
+      write(157, linkname);
       write(
         148,
         bytes
@@ -123,6 +130,15 @@ describe("bounded binary previews", () => {
       block("Local", attributes({ size: "3", mtime: "-172800" }), "x"),
       block("short.txt", encode("bye"), "0", 0),
       block("again.txt", encode("again"), "0", 0),
+      block("Global", attributes({ size: "", mtime: "" }), "g"),
+      block("original.txt", encode("hello world")),
+      block("alias.txt", encode(""), "1", 0, "original.txt"),
+      block("chain.txt", encode(""), "1", 0, "alias.txt"),
+      block("Local", attributes({ linkpath: "original.txt" }), "x"),
+      block("pax-link.txt", encode(""), "1", 0, "wrong-target"),
+      block("LongLink", encode("original.txt\0"), "K"),
+      block("gnu-link.txt", encode(""), "1", 0, "wrong-target"),
+      block("original.txt", encode("replacement")),
       new Uint8Array(1024),
     ];
     const bytes = new Uint8Array(chunks.reduce((size, chunk) => size + chunk.length, 0));
@@ -154,6 +170,14 @@ describe("bounded binary previews", () => {
         ["world.txt", 5, "1969-12-31T00:00:00.000Z"],
         ["short.txt", 3, "1969-12-30T00:00:00.000Z"],
         ["again.txt", 5, "1969-12-31T00:00:00.000Z"],
+        ...[
+          "original.txt",
+          "alias.txt",
+          "chain.txt",
+          "pax-link.txt",
+          "gnu-link.txt",
+          "original.txt",
+        ].map((path) => [path, 11, "1970-01-01T00:00:00.000Z"]),
       ]);
       const entry = await request({ type: "entry", path: "café\n9 size=1\nname.txt" });
       if (entry.type !== "entry") throw new Error("Expected entry");
@@ -164,6 +188,47 @@ describe("bounded binary previews", () => {
       if (reopened.type !== "entry") throw new Error("Expected entry");
       expect(new TextDecoder().decode(reopened.bytes)).toBe("hello");
       expect(reopened.bytes.buffer.byteLength).toBe(5);
+      for (const path of ["alias.txt", "chain.txt", "pax-link.txt", "gnu-link.txt"]) {
+        const linked = await request({ type: "entry", path });
+        if (linked.type !== "entry") throw new Error("Expected hard link entry");
+        expect(new TextDecoder().decode(linked.bytes)).toBe("hello world");
+      }
+      for (const chunks of [
+        [block("alias.txt", encode(""), "1", 0, "missing.txt")],
+        [block("self.txt", encode(""), "1", 0, "self.txt")],
+        [block("alias.txt", encode(""), "1", 0, "later.txt"), block("later.txt", encode("hello"))],
+        [block("a.txt", encode(""), "1", 0, "b.txt"), block("b.txt", encode(""), "1", 0, "a.txt")],
+        [block("folder/", encode(""), "5"), block("alias.txt", encode(""), "1", 0, "folder/")],
+        [
+          block("original.txt", encode("hello")),
+          block("Local", attributes({ linkpath: "" }), "x"),
+          block("alias.txt", encode(""), "1", 0, "original.txt"),
+        ],
+        [
+          block("original.txt", encode("hello")),
+          block("LongLink", encode("original.txt\0"), "K"),
+          block("Global", attributes({ linkpath: "" }), "g"),
+          block("alias.txt", encode(""), "1", 0, "original.txt"),
+        ],
+        [
+          block("replaced.txt", encode("stale")),
+          block("replaced.txt", encode(""), "2", 0, "elsewhere.txt"),
+          block("alias.txt", encode(""), "1", 0, "replaced.txt"),
+        ],
+        [
+          block("folder", encode("stale")),
+          block("folder/", encode(""), "5"),
+          block("alias.txt", encode(""), "1", 0, "folder"),
+        ],
+      ]) {
+        const archive = new Uint8Array(await new Blob(chunks).arrayBuffer());
+        expect(
+          await request({ type: "open", kind: "archive", name: "link.tar", bytes: archive.buffer }),
+        ).toEqual({
+          type: "error",
+          message: "A TAR hard link does not refer to an earlier file in this archive.",
+        });
+      }
     } finally {
       worker.terminate();
     }
