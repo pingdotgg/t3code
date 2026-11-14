@@ -2019,6 +2019,40 @@ effectIt.effect("leaves the run starting when a session-open failure will be ret
   }),
 );
 
+effectIt.effect("fails rather than retries a provider thread request with an unknown outcome", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      ensureThreadFailure: { _tag: "CodexAppServerUnresponsiveError", method: "thread/start" },
+    });
+
+    yield* harness.startWithRetry;
+
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+  }),
+);
+
+effectIt.effect("fails rather than starts a fresh thread when a resume outcome is unknown", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      resumeFailure: new ProviderAdapter.ProviderAdapterEventStreamError({
+        driver: ProviderDriverKind.make("codex"),
+        providerSessionId: ProviderSessionId.make("resume-provider-session"),
+        cause: { _tag: "CodexAppServerUnresponsiveError", method: "thread/resume" },
+      }),
+    });
+
+    const exit = yield* Effect.exit(harness.startWithRetry);
+
+    expect(exit._tag).toBe("Success");
+    expect(harness.fallbackEnsureThread).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+  }),
+);
+
 effectIt.effect("fails the run without a retry when the provider needs sign-in", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
