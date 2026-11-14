@@ -4474,23 +4474,29 @@ function expiredBufferedWakeRateLimitFrames(
   const lastRootStart = beforeResult.findLastIndex(isClaudeTurnStartMessage);
   const lastResult = beforeResult.findLastIndex((frame) => frame.type === "result");
   const segment = frames.slice(Math.max(lastRootStart, lastResult) + 1, resultIndex);
-  const directResets = segment.flatMap((frame) =>
+  const directLimits = segment.flatMap((frame) =>
     frame.type === "rate_limit_event" &&
     frame.rate_limit_info?.status === "rejected" &&
     frame.rate_limit_info.overageStatus !== "allowed" &&
     frame.rate_limit_info.overageStatus !== "allowed_warning" &&
     frame.rate_limit_info.isUsingOverage !== true &&
     frame.rate_limit_info.overageInUse !== true
-      ? [frame.rate_limit_info.resetsAt]
+      ? [frame.rate_limit_info]
       : [],
   );
-  // Standalone rate-limit events are authoritative over the embedded assistant error.
-  const embeddedResets = segment.flatMap((frame) =>
-    isClaudeBlockedAssistantRateLimit(frame)
-      ? [frame.api_error_params.rate_limit_info.resetsAt]
-      : [],
+  const directTypes = new Set<string>(
+    directLimits.map((limit) => limit.rateLimitType ?? "unknown"),
   );
-  const resets = directResets.length > 0 ? directResets : embeddedResets;
+  // Like result handling, a standalone event wins for its own limit type only.
+  const embeddedResets = segment.flatMap((frame) => {
+    if (!isClaudeBlockedAssistantRateLimit(frame)) return [];
+    const { rateLimitType, resetsAt } = frame.api_error_params.rate_limit_info;
+    return directLimits.length === 0 ||
+      (rateLimitType != null && !directTypes.has(String(rateLimitType)))
+      ? [resetsAt]
+      : [];
+  });
+  const resets = [...directLimits.map((limit) => limit.resetsAt), ...embeddedResets];
   if (
     resets.length === 0 ||
     !resets.every(

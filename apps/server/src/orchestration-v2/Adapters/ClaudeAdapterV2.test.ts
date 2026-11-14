@@ -15455,20 +15455,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect.each([
-    { standaloneEvent: true, arrivedAfterReset: false, expired: false, newerTurn: false },
-    { standaloneEvent: false, arrivedAfterReset: false, expired: false, newerTurn: false },
-    { standaloneEvent: true, arrivedAfterReset: false, expired: true, newerTurn: false },
-    { standaloneEvent: false, arrivedAfterReset: false, expired: true, newerTurn: false },
-    { standaloneEvent: true, arrivedAfterReset: false, expired: true, newerTurn: true },
-    { standaloneEvent: true, arrivedAfterReset: true, expired: false, newerTurn: false },
-  ])(
-    "replays a rejected wake rate limit only while it is current (event=$standaloneEvent arrivedAfterReset=$arrivedAfterReset expired=$expired newerTurn=$newerTurn)",
-    ({ standaloneEvent, arrivedAfterReset, expired, newerTurn }) =>
+  it.effect.each(
+    [
+      { standaloneEvent: true, arrivedAfterReset: false, expired: false, newerTurn: false },
+      { standaloneEvent: false, arrivedAfterReset: false, expired: false, newerTurn: false },
+      { standaloneEvent: true, arrivedAfterReset: false, expired: true, newerTurn: false },
+      { standaloneEvent: false, arrivedAfterReset: false, expired: true, newerTurn: false },
+      { standaloneEvent: true, arrivedAfterReset: false, expired: true, newerTurn: true },
+      { standaloneEvent: true, arrivedAfterReset: true, expired: false, newerTurn: false },
+      { standaloneEvent: true, arrivedAfterReset: false, expired: true, weeklyStillActive: true },
+    ].map((row) => ({ newerTurn: false, weeklyStillActive: false, ...row })),
+  )(
+    "replays a rejected wake rate limit only while it is current (event=$standaloneEvent arrivedAfterReset=$arrivedAfterReset expired=$expired newerTurn=$newerTurn weekly=$weeklyStillActive)",
+    ({ standaloneEvent, arrivedAfterReset, expired, newerTurn, weeklyStillActive }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
         const resetsAt = 1790298600;
+        const weeklyResetsAt = resetsAt + 604_800;
 
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -15510,9 +15514,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             apiErrorParams: {
               rate_limit_info: {
                 status: "rejected",
-                rateLimitType: "five_hour",
+                rateLimitType: weeklyStillActive ? "seven_day" : "five_hour",
                 // A conflicting embedded time must not replace the event for this window.
-                resetsAt: standaloneEvent ? resetsAt + 3_600 : resetsAt,
+                resetsAt: weeklyStillActive
+                  ? weeklyResetsAt
+                  : standaloneEvent
+                    ? resetsAt + 3_600
+                    : resetsAt,
               },
             },
           }),
@@ -15581,7 +15589,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         const terminal = yield* Queue.take(harness.terminalReceipts);
-        if (expired) {
+        if (expired && !weeklyStillActive) {
           assert.equal(terminal.status, "completed");
           assert.isFalse(
             harness.events.some(
@@ -15604,7 +15612,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(terminal.status, "failed");
         if (terminal.status !== "failed") return;
         assert.equal(terminal.failure.class, "usage_limit");
-        assert.equal(terminal.failure.resetAt, "2026-09-25T01:10:00.000Z");
+        assert.equal(
+          terminal.failure.resetAt,
+          weeklyStillActive ? "2026-10-02T01:10:00.000Z" : "2026-09-25T01:10:00.000Z",
+        );
         if (standaloneEvent) {
           const pause = yield* Queue.take(harness.systemNoticeReceipts);
           assert.equal(pause.turnItem.type, "system_notice");
