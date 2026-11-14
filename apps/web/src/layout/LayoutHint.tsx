@@ -17,6 +17,7 @@ import {
   selectLayoutWorkspaceLeadTab,
   type LayoutTab,
   type LayoutWorkspace,
+  isBlankLayoutWorkspace,
 } from "./layoutModel";
 import { useLayoutTabLabel } from "./PaneTabs";
 import { useLayoutStore, type LayoutHint as LayoutHintState } from "./layoutStore";
@@ -408,7 +409,7 @@ function WorkspaceHintPill({
       className={cn(
         "pointer-events-none absolute left-1/2 z-40 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-lg px-3 surface-tooltip transition-opacity duration-200 motion-reduce:transition-none",
         small ? "h-7.5" : "h-8.5 gap-2.5",
-        workspace?.columns.length === 0 ? "bottom-12" : "bottom-27",
+        workspace && isBlankLayoutWorkspace(workspace) ? "bottom-12" : "bottom-27",
         leaving && "opacity-0",
       )}
     >

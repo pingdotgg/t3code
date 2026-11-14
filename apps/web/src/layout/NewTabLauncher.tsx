@@ -30,6 +30,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip"
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useScratchProject } from "../hooks/useScratchProject";
+import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands } from "../shortcuts/dispatcher";
@@ -54,7 +55,7 @@ import { openLayoutNewTab } from "./layoutActions";
 import { LayoutLearningTips } from "./LayoutOnboarding";
 import { beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
-import type { LayoutPageContent } from "./layoutModel";
+import { selectLayoutWayBack, type LayoutPageContent } from "./layoutModel";
 import { useOpenLayoutPage } from "./pageNavigation";
 import { runInNewLayoutTab, useLayoutStore } from "./layoutStore";
 import {
@@ -390,12 +391,10 @@ function LauncherThreadLabel({
 export function LayoutLauncherPane({
   tabId,
   context,
-  footer,
 }: {
-  /** Null for an empty workspace, which looks the same but has no tab to close or move. */
+  /** Null for a workspace drawn after it closed, which looks the same but has no tab to close or move. */
   tabId: string | null;
   context: ThreadRouteTarget | null;
-  footer?: React.ReactNode;
 }) {
   const { focused, leadingEdge } = useLayoutPane();
   return (
@@ -413,8 +412,31 @@ export function LayoutLauncherPane({
         <LauncherTabNotch tabId={tabId} />
       </header>
       <NewTabLauncher tabId={tabId} context={context} active={focused} />
-      {footer}
+      <WorkspaceWayBackHint />
     </div>
+  );
+}
+
+function WorkspaceWayBackHint() {
+  const { paneId } = useLayoutPane();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
+  const way = useLayoutStore((state) =>
+    scrollingWorkspaces && paneId !== null ? selectLayoutWayBack(state.layout, paneId) : null,
+  );
+  if (way === null) return null;
+  const back = shortcutLabelForCommand(
+    keybindings,
+    way === "up" ? "layout.focusWorkspaceUp" : "layout.focusWorkspaceDown",
+  );
+  const overview = shortcutLabelForCommand(keybindings, "layout.overview");
+  if (!back && !overview) return null;
+  return (
+    <p className="pointer-events-none absolute inset-x-0 bottom-4 text-center text-meta text-dim-foreground">
+      {back ? `${back} goes back ${way}.` : null}
+      {back && overview ? " " : null}
+      {overview ? `${overview} shows every workspace.` : null}
+    </p>
   );
 }
 

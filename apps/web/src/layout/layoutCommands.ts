@@ -43,6 +43,7 @@ import {
   selectFocusedTab,
   selectFocusedWorkspace,
   type LayoutState,
+  isBlankLayoutWorkspace,
 } from "./layoutModel";
 import { RELATED_CHAT_COMMANDS } from "./layoutPaneContext";
 import { landPendingLayoutFocus, selectIntendedLayout, useLayoutStore } from "./layoutStore";
@@ -100,7 +101,7 @@ const WORKSPACE_HINT_COMMANDS: ReadonlySet<LayoutKeybindingCommand> = new Set([
  */
 export function countedLayoutWorkspaces(layout: LayoutState) {
   return layout.workspaces.filter(
-    (workspace) => workspace.columns.length > 0 || workspace.id === layout.focusedWorkspaceId,
+    (workspace) => !isBlankLayoutWorkspace(workspace) || workspace.id === layout.focusedWorkspaceId,
   );
 }
 

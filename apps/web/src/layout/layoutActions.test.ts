@@ -54,7 +54,8 @@ function setup(contents: ReadonlyArray<LayoutTabContent>) {
         .getState()
         .layout.workspaces.flatMap((workspace) => workspace.columns)
         .flatMap((column) => column.panes)
-        .flatMap((pane) => pane.tabs.map((tab) => tab.content)),
+        .flatMap((pane) => pane.tabs.map((tab) => tab.content))
+        .filter((content) => content.kind === "chat"),
     [Symbol.dispose]: () => {
       unsubscribe();
       useLayoutStore.setState({ layout: original });
