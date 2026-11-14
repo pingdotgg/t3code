@@ -153,6 +153,7 @@ const page = (
     openThreadId={openThreadId}
     onSelect={on.select ?? vi.fn()}
     onOpenThread={on.thread ?? vi.fn()}
+    onOpenDefinitions={vi.fn()}
   />
 );
 

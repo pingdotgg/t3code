@@ -371,6 +371,10 @@ import {
 import {
   WorkflowAnswerInput,
   WorkflowRequestError,
+  WorkflowDefinitionGetInput,
+  WorkflowDefinitionGetResult,
+  WorkflowDefinitionSaveInput,
+  WorkflowDefinitionSaveResult,
   WorkflowRunCancelInput,
   WorkflowRunDetail,
   WorkflowRunGetInput,
@@ -568,6 +572,8 @@ export const WS_METHODS = {
   workflowsAnswer: "workflows.answer",
   workflowsResume: "workflows.resume",
   workflowsCancel: "workflows.cancel",
+  workflowsGetDefinition: "workflows.getDefinition",
+  workflowsSaveDefinition: "workflows.saveDefinition",
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
@@ -2067,6 +2073,18 @@ const WsWorkflowsCancelRpc = Rpc.make(WS_METHODS.workflowsCancel, {
   error: Schema.Union([WorkflowRequestError, EnvironmentAuthorizationError]),
 });
 
+const WsWorkflowsGetDefinitionRpc = Rpc.make(WS_METHODS.workflowsGetDefinition, {
+  payload: WorkflowDefinitionGetInput,
+  success: WorkflowDefinitionGetResult,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsWorkflowsSaveDefinitionRpc = Rpc.make(WS_METHODS.workflowsSaveDefinition, {
+  payload: WorkflowDefinitionSaveInput,
+  success: WorkflowDefinitionSaveResult,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -2222,6 +2240,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsWorkflowsAnswerRpc,
   WsWorkflowsResumeRpc,
   WsWorkflowsCancelRpc,
+  WsWorkflowsGetDefinitionRpc,
+  WsWorkflowsSaveDefinitionRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,

@@ -101,6 +101,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.workflowsAnswer]: "workflows",
   [WS_METHODS.workflowsResume]: "workflows",
   [WS_METHODS.workflowsCancel]: "workflows",
+  [WS_METHODS.workflowsGetDefinition]: "workflows",
+  [WS_METHODS.workflowsSaveDefinition]: "workflows",
   [WS_METHODS.scheduledTasksSubscribe]: "scheduledTasks",
   [WS_METHODS.scheduledTasksUpsert]: "scheduledTasks",
   [WS_METHODS.scheduledTasksSetEnabled]: "scheduledTasks",

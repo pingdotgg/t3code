@@ -5,6 +5,7 @@ import { useState, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -71,6 +72,7 @@ export function WorkflowRunsView({
   openThreadId,
   onSelect,
   onOpenThread,
+  onOpenDefinitions,
 }: {
   readonly environmentId: EnvironmentId;
   readonly selectedRunId: string | null;
@@ -78,6 +80,7 @@ export function WorkflowRunsView({
   readonly openThreadId: string | null;
   readonly onSelect: (runId: string | null) => void;
   readonly onOpenThread: (thread: WorkflowThreadTarget) => void;
+  readonly onOpenDefinitions: () => void;
 }) {
   const live = useEnvironmentQuery(serverEnvironment.workflowsLive({ environmentId, input: {} }));
   const [pickedTab, setPickedTab] = useState<WorkflowListTab | null>(null);
@@ -140,109 +143,127 @@ export function WorkflowRunsView({
     (node) => section === null || node.run.workflow === section.name,
   );
   return (
-    <div className="flex min-h-0 min-w-0 flex-1">
-      {/* Below md there is room for one of the two: the list, or the run picked from it. */}
-      <div
-        className={cn(
-          "min-h-0 w-full shrink-0 flex-col md:w-72 md:border-e",
-          selectedRunId === null ? "flex" : "hidden",
-          openThreadId === null ? "md:flex" : "xl:flex",
-        )}
-      >
-        <div className="space-y-2 p-2 pb-1">
-          <ToggleGroup
-            aria-label="Which runs"
-            className="w-full *:flex-1"
-            value={[tab]}
-            onValueChange={(next) => {
-              const value = TABS.find((candidate) => candidate.value === next[0]);
-              if (value !== undefined) setPickedTab(value.value);
-            }}
-          >
-            {TABS.map(({ value, label }) => (
-              <Toggle key={value} value={value}>
-                {label}
-                {value === "all" || lists[value].length === 0 ? null : (
-                  <span
-                    className={cn(
-                      "tabular-nums",
-                      value === "needs-you"
-                        ? cn("font-semibold", WORKFLOW_TONE_CLASS.input)
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    {lists[value].length}
-                  </span>
-                )}
-              </Toggle>
-            ))}
-          </ToggleGroup>
-          {groups.workflows.length > 1 ? (
-            <Select
-              value={workflow}
-              onValueChange={(value) => setWorkflow(value ?? EVERY_WORKFLOW)}
-            >
-              <SelectTrigger size="sm" aria-label="Workflow">
-                <SelectValue>
-                  {section === null ? `All ${groups.workflows.length} workflows` : section.name}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup>
-                <SelectItem value={EVERY_WORKFLOW}>All workflows</SelectItem>
-                {groups.workflows.map((candidate) => (
-                  <SelectItem key={candidate.name} value={candidate.name}>
-                    <span className="flex items-center gap-2">
-                      <WorkflowChip name={candidate.name} />
-                      {candidate.name}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          ) : null}
-          {section === null ? null : (
-            <p className="px-1 text-xs text-muted-foreground">{workflowTriggerLine(section)}</p>
-          )}
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      {snapshot.definition?.problem == null ? null : (
+        <div
+          role="alert"
+          className="flex shrink-0 items-center gap-3 border-b bg-destructive/4 px-4 py-2 text-xs"
+        >
+          <span className="min-w-0 flex-1 text-muted-foreground">
+            <span className="font-medium text-destructive-foreground">
+              The definitions file does not load.
+            </span>{" "}
+            The last version that did keeps running.
+          </span>
+          <Button size="xs" variant="outline" onClick={onOpenDefinitions}>
+            Open the file
+          </Button>
         </div>
-        <ScrollArea className="min-h-0 flex-1">
-          <nav aria-label="Workflow runs" className="p-2 pt-1">
-            {listed.length === 0 ? (
-              <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-                {section?.neverRan ? "Has not run yet." : NOTHING[tab]}
-              </p>
-            ) : (
-              <ul className="space-y-0.5">
-                {listed.map((node) => (
-                  <WorkflowRunListItem
-                    key={node.run.runId}
-                    node={node}
-                    current={node.run.runId === currentRunId}
-                    onSelect={onSelect}
-                  />
-                ))}
-              </ul>
+      )}
+      <div className="flex min-h-0 min-w-0 flex-1">
+        {/* Below md there is room for one of the two: the list, or the run picked from it. */}
+        <div
+          className={cn(
+            "min-h-0 w-full shrink-0 flex-col md:w-72 md:border-e",
+            selectedRunId === null ? "flex" : "hidden",
+            openThreadId === null ? "md:flex" : "xl:flex",
+          )}
+        >
+          <div className="space-y-2 p-2 pb-1">
+            <ToggleGroup
+              aria-label="Which runs"
+              className="w-full *:flex-1"
+              value={[tab]}
+              onValueChange={(next) => {
+                const value = TABS.find((candidate) => candidate.value === next[0]);
+                if (value !== undefined) setPickedTab(value.value);
+              }}
+            >
+              {TABS.map(({ value, label }) => (
+                <Toggle key={value} value={value}>
+                  {label}
+                  {value === "all" || lists[value].length === 0 ? null : (
+                    <span
+                      className={cn(
+                        "tabular-nums",
+                        value === "needs-you"
+                          ? cn("font-semibold", WORKFLOW_TONE_CLASS.input)
+                          : "text-muted-foreground",
+                      )}
+                    >
+                      {lists[value].length}
+                    </span>
+                  )}
+                </Toggle>
+              ))}
+            </ToggleGroup>
+            {groups.workflows.length > 1 ? (
+              <Select
+                value={workflow}
+                onValueChange={(value) => setWorkflow(value ?? EVERY_WORKFLOW)}
+              >
+                <SelectTrigger size="sm" aria-label="Workflow">
+                  <SelectValue>
+                    {section === null ? `All ${groups.workflows.length} workflows` : section.name}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value={EVERY_WORKFLOW}>All workflows</SelectItem>
+                  {groups.workflows.map((candidate) => (
+                    <SelectItem key={candidate.name} value={candidate.name}>
+                      <span className="flex items-center gap-2">
+                        <WorkflowChip name={candidate.name} />
+                        {candidate.name}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            ) : null}
+            {section === null ? null : (
+              <p className="px-1 text-xs text-muted-foreground">{workflowTriggerLine(section)}</p>
             )}
-          </nav>
+          </div>
+          <ScrollArea className="min-h-0 flex-1">
+            <nav aria-label="Workflow runs" className="p-2 pt-1">
+              {listed.length === 0 ? (
+                <p className="px-2 py-6 text-center text-xs text-muted-foreground">
+                  {section?.neverRan ? "Has not run yet." : NOTHING[tab]}
+                </p>
+              ) : (
+                <ul className="space-y-0.5">
+                  {listed.map((node) => (
+                    <WorkflowRunListItem
+                      key={node.run.runId}
+                      node={node}
+                      current={node.run.runId === currentRunId}
+                      onSelect={onSelect}
+                    />
+                  ))}
+                </ul>
+              )}
+            </nav>
+          </ScrollArea>
+        </div>
+        <ScrollArea
+          className={cn(
+            "@container/feed min-h-0 min-w-0 flex-1",
+            selectedRunId === null ? "hidden md:block" : "block",
+          )}
+        >
+          {shown === null ? null : (
+            <WorkflowRunFeed
+              key={shown.run.runId}
+              environmentId={environmentId}
+              node={shown}
+              parent={all.find((node) => node.run.runId === shown.run.parentRunId)?.run ?? null}
+              openThreadId={openThreadId}
+              onSelect={onSelect}
+              onOpenThread={onOpenThread}
+            />
+          )}
         </ScrollArea>
       </div>
-      <ScrollArea
-        className={cn(
-          "@container/feed min-h-0 min-w-0 flex-1",
-          selectedRunId === null ? "hidden md:block" : "block",
-        )}
-      >
-        {shown === null ? null : (
-          <WorkflowRunFeed
-            key={shown.run.runId}
-            environmentId={environmentId}
-            node={shown}
-            parent={all.find((node) => node.run.runId === shown.run.parentRunId)?.run ?? null}
-            openThreadId={openThreadId}
-            onSelect={onSelect}
-            onOpenThread={onOpenThread}
-          />
-        )}
-      </ScrollArea>
     </div>
   );
 }

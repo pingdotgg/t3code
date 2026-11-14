@@ -1510,6 +1510,12 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.workflowsGet,
       refreshTrigger: ({ environmentId }) => workflowsLive({ environmentId, input: {} }),
     }),
+    // Read again whenever the server loads the file or finds it wrong, which the live list says.
+    workflowDefinition: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:workflows:definition",
+      tag: WS_METHODS.workflowsGetDefinition,
+      refreshTrigger: ({ environmentId }) => workflowsLive({ environmentId, input: {} }),
+    }),
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
       tag: WS_METHODS.scheduledTasksSubscribe,
@@ -1811,6 +1817,10 @@ export function createServerEnvironmentAtoms<R, E>(
     cancelWorkflowRun: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:workflows:cancel",
       tag: WS_METHODS.workflowsCancel,
+    }),
+    saveWorkflowDefinition: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:workflows:save-definition",
+      tag: WS_METHODS.workflowsSaveDefinition,
     }),
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",
