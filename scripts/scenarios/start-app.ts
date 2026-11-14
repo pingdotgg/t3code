@@ -52,7 +52,7 @@ esac
 
 const encodeSettings = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: string) {
+export const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.remove(home, { recursive: true, force: true });
@@ -85,7 +85,7 @@ const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: string) {
 });
 
 /** Starts a process in the caller's scope and hands each line it prints to `onLine`. */
-const start = Effect.fn("startApp.start")(function* (input: {
+export const start = Effect.fn("startApp.start")(function* (input: {
   readonly cwd: string;
   readonly command: string;
   readonly args: ReadonlyArray<string>;

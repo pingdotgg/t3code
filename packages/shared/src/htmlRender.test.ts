@@ -120,22 +120,41 @@ describe("readHtmlRenderImageRequest", () => {
     });
     expect(
       readHtmlRenderImageRequest(image({ src: "data:image/png;base64,AA", name: " Chart " })),
-    ).toEqual({
-      src: "data:image/png;base64,AA",
-      name: "Chart",
-    });
+    ).toEqual({ images: [{ src: "data:image/png;base64,AA", name: "Chart" }], index: 0 });
     expect(readHtmlRenderImageRequest(image({ src: "https://example.com/a.png" }))).toEqual({
-      src: "https://example.com/a.png",
-      name: "Image",
+      images: [{ src: "https://example.com/a.png", name: "Image" }],
+      index: 0,
     });
     const boundaryImage = readHtmlRenderImageRequest(
       image({ src: "https://example.com/a.png", name: "a".repeat(199) + "😀" }),
     );
-    expect(boundaryImage?.name.isWellFormed()).toBe(true);
-    expect(boundaryImage?.name).toBe("a".repeat(199));
+    expect(boundaryImage?.images[0]?.name.isWellFormed()).toBe(true);
+    expect(boundaryImage?.images[0]?.name).toBe("a".repeat(199));
     expect(readHtmlRenderImageRequest(image({ src: "javascript:alert(1)" }))).toBeUndefined();
     expect(readHtmlRenderImageRequest(image({ src: "data:text/html,<p>" }))).toBeUndefined();
     expect(readHtmlRenderImageRequest(image({ src: "blob:null/1" }))).toBeUndefined();
+  });
+
+  it("keeps the page's other images, dropping unsafe ones, around the clicked image", () => {
+    const b = { src: "https://example.com/b.png", name: "B" };
+    const params = {
+      ...b,
+      images: [{ src: "https://example.com/a.png", name: "A" }, { src: "blob:null/1" }, b, null],
+      index: 2,
+    };
+    const request = (overrides: object) =>
+      readHtmlRenderImageRequest({
+        jsonrpc: "2.0",
+        method: "t3/notifications/open-image",
+        params: { ...params, ...overrides },
+      });
+    expect(request({})).toEqual({
+      images: [{ src: "https://example.com/a.png", name: "A" }, b],
+      index: 1,
+    });
+    // An index that does not point at the clicked image falls back to that image alone.
+    expect(request({ index: 0 })).toEqual({ images: [b], index: 0 });
+    expect(request({ index: -1 })).toEqual({ images: [b], index: 0 });
   });
 });
 
@@ -148,6 +167,8 @@ describe("htmlRenderFromToolItem", () => {
       ["t3-code.html_render", { structuredContent: result, content: [] }],
       ["t3-code-thread_1_html_render", JSON.stringify(result)],
       ["html_render", result],
+      // OpenCode 2 Code Mode reports a script's nested html_render call as one `execute` item.
+      ["execute", JSON.stringify(result)],
     ] as const) {
       expect(htmlRenderFromToolItem({ toolName, output })).toEqual(reference);
     }

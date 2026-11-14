@@ -95,7 +95,12 @@ export function attachmentTokenAllowance(attachments: ReadonlyArray<ChatAttachme
   );
 }
 
-// One UTF-8 byte per token is a pessimistic estimate, not a guarantee for custom models.
+// Stored history is mostly prose and tool output, about four UTF-8 bytes per token.
+export function estimateTextTokens(text: string): number {
+  return Math.ceil(Buffer.byteLength(text) / 4);
+}
+
+// One UTF-8 byte per token keeps the new turn and imported history pessimistic.
 export function handoffBudget(input: {
   readonly tokenCap: number;
   readonly userText: string;
@@ -147,7 +152,7 @@ export function historicalMessage(
       text = item.message;
       break;
     case "file_change":
-      text = `File change: ${item.changes?.map((change) => change.path).join(", ") ?? item.fileName}`;
+      text = `File change: ${item.changes?.length ? item.changes.map((change) => change.path).join(", ") : item.fileName}`;
       break;
     case "proposed_plan":
       text = item.markdown;
