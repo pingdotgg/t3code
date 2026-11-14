@@ -27,7 +27,11 @@ import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPa
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ShellCommandBlock } from "./ShellCommandBlock";
-import { useInitialOutputReady, type TurnItemSource } from "./timelineRowContext";
+import {
+  TimelineRowFolderCtx,
+  useInitialOutputReady,
+  type TurnItemSource,
+} from "./timelineRowContext";
 
 interface V2ItemInspectorProps {
   readonly onInitialOutputReady?: (() => void) | undefined;
@@ -248,6 +252,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
           <ChatMarkdown
             text={item.text}
             cwd={props.cwd}
+            fileLinkBaseDir={use(TimelineRowFolderCtx)?.cwd}
             threadRef={{
               environmentId: props.environmentId,
               threadId: props.projectedItem.sourceThreadId,

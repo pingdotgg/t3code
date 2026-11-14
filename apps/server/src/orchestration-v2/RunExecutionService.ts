@@ -582,6 +582,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly baseline?: Effect.Effect<void>;
   readonly providerTurnOrdinal: number;
   readonly nativeThreadHasTurns?: boolean;
+  readonly readNativeStorageFolder?: ProviderAdapter.ProviderAdapterV2TurnInput["readNativeStorageFolder"];
   readonly resume?: boolean;
   readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
     ReadonlyArray<InheritedBackgroundTurnItemRoute>,
@@ -1063,6 +1064,15 @@ export const layer: Layer.Layer<
         const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
         const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
         const latestProviderThread = yield* Ref.make(input.providerThread);
+        let recordedNativeStorageFolder: string | undefined;
+        // A run that fails may not have stored the adapter's update that carried the folder.
+        const failedRunProviderThread = Ref.get(latestProviderThread).pipe(
+          Effect.map((providerThread) =>
+            recordedNativeStorageFolder === undefined
+              ? providerThread
+              : { ...providerThread, nativeStorageFolder: recordedNativeStorageFolder },
+          ),
+        );
         const latestRootProviderTurn = yield* Ref.make<OrchestrationV2ProviderTurn | null>(null);
         // Later root turns in one attempt are provider continuations, such as Codex goal turns.
         let firstRootProviderTurnId: ProviderTurnId | undefined;
@@ -1796,7 +1806,7 @@ export const layer: Layer.Layer<
                     cause,
                   });
                   if (yield* Ref.get(rootRunFinalized)) return;
-                  const providerThread = yield* Ref.get(latestProviderThread);
+                  const providerThread = yield* failedRunProviderThread;
                   // Stop background work too; the failed consumer cannot persist terminal events.
                   const abandonedProviderTurn =
                     routing.rootProviderTurnId !== null && !routing.rootTurnEnded
@@ -1948,6 +1958,13 @@ export const layer: Layer.Layer<
           modelSelection: input.modelSelection,
           runtimePolicy: input.runtimePolicy,
           ...(appContext.length === 0 ? {} : { appContext }),
+          ...(input.readNativeStorageFolder === undefined
+            ? {}
+            : { readNativeStorageFolder: input.readNativeStorageFolder }),
+          recordNativeStorageFolder: (folder: string) =>
+            Effect.sync(() => {
+              recordedNativeStorageFolder = folder;
+            }),
         };
         // Check after the context read: ingestion can settle the run while
         // it awaits. A failed ownership read fails the start below.
@@ -2009,7 +2026,7 @@ export const layer: Layer.Layer<
               cause,
             }).pipe(
               Effect.andThen(Fiber.interrupt(providerEventFiber)),
-              Effect.andThen(Ref.get(latestProviderThread)),
+              Effect.andThen(failedRunProviderThread),
               Effect.flatMap((providerThread) =>
                 Ref.get(latestTurnItemOrdinal).pipe(
                   Effect.flatMap((latestItemOrdinal) =>

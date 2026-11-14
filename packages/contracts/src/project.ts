@@ -553,6 +553,87 @@ export const ProjectCreateFromThreadResult = Schema.Struct({
 });
 export type ProjectCreateFromThreadResult = typeof ProjectCreateFromThreadResult.Type;
 
+const ThreadMoveThread = Schema.Struct({ threadId: ThreadId, title: TrimmedNonEmptyString });
+const ThreadMoveProject = Schema.Struct({ projectId: ProjectId, title: TrimmedNonEmptyString });
+
+export const ThreadMoveInput = Schema.Struct({
+  threadId: ThreadId,
+  /** A path the server resolves against the thread's folder; null moves it to No project. */
+  destination: Schema.NullOr(Schema.NonEmptyString),
+  addProject: Schema.optional(Schema.Boolean),
+  confirm: Schema.optional(Schema.Boolean),
+  /**
+   * The `resolvedFolders` of the question this call answers. The server refuses when the thread
+   * left `from` or the destination no longer resolves to `to`.
+   */
+  approved: Schema.optional(
+    Schema.Struct({
+      from: Schema.optional(Schema.NonEmptyString),
+      /** Null for a new scratch folder. */
+      to: Schema.NullOr(Schema.NonEmptyString),
+    }),
+  ),
+});
+export type ThreadMoveInput = typeof ThreadMoveInput.Type;
+
+/**
+ * The thread's folder and the destination of a question, with symlinks resolved. The dialog
+ * shows the paths the user knows, and the answer sends these back as `approved`.
+ */
+const ThreadMoveResolvedFolders = Schema.Struct({
+  from: Schema.NonEmptyString,
+  /** Null for a new scratch folder. */
+  to: Schema.NullOr(Schema.NonEmptyString),
+});
+
+export const ThreadMoveResult = Schema.Union([
+  /** No members when the thread already works in `folder`. */
+  Schema.TaggedStruct("moved", {
+    folder: Schema.NonEmptyString,
+    members: Schema.Array(ThreadMoveThread),
+  }),
+  Schema.TaggedStruct("needs-project", {
+    folder: Schema.NonEmptyString,
+    nestedIn: Schema.optional(ThreadMoveProject),
+    resolvedFolders: ThreadMoveResolvedFolders,
+  }),
+  Schema.TaggedStruct("confirm", {
+    from: Schema.NonEmptyString,
+    /** Null for a new scratch folder. */
+    to: Schema.NullOr(Schema.NonEmptyString),
+    staysOnDisk: Schema.String,
+    wayBack: Schema.Literals(["cd", "add-project", "none"]),
+    /** Named instead of its root threads when `from` is its root. */
+    project: Schema.optional(ThreadMoveProject),
+    otherThreads: Schema.Array(ThreadMoveThread),
+    resolvedFolders: ThreadMoveResolvedFolders,
+  }),
+  Schema.TaggedStruct("refused", {
+    reason: Schema.String,
+    thread: Schema.optional(ThreadMoveThread),
+    projects: Schema.optional(Schema.Array(ThreadMoveProject)),
+  }),
+]);
+export type ThreadMoveResult = typeof ThreadMoveResult.Type;
+
+export const ThreadMoveStage = Schema.Literals([
+  "check",
+  "add-project",
+  "claim-folder",
+  "plan",
+  "commit",
+]);
+export type ThreadMoveStage = typeof ThreadMoveStage.Type;
+
+export class ThreadMoveError extends Schema.TaggedError<ThreadMoveError>()("ThreadMoveError", {
+  /** Absent when the server could not start the move. */
+  stage: Schema.optional(ThreadMoveStage),
+  /** The file or folder that the failed step read. */
+  path: Schema.optional(Schema.String),
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
 export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileError>()(
   "ProjectWriteFileError",
   {

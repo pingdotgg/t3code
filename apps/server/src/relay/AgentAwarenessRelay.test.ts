@@ -210,6 +210,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
   const threads = ThreadManagementService.ThreadManagementService.of({
     getThreadShell: unused,
     getShellSnapshot: unused,
+    threadHasBackgroundWork: unused,
     getAgentAwarenessSnapshot: (threadId) =>
       threadId === undefined
         ? Effect.sync(() => {

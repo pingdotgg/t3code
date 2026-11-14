@@ -35,7 +35,9 @@ import { type TimestampFormat } from "@t3tools/contracts/settings";
 import {
   TimelineRowCtx,
   TimelineRowActivityCtx,
+  TimelineRowFolderCtx,
   WorkGroupViewCtx,
+  useTimelineRowWorkspaceRoot,
   type WorkGroupViewedImage,
   type TimelineWorkEntry,
   type TimelineRow,
@@ -76,13 +78,9 @@ export const WorkGroupSection = memo(function WorkGroupSection({
   isExpandedToolGroup: boolean;
   displayLabel?: string | undefined;
 }) {
-  const {
-    workspaceRoot,
-    routeThreadKey,
-    onToggleWorkEntry,
-    onWorkEntryContentReady,
-    pendingApprovals,
-  } = use(TimelineRowCtx);
+  const { routeThreadKey, onToggleWorkEntry, onWorkEntryContentReady, pendingApprovals } =
+    use(TimelineRowCtx);
+  const workspaceRoot = useTimelineRowWorkspaceRoot();
   const nonEmptyEntries = groupedEntries.filter((entry) => {
     const item = entry.projectedItem?.item;
     return (
@@ -143,7 +141,12 @@ const compactWorkEntryHeight = 24;
 function useWorkGroupViewedImages(
   groupedEntries: ReadonlyArray<TimelineWorkEntry>,
 ): ReadonlyArray<WorkGroupViewedImage> {
-  const { threadRef, workspaceRoot, activeThreadEnvironmentId } = use(TimelineRowCtx);
+  const {
+    threadRef,
+    activeThreadEnvironmentId,
+    workspaceRoot: threadWorkspaceRoot,
+  } = use(TimelineRowCtx);
+  const workspaceRoot = useTimelineRowWorkspaceRoot();
   const viewed = threadRef
     ? workEntriesViewedImagePaths(groupedEntries).flatMap((path) => {
         const asset = resolveViewedImageAsset(path, {
@@ -175,6 +178,7 @@ function useWorkGroupViewedImages(
           name: asset.alt || "image",
           src,
           workspaceRoot,
+          threadWorkspaceRoot,
         }),
       },
     };
@@ -567,7 +571,8 @@ export function LiveWorkEntryTimelineRow({
 }) {
   const ctx = use(TimelineRowCtx);
   const threadTarget = useThreadReadTarget(row.entry, ctx.activeThreadEnvironmentId);
-  const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
+  const rowFolder = use(TimelineRowFolderCtx)?.cwd;
+  const label = liveWorkEntryLabel(row.entry, rowFolder ?? ctx.workspaceRoot, row.active);
   const threadLabel = threadReadLabel(label, threadTarget);
 
   const item = row.entry.projectedItem?.item;
@@ -615,6 +620,7 @@ export function LiveWorkEntryTimelineRow({
                 inline
                 text={thoughtLine}
                 cwd={ctx.markdownCwd}
+                fileLinkBaseDir={rowFolder}
                 parseRawHtml={false}
                 extraRemarkPlugins={THOUGHT_PREVIEW_PLUGINS}
               />
@@ -636,6 +642,7 @@ export function LiveWorkEntryTimelineRow({
               inline
               text={(row.entry.detail ?? label).slice(0, THOUGHT_PREVIEW_SOURCE_MAX_LENGTH)}
               cwd={ctx.markdownCwd}
+              fileLinkBaseDir={rowFolder}
               parseRawHtml={false}
               extraRemarkPlugins={row.active ? THINKING_PREVIEW_PLUGINS : THOUGHT_PREVIEW_PLUGINS}
             />

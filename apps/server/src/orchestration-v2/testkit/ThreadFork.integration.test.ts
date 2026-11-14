@@ -18,6 +18,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
+import { rootCheckpointScopeName } from "../CheckpointService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import {
@@ -492,7 +493,7 @@ describe("orchestration V2 thread fork", () => {
         const secondRunId = ids.derive.run({ threadId: sourceThreadId, ordinal: 2 });
         const checkpointScopeId = yield* ids.allocate.checkpointScope({
           threadId: sourceThreadId,
-          name: "root",
+          name: rootCheckpointScopeName(cwd),
         });
         const firstCheckpointId = yield* ids.allocate.checkpoint({
           checkpointScopeId,
@@ -698,7 +699,7 @@ describe("orchestration V2 thread fork", () => {
         const targetSecondRunId = ids.derive.run({ threadId: targetThreadId, ordinal: 2 });
         const targetCheckpointScopeId = yield* ids.allocate.checkpointScope({
           threadId: targetThreadId,
-          name: "root",
+          name: rootCheckpointScopeName(cwd),
         });
         const targetFirstCheckpointId = yield* ids.allocate.checkpoint({
           checkpointScopeId: targetCheckpointScopeId,

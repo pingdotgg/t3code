@@ -217,6 +217,8 @@ it.effect("resolves the thread baseline after a second root run replaces scope o
         Layer.mergeAll(
           Layer.mock(ThreadManagement.ThreadManagementService)({
             getCheckpointContext: () => Effect.succeed(context),
+            getThreadRecords: (threadId, fields, filter) =>
+              projections.getThreadRecords(threadId, fields, filter).pipe(Effect.orDie),
           }),
           Layer.mock(CheckpointStore.CheckpointStore)({
             listAuthoredPaths: () => Effect.succeed(null),

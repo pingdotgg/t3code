@@ -18,6 +18,7 @@ import {
   ThreadId,
   type OrchestrationV2Subagent,
 } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   createRef,
@@ -33,7 +34,8 @@ import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import "~/index.css";
 
-import { environmentThreadDetails } from "../../state/threads";
+import { environmentProjects } from "../../state/projects";
+import { environmentThreadDetails, environmentThreadShells } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
@@ -51,6 +53,8 @@ import { TimelineRowCtx } from "./timelineRowContext";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 import { collectThreadFindRanges } from "./threadFindHighlights";
 import { toastManager } from "../ui/toast";
+import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { useRightPanelStore } from "~/rightPanelStore";
 import type { CitedHistory } from "./citationProcedure";
 import type { TimelineNavigation } from "./timelineViewport";
 import { rememberTimelinePosition } from "./timelineScrollAnchoring";
@@ -58,7 +62,11 @@ import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   decodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
-import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import {
+  collectComposerContextReferences,
+  formatComposerContextReference,
+} from "@t3tools/shared/composerContextReferences";
+import { resolveFileContextMenuAbsolutePath, type FileContextMenuTarget } from "~/fileContextMenu";
 
 const environmentQuery = vi.hoisted(() => ({
   error: "Pull request not found" as string | null,
@@ -77,6 +85,12 @@ vi.mock(import("~/state/query"), async (original) => ({
   })) as never,
 }));
 
+const fileMenu = vi.hoisted(() => ({ targets: [] as Array<FileContextMenuTarget> }));
+vi.mock(import("~/fileContextMenu"), async (original) => ({
+  ...(await original()),
+  useFileContextMenuHandler: () => (target: FileContextMenuTarget) => fileMenu.targets.push(target),
+}));
+
 const stubbedAsset = vi.hoisted(() => ({ url: "" }));
 vi.mock(import("~/assets/assetUrls"), async (original) => {
   const actual = await original();
@@ -92,6 +106,8 @@ vi.mock(import("~/assets/assetUrls"), async (original) => {
         : actual.useAssetUrls(...args)) as typeof actual.useAssetUrls,
   };
 });
+const PIXEL_PNG =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const CREATED_AT = "2026-03-17T19:12:28.000Z";
@@ -223,6 +239,7 @@ async function click(element: HTMLElement) {
 function setup({ scheduledTasks = [] as ReadonlyArray<{ id: string; title: string }> } = {}) {
   environmentQuery.error = "Pull request not found";
   environmentQuery.data = { tasks: scheduledTasks };
+  fileMenu.targets.length = 0;
 }
 
 const TASK_ID = ScheduledTaskId.make("task-1");
@@ -1679,8 +1696,7 @@ describe("MessagesTimeline attachments", () => {
   });
 
   it("opens a viewed image as a gallery of the images beside it", async () => {
-    stubbedAsset.url =
-      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    stubbedAsset.url = PIXEL_PNG;
     onTestFinished(() => {
       stubbedAsset.url = "";
     });
@@ -1701,6 +1717,7 @@ describe("MessagesTimeline attachments", () => {
             id: "viewed",
             createdAt: CREATED_AT,
             paths: ["/repo/first.png", "/repo/second.png", "/repo/third.png"],
+            source: { id: "viewed" },
           }}
         />
       </TimelineRowCtx>,
@@ -1717,8 +1734,7 @@ describe("MessagesTimeline attachments", () => {
   });
 
   it("opens an image from an expanded tool row as a gallery of the turn's viewed images", async () => {
-    stubbedAsset.url =
-      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    stubbedAsset.url = PIXEL_PNG;
     onTestFinished(() => {
       stubbedAsset.url = "";
     });
@@ -2304,4 +2320,186 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await expect
     .element(screen.getByRole("button", { name: "Open the current tab", exact: true }))
     .toBeVisible();
+});
+
+it("shows the full folders in an expanded move receipt", async () => {
+  const detail = [
+    'It came from project "A", which has its root at `/repos/a`.',
+    "The next turn runs in `` /repos/b`c ``.",
+    "Open terminals keep their folder.",
+  ].join("\n");
+  await using screen = await renderTimeline([
+    work("move-receipt", {
+      itemType: "system_notice",
+      label: "Moved to B",
+      detail,
+      projectedItem: v2Item("system_notice", {
+        id: "move-receipt",
+        message: `Moved to B.\n${detail}`,
+        previousFolder: "/repos/a",
+      }),
+    }),
+  ]);
+  expect(screen.text()).not.toContain("/repos/a");
+  await click(screen.button("Moved to B"));
+  await vi.waitFor(() =>
+    expect(screen.text()).toContain('It came from project "A", which has its root at /repos/a.'),
+  );
+  const paths = [...screen.container.querySelectorAll("code")].map((code) => code.textContent);
+  expect(paths).toEqual(["/repos/a", "/repos/b`c"]);
+});
+
+it("opens a row's relative links under its run's folder", async () => {
+  setup();
+  stubbedAsset.url = PIXEL_PNG;
+  onTestFinished(() => {
+    stubbedAsset.url = "";
+  });
+  const onImageExpand = vi.fn<TimelineProps["onImageExpand"]>();
+  const run = (id: string, folder: object = {}) => ({
+    id: RunId.make(id),
+    ordinal: 1,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    ...folder,
+  });
+  const mention = {
+    version: 1 as const,
+    kind: "mention" as const,
+    contextId: ComposerContextId.make("mention-notes"),
+    label: "notes.md",
+    path: "notes.md",
+  };
+  const entries = [
+    message("See [notes](notes.txt).", {}, "imported"),
+    {
+      id: "plan",
+      kind: "proposed-plan",
+      createdAt: CREATED_AT,
+      proposedPlan: { id: "plan", runId: null, planMarkdown: "[plan](plan.txt)", status: "active" },
+    } as Entry,
+    work("move-receipt", {
+      itemType: "system_notice",
+      label: "Moved.",
+      structuredPayload: { type: "system_notice", previousFolder: "/old" },
+    }),
+    message("See [a](a.ts).", { runId: RunId.make("run-1") }, "in-run"),
+    ...["diagram.png", "chart.png"].map((name) =>
+      work(`read-${name}`, {
+        label: `Read ${name}`,
+        toolTitle: "Read",
+        tone: "tool",
+        itemType: "dynamic_tool",
+        toolLifecycleStatus: "completed",
+        viewedImagePath: name,
+        runId: RunId.make("run-1"),
+      }),
+    ),
+    message("See [b](b.ts).", {}, "runless"),
+    message("See [c](c.ts).", { runId: RunId.make("run-paged") }, "paged"),
+    message(
+      `Read ${formatComposerContextReference(mention)}`,
+      { runId: RunId.make("run-1"), context: { version: 1, records: [mention] } },
+      "mention",
+    ),
+    message("Done", { role: "assistant", runId: RunId.make("run-1") }, "changed"),
+  ];
+  const ui = (props: Partial<TimelineProps>) => (
+    <MessagesTimeline
+      {...baseProps()}
+      routeThreadKey="environment-local:thread-file-links"
+      timelineEntries={entries}
+      workspaceRoot="/repo-w/app"
+      markdownCwd="/repo-w/app"
+      onImageExpand={onImageExpand}
+      turnDiffSummaries={[
+        {
+          runId: RunId.make("run-1"),
+          checkpointTurnCount: 1,
+          checkpointRef: "checkpoint-1" as never,
+          status: "ready",
+          files: [{ path: "app/kept.txt", kind: "modified", additions: 1, deletions: 0 }],
+          assistantMessageId: MessageId.make("changed"),
+          completedAt: CREATED_AT,
+        },
+      ]}
+      {...props}
+    />
+  );
+  using _threadShell = vi
+    .spyOn(environmentThreadShells, "threadShellAtom")
+    .mockReturnValue(Atom.make({ environmentId: ENVIRONMENT_ID, projectId: "project-w" }) as never);
+  using _project = vi
+    .spyOn(environmentProjects, "projectAtom")
+    .mockReturnValue(Atom.make({ repositoryIdentity: { rootPath: "/repo-w" } }) as never);
+  await using screen = await renderElement(ui({ runs: [run("run-1")] }));
+  using openFile = vi.spyOn(useRightPanelStore.getState(), "openFile").mockImplementation(() => {});
+  const opened = async () => {
+    openFile.mockClear();
+    const links = [...screen.container.querySelectorAll<HTMLElement>("a.chat-markdown-file-link")];
+    for (const link of links) await click(link);
+    await click(screen.button("Preview notes.md"));
+    return openFile.mock.calls.map((call) => call[1]);
+  };
+  const noFolders = ["/old/notes.txt", "/old/plan.txt", "a.ts", "b.ts", "c.ts", "notes.md"];
+  await vi.waitFor(async () => expect(await opened()).toEqual(noFolders));
+
+  await screen.rerender(
+    ui({
+      runs: [run("run-1", { cwd: "/repo-a/app", repositoryRoot: "/repo-a" })],
+      runFolders: [{ id: RunId.make("run-paged"), cwd: "/repo-old" }],
+    }),
+  );
+  await vi.waitFor(async () =>
+    expect(await opened()).toEqual([
+      "/old/notes.txt",
+      "/old/plan.txt",
+      "/repo-a/app/a.ts",
+      "b.ts",
+      "/repo-old/c.ts",
+      "/repo-a/app/notes.md",
+    ]),
+  );
+
+  const gallery = expect.objectContaining({
+    images: ["diagram.png", "chart.png"].map((name) =>
+      expect.objectContaining({
+        actionsSource: expect.objectContaining({
+          asset: expect.objectContaining({
+            resource: expect.objectContaining({ path: `/repo-a/app/${name}` }),
+          }),
+        }),
+      }),
+    ),
+  });
+  const thumbnails = () => screen.buttons("Preview diagram.png");
+  await click(screen.button(/^Worked for/));
+  await vi.waitFor(() => expect(thumbnails()).toHaveLength(1));
+  await click(thumbnails()[0]!);
+  await click(screen.button(/^Read 2 files/));
+  await vi.waitFor(() => expect(screen.buttons("Read")).toHaveLength(2));
+  await click(screen.buttons("Read")[0]!);
+  await vi.waitFor(() => expect(thumbnails()).toHaveLength(2));
+  await click(thumbnails().find((image) => !image.closest("[data-image-gallery]"))!);
+  expect(onImageExpand.mock.calls).toEqual([[gallery], [gallery]]);
+
+  await click(screen.button(/^app/));
+  for (const [folder, target] of [
+    [{ cwd: "/repo-a/app", repositoryRoot: "/repo-a" }, "/repo-a/app/kept.txt"],
+    [{ cwd: "/repo-w/app" }, "/repo-w/app/kept.txt"],
+    [{ cwd: "/repo-old" }, "/repo-old/app/kept.txt"],
+  ] as const) {
+    await screen.rerender(ui({ runs: [run("run-1", folder)] }));
+    await vi.waitFor(() => {
+      screen.button(/^kept\.txt/).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+      expect(resolveFileContextMenuAbsolutePath(fileMenu.targets.at(-1)!)).toEqual(target);
+    });
+  }
+
+  expect(screen.text()).toContain("Moved.");
+  onTestFinished(() => __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS));
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, toolCallVisibility: "zen" });
+  await screen.rerender(ui({ runs: [run("run-1")] }));
+  await vi.waitFor(() => expect(screen.text()).not.toContain("Moved."));
+  expect(await opened()).toEqual(noFolders);
 });

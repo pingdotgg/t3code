@@ -510,6 +510,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     supportsProviderSwitchingViaHandoff: true,
     supportsRuntimeModeSwitchInSession: false,
     pendingRequestsSurviveRestart: false,
+    supportsFolderMove: true,
   },
   threads: {
     canCreateEmptyThread: true,
@@ -2539,6 +2540,7 @@ function makeProviderThread(input: {
   readonly ownerNodeId?: OrchestrationV2ProviderThread["ownerNodeId"];
   readonly providerSessionId: OrchestrationV2ProviderThread["providerSessionId"];
   readonly nativeThreadId: string;
+  readonly nativeStorageFolder?: string;
   readonly forkedFrom?: NonNullable<OrchestrationV2ProviderThread["forkedFrom"]>;
   readonly nativeMetadata?: NonNullable<OrchestrationV2ProviderThread["nativeMetadata"]>;
   readonly now: DateTime.Utc;
@@ -2559,6 +2561,9 @@ function makeProviderThread(input: {
       strength: "strong",
     },
     nativeConversationHeadRef: null,
+    ...(input.nativeStorageFolder === undefined
+      ? {}
+      : { nativeStorageFolder: input.nativeStorageFolder }),
     status: "idle",
     firstRunOrdinal: null,
     lastRunOrdinal: null,
@@ -4970,6 +4975,8 @@ interface ClaudeLiveQueryContext {
   // Per process, not per session: a relative temp dir follows the cwd this CLI
   // was launched in, and a later turn's cwd can differ.
   readonly taskOutputRoot: string | undefined;
+  // Set when this process created its session without resume: Claude stores it under this folder.
+  readonly createdSessionFolder: string | undefined;
 }
 
 interface ActiveClaudeToolCall {
@@ -6982,11 +6989,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             return;
           }
+          const { input: turnInput } = resume.context;
+          const storageFolder =
+            turnInput.providerThread.nativeStorageFolder ??
+            (yield* turnInput.readNativeStorageFolder ?? Effect.undefined) ??
+            turnInput.runtimePolicy.cwd;
           const launchToolUseId = yield* queryRunner
             .subagentLaunchToolUseId({
               sessionId: resume.nativeThreadId,
               agentId: resume.taskId,
-              dir: resume.context.input.runtimePolicy.cwd,
+              dir: storageFolder,
               threadId: resume.context.input.threadId,
               providerSessionId: input.providerSessionId,
             })
@@ -12218,10 +12230,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
+          // A continuation keeps the process its wake turn still runs in: a replacement would never finish that turn.
+          const keepsRunningWake = Effect.gen(function* () {
+            if (
+              existing === null ||
+              existing.nativeThreadId !== nativeThreadId ||
+              existing.stopping ||
+              !isClaudeProviderContinuationTurn(turnInput) ||
+              (yield* Ref.get(absorbedWakes)).has(nativeThreadId)
+            ) {
+              return false;
+            }
+            const buffered = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
+            return buffered
+              .slice(buffered.findLastIndex((entry) => entry.type === "result") + 1)
+              .some(isClaudeRootTurnFrame);
+          });
           // Continuations drain existing output without prompting; retain the live process regardless of selection.
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
+            (existing.settingsCwd === turnInput.runtimePolicy.cwd || (yield* keepsRunningWake)) &&
             !existing.stopping &&
             isClaudeProviderContinuationTurn(turnInput)
           ) {
@@ -12251,6 +12280,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             !turnInput.resume &&
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
+            existing.settingsCwd === turnInput.runtimePolicy.cwd &&
             existing.queryPolicyKey === queryPolicyKey &&
             !existing.stopping &&
             existing.selection.queryIdentity !== compiledSelection.queryIdentity &&
@@ -12264,6 +12294,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             !turnInput.resume &&
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
+            existing.settingsCwd === turnInput.runtimePolicy.cwd &&
             existing.queryPolicyKey === queryPolicyKey &&
             !existing.stopping &&
             existing.selection.queryIdentity === compiledSelection.queryIdentity
@@ -12289,15 +12320,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           // Replacing this thread's process kills its background work, even with a new native identity.
-          if (
-            existing !== null &&
-            (existing.nativeThreadId === nativeThreadId ||
-              existing.lastTurn?.input.threadId === turnInput.threadId) &&
-            !existing.stopping &&
-            (yield* liveProcessRunsBackgroundWork(existing))
-          ) {
-            return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
-          }
+          const refuseIfBackgroundWorkRuns = Effect.gen(function* () {
+            if (
+              existing !== null &&
+              (existing.nativeThreadId === nativeThreadId ||
+                existing.lastTurn?.input.threadId === turnInput.threadId) &&
+              !existing.stopping &&
+              (yield* liveProcessRunsBackgroundWork(existing))
+            ) {
+              return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
+            }
+          });
+          yield* refuseIfBackgroundWorkRuns;
 
           if (reuseLaunchSettings) {
             launchArgSettings = yield* readLaunchSettings;
@@ -12325,7 +12359,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           clearedNativeSessions.delete(nativeThreadId);
           if (existing !== null) {
-            yield* existing.query.close.pipe(Effect.ignore);
+            // SDK frames land under the SDK message lock; decide and close under it so a wake turn or
+            // background work that started during the reads above keeps its process. A stopping query may
+            // be closing under that lock already.
+            const closeUnlessWorkRuns = Effect.gen(function* () {
+              if (yield* keepsRunningWake) return true;
+              yield* refuseIfBackgroundWorkRuns;
+              yield* existing.query.close.pipe(Effect.ignore);
+              return false;
+            });
+            const kept = yield* existing.stopping
+              ? closeUnlessWorkRuns
+              : sdkMessageLock.withPermits(1)(closeUnlessWorkRuns);
+            if (kept) return existing;
             if (existing.nativeThreadId !== nativeThreadId) {
               yield* clearWakeStateForNativeThread(existing.nativeThreadId);
               yield* resetBackgroundTaskStateForNativeThreadProcess(existing.nativeThreadId, {
@@ -12423,6 +12469,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
             status: "active",
           });
+          if (!shouldResume && turnInput.runtimePolicy.cwd !== null) {
+            // Before the prompt goes out: a refused prompt or an early exit must not lose it.
+            yield* (
+              turnInput.recordNativeStorageFolder?.(turnInput.runtimePolicy.cwd) ?? Effect.void
+            );
+            yield* emitProviderThreadRoster({
+              nativeThreadId,
+              providerThread: {
+                ...turnInput.providerThread,
+                nativeStorageFolder: turnInput.runtimePolicy.cwd,
+              },
+              status: "active",
+            });
+          }
           const closed = yield* Deferred.make<void, never>();
           const context: ClaudeLiveQueryContext = {
             queryPolicy,
@@ -12454,6 +12514,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resolvedTurnCwd,
               hostPlatform,
             ),
+            createdSessionFolder: shouldResume
+              ? undefined
+              : (turnInput.runtimePolicy.cwd ?? undefined),
           };
           // One step, so the replaced process cannot exit between the install and the handoff.
           yield* Ref.update(queryContext, (replaced) => {
@@ -12553,6 +12616,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
+            // A continuation that ends before its drain retires the wake it started under, as a run
+            // that never started does, so the next wake gets a request of its own. A drain, or a
+            // request registered since, has already released this one.
+            const requestNativeThreadId = turnInput.providerThread.nativeThreadRef?.nativeId;
+            const continuationRequest =
+              isClaudeProviderContinuationTurn(turnInput) &&
+              typeof requestNativeThreadId === "string"
+                ? (yield* Ref.get(requestedContinuations)).get(requestNativeThreadId)?.token
+                : undefined;
+            if (continuationRequest !== undefined && typeof requestNativeThreadId === "string") {
+              yield* Effect.addFinalizer(() =>
+                Ref.get(requestedContinuations).pipe(
+                  Effect.flatMap((current) =>
+                    current.get(requestNativeThreadId)?.token === continuationRequest
+                      ? sdkMessageLock.withPermits(1)(
+                          retireOfferedWake(requestNativeThreadId, continuationRequest),
+                        )
+                      : Effect.void,
+                  ),
+                ),
+              );
+            }
             modelCatalog = yield* loadModelCatalog;
             const startedAt = yield* DateTime.now;
             const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
@@ -12668,13 +12753,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       Effect.provideService(Path.Path, path),
                     );
             const querySession = yield* openQuery(turnInput, nativeThreadId, queryPolicy);
+            const storedTurnInput =
+              querySession.createdSessionFolder === undefined
+                ? turnInput
+                : {
+                    ...turnInput,
+                    providerThread: {
+                      ...turnInput.providerThread,
+                      nativeStorageFolder: querySession.createdSessionFolder,
+                    },
+                  };
             const autoCompactWindow = yield* resolveAutoCompactWindow(
               querySession.settingsCwd,
               turnInput.modelSelection,
               querySession.launchArgSettings,
             );
             const context: ActiveClaudeTurnContext = {
-              input: turnInput,
+              input: storedTurnInput,
               autoCompactWindow,
               queryPolicy: querySession.queryPolicy,
               nativeThreadId,
@@ -13890,6 +13985,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const sourceNativeThreadId = yield* getNativeThreadId(forkInput.sourceProviderThread);
               yield* closeLiveQueryForNativeThread(sourceNativeThreadId);
               const upToMessageId = yield* resolveClaudeForkUpToMessageId(forkInput);
+              const storageFolder =
+                forkInput.sourceProviderThread.nativeStorageFolder ??
+                forkInput.sourceNativeStorageFolder ??
+                input.runtimePolicy.cwd;
               // A moved project still has its transcript under the original cwd.
               // Let the SDK find the session by ID within this Claude home.
               const forkOptions: ForkSessionOptions =
@@ -13918,6 +14017,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ownerNodeId: forkInput.ownerNodeId ?? null,
                 providerSessionId: input.providerSessionId,
                 nativeThreadId: forked.sessionId,
+                ...(storageFolder === null ? {} : { nativeStorageFolder: storageFolder }),
                 forkedFrom: {
                   providerThreadId: forkInput.sourceProviderThread.id,
                   ...(forkInput.providerTurnId === undefined

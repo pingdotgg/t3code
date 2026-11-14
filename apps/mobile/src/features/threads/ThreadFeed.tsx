@@ -43,6 +43,12 @@ import {
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import {
+  receiptFoldersSignature,
+  runFoldersSignature,
+  timelineRowFolder,
+  timelineRowFolders,
+} from "@t3tools/client-runtime/timeline-row-folders";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   AuthFilesystemReadScope,
@@ -55,6 +61,8 @@ import {
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
   type RunId,
   type ScheduledTaskId,
   type ScopedThreadRef,
@@ -156,6 +164,7 @@ import {
   SelectableMarkdownText,
   type MarkdownFileContextMenu,
   type MarkdownImageRenderer,
+  type MarkdownImageRequest,
   type MarkdownImageSourceResolver,
   type MarkdownLinkCustomization,
   type NativeMarkdownTextStyle,
@@ -329,6 +338,9 @@ export interface ThreadFeedProps {
   readonly detailRef: ScopedThreadRef | null;
   readonly threadTitle: string;
   readonly workspaceRoot?: string | null;
+  /** Live runs and the folders of paged-in runs; a row's links resolve in its run's folder. */
+  readonly runs?: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "cwd" | "repositoryRoot">>;
+  readonly runFolders?: OrchestrationV2ThreadProjection["runFolders"];
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly contentPresentation: ThreadContentPresentation;
@@ -1080,6 +1092,16 @@ function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
 
 /** The reply a link sits in; a file it cites may be where the agent worked before writing it. */
 type MarkdownLinkReply = Pick<OrchestrationV2ProjectedTurnItem, "sourceThreadId" | "sourceItemId">;
+
+function feedRowRunId(row: ThreadFeedRow): RunId | null {
+  if (row.type === "message") return row.message.runId;
+  return "runId" in row ? row.runId : null;
+}
+
+function feedRowPreviousFolder(row: ThreadFeedRow): string | undefined {
+  const item = row.type === "activity-group" ? row.activities[0]?.projectedItem.item : undefined;
+  return item?.type === "system_notice" ? item.previousFolder : undefined;
+}
 
 interface MarkdownLinkHandlers {
   readonly onLinkPress: (href: string, reply?: MarkdownLinkReply) => void;
@@ -2892,23 +2914,25 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     return scopeThreadRef(props.environmentId, link.threadId);
   };
   // The file a chat link names: in this workspace, else in the one other project that has it.
+  // `lookupRoot` is this workspace, or the folder the link's row ran in.
   const findFileLinkTarget = async (
     linkPath: string,
     path: string,
     signal: AbortSignal,
     reply: MarkdownLinkReply | undefined,
+    lookupRoot: string | null | undefined,
   ): Promise<string> => {
-    const relativePath = resolveWorkspaceRelativeFilePath(props.workspaceRoot, path);
+    const relativePath = resolveWorkspaceRelativeFilePath(lookupRoot, path);
     if (
-      !props.workspaceRoot ||
+      !lookupRoot ||
       !relativePath ||
       /[\\/]$/.test(linkPath) ||
-      workspaceLinkLookupQuery(linkPath, props.workspaceRoot) === null ||
+      workspaceLinkLookupQuery(linkPath, lookupRoot) === null ||
       !readEnvironmentScope(props.environmentId, AuthFilesystemReadScope)
     ) {
       return relativePath ?? path;
     }
-    const workspaceRoot = props.workspaceRoot;
+    const workspaceRoot = lookupRoot;
     const originalPath = resolveWorkspaceFilePath(workspaceRoot, relativePath);
     const queryOptions = { signal, reportFailure: false, reportDefect: false };
     const searchRoot = (root: string) =>
@@ -2951,7 +2975,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           .get(environmentProjects.projectsAtom)
           .flatMap((project) =>
             project.environmentId === props.environmentId &&
-            project.id !== threadProjectId &&
+            // A row that ran in another folder is not in the thread's project.
+            (workspaceRoot !== props.workspaceRoot || project.id !== threadProjectId) &&
             project.workspaceRoot !== workspaceRoot
               ? [project.workspaceRoot]
               : [],
@@ -3000,7 +3025,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     };
     return lookup().catch(() => relativePath);
   };
-  const onMarkdownLinkPress = (href: string, imageEmbed = false, reply?: MarkdownLinkReply) => {
+  // `folder` is a row's own run folder when it differs from the thread's: links resolve there,
+  // are looked up there by name, and the file screen opens them in that folder.
+  const onMarkdownLinkPress = (
+    href: string,
+    imageEmbed = false,
+    folder?: string,
+    reply?: MarkdownLinkReply,
+  ) => {
     markdownLinkRequest.current?.abort();
     const request = new AbortController();
     markdownLinkRequest.current = request;
@@ -3023,7 +3055,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     const media = resolveMarkdownMediaPreview(href, {
       environmentId: props.environmentId,
       threadId: props.threadId,
-      workspaceRoot: props.workspaceRoot,
+      workspaceRoot: folder ?? props.workspaceRoot,
       imageEmbed,
     });
     if (media && media.kind !== "file") {
@@ -3056,6 +3088,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               environmentId: String(props.environmentId),
               threadId: String(props.threadId),
               path: fileRoutePathSegments(mediaPath),
+              ...(folder === undefined ? {} : { cwd: folder }),
             });
           } else openMediaPreview();
         }, openMediaPreview);
@@ -3065,9 +3098,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
     const presentation = resolveMarkdownLinkPresentation(href);
     if (presentation.kind === "file") {
-      const path = resolveFileLinkPath(props.workspaceRoot, presentation.path);
+      const root = folder ?? props.workspaceRoot;
+      const path = resolveFileLinkPath(root, presentation.path);
       if (path === null) return;
-      void findFileLinkTarget(presentation.path, path, request.signal, reply).then((target) => {
+      const lookup = findFileLinkTarget(presentation.path, path, request.signal, reply, root);
+      void lookup.then((target) => {
         if (request.signal.aborted) return;
         void Haptics.selectionAsync();
         navigation.navigate("ThreadFile", {
@@ -3075,6 +3110,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           threadId: String(props.threadId),
           path: fileRoutePathSegments(target),
           ...(presentation.line ? { line: String(presentation.line) } : {}),
+          ...(folder === undefined ? {} : { cwd: folder }),
         });
       });
       return;
@@ -3095,21 +3131,23 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     threadId: props.threadId,
     workspaceRoot: props.workspaceRoot ?? null,
   });
-  const markdownLinkHandlers: MarkdownLinkHandlers = {
+  // Every file action resolves in `folder`, so a tap, the context menu, and its paths agree.
+  const markdownLinkHandlersIn = (folder: string | undefined): MarkdownLinkHandlers => ({
     fileEmbedLabel: (href, standalone) =>
       markdownFileEmbedLabel(
         href,
         {
           environmentId: props.environmentId,
           threadId: props.threadId,
-          workspaceRoot: props.workspaceRoot,
+          workspaceRoot: folder ?? props.workspaceRoot,
         },
         standalone,
       ),
-    onLinkPress: (href, reply) => onMarkdownLinkPress(href, false, reply),
+    onLinkPress: (href, reply) => onMarkdownLinkPress(href, false, folder, reply),
     linkCustomization: enrichedThreadLinkCustomization,
-    onImagePress: (href) => onMarkdownLinkPress(href, true),
-    resolveImageSource,
+    onImagePress: (href) => onMarkdownLinkPress(href, true, folder),
+    resolveImageSource:
+      folder === undefined ? resolveImageSource : (image) => resolveImageSource(image, folder),
     fileContextMenu: (href) => {
       const skill = enrichedSkillReference(href, props.skills);
       if (skill) {
@@ -3136,7 +3174,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ],
         };
       }
-      const target = resolveFileChipTarget(href, props.workspaceRoot);
+      const target = resolveFileChipTarget(href, folder ?? props.workspaceRoot);
       return target ? fileChipMenu(target) : undefined;
     },
     onFileContextMenuAction: (href, actionId, reply) => {
@@ -3153,26 +3191,24 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         else if (actionId === "copy-thread-link") copyTextWithHaptic(hostedThreadLink(thread));
         return;
       }
-      const target = resolveFileChipTarget(href, props.workspaceRoot);
+      const target = resolveFileChipTarget(href, folder ?? props.workspaceRoot);
       if (!target) return;
       switch (actionId) {
         case "copy-full-path":
         case "copy-relative-path": {
+          const root = folder ?? props.workspaceRoot;
           const presentation = resolveMarkdownLinkPresentation(href);
           const path =
-            presentation.kind === "file"
-              ? resolveFileLinkPath(props.workspaceRoot, presentation.path)
-              : null;
+            presentation.kind === "file" ? resolveFileLinkPath(root, presentation.path) : null;
           if (presentation.kind !== "file" || path === null) return;
           markdownLinkRequest.current?.abort();
           const request = new AbortController();
           markdownLinkRequest.current = request;
-          void findFileLinkTarget(presentation.path, path, request.signal, reply).then((found) => {
+          const lookup = findFileLinkTarget(presentation.path, path, request.signal, reply, root);
+          void lookup.then((found) => {
             if (request.signal.aborted) return;
             const fullPath =
-              props.workspaceRoot && !isAbsolutePath(found)
-                ? resolveWorkspaceFilePath(props.workspaceRoot, found)
-                : found;
+              root && !isAbsolutePath(found) ? resolveWorkspaceFilePath(root, found) : found;
             const clipboardPath = fileChipClipboardPath(
               {
                 ...target,
@@ -3180,8 +3216,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                 ...(target.relativePath
                   ? {
                       relativePath:
-                        resolveWorkspaceRelativeFilePath(props.workspaceRoot, fullPath) ??
-                        target.relativePath,
+                        resolveWorkspaceRelativeFilePath(root, fullPath) ?? target.relativePath,
                     }
                   : {}),
               },
@@ -3192,19 +3227,21 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           return;
         }
         case "open-file":
-          onMarkdownLinkPress(href, false, reply);
+          onMarkdownLinkPress(href, false, folder, reply);
           return;
         case "save":
           shareFileChip(target);
           return;
       }
     },
-  };
-  const renderMarkdownImage: MarkdownImageRenderer = (image) => {
+  });
+  const markdownLinkHandlers = markdownLinkHandlersIn(undefined);
+  const renderMarkdownImage = (image: MarkdownImageRequest, folder?: string) => {
+    const workspaceRoot = folder ?? props.workspaceRoot;
     const media = resolveMarkdownMediaPreview(image.href, {
       environmentId: props.environmentId,
       threadId: props.threadId,
-      workspaceRoot: props.workspaceRoot,
+      workspaceRoot,
       imageEmbed: true,
     });
     if (media?.kind === "video") {
@@ -3221,7 +3258,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         <ThreadInlineFilePreview
           key={image.href}
           source={media.source}
-          onOpen={() => onMarkdownLinkPress(image.href, true)}
+          onOpen={() => onMarkdownLinkPress(image.href, true, folder)}
           onPlaybackStart={onInlinePlaybackStart}
         />
       );
@@ -3236,7 +3273,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         <Text
           accessibilityRole="link"
           accessibilityLabel={`Open ${name}`}
-          onPress={() => onMarkdownLinkPress(image.href, true)}
+          onPress={() => onMarkdownLinkPress(image.href, true, folder)}
           style={{
             color: markdownStyles.assistant.nativeTextStyle.linkColor,
             fontSize: markdownStyles.assistant.nativeTextStyle.fontSize,
@@ -3247,7 +3284,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         </Text>
       );
     }
-    const imageSource = classifyMarkdownImageSource(image.href, props.workspaceRoot ?? null);
+    const imageSource = classifyMarkdownImageSource(image.href, workspaceRoot ?? null);
     if (imageSource._tag === "Direct") {
       return (
         <ThreadMarkdownImageView
@@ -3284,16 +3321,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       />
     );
   };
-  const renderViewedImage: MarkdownImageRenderer = (image) => {
+  const renderViewedImage = (image: MarkdownImageRequest, folder?: string) => {
+    const workspaceRoot = folder ?? props.workspaceRoot;
     const viewedImage = resolveViewedImageAsset(image.href, {
       threadId: props.threadId,
-      workspaceRoot: props.workspaceRoot,
+      workspaceRoot,
     });
     const media = viewedImage
       ? resolveMarkdownMediaPreview(image.href, {
           environmentId: props.environmentId,
           threadId: props.threadId,
-          workspaceRoot: props.workspaceRoot,
+          workspaceRoot,
           imageEmbed: true,
         })
       : null;
@@ -3314,13 +3352,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     ) : null;
   };
   const markdownStyles = useMarkdownStyles();
-  const renderReasoning = (text: string) => (
+  const renderReasoning = (text: string, folder?: string) => (
     <AssistantMarkdownContent
       markdown={text}
       environmentId={props.environmentId}
       markdownStyles={markdownStyles.assistant}
-      linkHandlers={markdownLinkHandlers}
-      renderImage={renderMarkdownImage}
+      linkHandlers={folder === undefined ? markdownLinkHandlers : markdownLinkHandlersIn(folder)}
+      renderImage={
+        folder === undefined ? renderMarkdownImage : (image) => renderMarkdownImage(image, folder)
+      }
       skills={props.skills}
     />
   );
@@ -3424,6 +3464,27 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     setupAnchorIndex:
       props.worktreeSetup || props.setupWorkingStartedAt ? setupAnchorIndex : undefined,
   });
+  const rowFolders = timelineRowFolders(
+    `${runFoldersSignature(props.runs, props.runFolders)}`,
+    `${receiptFoldersSignature(groupedFeed, feedRowPreviousFolder)}`,
+  );
+  // A row's own run folder when it differs from the thread's.
+  const rowFolderOf = (entry: ThreadFeedRow) => {
+    const folder = timelineRowFolder(rowFolders, feedRowRunId(entry), entry.id)?.cwd;
+    return folder === props.workspaceRoot ? undefined : folder;
+  };
+  // A row that ran in another folder replaces the thread's folder and renderers with its own.
+  const rowFolderRenderers = (entry: ThreadFeedRow) => {
+    const folder = rowFolderOf(entry);
+    if (folder === undefined) return undefined;
+    return {
+      workspaceRoot: folder,
+      markdownLinkHandlers: markdownLinkHandlersIn(folder),
+      renderMarkdownImage: (image: MarkdownImageRequest) => renderMarkdownImage(image, folder),
+      renderViewedImage: (image: MarkdownImageRequest) => renderViewedImage(image, folder),
+      renderReasoning: (text: string) => renderReasoning(text, folder),
+    };
+  };
   const { contentInsetEndAdjustment } = props;
   const attachList = (list: LegendListRef | null) => {
     listRef.current = list;
@@ -3722,7 +3783,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         entry={info.item}
         environmentId={props.environmentId}
         threadId={props.threadId}
-        workspaceRoot={props.workspaceRoot}
+        workspaceRoot={rowFolderOf(info.item) ?? props.workspaceRoot}
       >
         <ThreadMediaVisibility>
           {info.item.type === "message" &&
@@ -3785,6 +3846,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             threadTitle: props.threadTitle,
             skills: props.skills,
             workspaceRoot: props.workspaceRoot,
+            ...rowFolderRenderers(info.item),
             workflowOpening,
           })}
           {props.worktreeSetup && info.index === setupAnchorIndex ? (

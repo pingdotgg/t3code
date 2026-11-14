@@ -1,5 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   CommandId,
   MessageId,
   EventId,
@@ -29,19 +32,33 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   orchestrationCommandDuration,
   orchestrationCommandsTotal,
 } from "../observability/Metrics.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { providerThread, runCreated, threadCreated } from "../project/ThreadMove.testkit.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { SHARED_WORKSPACE_RESTORE_MESSAGE } from "./CheckpointRestoreSafety.ts";
+import * as CheckpointService from "./CheckpointService.ts";
+import * as CommandPolicy from "./CommandPolicy.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ProviderSwitchService from "./ProviderSwitchService.ts";
+import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ThreadForkService from "./ThreadForkService.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -2126,6 +2143,184 @@ it.effect("dispatch records the command outcome and its duration", () =>
     assert.strictEqual((yield* successes).count - successesBefore, 1);
     assert.strictEqual((yield* durations).count - durationsBefore, 1);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  { firstRun: "moved", cwd: "/baseline-restore/moved-away", admitted: false },
+  { firstRun: "same", cwd: process.cwd(), admitted: true },
+  { firstRun: "legacy", cwd: undefined, admitted: true },
+  {
+    firstRun: "moved-earlier",
+    cwd: "/baseline-restore/moved-away",
+    laterRun: true,
+    admitted: true,
+  },
+])(
+  "admits a baseline file restore by the folder of the run that took it ($firstRun)",
+  ({ firstRun, cwd, laterRun, admitted }) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const name = `baseline-restore-${firstRun}`;
+      const threadId = ThreadId.make(`thread:${name}`);
+      const projectId = ProjectId.make(`project:${name}`);
+      const providerThreadId = ProviderThreadId.make(`provider-thread:${name}`);
+      const scopeId = CheckpointScopeId.make(`scope:${name}`);
+      const checkpointId = CheckpointId.make(`checkpoint:${name}`);
+      const firstRunId = RunId.make(`run:${name}`);
+      const firstNodeId = NodeId.make(`node:${name}`);
+      const runId = laterRun ? RunId.make(`run:${name}:later`) : firstRunId;
+      const nodeId = laterRun ? NodeId.make(`node:${name}:later`) : firstNodeId;
+      const now = yield* DateTime.now;
+      yield* projections.apply(threadCreated({ threadId, projectId, worktreePath: process.cwd() }));
+      yield* projections.apply({
+        id: EventId.make(`${name}:provider-thread`),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          ...providerThread({
+            id: providerThreadId,
+            threadId,
+            providerInstanceId: instanceId,
+            nativeId: name,
+          }),
+          driver: adapter.driver,
+          providerSessionId: ProviderSessionId.make(`session:${name}`),
+          nativeThreadRef: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`${name}:scope`),
+        type: "checkpoint-scope.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: scopeId,
+          threadId,
+          runId,
+          nodeId,
+          parentScopeId: null,
+          providerThreadId,
+          kind: "root_run",
+          ordinalWithinParent: 0,
+          advancesAppRunCount: true,
+          cwd: process.cwd(),
+          createdAt: now,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`${name}:checkpoint`),
+        type: "checkpoint.captured",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: checkpointId,
+          threadId,
+          scopeId,
+          runId: null,
+          nodeId,
+          parentCheckpointId: null,
+          ordinalWithinScope: 0,
+          appRunOrdinal: null,
+          ref: CheckpointRef.make(`refs/t3/${name}`),
+          status: "ready",
+          files: [],
+          capturedAt: now,
+        },
+      });
+      const runs = [
+        { id: firstRunId, rootNodeId: firstNodeId, cwd },
+        ...(laterRun ? [{ id: runId, rootNodeId: nodeId, cwd: process.cwd() }] : []),
+      ];
+      for (const [index, run] of runs.entries()) {
+        yield* projections.apply(
+          runCreated({
+            ...run,
+            threadId,
+            ordinal: index + 1,
+            providerInstanceId: instanceId,
+            providerThreadId,
+            occurredAt: now,
+          }),
+        );
+      }
+      const rollback = orchestrator.dispatch({
+        type: "checkpoint.rollback",
+        commandId: CommandId.make(`rollback-${name}`),
+        threadId,
+        checkpointId,
+        scopeId,
+        restoreFiles: true,
+      });
+      if (admitted) {
+        assert.deepEqual(
+          (yield* rollback).storedEvents.map((stored) => stored.event.type),
+          ["thread.metadata-updated", "checkpoint.rollback-requested"],
+        );
+      } else {
+        assert.deepInclude(yield* rollback.pipe(Effect.flip), {
+          _tag: "OrchestratorDispatchError",
+          cause: SHARED_WORKSPACE_RESTORE_MESSAGE,
+        });
+      }
+    }).pipe(Effect.provide(layerTest)),
+);
+
+// A move detaches the thread's sessions, which ends any background work inside them. Only the
+// session manager knows whether a session is live, so its answer stands in for the probe.
+const layerSessionLookup = (lookup: "absent" | "fails") =>
+  Orchestrator.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        IdAllocator.layer,
+        ServerSettings.layerTest(),
+        Layer.mock(CheckpointService.CheckpointServiceV2)({}),
+        Layer.mock(CommandPolicy.CommandPolicyV2)({}),
+        Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({}),
+        Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
+        Layer.mock(EffectOutbox.EffectOutboxV2)({}),
+        Layer.mock(EventSink.EventSinkV2)({
+          latestSequence: () => Effect.succeed(0),
+          stream: () => Stream.empty,
+        }),
+        Layer.mock(ProjectStore.ProjectStoreV2)({}),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadRecords: () =>
+            Effect.succeed({
+              providerSessions: [{ id: ProviderSessionId.make("session:lookup") }],
+              providerThreads: [],
+            } as never),
+        }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+          get: (providerSessionId) =>
+            lookup === "absent"
+              ? Effect.succeedNone
+              : Effect.fail(
+                  new ProviderSessionManager.ProviderSessionLookupError({ providerSessionId }),
+                ),
+        }),
+        Layer.mock(ProviderSwitchService.ProviderSwitchServiceV2)({}),
+        Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+        Layer.mock(ThreadForkService.ThreadForkServiceV2)({}),
+      ),
+    ),
+  );
+
+it.effect.each([
+  { lookup: "absent", answer: false },
+  // A failed lookup cannot tell a gone session from a live one, so the move must not proceed.
+  { lookup: "fails", answer: "OrchestratorProjectionError" },
+] as const)("threadHasBackgroundWork when the session lookup $lookup", ({ lookup, answer }) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const result = yield* orchestrator
+      .threadHasBackgroundWork(ThreadId.make("thread:session-lookup"))
+      .pipe(Effect.result);
+    assert.equal(Result.isSuccess(result) ? result.success : result.failure._tag, answer);
+  }).pipe(Effect.provide(layerSessionLookup(lookup))),
 );
 
 it.effect("a user message dispatched first stays run 1 when its lineage read is slow", () => {

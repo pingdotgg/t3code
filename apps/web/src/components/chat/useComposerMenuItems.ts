@@ -51,6 +51,8 @@ import type { ComposerCommandItem } from "./ComposerCommandMenu";
 import { matchComposerModelItems } from "./composerModelMentions";
 import type { ModelEsque } from "./providerIconUtils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
+import { folderMoveSlashCommandItems } from "./composerMenuItems.logic";
+import { useFolderMoveMenu } from "./useFolderMoveMenu";
 import {
   searchSlashCommandItems,
   slashCommandItemsForPromptPosition,
@@ -73,6 +75,10 @@ export function useComposerMenuItems({
   threadPullRequests,
   sideChatAvailable,
   sideChatDisabledReason,
+  folderMoveAvailable,
+  folderMoveDisabledReason,
+  folderMoveCurrentFolder,
+  folderMoveInNoProject,
   freshSessionAvailable,
   compactSlashCommandAvailable,
   selectedProvider,
@@ -93,6 +99,10 @@ export function useComposerMenuItems({
   readonly threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly sideChatAvailable: boolean;
   readonly sideChatDisabledReason: string | null;
+  readonly folderMoveAvailable: boolean;
+  readonly folderMoveDisabledReason: string | null;
+  readonly folderMoveCurrentFolder: string | null;
+  readonly folderMoveInNoProject: boolean;
   readonly freshSessionAvailable: boolean;
   readonly compactSlashCommandAvailable: boolean;
   readonly selectedProvider: ProviderDriverKind;
@@ -197,8 +207,17 @@ export function useComposerMenuItems({
       ? []
       : composerPullRequestsFromLinks(threadPullRequests ?? [], pullRequestProjectId);
 
+  const folderMove = useFolderMoveMenu({
+    query: composerTrigger?.kind === "folder" ? composerTrigger.query : null,
+    environmentId,
+    currentFolder: folderMoveCurrentFolder,
+    inNoProject: folderMoveInNoProject,
+    disabledReason: folderMoveDisabledReason,
+  });
+
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
+    if (composerTrigger.kind === "folder") return folderMove.items;
     if (composerTrigger.kind === "path") {
       return [
         ...matchComposerThreadItems({
@@ -260,6 +279,11 @@ export function useComposerMenuItems({
               },
             ] as const)
           : []),
+        ...folderMoveSlashCommandItems({
+          available: folderMoveAvailable,
+          disabledReason: folderMoveDisabledReason,
+          inNoProject: folderMoveInNoProject,
+        }),
         ...(freshSessionAvailable
           ? ([
               {
@@ -299,11 +323,12 @@ export function useComposerMenuItems({
           skill.description ??
           (skill.scope ? `${skill.scope} skill` : ""),
       }));
-      // T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live.
+      // T3 handles `/clear` and `/cd`; the provider's would clear a live session or never run.
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) =>
           (item.command.name !== "compact" || compactSlashCommandAvailable) &&
-          (item.command.name !== "clear" || !freshSessionAvailable),
+          (item.command.name !== "clear" || !freshSessionAvailable) &&
+          item.command.name !== "cd",
       );
       const slashCommandItems = slashCommandItemsForPromptPosition(
         [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
@@ -396,6 +421,7 @@ export function useComposerMenuItems({
     return [];
   })();
   const isLoading =
+    (composerTriggerKind === "folder" && folderMove.isLoading) ||
     (composerTriggerKind === "path" && workspaceEntries.isPending) ||
     ((composerTriggerKind === "skill" || composerTriggerKind === "slash-command") &&
       workspaceSkillsScanning) ||
@@ -407,6 +433,7 @@ export function useComposerMenuItems({
         pullRequestTriggerNumber !== debouncedPullRequestNumber ||
         exactPullRequestLookup.isPending));
   const emptyState = (() => {
+    if (composerTriggerKind === "folder") return folderMove.emptyState;
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";
     }
@@ -429,5 +456,5 @@ export function useComposerMenuItems({
       : "No matching command.";
   })();
 
-  return { items, isLoading, emptyState };
+  return { items, isLoading, emptyState, folderMove };
 }

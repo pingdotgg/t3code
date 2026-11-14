@@ -53,6 +53,7 @@ export function resolveInlineCodeFileLinkMeta(
   codeText: string,
   cwd?: string,
   baseDir: string | undefined = cwd,
+  lookupRoot: string | undefined = cwd,
 ): MarkdownFileLinkMeta | null {
   const candidate = inlineCodeFilePathCandidate(codeText);
   if (candidate === null) return null;
@@ -60,7 +61,8 @@ export function resolveInlineCodeFileLinkMeta(
   return resolveMarkdownFileLinkMeta(
     candidate,
     cwd,
-    inlineCodePathNamesFromWorkspaceRoot(candidate, cwd, baseDir) ? cwd : baseDir,
+    inlineCodePathNamesFromWorkspaceRoot(candidate, lookupRoot, baseDir) ? lookupRoot : baseDir,
+    lookupRoot,
   );
 }
 
@@ -75,10 +77,15 @@ function inlineCodePathNamesFromWorkspaceRoot(
   return workspaceRelativeFilePath(baseDir, cwd) !== null;
 }
 
+/**
+ * `lookupRoot` is the folder a relative link is searched in when it does not name its file
+ * exactly: the thread's folder, or the folder of the run that wrote the link.
+ */
 export function resolveMarkdownFileLinkMeta(
   href: string | undefined,
   cwd?: string,
   baseDir: string | undefined = cwd,
+  lookupRoot: string | undefined = cwd,
 ): MarkdownFileLinkMeta | null {
   const targetPath = resolveMarkdownFileLinkTarget(href, cwd, baseDir);
   if (!targetPath) return null;
@@ -90,7 +97,7 @@ export function resolveMarkdownFileLinkMeta(
       source !== null &&
       !isAbsolutePath(source.path) &&
       baseDir !== undefined &&
-      workspaceRelativeFilePath(baseDir, cwd) === "."
+      workspaceRelativeFilePath(baseDir, lookupRoot) === "."
         ? source.path
         : null,
   };

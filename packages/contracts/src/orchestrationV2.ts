@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaGetter from "effect/SchemaGetter";
 import * as SchemaTransformation from "effect/SchemaTransformation";
+import * as Struct from "effect/Struct";
 
 import {
   CheckpointId,
@@ -276,6 +277,7 @@ export const OrchestrationV2SessionCapabilities = Schema.Struct({
   supportsProviderSwitchingViaHandoff: Schema.Boolean,
   supportsRuntimeModeSwitchInSession: Schema.Boolean,
   pendingRequestsSurviveRestart: Schema.Boolean,
+  supportsFolderMove: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2SessionCapabilities = typeof OrchestrationV2SessionCapabilities.Type;
 
@@ -758,6 +760,8 @@ export const OrchestrationV2Run = Schema.Struct({
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
   /** Starts a new provider conversation; earlier runs stay visible but never reach the provider. */
   freshContext: Schema.optional(Schema.Boolean),
+  cwd: Schema.optional(Schema.String),
+  repositoryRoot: Schema.optional(Schema.String),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -1133,6 +1137,7 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
   ownerNodeId: Schema.NullOr(NodeId),
   nativeThreadRef: Schema.NullOr(OrchestrationV2ProviderRef),
   nativeConversationHeadRef: Schema.NullOr(OrchestrationV2ProviderRef),
+  nativeStorageFolder: Schema.optional(TrimmedNonEmptyString),
   status: Schema.Literals(["not_loaded", "idle", "active", "archived", "closed", "error"]),
   firstRunOrdinal: Schema.NullOr(PositiveInt),
   lastRunOrdinal: Schema.NullOr(PositiveInt),
@@ -1822,6 +1827,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
+    previousFolder: Schema.optional(Schema.String),
     level: Schema.optional(OrchestrationV2SystemNoticeLevel),
   }),
   Schema.Struct({
@@ -2112,9 +2118,14 @@ export const OrchestrationV2DomainEvent = Schema.Union([
 ]);
 export type OrchestrationV2DomainEvent = typeof OrchestrationV2DomainEvent.Type;
 
+const OrchestrationV2RunFolder = OrchestrationV2Run.mapFields(
+  Struct.pick(["id", "cwd", "repositoryRoot"]),
+);
+
 export const OrchestrationV2ThreadProjection = Schema.Struct({
   thread: OrchestrationV2AppThread,
   runs: Schema.Array(OrchestrationV2Run),
+  runFolders: Schema.optional(Schema.Array(OrchestrationV2RunFolder)),
   attempts: Schema.Array(OrchestrationV2RunAttempt),
   nodes: Schema.Array(OrchestrationV2ExecutionNode),
   subagents: Schema.Array(OrchestrationV2Subagent),
@@ -2703,6 +2714,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
+    previousFolder: Schema.optional(Schema.String),
     level: Schema.optional(OrchestrationV2SystemNoticeLevel),
   }),
   Schema.Struct({
@@ -3776,6 +3788,17 @@ export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalComma
 
 export type OrchestrationV2ServerCommand = OrchestrationV2Command | OrchestrationV2InternalCommand;
 
+// The move service records it through the event sink; the orchestrator never dispatches it.
+export const OrchestrationV2ThreadProjectMoveCommand = Schema.Struct({
+  type: Schema.Literal("thread.project.move"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  projectId: ProjectId,
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type OrchestrationV2ThreadProjectMoveCommand =
+  typeof OrchestrationV2ThreadProjectMoveCommand.Type;
+
 export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
@@ -4070,6 +4093,7 @@ export const OrchestrationV2ThreadHistoryPage = withRecordIdTable(
         item: ForwardCompatibleUnion(OrchestrationV2TurnItem.members, "type"),
       })),
     ),
+    runFolders: Schema.optional(Schema.Array(OrchestrationV2RunFolder)),
     nextCursor: Schema.NullOr(TrimmedNonEmptyString),
     hasMoreHistory: Schema.Boolean,
     idTable: IdTableMarker,

@@ -552,6 +552,8 @@ export function layerWithRegistry<Error>(
         layerThreadTitleRegenerationTest,
         layerServerSettings,
         layerThreadManagementProvided,
+        layerEventSinkProvided,
+        IdAllocator.layer,
       ),
     ),
   );

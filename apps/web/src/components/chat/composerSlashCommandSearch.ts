@@ -12,7 +12,7 @@ type SlashSearchItem = Extract<
   { type: "slash-command" | "provider-slash-command" | "skill" }
 >;
 
-/** Provider commands, `/side`, `/btw` and `/clear` work only at the message start. */
+/** Provider commands, `/side`, `/btw`, `/clear`, `/cd` and `/no` work only at the message start. */
 export function slashCommandItemsForPromptPosition(
   items: ReadonlyArray<SlashSearchItem>,
   isAtPromptStart: boolean,
@@ -24,9 +24,7 @@ export function slashCommandItemsForPromptPosition(
     (item) =>
       item.type === "skill" ||
       (item.type === "slash-command" &&
-        item.command !== "side" &&
-        item.command !== "btw" &&
-        item.command !== "clear"),
+        !["side", "btw", "clear", "cd", "no"].includes(item.command)),
   );
 }
 

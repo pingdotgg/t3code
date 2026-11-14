@@ -13,6 +13,8 @@ import {
   type AssistantCitation,
   type EnvironmentId,
   type MessageId,
+  type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   type RunAttemptId,
   type ServerProviderSkill,
@@ -76,6 +78,11 @@ import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection
 import { type AssistantCitationRequest } from "./AssistantCitationSource";
 import { useAssistantCitationTarget } from "./useAssistantCitationTarget";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
+import {
+  receiptFoldersSignature,
+  runFoldersSignature,
+  timelineRowFolders,
+} from "@t3tools/client-runtime/timeline-row-folders";
 import { resolveCitationPhase, type CitedHistory } from "./citationProcedure";
 import {
   resolveTimelineIsAtEnd,
@@ -87,6 +94,8 @@ import {
   TIMELINE_MINIMAP_TARGET_OFFSET,
   timelineTurnFoldRunIdsByEntryId,
   liveAnswerPreview,
+  timelineEntryPreviousFolder,
+  timelineRowFolder,
   type MessagesTimelineRow,
   type TimelineLatestRun,
 } from "./MessagesTimeline.logic";
@@ -108,6 +117,7 @@ import {
   type TimelineRowActivityState,
   TimelineRowCtx,
   TimelineRowActivityCtx,
+  TimelineRowFolderCtx,
   type WorkGroupViewState,
   type TimelineRow,
 } from "./timelineRowContext";
@@ -304,7 +314,8 @@ interface MessagesTimelineProps {
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<ServerProviderSkill>;
-  runs: ReadonlyArray<HandoffTimelineRun>;
+  runs: ReadonlyArray<HandoffTimelineRun & Pick<OrchestrationV2Run, "cwd" | "repositoryRoot">>;
+  runFolders?: OrchestrationV2ThreadProjection["runFolders"];
   anchorMessageId: MessageId | null;
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
@@ -406,6 +417,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
   runs: runsProp,
+  runFolders,
   anchorMessageId,
   onAnchorReady,
   onAnchorSizeChanged,
@@ -1343,6 +1355,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       return next;
     });
   });
+  const folders = timelineRowFolders(
+    `${runFoldersSignature(runsProp, runFolders)}`,
+    `${receiptFoldersSignature(timelineEntries, timelineEntryPreviousFolder)}`,
+  );
   const renderItem = ({ item }: { item: MessagesTimelineRow }) => (
     <TimelineRowCtx value={sharedState}>
       <div
@@ -1357,13 +1373,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
           data-timeline-root="true"
         >
           <AudioPreviewUnmountContext value={onAudioUnmount}>
-            <TimelineRowContent row={item} />
+            <TimelineRowFolderCtx value={timelineRowFolder(item, folders)}>
+              <TimelineRowContent row={item} />
+            </TimelineRowFolderCtx>
           </AudioPreviewUnmountContext>
         </div>
       </div>
     </TimelineRowCtx>
   );
-  const listExtraData = { identity: listIdentityKey, rowCount: rows.length, sharedState };
+  const listExtraData = { identity: listIdentityKey, rowCount: rows.length, sharedState, folders };
   const timelineListFooter = (
     <TimelineListFooter
       composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment}

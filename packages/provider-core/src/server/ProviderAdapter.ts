@@ -553,6 +553,8 @@ export interface ProviderAdapterV2TurnInput {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+  readonly readNativeStorageFolder?: Effect.Effect<string | undefined>;
+  readonly recordNativeStorageFolder?: (folder: string) => Effect.Effect<void>;
 }
 
 export type ProviderAdapterV2ResumeTurnInput = Omit<
@@ -638,6 +640,7 @@ export interface ProviderAdapterV2ForkThreadInput {
   readonly ownerNodeId?: NodeId;
   readonly modelSelection?: ModelSelection;
   readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
+  readonly sourceNativeStorageFolder?: string;
 }
 
 export interface ProviderAdapterV2EventSubscription {

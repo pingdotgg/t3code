@@ -259,6 +259,9 @@ import {
   ProjectWriteFileError,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
+  ThreadMoveError,
+  ThreadMoveInput,
+  ThreadMoveResult,
 } from "./project.ts";
 import {
   TerminalAttachInput,
@@ -425,6 +428,7 @@ export const WS_METHODS = {
   projectsEnsureScratch: "projects.ensureScratch",
   projectsCreateNew: "projects.createNew",
   projectsCreateFromThread: "projects.createFromThread",
+  threadsMove: "threads.move",
 
   shellOpenInEditor: "shell.openInEditor",
 
@@ -1406,6 +1410,12 @@ const WsProjectsMutateRpc = Rpc.make(WS_METHODS.projectsMutate, {
   error: Schema.Union([ProjectMutationError, EnvironmentAuthorizationError]),
 });
 
+const WsThreadsMoveRpc = Rpc.make(WS_METHODS.threadsMove, {
+  payload: ThreadMoveInput,
+  success: ThreadMoveResult,
+  error: Schema.Union([ThreadMoveError, EnvironmentAuthorizationError]),
+});
+
 const WsProjectsEnsureScratchRpc = Rpc.make(WS_METHODS.projectsEnsureScratch, {
   payload: Schema.Struct({}),
   success: ProjectEnsureScratchResult,
@@ -2233,6 +2243,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsCreateFromThreadRpc,
   WsProjectsWriteFileRpc,
   WsProjectsMutateRpc,
+  WsThreadsMoveRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsFilesystemGetMetadataRpc,

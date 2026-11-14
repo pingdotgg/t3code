@@ -19,6 +19,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "../project/ScratchThreadPromotion.ts";
+import * as ThreadMoveService from "../project/ThreadMoveService.ts";
 import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
@@ -170,7 +171,9 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
   Layer.provide(
     Layer.mergeAll(
       layerContextHandoffServiceProvided,
+      EffectOutbox.layer,
       layerEventSink,
+      layerEventStoreProvided,
       IdAllocator.layer,
       ProjectionStore.layer,
       layerProviderSessionManagerProvided,
@@ -343,6 +346,8 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
       layerRuntimeRequestServiceProvided,
       layerThreadTitleRegenerationProvided,
       layerThreadManagementProvided,
+      layerEventSink,
+      IdAllocator.layer,
     ),
   ),
 );
@@ -394,6 +399,17 @@ export const layerProduction = Layer.mergeAll(
   layerThreadLaunchProvided,
   layerScheduledTaskProvided,
   layerScratchThreadPromotionProvided,
+  ThreadMoveService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerManagedProjectFoldersProvided,
+        layerThreadManagementProvided,
+        layerEventSink,
+        IdAllocator.layer,
+        layerStores,
+      ),
+    ),
+  ),
   layerSecretRequestsProvided,
   GuestShareService.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerCommandOutputHubProvided)),

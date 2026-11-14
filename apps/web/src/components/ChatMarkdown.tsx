@@ -8,7 +8,11 @@ import {
   inlineCodeFilePathCandidate,
 } from "@t3tools/shared/markdownLinks";
 import { taskListMarkerOffset } from "@t3tools/shared/markdownTaskList";
-import { isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
+import {
+  isHostPath,
+  resolveWorkspaceFilePath,
+  workspaceRelativeFilePath,
+} from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import {
   AuthFilesystemReadScope,
@@ -250,6 +254,8 @@ interface ChatMarkdownProps {
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   onRunShellCommand?: ((command: string) => void) | undefined;
   imageBaseDir?: string | undefined;
+  /** The row's run folder; relative file links resolve there and are looked up there by name. */
+  fileLinkBaseDir?: string | undefined;
   workspaceMutationId?: string | null | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   /** Keep one list per configuration (a module constant): it keys the shared parse cache. */
@@ -483,16 +489,17 @@ function resolveFileLinkSources(
   key: string,
   cwd: string | undefined,
   imageBaseDir: string | undefined,
+  lookupRoot: string | undefined,
 ) {
   const [hrefs, spans] = JSON.parse(key) as [string[], string[]];
   const markdownFileLinkMetaByHref = new Map<string, MarkdownFileLinkMeta>();
   for (const href of hrefs) {
-    const meta = resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd);
+    const meta = resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd, lookupRoot);
     if (meta) markdownFileLinkMetaByHref.set(href, meta);
   }
   const inlineCodeFileLinkMetaByText = new Map<string, MarkdownFileLinkMeta>();
   for (const span of spans) {
-    const meta = resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd);
+    const meta = resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd, lookupRoot);
     if (meta) inlineCodeFileLinkMetaByText.set(span, meta);
   }
   const fileLinkParentSuffixByPath = buildFileLinkParentSuffixByPath([
@@ -515,7 +522,8 @@ function useChatMarkdownState({
   skills = EMPTY_MARKDOWN_SKILLS,
   onUseArtifactTemplate,
   onRunShellCommand,
-  imageBaseDir,
+  imageBaseDir: documentBaseDir,
+  fileLinkBaseDir,
   workspaceMutationId,
   onImageExpand,
   renderContextReference,
@@ -523,6 +531,9 @@ function useChatMarkdownState({
   sourceControlMedia = false,
   sourceControlMediaRepository,
 }: ChatMarkdownProps) {
+  const imageBaseDir = fileLinkBaseDir ?? documentBaseDir;
+  // A row that ran in another folder has its relative links looked up there.
+  const lookupRoot = fileLinkBaseDir ?? cwd;
   const resolvedTheme = useRenderedAppearance();
   const markdownRef = useRef<HTMLElement>(null);
   const mediaRequestId = useRef(0);
@@ -702,7 +713,7 @@ function useChatMarkdownState({
   // A template literal marks the key as a string, so the compiler memoizes the maps on its value.
   const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir)}`;
   const { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath } =
-    resolveFileLinkSources(fileLinksKey, cwd, imageBaseDir);
+    resolveFileLinkSources(fileLinksKey, cwd, imageBaseDir, lookupRoot);
   const resolveThreadPullRequest = (
     href: string,
   ): (ThreadPullRequestKey & { readonly url: string }) | null => {
@@ -781,20 +792,20 @@ function useChatMarkdownState({
     const workspaceRelativePath = fileLinkMeta.workspaceLookupPath;
     if (
       !workspaceRelativePath ||
-      !cwd ||
+      !lookupRoot ||
       environmentId === null ||
       !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
     ) {
       return null;
     }
-    const query = workspaceLinkLookupQuery(workspaceRelativePath, cwd);
+    const query = workspaceLinkLookupQuery(workspaceRelativePath, lookupRoot);
     if (query === null) return null;
     // Search can be truncated or still scanning, so it cannot rule out the literal
     // path. A path with a folder opens as written whenever it exists.
     if (!needsWorkspaceBasenameLookup(workspaceRelativePath)) {
       const metadata = await getFilesystemMetadata({
         environmentId,
-        input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, cwd)] },
+        input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, lookupRoot)] },
       });
       if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
     }
@@ -812,24 +823,28 @@ function useChatMarkdownState({
       });
       return { root, entries: result._tag === "Success" ? result.value.entries : [] };
     };
-    const own = await searchRoot(cwd);
-    const ownMatch = pickWorkspaceLinkMatch(workspaceRelativePath, cwd, own.entries);
-    if (ownMatch !== null) return ownMatch;
+    const own = await searchRoot(lookupRoot);
+    const ownMatch = pickWorkspaceLinkMatch(workspaceRelativePath, lookupRoot, own.entries);
+    // Callers read a relative match against the thread's folder.
+    if (ownMatch !== null) {
+      return lookupRoot === cwd ? ownMatch : resolveWorkspaceFilePath(ownMatch, lookupRoot);
+    }
     const threadProjectId = threadRef ? readThreadShell(threadRef)?.projectId : undefined;
     const otherRoots = projects.flatMap((project) =>
       project.environmentId === environmentId &&
-      project.id !== threadProjectId &&
-      project.workspaceRoot !== cwd
+      // A row that ran in another folder is not in the thread's project.
+      (lookupRoot !== cwd || project.id !== threadProjectId) &&
+      project.workspaceRoot !== lookupRoot
         ? [project.workspaceRoot]
         : [],
     );
-    const agentRoots = (agentDirectories?.() ?? []).filter((root) => root !== cwd);
+    const agentRoots = (agentDirectories?.() ?? []).filter((root) => root !== lookupRoot);
     if (otherRoots.length === 0 && agentRoots.length === 0) return null;
     // Another project's file never replaces a thread-local file the search missed.
     if (needsWorkspaceBasenameLookup(workspaceRelativePath)) {
       const metadata = await getFilesystemMetadata({
         environmentId,
-        input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, cwd)] },
+        input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, lookupRoot)] },
       });
       if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
     }
@@ -856,10 +871,13 @@ function useChatMarkdownState({
     const isLatestLookup = claimWorkspaceBasenameLookup();
     const openAt = (path: string) =>
       useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
+    // A row that ran in another folder has an absolute panel path. The lookup reads it from its root.
+    const rootPath = workspaceRelativeFilePath(fileLinkMeta.filePath, lookupRoot);
     if (
       fileLinkMeta.workspaceLookupPath === null ||
-      !cwd ||
-      workspaceLinkLookupQuery(panelPath, cwd) === null
+      !lookupRoot ||
+      rootPath === null ||
+      workspaceLinkLookupQuery(rootPath, lookupRoot) === null
     ) {
       openAt(panelPath);
       return;
@@ -878,7 +896,7 @@ function useChatMarkdownState({
     const resolveHostPath = () =>
       resolveMarkdownFileHostPath({
         meta: fileLinkMeta,
-        cwd,
+        cwd: lookupRoot,
         findWorkspaceMatch: () => findWorkspaceFileMatch(fileLinkMeta),
       });
     const isAppBundle = isMacOS && fileLinkMeta.filePath.endsWith(".app");
@@ -978,6 +996,7 @@ function useChatMarkdownState({
     renderContextReference,
     headingLevelOffset,
     imageBaseDir,
+    lookupRoot,
     workspaceMutationId,
     inlineCodeFileLinkMetaByText,
     inline,
@@ -1155,6 +1174,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       cwd,
       environmentId,
       imageBaseDir,
+      lookupRoot,
       markdownFileLinkMetaByHref,
       threadRef,
       openMarkdownMedia,
@@ -1202,7 +1222,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
     const fileLinkMeta = normalizedHref
       ? (markdownFileLinkMetaByHref.get(normalizedHref) ??
-        resolveMarkdownFileLinkMeta(normalizedHref, cwd, imageBaseDir ?? cwd))
+        resolveMarkdownFileLinkMeta(normalizedHref, cwd, imageBaseDir ?? cwd, lookupRoot))
       : null;
     if (!fileLinkMeta) {
       const faviconHost = resolveExternalWebLinkHost(href);
@@ -1430,8 +1450,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   code: function MarkdownCode({ node, children, className, ...props }) {
-    const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip, mathEnabled, inline } =
-      use(ChatMarkdownRendererContext);
+    const {
+      cwd,
+      imageBaseDir,
+      lookupRoot,
+      inlineCodeFileLinkMetaByText,
+      fileLinkChip,
+      mathEnabled,
+      inline,
+    } = use(ChatMarkdownRendererContext);
     const math = mathEnabled ? mathKind(className) : null;
     if (math) {
       return (
@@ -1446,7 +1473,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       const codeText = nodeToPlainText(children);
       const fileLinkMeta =
         inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
-        resolveInlineCodeFileLinkMeta(codeText, cwd, imageBaseDir ?? cwd);
+        resolveInlineCodeFileLinkMeta(codeText, cwd, imageBaseDir ?? cwd, lookupRoot);
       if (fileLinkMeta) {
         return fileLinkChip(
           fileLinkMeta,
@@ -1474,6 +1501,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       sourceControlMedia,
       sourceControlMediaRepository,
       imageBaseDir,
+      lookupRoot,
       threadRef,
       workspaceMutationId,
       renderContextReference,
@@ -1539,7 +1567,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
       );
     }
     if (mediaKind === null && imageSource._tag === "WorkspaceFile") {
-      const fileLinkMeta = resolveMarkdownFileLinkMeta(srcString, cwd, imageBaseDir ?? cwd);
+      const fileLinkMeta = resolveMarkdownFileLinkMeta(
+        srcString,
+        cwd,
+        imageBaseDir ?? cwd,
+        lookupRoot,
+      );
       if (fileLinkMeta) return fileLinkChip(fileLinkMeta, copyMarkdown, srcString);
     }
     const kind = mediaKind ?? "image";

@@ -53,6 +53,7 @@ export function mergeOlderHistoryIntoProjection(
   projection: OrchestrationV2ThreadProjection,
   olderItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
   work?: { readonly anchorId: string; readonly nextCursor: string | null },
+  olderRunFolders: OrchestrationV2ThreadProjection["runFolders"] = [],
 ): OrchestrationV2ThreadProjection {
   if (olderItems.length === 0 && work === undefined) {
     return projection;
@@ -154,13 +155,17 @@ export function mergeOlderHistoryIntoProjection(
       ...projection.visibleTurnItems.filter((row) => !pageKeys.has(projectedItemKey(row))),
     ];
   }
+  const knownRunIds = new Set(projection.runFolders?.map((run) => run.id));
+  const runFolders = olderRunFolders.filter((run) => !knownRunIds.has(run.id));
   if (
+    runFolders.length === 0 &&
     visible.length === projection.visibleTurnItems.length &&
     visible.every((row, index) => row === projection.visibleTurnItems[index])
   )
     return projection;
   return {
     ...projection,
+    ...(runFolders.length > 0 && { runFolders: [...(projection.runFolders ?? []), ...runFolders] }),
     turnItems: [...turnItemById.values()],
     visibleTurnItems: renumberVisible(visible),
   };

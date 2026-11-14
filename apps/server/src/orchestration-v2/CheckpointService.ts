@@ -24,7 +24,7 @@ import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
-const ROOT_CHECKPOINT_SCOPE_NAME = "root";
+export const rootCheckpointScopeName = (cwd: string) => `root:${cwd}`;
 // The provider turn waits on the baseline, so a workspace too slow for this starts without one.
 // It bounds only the snapshot: waiting on the lock lets an in-flight capture finish the same ref.
 const BASELINE_CAPTURE_BUDGET = "5 seconds";
@@ -188,7 +188,7 @@ const makeRootRunScope = Effect.fn("CheckpointService.makeRootRunScope")(functio
 }) {
   const scopeId = yield* input.idAllocator.allocate.checkpointScope({
     threadId: input.threadId,
-    name: ROOT_CHECKPOINT_SCOPE_NAME,
+    name: rootCheckpointScopeName(input.cwd),
   });
   return {
     id: scopeId,

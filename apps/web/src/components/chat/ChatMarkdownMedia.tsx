@@ -347,6 +347,8 @@ export function assetMediaActionsSource(input: {
   readonly name: string;
   readonly src: string | null;
   readonly workspaceRoot?: string | undefined;
+  /** The thread's folder, when `workspaceRoot` is the folder of a run that started elsewhere. */
+  readonly threadWorkspaceRoot?: string | undefined;
   readonly originalUrl?: string | undefined;
   readonly downloadable?: boolean | undefined;
 }): MediaActionSource {
@@ -363,18 +365,24 @@ export function assetMediaActionsSource(input: {
       ? mediaUrlReference(input.originalUrl)
       : undefined;
   const relativePath = reference?.kind === "file" ? reference.relativePath : undefined;
+  // The panel reads a relative path in the thread's folder, so a file of a run in another folder
+  // opens by absolute path.
+  const panelPath =
+    path && input.threadWorkspaceRoot
+      ? (mediaFileReference(path, input.threadWorkspaceRoot).relativePath ?? (relativePath && path))
+      : relativePath;
   return {
     kind: input.kind,
     name: input.name,
     src: input.src,
     ...(input.downloadable === false ? {} : { asset: { environmentId, resource } }),
     ...(reference ? { reference } : {}),
-    ...(relativePath && (resource._tag === "media-file" || resource._tag === "workspace-file")
+    ...(panelPath && (resource._tag === "media-file" || resource._tag === "workspace-file")
       ? {
           onOpenFile: () =>
             useRightPanelStore
               .getState()
-              .openFile({ environmentId, threadId: resource.threadId }, relativePath),
+              .openFile({ environmentId, threadId: resource.threadId }, panelPath),
         }
       : {}),
   };
@@ -398,6 +406,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly framed?: boolean | undefined;
   readonly fallbackSrc?: string | undefined;
   readonly workspaceRoot?: string | undefined;
+  readonly threadWorkspaceRoot?: string | undefined;
   readonly workspaceMutationId?: string | null | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
@@ -442,6 +451,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     name: props.alt || (props.kind ?? "image"),
     src,
     workspaceRoot: props.workspaceRoot,
+    threadWorkspaceRoot: props.threadWorkspaceRoot,
     originalUrl: props.originalUrl,
     downloadable: fallbackSrc === undefined,
   });

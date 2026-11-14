@@ -1,4 +1,9 @@
-import type { EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ThreadContextRecord,
+  ThreadMoveInput,
+  ThreadMoveResult,
+} from "@t3tools/contracts";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
 
 /** Attached threads the prompt still links to; replacing linked text leaves stale records. */
@@ -78,4 +83,140 @@ export function approvalRedirectNotice(input: {
     return "Another approval arrived, so your message wasn't sent.";
   }
   return null;
+}
+
+/*
+ * Why a move cannot happen, as full sentences: a toast, a pane hint, and a pane footer show
+ * them as they are. A slash menu row shows one without its final period.
+ */
+const DRAFT_CHOOSES_PROJECT =
+  "Press Esc, then pick the project in the heading above the composer before the first message.";
+const QUEUED_EDIT_OPEN = "Save or cancel the queued message edit first.";
+const REQUEST_PENDING = "Answer the pending question or approval first.";
+const THREAD_STILL_WORKING = "This thread is still working. Try again when the turn ends.";
+
+export function folderMoveBlockReason(input: {
+  readonly supported: boolean;
+  readonly isLocalDraftThread: boolean;
+  readonly editingQueuedMessage: boolean;
+  readonly requestPending: boolean;
+  readonly textOnly: boolean;
+}): string | null {
+  if (!input.supported) return "Update this environment's T3 Code server to move threads.";
+  if (input.isLocalDraftThread) return DRAFT_CHOOSES_PROJECT;
+  if (input.editingQueuedMessage) return QUEUED_EDIT_OPEN;
+  if (input.requestPending) return REQUEST_PENDING;
+  if (!input.textOnly) return "Remove the attachments and context, then send it again.";
+  return null;
+}
+
+/** A path in backticks; a path with a backtick in it sits in double backticks with a space. */
+const INLINE_CODE = /``\s?(.+?)\s?``|`([^`]+)`/gu;
+
+/**
+ * Splits a refusal or a receipt at its backtick spans, which hold paths. The text around a path
+ * stays as written, its spaces and punctuation included.
+ */
+export function splitInlineCode(text: string): ReadonlyArray<InlineCodePart> {
+  const parts: Array<InlineCodePart> = [];
+  let end = 0;
+  for (const match of text.matchAll(INLINE_CODE)) {
+    if (match.index > end) {
+      parts.push({ code: false, text: text.slice(end, match.index), offset: end });
+    }
+    parts.push({ code: true, text: match[1] ?? match[2] ?? "", offset: match.index });
+    end = match.index + match[0].length;
+  }
+  if (end < text.length) parts.push({ code: false, text: text.slice(end), offset: end });
+  return parts;
+}
+
+/** `offset` is where the part starts in the text, so it identifies the part when rendering. */
+interface InlineCodePart {
+  readonly code: boolean;
+  readonly text: string;
+  readonly offset: number;
+}
+
+/** Why the slash menu shows `/cd` and `/no` as blocked, before the user types the command. */
+export function folderMoveMenuBlockReason(input: {
+  readonly isLocalDraftThread: boolean;
+  readonly editingQueuedMessage: boolean;
+  readonly requestPending: boolean;
+  readonly running: boolean;
+}): string | null {
+  if (input.isLocalDraftThread) return DRAFT_CHOOSES_PROJECT;
+  if (input.editingQueuedMessage) return QUEUED_EDIT_OPEN;
+  if (input.requestPending) return REQUEST_PENDING;
+  if (input.running) return THREAD_STILL_WORKING;
+  return null;
+}
+
+type ThreadMoveQuestion = Extract<ThreadMoveResult, { _tag: "needs-project" | "confirm" }>;
+type ThreadMoveOutcome = Extract<ThreadMoveResult, { _tag: "moved" | "refused" }>;
+
+export async function runThreadMove(
+  input: ThreadMoveInput,
+  move: (input: ThreadMoveInput) => Promise<ThreadMoveResult>,
+  ask: (question: ThreadMoveQuestion) => Promise<boolean> | boolean,
+): Promise<ThreadMoveOutcome | null> {
+  const result = await move(input);
+  if (result._tag === "moved" || result._tag === "refused") return result;
+  if (!(await ask(result))) return null;
+  // The server resolves the path again, so the answer sends back the folders the question covers.
+  const answer = result._tag === "needs-project" ? { addProject: true } : { confirm: true };
+  return runThreadMove({ ...input, ...answer, approved: result.resolvedFolders }, move, ask);
+}
+
+/**
+ * The question for the confirm dialog, which takes its title from the first line. Each path
+ * appears once, on its From or To line, so no other line repeats one. `currentFolder` is null
+ * when the client does not know the thread's folder.
+ */
+export function threadMoveConfirmMessage(
+  question: ThreadMoveQuestion,
+  currentFolder: string | null,
+): string {
+  const message = (
+    title: string,
+    from: string | null,
+    to: string | null,
+    notes: ReadonlyArray<string>,
+  ) =>
+    [
+      title,
+      ...(from === null ? [] : [`From: ${from}`]),
+      `To: ${to ?? "A new scratch folder"}`,
+      "",
+      ...notes,
+    ].join("\n");
+  if (question._tag === "needs-project") {
+    return message("Create a project and move this thread?", currentFolder, question.folder, [
+      question.nestedIn
+        ? `The new project is nested in project ${question.nestedIn.title}.`
+        : "This folder has no project yet.",
+    ]);
+  }
+  const wayBack = {
+    cd: "/cd to the From folder brings the thread back as a root thread.",
+    "add-project": "Add the From folder as a project first, and /cd to it brings the thread back.",
+    none: 'No command brings the thread back here. To keep a way back, cancel and choose "Turn into project" first.',
+  }[question.wayBack];
+  return message(
+    question.wayBack === "none" ? "Leave this scratch folder?" : "Leave this worktree?",
+    question.from,
+    question.to,
+    [
+      question.staysOnDisk.replace(`The folder ${question.from} `, "The folder "),
+      wayBack,
+      ...(question.project
+        ? [`The folder stays the root of project ${question.project.title}.`]
+        : []),
+      ...(question.otherThreads.length > 0
+        ? [
+            `Still working there: ${question.otherThreads.map((thread) => thread.title).join(", ")}.`,
+          ]
+        : []),
+    ],
+  );
 }

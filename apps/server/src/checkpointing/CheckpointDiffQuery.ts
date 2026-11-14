@@ -175,10 +175,41 @@ export const make = Effect.gen(function* () {
             )
           : undefined;
 
-      const firstScope =
+      const firstRun = projection.runs.find((run) => run.ordinal === 1);
+      const fromCheckpoint =
+        parentCheckpoint ??
+        readyCheckpoints.find((checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount);
+      // Run 1 captured the thread baseline, and each run captures its own baseline in its folder.
+      const fromRunId = input.fromTurnCount === 0 ? firstRun?.id : fromCheckpoint?.runId;
+      const threadNotFound = () =>
+        new CheckpointThreadNotFoundError({ operation, threadId: input.threadId });
+      const { runs } = yield* threads
+        .getThreadRecords(input.threadId, ["runs"], {
+          runIds: [toCheckpoint.runId, fromRunId].flatMap((runId) =>
+            runId == null ? [] : [runId],
+          ),
+        })
+        .pipe(Effect.mapError(threadNotFound));
+      const firstScopeId = projection.checkpoints.find(
+        (checkpoint) => checkpoint.status === "ready" && checkpoint.runId === firstRun?.id,
+      )?.scopeId;
+      let firstScope =
         input.fromTurnCount === 0
-          ? projection.checkpointScopes.find((scope) => scope.kind === "root_run")
+          ? projection.checkpointScopes.find((scope) => scope.id === firstScopeId)
           : undefined;
+      const firstRootNodeId = runs.find((run) => run.id === firstRun?.id)?.rootNodeId;
+      if (input.fromTurnCount === 0 && firstScope === undefined && firstRootNodeId != null) {
+        const { nodes } = yield* threads
+          .getThreadRecords(input.threadId, ["nodes"], { nodeIds: [firstRootNodeId] })
+          .pipe(Effect.mapError(threadNotFound));
+        const firstNode = nodes.find((node) => node.id === firstRootNodeId);
+        firstScope = projection.checkpointScopes.find(
+          (scope) => scope.id === firstNode?.checkpointScopeId,
+        );
+      }
+      firstScope ??= projection.checkpointScopes.find(
+        (scope) => scope.kind === "root_run" && scope.runId === firstRun?.id,
+      );
       const fromCheckpointRef =
         input.fromTurnCount === 0
           ? firstScope === undefined
@@ -187,13 +218,16 @@ export const make = Effect.gen(function* () {
                 scopeId: firstScope.id,
                 ordinalWithinScope: 0,
               }).pipe(Effect.provideService(Digest.Digest, digest))
-          : (
-              parentCheckpoint ??
-              readyCheckpoints.find(
-                (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,
-              )
-            )?.ref;
-      if (fromCheckpointRef === undefined) {
+          : fromCheckpoint?.ref;
+      const fromScopeId = input.fromTurnCount === 0 ? firstScope?.id : fromCheckpoint?.scopeId;
+      const folder = (runId: typeof fromRunId, scopeId: typeof fromScopeId) =>
+        runs.find((run) => run.id === runId)?.cwd ??
+        projection.checkpointScopes.find((scope) => scope.id === scopeId)?.cwd;
+      const cwd = folder(toCheckpoint.runId, toCheckpoint.scopeId) ?? toScope.cwd;
+      if (
+        fromCheckpointRef === undefined ||
+        (input.fromTurnCount !== input.toTurnCount - 1 && folder(fromRunId, fromScopeId) !== cwd)
+      ) {
         return yield* new CheckpointRefUnavailableError({
           operation,
           threadId: input.threadId,
@@ -203,7 +237,7 @@ export const make = Effect.gen(function* () {
       }
 
       const comparison = {
-        cwd: toScope.cwd,
+        cwd,
         fromCheckpointRef,
         toCheckpointRef: toCheckpoint.ref,
         fallbackFromToHead: false,

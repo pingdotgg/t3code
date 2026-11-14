@@ -234,4 +234,17 @@ describe("isComposerSubmissionBlocked", () => {
     ).toBe(true);
     expect(isComposerSubmissionBlocked({ ...answer, environmentUnavailable: true })).toBe(true);
   });
+
+  it("lets a folder move through without a provider, and blocks it on anything else", () => {
+    const move = {
+      ...sendBlocked,
+      sendDisabledReason: null,
+      submissionTarget: "provider-turn" as const,
+      movesFolder: true,
+    };
+    expect(isComposerSubmissionBlocked(move)).toBe(false);
+    expect(isComposerSubmissionBlocked({ ...move, sendDisabledReason: "Messages loading" })).toBe(
+      true,
+    );
+  });
 });

@@ -69,6 +69,27 @@ describe("relative links inside a rendered host file", () => {
   });
 });
 
+it("relative links with a recorded run folder resolve there and are looked up there", () => {
+  const worktree = "/repo/.worktrees/w";
+  expect(resolveInlineCodeFileLinkMeta("src/a.ts:12", "/repo", worktree)).toMatchObject({
+    filePath: "/repo/src/a.ts",
+  });
+  expect(resolveInlineCodeFileLinkMeta("src/a.ts:12", "/repo", worktree, worktree)).toMatchObject({
+    filePath: "/repo/.worktrees/w/src/a.ts",
+    line: 12,
+    workspaceLookupPath: "src/a.ts",
+  });
+  // A folder a document renders from is not a lookup root. The folder a run worked in is one.
+  expect(resolveMarkdownFileLinkMeta("config.ts", "/repo", "/old")).toMatchObject({
+    filePath: "/old/config.ts",
+    workspaceLookupPath: null,
+  });
+  expect(resolveMarkdownFileLinkMeta("config.ts", "/repo", "/old", "/old")).toMatchObject({
+    filePath: "/old/config.ts",
+    workspaceLookupPath: "config.ts",
+  });
+});
+
 describe("resolveInlineCodeFileLinkMeta", () => {
   it("links bare filenames only when a line suffix marks them as file references", () => {
     expect(resolveInlineCodeFileLinkMeta("script.ts:10", "/Users/julius/project")).toMatchObject({
