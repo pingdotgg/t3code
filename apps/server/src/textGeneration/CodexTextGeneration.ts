@@ -326,6 +326,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           model,
           "--config",
           `model_reasoning_effort="${reasoningEffort}"`,
+          // Current Codex gives hooks precedence over the historical codex_hooks alias.
+          "--config",
+          "features.codex_hooks=false",
+          "--config",
+          "features.hooks=false",
           ...(serviceTier ? ["--config", `service_tier="${serviceTier}"`] : []),
           "--output-schema",
           schemaPath,
