@@ -92,7 +92,8 @@ export function groupWorkflowRuns(
     run,
     questions: questions.filter((question) => question.runId === run.runId),
     children: (childrenOf.get(run.runId) ?? [])
-      .toSorted((left, right) => left.startedAt.localeCompare(right.startedAt))
+      .slice()
+      .sort((left, right) => left.startedAt.localeCompare(right.startedAt))
       .map(node),
   });
   const needsYou: WorkflowRunNode[] = [];
@@ -129,7 +130,8 @@ export function groupWorkflowRuns(
         invokedOnly: hasRuns.has(name) && !hasRootRuns.has(name),
         neverRan: !hasRuns.has(name),
       }))
-      .toSorted(
+      .slice()
+      .sort(
         (left, right) => rank(left.name) - rank(right.name) || left.name.localeCompare(right.name),
       ),
   };
@@ -161,8 +163,8 @@ export function defaultWorkflowRunId(groups: WorkflowRunGroups): string | null {
     rest.find((section) => section.active.length > 0)?.active[0]?.run.runId ??
     rest
       .flatMap((section) => section.finished)
-      .toSorted((left, right) => right.run.updatedAt.localeCompare(left.run.updatedAt))[0]?.run
-      .runId ??
+      .slice()
+      .sort((left, right) => right.run.updatedAt.localeCompare(left.run.updatedAt))[0]?.run.runId ??
     null
   );
 }
@@ -186,7 +188,7 @@ export function workflowRunLists(
   groups: WorkflowRunGroups,
 ): Readonly<Record<WorkflowListTab, ReadonlyArray<WorkflowRunNode>>> {
   const byChange = (nodes: ReadonlyArray<WorkflowRunNode>) =>
-    nodes.toSorted((left, right) => right.run.updatedAt.localeCompare(left.run.updatedAt));
+    [...nodes].sort((left, right) => right.run.updatedAt.localeCompare(left.run.updatedAt));
   const running = groups.workflows.flatMap((section) => section.active);
   const finished = groups.workflows.flatMap((section) => section.finished);
   return {
@@ -556,7 +558,8 @@ export function workflowAgentSummary(beat: Pick<WorkflowBeat, "result" | "said">
             (entry): entry is [string, string] =>
               typeof entry[1] === "string" && entry[1].trim().length >= PROSE_LENGTH,
           )
-          .toSorted((left, right) => right[1].length - left[1].length)[0] ?? null);
+          .slice()
+          .sort((left, right) => right[1].length - left[1].length)[0] ?? null);
   return {
     said: kept !== "" ? kept : (prose?.[1].trim() ?? null),
     facts: entries

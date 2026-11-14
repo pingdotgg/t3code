@@ -6,7 +6,7 @@ import { NewThreadButton } from "../../components/NewThreadButton";
 import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import type { WorkspaceTab } from "./workspace/workspace-tabs-state";
+import { workspaceUsesColumns, type WorkspaceTab } from "./workspace/workspace-tabs-state";
 
 export function WorkspaceEmptyDetail(props: {
   readonly tab?: WorkspaceTab | "settings";
@@ -15,7 +15,8 @@ export function WorkspaceEmptyDetail(props: {
 }) {
   const pullRequests = props.tab === "pullRequests";
   const settings = props.tab === "settings";
-  if (props.tab === "usage") return <View className="flex-1 bg-screen" />;
+  if (props.tab !== undefined && props.tab !== "settings" && !workspaceUsesColumns(props.tab))
+    return <View className="flex-1 bg-screen" />;
   return (
     <ScreenContent surface="screen">
       <View

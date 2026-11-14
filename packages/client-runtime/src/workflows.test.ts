@@ -19,10 +19,10 @@ import {
   workflowRunState,
   workflowSaidStart,
   workflowTriggerLine,
-} from "./workflows.logic";
+} from "./workflows.ts";
 
-const at = (minute: number, second = 0) =>
-  new Date(Date.UTC(2026, 10, 1, 0, minute, second)).toISOString();
+const two = (value: number) => String(value).padStart(2, "0");
+const at = (minute: number, second = 0) => `2026-11-01T00:${two(minute)}:${two(second)}.000Z`;
 
 const run = (runId: string, fields: Partial<WorkflowRun> = {}): WorkflowRun => ({
   runId,

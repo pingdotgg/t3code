@@ -55,7 +55,7 @@ import {
   type WorkflowQuickSteps,
   type WorkflowRunNode,
   type WorkflowRunTone,
-} from "./workflows.logic";
+} from "@t3tools/client-runtime/workflows";
 
 /** An agent's thread, as a step names it: the linked environment it is in, or null for this one. */
 export interface WorkflowThreadTarget {

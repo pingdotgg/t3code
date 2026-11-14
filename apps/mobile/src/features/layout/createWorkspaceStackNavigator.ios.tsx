@@ -40,6 +40,7 @@ import {
   WorkspaceNativeTabs,
   WorkspaceSidebarTabsFooter,
 } from "./workspace/WorkspaceNativeTabs.ios";
+import { NAVIGATION_TAB_ORDER } from "./workspace/navigation-tab-order";
 import { workspaceUsesColumns } from "./workspace/workspace-tabs-state";
 import { isSettingsRoute, settingsOpenIn } from "../settings/settings-navigation";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
@@ -359,9 +360,7 @@ function WorkspaceColumns(
         if (workspace.some((route) => route.name !== "Home" && route.name !== "Settings")) return;
         const tab = workspace.some((route) => route.name === "Settings")
           ? "settings"
-          : (["threads", "pullRequests", "usage"] as const).find((candidate) =>
-              workspaceTabs?.isTabActive(candidate),
-            );
+          : NAVIGATION_TAB_ORDER.find((candidate) => workspaceTabs?.isTabActive(candidate));
         openWorkspaceTab(tab ?? "threads", { columns: true });
       }}
       preferredDisplayMode={

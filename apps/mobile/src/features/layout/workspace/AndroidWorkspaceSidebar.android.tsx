@@ -2,6 +2,7 @@ import { useAndroidFloatingTabs } from "../../settings/appearance/AppearancePref
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { useEnabledNavigationTabs } from "./navigation-tabs";
 import { NAVIGATION_TAB_ORDER } from "./navigation-tab-order";
+import { workspaceUsesColumns } from "./workspace-tabs-state";
 import { useNavigationState } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAndroidControlSizing } from "../../../components/ui/useAndroidControlSizing";
@@ -28,9 +29,10 @@ export function AndroidWorkspaceSidebar() {
   const { fabSize } = useAndroidControlSizing();
   const { revealPrimarySidebar, startNewTask } = useAdaptiveWorkspaceLayout();
   const selectedPullRequest = useNavigationState(selectedPullRequestKey);
-  // Settings and Usage cover the sidebar.
+  // Settings and the one-page tabs cover the sidebar.
   const coveredByPage =
-    (useAndroidWorkspaceRoot()?.settingsOpen ?? false) || workspace.state.selectedTab === "usage";
+    (useAndroidWorkspaceRoot()?.settingsOpen ?? false) ||
+    !workspaceUsesColumns(workspace.state.selectedTab);
   const bottomClearance = floatingTabsEnabled
     ? insets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + fabSize
     : 16;

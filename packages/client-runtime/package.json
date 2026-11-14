@@ -27,6 +27,10 @@
       "types": "./src/composerModelMentions.ts",
       "default": "./src/composerModelMentions.ts"
     },
+    "./workflows": {
+      "types": "./src/workflows.ts",
+      "default": "./src/workflows.ts"
+    },
     "./locales": {
       "types": "./src/locales.ts",
       "default": "./src/locales.ts"
