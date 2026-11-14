@@ -1055,6 +1055,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly text: string;
           readonly message: string | SDKUserMessage;
         } | null>(null);
+        // A native resume's own run may stop before it checkpoints; the request is still in history.
+        const resumedAgent = yield* Ref.make<string | null>(null);
         const warnedUnsupportedSandbox = yield* Ref.make(false);
         const activeTurn = yield* Ref.make<ActiveCursorTurn | null>(null);
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
@@ -2561,7 +2563,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 ? undefined
                 : dropped !== undefined
                   ? ("replay" as const)
-                  : interrupted?.agent === agent.nativeThreadId || (yield* runCheckpointed())
+                  : interrupted?.agent === agent.nativeThreadId ||
+                      (yield* Ref.get(resumedAgent)) === agent.nativeThreadId ||
+                      (yield* runCheckpointed())
                     ? ("native" as const)
                     : undefined;
             if (turnInput.resume === true && resume === undefined) {
@@ -2626,6 +2630,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             }
             if (!compacted && resume !== "native") {
               yield* Ref.set(interruptedPrompt, null);
+            }
+            if (!compacted) {
+              yield* Ref.set(resumedAgent, resume === "native" ? agent.nativeThreadId : null);
             }
             const startedAt = yield* DateTime.now;
             const completed = yield* Deferred.make<void, never>();

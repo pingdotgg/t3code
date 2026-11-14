@@ -8394,11 +8394,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // load/resume can invoke client methods; install the incoming policy before activation.
             latestRuntimePolicy = turnInput.runtimePolicy;
             const requestedSessionId = yield* nativeThreadId(driver, turnInput.providerThread);
-            const resumeSessionId = nativeResumeSessionId;
-            nativeResumeSessionId = null;
             if (
               turnInput.resume === true &&
-              (resumeSessionId !== requestedSessionId || (yield* Ref.get(runtimeRestartRequired)))
+              (nativeResumeSessionId !== requestedSessionId ||
+                (yield* Ref.get(runtimeRestartRequired)))
             ) {
               return yield* new ProviderAdapter.ProviderResumeUnsupportedError({
                 driver,
@@ -8725,6 +8724,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const compactSession = isCompactionMessage(turnInput.message)
               ? flavor.compactSession
               : undefined;
+            // Whatever the agent receives next consumes its record of the stopped turn.
+            nativeResumeSessionId = null;
             yield* (
               compactSession === undefined
                 ? sendPromptWhenIdle(context, () =>

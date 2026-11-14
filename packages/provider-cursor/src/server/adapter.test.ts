@@ -1106,6 +1106,19 @@ describe("CursorAdapterV2", () => {
         "Now a cow.",
         "a request Cursor checkpointed is not carried forward",
       );
+
+      // A turn that ended without a Stop (a usage limit, say) resumes from Cursor's checkpoint,
+      // and stays resumable when that resume is stopped before saving its own.
+      checkpointedRuns.add("native-cursor-run-7");
+      yield* Deferred.succeed(runEnds[6]!, "finished");
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal" && event.status === "completed"),
+        Stream.runHead,
+      );
+      yield* runtime.resumeTurn!(resumeInput(8));
+      yield* interruptRunning;
+      yield* runtime.resumeTurn!(resumeInput(9));
+      assert.deepEqual(resumedRuns, [5, 6, 8, 9]);
     }).pipe(
       Effect.scoped,
       Effect.provide(

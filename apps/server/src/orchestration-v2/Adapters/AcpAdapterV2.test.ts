@@ -1614,6 +1614,19 @@ describe("AcpAdapterV2", () => {
           now,
           ordinal: 2,
         });
+        if (reachedTool) {
+          // A resume that fails before reaching the agent leaves the stopped turn resumable.
+          const unknownModel = { instanceId, model: "missing-model" } as const;
+          const failedBeforeDispatch = yield* Effect.exit(
+            runtime.resumeTurn!({
+              ...resumeBase,
+              modelSelection: unknownModel,
+              messageId: message.messageId,
+            }),
+          );
+          assert.isTrue(Exit.isFailure(failedBeforeDispatch));
+          assert.lengthOf(prompts, 1);
+        }
         const resumed = yield* Effect.exit(
           runtime.resumeTurn!({ ...resumeBase, messageId: message.messageId }),
         );
