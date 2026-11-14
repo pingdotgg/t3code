@@ -148,7 +148,7 @@ pub(crate) fn fixture(name: &str, settings: Value) -> Fixture {
     let settings = Arc::new(Mutex::new(map));
     let read = settings.clone();
     Fixture {
-        generators: TextGenerators::new(move || read.lock().unwrap().clone(), &dir.0),
+        generators: TextGenerators::new(move || read.lock().unwrap().clone()),
         settings,
         _dir: dir,
     }
@@ -389,22 +389,28 @@ async fn a_missing_generator_and_an_unreadable_reference_fail_in_words() {
 #[tokio::test(flavor = "current_thread")]
 async fn a_marker_reads_the_key_from_the_t3_secret_store() {
     let stub = Stub::start(|_| (200, json!({"data": []}).to_string())).await;
-    let f = fixture(
-        "store",
-        generator(
-            &stub.base,
-            json!({"apiKey": crate::settings::SECRET_REDACTED}),
-        ),
-    );
-    let secrets = f.generators.secrets_dir.clone();
-    std::fs::create_dir_all(&secrets).unwrap();
-    // `text-generator-${base64url(id)}-${base64url("apiKey")}.bin`
+    let dir = temp_dir("store");
+    let Value::Object(settings) = generator(
+        &stub.base,
+        json!({"apiKey": crate::settings::SECRET_REDACTED}),
+    ) else {
+        panic!("settings must be an object")
+    };
     std::fs::write(
-        secrets.join("text-generator-cm91dGVy-YXBpS2V5.bin"),
-        "stored-key",
+        dir.0.join("settings.json"),
+        Value::Object(settings).to_string(),
     )
     .unwrap();
-    f.generators
+    // `text-generator-${base64url(id)}-${base64url("apiKey")}.bin`
+    conn_support::secret_store::write(
+        &dir.0.join("secrets"),
+        "text-generator-cm91dGVy-YXBpS2V5",
+        b"stored-key",
+    )
+    .unwrap();
+    let store = crate::settings::SettingsStore::open(dir.0.join("settings.json"));
+    let generators = TextGenerators::new(move || store.raw());
+    generators
         .list_models(input(json!({"id": ID})))
         .await
         .unwrap();

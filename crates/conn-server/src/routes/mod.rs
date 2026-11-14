@@ -7,8 +7,12 @@ use axum::Router;
 use crate::AppState;
 
 mod assets;
+mod hooks;
 pub mod mcp;
 
 pub fn router() -> Router<AppState> {
-    Router::new().merge(mcp::router()).merge(assets::router())
+    Router::new()
+        .merge(mcp::router())
+        .merge(assets::router())
+        .merge(hooks::router())
 }

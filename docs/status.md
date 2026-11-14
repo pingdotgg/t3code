@@ -50,14 +50,14 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 33 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
+`main` is in a working state. `tools/check.sh` passes 35 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
 
 | Part | State |
 | --- | --- |
-| RPC methods | 99 of 236 served; 99 have a run that the real client's decoders accept |
+| RPC methods | 102 of 236 served; 102 have a run that the real client's decoders accept |
 | Engine commands | 43 of 56 |
 | T3 testkit fixtures through this engine | 60 of 159 variants pass T3's own assertions (Claude 25 of 34, Codex 25 of 25, Grok 10 of 15; the other 85 are providers this server does not offer) |
-| HTTP routes | 13 of 57 |
+| HTTP routes | 17 of 57 (the 4 of `/api/hooks/:hookId/:token`) |
 | `/mcp` tools | 33 of 87 |
 | Providers | Claude, Codex and Grok, of the 10 the T3 server has without Pi |
 
@@ -234,11 +234,38 @@ that list.
 `schedule_task`, `list_scheduled_tasks`, `delete_scheduled_task`, `run_scheduled_task_now`
 (`crates/conn-features`). One timer sleeps until the next run; no poll. Proven by 31 ported
 unit tests on a paused clock, the real client's decoders, and `parity.mjs` (no differences).
-`runNow` stops with its caller and records a failure, as T3 (2026-11-14). Not built: webhook
-tasks (refused on save; `crates/conn-features/README.md` maps what is left). `fresh_session` tasks are served since part 2 of the engine work (below). Annotations
+`runNow` stops with its caller and records a failure, as T3 (2026-11-14). Webhook tasks are
+served since 2026-11-14 (see above), without coalescing windows and the relay. `fresh_session` tasks are served since part 2 of the engine work (below). Annotations
 (`annotations.*` and the four `annotations_*` tools) on the T3 server's own files, also with
 parity. `docs/conn-only-areas.md`
 maps the Conn-only areas and what each needs.
+
+## Settings secrets, webhook tasks, text generator headers (2026-11-14)
+
+- **Settings secrets in the T3 server's store.** `settings.json` now holds `••••••` where a
+  secret is saved; the value is in `<state>/secrets/<name>.bin` under the T3 server's names
+  (folder 0700, files 0600). An inline field secret moves there at start, as in T3; saves
+  write, keep and remove store entries as `persistSettingsSecrets`, and undo them when the
+  file cannot be written. The server's own code (`SettingsStore::raw`) reads the values, so
+  text generators and source control host tokens work with a folder the T3 server wrote (a
+  marker without a file reads as no token, so `GH_TOKEN` is tried). Proof: unit tests on
+  T3's names, `settings-diff.mjs` (stored file in T3's form, 18 cases), and a new check,
+  `secrets-interop.mjs`: the T3 server's own settings service and this server on shared
+  folders, 5 cases (a folder from before the change, saves by either server, a key used by a
+  text generator request).
+- **Webhook scheduled tasks.** `rotateWebhookToken`, `listWebhookDeliveries`,
+  `getWebhookDelivery`, webhook saves and `/api/hooks/<task id>/<token>` are served
+  (`crates/conn-features/README.md`, "Webhook tasks"). Proof: 16 ported service tests, the
+  store's tests, 29 ported tests of the template, filter and signature code, a new check
+  `webhook-diff.mjs` (T3's own functions, 140 cases, no difference), and `effect-client.mjs`
+  (the 3 methods decode; HEAD, a body over 1 MiB, chunked or not, a wrong token and bad
+  paths are refused as T3 refuses them). Not built: coalescing windows (a save with
+  `coalesceKey` is refused), the T3 Connect relay, `secretRef`, managed policy.
+- **Text generator requests** carry the headers Node's fetch adds (`accept`,
+  `accept-language`, `sec-fetch-mode`, `user-agent: node`, `accept-encoding: gzip, deflate`,
+  `connection: keep-alive`); gzip and deflate answers decode within 8 MiB. `textgen-diff.mjs`
+  now compares every header but `host` and `content-length`, with compressed answers.
+  Assistant quotes in a title context become their text (`assistantCitationsToPlainText`).
 
 ## Text generators and thread titles (2026-11-14)
 
@@ -248,8 +275,7 @@ a generator was already served by `server.updateSettings` (3 more `settings-diff
 Thread titles are generated through a text generator: T3's prompt (generated from
 `buildThreadTitlePrompt`), its reply rules, three tries for a first title. When the title model
 is an agent provider (Codex by default, or Claude), the T3 server asks that provider; this
-server does not call it, and the thread keeps its seed title. The key stays in `settings.json`
-with the other settings secrets, or in the T3 server's secret store when a T3 server moved it.
+server does not call it, and the thread keeps its seed title. The key is in the T3 server's secret store, with the other settings secrets.
 Proven by 23 unit tests on a loopback stub, the client's decoders, and `textgen-diff.mjs`
 (a new check: T3's own code and ours against one stub, 102 comparisons). Map, what is sent and
 when, and the differences: `docs/server-area.md`, "Text generators". Commit messages, pull
@@ -877,7 +903,7 @@ The check is the one to trust; several review findings did not hold.
 - `t3/32cd278b` (text generators, titles, `runNow`, the redacting `Debug`): all 31 checks pass
   on macOS (2026-11-14). No new dependency; the release binary grew by 93,648 bytes
   (16,558,944 to 16,652,592, macOS arm64).
-- `main`: verified. All 33 checks pass on macOS (2026-11-14, with the ACP provider, scheduled
+- `main`: verified. All 35 checks pass on macOS (2026-11-14, with the ACP provider, scheduled
   tasks and annotations). The last Linux pass (all tests, 20 runs on the gnu target and 5 on
   musl, 2026-11-14) is older than those merges.
 - Fixed on 2026-11-14: the T3 adapter closes the Claude query after an interrupt, and the next

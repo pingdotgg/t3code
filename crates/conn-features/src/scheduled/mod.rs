@@ -29,6 +29,7 @@ use crate::clock::Clock;
 
 mod engine;
 pub mod schedule;
+pub mod webhook;
 
 pub use engine::EngineRunner;
 
@@ -74,6 +75,8 @@ const STALLED_RETRY: Duration = Duration::from_secs(5);
 /// `RUN_OUTCOME_WAIT_MS`: how long a run's outcome is followed after its message went out.
 pub const RUN_OUTCOME_WAIT: Duration = Duration::from_secs(24 * 60 * 60);
 const FILE_NAME: &str = "scheduled-tasks.json";
+/// The webhook delivery log and replay keys (`webhook/store.rs`).
+const HOOKS_FILE_NAME: &str = "scheduled-task-webhooks.sqlite";
 
 /// `ScheduledTaskError`, the contract's failure for every scheduled task method.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -229,6 +232,13 @@ pub trait TaskRunner: Send + Sync + std::fmt::Debug {
 enum Trigger {
     Scheduled,
     Manual,
+    Webhook,
+}
+
+/// A run a webhook delivery starts: its id names the run, and its prompt replaces the task's.
+struct WebhookRun {
+    delivery_id: String,
+    prompt: String,
 }
 
 impl Trigger {
@@ -236,6 +246,7 @@ impl Trigger {
         match self {
             Self::Scheduled => "scheduled",
             Self::Manual => "manual",
+            Self::Webhook => "webhook",
         }
     }
 }
@@ -280,6 +291,9 @@ struct Inner {
     changes: watch::Sender<u64>,
     /// Wakes the timer to plan again.
     wake: Notify,
+    /// Webhook tokens and secrets, rate windows, queue counts and run permits.
+    hooks: webhook::State,
+    hooks_db: PathBuf,
 }
 
 impl std::fmt::Debug for Inner {
@@ -292,20 +306,33 @@ impl std::fmt::Debug for Inner {
 
 /// Loads the stored tasks. A file that does not parse moves aside, so the server still starts;
 /// a task that does not decode is dropped with a warning (the T3 server skips such rows).
-fn load(path: &Path) -> Vec<ScheduledTask> {
+/// The stored tasks and the credentials of their webhooks.
+type Loaded = (Vec<ScheduledTask>, HashMap<String, webhook::Credentials>);
+
+fn load(path: &Path) -> Loaded {
     let text = match std::fs::read(path) {
         Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Default::default(),
         Err(error) => {
             eprintln!("scheduled tasks: cannot read {}: {error}", path.display());
-            return Vec::new();
+            return Default::default();
         }
     };
+    let mut credentials: HashMap<String, webhook::Credentials> = HashMap::new();
     let rows = match serde_json::from_slice::<Value>(&text) {
-        Ok(Value::Object(mut file)) => match file.remove("tasks") {
-            Some(Value::Array(rows)) => rows,
-            _ => Vec::new(),
-        },
+        Ok(Value::Object(mut file)) => {
+            if let Some(Value::Object(hooks)) = file.remove("webhooks") {
+                for (id, value) in hooks {
+                    if let Ok(stored) = serde_json::from_value::<webhook::Credentials>(value) {
+                        credentials.insert(id, stored);
+                    }
+                }
+            }
+            match file.remove("tasks") {
+                Some(Value::Array(rows)) => rows,
+                _ => Vec::new(),
+            }
+        }
         _ => {
             let aside = path.with_extension("json.unreadable");
             eprintln!(
@@ -314,7 +341,7 @@ fn load(path: &Path) -> Vec<ScheduledTask> {
                 aside.display()
             );
             let _ = std::fs::rename(path, aside);
-            return Vec::new();
+            return Default::default();
         }
     };
     let mut tasks = Vec::with_capacity(rows.len().min(MAX_TASKS));
@@ -325,7 +352,18 @@ fn load(path: &Path) -> Vec<ScheduledTask> {
             Err(error) => eprintln!("scheduled tasks: skipped an undecodable task: {error}"),
         }
     }
-    tasks
+    // Only webhook tasks keep credentials, and each shows its endpoint.
+    credentials.retain(|id, _| {
+        tasks
+            .iter()
+            .any(|t| &t.id == id && matches!(t.schedule, ScheduledTaskSchedule::Webhook(_)))
+    });
+    for task in &mut tasks {
+        task.webhook = credentials
+            .get(&task.id)
+            .map(|c| webhook::endpoint(&task.id, c));
+    }
+    (tasks, credentials)
 }
 
 impl ScheduledTasks {
@@ -334,9 +372,13 @@ impl ScheduledTasks {
     pub async fn start(config: Config) -> Self {
         let path = config.state_dir.join(FILE_NAME);
         let read_path = path.clone();
-        let tasks = tokio::task::spawn_blocking(move || load(&read_path))
+        let (tasks, credentials) = tokio::task::spawn_blocking(move || load(&read_path))
             .await
             .unwrap_or_default();
+        let hooks = webhook::State::default();
+        if let Ok(mut stored) = hooks.credentials.lock() {
+            *stored = credentials;
+        }
         let (changes, _) = watch::channel(0);
         let service = Self {
             inner: Arc::new(Inner {
@@ -349,6 +391,8 @@ impl ScheduledTasks {
                 followers: StdMutex::new(HashMap::new()),
                 changes,
                 wake: Notify::new(),
+                hooks,
+                hooks_db: config.state_dir.join(HOOKS_FILE_NAME),
             }),
         };
         service.recover_interrupted_runs().await;
@@ -375,8 +419,40 @@ impl ScheduledTasks {
         self.inner.wake.notify_one();
     }
 
+    /// Writes the tasks and the webhook credentials (0600). The credentials are what the T3
+    /// server keeps in the task's row: the URL token and the signing secret, in clear text.
+    /// Sets or clears a task's webhook credentials in memory; returns what was there.
+    fn set_credentials(
+        &self,
+        id: &str,
+        credentials: Option<webhook::Credentials>,
+    ) -> Option<webhook::Credentials> {
+        let mut stored = self
+            .inner
+            .hooks
+            .credentials
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match credentials {
+            Some(credentials) => stored.insert(id.to_owned(), credentials),
+            None => stored.remove(id),
+        }
+    }
+
     async fn persist(&self, tasks: &[ScheduledTask]) -> Result<(), String> {
-        let body = json!({"version": 1, "tasks": tasks}).to_string();
+        let hooks: serde_json::Map<String, Value> = self
+            .inner
+            .hooks
+            .credentials
+            .lock()
+            .map(|c| {
+                c.iter()
+                    .filter(|(id, _)| tasks.iter().any(|t| &t.id == *id))
+                    .filter_map(|(id, c)| Some((id.clone(), serde_json::to_value(c).ok()?)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let body = json!({"version": 1, "tasks": tasks, "webhooks": hooks}).to_string();
         let path = self.inner.path.clone();
         tokio::task::spawn_blocking(move || conn_support::fs::write_private(&path, body.as_bytes()))
             .await
@@ -462,15 +538,8 @@ impl ScheduledTasks {
                 "Expected a non-blank string for title and prompt".into(),
             ));
         }
-        let Some(schedule) =
-            schedule::decode_upsert_schedule(&input.schedule).map_err(|e| Failure::Invalid(e.0))?
-        else {
-            return Err(TaskError::new(
-                "This server does not run webhook tasks yet.",
-                input.id.as_deref(),
-            )
-            .into());
-        };
+        let decoded =
+            schedule::decode_upsert_schedule(&input.schedule).map_err(|e| Failure::Invalid(e.0))?;
         let now = self.now();
         let id = match (&input.id, &input.command_id) {
             (Some(id), _) => id.clone(),
@@ -489,6 +558,26 @@ impl ScheduledTasks {
             )
             .into());
         }
+        // A webhook schedule keeps the stored token, and the stored secret unless a new one
+        // comes (`upsert`, the `webhook` part).
+        let (schedule, credentials) = match decoded {
+            Some(schedule) => (schedule, None),
+            None => {
+                let stored = self
+                    .inner
+                    .hooks
+                    .credentials
+                    .lock()
+                    .ok()
+                    .and_then(|c| c.get(&id).cloned());
+                let save = webhook::prepare_save(
+                    &input.schedule,
+                    &id,
+                    existing.as_ref().map(|e| (e, stored.as_ref())),
+                )?;
+                (save.schedule, Some(save.credentials))
+            }
+        };
         let thread_mode = resolve_thread_mode(&input, existing.as_ref());
         let kept_thread = input
             .thread_id
@@ -561,7 +650,7 @@ impl ScheduledTasks {
                 .map_or(ScheduledTaskRunStatus::Never, |e| e.last_run_status),
             last_run_error: existing.as_ref().and_then(|e| e.last_run_error.clone()),
             run_count: existing.as_ref().map_or(0, |e| e.run_count),
-            webhook: None,
+            webhook: credentials.as_ref().map(|c| webhook::endpoint(&id, c)),
             blocked_by_policy: None,
         };
         let mut next_tasks = tasks.clone();
@@ -569,8 +658,14 @@ impl ScheduledTasks {
             Some(slot) => *slot = task.clone(),
             None => next_tasks.push(task.clone()),
         }
-        self.save(&next_tasks, "Could not save schedule task.", Some(&id))
-            .await?;
+        let previous = self.set_credentials(&id, credentials);
+        if let Err(error) = self
+            .save(&next_tasks, "Could not save schedule task.", Some(&id))
+            .await
+        {
+            self.set_credentials(&id, previous);
+            return Err(error.into());
+        }
         *tasks = next_tasks;
         drop(tasks);
         self.notify_changed();
@@ -679,6 +774,8 @@ impl ScheduledTasks {
         *tasks = next_tasks;
         drop(tasks);
         self.forget(id);
+        self.set_credentials(id, None);
+        self.forget_webhooks(id).await;
         self.notify_changed();
         Ok(id.to_owned())
     }
@@ -699,6 +796,8 @@ impl ScheduledTasks {
         drop(tasks);
         for task in &removed {
             self.forget(&task.id);
+            self.set_credentials(&task.id, None);
+            self.forget_webhooks(&task.id).await;
         }
         self.notify_changed();
         Ok(())
@@ -724,7 +823,7 @@ impl ScheduledTasks {
                 Some(id),
             ));
         }
-        self.run_task(task, Trigger::Manual).await
+        self.run_task(task, Trigger::Manual, None).await
     }
 
     /// `releaseStuckRun`: a run that stopped before it recorded its end is recorded as failed,
@@ -759,11 +858,12 @@ impl ScheduledTasks {
         &self,
         task: ScheduledTask,
         trigger: Trigger,
+        webhook: Option<&WebhookRun>,
     ) -> Result<RunOutcome, TaskError> {
         let started = self.now();
         let Some(reservation) = Reservation::take(&self.inner, &task.id) else {
             return match trigger {
-                Trigger::Manual => Err(TaskError::new(
+                Trigger::Manual | Trigger::Webhook => Err(TaskError::new(
                     "Schedule task is already running.",
                     Some(&task.id),
                 )),
@@ -776,7 +876,9 @@ impl ScheduledTasks {
         // Read again, so a task deleted, paused or moved since the timer read it cannot fire.
         let Some(active) = self.find(&task.id).await else {
             return match trigger {
-                Trigger::Manual => Err(TaskError::new("Schedule task not found.", Some(&task.id))),
+                Trigger::Manual | Trigger::Webhook => {
+                    Err(TaskError::new("Schedule task not found.", Some(&task.id)))
+                }
                 Trigger::Scheduled => Ok(RunOutcome {
                     task,
                     thread_id: None,
@@ -819,7 +921,11 @@ impl ScheduledTasks {
             started_iso: started_iso.clone(),
             reservation: Some(reservation),
         };
-        let fire_key = format!("{}:{started}:{}", active.id, trigger.as_str());
+        let fire_key = match webhook {
+            Some(run) => format!("{}:webhook:{}", active.id, run.delivery_id),
+            None => format!("{}:{started}:{}", active.id, trigger.as_str()),
+        };
+        let prompt = webhook.map_or_else(|| active.prompt.clone(), |run| run.prompt.clone());
         let command_id = format!("scheduled-task:{fire_key}");
         let message_id = format!("scheduled-task-message:{fire_key}");
         let thread_mode = thread_mode_of(&active);
@@ -838,7 +944,7 @@ impl ScheduledTasks {
                         workspace_strategy: to_json(&active.workspace_strategy),
                         message_id: message_id.clone(),
                         scheduled_task_id: active.id.clone(),
-                        text: active.prompt.clone(),
+                        text: prompt.clone(),
                         created_by: to_json(&active.created_by),
                         creation_source: to_json(&active.creation_source),
                     })
@@ -851,7 +957,7 @@ impl ScheduledTasks {
                 launched
             }
             Some(thread) => self
-                .send_bound(&active, thread, &command_id, &message_id)
+                .send_bound(&active, thread, &command_id, &message_id, &prompt)
                 .await
                 .map(|()| thread.clone())
                 .map_err(|e| e.to_string()),
@@ -883,6 +989,7 @@ impl ScheduledTasks {
         thread_id: &str,
         command_id: &str,
         message_id: &str,
+        prompt: &str,
     ) -> Result<(), SendError> {
         let mut project_id = task.project_id.clone();
         let mut retries = 2;
@@ -896,7 +1003,7 @@ impl ScheduledTasks {
                     thread_id: thread_id.to_owned(),
                     message_id: message_id.to_owned(),
                     scheduled_task_id: task.id.clone(),
-                    text: task.prompt.clone(),
+                    text: prompt.to_owned(),
                     created_by: to_json(&task.created_by),
                     creation_source: to_json(&task.creation_source),
                     fresh_context: thread_mode_of(task) == ScheduledTaskThreadMode::FreshSession,
@@ -942,7 +1049,7 @@ impl ScheduledTasks {
         if let Err(error) = self.persist(&next_tasks).await {
             let message = "Could not mark schedule task as running.";
             return Err(match trigger {
-                Trigger::Manual => {
+                Trigger::Manual | Trigger::Webhook => {
                     eprintln!("scheduled tasks: {message} {error}");
                     TaskError::new(message, Some(id))
                 }
@@ -1194,7 +1301,7 @@ impl ScheduledTasks {
                     Some("Missed a scheduled run because the server was not running at that time."),
                 )
                 .await;
-            } else if let Err(error) = self.run_task(task.clone(), Trigger::Scheduled).await {
+            } else if let Err(error) = self.run_task(task.clone(), Trigger::Scheduled, None).await {
                 pass.failures.push(error.message);
             }
         }
