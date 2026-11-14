@@ -2,6 +2,7 @@ import {
   DEFAULT_BROWSER_PROFILE_ID,
   resolveBrowserProfiles,
   type BrowserProfile,
+  type DesktopPreviewTabDefaults,
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
   type PreviewZoomFactor,
@@ -61,10 +62,7 @@ export function useBrowserDefaults(): BrowserDefaults {
   return useClientSettings(toBrowserDefaults);
 }
 
-export function browserDefaultOpenRendering(defaults: BrowserDefaults): {
-  zoomFactor: PreviewZoomFactor;
-  colorScheme: PreviewAppearancePreference;
-} {
+export function browserDefaultTabState(defaults: BrowserDefaults): DesktopPreviewTabDefaults {
   return { zoomFactor: defaults.zoomFactor, colorScheme: defaults.appearance };
 }
 

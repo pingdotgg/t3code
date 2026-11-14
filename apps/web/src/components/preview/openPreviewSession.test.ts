@@ -59,7 +59,7 @@ afterEach(() => {
 
 describe("openPreviewSession", () => {
   it.each(["session", "link"] as const)(
-    "does not open a %s with unread settings and uses the saved defaults on retry",
+    "does not open a %s with unread settings and uses the saved profile on retry",
     async (entryPoint) => {
       const failure = new Error("Settings read failed");
       vi.spyOn(browserDefaults, "resolveBrowserDefaults").mockRejectedValueOnce(failure);
@@ -67,8 +67,6 @@ describe("openPreviewSession", () => {
       __setClientSettingsForTests({
         ...DEFAULT_CLIENT_SETTINGS,
         browserDefaultViewport: viewport,
-        browserDefaultZoomFactor: 0.8,
-        browserDefaultAppearance: "dark",
         browserDefaultProfileId: "work",
         browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }],
       });
@@ -95,9 +93,31 @@ describe("openPreviewSession", () => {
           url: input.url,
           viewport,
           profileId: "work",
-          zoomFactor: 0.8,
-          colorScheme: "dark",
         },
+      });
+    },
+  );
+
+  it.each(["new tab", "link"] as const)(
+    "opens a server tab from a %s with the default zoom and appearance",
+    async (entryPoint) => {
+      __setClientSettingsForTests({
+        ...DEFAULT_CLIENT_SETTINGS,
+        browserDefaultZoomFactor: 0.8,
+        browserDefaultAppearance: "dark",
+      });
+      const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+
+      if (entryPoint === "link") {
+        vi.spyOn(previewRuntime, "previewRuntimeFor").mockReturnValue("server");
+        await openUrlInPreview({ openPreview, threadRef, url: "https://t3.chat/" });
+      } else {
+        await openPreviewSession({ openPreview, threadRef, runtime: "server" });
+      }
+
+      expect(openPreview).toHaveBeenCalledExactlyOnceWith({
+        environmentId: threadRef.environmentId,
+        input: expect.objectContaining({ runtime: "server", zoomFactor: 0.8, colorScheme: "dark" }),
       });
     },
   );

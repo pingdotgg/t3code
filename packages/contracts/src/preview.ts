@@ -174,10 +174,9 @@ export const PreviewOpenInput = Schema.Struct({
   url: Schema.optional(Url),
   viewport: Schema.optional(PreviewViewportSetting),
   profileId: Schema.optional(BrowserProfileId),
-  /** Server tabs render from their snapshot, so clients send their defaults here. */
+  runtime: Schema.optional(PreviewRuntime),
   colorScheme: Schema.optional(PreviewAppearancePreference),
   zoomFactor: Schema.optional(PreviewZoomFactor),
-  runtime: Schema.optional(PreviewRuntime),
   reveal: Schema.optional(Schema.Boolean),
 });
 export type PreviewOpenInput = typeof PreviewOpenInput.Type;

@@ -422,6 +422,8 @@ export function startAttachmentUpload(input: {
       deletePendingUpload(existing.environmentId, existing.attachmentId);
     }
     setUploadState(input.image.id, existing.previous);
+    // Retargeting a scratch draft cleared the file's upload stamp; restore it for reloads.
+    stampDraftFileUpload(input, existing.previous.attachmentId);
     return;
   }
 
