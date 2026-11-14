@@ -401,10 +401,14 @@ export function sortProjectsByGroupOrder<
   TProject extends { readonly id: string; readonly environmentId: string },
 >(
   projects: ReadonlyArray<TProject>,
-  groups: ReadonlyArray<{ readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef> }>,
+  groups: ReadonlyArray<{
+    readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
+    readonly pinned: boolean;
+    readonly archived: boolean;
+  }>,
 ): TProject[] {
   const rankByProject = new Map<string, number>();
-  groups.forEach((group, rank) => {
+  pickableProjectGroups(groups).forEach((group, rank) => {
     for (const ref of group.memberProjectRefs) {
       const key = `${ref.environmentId}\0${ref.projectId}`;
       if (!rankByProject.has(key)) rankByProject.set(key, rank);
