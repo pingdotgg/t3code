@@ -285,6 +285,68 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
+  it.effect("retries a stalled release archive from the bytes already received", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-retry-stall-" });
+      const checksums = yield* validChecksums;
+      const archiveRanges: Array<string | undefined> = [];
+      const stalled = yield* Deferred.make<void>();
+      const install = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        httpClient: HttpClient.make((request) => {
+          if (request.url.endsWith("/SHA256SUMS")) {
+            return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(checksums)));
+          }
+          const range = request.headers["range"];
+          archiveRanges.push(range);
+          const response = HttpClientResponse.fromWeb(request, new Response(archiveBytes));
+          if (archiveRanges.length === 1) {
+            return Effect.succeed<HttpClientResponse.HttpClientResponse>(
+              Object.create(response, {
+                stream: {
+                  value: Stream.concat(Stream.make(archiveBytes.slice(0, 4)), Stream.never),
+                },
+              }),
+            );
+          }
+          const start = Number(/^bytes=(\d+)-$/.exec(range ?? "")?.[1] ?? 0);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              start > 0
+                ? new Response(archiveBytes.slice(start), {
+                    status: 206,
+                    headers: {
+                      "content-range": `bytes ${start}-${archiveBytes.length - 1}/${archiveBytes.length}`,
+                    },
+                  })
+                : new Response(archiveBytes),
+            ),
+          );
+        }),
+        runner: extractingRunner(fs, path),
+        validate: () => Effect.void,
+        onProgress: (event) => {
+          if (event.stage === "download" && event.received === 4) {
+            Deferred.doneUnsafe(stalled, Effect.void);
+          }
+        },
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(stalled);
+      yield* TestClock.adjust(Duration.minutes(2));
+      const paths = yield* Fiber.join(install);
+      assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
+      assert.deepEqual(archiveRanges, [undefined, "bytes=4-"]);
+    }),
+  );
+
   it.effect("fails at once when the release host cannot be reached", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
