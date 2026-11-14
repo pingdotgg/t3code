@@ -76,6 +76,31 @@ export const awaitHomeOwnershipRelease = Effect.fn("DesktopHomeOwner.awaitHomeOw
   }),
 );
 
+const HOME_OWNERSHIP_RELEASE_GRACE = Duration.seconds(15);
+const HOME_OWNERSHIP_RELEASE_POLL_INTERVAL = Duration.millis(250);
+
+/**
+ * Whether the ownership lock frees within a grace window. The previous owner
+ * holds the lock through its shutdown drain, so a launch that checks during
+ * the drain must wait rather than read the home as permanently owned.
+ */
+export const awaitHomeOwnershipRelease = Effect.fn("DesktopHomeOwner.awaitHomeOwnershipRelease")(
+  function* (options?: { readonly grace?: Duration.Input; readonly interval?: Duration.Input }) {
+    const released = Effect.gen(function* () {
+      while (yield* isHomeOwnershipLocked()) {
+        yield* Effect.sleep(options?.interval ?? HOME_OWNERSHIP_RELEASE_POLL_INTERVAL);
+      }
+      return true;
+    });
+    return yield* released.pipe(
+      Effect.timeoutOrElse({
+        duration: options?.grace ?? HOME_OWNERSHIP_RELEASE_GRACE,
+        orElse: () => Effect.succeed(false),
+      }),
+    );
+  },
+);
+
 /** The live server recorded as owning the desktop's T3 home. Only call once the ownership lock is known held: a live PID alone may be reused. */
 export const readLiveHomeOwner = Effect.fn("DesktopHomeOwner.readLiveHomeOwner")(function* () {
   const fs = yield* FileSystem.FileSystem;
