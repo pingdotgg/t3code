@@ -7,7 +7,7 @@ import { usePaneMotion } from "./paneMotion";
 
 function Strip({ x }: { x: number }) {
   const stage = useRef<HTMLDivElement>(null);
-  usePaneMotion(stage, "workspace", true, () => {}, x);
+  usePaneMotion(stage, "workspace", true, () => {}, x, 400);
   return (
     <div style={{ width: "400px", height: "200px", overflow: "hidden" }}>
       <div ref={stage} style={{ position: "relative", width: "1200px", height: "200px" }}>

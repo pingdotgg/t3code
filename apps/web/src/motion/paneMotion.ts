@@ -1,12 +1,167 @@
 /** Translate on whole device pixels without scaling or fades. Change sizes once so live timelines
  * never lay out per frame. */
-import { useEffectEvent, useLayoutEffect, useRef } from "react";
+import { Component, useEffectEvent, useLayoutEffect, useRef } from "react";
 
 import { useClientSettings } from "../hooks/useSettings";
 import { MotionAnimation, playMotion, toDevicePixel, type MotionRun } from "./animation";
 import { takePaneDrop } from "./paneDrop";
 import { configureMotion } from "./registry";
+import { afterResizeObservers, liftSlideClips, sidebarSlideStarting } from "./slideTrack";
 import { stripCameraPosition } from "./stripCamera";
+
+/** What rides a resized pane's edge or lane: the sidebar slide's tracked elements, and the header's
+ * top-right cluster (window-fixed in a lone pane, pane-anchored once split). */
+const TRACKED = "[data-sidebar-slide-track], [data-workspace-titlebar-controls]";
+
+type Anchor = "start" | "end";
+
+/** `end` stays with the pane's right edge. A lane (`center`, or a `lane` box that carries one)
+ * keeps the pane's left edge, or its right one when only that stays put on screen, so it starts
+ * inside the pane and its scroller, or under the neighbour its pane grows beneath. */
+function trackedEdge(element: HTMLElement, rect: { left: number; right: number }, anchor: Anchor) {
+  const track = element.dataset.paneSlideTrack ?? element.dataset.sidebarSlideTrack ?? "end";
+  if (track === "end") return rect.right;
+  if (track !== "center" && track !== "lane") return rect.left;
+  return anchor === "end" ? rect.right : rect.left;
+}
+
+/** A `lane` box moves with the lane inside it. */
+function trackedRect(element: HTMLElement) {
+  const lane =
+    element.dataset.paneSlideTrack === "lane"
+      ? element.querySelector<HTMLElement>('[data-sidebar-slide-track="center"]')
+      : null;
+  const { left, right } = (lane ?? element).getBoundingClientRect();
+  return { left, right };
+}
+
+interface Shown {
+  /** The strip's left edge then, which a sidebar slide moves. */
+  strip: number;
+  elements: Map<HTMLElement, { left: number; right: number }>;
+  /** Taken before the sidebar's commit, which moves the panes before React lays them out. */
+  held: boolean;
+}
+
+/** The strip's left edge on screen, which the camera's transform on the stage leaves alone. */
+const stripLeft = (stage: HTMLElement) =>
+  (stage.parentElement ?? stage).getBoundingClientRect().left;
+
+/** Where each tracked element showed before the commit that moved the panes. */
+const shownBefore = new WeakMap<HTMLElement, Shown>();
+
+function snapshot(stage: HTMLElement, held: boolean) {
+  const elements = new Map<HTMLElement, { left: number; right: number }>();
+  for (const element of stage.querySelectorAll<HTMLElement>(TRACKED)) {
+    if (!element.closest("[data-layout-closing]")) elements.set(element, trackedRect(element));
+  }
+  shownBefore.set(stage, { strip: stripLeft(stage), elements, held });
+}
+
+/** Before a sidebar toggle commits: what its split panes show now. */
+export function holdPaneContent(): void {
+  for (const stage of document.querySelectorAll<HTMLElement>("[data-layout-stage]")) {
+    snapshot(stage, true);
+  }
+}
+
+/** Once the sidebar slide starts, a held snapshot no pane motion took is stale. */
+export function releasePaneContent(): void {
+  for (const stage of document.querySelectorAll<HTMLElement>("[data-layout-stage]")) {
+    if (shownBefore.get(stage)?.held) shownBefore.delete(stage);
+  }
+}
+
+/** Measures the tracked elements before React writes a new pane layout to the DOM. */
+export class PaneMotionSnapshot extends Component<{
+  stageRef: React.RefObject<HTMLElement | null>;
+  slots: unknown;
+}> {
+  override getSnapshotBeforeUpdate(previous: Readonly<{ slots: unknown }>) {
+    const stage = this.props.stageRef.current;
+    if (stage && previous.slots !== this.props.slots && !shownBefore.get(stage)?.held) {
+      snapshot(stage, false);
+    }
+    return null;
+  }
+
+  override componentDidUpdate() {}
+
+  override render() {
+    return null;
+  }
+}
+
+const tracks = new WeakMap<HTMLElement, MotionRun>();
+const unlifts = new Map<HTMLElement, () => void>();
+
+/** Sends each tracked element straight from where it showed to where it lands, in step with the
+ * panes; a pane whose content starts past its box stops clipping it until they rest. */
+function trackContent(
+  stage: HTMLElement,
+  shown: Map<HTMLElement, { left: number; right: number }>,
+  anchors: Map<HTMLElement, Anchor>,
+  stepped: boolean,
+) {
+  for (const [pane, unlift] of unlifts) {
+    if (stage.contains(pane)) {
+      unlift();
+      unlifts.delete(pane);
+    }
+  }
+  const moving = new Map<HTMLElement, HTMLElement[]>();
+  const motion = MotionAnimation.start("window-movement", 1, 0);
+  for (const [element, start] of shown) {
+    tracks.get(element)?.cancel();
+    tracks.delete(element);
+    const pane = element.closest<HTMLElement>("[data-layout-pane-id]");
+    if (motion.durationMs <= 0 || !element.isConnected || !pane || !stage.contains(pane)) continue;
+    const anchor = anchors.get(pane) ?? "start";
+    // Measured under the panes' slides and any tracked ancestor's, which all end at rest.
+    const from =
+      trackedEdge(element, start, anchor) - trackedEdge(element, trackedRect(element), anchor);
+    if (Math.abs(from) < 0.5) continue;
+    let rested = false;
+    const run = playMotion(
+      element,
+      motion,
+      (progress) => ({ transform: `translateX(${toDevicePixel(from * progress)}px)` }),
+      () => {
+        rested = true;
+        if (tracks.get(element)?.motion !== motion) return;
+        tracks.delete(element);
+        if (!moving.get(pane)?.some((other) => tracks.has(other))) unlifts.get(pane)?.();
+      },
+      undefined,
+      stepped,
+    );
+    if (rested) continue;
+    tracks.set(element, run);
+    moving.set(pane, [...(moving.get(pane) ?? []), element]);
+  }
+  for (const [pane, elements] of moving) {
+    // Where the content starts, past the pane's box until it rests.
+    const box = pane.getBoundingClientRect();
+    let left = 0;
+    let right = 0;
+    for (const element of elements) {
+      const rect = element.getBoundingClientRect();
+      left = Math.max(left, box.left - rect.left);
+      right = Math.max(right, rect.right - box.right);
+    }
+    if (left < 1 && right < 1) continue;
+    const unlift = liftSlideClips(pane, elements);
+    // Square: rounding a box wider than the pane cuts a wedge out of its own rounded corner.
+    pane.style.clipPath = `inset(0 ${-right}px 0 ${-left}px)`;
+    const restore = () => {
+      if (unlifts.get(pane) !== restore) return;
+      unlifts.delete(pane);
+      pane.style.removeProperty("clip-path");
+      unlift();
+    };
+    unlifts.set(pane, restore);
+  }
+}
 
 interface Box {
   x: number;
@@ -41,8 +196,11 @@ const OPEN_TRAVEL_PX = 48;
 
 const ADJACENT_GAP_PX = 16;
 
-/** The Panel animations setting's default, which plays niri's springs as they are. */
+/** The Panel animations setting's default, which the pane motions in the registry last. */
 const DEFAULT_PANEL_MS = 150;
+
+/** Whole device pixels, except beside the sidebar slide's smooth curve, which they would lag. */
+let stepped = true;
 
 function slide(
   element: HTMLElement,
@@ -89,7 +247,7 @@ function slide(
     rider: edge
       ? {
           edge,
-          run: playMotion(edge.element, motion, keyframe, undefined, undefined, true),
+          run: playMotion(edge.element, motion, keyframe, undefined, undefined, stepped),
         }
       : undefined,
     run: playMotion(
@@ -103,7 +261,7 @@ function slide(
         entry.onRest?.();
       },
       undefined,
-      true,
+      stepped,
     ),
   };
   slides.set(element, entry);
@@ -352,18 +510,18 @@ function resized(side: Side, before: Box, now: Box): boolean {
     : Math.abs(before.height - now.height) > 1;
 }
 
-/** The stage must be a stacking context. Workspace or viewport changes move panes 1:1; unframed lone
- * panes never animate independently. */
+/** The stage must be a stacking context. Workspace or viewport changes move panes 1:1, except a
+ * sidebar toggle's; unframed lone panes never animate independently. */
 export function usePaneMotion(
   stageRef: React.RefObject<HTMLElement | null>,
   key: string | null,
   framed: boolean,
   onGhostDone: (tabId: string) => void,
   placement: unknown,
+  viewportWidth: number,
 ): void {
   // Settings > Appearance > Panel animations paces the panes and the strip's
-  // camera: 150ms plays niri's springs as they are, 300ms twice as slow, 0
-  // not at all.
+  // camera for exactly its duration, as the sidebar slide; 0 not at all.
   const panelMs = useClientSettings((settings) => settings.panelAnimationDurationMs);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Publish committed animation settings to the imperative motion runtime before paint.
   useLayoutEffect(() => {
@@ -371,6 +529,7 @@ export function usePaneMotion(
   }, [panelMs]);
   const previous = useRef<{
     key: string;
+    viewportWidth: number;
     placement: unknown;
     boxes: Map<string, PaneBox>;
   } | null>(null);
@@ -419,8 +578,13 @@ export function usePaneMotion(
       if (radius === null) radius = radiusOf(child);
     }
     const before = previous.current;
-    previous.current = { key, placement, boxes };
-    const animate = before !== null && before.key === key && framed;
+    previous.current = { key, viewportWidth, placement, boxes };
+    const animate =
+      before !== null &&
+      before.key === key &&
+      framed &&
+      (before.viewportWidth === viewportWidth || sidebarSlideStarting());
+    stepped = !sidebarSlideStarting();
     const scroller = stage.parentElement;
     const shown = shownScroll.current;
     const camera =
@@ -494,6 +658,8 @@ export function usePaneMotion(
         true,
       );
     }
+    const tracked = shownBefore.get(stage);
+    shownBefore.delete(stage);
     if (!before || !animate) return;
     const paneWas = new Map<string, PaneBox>();
     for (const box of previousBoxes.values()) paneWas.set(box.paneId, box);
@@ -636,5 +802,23 @@ export function usePaneMotion(
       }
     }
     settle();
-  }, [framed, key, placement, stageRef]);
+    if (!tracked || tracked.elements.size === 0) return;
+    // A lane keeps its pane's left edge unless only the right one stays put on screen.
+    const shift = stripLeft(stage) - tracked.strip;
+    const anchors = new Map<HTMLElement, Anchor>();
+    for (const [tabId, box] of boxes) {
+      const was = wasBy.get(tabId);
+      if (!was) continue;
+      const left = Math.abs(was.x - box.x - shift) >= 1;
+      const right = Math.abs(was.x + was.width - box.x - box.width - shift) >= 1;
+      anchors.set(box.element, left && !right ? "end" : "start");
+    }
+    const wholePixels = stepped;
+    // After the chat lanes re-measure for the new widths, so what they move lands once. Watching
+    // the tracked elements: a sidebar toggle commits this from inside a resize observer.
+    afterResizeObservers(
+      () => trackContent(stage, tracked.elements, anchors, wholePixels),
+      [...tracked.elements.keys()].filter((element) => element.isConnected),
+    );
+  }, [framed, key, placement, stageRef, viewportWidth]);
 }
