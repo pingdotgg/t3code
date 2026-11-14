@@ -1,6 +1,6 @@
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
-import { EnvironmentId, type T3ProjectFileScript } from "@t3tools/contracts";
+import { EnvironmentId, isManagedSettingPath, type T3ProjectFileScript } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -46,6 +46,14 @@ export function ProjectActionsSettings() {
   const mixed = targets.some(
     (candidate) =>
       JSON.stringify(candidate.settings.defaultProjectScripts) !== JSON.stringify(scripts),
+  );
+  // SettingsRow makes the header controls inert under a policy lock; the list edits need the same.
+  const locked = targets.some((candidate) =>
+    isManagedSettingPath(
+      environments.find((environment) => environment.environmentId === candidate.environmentId)
+        ?.serverConfig?.managedPolicy,
+      "defaultProjectScripts",
+    ),
   );
   const canWriteSettings = useScopedSettingsWriteAllowed();
   const [request, setRequest] = useState<ProjectScriptEditorRequest | null>(null);
@@ -114,7 +122,11 @@ export function ProjectActionsSettings() {
         settingKeys={["defaultProjectScripts"]}
         mixed={mixed}
         title="Actions"
-        description="Commands that run in this project's checkout or its worktree, with optional shortcuts."
+        description={
+          isProjectScope
+            ? "Commands that run in this project's checkout or its worktree, with optional shortcuts."
+            : "Commands for every project that has no actions of its own, with optional shortcuts."
+        }
         onResetOverride={() => void persist(() => null)}
         control={
           <div className="flex flex-wrap items-center gap-1.5">
@@ -180,7 +192,7 @@ export function ProjectActionsSettings() {
         <ProjectActionsList
           scripts={scripts}
           keybindings={keybindings}
-          disabled={saving || !canWriteSettings}
+          disabled={saving || !canWriteSettings || locked}
           onEdit={(script) => setRequest(editorRequestForScript(script, keybindings))}
         />
       )}
