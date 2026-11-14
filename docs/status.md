@@ -56,7 +56,7 @@ settings; about 140 MiB for the `claude` program alone).
 | --- | --- |
 | RPC methods | 99 of 236 served; 99 have a run that the real client's decoders accept |
 | Engine commands | 43 of 56 |
-| T3 testkit fixtures through this engine | 42 of 159 variants pass T3's own assertions (Claude 24 of 34, Codex 17 of 25, Grok 1 of 15; the other 85 are providers this server does not offer) |
+| T3 testkit fixtures through this engine | 50 of 159 variants pass T3's own assertions (Claude 24 of 34, Codex 17 of 25, Grok 9 of 15; the other 85 are providers this server does not offer) |
 | HTTP routes | 13 of 57 |
 | `/mcp` tools | 28 of 87 |
 | Providers | Claude, Codex and Grok, of the 10 the T3 server has without Pi |
@@ -135,6 +135,45 @@ Not proven:
 - Conn desktop and mobile against this server.
 - Orbit's flow in a real container.
 - Codex on CLI 0.166 or 0.167 (the recordings are from 0.156).
+
+## Engine, part 3: buffered delivery (2026-11-14)
+
+The fixture replay passes 50 of 159 variants: Grok 9 of 15 (was 1), Claude 24 of 34 and Codex
+17 of 25 (unchanged).
+
+- **Buffered delivery, as T3** (`crates/conn-engine/src/streaming.rs`; T3's
+  `assistantStreaming.ts`, `RunExecutionService`, `TurnItemPositionStore`). A running assistant
+  node is never stored. A streaming assistant message or `assistant_message`/`reasoning` turn
+  item is stored at a Markdown boundary (cut there, at most every 400 ms) or whole after 800 ms
+  idle in `paragraph` mode, never in `turn` mode (`responseStreamingMode`, per project, read at
+  each turn start). What is stored stays: the turn end no longer deletes streaming rows, so the
+  log has no gaps. A held turn item reserves its position. Note: the brief said T3 "never
+  stores" streaming rows; that holds only in `turn` mode. In its default `paragraph` mode T3
+  stores each delivered snapshot, and so do we.
+- **What a subscriber sees now.** Live: streamed text arrives at paragraph boundaries, not every
+  100 ms; no running assistant node. Joining mid-turn: the last delivered snapshot (before: the
+  last 100 ms flush, which the turn end then deleted). Stored log: the delivered snapshots stay.
+- **Store version 3** drops the index of the old deletion and adds `turn_item_positions`. A
+  store from `main` opens and keeps its gaps (test with an old store).
+- **Idle at every turn end** (T3's `writeFinalRunEvents`): a provider terminal or a failed start
+  writes the provider thread `idle` or `error` whatever its status; cancels, Force stop,
+  deletes and restart recovery keep the old rule. **Refusals carry `detail`** equal to the
+  reason, as T3's `ws.ts`.
+- **Proofs.** T3's 13 `assistantStreaming.test.ts` cases and its fence and heading cases,
+  ported; engine tests for positions, the old store, the idle write (fails on the old rule)
+  and refusal bodies; the fixture replay (8 Grok variants moved out of `expected-failures.txt`;
+  `queued_turn/grok` now fails only on the message-order tie, as `queued_turn/codex`).
+- **Memory** (macOS, release, `memory_load`, 3 runs each). A long streamed turn (400
+  snapshots, about 40 KB, one view open): peak live heap 588 to 629 KiB, against 662 to 689
+  KiB on `main`. 1,000 ordinary turns: heap at the end 415 KiB (414 on `main`), peak 24.5 MiB
+  (24.3, the snapshot per reopened view). The new state is bounded: at most 64 open messages
+  per session, each with its delivered text, its latest text and one held snapshot.
+- **Not built from that brief**, in order: merge-back and the portable fork path (T3 delivers
+  the handoff through Codex `thread/inject_items` and Claude's `inlineContextLength`, both
+  provider-crate changes that other workers own); prepared runs and setup scripts; a workspace
+  strategy for delegated tasks; the other refused commands; bounded snapshots and the
+  `/history`, `/bounded`, `/transcript` routes; NFC and T3's search ranking (`paletteSearch.ts`,
+  about 1,300 lines). Commands stay 43 of 56.
 
 ## ACP provider, part 3 (2026-11-14)
 
@@ -512,8 +551,8 @@ tasks, 64 links, 8 tails per turn, 16 ledger models).
    terminal host (`ProviderHost`; in T3 only Antigravity's files and the registry's terminals
    use it). Cursor, OpenCode and Muse go in the SDK host as driver modules.
 4. **Replay of the T3 server's `testkit` fixtures: done (2026-11-14), Claude, Codex and Grok.**
-   See "Engine, part 2", "Codex: the turn start, …" and "ACP provider, part 3". Next: T3's
-   buffered delivery in the engine (9 Grok variants), Codex subagents (6), a replay gate in the
+   See "Engine, part 2", "Codex: the turn start, …", "ACP provider, part 3" and "Engine, part
+   3". Buffered delivery is done (Grok 9 of 15). Next: Codex subagents (6), a replay gate in the
    stand-ins (3 + 4 Grok variants), the `queued_turn` tie (2; a provider clock seam is not
    enough).
 5. **Engine.** Merge-back and the portable fork path (both need T3's `ContextHandoffService`);

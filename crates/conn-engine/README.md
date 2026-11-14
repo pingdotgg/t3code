@@ -19,6 +19,7 @@ workspace README describes the trait's first methods and the wire.
 | `SqliteEngine::stored_events`                 | The whole event log, paged (`OrchestrationV2StoredEvent` rows); never pruned |
 | `EngineConfig::runtime_policy_override`       | Laid over every turn's policy (`RuntimePolicy.layerWithOverride`); the replay sets the fixture's |
 | `EngineConfig::command_output_tap`            | Sees every live command output chunk (T3's `CommandOutputRecorder`) |
+| `EngineHost::response_streaming_mode`, `ResponseStreamingMode` | The project's `responseStreamingMode` (`paragraph` by default, or `turn`), read at each turn start |
 
 `calls.rs` lists the tags `call` and `open_stream` serve. The server registers them with their
 contract types (`methods/orchestration.rs`, `methods/projects.rs`), so a result that does not
@@ -31,7 +32,7 @@ with a reason the client shows (`commands::refusal`).
 
 | Handled                                                                                                                                                             | Refused, and why                                                                             |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `thread.create`, `message.dispatch` (all five dispatch modes), `run.interrupt` (`holdQueue`), `thread.stop`, `runtime-request.respond`, `thread.user-input.dismiss` | `thread.merge_back`: no portable context handoff                                             |
+| `thread.create`, `message.dispatch` (all five dispatch modes), `run.interrupt` (`holdQueue`), `thread.stop`, `runtime-request.respond`, `thread.user-input.dismiss` | `thread.merge_back`: no portable context handoff (needs Codex `thread/inject_items` and Claude `inlineContextLength` in the providers) |
 | `queued-run.start`, `.cancel`, `.reorder`, `.edit`, `queue.resume`, `queued-message.promote-to-steer`                                                               | (none)                                                                                       |
 | `thread.archive`, `unarchive`, `delete`, `visit`, `mark-unread`, `metadata.update` (`regenerateTitle`), `title.regeneration.complete`                               | `prepared-run.release`, `.progress`, `.fail`, `.retry`: no worktree preparation              |
 | `thread.settle`, `auto-settle`, `unsettle`, `snooze`, `unsnooze`, `auto-settle.set`, `pin`, `unpin`, `pin.reorder`, `active.reorder`, `tag.set`                     | `thread.pull-request-link.sync`, `.pull-request.watch`, `.pull-request.sync`: no PR watching |
@@ -86,6 +87,17 @@ all 23 are.
   native fork) is not built: such a message is refused, and a failed native fork fails the
   turn.
 
+- **Buffered delivery** (`src/streaming.rs`, T3's `assistantStreaming.ts` and
+  `RunExecutionService`). A running `assistant_message` node is never stored. A streaming
+  assistant message, or a streaming `assistant_message` or `reasoning` turn item, is stored
+  only at a Markdown boundary (cut there, at most every 400 ms per message) or whole after
+  800 ms idle (`paragraph`); in `turn` mode not at all. The final version always passes. What
+  is stored stays in the log, so the stored sequence has no gaps and a subscriber that joins
+  mid-turn sees the last delivered snapshot. A held turn item reserves its position
+  (`turn_item_positions`, T3's `TurnItemPositionStore`). The idle timer runs on the engine's
+  clock: on a `ManualClock` a held snapshot comes due when the clock moves, as on T3's
+  `TestClock`. At most 64 open messages are tracked per session. Store version 3 dropped the
+  index for the old turn-end deletion; a log written before keeps its gaps and loads.
 - **Visible items** (`src/visibility.rs`). `visibleTurnItems` follows T3's timeline rule
   (`createOrchestrationV2TurnItemVisibility`): a rolled-back run's items, a queued message
   until its run starts, and an unpaired interrupt result of a superseded attempt are hidden.
@@ -96,9 +108,13 @@ all 23 are.
   provider thread. A schedule's fresh run is a side conversation: the next plain message
   continues the thread's own provider thread (`conversationProviderThread`).
 - **Provider thread at turn start.** The engine writes `firstRunOrdinal`, `lastRunOrdinal`
-  and `status: active` and hands that row to the provider (T3's `runningProviderThread`). The
-  run's end marks it `idle`, or `error` when the terminal says the thread is broken
-  (`finalProviderThreadStatus`), while the run is the thread's last.
+  and `status: active` and hands that row to the provider (T3's `runningProviderThread`). Every
+  turn end (a provider terminal or a failed start) marks it `idle`, or `error` when the
+  terminal says the thread is broken (`finalProviderThreadStatus`), while the run is the
+  thread's last, as T3's `writeFinalRunEvents`. A cancel, Force stop, delete or restart
+  recovery writes `idle` only from `active`.
+- **Refusals.** An `OrchestrationV2DispatchCommandError` carries its reason as both `message`
+  and `detail`, as T3's `ws.ts` builds it; a generic or empty reason has no `detail`.
 - **Loading the native thread.** Each live session keeps a load key: the native thread, the
   provider's load part of the model selection (`Session::thread_load_model_selection`) and
   the runtime policy (T3's `providerThreadLoadKey`). A turn start resumes the thread when the
@@ -168,6 +184,11 @@ all 23 are.
 cargo run --release -p conn-engine --features fake-provider --example memory_load -- 1000 1
 ```
 
+`STREAM=1` makes every turn one long streamed reply (400 snapshots, about 40 KB), `REOPEN=0`
+keeps one thread view open; the run prints `peak_heap_kib` (sampled every 2 ms). A long
+streamed turn with one view open peaked at 588 to 629 KiB live heap with buffered delivery,
+662 to 689 KiB before (3 runs each, macOS, release, 2026-11-14).
+
 The live Rust heap is flat under load (one thread, 1,000 turns: 0.33-0.39 MiB from turn 100).
 A thread snapshot is built in memory whole: about 13 heap bytes per byte of its JSON at the
 peak, so a 4.6 MB thread (1,000 turns) peaks near 60 MiB, and the macOS allocator keeps those
@@ -184,8 +205,8 @@ server crate and an `Engine` method for a page.
 - `cargo test -p conn-engine`: commands, streams, restart, families, reads, titles, observer.
 - `tools/t3-fixture-replay/check.mjs`: T3's own testkit fixtures through this engine and the
   Claude and Codex providers on stand-ins, judged by T3's own assertions (the vitest file is
-  placed in the monorepo for the run and removed; only the scenario runner is mocked). 35 of
-  159 variants pass; `expected-failures.txt` lists the rest by cause. The Rust half is
+  placed in the monorepo for the run and removed; only the scenario runner is mocked). 50 of
+  159 variants pass (Claude 24 of 34, Codex 17 of 25, Grok 9 of 15); `expected-failures.txt` lists the rest by cause. The Rust half is
   `examples/t3_fixture_replay.rs`. About 3 minutes; `--only <fixture>/<driver>` runs one,
   `--keep` keeps the work folder (each fixture's plan, stub log, database and result).
 - `tools/client-check.mjs`: the client's own decoders and reducers over
