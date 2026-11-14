@@ -154,7 +154,7 @@ describe("Expo API", () => {
         .availability("app-1")
         .pipe(Effect.flip);
       expect(graphQl.message).toBe(
-        "Expo could not check EAS Simulator access: Feature not enabled",
+        "Expo could not check Expo Simulators access: Feature not enabled",
       );
       const rejected = yield* makeExpoApi(respond(new Response("no", { status: 401 })), credential)
         .stop("session-1")

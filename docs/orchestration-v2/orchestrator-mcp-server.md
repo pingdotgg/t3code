@@ -293,7 +293,15 @@ type DelegateTaskResult = {
   childThreadId: string;
   childRunId: string | null;
   childNodeId: string;
-  status: "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled" | "interrupted";
+  status:
+    | "queued"
+    | "starting"
+    | "running"
+    | "waiting"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "interrupted";
   workState: "working" | "waiting_for_children" | "result_available";
   hasPendingChildRuns: boolean;
   providerInstanceId: string;
@@ -318,21 +326,31 @@ type DelegateTaskResult = {
 
 Reads a delegated task from the parent thread's durable projection. A task ID
 from another parent thread is rejected. `childRunId` identifies the original
-run. `workState` distinguishes active work, a finished turn waiting for children,
-and an available result. The task remains nonterminal until its known work
-finishes. Its published `summary` and result transfer then remain stable across
-later follow-ups. `hasPendingChildRuns` reports later queued or executing turns;
-`latestTerminal*` exposes later executed, non-monitor results without replacing
-the published task result.
+run. `status: "starting"` means the child's provider has not started its turn
+yet, so a task that stays there has not begun work. A task in a linked
+environment reads its run's status there for this. `workState` distinguishes
+active work, a finished turn waiting for children, and an available result. The
+task remains nonterminal until its known work finishes. Its published `summary`
+and result transfer then remain stable across later follow-ups.
+`hasPendingChildRuns` reports later queued or executing turns; `latestTerminal*`
+exposes later executed, non-monitor results without replacing the published task
+result.
 
 ### `task_cancel`
 
-Stops the child thread with the internal `thread.stop` command, then stops every
-task the child delegated, and disposes automatic parent delivery. Like a user Stop,
-`thread.stop` interrupts the running turn, holds queued turns, and ends pull request
-watches. A nonterminal task with no interruptible run is rejected. A terminal task
-returns its existing status, and its child thread still stops, including later
-runs and watch wakes. Published task results remain available. It accepts an
+Stops every task the child delegated, then the child thread with the internal
+`thread.stop` command, cancels the task's own queued turn, and disposes automatic
+parent delivery. Like a user Stop, `thread.stop` interrupts the running turn, holds
+queued turns, and ends pull request watches. The task's own queued turn is cancelled
+even if Stop already held it, so a task that is only queued can be cancelled; other
+queued turns in the child stay held for Resume. A nonterminal task is rejected when
+it has no interruptible run, no queued turn of its own, and its finished turn no
+longer waits on background work or delegated tasks. Once a cancelled task's turn
+ends, a completed result settles as `interrupted` and a failed one stays `failed`. A
+terminal task returns its existing status, and its child thread still stops,
+including later runs and watch wakes. In both cases, a follow-up that lost its child
+run but still shows as running on the parent is cancelled there and reported as
+`cancelled`. Published task results remain available. It accepts an
 optional cancellation reason.
 
 ### `create_threads`
@@ -393,8 +411,16 @@ the environment by thread ID. A deleted thread returns `thread_not_found`. The
 default `messages` view returns user messages, assistant
 messages, and proposed plans. The `activity` view also returns summarized tool,
 reasoning, checkpoint, handoff, and runtime-request items. Large item text is
-bounded and reports whether it was truncated. `afterPosition` and
-`nextPosition` support incremental reads.
+bounded and reports whether it was truncated. An agent in a T3 thread that
+reads without a cursor gets the newest items, and `beforePosition=earlierPosition`
+reads older ones. Client callers (the CLI, linked environments, outside MCP
+clients) start at the oldest item instead, because the CLI and linked
+environments on older versions read that way and follow only `hasMore`.
+`afterPosition=-1` starts any read at the oldest item, and
+`afterPosition=nextPosition` reads newer items. The server stops adding items once the result reaches about 30,000 characters and
+reports the rest through `earlierPosition` or `hasMore`. Claude Code saves MCP
+results over its token limit to a file instead of showing them, so a read has
+to fit whatever `limit` an agent asks for.
 
 Thread and message results include required `createdBy` and `creationSource`
 provenance. MCP-created threads and user-role messages use `createdBy: "agent"`
@@ -422,13 +448,19 @@ client's `effectiveSnoozed`, so agents and the sidebar agree: a snoozed thread
 wakes early only when it has a pending request or fails after snoozing. Completed
 runs, background wakes, and delegated completions keep it snoozed.
 
+They also report `blockedOnThreadWait` and `pendingBackgroundTasks`, the shell
+fields behind the sidebar's Waiting label, so an agent can see what a thread
+still waits on after its run completed. A subagent or `background_task` holds
+the thread. A command or monitor holds it only with `awaited: true`, since agents
+often leave a dev server running.
+
 ### `t3_thread_update`
 
 Updates metadata for the calling thread or any other thread in the environment.
-The typed actions are `rename`, `regenerate_title`, `link_pull_request`, and
-`unlink_pull_request`. A link input supplies the repository, number, and URL;
-the server records the target thread's project ID. Branch and workspace changes
-are outside this tool.
+The typed actions are `rename`, which requires `title`, and `regenerate_title`,
+which rejects one. Pull request links go through the separate
+`link_pull_request` and `unlink_pull_request` tools. Branch and workspace
+changes are outside this tool.
 
 The result includes the command ID and durable event sequence together with the
 resultant title, title-regeneration marker, and linked pull request. Reusing a
@@ -445,7 +477,12 @@ Sends a message to any ordinary or delegated thread in the environment:
 - `queue` creates a separate follow-up run after active work;
 - `steer` requires a steerable active provider turn; and
 - `restart` requires an active provider turn and uses the orchestrator's
-  interrupt-and-restart path.
+  interrupt-and-restart path. On a provider that can stop a turn and queue
+  messages but not restart a turn with new input, it stops the turn and queues
+  the message ahead of other queued messages; an unheld delegated-task result
+  that survives the stop still runs first. It is rejected when neither path
+  applies: the provider cannot stop a turn, Stop has already reached the turn,
+  or the turn or the new message is `/compact` or `/logout`.
 
 The target runtime and interaction modes may not be broader than the caller's.
 Stable command and message IDs are derived from `clientRequestId` for

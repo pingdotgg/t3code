@@ -20,7 +20,10 @@ import {
   type HandoffTimelineRun,
   resolveModelSwitchChange,
 } from "@t3tools/client-runtime/handoff";
-import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
+import {
+  formatSubagentDisplayTitle,
+  subagentCardDetail,
+} from "@t3tools/client-runtime/state/subagent-display";
 import {
   ProviderDriverKind,
   type ModelSelection,
@@ -43,6 +46,7 @@ import {
   CircleStopIcon,
   ArrowRightLeftIcon,
   ArrowRightIcon,
+  EraserIcon,
   GitForkIcon,
   MessageSquareIcon,
 } from "lucide-react";
@@ -191,17 +195,6 @@ const SETTLED_SUBAGENT_STATUSES = new Set<OrchestrationV2TurnItem["status"]>([
   "cancelled",
   "interrupted",
 ]);
-
-const GENERIC_CHILD_END = /^Child task ended with status\b/i;
-
-function plainDetail(text: string): string {
-  return text
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/`/g, "")
-    .replace(/^[ \t]*[-*][ \t]+/gm, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 function isoOrNull(value: DateTime.Utc | null | undefined): string | null {
   return value ? DateTime.formatIso(value) : null;
@@ -441,8 +434,7 @@ function SubagentTimelineLink(props: {
   const progress = (agent?.progress ?? props.progress)?.trim();
   const settled = SETTLED_SUBAGENT_STATUSES.has(status ?? liveStatus);
   const rawDetail = settled ? result || progress : progress || result;
-  const detail =
-    rawDetail && !GENERIC_CHILD_END.test(rawDetail) ? plainDetail(rawDetail) || null : null;
+  const detail = subagentCardDetail(rawDetail);
   const failed = status === "failed";
   const timing = {
     status: liveStatus,
@@ -595,6 +587,11 @@ function EnvironmentHandoffRow({
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   return <HandoffRow {...props} environmentId={environmentId} providers={providers} />;
+}
+
+/** Marks where `/clear` or an automation started a new provider session in this thread. */
+export function FreshSessionRow() {
+  return <TimelineSystemDivider label="New session" icon={EraserIcon} />;
 }
 
 /** A same-harness model or effort change. Shows only what changed. */

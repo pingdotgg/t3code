@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
+import { Sidebar, SidebarProvider, SidebarTrigger, useSidebar } from "../ui/sidebar";
 import { type SidebarRouteReveal, useActiveRowReveal } from "./routeReveal";
 
 const ROW_HEIGHT_PX = 24;
@@ -26,6 +27,12 @@ function RevealList(props: {
       ))}
     </ul>
   );
+}
+
+// Reads the sidebar context like the real thread list, so opening the sheet re-renders it.
+function SheetRevealList(props: Parameters<typeof RevealList>[0]) {
+  useSidebar();
+  return <RevealList {...props} />;
 }
 
 const rowKeys = (count: number) => Array.from({ length: count }, (_, index) => `thread-${index}`);
@@ -140,5 +147,47 @@ describe("useActiveRowReveal", () => {
       { router: false },
     );
     await expect.element(screen.getByText("thread-40", { exact: true })).toBeInViewport();
+  });
+
+  it("stops watching a hidden active row once it unmounts", async () => {
+    const reveal = newReveal();
+    using observe = vi.spyOn(ResizeObserver.prototype, "observe");
+    using unobserve = vi.spyOn(ResizeObserver.prototype, "unobserve");
+    using disconnect = vi.spyOn(ResizeObserver.prototype, "disconnect");
+    await using screen = await render(
+      <div hidden>
+        <RevealList reveal={reveal} rowKeys={rowKeys(50)} activeKey="thread-40" />
+      </div>,
+      // No router: the route arrives as the activeKey prop.
+      { router: false },
+    );
+    const row = screen.getByText("thread-40", { exact: true }).element();
+    expect(observe).toHaveBeenCalledWith(row);
+
+    // A widening viewport unmounts the closed sheet before it ever opens.
+    await screen.rerender(<div hidden />);
+
+    expect(
+      unobserve.mock.calls.some(([target]) => target === row) || disconnect.mock.calls.length > 0,
+    ).toBe(true);
+  });
+
+  it("reveals the open thread when the closed narrow sheet opens", async () => {
+    await page.viewport(390, 844);
+    const reveal = newReveal();
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar>
+          <SheetRevealList reveal={reveal} rowKeys={rowKeys(50)} activeKey="thread-40" />
+        </Sidebar>
+        <SidebarTrigger />
+      </SidebarProvider>,
+      // No router: the route arrives as the activeKey prop.
+      { router: false },
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+
+    await expect.element(page.getByText("thread-40", { exact: true })).toBeInViewport();
   });
 });

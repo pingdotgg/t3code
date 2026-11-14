@@ -3,6 +3,16 @@ import type { RelayAgentActivityState, RelayDeliveryResult } from "@t3tools/cont
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
+import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
+import { FetchHttpClient } from "effect/http";
+
+import * as RelayConfiguration from "../Config.ts";
+import * as ApnsClient from "./ApnsClient.ts";
+import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
+import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
+import * as DeliveryAttempts from "./DeliveryAttempts.ts";
+import type { SignedApnsDeliveryJob } from "./apnsDeliveryJobs.ts";
 
 import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
@@ -107,7 +117,6 @@ function makeApnsDeliveries(
 ): ApnsDeliveries.ApnsDeliveries["Service"] {
   return {
     sendForTarget: () => Effect.succeed(null),
-    sendPushNotificationForTarget: () => Effect.succeed(null),
     sendLiveActivity: () =>
       Effect.succeed({
         deviceId: "device",
@@ -198,6 +207,73 @@ describe("AgentActivityPublisher", () => {
     );
   });
 
+  it.effect.each([
+    {
+      name: "skips the activity query without a running iOS Live Activity",
+      activityToken: null,
+      listCalls: 0,
+    },
+    {
+      name: "aggregates activity for a running iOS Live Activity",
+      activityToken: "activity-token",
+      listCalls: 1,
+    },
+  ])("$name", ({ activityToken, listCalls }) => {
+    const android = { ...target("android"), platform: "android" as const, ios_major_version: null };
+    const ios = { ...target("ios"), activity_push_token: activityToken };
+    let listed = 0;
+    const hasAggregate: boolean[] = [];
+    return Effect.gen(function* () {
+      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+      yield* publisher.publish({
+        environmentId: state.environmentId,
+        environmentPublicKey: "key",
+        threadId: state.threadId,
+        state,
+      });
+      expect(listed).toBe(listCalls);
+      expect(hasAggregate).toEqual([listCalls > 0]);
+    }).pipe(
+      Effect.provide(
+        AgentActivityPublisher.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(
+                AgentActivityRows.AgentActivityRows,
+                makeAgentActivityRows({
+                  listForUser: () =>
+                    Effect.sync(() => {
+                      listed += 1;
+                      return [state];
+                    }),
+                }),
+              ),
+              Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
+              Layer.succeed(
+                LiveActivities.LiveActivities,
+                makeLiveActivities({ listTargets: () => Effect.succeed([android, ios]) }),
+              ),
+              Layer.succeed(
+                ApnsDeliveries.ApnsDeliveries,
+                makeApnsDeliveries({
+                  sendForTarget: (input) =>
+                    Effect.sync(() => {
+                      hasAggregate.push(input.aggregate !== null);
+                      return null;
+                    }),
+                }),
+              ),
+              Layer.succeed(FcmDeliveries.FcmDeliveries, {
+                enqueue: () => Effect.succeed(null),
+                process: () => Effect.void,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect("replays the latest aggregate when a Live Activity token registers", () => {
     const registeredTarget: LiveActivities.TargetRow = {
       ...target("device-1"),
@@ -269,114 +345,122 @@ describe("AgentActivityPublisher", () => {
     });
   });
 
-  it.effect(
-    "delivers notifications without querying activity rows when Live Activities are disabled",
-    () => {
-      const notificationState: RelayAgentActivityState = {
-        ...state,
-        phase: "waiting_for_approval",
-        headline: "Needs approval",
-      };
-      const liveAggregates: Array<
-        Parameters<ApnsDeliveries.ApnsDeliveries["Service"]["sendForTarget"]>[0]
-      > = [];
-      const pushAggregates: Array<
-        Parameters<ApnsDeliveries.ApnsDeliveries["Service"]["sendPushNotificationForTarget"]>[0]
-      > = [];
+  it.effect.each([
+    { phase: "waiting_for_input", pushToStartToken: null, body: "Input: Project" },
+    { phase: "waiting_for_approval", pushToStartToken: "start-token", body: "Approval: Project" },
+  ] as const)(
+    "queues $phase notifications for notification-only links and respects link opt-out",
+    ({ phase, pushToStartToken, body }) => {
+      const publishedState: RelayAgentActivityState = { ...state, phase };
+      const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+      let notificationsEnabled = true;
+      let liveActivitiesEnabled = false;
+      const dependencies = Layer.mergeAll(
+        Layer.succeed(
+          AgentActivityRows.AgentActivityRows,
+          makeAgentActivityRows({
+            listForUser: () =>
+              liveActivitiesEnabled
+                ? Effect.succeed([publishedState])
+                : Effect.die("Notification-only delivery must not read rows"),
+          }),
+        ),
+        Layer.succeed(
+          EnvironmentLinks.EnvironmentLinks,
+          makeEnvironmentLinks({
+            listDeliveryUsersForEnvironment: () =>
+              Effect.succeed([
+                { userId: "dev:julius", notificationsEnabled, liveActivitiesEnabled },
+              ]),
+          }),
+        ),
+        Layer.succeed(
+          LiveActivities.LiveActivities,
+          makeLiveActivities({
+            listTargets: () =>
+              Effect.succeed([
+                {
+                  ...target("device-1"),
+                  push_token: "apns-device-token",
+                  push_to_start_token: pushToStartToken,
+                  preferences_json: JSON.stringify({
+                    liveActivitiesEnabled: true,
+                    notificationsEnabled: true,
+                    notifyOnApproval: true,
+                    notifyOnInput: true,
+                    notifyOnCompletion: true,
+                    notifyOnFailure: true,
+                  }),
+                },
+              ]),
+          }),
+        ),
+        Layer.succeed(ApnsDeliveryQueue.ApnsDeliveryQueueSender, {
+          send: (job) =>
+            Effect.sync(() => {
+              queuedJobs.push(job);
+            }),
+        }),
+        Layer.succeed(DeliveryAttempts.DeliveryAttempts, {
+          pruneExpired: Effect.succeed(0),
+          claimSourceJob: () => Effect.succeed("claimed" as const),
+          completeSourceJob: () => Effect.void,
+        }),
+        RelayConfiguration.layer({
+          relayIssuer: "https://relay.example.test",
+          apns: {
+            environment: "sandbox",
+            teamId: "team-id",
+            keyId: "key-id",
+            privateKey: Redacted.make("unused-key"),
+            bundleId: "com.t3tools.t3code.dev",
+          },
+          apnsDeliveryJobSigningSecret: Redacted.make("job-signing-secret"),
+          clerkSecretKey: Redacted.make("clerk-secret"),
+          clerkPublishableKey: "pk_test_test",
+          clerkJwtAudience: "t3-code-relay",
+          cloudMintPrivateKey: Redacted.make("cloud-private-key"),
+          cloudMintPublicKey: "cloud-public-key",
+          managedEndpointBaseDomain: undefined,
+          managedEndpointNamespace: undefined,
+        }),
+      );
+      const deliveriesLayer = ApnsDeliveries.layer.pipe(
+        Layer.provide(NodeCryptoLayer.layerMac),
+        Layer.provide(
+          ApnsClient.layer.pipe(
+            Layer.provide(ApnsProviderTokens.layer),
+            Layer.provide(FetchHttpClient.layer),
+          ),
+        ),
+        Layer.provide(ApnsDeliveryQueue.layer.pipe(Layer.provide(NodeCryptoLayer.layer))),
+      );
 
       return Effect.gen(function* () {
-        const result = yield* Effect.gen(function* () {
-          const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
-          return yield* publisher.publish({
-            environmentId: "env",
+        const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+        const publish = () =>
+          publisher.publish({
+            environmentId: state.environmentId,
             environmentPublicKey: "environment-public-key",
-            threadId: "thread",
-            state: notificationState,
+            threadId: state.threadId,
+            state: publishedState,
           });
-        }).pipe(
-          Effect.provide(
-            layerPublisher.pipe(
-              Layer.provide(
-                Layer.mergeAll(
-                  Layer.succeed(
-                    AgentActivityRows.AgentActivityRows,
-                    makeAgentActivityRows({
-                      listForUser: () =>
-                        Effect.die("Notification-only delivery must not read rows"),
-                    }),
-                  ),
-                  Layer.succeed(
-                    EnvironmentLinks.EnvironmentLinks,
-                    makeEnvironmentLinks({
-                      listDeliveryUsersForEnvironment: () =>
-                        Effect.succeed([
-                          {
-                            userId: "dev:julius",
-                            notificationsEnabled: true,
-                            liveActivitiesEnabled: false,
-                          },
-                        ]),
-                    }),
-                  ),
-                  Layer.succeed(
-                    LiveActivities.LiveActivities,
-                    makeLiveActivities({
-                      listTargets: () =>
-                        Effect.succeed([
-                          {
-                            ...target("device-1"),
-                            push_token: "apns-device-token",
-                            push_to_start_token: "push-to-start-token",
-                          },
-                        ]),
-                    }),
-                  ),
-                  Layer.succeed(
-                    ApnsDeliveries.ApnsDeliveries,
-                    makeApnsDeliveries({
-                      sendForTarget: (input) =>
-                        Effect.sync(() => {
-                          liveAggregates.push(input);
-                          return null;
-                        }),
-                      sendPushNotificationForTarget: (input) =>
-                        Effect.sync(() => {
-                          pushAggregates.push(input);
-                          return {
-                            deviceId: input.target.device_id,
-                            kind: "push_notification",
-                            ok: true,
-                            queued: true,
-                            apnsStatus: null,
-                            apnsReason: null,
-                            apnsId: null,
-                          };
-                        }),
-                    }),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
+        expect((yield* publish()).deliveries).toMatchObject([
+          { deviceId: "device-1", kind: "push_notification", queued: true },
+        ]);
+        expect(queuedJobs.map((job) => job.payload)).toMatchObject([
+          { kind: "push_notification", notification: { body, threadId: state.threadId } },
+        ]);
 
-        expect(liveAggregates).toMatchObject([{ aggregate: null }]);
-        expect(pushAggregates).toHaveLength(1);
-        expect(pushAggregates[0]?.aggregate?.activities).toMatchObject([
-          {
-            environmentId: notificationState.environmentId,
-            threadId: notificationState.threadId,
-            phase: "waiting_for_approval",
-          },
-        ]);
-        expect(result.deliveries).toMatchObject([
-          {
-            deviceId: "device-1",
-            kind: "push_notification",
-            queued: true,
-          },
-        ]);
-      });
+        notificationsEnabled = false;
+        liveActivitiesEnabled = true;
+        expect((yield* publish()).deliveries).toEqual([]);
+        expect(queuedJobs).toHaveLength(1);
+      }).pipe(
+        Effect.provide(
+          layerPublisher.pipe(Layer.provide(deliveriesLayer), Layer.provide(dependencies)),
+        ),
+      );
     },
   );
 });

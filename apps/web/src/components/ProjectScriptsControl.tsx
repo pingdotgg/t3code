@@ -137,6 +137,7 @@ export default function ProjectScriptsControl({
       runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
       waitForSetup: fileScript.runOnWorktreeCreate === true && fileScript.async === false,
       runOnSettle: fileScript.runOnSettle ?? false,
+      stopOnSettle: fileScript.stopOnSettle ?? false,
       ...(readEnvironmentScope(environmentId, AuthSettingsWriteScope) ? { keybinding: null } : {}),
       previewUrl: fileScript.previewUrl ?? null,
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
@@ -329,21 +330,29 @@ export default function ProjectScriptsControl({
               setActionsMenuOpen({ presentation, scripts: open, imports: false })
             }
           >
-            <MenuTrigger
-              render={
-                <ThreadDetailsControl
-                  size={isPanel ? "sm" : "icon-xs"}
-                  variant={isPanel ? "ghost" : "outline"}
-                  part="secondary"
-                  panel={isPanel}
-                  aria-label="Script actions"
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <MenuTrigger
+                    render={
+                      <ThreadDetailsControl
+                        size={isPanel ? "sm" : "icon-xs"}
+                        variant={isPanel ? "ghost" : "outline"}
+                        part="secondary"
+                        panel={isPanel}
+                        aria-label="Script actions"
+                        data-toolbar-control=""
+                      />
+                    }
+                  />
+                }
+              >
+                <ChevronDownIcon
+                  className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
                 />
-              }
-            >
-              <ChevronDownIcon
-                className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
-              />
-            </MenuTrigger>
+              </TooltipTrigger>
+              <TooltipPopup side="top">Script actions</TooltipPopup>
+            </Tooltip>
             <MenuPopup
               align="end"
               {...(isPanel ? { anchor: panelAnchorRef } : {})}
