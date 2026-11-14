@@ -10,11 +10,12 @@ import {
   updateEnvironmentSpeechModelUnloadTimeout,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
-import { openRouterIcon } from "@t3tools/client-runtime/provider-clients";
+import { elevenLabsIcon, openRouterIcon } from "@t3tools/client-runtime/provider-clients";
 import {
   AuthFilesystemReadScope,
   AuthSettingsWriteScope,
   CLOUD_SPEECH_LABELS,
+  CLOUD_SPEECH_PROVIDER_NAMES,
   CloudSpeechProvider,
   DEFAULT_SPEECH_POST_PROCESSING_PROMPT,
   type EnvironmentId,
@@ -142,6 +143,8 @@ const OFF = "off";
 function CloudSpeechLogo({ provider }: { provider: CloudSpeechProvider }) {
   if (provider === "openrouter")
     return <ProviderPackageIcon icon={openRouterIcon} aria-hidden className="size-4 shrink-0" />;
+  if (provider === "elevenlabs")
+    return <ProviderPackageIcon icon={elevenLabsIcon} aria-hidden className="size-4 shrink-0" />;
   return (
     <ProviderInstanceIcon
       driverKind={ProviderDriverKind.make(provider === "openai" ? "codex" : "grok")}
@@ -1257,6 +1260,10 @@ export function VoiceSettingsPanel() {
   const cloudEnvironment = environments.find(
     (env) => env.environmentId === pendingCloud?.environmentId,
   );
+  const ownsSilence =
+    destination.cloudProvider === "openai" || destination.cloudProvider === "elevenlabs"
+      ? destination.cloudProvider
+      : null;
   // OpenRouter users without settings access still manage their own model choice.
   const manageLabel =
     destination.cloudProvider === "openrouter" ? "Manage OpenRouter" : "Manage key";
@@ -1539,14 +1546,14 @@ export function VoiceSettingsPanel() {
           {...searchableSetting("speech-silence-filtering")}
           title="Silence filtering"
           description={
-            destination.cloudProvider === "openai"
-              ? "OpenAI handles silence itself."
+            ownsSilence
+              ? `${CLOUD_SPEECH_PROVIDER_NAMES[ownsSilence]} handles silence itself.`
               : "Skip silence and background noise before transcribing."
           }
           control={
             <Switch
               aria-label="Silence filtering"
-              disabled={destination.cloudProvider === "openai"}
+              disabled={ownsSilence !== null}
               checked={settings.speechSilenceFiltering}
               onCheckedChange={(checked) =>
                 void updateClientSettings({ speechSilenceFiltering: checked })
