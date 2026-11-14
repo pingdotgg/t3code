@@ -2656,6 +2656,7 @@ it.effect.each([
   "lost-response",
   "promoted",
   "promoted-by-older-peer",
+  "failed",
 ] as const)("cancelling a queued follow-up task there when its run is $0", (outcome) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -2762,6 +2763,23 @@ it.effect.each([
           }),
         });
       }
+      if (outcome === "failed") {
+        const now = yield* DateTime.now;
+        yield* box_.sink.write({
+          commandId: CommandId.make("command:box:queued-failed"),
+          events: [
+            {
+              id: EventId.make("event:box:queued-failed"),
+              type: "run.updated",
+              threadId: remoteId,
+              runId: queuedRun.id,
+              providerInstanceId: queuedRun.providerInstanceId,
+              occurredAt: now,
+              payload: { ...queuedRun, status: "failed", completedAt: now },
+            },
+          ],
+        });
+      }
       const beforeCancel = yield* box_.orchestrator.getThreadProjection(remoteId);
       if (outcome === "promoted" || outcome === "promoted-by-older-peer") {
         const now = yield* DateTime.now;
@@ -2854,7 +2872,8 @@ it.effect.each([
         outcome !== "cancelled" &&
         outcome !== "older" &&
         outcome !== "promoted" &&
-        outcome !== "promoted-by-older-peer"
+        outcome !== "promoted-by-older-peer" &&
+        outcome !== "failed"
       ) {
         yield* Ref.set(thread.real, {
           ...box_.threads,
@@ -2948,6 +2967,10 @@ it.effect.each([
         outcome === "promoted-by-older-peer"
       ) {
         expect(yield* Ref.get(thread.stops)).toEqual(["thread.stop", "delegated-tasks"]);
+        return;
+      } else if (outcome === "failed") {
+        // It never started and was not promoted, so nothing there needs stopping.
+        expect(yield* Ref.get(thread.stops)).toEqual([]);
         return;
       }
 

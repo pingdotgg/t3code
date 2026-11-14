@@ -3233,17 +3233,20 @@ const make = Effect.gen(function* () {
       const visibleRuns = target.runs
         .toSorted((left, right) => right.ordinal - left.ordinal)
         .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT);
-      const cancelledMessageIds = visibleRuns
-        .filter((run) => run.status === "cancelled" && run.startedAt === null)
+      const unstartedEndedMessageIds = visibleRuns
+        .filter(
+          (run) =>
+            run.startedAt === null && ThreadManagementService.isTerminalRunStatus(run.status),
+        )
         .map((run) => run.userMessageId);
-      const cancelledMessages =
-        cancelledMessageIds.length === 0
+      const unstartedEndedMessages =
+        unstartedEndedMessageIds.length === 0
           ? undefined
           : yield* threadManagement
-              .getMessagesById(input.threadId, cancelledMessageIds)
+              .getMessagesById(input.threadId, unstartedEndedMessageIds)
               .pipe(Effect.mapError(threadManagementFailure));
       const recentRuns = visibleRuns.map((run) => {
-        const message = cancelledMessages?.get(run.userMessageId);
+        const message = unstartedEndedMessages?.get(run.userMessageId);
         if (message === undefined) return threadRun(target, run);
         const promotedToRunId =
           message.runId == null || message.runId === run.id ? null : message.runId;
