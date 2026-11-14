@@ -30,6 +30,7 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2ContextTransfer,
   OrchestrationV2DomainEvent,
+  OrchestrationV2LimitRecovery,
   OrchestrationV2OlderSettledCount,
   OrchestrationV2OlderSettledCursor,
   OrchestrationV2ProjectedTurnItem,
@@ -194,6 +195,11 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "limitRecovery"
   | "snoozedUntil"
 >;
+
+export interface ProjectionAwaitedLimitRecovery {
+  readonly threadId: ThreadId;
+  readonly limitRecovery: OrchestrationV2LimitRecovery;
+}
 
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
@@ -619,6 +625,13 @@ export interface ProjectionStoreV2Shape {
   readonly getLimitRecoveryWakeAt: (
     now: DateTime.Utc,
   ) => Effect.Effect<number | null, ProjectionStoreV2Error>;
+  /** Auto-resume or snooze recoveries not yet reset, for runs these instances failed by `failedBefore`. */
+  readonly getLimitRecoveriesAwaitingReset: (options: {
+    readonly now: DateTime.Utc;
+    readonly providerInstanceIds: ReadonlyArray<ProviderInstanceId>;
+    readonly failedBefore: DateTime.Utc;
+    readonly resetBefore?: DateTime.Utc;
+  }) => Effect.Effect<ReadonlyArray<ProjectionAwaitedLimitRecovery>, ProjectionStoreV2Error>;
   readonly getSettlementCandidates: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionSettlementCandidate>, ProjectionStoreV2Error>;
@@ -4639,7 +4652,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 json_extract(t.payload_json, '$.limitRecovery.runId') IS r.run_id
                 AND json_extract(t.payload_json, '$.limitRecovery.resetAt') IS json_extract(item.payload_json, '$.failure.resetAt')
                 AND json_extract(t.payload_json, '$.limitRecovery.autoResume') = 1
-                AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) <= julianday(${DateTime.formatIso(options.now)})
+                AND (
+                  json_extract(t.payload_json, '$.limitRecovery.resetEarly') = 1
+                  OR julianday(json_extract(item.payload_json, '$.failure.resetAt')) <= julianday(${DateTime.formatIso(options.now)})
+                )
                 AND (
                   json_extract(t.payload_json, '$.snoozedUntil') IS NULL
                   OR julianday(json_extract(t.payload_json, '$.snoozedUntil')) <= julianday(${DateTime.formatIso(options.now)})
@@ -4727,6 +4743,48 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           (value): value is number => value != null,
         );
         return wakes.length === 0 ? null : Math.round(Math.min(...wakes));
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
+    const getLimitRecoveriesAwaitingReset = Effect.fn(
+      "ProjectionStore.getLimitRecoveriesAwaitingReset",
+    )(
+      function* (
+        options: Parameters<ProjectionStoreV2Shape["getLimitRecoveriesAwaitingReset"]>[0],
+      ) {
+        if (options.providerInstanceIds.length === 0) return [];
+        const resetBefore = options.resetBefore ? DateTime.formatIso(options.resetBefore) : null;
+        const rows = yield* sql<{ readonly payload_json: string }>`
+          SELECT t.payload_json
+          FROM orchestration_v2_projection_threads t
+          INNER JOIN orchestration_v2_projection_runs r
+            ON r.run_id = json_extract(t.payload_json, '$.limitRecovery.runId')
+          WHERE t.deleted_at IS NULL
+            AND json_extract(t.payload_json, '$.archivedAt') IS NULL
+            AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
+            AND r.status = 'failed'
+            AND r.provider_instance_id IN ${sql.in(options.providerInstanceIds)}
+            AND julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt'))) <= julianday(${DateTime.formatIso(options.failedBefore)})
+            AND julianday(json_extract(t.payload_json, '$.limitRecovery.resetAt')) > julianday(${DateTime.formatIso(options.now)})
+            AND (
+              ${resetBefore} IS NULL
+              OR julianday(json_extract(t.payload_json, '$.limitRecovery.resetAt')) < julianday(${resetBefore})
+            )
+            AND json_extract(t.payload_json, '$.limitRecovery.resetEarly') IS NOT 1
+            AND (
+              json_extract(t.payload_json, '$.limitRecovery.autoResume') = 1
+              OR json_extract(t.payload_json, '$.limitRecovery.snooze') = 1
+            )
+          ORDER BY t.thread_id
+        `;
+        const waiting: Array<ProjectionAwaitedLimitRecovery> = [];
+        for (const row of rows) {
+          const thread = yield* decodeThreadPayload(row.payload_json);
+          if (thread.limitRecovery != null)
+            waiting.push({ threadId: thread.id, limitRecovery: thread.limitRecovery });
+        }
+        return waiting;
       },
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
     );
@@ -9113,6 +9171,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getProviderControlContext: readOnReader(getProviderControlContext),
       getLimitRecoveryCandidates: readOnReader(getLimitRecoveryCandidates),
       getLimitRecoveryWakeAt: readOnReader(getLimitRecoveryWakeAt),
+      getLimitRecoveriesAwaitingReset: readOnReader(getLimitRecoveriesAwaitingReset),
       getRecoveryThreadIds: readOnReader(getRecoveryThreadIds),
       getUnreadableThreadIds: readOnReader(getUnreadableThreadIds),
       getThreadSnapshot: readOnReader(getThreadSnapshot),

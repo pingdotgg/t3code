@@ -816,6 +816,60 @@ export function resetCreditChoices(
   ];
 }
 
+/**
+ * What a redeemed reset credit cleared: the enabled instances signed in to its account, and
+ * waits that end before `resetBefore`, where a limit still used up resets. Null until that
+ * account's limits are read again after `since`.
+ */
+export function resetCreditReach(
+  input: ProviderConsumeResetCreditInput,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+  since: number,
+): {
+  readonly instanceIds: ReadonlyArray<ProviderInstanceId>;
+  readonly resetBefore?: number;
+} | null {
+  const enabled = providers.filter((provider) => provider.enabled);
+  const redeemedOn =
+    "sourceId" in input
+      ? undefined
+      : enabled.find((provider) => provider.instanceId === input.instanceId);
+  const account: AccountReport | undefined =
+    "sourceId" in input
+      ? sources
+          .find((source) => source.id === input.sourceId)
+          ?.accounts.find((account) => account.id === input.accountId)
+      : redeemedOn && nativeReport(redeemedOn);
+  const limits = account?.usageLimits;
+  if (!account || !limits || limits.unavailable || !(Date.parse(limits.checkedAt) > since)) {
+    return null;
+  }
+  const resolveKey = accountKeyResolver([
+    ...enabled.map(nativeReport),
+    ...sources.flatMap((source) => source.accounts),
+  ]);
+  const key = resolveKey(account);
+  const stillUsedUp = limits.windows.flatMap((window) => {
+    const resetsAt = resetMillis(window);
+    return window.usedPercent >= 100 && resetsAt !== null && resetsAt > since ? [resetsAt] : [];
+  });
+  return {
+    instanceIds: [
+      ...new Set([
+        ...(redeemedOn ? [redeemedOn.instanceId] : []),
+        ...(key === null
+          ? []
+          : enabled.flatMap((provider) =>
+              resolveKey(nativeReport(provider)) === key ? [provider.instanceId] : [],
+            )),
+      ]),
+    ],
+    // A stop and a usage read report the same reset through different provider calls.
+    ...(stillUsedUp.length > 0 ? { resetBefore: Math.min(...stillUsedUp) - MINUTE } : {}),
+  };
+}
+
 export function formatResetsIn(window: ServerProviderUsageWindow, now: number): string | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null) return null;

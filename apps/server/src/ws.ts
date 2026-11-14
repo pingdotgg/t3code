@@ -279,6 +279,7 @@ import {
 } from "@t3tools/shared/usageLimits";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
+import * as ResetCredits from "./usage/ResetCredits.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import { requestUrl } from "./requestUrl.ts";
 
@@ -1499,6 +1500,7 @@ export const layerWsRpc = (
             );
       const usage = yield* UsageService.UsageService;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
+      const resetCredits = yield* ResetCredits.ResetCredits;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
       const repositoryIdentityResolver =
@@ -2576,38 +2578,7 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           providerMaintenanceRunner.updateProvider(input),
-        [WS_METHODS.providerConsumeResetCredit]:
-          /* Request instrumentation already owns the span; keep this helper in that context. */
-          Effect.fnUntraced(function* (input) {
-            if ("sourceId" in input) return yield* usageLimitSources.consumeResetCredit(input);
-            const instance = yield* providerInstances.getInstance(input.instanceId);
-            if (instance === undefined || !instance.enabled) {
-              return yield* new ProviderSetupError({
-                instanceId: input.instanceId,
-                operation: "consume-reset-credit",
-                detail: instance ? "This provider is disabled." : "Provider instance not found.",
-              });
-            }
-            if (instance.consumeResetCredit === undefined) {
-              return yield* new ProviderSetupError({
-                instanceId: input.instanceId,
-                operation: "consume-reset-credit",
-                detail: "This provider does not bank reset credits.",
-              });
-            }
-            const outcome = yield* instance.consumeResetCredit(input.creditId).pipe(
-              Effect.mapError(
-                (error) =>
-                  new ProviderSetupError({
-                    instanceId: input.instanceId,
-                    operation: "consume-reset-credit",
-                    detail: error.detail,
-                    cause: error,
-                  }),
-              ),
-            );
-            return { outcome };
-          }),
+        [WS_METHODS.providerConsumeResetCredit]: (input) => resetCredits.redeem(input),
         [WS_METHODS.providerAuthStart]: (input) => providerAuth.start(input, currentSessionId),
         [WS_METHODS.providerAuthRespond]: (input) =>
           Effect.annotateCurrentSpan({ instanceId: input.instanceId }).pipe(

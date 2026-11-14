@@ -8295,9 +8295,44 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         now: reset,
       })).find((row) => row.id === threadId)!;
       assert.deepEqual(due.limitRecovery, recovery);
+      const awaitingReset = store
+        .getLimitRecoveriesAwaitingReset({
+          now,
+          providerInstanceIds: [original.providerInstanceId],
+          failedBefore: now,
+        })
+        .pipe(Effect.map((rows) => rows.filter((row) => row.threadId === threadId)));
+      assert.deepEqual(yield* awaitingReset, [{ threadId, limitRecovery: recovery }]);
+      const [armedRow] = yield* sql<{
+        payload_json: string;
+      }>`SELECT payload_json FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}`;
+      // Nothing waits on a reset once it is recorded, cancelled, archived, settled or deleted.
+      for (const change of [
+        sql`payload_json = json_set(payload_json, '$.limitRecovery.resetEarly', json('true'))`,
+        sql`payload_json = json_set(payload_json, '$.limitRecovery.autoResume', json('false'))`,
+        sql`payload_json = json_set(payload_json, '$.archivedAt', ${DateTime.formatIso(now)})`,
+        sql`payload_json = json_set(payload_json, '$.settledOverride', 'settled')`,
+        sql`deleted_at = ${DateTime.formatIso(now)}`,
+      ]) {
+        yield* sql`UPDATE orchestration_v2_projection_threads SET ${change} WHERE thread_id = ${threadId}`;
+        assert.deepEqual(yield* awaitingReset, []);
+        yield* sql`UPDATE orchestration_v2_projection_threads
+          SET payload_json = ${armedRow!.payload_json}, deleted_at = NULL WHERE thread_id = ${threadId}`;
+      }
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.limitRecovery.resetEarly', json('true'))
+        WHERE thread_id = ${threadId}`;
+      const dueEarly = store
+        .getLimitRecoveryCandidates({ ...recoveryOptions, autoResume: true })
+        .pipe(Effect.map((rows) => rows.find((row) => row.id === threadId)));
+      assert.isDefined(yield* dueEarly);
       yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests
         (runtime_request_id, thread_id, node_id, kind, status, created_at, payload_json)
         VALUES ('limit-shell:pending-request', ${threadId}, ${original.rootNodeId}, 'approval', 'pending', ${DateTime.formatIso(now)}, '{}')`;
+      // A pending approval or question holds back a recovery that was reset early too.
+      assert.isUndefined(yield* dueEarly);
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = ${armedRow!.payload_json} WHERE thread_id = ${threadId}`;
       assert.isUndefined(
         (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, now: reset })).find(
           (row) => row.id === threadId,

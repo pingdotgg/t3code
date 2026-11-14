@@ -419,6 +419,8 @@ export const OrchestrationV2LimitRecovery = Schema.Struct({
   resetAt: IsoDateTime,
   autoResume: Schema.Boolean,
   snooze: Schema.optional(Schema.Boolean),
+  /** The provider reset the limit before `resetAt`, so the scheduled continuation no longer waits for it. */
+  resetEarly: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2LimitRecovery = typeof OrchestrationV2LimitRecovery.Type;
 
@@ -3571,6 +3573,16 @@ const OrchestrationV2InternalCommand = Schema.Union([
     guestMessageId: GuestMessageId,
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  }),
+  /** The provider reset this recovery's limit before `resetAt`. */
+  Schema.Struct({
+    type: Schema.Literal("thread.limit-recovery.reset"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    resetAt: IsoDateTime,
+    /** The recovery choice the reset was read from; a later choice refuses it. */
+    requestId: Schema.optional(CommandId),
   }),
   /** Moves a thread to a project rooted at the folder it already works in, so its cwd never changes. */
   Schema.Struct({
