@@ -383,10 +383,33 @@ function markdownLinkTailScanner(markdown: string) {
   };
 }
 
+// micromark's own nesting limit. It also keeps link scanning linear: a scan only runs past another
+// link's opening parenthesis while that parenthesis counts toward this depth.
+const MAX_BARE_DESTINATION_PAREN_DEPTH = 32;
+
+function bareMarkdownLinkDestinationEnd(markdown: string, start: number): number | null {
+  const delimiter = /[\s()\\]/g;
+  delimiter.lastIndex = start;
+  let depth = 0;
+  while (true) {
+    const index = delimiter.exec(markdown)?.index ?? markdown.length;
+    const char = markdown[index];
+    if (char === "\\") {
+      if (/[()\\]/.test(markdown[index + 1] ?? "")) delimiter.lastIndex = index + 2;
+    } else if (char === "(") {
+      if (depth === MAX_BARE_DESTINATION_PAREN_DEPTH) return null;
+      depth += 1;
+    } else if (char === ")" && depth > 0) {
+      depth -= 1;
+    } else {
+      return depth === 0 ? index : null;
+    }
+  }
+}
+
 function markdownLinkDestinationScanner(markdown: string) {
   const whitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
   const angleEnd = markdownRunEndFinder(markdown, /[>\n]/g);
-  const bareEnd = markdownRunEndFinder(markdown, /[\s)]/g);
   // Separate caches keep scans moving forward when angle destinations fall back to bare ones.
   const angleTail = markdownLinkTailScanner(markdown);
   const bareTail = markdownLinkTailScanner(markdown);
@@ -400,11 +423,23 @@ function markdownLinkDestinationScanner(markdown: string) {
         if (end !== null) return { hrefStart: hrefStart + 1, hrefEnd, end };
       }
     }
-    const hrefEnd = bareEnd(hrefStart);
-    if (hrefEnd === hrefStart) return null;
+    const hrefEnd = bareMarkdownLinkDestinationEnd(markdown, hrefStart);
+    if (hrefEnd === null || hrefEnd === hrefStart) return null;
     const end = bareTail(hrefEnd);
     return end === null ? null : { hrefStart, hrefEnd, end };
   };
+}
+
+// The composer escapes brackets in labels (`[\[id\].tsx](...)`), and `\]` does not close one.
+function unescapedLabelEnd(markdown: string, start: number): number {
+  let end = markdown.indexOf("]", start);
+  while (end !== -1) {
+    let backslashes = 0;
+    while (end - backslashes > start && markdown[end - backslashes - 1] === "\\") backslashes += 1;
+    if (backslashes % 2 === 0) return end;
+    end = markdown.indexOf("]", end + 1);
+  }
+  return -1;
 }
 
 export function extractMarkdownLinkHrefs(markdown: string): string[] {
@@ -414,7 +449,7 @@ export function extractMarkdownLinkHrefs(markdown: string): string[] {
   while (cursor < markdown.length) {
     const labelStart = markdown.indexOf("[", cursor);
     if (labelStart === -1) break;
-    const labelEnd = markdown.indexOf("]", labelStart + 1);
+    const labelEnd = unescapedLabelEnd(markdown, labelStart + 1);
     if (labelEnd === -1) break;
 
     // Skip a failed label once; nested openings share its closing bracket.
