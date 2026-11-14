@@ -16,9 +16,8 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 /**
- * The two strings are what `changeRequestHost` and the project's `repositoryIdentity` produce
- * from a git remote — lower case, no port, the full path below the host — because links are
- * matched against those. `authority` keeps the port for hosts whose identity includes it.
+ * The hostname and full repository path match persisted repository identities, lower case.
+ * `authority` preserves the web port for project matching and request routing.
  */
 export interface ChangeRequestLink {
   readonly host: string;
@@ -420,6 +419,7 @@ export function parseChangeRequestPath(url: URL, route: RegExp): ParsedChangeReq
         repository: repository.toLowerCase(),
         number,
         repositoryUrl: `${url.origin}/${repository}`,
+        ...(url.port ? { authority: url.host.toLowerCase() } : {}),
       }
     : null;
 }
@@ -479,13 +479,25 @@ export function isChangeRequestAuthorityOfProject(
   return true;
 }
 
-/** The host of the project's repository key, or `kind` when the key has none. */
+/** The repository host with its HTTP remote's web port, or `kind` when the key has none. */
 export function projectChangeRequestHost<const Kind extends string | undefined>(
   identity: ChangeRequestHostIdentity,
   kind: Kind,
 ): string | Kind {
-  const host = identity?.canonicalKey?.split("/")[0]?.trim();
-  return host === undefined || host.length === 0 ? kind : host.toLowerCase();
+  const host = identity?.canonicalKey?.split("/")[0]?.trim().toLowerCase();
+  if (host === undefined || host.length === 0) return kind;
+  try {
+    const remote = new URL(identity?.locator?.remoteUrl ?? "");
+    if (
+      (remote.protocol === "http:" || remote.protocol === "https:") &&
+      remote.hostname.toLowerCase() === host
+    ) {
+      return remote.host.toLowerCase();
+    }
+  } catch {
+    // SSH ports do not name the web server.
+  }
+  return host;
 }
 
 /** `projectHost` is the project's `changeRequestHost`. */

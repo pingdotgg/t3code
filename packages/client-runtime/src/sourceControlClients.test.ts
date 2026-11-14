@@ -343,10 +343,20 @@ describe("sourceControlClients project hosts", () => {
     locator: { remoteUrl: "http://forge.example:3000/team/repo.git" },
   };
 
-  it("keeps an HTTP remote's port for Forgejo only, and falls back to the kind without a key", () => {
-    expect(sourceControlClients.changeRequestHost(identity, "forgejo")).toBe("forge.example:3000");
-    expect(sourceControlClients.changeRequestHost(identity, "gitlab")).toBe("forge.example");
-    expect(sourceControlClients.changeRequestHost(identity, undefined)).toBe("forge.example");
+  it("keeps matching HTTP web ports and falls back to the kind without a key", () => {
+    for (const kind of ["forgejo", "github", "gitlab", undefined] as const) {
+      expect(sourceControlClients.changeRequestHost(identity, kind)).toBe("forge.example:3000");
+    }
+    for (const kind of ["github", "gitlab", undefined] as const) {
+      for (const remoteUrl of [
+        "ssh://git@forge.example:2222/team/repo.git",
+        "http://other.example:3000/team/repo.git",
+      ]) {
+        expect(
+          sourceControlClients.changeRequestHost({ ...identity, locator: { remoteUrl } }, kind),
+        ).toBe("forge.example");
+      }
+    }
     expect(
       sourceControlClients.changeRequestHost(
         { locator: { remoteUrl: "https://x.example/a/b" } },

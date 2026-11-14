@@ -1054,7 +1054,15 @@ export const make = Effect.gen(function* () {
                   candidate.repositoryKey === null &&
                   candidate.repository.toLowerCase() === repository.toLowerCase(),
               ) ??
-              onHost.find((candidate) => candidate.repositoryKey === null);
+              onHost.find((candidate) => candidate.repositoryKey === null) ??
+              // An SSH checkout names no web port, so it serves its hostname on the requested one.
+              (own !== undefined &&
+              own.repositoryKey === null &&
+              isSshRemoteUrl(own.project.repositoryIdentity?.locator.remoteUrl ?? "") &&
+              URL.canParse(`https://${host}`) &&
+              new URL(`https://${host}`).hostname === own.host
+                ? { ...own, host }
+                : undefined);
             if (route === undefined) {
               return Effect.gen(function* () {
                 const publicHost = sourceControlDefinitions.findByPublicHost(host);
