@@ -151,6 +151,7 @@ describe("appendTerminalOutput edge cases from review", () => {
     expect(continued.text).toBe("Y\n     X");
     const resumed = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, terminalOutputResumeText(state));
     expect(appendTerminalOutput(resumed, "X\u001b[1A\rY").text).toBe(continued.text);
+    expect(feed(["l0\nl1\nl2\u001b[H\u001b[2J\u001b[3Jhello\nworld"]).text).toBe("hello\nworld");
     for (const [input, maxChars, next] of [
       ["\n".repeat(10) + "\u001b[2J", 3, "\u001b[8AX"],
       ["\n".repeat(10) + "\u001b[8A\u001b[2Jx", 3, "X"],

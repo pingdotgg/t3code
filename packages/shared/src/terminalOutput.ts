@@ -487,7 +487,7 @@ class Terminal {
           this.settledHead = "";
           this.settledTail = "";
         } else if (mode === 2) {
-          this.lines = this.lines.map(() => []);
+          this.lines = Array.from({ length: this.row + 1 }, () => []);
         }
         return;
       }
