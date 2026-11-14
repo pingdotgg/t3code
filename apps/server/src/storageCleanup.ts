@@ -1615,9 +1615,6 @@ const make = Effect.gen(function* () {
                   keep("another thread works in it as a repository worktree");
                   return false;
                 }
-                // Clean only untracked files. Ordinary worktrees retain Git's final tracked-edit check.
-                if (settings.worktreeKeepWhen === "tracked-changes")
-                  yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
                 const submodules = yield* submoduleRemoval(worktreePath, settings);
                 if (submodules.reason !== null) {
                   keep(submodules.reason);
@@ -1630,6 +1627,9 @@ const make = Effect.gen(function* () {
                     return false;
                   }
                 }
+                // Forced removal already discards local files; do not widen its final-check window.
+                if (settings.worktreeKeepWhen === "tracked-changes" && !submodules.force)
+                  yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
                 yield* removeLinkedWorktree({
                   operation: "StorageCleanup.cleanupGit",
                   cwd: repository,
