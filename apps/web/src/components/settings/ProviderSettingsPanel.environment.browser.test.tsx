@@ -342,6 +342,59 @@ describe("EnvironmentProviderSettings routing", () => {
     },
   );
 
+  it.each([false, true])(
+    "preserves the latest repeated snapshot with coalesced echoes %s",
+    async (coalesced) => {
+      await setup();
+      const first = { slug: "model-a", name: "Original A" };
+      const second = { slug: "model-b", name: "Original B" };
+      const stored = (name: string) => ({
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerInstances: {
+          [customId]: {
+            driver: ProviderDriverKind.make("codex"),
+            config: { customModels: [{ ...first, name }, second] },
+          },
+        },
+      });
+      state.settings = stored(first.name);
+      await using screen = await render(panel({ targetInstanceId: customId }));
+      const rename = async (slug: string, name: string) => {
+        await screen.getByRole("button", { name: `Edit ${slug}`, exact: true }).click();
+        await userEvent.fill(
+          screen.getByRole("textbox", { name: "Display name", exact: true }),
+          name,
+        );
+        await screen.getByRole("button", { name: "Save", exact: true }).click();
+        await expect
+          .element(screen.getByRole("textbox", { name: "Display name", exact: true }))
+          .not.toBeInTheDocument();
+      };
+      await rename(first.slug, "Entered A");
+      await rename(first.slug, "Entered B");
+      await rename(first.slug, "Entered A");
+      state.settings = stored("Entered A");
+      await screen.rerender(panel({ targetInstanceId: customId }));
+      if (!coalesced) {
+        state.settings = stored("Entered B");
+        await screen.rerender(panel({ targetInstanceId: customId }));
+      }
+      await rename(second.slug, "Changed second");
+      expect(state.mutateProviderInstance.mock.calls[3]?.[0].instance.config.customModels).toEqual([
+        { ...first, name: "Entered A" },
+        { ...second, name: "Changed second" },
+      ]);
+      // The final A echo can be skipped when the stream coalesces the three writes.
+      state.settings = stored("Entered A");
+      await screen.rerender(panel({ targetInstanceId: customId }));
+      await rename(first.slug, "Next edit");
+      expect(state.mutateProviderInstance.mock.calls[4]?.[0].instance.config.customModels).toEqual([
+        { ...first, name: "Next edit" },
+        { ...second, name: "Changed second" },
+      ]);
+    },
+  );
+
   it("preserves a failed model draft for retry without including it in another edit", async () => {
     await setup();
     const first = { slug: "model-a", name: "Original A" };

@@ -724,10 +724,11 @@ const customModelsKey = (models: ReadonlyArray<CustomModelDefinition>) =>
 
 /**
  * Saves the stored list does not reflect yet. Saves land in order, so the echo of one settles it
- * and every save before it; any other change to the stored list drops the replied ones.
+ * and every save before it; repeated snapshots retire only the earliest match because later
+ * identical saves may still be pending. Any other stored change drops the replied ones.
  */
 function pendingCustomModelSaves(saves: ReadonlyArray<CustomModelSave>, storedKey: string) {
-  const echoed = saves.findLastIndex((entry) => entry.key === storedKey);
+  const echoed = saves.findIndex((entry) => entry.key === storedKey);
   return saves
     .slice(echoed + 1)
     .flatMap((entry) =>
@@ -748,7 +749,7 @@ function useCustomModelSaves(
   save: (next: ReadonlyArray<CustomModelDefinition>) => Promise<boolean>,
 ) {
   const [saves, setSaves] = useState<ReadonlyArray<CustomModelSave>>([]);
-  const storedKey = JSON.stringify(stored);
+  const storedKey = customModelsKey(stored);
   const [previousStoredKey, setPreviousStoredKey] = useState(storedKey);
   if (previousStoredKey !== storedKey) {
     setPreviousStoredKey(storedKey);

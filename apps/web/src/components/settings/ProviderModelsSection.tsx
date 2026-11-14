@@ -418,6 +418,9 @@ export function ProviderModelsSection({
                   entry={editingEntry}
                   builtInModels={builtInModels}
                   onSave={(next) => void handleSaveEdit(next)}
+                  onDraftChange={() => {
+                    editAttemptRef.current += 1;
+                  }}
                   onCancel={() => {
                     editAttemptRef.current += 1;
                     setEditingSlug(null);
