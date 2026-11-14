@@ -39,7 +39,7 @@ jobs:
       # Only the package manifests the script reads to build the dependency graph.
       # Depth 2 brings the base commit the change is diffed against.
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 2
           sparse-checkout: |
@@ -68,7 +68,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: |
             /*
@@ -92,7 +92,7 @@ jobs:
       # electron's install.js (run by ensure:electron) reads this cache before it
       # downloads from GitHub. The key changes only with the Electron version.
       - name: Cache Electron download
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/electron
           key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
@@ -124,7 +124,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: |
             /*
@@ -161,7 +161,7 @@ jobs:
       # electron's install.js (run by ensure:electron) reads this cache before it
       # downloads from GitHub. The key changes only with the Electron version.
       - name: Cache Electron download
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/electron
           key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
@@ -213,7 +213,7 @@ jobs:
 
       - name: Upload desktop launch check
         if: ${{ failure() && steps.desktop_launch.outcome == 'failure' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: desktop-launch-check
           path: ${{ runner.temp }}/desktop-launch-check
@@ -231,7 +231,7 @@ jobs:
       - name: Cache Chromium
         id: chromium_cache
         if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.test_web != 'false' }}
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
@@ -279,7 +279,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: |
             /*
@@ -314,7 +314,7 @@ jobs:
       # electron's install.js (run by ensure:electron) reads this cache before it
       # downloads from GitHub. The key changes only with the Electron version.
       - name: Cache Electron download
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/electron
           key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
@@ -326,7 +326,7 @@ jobs:
         run: python3 -B .github/scripts/stage-preview-bundle.test.py
 
       - name: Test release checks
-        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs .github/scripts/mobile-preview-comment.test.cjs
+        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs .github/scripts/mobile-preview-comment.test.cjs .github/scripts/test-delta.test.cjs
 
       - name: Finish installing browser secret helper build libraries
         timeout-minutes: 5
@@ -355,19 +355,25 @@ jobs:
 
   # The web suite is the largest outside the server. In the shared Test job it
   # started last and ran alone for about 40s after everything else finished.
-  # release.yml mirrors this test, test_web, and test_server split.
+  # Browser tests are bound by the Vite server transforming modules for each
+  # file, not by Chromium, so a second runner (and Vite server) halves the job
+  # that gated every run. release.yml mirrors this test, test_web, and test_server split.
   test_web:
     permissions:
       contents: read
       id-token: write
-    name: Test Web
+    name: Test Web ${{ matrix.shard }}
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.test_web != 'false' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: |
             /*
@@ -388,7 +394,7 @@ jobs:
 
       - name: Cache Chromium
         id: chromium_cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
@@ -406,7 +412,7 @@ jobs:
           fi
 
       - name: Test
-        run: vp run --filter @t3tools/web test
+        run: vp run --filter @t3tools/web test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
   # apps/server sets `fileParallelism: false`, so its test files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
@@ -432,7 +438,7 @@ jobs:
     steps:
       # Depth 2 brings the base commit the change is diffed against.
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 2
           sparse-checkout: |
@@ -463,7 +469,7 @@ jobs:
       - name: Cache Chromium
         id: chromium_cache
         if: steps.changes.outputs.test_server != 'false'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
@@ -481,23 +487,35 @@ jobs:
             node apps/server/node_modules/playwright-core/cli.js install-deps chromium
           fi
 
+      # Each server test file runs in its own Vitest process, and a fresh install starts
+      # Vitest's content-keyed module cache empty, so every file re-transformed its imports.
+      # Only pushes to main save it, so pull requests never evict each other's entries.
+      - name: Restore Vitest module cache
+        if: steps.changes.outputs.test_server != 'false'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/.vitest-cache
+          key: vitest-modules-server-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: vitest-modules-server-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
       - name: Test
         if: steps.changes.outputs.test_server != 'false'
         env:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
+          T3CODE_TRANSFER_BUDGET_SCENARIOS_PATH: ${{ runner.temp }}/thread-transfer-scenarios.json
+        # One process per file spends ~2s starting before its tests run; one file per vCPU overlaps that.
         run: >-
-          vp run test:cached -- --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+          vp run test:cached -- --shard ${{ matrix.shard }}/${{ strategy.job-total }} --concurrency 4
           --uncached apps/server/integration/transferBudgetV2.integration.test.ts
-          --verify-hits 1 --report "${{ runner.temp }}/test-cache-${{ matrix.shard }}.json" apps/server
+          --verify-hits 1 apps/server
 
-      - name: Upload test cache measurements
-        if: always() && steps.changes.outputs.test_server != 'false'
-        uses: actions/upload-artifact@v7
+      - name: Save Vitest module cache
+        if: github.event_name == 'push' && steps.changes.outputs.test_server != 'false'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          name: test-cache-${{ matrix.shard }}
-          path: ${{ runner.temp }}/test-cache-${{ matrix.shard }}.json
-          if-no-files-found: error
+          path: node_modules/.vitest-cache
+          key: vitest-modules-server-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
 
       # integration/transferBudgetV2.integration.test.ts writes the report; exactly one shard
       # produces these files. Gating the upload on their presence keeps a
@@ -524,10 +542,12 @@ jobs:
 
       - name: Upload thread transfer result
         if: always() && steps.transfer_budget.outputs.present == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: thread-transfer-results
-          path: ${{ runner.temp }}/thread-transfer-result.json
+          path: |
+            ${{ runner.temp }}/thread-transfer-result.json
+            ${{ runner.temp }}/thread-transfer-scenarios.json
           if-no-files-found: ignore
           retention-days: 30
 
@@ -541,7 +561,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: |
             /*
@@ -550,8 +570,9 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
+          toolchain: stable
           components: rustfmt
 
       - name: Check Rust formatting
@@ -570,11 +591,11 @@ jobs:
     name: Mobile Native Static Analysis
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.mobile_native != 'false' }}
-    runs-on: blacksmith-6vcpu-macos-26
+    runs-on: blacksmith-6vcpu-macos-27
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: |
             /*
@@ -582,7 +603,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
@@ -607,7 +628,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: |
             /*
@@ -665,7 +686,7 @@ jobs:
       # server tests ran must have produced it.
       - name: Require transfer measurements
         if: needs.test_server.result == 'success' && needs.changes.outputs.test_server != 'false'
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: thread-transfer-results
           path: ${{ runner.temp }}/thread-transfer
