@@ -1157,6 +1157,13 @@ describe("DesktopBrowserHost", () => {
       debuggee.refuse(6);
       debuggee.release();
       expect([yield* Queue.take(replies), yield* Queue.take(replies)].toSorted()).toEqual([5, 6]);
+      yield* raw({
+        id: 7,
+        method: "Page.screencastFrameAck",
+        params: { sessionId: 1 },
+        sessionId: "t3-preview-page-1",
+      });
+      expect(yield* Queue.take(replies)).toBe(7);
       yield* settle;
       frames.length = 0;
       debuggee.emit("Page.screencastFrame", { data: "frame", sessionId: 2 });

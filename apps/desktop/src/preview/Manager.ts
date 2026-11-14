@@ -1096,28 +1096,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             ),
             scope,
           );
-          const handleDebuggerMessage = Effect.fnUntraced(function* (
-            method: string,
-            params: Record<string, unknown>,
-          ) {
-            if (method === "Page.screencastFrame") {
-              const sessionId = params["sessionId"];
-              if (typeof sessionId === "number") {
-                yield* attemptPromise(
-                  {
-                    operation: "ackScreencastFrame",
-                    webContentsId: wc.id,
-                  },
-                  () => wcDebugger.sendCommand("Page.screencastFrameAck", { sessionId }),
-                ).pipe(Effect.ignore);
-              }
-            }
+          const handleDebuggerMessage = Effect.fnUntraced(function* (method: string) {
             if (method === "Runtime.consoleAPICalled" || method === "Runtime.exceptionThrown") {
               yield* Queue.offer(consoleReleases, undefined);
             }
           });
-          const onMessage: BrowserControlSession["onMessage"] = (_event, method, params) => {
-            runFork(handleDebuggerMessage(method, params));
+          const onMessage: BrowserControlSession["onMessage"] = (_event, method) => {
+            runFork(handleDebuggerMessage(method));
           };
           const control: BrowserControlSession = {
             webContentsId: wc.id,
