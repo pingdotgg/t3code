@@ -148,7 +148,7 @@ const make = Effect.gen(function* () {
     const outcome: Outcome | { readonly status: "stale" } = yield* Effect.gen(function* () {
       const projection = yield* threads.getThreadRecords(
         input.threadId,
-        ["messages"],
+        ["messages", "providerThreads"],
         input.kind.type === "initial"
           ? { messageIds: [input.kind.messageId] }
           : { messageRoles: ["user", "assistant"] },
@@ -202,6 +202,13 @@ const make = Effect.gen(function* () {
         yield* serverSettings.getSettings,
         projection.thread.projectId,
       ).settings;
+      const modelSelection = settings.threadTitleModelSelection ?? projection.thread.modelSelection;
+      // Forking the thread's own session keeps the provider's cached prefix warm.
+      const sourceSessionId = projection.providerThreads.find(
+        (providerThread) =>
+          providerThread.id === projection.thread.activeProviderThreadId &&
+          providerThread.providerInstanceId === modelSelection.instanceId,
+      )?.nativeThreadRef?.nativeId;
       // Storage cleanup removes worktrees but keeps the path; CLIs cannot spawn in a missing cwd.
       const worktreePath = projection.thread.worktreePath;
       const worktreeExists =
@@ -215,7 +222,8 @@ const make = Effect.gen(function* () {
         ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
         ...(inherited === undefined ? {} : { forkSource: inherited }),
         instructions: settings.threadTitleInstructions,
-        modelSelection: settings.threadTitleModelSelection ?? projection.thread.modelSelection,
+        ...(sourceSessionId == null ? {} : { sourceSessionId }),
+        modelSelection,
         projectId: projection.thread.projectId,
       });
       const generatedTitle = result.title.trim();

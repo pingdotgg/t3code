@@ -562,7 +562,7 @@ describe("ThreadTitleRegenerationService", () => {
     }),
   );
 
-  it.effect("titles with the thread's own model, without the handoff header", () =>
+  it.effect("titles with the thread's own model and session, without the handoff header", () =>
     Effect.gen(function* () {
       const harness = makeHarness();
       yield* Effect.gen(function* () {
@@ -590,6 +590,7 @@ describe("ThreadTitleRegenerationService", () => {
 
         const call = harness.generateThreadTitle.mock.calls[0]?.[0];
         assert.deepEqual(call?.modelSelection, modelSelection);
+        assert.equal(call?.sourceSessionId, "native");
         assert.include(call?.message, "USER:\nMigrate sessions to Postgres");
         assert.notInclude(call?.message, "Context handoff");
       }).pipe(Effect.provide(harness.layer));
