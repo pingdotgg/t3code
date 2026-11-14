@@ -12,6 +12,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 
+import { InjectedSecrets } from "./instanceEnvironment.ts";
+
 export interface ProviderContinuationRequest {
   readonly threadId: ThreadId;
   readonly providerThreadId: ProviderThreadId;
@@ -46,11 +48,18 @@ export const layer = Layer.effect(
   ProviderContinuationRequests,
   Effect.gen(function* () {
     const queue = yield* Queue.unbounded<ProviderContinuationRequest>();
+    const injectedSecrets = yield* InjectedSecrets;
     return {
+      // Redact while the producing session still registers its values; the worker may run after it closes.
       offer: Effect.fn("ProviderContinuationRequests.offer")(function (
         request: ProviderContinuationRequest,
       ) {
-        return Queue.offer(queue, request).pipe(Effect.asVoid);
+        return Queue.offer(
+          queue,
+          request.detail === null
+            ? request
+            : { ...request, detail: injectedSecrets.redactText(request.detail) },
+        ).pipe(Effect.asVoid);
       }),
       take: Queue.take(queue),
     };

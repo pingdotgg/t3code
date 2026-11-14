@@ -1,4 +1,5 @@
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { InjectedSecrets } from "@t3tools/provider-core/server/instanceEnvironment";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Random from "effect/Random";
 import * as EnvironmentKeys from "./cloud/environmentKeys.ts";
@@ -262,7 +263,17 @@ const layerProviderEventLoggers = Layer.effect(
     );
     if (!store) return ProviderEventLoggers.NoOpProviderEventLoggers;
     yield* Effect.addFinalizer(() => store.close());
-    return { native: store.logger("native"), canonical: store.logger("canonical") };
+    const injectedSecrets = yield* InjectedSecrets;
+    const redacting = (
+      logger: ProviderEventLoggers.EventNdjsonLogger,
+    ): ProviderEventLoggers.EventNdjsonLogger => ({
+      ...logger,
+      write: (event, threadId) => logger.write(injectedSecrets.redact(event), threadId),
+    });
+    return {
+      native: redacting(store.logger("native")),
+      canonical: redacting(store.logger("canonical")),
+    };
   }),
 );
 
@@ -802,6 +813,7 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(RemoteOpenTargets.layer),
   Layer.provideMerge(DirectEndpoints.layer.pipe(Layer.provide(layerServerEnvironment))),
   Layer.provideMerge(ServerLifecycleEvents.layer),
+  Layer.provideMerge(InjectedSecrets.layer),
   Layer.provide(NetService.layer),
 );
 
