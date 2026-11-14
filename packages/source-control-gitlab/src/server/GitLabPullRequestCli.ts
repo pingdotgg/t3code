@@ -29,7 +29,7 @@ import type {
   PullRequestReactionContent,
   PullRequestReviewCommentDraft,
   PullRequestReviewPosition,
-  PullRequestReviewThread,
+  PullRequestConversationThread,
   PullRequestReviewVerdict,
   PullRequestReviewerCandidateList,
 } from "@t3tools/contracts";
@@ -343,9 +343,11 @@ const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DIFF_TIMEOUT_MS = 60_000;
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+// REST list rows carry full descriptions, so a page can pass the 1 MB default output cap.
+const MERGE_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 export interface GitLabDiscussionThreads {
-  readonly threads: ReadonlyArray<PullRequestReviewThread>;
+  readonly threads: ReadonlyArray<PullRequestConversationThread>;
   readonly diffRefsByThreadId: ReadonlyMap<string, GitLabDiffRefs>;
   readonly overviewFindingIds: ReadonlyArray<string>;
   readonly truncated: boolean;
@@ -1085,6 +1087,7 @@ export const make = Effect.gen(function* () {
         ["per_page", String(perPage)],
         ["page", String(input.page)],
       ])}`,
+      maxOutputBytes: MERGE_REQUEST_LIST_MAX_OUTPUT_BYTES,
     }).pipe(
       Effect.flatMap((result) => {
         const raw = result.stdout.trim();
@@ -1310,7 +1313,7 @@ export const make = Effect.gen(function* () {
     readonly repository: string;
     readonly number: number;
     readonly page: number;
-    readonly collected: ReadonlyArray<PullRequestReviewThread>;
+    readonly collected: ReadonlyArray<PullRequestConversationThread>;
     readonly collectedDiffRefs: ReadonlyMap<string, GitLabDiffRefs>;
     readonly collectedFindingIds: ReadonlyArray<string>;
   }): Effect.Effect<GitLabDiscussionThreads, GitLabPullRequestCliError> =>

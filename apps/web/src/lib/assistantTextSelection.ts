@@ -248,6 +248,23 @@ export function captureAssistantTextSelection(
   return selector === null ? null : { source, selector, range };
 }
 
+/** How much of a response a reply carries: enough to recognise it, not to resend it. */
+const RESPONSE_OPENING_LENGTH = 300;
+
+/** The opening of a response. Falls back to the raw text when the source is virtualized away or
+ * renders no text, as in an image-only response. */
+export function captureAssistantMessageOpening(
+  source: HTMLElement | null,
+  fallbackText: string,
+): AssistantTextSelector | null {
+  const rendered = source ? readAssistantText(source).text : "";
+  const text = rendered.trim() ? rendered : fallbackText;
+  const rawStart = text.length - text.trimStart().length;
+  let rawEnd = Math.min(text.trimEnd().length, rawStart + RESPONSE_OPENING_LENGTH);
+  if (splitsSurrogatePair(text, rawEnd)) rawEnd -= 1;
+  return createAssistantTextSelector(text, rawStart, rawEnd);
+}
+
 function rawTextOffset(text: string, normalizedOffset: number): number {
   let offset = 0;
   for (const match of text.matchAll(/\s+|\S+/g)) {

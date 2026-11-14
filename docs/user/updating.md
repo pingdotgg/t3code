@@ -103,7 +103,7 @@ The offered action depends on how the server runs:
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Update server**          | Keep the client open while it installs and reconnects. Supported background services update remotely. For a desktop-hosted server, this also closes and relaunches the desktop app on the host. |
 | **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                             |
-| **Copy update command**    | Run the command on the named host to update the detected global npm install, then restart the server with your usual options.                                                                   |
+| **Copy update command**    | Run the command on the named host to update the detected global npm install or installed `t3` command, then restart the server with your usual options.                                         |
 | **Copy relaunch command**  | Stop the command-line server on its host and relaunch with the copied command, keeping your usual subcommand and options. This does not update an installed `t3` command.                       |
 
 On the host, run:
@@ -118,10 +118,9 @@ asks before restarting the background service; if you decline, run
 stop it and start it again afterwards with your usual options such as `--host`
 or `--tailscale-serve`.
 
-A background service installed by an older release refuses **Update server**
-until you update it once on the host and let that update restart it. If you
-decline the restart, the service can stay down after a crash or reboot until you
-run `t3 service restart`.
+If you decline the restart for a background service installed by an older
+release, the service can stay down after a crash or reboot until you run
+`t3 service restart`.
 
 If you run the server with `npx` rather than an installed `t3`, there is
 nothing to update on the host: stop the server and relaunch it as
