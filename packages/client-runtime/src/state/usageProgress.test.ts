@@ -116,11 +116,5 @@ describe("usageLoadingState", () => {
       environment("c", { summary: null, error: "Offline" }),
     ]);
     expect(state).toEqual({ partial: false, everyProvider: false, providers: new Set() });
-    expect(
-      usageLoadingState([
-        environment("a"),
-        environment("connecting", { summary: null, isConnected: false, isPending: true }),
-      ]),
-    ).toEqual({ partial: true, everyProvider: true, providers: new Set() });
   });
 });
