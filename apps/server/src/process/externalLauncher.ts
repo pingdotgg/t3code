@@ -229,6 +229,8 @@ function resolveWindowsBrowserLaunch(
     options: {
       detached,
       shell: false,
+      // Detached children stay unhidden in Effect's spawner; the Windows host would show a PowerShell console.
+      windowsHide: true,
       stdin: "ignore",
       stdout: "ignore",
       stderr: "ignore",
@@ -861,6 +863,8 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
       options: {
         detached: launch.detached ?? true,
         shell: spawnCommand.shell,
+        // Detached children stay unhidden in Effect's spawner; Windows console shims (code.cmd) would flash a console.
+        windowsHide: true,
         env: yield* readGraphicalSessionEnv(),
         stdin: "ignore",
         stdout: "ignore",
