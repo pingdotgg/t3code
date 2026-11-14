@@ -196,9 +196,7 @@ function StopGenerationSlot({
       >
         <span aria-hidden className="size-2.5 rounded-xs bg-error-foreground" />
       </TooltipTrigger>
-      <TooltipPopup>
-        {stopPhase === "pending" ? "Stopping…" : "Interrupt"}
-      </TooltipPopup>
+      <TooltipPopup>{stopPhase === "pending" ? "Stopping…" : "Interrupt"}</TooltipPopup>
     </Tooltip>
   );
 }
