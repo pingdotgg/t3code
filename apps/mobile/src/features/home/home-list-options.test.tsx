@@ -19,8 +19,8 @@ const AVAILABLE = new Set([ENVIRONMENT]);
 it("saves the scope from every update made in one event", async () => {
   harness.saved = [];
   let controls: ReturnType<typeof useHomeListOptions> | undefined;
-  function Probe() {
-    const result = useHomeListOptions(AVAILABLE);
+  function Probe(props: { readonly tagEnvironmentIds: ReadonlySet<EnvironmentId> }) {
+    const result = useHomeListOptions(AVAILABLE, props.tagEnvironmentIds);
     useLayoutEffect(() => {
       controls = result;
     });
@@ -28,22 +28,32 @@ it("saves the scope from every update made in one event", async () => {
   }
 
   const root = createRoot(document.createElement("div"));
-  await act(async () =>
-    root.render(
-      <HomeListOptionsProvider projectGroupingMode="repository">
-        <Probe />
-      </HomeListOptionsProvider>,
-    ),
-  );
+  const renderWith = (tagEnvironmentIds: ReadonlySet<EnvironmentId>) =>
+    act(async () =>
+      root.render(
+        <HomeListOptionsProvider projectGroupingMode="repository">
+          <Probe tagEnvironmentIds={tagEnvironmentIds} />
+        </HomeListOptionsProvider>,
+      ),
+    );
+  await renderWith(AVAILABLE);
   act(() => {
     controls!.setSelectedEnvironmentId(ENVIRONMENT);
     controls!.setSelectedProjectKey("env-1:project-1");
   });
 
   expect(harness.saved.at(-1)).toEqual({
-    threadListFilters: { environmentId: ENVIRONMENT, projectKey: "env-1:project-1" },
+    threadListFilters: { environmentId: ENVIRONMENT, projectKey: "env-1:project-1", tag: null },
   });
   expect(controls!.options.selectedEnvironmentId).toBe(ENVIRONMENT);
   expect(controls!.options.selectedProjectKey).toBe("env-1:project-1");
+
+  // With no server that supports tags, the saved tag stops filtering but is kept.
+  act(() => controls!.setSelectedTag("bug"));
+  await renderWith(new Set());
+  expect(controls!.options.selectedTag).toBeNull();
+  expect(harness.saved.at(-1)).toMatchObject({ threadListFilters: { tag: "bug" } });
+  await renderWith(AVAILABLE);
+  expect(controls!.options.selectedTag).toBe("bug");
   act(() => root.unmount());
 });

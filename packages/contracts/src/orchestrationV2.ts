@@ -3179,6 +3179,8 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     tag: ThreadTag,
     tagged: Schema.Boolean,
+    /** Removed in the same event, so a rename never leaves a thread with neither tag. */
+    replaces: Schema.optional(ThreadTag),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pin.reorder"),
@@ -3791,6 +3793,9 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getThreadFamily: "orchestration.getThreadFamily",
   getThreadTitles: "orchestration.getThreadTitles",
+  listThreadTags: "orchestration.listThreadTags",
+  renameThreadTag: "orchestration.renameThreadTag",
+  deleteThreadTag: "orchestration.deleteThreadTag",
   getThreadLinkMetadata: "orchestration.getThreadLinkMetadata",
   getWorktreeThreadIds: "orchestration.getWorktreeThreadIds",
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
@@ -3943,6 +3948,44 @@ export const OrchestrationV2GetThreadTitlesInput = Schema.Struct({
 
 /** Titles of the requested threads that exist, archived ones included. Deleted and unknown ids are absent. */
 export const OrchestrationV2ThreadTitles = Schema.Record(ThreadId, Schema.String);
+
+/** One tag on this environment, spelled as first seen, with the threads that carry it, archived ones included. */
+export const OrchestrationV2ThreadTagUsage = Schema.Struct({
+  tag: Schema.String,
+  threadCount: NonNegativeInt,
+});
+export type OrchestrationV2ThreadTagUsage = typeof OrchestrationV2ThreadTagUsage.Type;
+
+/** Renaming onto an existing tag merges the two; a case-only rename respells it. */
+export const OrchestrationV2RenameThreadTagInput = Schema.Struct({
+  tag: ThreadTag,
+  to: ThreadTag,
+});
+export type OrchestrationV2RenameThreadTagInput = typeof OrchestrationV2RenameThreadTagInput.Type;
+
+export const OrchestrationV2DeleteThreadTagInput = Schema.Struct({ tag: ThreadTag });
+export type OrchestrationV2DeleteThreadTagInput = typeof OrchestrationV2DeleteThreadTagInput.Type;
+
+/** How many threads the rename or delete changed. */
+export const OrchestrationV2ThreadTagChangeResult = Schema.Struct({ threadCount: NonNegativeInt });
+export type OrchestrationV2ThreadTagChangeResult = typeof OrchestrationV2ThreadTagChangeResult.Type;
+
+export class OrchestrationV2ThreadTagChangeError extends Schema.TaggedError<OrchestrationV2ThreadTagChangeError>()(
+  "OrchestrationV2ThreadTagChangeError",
+  {
+    cause: Schema.Defect(),
+    /** Threads already changed when the failure happened; there is no rollback. */
+    threadsChanged: NonNegativeInt,
+  },
+) {
+  override get message(): string {
+    return this.threadsChanged === 0
+      ? "Failed to update the tag. No threads were changed."
+      : `Failed to update the tag after changing ${this.threadsChanged} ${
+          this.threadsChanged === 1 ? "thread" : "threads"
+        }. The rest still have the old tag.`;
+  }
+}
 
 export const OrchestrationV2ThreadLinkMetadata = Schema.Struct({
   title: Schema.String,
@@ -4475,6 +4518,18 @@ export const OrchestrationV2RpcSchemas = {
   getThreadTitles: {
     input: OrchestrationV2GetThreadTitlesInput,
     output: OrchestrationV2ThreadTitles,
+  },
+  listThreadTags: {
+    input: Schema.Struct({}),
+    output: Schema.Array(OrchestrationV2ThreadTagUsage),
+  },
+  renameThreadTag: {
+    input: OrchestrationV2RenameThreadTagInput,
+    output: OrchestrationV2ThreadTagChangeResult,
+  },
+  deleteThreadTag: {
+    input: OrchestrationV2DeleteThreadTagInput,
+    output: OrchestrationV2ThreadTagChangeResult,
   },
   getThreadLinkMetadata: {
     input: OrchestrationV2GetThreadTitlesInput,

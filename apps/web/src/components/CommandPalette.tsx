@@ -75,6 +75,7 @@ import {
   MonitorIcon,
   PinIcon,
   PinOffIcon,
+  TagIcon,
   PlugIcon,
   SquarePenIcon,
   TextSearchIcon,
@@ -139,6 +140,7 @@ import {
 import {
   useAnyEnvironmentHiding,
   useHiddenThreadKeys,
+  useQuietThreadShells,
   useEnvironmentThreadRefs,
   useProjects,
   useServerConfigs,
@@ -261,6 +263,9 @@ import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
+import { openThreadTagPicker } from "../state/threadTagPicker";
+import { useSidebarTagFilter } from "../hooks/useSidebarTagFilter";
+import { collectThreadTags } from "@t3tools/client-runtime/state/threadTagFilter";
 import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
@@ -429,6 +434,8 @@ function OpenCommandPaletteDialog(props: {
   const linkedThreadSearch = initialSearch.linkedThreadSearch;
   // Rows were captured when the palette opened; drop any hidden since then.
   const hiddenKeys = useHiddenThreadKeys();
+  const [sidebarTagFilter, setSidebarTagFilter] = useSidebarTagFilter();
+  const knownTags = collectThreadTags(useQuietThreadShells());
   const linkedEnvironmentId = linkedThreadSearch?.linkedThreads?.environmentId ?? null;
   const hidingAnywhere = useAnyEnvironmentHiding();
   const linkedThreadRefs = useEnvironmentThreadRefs(linkedEnvironmentId);
@@ -1471,6 +1478,64 @@ function OpenCommandPaletteDialog(props: {
       icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
       run: async () => {
         useRightPanelStore.getState().open(threadRef, "pull-requests");
+      },
+    });
+  }
+
+  if (
+    activeThread !== null &&
+    activeThreadServerConfig?.environment.capabilities.threadTags === true &&
+    readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)
+  ) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:edit-thread-tags",
+      searchTerms: ["tag", "tags", "label", "add tag", "remove tag"],
+      title: "Edit tags",
+      icon: <TagIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        openThreadTagPicker(threadRef);
+      },
+    });
+  }
+
+  if (knownTags.length > 0) {
+    actionItems.push({
+      kind: "submenu",
+      value: "action:filter-sidebar-tag",
+      searchTerms: ["filter", "tag", "tags", "sidebar"],
+      title: "Filter sidebar by tag…",
+      icon: <TagIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <TagIcon className={ADDON_ICON_CLASS} />,
+      groups: [
+        {
+          value: "sidebar-tags",
+          label: "Tags",
+          items: knownTags.map((tag) => ({
+            kind: "action" as const,
+            value: `action:filter-sidebar-tag:${tag}`,
+            searchTerms: ["filter", "tag", "sidebar", tag],
+            title: tag,
+            icon: <TagIcon className={ITEM_ICON_CLASS} />,
+            run: async () => {
+              setSidebarTagFilter([tag]);
+            },
+          })),
+        },
+      ],
+    });
+  }
+
+  if (sidebarTagFilter.length > 0) {
+    actionItems.push({
+      kind: "action",
+      value: "action:clear-sidebar-tag-filter",
+      searchTerms: ["clear", "tag", "filter", "sidebar", "reset"],
+      title: "Clear tag filter",
+      icon: <TagIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        setSidebarTagFilter([]);
       },
     });
   }

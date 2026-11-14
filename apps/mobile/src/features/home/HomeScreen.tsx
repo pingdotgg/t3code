@@ -116,6 +116,9 @@ interface HomeScreenProps {
   readonly searchQuery: string;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
+  readonly selectedTag: string | null;
+  readonly tags: ReadonlyArray<string>;
+  readonly onTagChange: (tag: string | null) => void;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
   readonly onSearchQueryChange: (query: string) => void;
@@ -398,6 +401,7 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozePresetsByEnvironmentId,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
+    tagEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
@@ -422,6 +426,7 @@ export function HomeScreen(props: HomeScreenProps) {
     activeReorderEnvironmentIds,
     queuedThreadKeys,
     settledLimit: settledVisibleCount,
+    tagFilterActive: props.selectedTag !== null,
     now,
     pendingOrder,
     shelfPreferencesLoaded,
@@ -569,6 +574,7 @@ export function HomeScreen(props: HomeScreenProps) {
         snoozePresets={snoozePresetsByEnvironmentId.get(thread.environmentId)}
         pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
         autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
+        tagsSupported={tagEnvironmentIds.has(thread.environmentId)}
         reorderSupported={
           item.item.pinned
             ? pinReorderEnvironmentIds.has(thread.environmentId)
@@ -605,7 +611,9 @@ export function HomeScreen(props: HomeScreenProps) {
     workingShelfEnabled,
   };
 
+  // A tag filter that matches nothing keeps its controls and its own empty state.
   const hasAnyThreads =
+    props.selectedTag !== null ||
     props.threads.some((thread) => thread.archivedAt === null) ||
     props.pendingTasks.length > 0 ||
     threadListV2Layout.settledCount > 0;
@@ -694,6 +702,9 @@ export function HomeScreen(props: HomeScreenProps) {
           selectedProjectKey={props.selectedProjectKey}
           onEnvironmentChange={props.onEnvironmentChange}
           onProjectChange={props.onProjectChange}
+          tags={props.tags}
+          selectedTag={props.selectedTag}
+          onTagChange={props.onTagChange}
         />
       ) : null}
     </>
@@ -710,6 +721,12 @@ export function HomeScreen(props: HomeScreenProps) {
       <EmptyState
         title="No results"
         detail={`No threads matching "${props.searchQuery}".`}
+        variant={Platform.OS === "android" ? "plain" : undefined}
+      />
+    ) : props.selectedTag !== null ? (
+      <EmptyState
+        title={`No threads tagged ${props.selectedTag}`}
+        detail="Choose another tag or clear the filter."
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : v2ScopedProjectGroup !== null ? (

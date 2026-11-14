@@ -228,6 +228,7 @@ import {
   OrchestrationGetWorkflowScriptError,
   OrchestrationV2GetNativeChildWorkError,
   OrchestrationV2StopWorkflowError,
+  OrchestrationV2ThreadTagChangeError,
   OrchestrationV2ForceStopThreadError,
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
@@ -1864,6 +1865,24 @@ const WsOrchestrationV2GetThreadTitlesRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS
   error: Schema.Union([OrchestrationV2GetShellSnapshotError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2ListThreadTagsRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.listThreadTags, {
+  payload: OrchestrationV2RpcSchemas.listThreadTags.input,
+  success: OrchestrationV2RpcSchemas.listThreadTags.output,
+  error: Schema.Union([OrchestrationV2GetShellSnapshotError, EnvironmentAuthorizationError]),
+});
+
+const WsOrchestrationV2RenameThreadTagRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.renameThreadTag, {
+  payload: OrchestrationV2RpcSchemas.renameThreadTag.input,
+  success: OrchestrationV2RpcSchemas.renameThreadTag.output,
+  error: Schema.Union([OrchestrationV2ThreadTagChangeError, EnvironmentAuthorizationError]),
+});
+
+const WsOrchestrationV2DeleteThreadTagRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.deleteThreadTag, {
+  payload: OrchestrationV2RpcSchemas.deleteThreadTag.input,
+  success: OrchestrationV2RpcSchemas.deleteThreadTag.output,
+  error: Schema.Union([OrchestrationV2ThreadTagChangeError, EnvironmentAuthorizationError]),
+});
+
 const WsOrchestrationV2GetThreadLinkMetadataRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata,
   {
@@ -2314,6 +2333,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetArchivedShellSnapshotRpc,
   WsOrchestrationV2GetThreadFamilyRpc,
   WsOrchestrationV2GetThreadTitlesRpc,
+  WsOrchestrationV2ListThreadTagsRpc,
+  WsOrchestrationV2RenameThreadTagRpc,
+  WsOrchestrationV2DeleteThreadTagRpc,
   WsOrchestrationV2GetThreadLinkMetadataRpc,
   WsOrchestrationV2GetWorktreeThreadIdsRpc,
   WsOrchestrationV2GetOlderSettledThreadsRpc,
