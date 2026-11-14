@@ -20,6 +20,7 @@ use std::{future::Future, pin::Pin};
 
 mod background;
 mod calls;
+mod checkpoint;
 mod commands;
 mod engine;
 
@@ -34,10 +35,12 @@ mod engine_tests;
 #[cfg(any(test, feature = "fake-provider"))]
 pub mod fake;
 mod families;
+mod fork;
 mod output;
 mod projects;
 mod reads;
 mod restart;
+mod rollback;
 mod runner;
 mod shell;
 mod store;

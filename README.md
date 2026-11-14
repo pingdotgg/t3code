@@ -383,7 +383,7 @@ to the socket.
 
 ## Status
 
-**Coverage:** 81 of 236 methods (20 of 33 streams), from the method table at startup. Every
+**Coverage:** 83 of 236 methods (20 of 33 streams), from the method table at startup. Every
 registered method checks the scope the T3 server requires (`src/scopes.rs`, its table
 generated). Every registered method but two has a run that decodes its answer with the real
 client (`tools/decode-coverage.mjs`; the rest are in `decode-coverage.pending`). The engine's
@@ -393,7 +393,7 @@ lists what it serves.
 | Area            | Served by                                                                                       |
 | --------------- | ----------------------------------------------------------------------------------------------- |
 | Connect, config | `methods/server.rs`: config and lifecycle streams, settings, keybindings, access, diagnostics   |
-| Threads         | `conn-engine`: dispatch (41 of 56 commands), launch, streams, reads, search, families, projects |
+| Threads         | `conn-engine`: dispatch (43 of 56 commands), launch, streams, reads, search, families, projects, checkpoints |
 | Agents          | `conn-provider-claude`, `conn-provider-codex`; `/mcp` (`conn-mcp`, 20 tools)                    |
 | Workspace       | `conn-vcs` (status, refs, review, worktrees), `conn-files` (files, search, assets, uploads)     |
 | Terminals       | `conn-terminal`                                                                                 |

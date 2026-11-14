@@ -258,6 +258,9 @@ const decodeEach = (client) =>
     yield* call("orchestration.forceStopThread", { threadId: none });
     yield* call("orchestration.getNativeChildWork", { threadId: none });
     yield* call("orchestration.getThreadFamily", { threadId: none });
+    // Checkpoint diffs: an empty range answers, an unknown thread is a typed error.
+    yield* call("orchestration.getFullThreadDiff", { threadId: none, toTurnCount: 0 });
+    yield* call("orchestration.getTurnDiff", { threadId: none, fromTurnCount: 0, toTurnCount: 1 });
     yield* call("orchestration.getThreadLinkMetadata", { threadIds: [none] });
     yield* call("orchestration.getThreadTitles", { threadIds: [none] });
     yield* call("orchestration.getWorktreeThreadIds", { worktreePath: repo });

@@ -5,6 +5,10 @@
 //! Runs `<turns>` turns spread round-robin over `<threads>` threads, one at a time, with a shell
 //! and a thread subscription open as a client would have. Prints the process RSS (from `ps`)
 //! every tenth of the run, then again after closing every provider session.
+//!
+//! `CHECKPOINTS=1` runs the turns in a scratch git repository with checkpoints on; each turn
+//! writes one file, so each turn captures a checkpoint with one changed file. It prints the
+//! repository's `.git` size before and after.
 
 #![expect(
     clippy::unwrap_used,
@@ -55,11 +59,67 @@ async fn main() {
     let dir = std::env::temp_dir().join(format!("conn-engine-memory-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    let checkpoints = std::env::var("CHECKPOINTS").is_ok_and(|v| v == "1");
+    let root = if checkpoints {
+        let repo = dir.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                ])
+                .args(args)
+                .current_dir(&repo)
+                .env("GIT_AUTHOR_NAME", "m")
+                .env("GIT_AUTHOR_EMAIL", "m@example.com")
+                .env("GIT_COMMITTER_NAME", "m")
+                .env("GIT_COMMITTER_EMAIL", "m@example.com")
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        // A small project: 200 files.
+        for i in 0..200 {
+            std::fs::write(
+                repo.join(format!("src{i}.txt")),
+                format!("file {i}\n").repeat(20),
+            )
+            .unwrap();
+        }
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "init"]);
+        std::fs::canonicalize(&repo)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        ROOT.to_owned()
+    };
+    let git_kib = |root: &str| -> u64 {
+        let out = std::process::Command::new("du")
+            .args(["-sk", &format!("{root}/.git")])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .next()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(0)
+    };
+    if checkpoints {
+        println!("git_kib_before={}", git_kib(&root));
+    }
     let mut config = EngineConfig::new(dir.join("engine.sqlite"));
     config.projects = vec![ProjectConfig {
         title: "Memory".into(),
-        workspace_root: ROOT.into(),
+        workspace_root: root.clone(),
     }];
+    config.checkpoints = checkpoints;
     config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
     config.stream_flush = Duration::from_millis(5);
     // `IDLE_MS` closes provider sessions idle that long (default: the engine's 10 minutes).
@@ -71,7 +131,7 @@ async fn main() {
         config.idle_session = idle;
     }
     let engine = SqliteEngine::open(config).unwrap();
-    let project = SqliteEngine::project_id_for(ROOT);
+    let project = SqliteEngine::project_id_for(&root);
 
     let mut shell = engine
         .subscribe_shell(from_json(json!({"requestCompletionMarker": true})).unwrap())
@@ -117,6 +177,11 @@ async fn main() {
             );
         }
         let view = kept.as_mut().unwrap();
+        let text = if checkpoints {
+            format!("write turn{n}.txt {text}")
+        } else {
+            text.to_owned()
+        };
         engine
             .dispatch(
                 from_json(json!({
@@ -166,6 +231,9 @@ async fn main() {
         snapshot.to_string().len()
     );
     drop(snapshot);
+    if checkpoints {
+        println!("git_kib_after={}", git_kib(&root));
+    }
     if let Some(idle) = idle {
         tokio::time::sleep(idle * 3).await;
         println!("after_idle rss_kib={} heap_kib={}", rss_kib(), heap_kib());

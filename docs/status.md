@@ -54,8 +54,8 @@ settings; about 140 MiB for the `claude` program alone).
 
 | Part | State |
 | --- | --- |
-| RPC methods | 81 of 236 served; 80 have a run that the real client's decoders accept |
-| Engine commands | 41 of 56 |
+| RPC methods | 83 of 236 served; 82 have a run that the real client's decoders accept |
+| Engine commands | 43 of 56 |
 | HTTP routes | 13 of 57 |
 | `/mcp` tools | 20 of 87 |
 | Providers | Claude and Codex, of the 10 the T3 server has without Pi |
@@ -170,6 +170,22 @@ continuation turns through `start_turn`; the SDK host client in `conn-provider-s
 Trait additions with no provider behind them yet: `ProviderHost` (only a rooted file host),
 `stop_task`, `await_background_tasks`, `background_work.updated` (Claude reports no roster).
 
+## Checkpoints, rollback and fork (2026-11-14)
+
+Each turn is captured as a git checkpoint the T3 way (`conn-vcs` `checkpoint.rs`, engine
+`checkpoint.rs`): T3's refs in the workspace's own repository, a scratch index, a baseline
+before the provider turn, the run `waiting` until the capture completes it, a `checkpoint`
+turn item with the changed files. `getTurnDiff` and `getFullThreadDiff` are served.
+`checkpoint.rollback` (provider rollback, file restore in an isolated worktree, stale refs,
+`rolled_back` runs, `rollbackFailure`) and `thread.fork` (native fork only) are handled.
+Proofs: engine tests on scratch repositories, `client-check.mjs` (changed files, a rewind, a
+fork's lineage and graph through the client's own code), `effect-client.mjs` for both diff
+methods. Not proven: T3's recorded `thread_rollback`, `thread_fork_native*` and
+`thread_merge_back_siblings` scenarios through our engine (they need the replay driver of item
+4); a live Claude or Codex rollback or fork. Measured (macOS, 50 fake turns, one file each, a
+200-file repository): live heap 428 KiB without and 430 KiB with checkpoints; `.git` grew from
+924 to 1,736 KiB (about 16 KiB per checkpoint); the database from 1.31 to 1.76 MB.
+
 ## What is left, in the planned order
 
 1. **Rust hygiene, step 1: done (2026-11-14).** The toolchain is pinned to 1.99.1; BeautifulRust's
@@ -197,11 +213,11 @@ Trait additions with no provider behind them yet: `ProviderHost` (only a rooted 
    and passed. It needs an event export without pruning and a clock seam in the engine.
 5. **Engine.** Bounded thread snapshots and the `/history`, `/bounded` and `/transcript`
    routes (a full snapshot of a long thread peaks at about 13 bytes per byte of JSON);
-   checkpoints and diffs per turn; rollback, fork and merge-back; a workspace strategy for
-   delegated tasks; search details (no NFC normalization, the old snippet rule). Seen with
+   merge-back and the portable fork path (both need T3's `ContextHandoffService`); prepared
+   runs and setup scripts in a `setup-<id>` terminal; a workspace strategy for delegated tasks; search details (no NFC normalization, the old snippet rule). Seen with
    the real client: a provider turn shows as running only after the CLI's first event (about
    3.5 s on a cold start; the T3 server marks it at once), so the client offers "Send now" on
-   a queued message later; runs skip the `waiting` status; no title generation, so a thread
+   a queued message later; no title generation, so a thread
    keeps its first message as title.
 6. **Features.** `pullRequests.*` (34), `sourceControl.*` and `git.*`; the Conn-only methods
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest

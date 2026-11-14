@@ -33,6 +33,157 @@ fn open(path: &std::path::Path) -> SqliteEngine {
     SqliteEngine::open(config).expect("open engine")
 }
 
+/// A scratch git repository with one commit, for the checkpoint scenarios.
+fn scratch_repo(dir: &std::path::Path) -> String {
+    let repo = dir.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args([
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+            ])
+            .args(args)
+            .current_dir(&repo)
+            .env("GIT_AUTHOR_NAME", "export")
+            .env("GIT_AUTHOR_EMAIL", "export@example.com")
+            .env("GIT_COMMITTER_NAME", "export")
+            .env("GIT_COMMITTER_EMAIL", "export@example.com")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("README.md"), "hello\n").unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "init"]);
+    std::fs::canonicalize(&repo)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Two turns that write files on an engine that takes checkpoints, a rewind, and a fork of the
+/// first turn with one message. Returns the source's items, the fork's items and the shell rows.
+async fn checkpoint_scenario(dir: &std::path::Path) -> (Vec<Value>, Vec<Value>, Value) {
+    let root = scratch_repo(dir);
+    let mut config = EngineConfig::new(dir.join("checkpoints.sqlite"));
+    config.projects = vec![ProjectConfig {
+        title: "Repo".into(),
+        workspace_root: root.clone(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.checkpoints = true;
+    let engine = SqliteEngine::open(config).expect("open engine");
+    let project_id = SqliteEngine::project_id_for(&root);
+    engine
+        .launch_thread(json!({
+            "commandId": "launch-cp", "creationSource": "web", "threadId": "thread-cp",
+            "projectId": project_id, "title": "Edit files",
+            "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-4-5"},
+            "runtimeMode": "full-access", "interactionMode": "default",
+            "workspaceStrategy": {"type": "root"},
+            "initialMessage": {"messageId": "message:cp-1", "text": "write a.txt one", "attachments": []},
+        }))
+        .await
+        .unwrap();
+    // A snapshot first, then every event of both turns, as an open thread view gets them.
+    let mut items = vec![];
+    let mut follow = engine
+        .subscribe_thread(
+            from_json(json!({"threadId": "thread-cp", "requestCompletionMarker": true})).unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut follow, &mut items, run_ended).await;
+    engine
+        .dispatch(
+            from_json(json!({
+                "type": "message.dispatch", "commandId": "cp-2", "threadId": "thread-cp",
+                "messageId": "message:cp-2", "text": "write b.txt two", "attachments": [],
+                "dispatchMode": {"type": "start_immediately"}, "createdBy": "user", "creationSource": "web",
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut follow, &mut items, |item| {
+        run_ended(item) && item["event"]["payload"]["id"] == "run:thread-cp:2"
+    })
+    .await;
+    read(&mut follow, &mut items, |_| false).await;
+    // Rewind the conversation to the first turn (a root thread keeps its files).
+    let projection = engine
+        .get_thread_projection("thread-cp".into())
+        .await
+        .unwrap();
+    let first = projection["checkpoints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["appRunOrdinal"] == 1)
+        .cloned()
+        .unwrap();
+    engine
+        .dispatch(
+            from_json(json!({
+                "type": "checkpoint.rollback", "commandId": "cp-rollback", "threadId": "thread-cp",
+                "scopeId": first["scopeId"], "checkpointId": first["id"], "restoreFiles": false,
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut follow, &mut items, |item| {
+        item["event"]["type"] == "run.updated"
+            && item["event"]["payload"]["status"] == "rolled_back"
+    })
+    .await;
+    read(&mut follow, &mut items, |_| false).await;
+
+    // A fork of the first turn, then its first message: a native fork.
+    engine
+        .dispatch(
+            from_json(json!({
+                "type": "thread.fork", "commandId": "cp-fork", "sourceThreadId": "thread-cp",
+                "targetThreadId": "thread-cp-fork", "sourcePoint": {"type": "latest_stable"},
+                "createdBy": "user", "creationSource": "web",
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let mut fork_items = vec![];
+    let mut fork = engine
+        .subscribe_thread(
+            from_json(json!({"threadId": "thread-cp-fork", "requestCompletionMarker": true}))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut fork, &mut fork_items, |item| {
+        item["kind"] == "synchronized"
+    })
+    .await;
+    engine
+        .dispatch(
+            from_json(json!({
+                "type": "message.dispatch", "commandId": "cp-fork-1", "threadId": "thread-cp-fork",
+                "messageId": "message:cp-fork-1", "text": "go on", "attachments": [],
+                "dispatchMode": {"type": "start_immediately"}, "createdBy": "user", "creationSource": "web",
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut fork, &mut fork_items, run_ended).await;
+    read(&mut fork, &mut fork_items, |_| false).await;
+    let shell = engine.shell_snapshot().await.unwrap();
+    (items, fork_items, shell["threads"].clone())
+}
+
 /// Reads items until `done` holds for one, or the stream is quiet for 300 ms.
 async fn read<T: serde::Serialize, E: serde::Serialize>(
     stream: &mut Subscription<T, E>,
@@ -344,7 +495,12 @@ async fn main() {
     })
     .await;
 
+    let (checkpoint_items, fork_items, checkpoint_shell) = checkpoint_scenario(&dir).await;
+
     let export = json!({
+        "checkpointItems": checkpoint_items,
+        "forkItems": fork_items,
+        "checkpointShellThreads": checkpoint_shell,
         "shellItems": shell_items,
         "launch": launch,
         "threadHttp": thread_http,

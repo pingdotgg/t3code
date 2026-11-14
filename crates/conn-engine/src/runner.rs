@@ -22,7 +22,7 @@ use tokio::{
     time::{Instant, sleep_until},
 };
 
-use crate::commands::{failure, finish_run, hold_queue, start_next_queued};
+use crate::commands::{failure, finish_run_as, hold_queue, start_next_queued};
 use crate::engine::Inner;
 use crate::lock;
 use crate::store::Draft;
@@ -69,8 +69,21 @@ struct ActiveRun {
 }
 
 impl LiveThread {
-    fn touch(&self) {
+    pub(crate) fn touch(&self) {
         *lock(&self.last_used) = Instant::now();
+    }
+
+    pub(crate) fn session(&self) -> &Arc<dyn Session> {
+        &self.session
+    }
+
+    pub(crate) fn instance(&self) -> &str {
+        &self.instance
+    }
+
+    /// The provider thread the session's next turn continues (after a rollback or a fork).
+    pub(crate) fn set_provider_thread(&self, thread: ProviderThread) {
+        lock(&self.state).provider_thread = Some(thread);
     }
 
     /// Idle: no run and no provider event for `idle`, and no background work, which holds the
@@ -103,6 +116,8 @@ struct TurnContext {
     message: Value,
     cwd: Option<String>,
     provider_thread: Option<Value>,
+    /// The source to fork natively, on a fork's first turn.
+    fork: Option<crate::fork::NativeFork>,
 }
 
 enum StartError {
@@ -145,7 +160,7 @@ impl Inner {
         }
     }
 
-    fn live_thread(&self, thread_id: &str) -> Option<Arc<LiveThread>> {
+    pub(crate) fn live_thread(&self, thread_id: &str) -> Option<Arc<LiveThread>> {
         lock(&self.live).get(thread_id).cloned()
     }
 
@@ -161,24 +176,151 @@ impl Inner {
         let held_on_failure = failure
             .as_ref()
             .is_some_and(|f| f["class"] != "validation_error");
+        let checkpointing = self.checkpoints.is_some();
         let next = self
             .write(move |tx| {
-                finish_run(tx, &thread_id, &run_id, status, failure)?;
+                // A run with a checkpoint scope is captured first (`checkpoint.capture`): a
+                // completed one waits, and what follows its end runs after the capture.
+                let captured = checkpointing
+                    && matches!(status, "completed" | "interrupted" | "cancelled")
+                    && tx
+                        .entity(&thread_id, "runs", &run_id)?
+                        .and_then(|run| run["rootNodeId"].as_str().map(str::to_owned))
+                        .map(|root| tx.entity(&thread_id, "nodes", &root))
+                        .transpose()?
+                        .flatten()
+                        .is_some_and(|node| node["checkpointScopeId"].is_string());
+                let persisted = if captured && status == "completed" {
+                    "waiting"
+                } else {
+                    status
+                };
+                finish_run_as(tx, &thread_id, &run_id, status, persisted, failure)?;
                 // A failure holds the queue, so queued messages do not hit the same wall.
                 if held_on_failure {
                     hold_queue(tx, &thread_id)?;
                 }
+                if captured {
+                    return Ok(None);
+                }
                 let mut effects = crate::families::on_run_end(tx, &thread_id, &run_id)?;
                 effects.extend(start_next_queued(tx, &thread_id, None)?);
-                Ok(effects)
+                Ok(Some(effects))
             })
             .await;
         match next {
-            Ok(effects) => effects.into_iter().for_each(|e| self.spawn_effect(e)),
+            Ok(Some(effects)) => effects.into_iter().for_each(|e| self.spawn_effect(e)),
+            Ok(None) => return self.capture_run(thread, run).await,
             Err(e) => eprintln!("conn-engine: could not end run: {e}"),
         }
         if let Some(observer) = &self.observer {
             self.observe_end(observer.clone(), thread, run).await;
+        }
+    }
+
+    /// Opens a provider session for the thread on `instance` and makes it the thread's live
+    /// one. `None`: shutdown began, or another session for the thread won the race.
+    pub(crate) async fn open_live(
+        self: &Arc<Self>,
+        thread_id: &str,
+        instance: &str,
+        session_id: &str,
+        model_selection: &conn_contract::ModelSelection,
+        runtime_policy: &RuntimePolicy,
+        thread: &Value,
+    ) -> Result<Option<Arc<LiveThread>>, String> {
+        let subagent = thread["lineage"]["relationshipToParent"] == "subagent";
+        // Only a run that names no instance may go to the one configured provider.
+        let provider = self
+            .providers
+            .iter()
+            .find(|p| p.instance_id().as_str() == instance)
+            .or_else(|| {
+                (instance.is_empty() && self.providers.len() == 1)
+                    .then(|| self.providers.first())
+                    .flatten()
+            })
+            .cloned()
+            .ok_or_else(|| {
+                format!("No provider instance `{instance}` is configured on this server.")
+            })?;
+        let tools = self.host.as_ref().and_then(|host| {
+            host.agent_tools(crate::AgentSession {
+                thread_id: thread_id.to_owned(),
+                provider_instance_id: provider.instance_id().as_str().to_owned(),
+                subagent,
+            })
+        });
+        let opened = provider
+            .open_session(OpenSessionInput {
+                thread_id: thread_id.into(),
+                provider_session_id: session_id.into(),
+                model_selection: model_selection.clone(),
+                runtime_policy: runtime_policy.clone(),
+                resume_from_session: None,
+                mcp_servers: tools
+                    .as_ref()
+                    .map(|tools| tools.servers.clone())
+                    .unwrap_or_default(),
+                host: self.host.as_ref().and_then(|host| {
+                    host.provider_host(crate::AgentSession {
+                        thread_id: thread_id.to_owned(),
+                        provider_instance_id: provider.instance_id().as_str().to_owned(),
+                        subagent,
+                    })
+                }),
+            })
+            .await
+            .map_err(|e| {
+                self.revoke_tools(tools.as_ref().map(|t| t.key.as_str()));
+                e.to_string()
+            })?;
+        let session: Arc<dyn Session> = Arc::from(opened.session);
+        let provider_session = to_json(&opened.provider_session);
+        // `open_session` must not yield before the session is in
+        // `live`: on the one runtime thread, nothing else can then open a session for
+        // this thread or begin shutdown in between. Check again anyway, so a provider
+        // that does yield never leaks a session or overwrites one.
+        let raced = self.live_thread(thread_id);
+        if raced.is_some() || self.shutting_down() {
+            self.revoke_tools(tools.as_ref().map(|t| t.key.as_str()));
+            session.close().await;
+            match raced {
+                Some(live) if !self.shutting_down() && live.instance == instance => Ok(Some(live)),
+                _ => Ok(None),
+            }
+        } else {
+            let live = Arc::new(LiveThread {
+                session,
+                instance: instance.to_owned(),
+                state: Mutex::new(LiveState::default()),
+                last_used: Mutex::new(Instant::now()),
+                closed: tokio::sync::Notify::new(),
+                held_since: Mutex::new(None),
+                provider_session_id: provider_session["id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                background_tasks_end_with_process: opened.background_tasks_end_with_process,
+                tools_key: tools.map(|t| t.key),
+            });
+            lock(&self.live).insert(thread_id.to_owned(), live.clone());
+            // The session's row, from `open_session` (T3: the runtime's
+            // `providerSession`), before any of its events.
+            let tid = thread_id.to_owned();
+            self.write(move |tx| {
+                tx.append(Draft::new(
+                    &tid,
+                    "provider-session.updated",
+                    provider_session,
+                ))
+            })
+            .await?;
+            tokio::spawn(
+                self.clone()
+                    .pump(thread_id.to_owned(), live.clone(), opened.events),
+            );
+            Ok(Some(live))
         }
     }
 
@@ -239,19 +381,24 @@ impl Inner {
                                 )
                             }),
                     };
+                    let fork = match provider_thread {
+                        Some(_) => None,
+                        None => crate::fork::native_fork_input(&tx, &tid)?,
+                    };
                     Ok(Some(TurnContext {
                         thread,
                         run,
                         message,
                         cwd,
                         provider_thread,
+                        fork,
                     }))
                 })();
                 tx.rollback();
                 context
             })
             .await?;
-        let Some(context) = context else {
+        let Some(mut context) = context else {
             return Err(StartError::Abandoned);
         };
         if context.run["status"] != "starting" {
@@ -281,131 +428,64 @@ impl Inner {
             // The run stays `starting`; the next server start picks it up (`restart.rs`).
             None if self.shutting_down() => return Err(StartError::Abandoned),
             None => {
-                // Only a run that names no instance may go to the one configured provider.
-                let provider = self
-                    .providers
-                    .iter()
-                    .find(|p| p.instance_id().as_str() == instance)
-                    .or_else(|| {
-                        (instance.is_empty() && self.providers.len() == 1)
-                            .then(|| self.providers.first())
-                            .flatten()
-                    })
-                    .cloned()
-                    .ok_or_else(|| {
-                        format!("No provider instance `{instance}` is configured on this server.")
-                    })?;
-                let tools = self.host.as_ref().and_then(|host| {
-                    host.agent_tools(crate::AgentSession {
-                        thread_id: thread_id.to_owned(),
-                        provider_instance_id: provider.instance_id().as_str().to_owned(),
-                        subagent: context.thread["lineage"]["relationshipToParent"] == "subagent",
-                    })
-                });
-                let opened = provider
-                    .open_session(OpenSessionInput {
-                        thread_id: thread_id.into(),
-                        provider_session_id: format!("provider-session:{thread_id}:{run_id}")
-                            .as_str()
-                            .into(),
-                        model_selection: model_selection.clone(),
-                        runtime_policy: runtime_policy.clone(),
-                        resume_from_session: None,
-                        mcp_servers: tools
-                            .as_ref()
-                            .map(|tools| tools.servers.clone())
-                            .unwrap_or_default(),
-                        host: self.host.as_ref().and_then(|host| {
-                            host.provider_host(crate::AgentSession {
-                                thread_id: thread_id.to_owned(),
-                                provider_instance_id: provider.instance_id().as_str().to_owned(),
-                                subagent: context.thread["lineage"]["relationshipToParent"]
-                                    == "subagent",
-                            })
-                        }),
-                    })
-                    .await
-                    .map_err(|e| {
-                        self.revoke_tools(tools.as_ref().map(|t| t.key.as_str()));
-                        e.to_string()
-                    })?;
-                let session: Arc<dyn Session> = Arc::from(opened.session);
-                let provider_session = to_json(&opened.provider_session);
-                // `open_session` must not yield before the session is in
-                // `live`: on the one runtime thread, nothing else can then open a session for
-                // this thread or begin shutdown in between. Check again anyway, so a provider
-                // that does yield never leaks a session or overwrites one.
-                let raced = self.live_thread(thread_id);
-                if raced.is_some() || self.shutting_down() {
-                    self.revoke_tools(tools.as_ref().map(|t| t.key.as_str()));
-                    session.close().await;
-                    match raced {
-                        Some(live) if !self.shutting_down() && live.instance == instance => live,
-                        _ => return Err(StartError::Abandoned),
-                    }
-                } else {
-                    let live = Arc::new(LiveThread {
-                        session,
-                        instance: instance.to_owned(),
-                        state: Mutex::new(LiveState::default()),
-                        last_used: Mutex::new(Instant::now()),
-                        closed: tokio::sync::Notify::new(),
-                        held_since: Mutex::new(None),
-                        provider_session_id: provider_session["id"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .to_owned(),
-                        background_tasks_end_with_process: opened.background_tasks_end_with_process,
-                        tools_key: tools.map(|t| t.key),
-                    });
-                    lock(&self.live).insert(thread_id.to_owned(), live.clone());
-                    // The session's row, from `open_session` (T3: the runtime's
-                    // `providerSession`), before any of its events.
-                    let tid = thread_id.to_owned();
-                    self.write(move |tx| {
-                        tx.append(Draft::new(
-                            &tid,
-                            "provider-session.updated",
-                            provider_session,
-                        ))
-                    })
-                    .await?;
-                    tokio::spawn(self.clone().pump(
-                        thread_id.to_owned(),
-                        live.clone(),
-                        opened.events,
-                    ));
-                    live
+                match self
+                    .open_live(
+                        thread_id,
+                        instance,
+                        &format!("provider-session:{thread_id}:{run_id}"),
+                        &model_selection,
+                        &runtime_policy,
+                        &context.thread,
+                    )
+                    .await?
+                {
+                    Some(live) => live,
+                    None => return Err(StartError::Abandoned),
                 }
             }
         };
 
         live.touch();
         let known = lock(&live.state).provider_thread.clone();
-        let provider_thread = match (known, context.provider_thread) {
-            (Some(provider_thread), _) => provider_thread,
-            (None, Some(stored)) => live
-                .session
-                .resume_thread(ResumeThreadInput {
-                    provider_thread: from_json(stored).map_err(|e| e.to_string())?,
-                    thread_id: Some(thread_id.into()),
-                    model_selection: Some(model_selection.clone()),
-                    runtime_policy: Some(runtime_policy.clone()),
-                })
-                .await
-                .map_err(|e| e.to_string())?,
-            (None, None) => live
-                .session
-                .ensure_thread(EnsureThreadInput {
-                    thread_id: thread_id.into(),
-                    title: context.thread["title"].as_str().map(str::to_owned),
-                    model_selection: model_selection.clone(),
-                    runtime_policy: runtime_policy.clone(),
-                    existing_provider_thread: None,
-                })
-                .await
-                .map_err(|e| e.to_string())?,
-        };
+        let provider_thread =
+            match (known, context.provider_thread) {
+                (Some(provider_thread), _) => provider_thread,
+                (None, Some(stored)) => live
+                    .session
+                    .resume_thread(ResumeThreadInput {
+                        provider_thread: from_json(stored).map_err(|e| e.to_string())?,
+                        thread_id: Some(thread_id.into()),
+                        model_selection: Some(model_selection.clone()),
+                        runtime_policy: Some(runtime_policy.clone()),
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?,
+                // A fork's first turn: the provider forks the source's native thread.
+                (None, None) if context.fork.is_some() => {
+                    let fork = context.fork.as_mut().map(|f| {
+                        f.input.model_selection = Some(model_selection.clone());
+                        f.input.runtime_policy = Some(runtime_policy.clone());
+                        f.input.clone()
+                    });
+                    match fork {
+                        Some(input) => live.session.fork_thread(input).await.map_err(|e| {
+                            StartError::Failed(format!("The native fork failed: {e}"))
+                        })?,
+                        None => return Err(StartError::Abandoned),
+                    }
+                }
+                (None, None) => live
+                    .session
+                    .ensure_thread(EnsureThreadInput {
+                        thread_id: thread_id.into(),
+                        title: context.thread["title"].as_str().map(str::to_owned),
+                        model_selection: model_selection.clone(),
+                        runtime_policy: runtime_policy.clone(),
+                        existing_provider_thread: None,
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?,
+            };
         let root = context.run["rootNodeId"]
             .as_str()
             .unwrap_or_default()
@@ -437,13 +517,19 @@ impl Inner {
             attempt_id.clone(),
             root.clone(),
         );
-        let still_live = self
+        let fork_transfer = context.fork.as_ref().map(|f| f.transfer.clone());
+        let checkpoint_cwd = self
+            .checkpoints
+            .as_ref()
+            .and(context.cwd.clone())
+            .filter(|_| context.thread["lineage"]["sideChat"] != true);
+        let started = self
             .write(move |tx| {
                 let Some(mut run) = tx.entity(&tid, "runs", &rid)? else {
-                    return Ok(false);
+                    return Ok(None);
                 };
                 if run["status"] != "starting" {
-                    return Ok(false);
+                    return Ok(None);
                 }
                 let now = tx.now().to_owned();
                 let pt_id = provider_thread_json["id"].clone();
@@ -458,6 +544,16 @@ impl Inner {
                         "provider-thread.updated",
                         provider_thread_json.clone(),
                     ))?;
+                }
+                if let Some(transfer) = &fork_transfer {
+                    tx.append(
+                        Draft::new(
+                            &tid,
+                            "context-transfer.updated",
+                            crate::fork::consumed(transfer, &provider_thread_json, &run, &now),
+                        )
+                        .run(Some(&rid)),
+                    )?;
                 }
                 if let Some(mut thread) = tx.thread(&tid)?
                     && thread["activeProviderThreadId"] != pt_id
@@ -485,19 +581,34 @@ impl Inner {
                 run["startedAt"] = json!(now);
                 run["activeAttemptId"] = json!(aid);
                 run["providerThreadId"] = pt_id.clone();
-                tx.append(draft("run.updated", run))?;
+                tx.append(draft("run.updated", run.clone()))?;
+                let mut scope = None;
                 if let Some(mut node) = tx.entity(&tid, "nodes", &root_id)? {
+                    if let Some(cwd) = &checkpoint_cwd {
+                        scope = Some(crate::checkpoint::ensure_scope(
+                            tx, &tid, &run, &mut node, &pt_id, cwd,
+                        )?);
+                    }
                     node["status"] = json!("running");
                     node["startedAt"] = json!(now);
                     node["providerThreadId"] = pt_id;
                     tx.append(draft("node.updated", node))?;
                 }
-                Ok(true)
+                Ok(Some(scope))
             })
             .await?;
-        if !still_live {
+        let Some(scope) = started else {
             live.take_active();
             return Err(StartError::Abandoned);
+        };
+        // The baseline holds no change of this turn: the provider has not had the message.
+        if let Some((scope_id, cwd)) = scope {
+            self.capture_baseline(
+                &scope_id,
+                &cwd,
+                context.run["ordinal"].as_u64().unwrap_or(1),
+            )
+            .await;
         }
         if let Some(observer) = &self.observer {
             observer
@@ -1126,7 +1237,7 @@ impl Inner {
     }
 
     /// Tells the observer a run ended, when it started (an attempt exists) and is now final.
-    async fn observe_end(
+    pub(crate) async fn observe_end(
         &self,
         observer: Arc<dyn crate::TurnObserver>,
         thread_id: String,
