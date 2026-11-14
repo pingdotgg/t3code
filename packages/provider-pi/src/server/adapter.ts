@@ -42,6 +42,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
+import { modelImageInputSupport } from "@t3tools/provider-core/server/imageInputPolicy";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { parsePiCompactCommand, type PiCompactCommand } from "./commands.ts";
@@ -2986,6 +2987,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         attachments: ReadonlyArray<ChatAttachment>,
       ) {
         const images: Array<{ type: "image"; data: string; mimeType: string }> = [];
+        const selectedSlug =
+          appliedModel ??
+          (baselineModel === null ? null : `${baselineModel.provider}/${baselineModel.modelId}`);
+        const selectedModel = discoveredModels?.find((model) =>
+          selectedSlug === `${recordString(model, "provider")}/${recordString(model, "id")}`,
+        );
+        const supportsImageInput = modelImageInputSupport(selectedModel);
         const message = yield* providerMessageTextWithAttachmentPaths({
           text,
           attachments,
@@ -2995,7 +3003,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         for (const attachment of attachments) {
           const path = host.resolveAttachmentPath(attachment);
           if (path === null) continue;
-          if (attachment.mimeType.startsWith("image/")) {
+          // Keep the saved path in the prompt, but never send native image bytes
+          // to a model whose Pi inventory explicitly excludes image input.
+          if (supportsImageInput !== false && attachment.mimeType.startsWith("image/")) {
             const bytes = yield* fileSystem.readFile(path);
             images.push({
               type: "image",
