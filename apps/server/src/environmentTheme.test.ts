@@ -21,6 +21,12 @@ import { ServerSettingsService } from "./serverSettings.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const encodeThemeFile = Schema.encodeSync(Schema.fromJsonString(EnvironmentThemeFile));
+/** Writes non-ASCII characters as `\uXXXX` escapes, as encoders such as Python's json.dumps do. */
+const encodeThemeFileEscaped = (theme: EnvironmentThemeFile) =>
+  encodeThemeFile(theme).replace(
+    /[\u0080-\uffff]/g,
+    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
 
 const NIGHTFALL_THEME: EnvironmentThemeFile = {
   name: "Nightfall",
@@ -309,7 +315,7 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
         ...Object.fromEntries(
           Array.from({ length: 6 }, (_, index) => [
             `aa-${index}.json`,
-            encodeThemeFile(large(`Large ${index}`)),
+            encodeThemeFileEscaped(large(`Large ${index}`)),
           ]),
         ),
         "zz-look.json": encodeThemeFile(NIGHTFALL_THEME),

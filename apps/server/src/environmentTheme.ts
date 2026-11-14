@@ -46,10 +46,10 @@ const THEME_FILE_SUFFIX = ".json";
 
 const MAX_THEME_FILES = 32;
 /**
- * Shared with publishing so it cannot accept files the watcher skips. Fits the longest CSS at
- * 3 UTF-8 bytes per character, plus the colors.
+ * Shared with publishing so it cannot accept files the watcher skips. Fits the longest CSS in any
+ * JSON encoding, at up to 6 bytes per character for a `\uXXXX` escape, plus the colors.
  */
-export const MAX_THEME_FILE_BYTES = 3 * THEME_CSS_MAX_LENGTH + 16 * 1024;
+export const MAX_THEME_FILE_BYTES = 6 * THEME_CSS_MAX_LENGTH + 16 * 1024;
 const MAX_THEME_TOTAL_BYTES = 6 * MAX_THEME_FILE_BYTES;
 
 interface PublishedThemes {
