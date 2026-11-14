@@ -5,10 +5,13 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as SqlError from "effect/sql/SqlError";
 
 import {
   increment,
@@ -19,6 +22,7 @@ import {
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
@@ -81,6 +85,7 @@ export const layerExecutor: Layer.Layer<
   | RuntimeRequestService.RuntimeRequestServiceV2
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
   | ThreadManagementService.ThreadManagementService
+  | ProjectionStore.ProjectionStoreV2
   | ServerSettings.ServerSettingsService
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
@@ -95,6 +100,7 @@ export const layerExecutor: Layer.Layer<
     const threadTitleRegeneration =
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const settings = yield* ServerSettings.ServerSettingsService;
     return OrchestrationEffectExecutorV2.of({
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
@@ -581,8 +587,21 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
-          case "attachment.cleanup":
-            return resourceCleanup.cleanupAttachments(effect.request.attachmentIds).pipe(
+          case "attachment.cleanup": {
+            const request = effect.request;
+            return Effect.gen(function* () {
+              // Another message or answer may share the file, or a stale queued edit may restore it.
+              const referenced = new Set(
+                request.skipReferenced
+                  ? yield* projectionStore.getThreadAttachmentIds(effect.threadId, {
+                      includeShownByLiveFork: true,
+                    })
+                  : [],
+              );
+              yield* resourceCleanup.cleanupAttachments(
+                request.attachmentIds.filter((id) => !referenced.has(id)),
+              );
+            }).pipe(
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({
@@ -592,6 +611,7 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
+          }
           case "thread-title.generate":
             return threadTitleRegeneration
               .execute({
@@ -666,6 +686,16 @@ export class OrchestrationEffectWorkerError extends Schema.TaggedError<Orchestra
 
 const isOrchestrationEffectWorkerError = Schema.is(OrchestrationEffectWorkerError);
 
+// Only the claiming worker settles its row, and a running row blocks every later effect on its
+// thread until the server restarts. onError masks interruption, so retries must restore it.
+const isLockTimeout = (error: EffectOutbox.EffectOutboxError) =>
+  SqlError.isSqlError(error.cause) && error.cause.reason._tag === "LockTimeoutError";
+const lockRetrySchedule = Schedule.spaced(Duration.millis(100));
+const retryWhileLocked = <A>(settlement: Effect.Effect<A, EffectOutbox.EffectOutboxError>) =>
+  Effect.interruptible(
+    Effect.retry(settlement, { schedule: lockRetrySchedule, while: isLockTimeout }),
+  );
+
 type ClaimFilter = Omit<Parameters<EffectOutbox.EffectOutboxV2Shape["claimNext"]>[0], "workerId">;
 
 export interface OrchestrationEffectWorkerV2Shape {
@@ -727,6 +757,7 @@ export const layerWithOptions = (
                 delayMs: 0,
               })
               .pipe(
+                retryWhileLocked,
                 Effect.flatMap((requeued) =>
                   requeued
                     ? Effect.logWarning("Requeued effect after unexpected worker failure", {
@@ -758,6 +789,7 @@ export const layerWithOptions = (
             error: `Worker failed to settle a process-bound effect after execution started: ${Cause.pretty(cause)}`,
           })
           .pipe(
+            retryWhileLocked,
             Effect.flatMap((failed) =>
               failed
                 ? Effect.logError("Terminalized process-bound effect after settlement failure", {
@@ -943,11 +975,15 @@ export interface OrchestrationEffectDaemonOptions {
 
 const DEFAULT_EFFECT_WORKER_CONCURRENCY = 4;
 const DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS = 30_000;
+// A provider request can go unanswered indefinitely. After this wait the slot claims other work
+// while the execution keeps its running row (which blocks its own thread) and settles it later.
+const EFFECT_WORKER_SLOT_WAIT = Duration.seconds(30);
 
 export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions = {}) =>
   Effect.scoped(
     Effect.gen(function* () {
       const worker = yield* OrchestrationEffectWorkerV2;
+      const scope = yield* Effect.scope;
       const requestedConcurrency = options.concurrency ?? DEFAULT_EFFECT_WORKER_CONCURRENCY;
       const concurrency = Number.isFinite(requestedConcurrency)
         ? Math.max(1, Math.floor(requestedConcurrency))
@@ -962,13 +998,18 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
       // Notifications wake promptly; availableAt persists retry timing, and liveness polling recovers missed wakeups.
       const runWorker = Effect.gen(function* () {
         while (true) {
-          const outcome = yield* worker.runOnce(claimLimits).pipe(
+          const attempt = yield* worker.runOnce(claimLimits).pipe(
             Effect.map((worked) => (worked ? ("worked" as const) : ("idle" as const))),
             Effect.catchCause((cause) =>
               Effect.logWarning("Orchestration effect worker failed", cause).pipe(
                 Effect.as("failed" as const),
               ),
             ),
+            Effect.forkIn(scope),
+          );
+          const outcome = yield* Fiber.join(attempt).pipe(
+            Effect.timeoutOption(EFFECT_WORKER_SLOT_WAIT),
+            Effect.map(Option.getOrElse(() => "worked" as const)),
           );
           if (outcome === "worked") {
             yield* Effect.yieldNow;

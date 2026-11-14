@@ -19,6 +19,7 @@ import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
+  decodeMarkdownLinkEscapes,
   remarkAssistantInsights,
 } from "@t3tools/shared/markdownPipeline";
 import { useAtomValue } from "@effect/atom-react";
@@ -80,6 +81,7 @@ import React, {
   type MouseEvent as ReactMouseEvent,
   use,
   memo,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -126,6 +128,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
+import { contextMenuSourceOf } from "../contextMenuSource";
 import {
   PreferredEditorEnvironmentRequiredError,
   useOpenInPreferredEditor,
@@ -173,7 +176,9 @@ import { projectEnvironment } from "../state/projects";
 import { filesystemEnvironment } from "../state/filesystem";
 import {
   claimWorkspaceBasenameLookup,
+  findAgentDirectoryMatch,
   needsWorkspaceBasenameLookup,
+  pickProjectLinkMatch,
   pickWorkspaceLinkMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
   workspaceLinkLookupQuery,
@@ -233,6 +238,8 @@ interface ChatMarkdownProps {
   inline?: boolean;
   text: string;
   cwd: string | undefined;
+  /** Folders the agent worked in before writing `text`, the latest first; read when a link opens. */
+  agentDirectories?: (() => ReadonlyArray<string>) | undefined;
   threadRef?: ScopedThreadRef | undefined;
   pullRequestPanelRef?: ScopedThreadRef | undefined;
   environmentId?: EnvironmentId | undefined;
@@ -466,6 +473,7 @@ function fileLinkSourcesKey(
 ): string {
   const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
     .filter((href) => !parseComposerContextHref(href))
+    .map(decodeMarkdownLinkEscapes)
     .map(normalizeMarkdownLinkHrefKey)
     .filter((href) => resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd));
   const spans = extractInlineCodeSpans(text).filter((span) =>
@@ -501,6 +509,7 @@ function useChatMarkdownState({
   text,
   inline = false,
   cwd,
+  agentDirectories,
   threadRef,
   pullRequestPanelRef,
   environmentId: explicitEnvironmentId,
@@ -646,7 +655,7 @@ function useChatMarkdownState({
   const projects = useProjects();
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
-  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
+  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors, cwd);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
@@ -792,13 +801,57 @@ function useChatMarkdownState({
       });
       if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
     }
-    const result = await searchProjectEntries({
-      environmentId,
-      input: { cwd, query, limit: WORKSPACE_BASENAME_LOOKUP_LIMIT, kind: "file" },
-    });
-    return result._tag === "Success"
-      ? pickWorkspaceLinkMatch(workspaceRelativePath, cwd, result.value.entries)
-      : null;
+    const searchRoot = async (root: string) => {
+      const rootQuery = workspaceLinkLookupQuery(workspaceRelativePath, root);
+      if (rootQuery === null) return { root, entries: [] };
+      const result = await searchProjectEntries({
+        environmentId,
+        input: {
+          cwd: root,
+          query: rootQuery,
+          limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
+          kind: "file",
+        },
+      });
+      return { root, entries: result._tag === "Success" ? result.value.entries : [] };
+    };
+    const own = await searchRoot(cwd);
+    const ownMatch = pickWorkspaceLinkMatch(workspaceRelativePath, cwd, own.entries);
+    if (ownMatch !== null) return ownMatch;
+    const threadProjectId = threadRef ? readThreadShell(threadRef)?.projectId : undefined;
+    const otherRoots = projects.flatMap((project) =>
+      project.environmentId === environmentId &&
+      project.id !== threadProjectId &&
+      project.workspaceRoot !== cwd
+        ? [project.workspaceRoot]
+        : [],
+    );
+    const agentRoots = (agentDirectories?.() ?? []).filter((root) => root !== cwd);
+    if (otherRoots.length === 0 && agentRoots.length === 0) return null;
+    // Another project's file never replaces a thread-local file the search missed.
+    if (needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+      const metadata = await getFilesystemMetadata({
+        environmentId,
+        input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, cwd)] },
+      });
+      if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
+    }
+    const projectMatch = pickProjectLinkMatch(
+      workspaceRelativePath,
+      await Promise.all(otherRoots.map(searchRoot)),
+    );
+    if (projectMatch !== null || agentRoots.length === 0) return projectMatch;
+    // No project has the file, so it opens where the agent last worked, as written.
+    const agentPaths = agentRoots.map((root) =>
+      resolveWorkspaceFilePath(workspaceRelativePath, root),
+    );
+    const metadata = await getFilesystemMetadata({ environmentId, input: { paths: agentPaths } });
+    if (metadata._tag !== "Success") return null;
+    const literal = agentPaths.find((_, index) => metadata.value.entries[index]?.kind === "file");
+    if (literal !== undefined || !needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+      return literal ?? null;
+    }
+    return findAgentDirectoryMatch(workspaceRelativePath, agentRoots, searchRoot);
   };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
     if (!threadRef) return;
@@ -1023,19 +1076,21 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   blockquote: function MarkdownBlockquote({ node: _node, children, ...props }) {
-    const alert =
-      GITHUB_ALERT_PRESENTATIONS[String((props as Record<string, unknown>)["data-alert"] ?? "")];
+    const alertKind = String((props as Record<string, unknown>)["data-alert"] ?? "");
+    const alert = GITHUB_ALERT_PRESENTATIONS[alertKind];
     if (!alert) {
       return <blockquote {...props}>{children}</blockquote>;
     }
     return (
       <div
         role="note"
+        data-markdown-alert={alertKind}
         dir={props.dir}
         className={cn("my-1 border-s-2 ps-3", alert.borderClassName)}
       >
         <p
           data-thread-find-ignore="true"
+          data-markdown-alert-label=""
           className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}
         >
           <alert.Icon aria-hidden className="size-3.5 shrink-0" />
@@ -1268,6 +1323,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             event.stopPropagation();
             const api = readLocalApi();
             if (!api) return;
+            const source = contextMenuSourceOf(event);
             const threadLinkAction = !canOperateHost
               ? undefined
               : linkedThreadPullRequestFor(href) !== null
@@ -1280,7 +1336,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
               canOpenInPreview,
               threadLinkAction,
               position: { x: event.clientX, y: event.clientY },
-              showContextMenu: (items, position) => api.contextMenu.show(items, position),
+              showContextMenu: (items, position) => api.contextMenu.show(items, position, source),
               openInPreview: async (target) => {
                 const result = await openExternalLinkInPreview(target);
                 if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -1592,6 +1648,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             _tag: "media-file",
             threadId: threadRef.threadId,
             path: imageSource.path,
+            ...(imageSource.relative ? { hostOnly: true as const } : {}),
           }}
           alt={altText}
           kind={kind}
@@ -1766,9 +1823,12 @@ const MarkdownSource = memo(function MarkdownSource({
         components: CHAT_MARKDOWN_COMPONENTS,
         urlTransform: markdownUrlTransform,
       });
-  return (
-    <ChatMarkdownTextContext value={text}>{render(text, shared && cache)}</ChatMarkdownTextContext>
-  );
+  const element = render(text);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Caching during render would make React Compiler rebuild the element when `cache` flips.
+  useEffect(() => {
+    if (shared && cache) render.remember(text, element);
+  }, [render, text, element, shared, cache]);
+  return <ChatMarkdownTextContext value={text}>{element}</ChatMarkdownTextContext>;
 });
 
 function ChatMarkdown({
