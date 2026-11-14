@@ -7275,6 +7275,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             payload: { ...sourcePlan, status: "completed" },
           });
 
+    if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
+      const targetRunId = dispatchMode.targetRunId;
+      // The input reaches the active run, now or once it is ready, and that run can be above the thread's modes.
+      yield* refuseAboveDispatchModeLimit(
+        command,
+        command.threadId,
+        runModes(
+          projection.thread,
+          projection.runs.find((run) => run.id === targetRunId),
+        ),
+      );
+    }
     let steerWhenReadyRunId: RunId | undefined;
     if (dispatchMode.type === "steer_active") {
       const targetRunId = dispatchMode.targetRunId;
@@ -7306,16 +7318,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
-      const targetRunId = dispatchMode.targetRunId;
-      // The input reaches the active run, which can run above the thread's modes.
-      yield* refuseAboveDispatchModeLimit(
-        command,
-        command.threadId,
-        runModes(
-          projection.thread,
-          projection.runs.find((run) => run.id === targetRunId),
-        ),
-      );
       yield* ensureGoalCommandSupported(command, command, modelSelection.instanceId);
       yield* dispatchSteerIntoRun({
         command,
@@ -15261,20 +15263,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         // Starting one queued run or resuming the queue releases every queued run.
         const releasesQueue = command.type !== "queued-run.edit";
-        const records = yield* projectionStore
-          .getThreadRecords(
-            threadId,
-            ["runs", "messages"],
-            releasesQueue
-              ? { runStatuses: ["queued"], messageRoles: ["user"] }
-              : { runIds: [command.runId], messageIds: [] },
-          )
-          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
-        const runs = releasesQueue
-          ? queuedRunsInDeliveryOrder(records)
-          : records.runs.filter((candidate) => candidate.id === command.runId);
+        const readRecords = (filter: ProjectionRecordFilter) =>
+          projectionStore
+            .getThreadRecords(threadId, ["runs", "messages"], filter)
+            .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+        const editedRun = releasesQueue
+          ? undefined
+          : (yield* readRecords({ runIds: [command.runId], messageIds: [] })).runs[0];
+        const records = releasesQueue
+          ? yield* readRecords({ runStatuses: ["queued"], messageRoles: ["user"] })
+          : editedRun === undefined
+            ? { runs: [], messages: [] }
+            : yield* readRecords({ runIds: [editedRun.id], messageIds: [editedRun.userMessageId] });
+        const runs = releasesQueue ? queuedRunsInDeliveryOrder(records) : records.runs;
         for (const run of runs) {
-          // Edit and start refuse automatic deliveries, the only runs that follow the current modes.
+          // Unpinned scheduled sends follow the thread's current modes; other automatic ones can't be edited.
           const followsCurrent = followsCurrentConversation(
             records.messages.find((message) => message.id === run.userMessageId),
           );
