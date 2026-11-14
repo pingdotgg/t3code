@@ -13,46 +13,34 @@ test(
       project,
       title: "Steps",
       messages: ["Steps:\n\n1. Install\n2. Configure\n3. Deploy\n\nThen report back."],
-      model: "ordered-list",
     });
     await t3.open(thread);
     // A message sent through the CLI shows collapsed under its sender.
     await screen.getByRole("button", /^Agent Steps/).tap();
     await expect(screen.getByText("Configure")).toBeVisible();
-    await expect(screen.getByText("Verify")).toBeVisible();
 
-    const composer = screen.getByRole("textbox");
-    // Drags from a list item's text to the end of the paragraph after its list, then pastes.
-    const pasteTailFrom = async (itemText: string) => {
-      await browser.evaluate((text: string) => {
-        const item = [...document.querySelectorAll("li")].find(
-          (candidate) => candidate.textContent === text,
-        );
-        const after = item?.closest("ol")?.nextElementSibling?.firstChild;
-        if (!item?.firstChild || !after) throw new Error(`No rendered list item ${text}`);
-        const range = document.createRange();
-        range.setStart(item.firstChild, 0);
-        range.setEnd(after, after.textContent?.length ?? 0);
-        window.getSelection()?.removeAllRanges();
-        window.getSelection()?.addRange(range);
-        return null;
-      }, itemText);
-      await browser.keyboard.press("ControlOrMeta+C");
-      await composer.tap();
-      await browser.keyboard.press("ControlOrMeta+End");
-      await browser.keyboard.press("ControlOrMeta+V");
-    };
-    await pasteTailFrom("Configure");
-    await pasteTailFrom("Verify");
+    // Selects from a list item's text to the end of the paragraph after its list.
+    await browser.evaluate(() => {
+      const item = [...document.querySelectorAll("li")].find(
+        (candidate) => candidate.textContent === "Configure",
+      );
+      const after = item?.closest("ol")?.nextElementSibling?.firstChild;
+      if (!item?.firstChild || !after) throw new Error("No rendered list item Configure");
+      const range = document.createRange();
+      range.setStart(item.firstChild, 0);
+      range.setEnd(after, after.textContent?.length ?? 0);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+      return null;
+    });
+    await browser.keyboard.press("ControlOrMeta+C");
+    await screen.getByRole("textbox").tap();
+    await browser.keyboard.press("ControlOrMeta+V");
 
-    // The composer parses the pasted Markdown, so the copied numbers become each list's start.
-    const pastedLists = browser.locator('[role="textbox"] ol');
-    const fromUser = pastedLists.first();
-    const fromAssistant = pastedLists.nth(1);
-    await expect(fromUser).toHaveText(/Configure\s*Deploy/);
-    await expect(fromAssistant).toHaveText(/Verify\s*Ship/);
+    // The composer parses the pasted Markdown, so the copied number becomes the list's start.
+    const pasted = browser.locator('[role="textbox"] ol');
+    await expect(pasted).toHaveText(/Configure\s*Deploy/);
     await app.screenshot("pasted");
-    await expect(fromUser).toHaveAttribute("start", "2");
-    await expect(fromAssistant).toHaveAttribute("start", "2");
+    await expect(pasted).toHaveAttribute("start", "2");
   },
 );

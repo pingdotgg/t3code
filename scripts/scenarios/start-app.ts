@@ -21,9 +21,8 @@ import { ScenarioError } from "./shell.ts";
 
 // The dev runner's web port is 5733 plus an offset. Mirror of BASE_WEB_PORT in dev-runner.ts.
 const BASE_WEB_PORT = 5733;
-// Free recorded turns through the real adapter, from this checkout's replay agent rather than the
-// app's `devReplay`, so a recording added with a fix also plays on the base it is proven against.
-export const REPLAY = { instanceId: "scenarioReplay", model: "showcase" };
+// The replay agent `vp run dev` registers: free, recorded turns through the real adapter.
+const REPLAY = { instanceId: "devReplay", model: "showcase" };
 // Generated text (titles) cannot go to the replay agent: the server swaps an ACP agent for the
 // first enabled real provider, else its default, Codex. So every provider it could fall back to
 // is off and Codex is a command that only fails: no run reaches a paid model.
@@ -71,31 +70,16 @@ export const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: st
     path.join(home, "userdata/settings.json"),
     yield* encodeSettings({
       defaultModelSelection: REPLAY,
-      providerInstances: {
-        ...Object.fromEntries(
-          REAL_PROVIDERS.map((driver) => [
+      providerInstances: Object.fromEntries(
+        REAL_PROVIDERS.map((driver) => [
+          driver,
+          {
             driver,
-            {
-              driver,
-              enabled: false,
-              ...(driver === "codex" ? { config: { binaryPath: noModel } } : {}),
-            },
-          ]),
-        ),
-        [REPLAY.instanceId]: {
-          driver: "acpRegistry",
-          displayName: "Replay (scenario)",
-          config: {
-            source: "local",
-            commandPath: yield* HostProcess.ExecutablePath,
-            commandArgs: [
-              yield* path.fromFileUrl(
-                new URL("../../apps/server/scripts/dev-replay-agent.ts", import.meta.url),
-              ),
-            ],
+            enabled: false,
+            ...(driver === "codex" ? { config: { binaryPath: noModel } } : {}),
           },
-        },
-      },
+        ]),
+      ),
     }),
   );
 });

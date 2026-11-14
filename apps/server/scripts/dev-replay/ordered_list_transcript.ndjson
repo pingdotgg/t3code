@@ -1,4 +1,0 @@
-{"type":"transcript_start","provider":"acpRegistry","protocol":"acp.ndjson-jsonrpc","version":"1","scenario":"dev_replay_ordered_list","metadata":{"generatedBy":"hand-written for the dev replay agent"}}
-{"type":"expect_outbound","frame":{"kind":"request","method":"session/prompt","params":"<any>"}}
-{"type":"emit_inbound","frame":{"kind":"notification","method":"session/update","params":{"sessionId":"dev-replay-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Plan:\n\n1. Build\n2. Verify\n3. Ship\n\nThen it is done."}}}}}
-{"type":"emit_inbound","frame":{"kind":"response","method":"session/prompt","result":{"stopReason":"end_turn"}}}
