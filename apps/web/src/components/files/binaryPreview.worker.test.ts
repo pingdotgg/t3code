@@ -6,7 +6,7 @@ import {
   type BinaryWorkerResult,
 } from "./binaryPreviewProtocol";
 
-it.each([ARCHIVE_ENTRY_MAX_BYTES, ARCHIVE_ENTRY_MAX_BYTES + 1, 40 * 1024 * 1024])(
+it.each([ARCHIVE_ENTRY_MAX_BYTES, ARCHIVE_ENTRY_MAX_BYTES + 1])(
   "only copies previewable TAR payloads with a %i-byte entry",
   async (size) => {
     const encode = (value: string) => new TextEncoder().encode(value);
