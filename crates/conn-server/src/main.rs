@@ -7,6 +7,10 @@ use conn_server::serve::{ServeOptions, serve};
 fn main() {
     // Runs and exits for every command but `serve`.
     let options = ServeOptions::from_args();
+    // `fixPath`: the login shell's PATH for every child and every program lookup, read before
+    // the providers are detected (Codex looks for its binary on that PATH). Blocking is fine:
+    // the runtime does not exist yet.
+    conn_support::login_env::hydrate();
     let mut claude = ClaudeConfig {
         // `conn-files` stores attachments here; the CLI may read them.
         attachments_dir: Some(options.state_dir.join("attachments")),

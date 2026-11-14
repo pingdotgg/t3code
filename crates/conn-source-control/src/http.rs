@@ -6,7 +6,13 @@
 //! TLS is rustls with Mozilla's roots (the set Node bundles). Plain `http://` exists for tests
 //! against a local fake server and for a host the user configured with an `http` base URL.
 
-use std::{sync::Arc, sync::OnceLock, time::Duration};
+use std::{
+    io,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+    sync::OnceLock,
+    time::Duration,
+};
 
 use http_body_util::{BodyExt, Full};
 use hyper::{
@@ -15,7 +21,7 @@ use hyper::{
     header::{HeaderName, HeaderValue},
 };
 use hyper_util::rt::TokioIo;
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, lookup_host};
 
 use crate::secret::Secret;
 
@@ -66,6 +72,17 @@ pub enum HeaderText {
     },
 }
 
+/// Whether a request may dial a link-local address (169.254.0.0/16, fe80::/10), where a cloud
+/// host answers with its metadata and credentials.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LinkLocal {
+    #[default]
+    Allow,
+    /// Checked on the addresses the host name resolves to, and only the addresses that pass
+    /// are dialled, so a second lookup cannot change the answer.
+    Refuse,
+}
+
 #[derive(Clone, Debug)]
 pub struct HttpRequest {
     pub method: Method,
@@ -75,6 +92,7 @@ pub struct HttpRequest {
     pub body: Option<Vec<u8>>,
     pub timeout: Duration,
     pub max_response_bytes: usize,
+    pub link_local: LinkLocal,
 }
 
 impl HttpRequest {
@@ -86,6 +104,7 @@ impl HttpRequest {
             body: None,
             timeout: DEFAULT_TIMEOUT,
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
+            link_local: LinkLocal::Allow,
         }
     }
 
@@ -160,6 +179,8 @@ struct Target<'a> {
 }
 
 fn parse_url(url: &str) -> Result<Target<'_>, HttpError> {
+    // A fragment never goes on the wire, also after a bare host (`https://host#top`).
+    let url = url.split('#').next().unwrap_or(url);
     let (tls, rest) = if let Some(rest) = url.strip_prefix("https://") {
         (true, rest)
     } else if let Some(rest) = url.strip_prefix("http://") {
@@ -290,6 +311,14 @@ fn resolve_location(base: &str, location: &str) -> Option<String> {
     if location.starts_with('/') {
         return Some(format!("{origin}{location}"));
     }
+    // A query or a fragment alone replaces only that part of the base.
+    if location.starts_with('?') {
+        let path = base.split(['?', '#']).next()?;
+        return Some(format!("{path}{location}"));
+    }
+    if location.starts_with('#') {
+        return base.split('#').next().map(str::to_owned);
+    }
     let path = base.get(origin.len()..)?.split(['?', '#']).next()?;
     let folder = path.rsplit_once('/').map_or("", |(head, _)| head);
     Some(format!("{origin}{folder}/{location}"))
@@ -312,7 +341,7 @@ async fn exchange(target: &Target<'_>, request: &HttpRequest) -> Result<HttpResp
         host: host.clone(),
         message,
     };
-    let tcp = TcpStream::connect((target.host, target.port))
+    let tcp = dial(target, request.link_local)
         .await
         .map_err(|e| connect(e.to_string()))?;
     let _ = tcp.set_nodelay(true);
@@ -334,6 +363,42 @@ async fn exchange(target: &Target<'_>, request: &HttpRequest) -> Result<HttpResp
     } else {
         round_trip(TokioIo::new(tcp), built, request.max_response_bytes, &host).await
     }
+}
+
+/// 169.254.0.0/16, fe80::/10, and an IPv4-mapped IPv6 form of the first.
+fn is_link_local(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_link_local(),
+        IpAddr::V6(v6) => v6
+            .to_ipv4_mapped()
+            .map_or_else(|| v6.is_unicast_link_local(), |v4| v4.is_link_local()),
+    }
+}
+
+/// Opens the connection, trying each address the host resolves to in turn, as
+/// `TcpStream::connect` does; with [`LinkLocal::Refuse`] a link-local address is skipped.
+async fn dial(target: &Target<'_>, link_local: LinkLocal) -> io::Result<TcpStream> {
+    if link_local == LinkLocal::Allow {
+        return TcpStream::connect((target.host, target.port)).await;
+    }
+    let addresses: Vec<SocketAddr> = lookup_host((target.host, target.port)).await?.collect();
+    let mut last = None;
+    for address in addresses {
+        if is_link_local(address.ip()) {
+            last.get_or_insert_with(|| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "link-local addresses are refused",
+                )
+            });
+            continue;
+        }
+        match TcpStream::connect(address).await {
+            Ok(stream) => return Ok(stream),
+            Err(error) => last = Some(error),
+        }
+    }
+    Err(last.unwrap_or_else(|| io::Error::new(io::ErrorKind::NotFound, "the host has no address")))
 }
 
 fn build_request(
@@ -578,6 +643,15 @@ mod tests {
         );
         assert_eq!(resolve_location(base, "ftp://x/y"), None);
         assert_eq!(
+            resolve_location(base, "?page=2").as_deref(),
+            Some("http://127.0.0.1:9/2.0/repositories/ws/old?page=2")
+        );
+        assert_eq!(
+            resolve_location("http://h.test/a/b#f", "?q").as_deref(),
+            Some("http://h.test/a/b?q")
+        );
+        assert_eq!(resolve_location(base, "#x").as_deref(), Some(base));
+        assert_eq!(
             origin_of("HTTPS://Api.Bitbucket.org/2.0").as_deref(),
             Some("https://api.bitbucket.org")
         );
@@ -614,6 +688,56 @@ mod tests {
     }
 
     #[test]
+    fn link_local_means_169_254_and_fe80_only() {
+        for ip in [
+            "169.254.169.254",
+            "169.254.0.1",
+            "fe80::1",
+            "febf::1",
+            "::ffff:169.254.1.1",
+        ] {
+            assert!(is_link_local(ip.parse().expect("ip")), "{ip}");
+        }
+        for ip in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.1",
+            "100.64.0.1",
+            "::1",
+            "fc00::1",
+            "fec0::1",
+            "8.8.8.8",
+        ] {
+            assert!(!is_link_local(ip.parse().expect("ip")), "{ip}");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_refused_link_local_address_is_never_dialled() {
+        for url in ["http://169.254.169.254/latest", "http://[fe80::1]:9/x"] {
+            let request = HttpRequest {
+                link_local: LinkLocal::Refuse,
+                ..HttpRequest::new(Method::Get, url).timeout(Duration::from_secs(20))
+            };
+            let started = std::time::Instant::now();
+            let error = send(request).await.expect_err("refused");
+            assert!(
+                matches!(&error, HttpError::Connect { message, .. } if message == "link-local addresses are refused"),
+                "{url}: {error:?}"
+            );
+            assert!(started.elapsed() < Duration::from_secs(5), "no dial: {url}");
+        }
+        // Loopback stays reachable, for a local model server.
+        let server = fake::serve(|_| (200, "{}".into())).await;
+        let request = HttpRequest {
+            link_local: LinkLocal::Refuse,
+            ..HttpRequest::new(Method::Get, format!("{}/v1/models", server.base))
+        };
+        assert_eq!(send(request).await.expect("answer").status, 200);
+    }
+
+    #[test]
     fn parses_urls() {
         let t = parse_url("https://api.github.com/user?x=1").expect("parses");
         assert!(t.tls, "https");
@@ -628,6 +752,13 @@ mod tests {
             "no credentials in URLs"
         );
         assert!(parse_url("ftp://host/").is_err(), "only http and https");
+        let t = parse_url("https://host.test#top").expect("parses");
+        assert_eq!(
+            (t.host, t.port, t.authority, t.path),
+            ("host.test", 443, "host.test", "/")
+        );
+        let t = parse_url("http://h.test:8080/a?b=1#c").expect("parses");
+        assert_eq!((t.host, t.port, t.path), ("h.test", 8080, "/a?b=1"));
     }
 
     #[tokio::test(flavor = "current_thread")]

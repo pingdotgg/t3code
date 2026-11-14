@@ -323,4 +323,4 @@ fn is_small_model(id: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

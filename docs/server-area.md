@@ -180,10 +180,11 @@ that list.
 
 - **Payload limits.** The generated contract types carry no schema checks. `limits.rs` now
   applies the length, pattern, range and entry-count checks of `assets.createUrl`,
+  `server.listTextGeneratorModels` (the `ProviderInstanceId` of `id`, the base URL's length),
   `terminal.open` and `terminal.attach`, generated from the schema AST by
   `tools/gen-upstream.mjs`. A terminal env entry with a bad key (`1FOO`) is dropped, as
   Effect's `Record` decode drops it; more than 128 entries, a key over 128 or a value over
-  8,192 UTF-16 units fail. Proof: `tools/limits-cases.json` (37 cases) through the T3
+  8,192 UTF-16 units fail. Proof: `tools/limits-cases.json` (43 cases) through the T3
   contract's decode (`limits-diff.mjs`, a check step) and through `limits::check` (a test).
   Add a method tag to `LIMITED_METHODS` to cover it. The hand limits in `methods/files.rs`
   could move to this table. Difference left: Effect trims a `TrimmedNonEmptyString` before it
@@ -245,6 +246,19 @@ that list.
   lists. Titles: no fork source section, no linked pull request or issue context
   (`ThreadTitleLinks.ts`), assistant citation links are not turned into plain text, no
   fallback to another model when the chosen one is unusable.
+- **Stricter than the T3 server, on purpose** (security faults T3 also has; see
+  `docs/status.md`, "Faults found in the T3 server"):
+  - *The saved key and the marker.* An unsaved config whose key is the redaction marker gets
+    the saved key only when the caller holds `providers:manage`; otherwise no key is sent
+    (`methods/text_generation.rs`). T3 fills it in for any `settings:write` caller, to any
+    host. A legitimate user loses nothing: only the generator edit form sends the marker, and
+    saving that form needs `providers:manage`.
+  - *Link-local hosts.* A base URL whose host resolves to a link-local address
+    (169.254.0.0/16, fe80::/10, where a cloud host serves its metadata and credentials) is
+    refused: the check runs on the addresses of the one lookup, and only addresses that pass
+    are dialled (`LinkLocal::Refuse` in `conn_source_control::http`). The client sees "Couldn't
+    reach …". Loopback and private ranges stay open for Ollama, LM Studio and similar. A user
+    loses only a model server on a link-local address.
 
 ### Other uses of text generation in the T3 server
 

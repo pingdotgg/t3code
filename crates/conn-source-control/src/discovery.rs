@@ -561,7 +561,9 @@ pub(crate) mod stub {
         }
 
         /// Writes `<dir>/<name>`: a shell script that appends `argv` (one line, args joined by a
-        /// space) and the listed variables to `<dir>/<name>.log`, then runs `body`.
+        /// space) and the listed variables to `<dir>/<name>.log`, then runs `body`. An argument
+        /// that is empty or holds white space, a quote or a backslash is logged in single
+        /// quotes, shell style, so the line reads back as one argv.
         ///
         /// The script writes its whole record with one `printf`, so two children that run at
         /// the same time cannot mix their lines in the log.
@@ -572,14 +574,22 @@ pub(crate) mod stub {
             for var in record_env {
                 env_lines.push_str(&format!("  env {var}=${{{var}-<unset>}}\n"));
             }
+            // Each `'` becomes `'\''`, with no outside program: a test's `PATH` may hold only
+            // the stubs.
+            let quote_arg = r#"q=''; r="$a"; while :; do case "$r" in *\'*) q="$q${r%%\'*}'\\''"; r="${r#*\'}" ;; *) q="$q$r"; break ;; esac; done; rec="$rec '$q'""#;
             let script = format!(
-                "#!/bin/sh\nrec='argv'\nfor a in \"$@\"; do rec=\"$rec $a\"; done\nrec=\"$rec\n{env_lines}\"\nprintf '%s' \"$rec\" >> '{log}'\n{body}\n",
-                log = log.display()
+                "#!/bin/sh\nrec='argv'\nfor a in \"$@\"; do\n  case \"$a\" in\n    ''|*' '*|*'\t'*|*\"'\"*|*'\"'*|*'\\'*|*'\n'*) {quote_arg} ;;\n    *) rec=\"$rec $a\" ;;\n  esac\ndone\nrec=\"$rec\n{env_lines}\"\nprintf '%s' \"$rec\" >> {log}\n{body}\n",
+                log = Self::sh_quote(&log.to_string_lossy())
             );
             std::fs::write(&path, script).expect("write stub");
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
                 .expect("chmod stub");
             path.to_string_lossy().into_owned()
+        }
+
+        /// A shell word for `text` in single quotes.
+        fn sh_quote(text: &str) -> String {
+            format!("'{}'", text.replace('\'', "'\\''"))
         }
 
         /// `PATH` for a child: this folder first, then the server's own `PATH`.
@@ -613,6 +623,34 @@ pub(crate) mod stub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The stub log reads back as one argv: plain arguments as before, the rest in quotes; a
+    /// quote in the stub folder's name does not break the script.
+    #[cfg(unix)]
+    #[test]
+    fn stub_logs_quote_ambiguous_arguments() {
+        let stubs = stub::StubDir::new("it's");
+        let path = stubs.executable("tool", &[], "exit 0");
+        let status = std::process::Command::new(&path)
+            .args([
+                "plain",
+                "--x=1",
+                "two words",
+                "",
+                "it's",
+                "back\\slash",
+                "line\nbreak",
+                "tab\there",
+            ])
+            .env("PATH", "/nonexistent")
+            .status()
+            .expect("run stub");
+        assert!(status.success());
+        assert_eq!(
+            stubs.log("tool"),
+            "argv plain --x=1 'two words' '' 'it'\\''s' 'back\\slash' 'line\nbreak' 'tab\there'\n"
+        );
+    }
 
     #[test]
     fn auth_text_helpers_follow_discovery_ts() {
