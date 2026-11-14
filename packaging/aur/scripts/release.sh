@@ -8,8 +8,10 @@ pkgrel="${PKGREL:-1}"
 
 if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   pkgname='t3code-bin'
+  asset_name='T3-Code-x86_64.AppImage'
 elif [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[0-9]+$ ]]; then
   pkgname='t3code-nightly-bin'
+  asset_name='T3-Code-Nightly-x86_64.AppImage'
 else
   echo "Release $tag does not publish an AUR package."
   exit 0
@@ -17,14 +19,17 @@ fi
 
 version="${tag#v}"
 pkgver="${version//-/_}"
-asset_name="T3-Code-${version}-x86_64.AppImage"
 release_json="$(gh api "repos/$repo/releases/tags/$tag")"
-asset_digest="$(jq -r --arg name "$asset_name" \
-  '.assets[] | select(.name == $name) | .digest' <<<"$release_json")"
-appimage_sha256="${asset_digest#sha256:}"
+# Older releases publish the AppImage under a versioned name.
+for asset_name in "$asset_name" "T3-Code-${version}-x86_64.AppImage"; do
+  asset_digest="$(jq -r --arg name "$asset_name" \
+    '.assets[] | select(.name == $name) | .digest' <<<"$release_json")"
+  appimage_sha256="${asset_digest#sha256:}"
+  [[ "$appimage_sha256" =~ ^[0-9a-f]{64}$ ]] && break
+done
 
 if [[ ! "$appimage_sha256" =~ ^[0-9a-f]{64}$ ]]; then
-  echo "Release $tag is missing $asset_name or its SHA-256 digest." >&2
+  echo "Release $tag is missing its x86_64 AppImage or its SHA-256 digest." >&2
   exit 1
 fi
 
@@ -39,6 +44,7 @@ cd "$package_dir"
 sed -Ei \
   -e "s/^pkgver=.*/pkgver=$pkgver/" \
   -e "s/^pkgrel=.*/pkgrel=$pkgrel/" \
+  -e "s/^_asset=.*/_asset='$asset_name'/" \
   -e "/# AppImage$/s/'[0-9a-f]{64}'/'$appimage_sha256'/" \
   -e "/# upstream license$/s/'[0-9a-f]{64}'/'$license_sha256'/" \
   PKGBUILD

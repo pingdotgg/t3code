@@ -1,9 +1,17 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  SourceControlProviderKind,
+  type ClientSettings,
+} from "@t3tools/contracts";
 import { EnvironmentId, ProjectId, type PullRequestDetailView } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-const state = vi.hoisted(() => ({ update: vi.fn(), canUpdate: true }));
+const state = vi.hoisted(() => ({
+  update: vi.fn(),
+  canUpdate: true,
+  timestampFormat: "locale" as "locale" | "12-hour" | "24-hour",
+}));
 
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
@@ -13,6 +21,13 @@ vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
   readEnvironmentScope: () => true,
   useEnvironmentScope: () => true,
+}));
+vi.mock(import("~/hooks/useSettings"), async (original) => ({
+  ...(await original()),
+  useClientSettings: ((select?: (settings: ClientSettings) => unknown) => {
+    const settings = { ...DEFAULT_CLIENT_SETTINGS, timestampFormat: state.timestampFormat };
+    return select ? select(settings) : settings;
+  }) as never,
 }));
 vi.mock(import("~/state/pullRequests"), async (original) => {
   const actual = await original();
@@ -35,6 +50,7 @@ function setup() {
   state.update.mockReset();
   state.update.mockResolvedValue({ _tag: "Success", value: undefined });
   state.canUpdate = true;
+  state.timestampFormat = "locale";
 }
 
 import { act, render as renderUi } from "../../../test/render";
@@ -230,4 +246,27 @@ it("fixes an overview thread as its opening remark, since it has no line to atta
 
   await userEvent.click(screen.getByRole("button", { name: "Fix in a thread" }));
   expect(onFixFinding).toHaveBeenCalledWith({ kind: "comment", comment: remark });
+});
+
+it("shows a comment's exact time in the chosen 24-hour clock", async () => {
+  setup();
+  state.timestampFormat = "24-hour";
+  const createdAt = "2026-09-01T17:30:00Z";
+  const comment = {
+    id: "10",
+    kind: "review-comment" as const,
+    body: "A remark",
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    createdAt,
+    url: null,
+    path: null,
+    reviewState: null,
+  };
+  await using screen = await render({ ...detail, comments: [comment], commentCount: 1 });
+
+  await userEvent.hover(screen.container.querySelector(`time[datetime="${createdAt}"]`)!);
+  const expected = new Date(createdAt).toLocaleString(undefined, { hour12: false });
+  await vi.waitFor(() =>
+    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toBe(expected),
+  );
 });
