@@ -485,11 +485,15 @@ function searchItem(number: number, repository: string, updatedAt: string) {
   };
 }
 
-function searchPage(nodes: ReadonlyArray<unknown>, hasNextPage = false) {
+function searchPage(
+  nodes: ReadonlyArray<unknown>,
+  hasNextPage = false,
+  endCursor: string | null = hasNextPage ? "next" : null,
+) {
   return output(
     encodeJson({
       data: {
-        search: { pageInfo: { hasNextPage, endCursor: hasNextPage ? "next" : null }, nodes },
+        search: { pageInfo: { hasNextPage, endCursor }, nodes },
       },
     }),
   );
@@ -1638,18 +1642,12 @@ layer("GitHubPullRequestApi.layer", (it) => {
           ),
         )
         .mockReturnValueOnce(
-          // Search pages hold at most 100 rows, so a limit of 100 leaves no room for the extra one.
           Effect.succeed(
-            searchPage(
-              Array.from({ length: 100 }, (_, index) =>
-                searchItem(index + 1, "acme/web", "2026-07-03T00:00:00Z"),
-              ),
-              true,
-            ),
+            searchPage([searchItem(1, "acme/web", "2026-07-03T00:00:00Z")], true, null),
           ),
         );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const read = (limit: number) =>
+      const read = () =>
         cli.searchPullRequests({
           cwd: "/w",
           host: "github.com",
@@ -1657,11 +1655,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
           state: "open",
           involvement: "all",
           viewer: "bilal",
-          limit,
+          limit: 2,
         });
 
-      const overflowing = yield* read(2);
-      const capped = yield* read(100);
+      const overflowing = yield* read();
+      const capped = yield* read();
 
       assert.strictEqual(overflowing.items.length, 2);
       assert.isTrue(overflowing.truncated);

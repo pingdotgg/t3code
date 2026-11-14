@@ -393,13 +393,13 @@ type GitHubPullRequestRow = ReturnType<typeof toPullRequestRows>["rows"][number]
 interface GitHubPullRequestListPage {
   readonly rows: ReadonlyArray<GitHubPullRequestRow>;
   readonly rawCount: number;
+  readonly hasNextPage: boolean;
   readonly endCursor: string | null;
 }
 
 /**
- * Search cannot exclude rows by number, so a page drops the rows a cursor already delivered at
- * its inclusive boundary and leaves them out of its count, and `collectPages` reads on past them.
- * Search answers at most 1,000 rows a query, so a run of more equal times than that stays cut off.
+ * Search cannot exclude rows by number, so delivered rows at the inclusive boundary are dropped
+ * here, uncounted. Search answers 1,000 rows a query, so a longer run of equal times stays cut off.
  */
 function toListPage(
   page: ReturnType<typeof toPullRequestRows>,
@@ -417,14 +417,12 @@ function toListPage(
   return {
     rows,
     rawCount: page.rawCount - (page.rows.length - rows.length),
+    hasNextPage: page.hasNextPage,
     endCursor: page.endCursor,
   };
 }
 
-/**
- * Pages of up to a hundred until `rows` have arrived or GitHub has no more. Each page is told
- * only the rows still missing; a page that drops delivered rows asks GitHub for room for them.
- */
+/** Pages of up to a hundred until `rows` have arrived or GitHub has no more. */
 const collectPages = Effect.fn("GitHubPullRequestApi.collect")(function* (
   rows: number,
   page: (
@@ -442,7 +440,11 @@ const collectPages = Effect.fn("GitHubPullRequestApi.collect")(function* (
     const read: GitHubPullRequestListPage = yield* page(after, rows - countRows(pages));
     pages.push(read);
     const next = read.endCursor;
-    if (next === null) break;
+    if (next === null) {
+      // GitHub can claim more without a cursor to reach it.
+      truncated = read.hasNextPage;
+      break;
+    }
     // `truncated` also covers a cursor GitHub repeated before `rows` arrived.
     if (seen.has(next) || countRows(pages) >= rows) {
       truncated = true;
