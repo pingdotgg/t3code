@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import {
+  BLOB_BATCH_FILES,
   LOCATION_CACHE_CAPACITY,
   make,
   MAX_DIFF_SPAWNS,
@@ -46,6 +47,9 @@ function change(
   return { path, oldPath: path, changeKind, objectId: "8f80", originalObjectId: "0ca4" };
 }
 
+/** A batch that returns nothing, so every file takes the per-file read. */
+const NO_BLOBS = { readBlobs: () => Effect.succeed(new Map()) };
+
 function side(prefix: string, lines: number, width: number): string {
   const pad = "z".repeat(width);
   return `${Array.from({ length: lines }, (_, line) => `${prefix} ${line} ${pad}`).join("\n")}\n`;
@@ -69,6 +73,7 @@ const readSlice = (input: {
     const provider = yield* make.pipe(
       Effect.provide(
         Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+          ...NO_BLOBS,
           getPullRequest: () => Effect.succeed(PULL_REQUEST),
           listIterations: () => Effect.succeed([ITERATION]),
           listIterationChanges: () =>
@@ -199,6 +204,7 @@ describe("getDiff reads", () => {
       const provider = yield* make.pipe(
         Effect.provide(
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            ...NO_BLOBS,
             getPullRequest: () => Effect.succeed(PULL_REQUEST),
             listIterations: () => Effect.succeed([ITERATION]),
             listIterationChanges: () =>
@@ -223,6 +229,179 @@ describe("getDiff reads", () => {
       yield* Effect.all([readDiff(7), readDiff(8)], { concurrency: 2 });
 
       expect(peakInFlight).toBeLessThanOrEqual(MAX_DIFF_SPAWNS);
+    }),
+  );
+
+  it.effect("reads a slice's files in one blob batch, and per file only what it missed", () =>
+    Effect.gen(function* () {
+      const paths = ["a.ts", "b.ts", "c.ts", "gone.ts", "added.ts"];
+      const changes = [
+        ...["a.ts", "b.ts", "c.ts"].map((path) => ({
+          ...change(path),
+          objectId: `${path.toUpperCase()}-NEW`,
+          originalObjectId: `${path.toUpperCase()}-OLD`,
+        })),
+        { ...change("gone.ts", "deleted"), objectId: null, originalObjectId: "GONE-OLD" },
+        { ...change("added.ts", "new"), objectId: "ADDED-NEW", originalObjectId: null },
+      ];
+      const batches: ReadonlyArray<string>[] = [];
+      const reads: string[] = [];
+
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            listIterations: () => Effect.succeed([ITERATION]),
+            listIterationChanges: () => Effect.succeed({ changes, truncated: false }),
+            readBlobs: (input) =>
+              Effect.sync(() => {
+                batches.push(input.objectIds);
+                // Azure left one side of b.ts out, as it does for a file only it can decode.
+                return new Map(
+                  input.objectIds
+                    .filter((id) => id !== "B.TS-OLD")
+                    .map((id) => [
+                      id.toLowerCase(),
+                      {
+                        contents: side(id.endsWith("NEW") ? "new" : "old", 2, 4),
+                        isBinary: false,
+                      },
+                    ]),
+                );
+              }),
+            readItemContent: (item) =>
+              Effect.sync(() => {
+                reads.push(`${item.commit}:${item.path}`);
+                return {
+                  contents: side(item.commit === ITERATION.headCommit ? "new" : "old", 2, 4),
+                  isBinary: false,
+                };
+              }),
+          }),
+        ),
+      );
+
+      const slice = yield* provider.getDiff({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "dev.azure.com",
+        number: 7,
+      });
+
+      expect(patchedPaths(slice.patch)).toEqual(paths);
+      expect(slice.patch.match(/^@@ /gmu)).toHaveLength(paths.length);
+      expect(batches).toEqual([
+        [
+          "A.TS-OLD",
+          "A.TS-NEW",
+          "B.TS-OLD",
+          "B.TS-NEW",
+          "C.TS-OLD",
+          "C.TS-NEW",
+          "GONE-OLD",
+          "ADDED-NEW",
+        ],
+      ]);
+      expect(reads.toSorted()).toEqual(["base:b.ts", "head:b.ts"]);
+    }),
+  );
+
+  it.effect("starts a new blob batch where the last one's files run out", () =>
+    Effect.gen(function* () {
+      const paths = Array.from({ length: BLOB_BATCH_FILES + 3 }, (_, at) => `f${at}.ts`);
+      // Added lines that bring the slice near its edit budget by file 96, so the read batches
+      // there narrow to 3 and the one from file 99 would reach past the blob batch.
+      const added = (at: number) => (at < 60 ? 41 : at < 96 ? 40 : at < 99 ? 0 : 10);
+      const batchSizes: number[] = [];
+      let fileReads = 0;
+
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            listIterations: () => Effect.succeed([ITERATION]),
+            listIterationChanges: () =>
+              Effect.succeed({
+                changes: paths.map((path) => ({
+                  ...change(path),
+                  objectId: `${path}-new`,
+                  originalObjectId: `${path}-old`,
+                })),
+                truncated: false,
+              }),
+            readBlobs: (input) =>
+              Effect.sync(() => {
+                batchSizes.push(input.objectIds.length);
+                return new Map(
+                  input.objectIds.map((id) => {
+                    const at = Number(id.slice(1, id.indexOf(".")));
+                    const lines = id.endsWith("-new") ? added(at) : 0;
+                    return [
+                      id,
+                      { contents: lines === 0 ? "" : side("+", lines, 1), isBinary: false },
+                    ];
+                  }),
+                );
+              }),
+            readItemContent: () =>
+              Effect.sync(() => ((fileReads += 1), { contents: "", isBinary: false })),
+          }),
+        ),
+      );
+
+      const slice = yield* provider.getDiff({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "dev.azure.com",
+        number: 7,
+      });
+
+      expect(patchedPaths(slice.patch)).toHaveLength(paths.length);
+      expect(batchSizes).toEqual([2 * BLOB_BATCH_FILES, 6]);
+      expect(fileReads).toBe(0);
+    }),
+  );
+
+  it.effect("serves a later slice from the iteration and change list the first one read", () =>
+    Effect.gen(function* () {
+      const paths = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts"];
+      let iterationReads = 0;
+      let changeReads = 0;
+
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            ...NO_BLOBS,
+            getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            listIterations: () => Effect.sync(() => ((iterationReads += 1), [ITERATION])),
+            listIterationChanges: () =>
+              Effect.sync(() => {
+                changeReads += 1;
+                return { changes: paths.map((path) => change(path)), truncated: false };
+              }),
+            readItemContent: (item) =>
+              Effect.succeed({
+                contents: side(item.commit === ITERATION.headCommit ? "new" : "old", 100, 900),
+                isBinary: false,
+              }),
+          }),
+        ),
+      );
+      const readDiff = (cursor?: string) =>
+        provider.getDiff({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "dev.azure.com",
+          number: 7,
+          ...(cursor === undefined ? {} : { cursor }),
+        });
+
+      const first = yield* readDiff();
+      const second = yield* readDiff(first.nextCursor ?? undefined);
+
+      expect(patchedPaths(second.patch)).toEqual(["c.ts", "d.ts"]);
+      expect(iterationReads).toBe(1);
+      expect(changeReads).toBe(1);
     }),
   );
 
@@ -321,6 +500,7 @@ describe("what one diff slice spends", () => {
       const provider = yield* make.pipe(
         Effect.provide(
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            ...NO_BLOBS,
             getPullRequest: (input) =>
               Effect.sync(() => {
                 readsOf.set(input.number, (readsOf.get(input.number) ?? 0) + 1);
