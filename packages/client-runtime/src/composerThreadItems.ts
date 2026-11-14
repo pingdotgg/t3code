@@ -87,9 +87,9 @@ export interface ComposerEnvironmentItem {
 }
 
 /**
- * The user's machines the `@` picker offers, so the agent can link or work there. The
- * composer's own environment is left out. Like threads, they need a query: bare `@` stays a
- * file picker.
+ * The user's machines the `@` picker offers, so the agent can link or work there. That includes
+ * the thread's own machine, which the user may still want to name. Like threads, they need a
+ * query: bare `@` stays a file picker.
  */
 export function matchComposerEnvironmentItems(input: {
   environments: ReadonlyArray<ComposerEnvironmentCandidate>;
@@ -99,17 +99,14 @@ export function matchComposerEnvironmentItems(input: {
   const query = input.query.trim().toLowerCase();
   if (query.length === 0) return [];
   return input.environments
-    .filter(
-      (environment) =>
-        environment.environmentId !== input.environmentId &&
-        environment.label.toLowerCase().includes(query),
-    )
+    .filter((environment) => environment.label.toLowerCase().includes(query))
     .map((environment) => ({
       id: `environment:${environment.environmentId}`,
       type: "environment",
       environmentId: environment.environmentId,
       machine: environment.machine,
       label: environment.label,
-      description: "Machine",
+      description:
+        environment.environmentId === input.environmentId ? "This thread's machine" : "Machine",
     }));
 }
