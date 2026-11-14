@@ -1,22 +1,11 @@
 import { WORKTREE_SETUP_ROW_ID, attachCreatedThreadSummaries, attachTrailingToolGroupsToAssistant, deriveActiveVisualResponseRunIds, deriveTurnFolds, deriveUnsettledRunId, failedTimelineRunIds, itemizedFailedRunIds, lastResponseBoundaryIndex, liveSubagentCardEntryIds, messageIsSteer, timelineEntryIsCompaction, timelineRowEntries, timelineRowIsOwnUserMessage, timelineRowIsWorkLog } from "./MessagesTimeline.logic-03-derive.ts";
 import { LIVE_ACTIVITY_ROW_ID, completeSupersededReplyEntryIds, deriveSupersededAttemptFolds, deriveTerminalAssistantMessageIds, expandedWorkGroupRow, singleToolCallLabel, timelineEntryRunId, workEntryIsActiveTurnActivity, workEntryIsVisibleInGroup, workGroupId } from "./MessagesTimeline.logic-04-timeline.ts";
 import type { MessagesTimelineRow, TimelineLatestRun } from "./MessagesTimeline.logic-04-timeline.ts";
+import { groupOwnUserMessages } from "./messagesTimeline.logic-05-grouping.ts";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { claudeResumeCompactionAge } from "@t3tools/shared/claudeCompaction";
-import {
-  IDLE_COMPACTING_LABELS,
-  IDLE_COMPACTION_TITLES,
-} from "@t3tools/client-runtime/user-message";
-import {
-  liveActivityToolStatus,
-  normalizeCompactToolLabel,
-  resolveWorkEntryToolPresentation,
-  summarizeToolGroup,
-  toolGroupAction,
-  toolGroupSummaryKind,
-  contextCompactionTokenCounts,
-  type ToolGroupSummaryKind,
-} from "@t3tools/client-runtime/work-log/presentation";
+import { IDLE_COMPACTING_LABELS, IDLE_COMPACTION_TITLES } from "@t3tools/client-runtime/user-message";
+import { liveActivityToolStatus, normalizeCompactToolLabel, resolveWorkEntryToolPresentation, summarizeToolGroup, toolGroupAction, toolGroupSummaryKind, contextCompactionTokenCounts, type ToolGroupSummaryKind } from "@t3tools/client-runtime/work-log/presentation";
 import {
   deriveRevertTurnCountByUserMessageId,
   formatDuration,
@@ -801,18 +790,5 @@ export function deriveMessagesTimelineRows(input: {
   const result = attachTrailingToolGroupsToAssistant(
     attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
   );
-  return result.map((row, index) => {
-    if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])) {
-      return { ...row, continuesWorkLog: true };
-    }
-    if (!timelineRowIsOwnUserMessage(row)) return row;
-    const previous = result[index - 1];
-    const groupedWithNext = timelineRowIsOwnUserMessage(result[index + 1]);
-    const groupedWithPrevious = timelineRowIsOwnUserMessage(previous);
-    const continuesSteer =
-      groupedWithPrevious && messageIsSteer(row.message) && messageIsSteer(previous.message);
-    if (!groupedWithNext && !groupedWithPrevious) return row;
-    return { ...row, groupedWithNext, groupedWithPrevious, continuesSteer };
-  });
+  return groupOwnUserMessages(result);
 }
-

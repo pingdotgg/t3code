@@ -5,12 +5,10 @@ import {
   previewStreamModifiers,
   type PreviewStreamClient,
   type PreviewStreamControl,
-  type PreviewStreamDownload,
   type PreviewStreamFileChooser,
   uploadPreviewStreamFiles,
   type PreviewStreamInput,
   type PreviewStreamMouseButton,
-  type PreviewStreamPointer,
   type PreviewStreamViewport,
   previewStreamHostSetupMessage,
 } from "@t3tools/client-runtime/preview/server-browser-stream";
@@ -41,7 +39,15 @@ import { toastManager } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
 import { observeResize } from "~/lib/observeResize";
+import {
+  historyDeltaOf,
+  pressedButtonOf,
+} from "./serverBrowserInputMappings";
+import { copyPageText, offerDownload } from "./serverBrowserFeedback";
+import { placeAgentCursor, type AgentCursorPlacement } from "./agentCursorPlacement";
 import { ServerBrowserViewport } from "./ServerBrowserViewport";
+
+export type { AgentCursorPlacement } from "./agentCursorPlacement";
 
 export interface ServerBrowserHandle {
   readonly navigate: (url: string) => void;
@@ -97,48 +103,6 @@ interface TouchProbe {
 const buttonOf = (button: number): PreviewStreamMouseButton =>
   button === 0 ? "left" : button === 1 ? "middle" : button === 2 ? "right" : "none";
 
-const pressedButtonOf = (buttons: number): PreviewStreamMouseButton =>
-  buttons & 1 ? "left" : buttons & 2 ? "right" : buttons & 4 ? "middle" : "none";
-
-// Mouse thumb buttons: `button === 3` is Back, `button === 4` is Forward.
-const historyDeltaOf = (button: number): -1 | 1 | null =>
-  button === 3 ? -1 : button === 4 ? 1 : null;
-
-/** Browsers may refuse a write that arrives after the key press; a toast button is a fresh gesture. */
-async function copyPageText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const id = toastManager.add({
-      type: "info",
-      title: "The page copied text",
-      actionProps: {
-        children: "Copy",
-        onClick: () => {
-          toastManager.close(id);
-          void navigator.clipboard.writeText(text).catch(() => undefined);
-        },
-      },
-    });
-  }
-}
-
-function offerDownload(download: PreviewStreamDownload) {
-  const id = toastManager.add({
-    type: "info",
-    title: `Downloaded ${download.fileName}`,
-    actionProps: {
-      children: "Save",
-      onClick: () => {
-        toastManager.close(id);
-        const anchor = document.createElement("a");
-        anchor.href = download.url;
-        anchor.download = download.fileName;
-        anchor.click();
-      },
-    },
-  });
-}
 
 export function ServerBrowserSurface(props: {
   readonly environmentId: EnvironmentId;
@@ -781,27 +745,3 @@ export function ServerBrowserSurface(props: {
   );
 }
 
-export interface AgentCursorPlacement {
-  readonly phase: PreviewStreamPointer["phase"];
-  readonly sequence: number;
-  readonly left: number;
-  readonly top: number;
-}
-
-function placeAgentCursor(
-  pointer: PreviewStreamPointer,
-  canvas: HTMLCanvasElement | null,
-  viewport: PreviewStreamViewport | null,
-): AgentCursorPlacement | null {
-  if (!canvas || !viewport || canvas.width < 1 || canvas.height < 1) return null;
-  const box = { width: canvas.clientWidth, height: canvas.clientHeight };
-  const fit = Math.min(box.width / canvas.width, box.height / canvas.height);
-  const width = canvas.width * fit;
-  const height = canvas.height * fit;
-  return {
-    phase: pointer.phase,
-    sequence: pointer.sequence,
-    left: (box.width - width) / 2 + (pointer.x * width) / viewport.width,
-    top: (box.height - height) / 2 + (pointer.y * height) / viewport.height,
-  };
-}

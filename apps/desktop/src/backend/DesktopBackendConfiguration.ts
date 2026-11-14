@@ -1,7 +1,7 @@
 import * as NodeOS from "node:os";
 
-import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
+import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -81,72 +81,13 @@ const DESKTOP_BACKEND_ENV_NAMES = [
 ] as const;
 
 // Windows forwards these variables into WSL only through WSLENV.
-const WSL_FORWARDED_ENV_NAMES = [
-  "OPENAI_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "T3CODE_TELEMETRY_ENABLED",
-  "T3CODE_GITHUB_APP_CLIENT_ID",
-  // Otherwise the WSL server keeps exporting to endpoints from the bootstrap.
-  "T3CODE_OTEL_SDK_DISABLED",
-  "OTEL_SDK_DISABLED",
-  "T3CODE_OTLP_HEADERS",
-  "T3CODE_OTLP_PROTOCOL",
-  // Untranslated T3 URLs must override bootstrap endpoints inside WSL, as they do on Windows.
-  "T3CODE_OTLP_TRACES_URL",
-  "T3CODE_OTLP_METRICS_URL",
-  "T3CODE_OTLP_LOGS_URL",
-  "OTEL_EXPORTER_OTLP_ENDPOINT",
-  "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-  "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
-  "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
-  "OTEL_EXPORTER_OTLP_HEADERS",
-  "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
-  "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
-  "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
-  "OTEL_EXPORTER_OTLP_PROTOCOL",
-  "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
-  "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
-  "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL",
-  "OTEL_TRACES_EXPORTER",
-  "OTEL_METRICS_EXPORTER",
-  "OTEL_LOGS_EXPORTER",
-  "OTEL_RESOURCE_ATTRIBUTES",
-] as const;
 
-const WSL_SERVER_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
-const nodeBinDirOf = (nodePath: string): string => {
-  const lastSlash = nodePath.lastIndexOf("/");
-  return lastSlash > 0 ? nodePath.slice(0, lastSlash) : "/usr/bin";
-};
 
 const backendChildEnvPatch = (): Record<string, string | undefined> =>
   Object.fromEntries(DESKTOP_BACKEND_ENV_NAMES.map((name) => [name, undefined]));
 
-const getWslEnvEntryName = (entry: string): string => {
-  const slashIndex = entry.indexOf("/");
-  return slashIndex === -1 ? entry : entry.slice(0, slashIndex);
-};
 
-const mergeWslEnv = (
-  existingWslEnv: string | undefined,
-  forwardedEnvNames: ReadonlyArray<string>,
-): string | undefined => {
-  const existing = existingWslEnv?.trim() ?? "";
-
-  const seenNames = new Set(
-    existing
-      .split(":")
-      .map((entry) => getWslEnvEntryName(entry.trim()))
-      .filter((name) => name.length > 0),
-  );
-
-  const additions = forwardedEnvNames.filter((name) => !seenNames.has(name));
-
-  // Preserve empty segments and duplicates in the user's WSLENV; only append required variables.
-  const parts = [existing, ...additions].filter((part) => part.length > 0);
-  return parts.length > 0 ? parts.join(":") : undefined;
-};
 
 const logBackendObservabilitySettingsReadFailure = (
   settingsPath: string,
@@ -283,6 +224,9 @@ type FailedNodePtyResult = Extract<
   DesktopWslEnvironment.EnsureWslNodePtyResult,
   { readonly ok: false }
 >;
+
+import { WSL_FORWARDED_ENV_NAMES, WSL_SERVER_SYSTEM_PATH, mergeWslEnv, nodeBinDirOf } from "./DesktopWslEnvPlumbing.ts";
+export * from "./DesktopWslEnvPlumbing.ts";
 
 const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(function* (input: {
   readonly distro: string | null;
