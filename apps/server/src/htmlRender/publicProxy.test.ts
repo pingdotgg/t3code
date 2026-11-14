@@ -121,7 +121,7 @@ describe("publicProxy", () => {
       const { code, socket } = yield* connectThrough(port, ipv4Target("1.1.1.1", 0));
       socket.destroy();
       expect(code).toBe(7);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("refuses fake-IP names and records hosts whose every address is fake", () =>
@@ -133,7 +133,7 @@ describe("publicProxy", () => {
         expect(code).toBe(2);
       }
       expect([...fakeIpHosts]).toEqual([["cdn.fake-ip.test", "198.18.2.40"]]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("refuses every address this machine holds, even a public one", () =>
@@ -156,7 +156,7 @@ describe("publicProxy", () => {
         socket.destroy();
         expect(code).toBe(2);
       }
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("closes every connection when its scope closes", () =>

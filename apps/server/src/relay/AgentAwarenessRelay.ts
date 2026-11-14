@@ -117,6 +117,7 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.active-reordered":
     case "thread.tags-updated":
     case "thread.visited":
+    case "thread.visit-recorded":
     case "thread.marked-unread":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
