@@ -1,0 +1,236 @@
+import * as AWS from "@alchemy.run/aws";
+import {
+  Domain,
+  Environment,
+  EnvironmentBlueprintConfiguration,
+  Project,
+} from "@alchemy.run/aws/DataZone";
+import * as IAM from "@alchemy.run/aws/IAM";
+import * as S3 from "@alchemy.run/aws/S3";
+import { expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
+import * as athena from "@distilled.cloud/aws/athena";
+import * as logs from "@distilled.cloud/aws/cloudwatch-logs";
+import * as datazone from "@distilled.cloud/aws/datazone";
+import * as glue from "@distilled.cloud/aws/glue";
+import * as lf from "@distilled.cloud/aws/lakeformation";
+import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
+
+const { test } = Test.make({ providers: AWS.providers() });
+
+// Environment deployment drives a CloudFormation stack (several minutes each
+// way) — the full lifecycle only runs when explicitly requested.
+const RUN_SLOW = !process.env.FAST;
+
+// The DefaultDataLake blueprint requires an S3 location whose bucket name
+// contains "datazone" (the provisioning policy scopes S3 access to
+// *datazone* buckets). Deterministic constant — never Date.now().
+const DATALAKE_BUCKET = "amazon-datazone-391965393224-usw2-alchemy-test";
+
+// Ungated: the typed error union covers the not-found probe — proves the
+// distilled error mapping without provisioning anything.
+test.provider(
+  "getEnvironment on a nonexistent domain is typed",
+  () =>
+    Effect.gen(function* () {
+      const result = yield* datazone
+        .getEnvironment({
+          domainIdentifier: "dzd_000000000000",
+          identifier: "0000000000",
+        })
+        .pipe(Effect.result);
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect([
+          "ResourceNotFoundException",
+          "AccessDeniedException",
+          "ValidationException",
+        ]).toContain(result.failure._tag);
+      }
+    }),
+  { tags: ["provider:aws", "provider:aws:datazone", "live"] },
+);
+
+/** Domain + roles + bucket + blueprint config + project shared by both deploys. */
+const baseInfra = Effect.gen(function* () {
+  const domain = yield* Domain("EnvTestDomain", {
+    description: "alchemy datazone environment test",
+  });
+  // DataZone itself assumes the provisioning role to run the environment's
+  // CloudFormation deployment.
+  const provisioningRole = yield* IAM.Role("EnvProvisioningRole", {
+    assumeRolePolicyDocument: {
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Effect: "Allow",
+          Principal: { Service: "datazone.amazonaws.com" },
+          Action: ["sts:AssumeRole", "sts:TagSession"],
+        },
+      ],
+    },
+    managedPolicyArns: ["arn:aws:iam::aws:policy/AmazonDataZoneRedshiftGlueProvisioningPolicy"],
+  });
+  const manageAccessRole = yield* IAM.Role("EnvManageAccessRole", {
+    assumeRolePolicyDocument: {
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Effect: "Allow",
+          Principal: { Service: "datazone.amazonaws.com" },
+          Action: ["sts:AssumeRole", "sts:TagSession"],
+        },
+      ],
+    },
+    managedPolicyArns: [
+      "arn:aws:iam::aws:policy/service-role/AmazonDataZoneGlueManageAccessRolePolicy",
+    ],
+  });
+  const bucket = yield* S3.Bucket("EnvDataLakeBucket", {
+    bucketName: DATALAKE_BUCKET,
+    forceDestroy: true,
+  });
+  const config = yield* EnvironmentBlueprintConfiguration("EnvDataLakeBlueprint", {
+    domainId: domain.domainId,
+    environmentBlueprint: "DefaultDataLake",
+    enabledRegions: ["us-west-2"],
+    provisioningRoleArn: provisioningRole.roleArn,
+    manageAccessRoleArn: manageAccessRole.roleArn,
+    regionalParameters: {
+      "us-west-2": { S3Location: `s3://${DATALAKE_BUCKET}` },
+    },
+  });
+  const project = yield* Project("EnvTestProject", {
+    domainId: domain.domainId,
+    description: "environment test project",
+  });
+  return { domain, config, project, provisioningRole, manageAccessRole };
+});
+
+const lakeFormationAdmins = lf
+  .getDataLakeSettings({})
+  .pipe(
+    Effect.map((r) =>
+      (r.DataLakeSettings?.DataLakeAdmins ?? []).map((p) => p.DataLakePrincipalIdentifier),
+    ),
+  );
+
+test.provider.skipIf(!RUN_SLOW)(
+  "create environment from the DefaultDataLake blueprint, delete",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      // 1. Deploy the domain, project, roles, bucket, and blueprint config.
+      const base = yield* stack.deploy(
+        Effect.gen(function* () {
+          const { domain, config, project, provisioningRole, manageAccessRole } = yield* baseInfra;
+          return {
+            domainId: domain.domainId,
+            projectId: project.projectId,
+            environmentBlueprintId: config.environmentBlueprintId,
+            provisioningRoleArn: provisioningRole.roleArn,
+            manageAccessRoleArn: manageAccessRole.roleArn,
+          };
+        }),
+      );
+
+      // 2. Create an environment profile out-of-band (no alchemy resource
+      //    for it yet) and deploy the Environment from it.
+      const profile = yield* datazone.createEnvironmentProfile({
+        domainIdentifier: base.domainId,
+        name: "alchemy-env-test-profile",
+        environmentBlueprintIdentifier: base.environmentBlueprintId,
+        projectIdentifier: base.projectId,
+        awsAccountId: "391965393224",
+        awsAccountRegion: "us-west-2",
+      });
+
+      const result = yield* stack
+        .deploy(
+          Effect.gen(function* () {
+            const { domain, project } = yield* baseInfra;
+            const env = yield* Environment("TestEnvironment", {
+              domainId: domain.domainId,
+              projectId: project.projectId,
+              environmentProfileId: profile.id,
+              description: "alchemy environment",
+            });
+            return {
+              environmentId: env.environmentId,
+              status: env.status,
+            };
+          }),
+        )
+        .pipe(
+          Effect.ensuring(
+            // the environment profile blocks domain deletion — always remove
+            // it before the final destroy, even when the deploy fails.
+            datazone
+              .deleteEnvironmentProfile({
+                domainIdentifier: base.domainId,
+                identifier: profile.id,
+              })
+              .pipe(Effect.ignore),
+          ),
+        );
+
+      expect(result.environmentId).toBeDefined();
+      expect(result.status).toBe("ACTIVE");
+
+      // out-of-band: the environment is ACTIVE.
+      const created = yield* datazone.getEnvironment({
+        domainIdentifier: base.domainId,
+        identifier: result.environmentId,
+      });
+      expect(created.status).toBe("ACTIVE");
+      expect(created.projectId).toBe(base.projectId);
+      // DataZone made the blueprint's manage-access role a Lake Formation
+      // administrator when it deployed the environment.
+      expect(yield* lakeFormationAdmins).toContain(base.manageAccessRoleArn);
+      // The blueprint stack retains these on delete; the provider removes them.
+      const provisioned = (name: string) =>
+        created.provisionedResources?.find((r) => r.name === name)?.value;
+      const databases = [provisioned("glueProducerDBName"), provisioned("glueConsumerDBName")];
+      const workGroup = provisioned("athenaWorkGroupName");
+      const logGroup = provisioned("logGroupArn")?.split(":")[6];
+      expect(databases.every(Boolean)).toBe(true);
+      expect(workGroup).toBeDefined();
+      expect(logGroup).toBeDefined();
+
+      // 3. Destroy — environment, project, blueprint config, and domain.
+      yield* stack.destroy();
+      const gone = yield* datazone
+        .getEnvironment({
+          domainIdentifier: base.domainId,
+          identifier: result.environmentId,
+        })
+        .pipe(
+          Effect.map((env) => env.status === "DELETED"),
+          Effect.catchTag("ResourceNotFoundException", () => Effect.succeed(true)),
+          // once the domain is deleted, DataZone reports AccessDenied (auth
+          // is checked before existence) — also gone.
+          Effect.catchTag("AccessDeniedException", () => Effect.succeed(true)),
+        );
+      expect(gone).toBe(true);
+      // ...and the blueprint configuration's delete removed both roles'
+      // entries again, so none dangles once the roles are deleted.
+      const adminsAfterDestroy = yield* lakeFormationAdmins;
+      expect(adminsAfterDestroy).not.toContain(base.manageAccessRoleArn);
+      expect(adminsAfterDestroy).not.toContain(base.provisioningRoleArn);
+      // ...and nothing the environment's stack retained was left behind.
+      for (const database of databases) {
+        const lookup = yield* glue.getDatabase({ Name: database! }).pipe(Effect.result);
+        expect(Result.isFailure(lookup) && lookup.failure._tag).toBe("EntityNotFoundException");
+      }
+      const workGroups = yield* athena.listWorkGroups({});
+      expect((workGroups.WorkGroups ?? []).map((w) => w.Name)).not.toContain(workGroup);
+      const logGroups = yield* logs.describeLogGroups({ logGroupNamePrefix: logGroup });
+      expect(logGroups.logGroups ?? []).toHaveLength(0);
+    }),
+  {
+    tags: ["provider:aws", "provider:aws:datazone", "provider:aws:iam", "provider:aws:s3", "live"],
+    timeout: 1_100_000,
+  },
+);

@@ -1,4 +1,4 @@
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import { MicrovmBuildRole } from "./build-role.ts";
 
@@ -10,9 +10,7 @@ import { MicrovmBuildRole } from "./build-role.ts";
  * `effectfulNode.readyMs − node.readyMs` isolates the alchemy/Effect cold-start
  * tax on the runtime the Lambda VMs already ship.
  */
-export class NodeMicrovm extends AWS.Lambda.MicrovmImage<NodeMicrovm>()(
-  "MicrovmBenchNode",
-) {}
+export class NodeMicrovm extends AWS.Lambda.MicrovmImage<NodeMicrovm>()("MicrovmBenchNode") {}
 
 export default NodeMicrovm.make(
   MicrovmBuildRole.pipe(

@@ -1,0 +1,103 @@
+---
+title: Logging & Monitoring
+description: Declare uptime checks, alert policies, notification channels, and logs-based metrics in the same Stack as the services they watch.
+---
+
+Cloud Run sends everything your service logs to Cloud Logging, with no
+setup. Declare the checks and alerts that watch it next to the service
+itself.
+
+## Log from your code
+
+`Effect.log` goes to Cloud Logging:
+
+```typescript
+yield* Effect.log(`order ${id} confirmed`);
+yield* Effect.logWarning(`retrying ${id}`);
+```
+
+## Check that the service is up
+
+An uptime check probes a URL from several regions:
+
+```typescript
+Effect.gen(function* () {
+  const api = yield* Api;
+
+  const check = yield* GCP.Monitoring.UptimeCheckConfig("ApiUp", {
+    httpCheck: { path: "/", useSsl: true, validateSsl: true },
+    monitoredResource: {
+      type: "uptime_url",
+      labels: { host: Output.map(api.uri, (uri) => new URL(uri!).host) },
+    },
+    period: "300s",
+  });
+}),
+```
+
+## Get notified
+
+Create a channel to send alerts to:
+
+```typescript
+const oncall = yield* GCP.Monitoring.NotificationChannel("Oncall", {
+  type: "email",
+  labels: { email_address: "oncall@example.com" },
+});
+```
+
+## Alert on a metric
+
+An alert policy opens an incident when a condition holds. This one
+fires when the service answers with 5xx errors:
+
+```typescript
+yield* GCP.Monitoring.AlertPolicy("ApiErrors", {
+  combiner: "OR",
+  conditions: [
+    {
+      displayName: "5xx responses",
+      conditionThreshold: {
+        filter:
+          'resource.type = "cloud_run_revision" AND metric.type = "run.googleapis.com/request_count" AND metric.labels.response_code_class = "5xx"',
+        comparison: "COMPARISON_GT",
+        thresholdValue: 5,
+        duration: "60s",
+        aggregations: [{ alignmentPeriod: "60s", perSeriesAligner: "ALIGN_RATE" }],
+      },
+    },
+  ],
+  notificationChannels: [oncall.name],
+});
+```
+
+## Count log lines
+
+A logs-based metric turns matching log entries into a metric you can
+chart and alert on:
+
+```typescript
+const errors = yield* GCP.Logging.Metric("Errors", {
+  filter: 'resource.type = "cloud_run_revision" AND severity >= ERROR',
+  description: "error log entries",
+});
+```
+
+## Route logs elsewhere
+
+A sink copies matching entries to another destination, such as a log
+bucket or BigQuery:
+
+```typescript
+yield* GCP.Logging.Sink("ErrorArchive", {
+  destination:
+    "logging.googleapis.com/projects/my-project/locations/global/buckets/_Default",
+  filter: "severity >= ERROR",
+});
+```
+
+## Where next
+
+- [Observability](/testing/observability) — tracing Effect programs.
+- [Monitoring reference](/providers/gcp/monitoring#alertpolicy) and
+  [Logging reference](/providers/gcp/logging#metric) — every prop.
