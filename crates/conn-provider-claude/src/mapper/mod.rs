@@ -1012,9 +1012,10 @@ impl<E: Env> Mapper<E> {
             "compact_boundary" => {
                 let id = msg.uuid.unwrap_or_default();
                 let meta = msg.compact_metadata.unwrap_or(Value::Null);
+                // T3 takes the turn's compaction row whatever its status.
                 let mut item = match turn.compaction.take() {
-                    Some(running) if running["status"] == "running" => running,
-                    _ => {
+                    Some(existing) => existing,
+                    None => {
                         let mut item = notice_base(turn, &id, &now, "completed");
                         item["type"] = json!("compaction");
                         item["driver"] = json!(DRIVER);

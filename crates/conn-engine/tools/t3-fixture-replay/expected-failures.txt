@@ -42,7 +42,6 @@ subagent_v2_nested_approval/codex   provider: Codex subagents are not built
 
 # --- Claude provider: background roster, monitors and wakes are not built ---
 claude_background_subagent_after_root/claudeAgent    provider: no background_work.updated roster for Claude subagents; the subagent item never shows
-claude_compact_after_resume_wake/claudeAgent         provider: Claude background wakes are not built (the resumed wake's compaction differs)
 claude_compact_after_peer_turn/claudeAgent           provider: Claude background wakes are not built (the peer turn's run never reaches its status)
 
 # --- The replay driver: steps it cannot run yet ---
