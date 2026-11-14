@@ -442,6 +442,7 @@ it.each([1, 18])("continues scrolling the panel past a list of %i subagents", as
   const projection = makeThreadProjectionFixture();
   state.projection = projection;
   state.relatedShells = Array.from({ length: count }, (_, index) => ({
+    ...projection.thread,
     id: ThreadId.make(`subagent-${index}`),
     title: `Subagent ${index}`,
     forkedFrom: null,

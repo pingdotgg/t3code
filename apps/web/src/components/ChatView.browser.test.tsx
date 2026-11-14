@@ -1,3 +1,4 @@
+import "~/index.css";
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -109,7 +110,22 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 
+async function appViewport(width = 1400, height = 900) {
+  const previous = { width: window.innerWidth, height: window.innerHeight };
+  await page.viewport(width, height);
+  return {
+    [Symbol.asyncDispose]: () => page.viewport(previous.width, previous.height),
+  };
+}
+
+function appContainer() {
+  const container = document.createElement("div");
+  container.style.cssText = "height: 100dvh; width: 100%;";
+  return container;
+}
+
 it("a machine chip stashed in one thread restores with its machine in another", async () => {
+  await using _viewport = await appViewport();
   const other = threadWithHistory("thread-stash-restore", 1);
   const asking = threadWithQuestion("thread-stash-question", "Which file should change?");
   using _environment = installFakeEnvironment([other, asking]);
@@ -129,6 +145,7 @@ it("a machine chip stashed in one thread restores with its machine in another", 
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   const editor = page.getByTestId("composer-editor");
@@ -167,6 +184,7 @@ it("a machine chip stashed in one thread restores with its machine in another", 
 });
 
 it("a question that opens while a stashed file is checked keeps a machine stash", async () => {
+  await using _viewport = await appViewport();
   const thread = threadWithHistory("thread-stash-late-question", 1);
   const asking = threadWithQuestion("thread-stash-late-question", "Which file should change?");
   const [request] = asking.runtimeRequests ?? [];
@@ -201,6 +219,7 @@ it("a question that opens while a stashed file is checked keeps a machine stash"
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByText("Answer 0 for thread-stash-late-question.")).toBeVisible();
@@ -222,6 +241,7 @@ it("a question that opens while a stashed file is checked keeps a machine stash"
 });
 
 it("a new draft does not load its reserved thread before the server lists it", async () => {
+  await using _viewport = await appViewport();
   using _environment = installFakeEnvironment([]);
   using fetchSpy = vi.spyOn(globalThis, "fetch");
   __setClientSettingsForTests({
@@ -238,6 +258,7 @@ it("a new draft does not load its reserved thread before the server lists it", a
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByTestId("composer-editor")).toBeVisible();
@@ -297,6 +318,7 @@ it("an interrupted image-only first send of a new thread says it may not have be
 });
 
 it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {
+  await using _viewport = await appViewport();
   const thread = { ...threadWithHistory("older-settled", 1), olderSettled: true as const };
   using _environment = installFakeEnvironment([thread]);
   __setClientSettingsForTests({
@@ -310,6 +332,7 @@ it("opens the thread actions menu for an older settled thread the shell leaves o
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByText("older-settled: question 0")).toBeVisible();
@@ -322,6 +345,7 @@ it("opens the thread actions menu for an older settled thread the shell leaves o
 });
 
 it("retains each thread's diff selection when returning from another thread or Settings", async () => {
+  await using _viewport = await appViewport();
   const a = threadWithHistory("diff-selection-a", 1);
   const b = threadWithHistory("diff-selection-b", 1);
   using _environment = installFakeEnvironment([a, b]);
@@ -338,6 +362,7 @@ it("retains each thread's diff selection when returning from another thread or S
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByText(`Answer 0 for ${a.id}.`)).toBeVisible();
@@ -386,6 +411,7 @@ it("retains each thread's diff selection when returning from another thread or S
 });
 
 it("a stashed prompt ending in a file chip restores with the chip", async () => {
+  await using _viewport = await appViewport();
   using _environment = installFakeEnvironment([]);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
@@ -401,6 +427,7 @@ it("a stashed prompt ending in a file chip restores with the chip", async () => 
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   const chip = page.getByRole("button", { name: "Preview package.json" });
@@ -420,6 +447,7 @@ it("a stashed prompt ending in a file chip restores with the chip", async () => 
 });
 
 it("a rejected send leaves the timeline when a new draft was typed meanwhile", async () => {
+  await using _viewport = await appViewport();
   const thread = threadWithHistory("rejected-send", 1);
   using _environment = installFakeEnvironment([thread], {
     acceptCommands: true,
@@ -435,6 +463,7 @@ it("a rejected send leaves the timeline when a new draft was typed meanwhile", a
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
@@ -456,6 +485,7 @@ it("a rejected send leaves the timeline when a new draft was typed meanwhile", a
 });
 
 it("Enter on an empty prompt resumes an interrupted thread", async () => {
+  await using _viewport = await appViewport();
   const history = threadWithHistory("interrupted", 1);
   const interruptedRun = { ...history.runs[0]!, status: "interrupted" as const };
   const thread = { ...history, runs: [interruptedRun] };
@@ -470,6 +500,7 @@ it("Enter on an empty prompt resumes an interrupted thread", async () => {
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   await expect.element(page.getByRole("button", { name: "Resume thread" })).toBeVisible();
@@ -485,6 +516,7 @@ it("Enter on an empty prompt resumes an interrupted thread", async () => {
 });
 
 it("opening a thread or returning to the window on a touch tablet does not focus the composer", async () => {
+  await using _viewport = await appViewport();
   const realMatchMedia = window.matchMedia.bind(window);
   using _touch = vi
     .spyOn(window, "matchMedia")
@@ -504,6 +536,7 @@ it("opening a thread or returning to the window on a touch tablet does not focus
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   const composer = page.getByTestId("composer-editor");
@@ -530,6 +563,7 @@ it("opening a thread or returning to the window on a touch tablet does not focus
 });
 
 it("a mounted thread view lets go of the thread structures it has replaced", async () => {
+  await using _viewport = await appViewport();
   // Items are shared with the fixture, so a reopen's snapshot also carries the earlier updates.
   const history = threadWithHistory("updated", 3);
   const items = [...history.items];
@@ -542,7 +576,10 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
   });
   const router = getRouter(createMemoryHistory({ initialEntries: ["/"] }));
   await router.load();
-  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await using _app = await render(<AppRoot router={router} />, {
+    container: appContainer(),
+    router: false,
+  });
   const open = async (threadId: ThreadId, text: string) => {
     await act(() =>
       router.navigate({
