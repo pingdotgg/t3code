@@ -13,7 +13,7 @@ import "~/index.css";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
+const { diffAtom, pagedDiffAtom, allowed, denied } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string) =>
     [
@@ -53,12 +53,15 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
     pagedDiffAtom: Atom.family((cursor: string) =>
       Atom.make(() => AsyncResult.success(pages[cursor]!)),
     ),
+    allowed: Atom.make(true),
+    denied: Atom.make(false),
   };
 });
 
 const mocks = vi.hoisted(() => ({
   paged: false,
   diffCommits: [] as Array<string | undefined>,
+  canMarkViewed: true,
   viewedPaths: null as ReadonlySet<string> | null,
   viewedListeners: new Set<() => void>(),
 }));
@@ -103,6 +106,10 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
         mocks.diffCommits.push(input.commit);
         return mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom;
       }) as never,
+      setFilesViewed: {
+        ...actual.pullRequestEnvironment.setFilesViewed,
+        permissionAtom: () => (mocks.canMarkViewed ? allowed : denied),
+      },
     },
   };
 });
@@ -162,11 +169,12 @@ const detail: PullRequestDetailView = {
   },
 };
 
-function setup({ paged }: { paged: boolean }) {
+function setup({ paged, canMarkViewed = true }: { paged: boolean; canMarkViewed?: boolean }) {
   window.localStorage.removeItem("t3code.diffHideTestFiles");
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   mocks.paged = paged;
   mocks.diffCommits = [];
+  mocks.canMarkViewed = canMarkViewed;
   mocks.viewedPaths = null;
   mocks.viewedListeners.clear();
 }
@@ -176,10 +184,12 @@ const tab = (
   revealRequest: { readonly path: string; readonly nonce: number } | null = null,
   revealUrl?: string,
   onRevealSettled?: (url: string) => void,
+  environmentConnected = true,
 ) => (
   <PullRequestCodeTab
     scrollerRef={() => {}}
     environmentId={EnvironmentId.make("environment")}
+    environmentConnected={environmentConnected}
     reference={detail}
     detail={detail}
     selectedCommitOid={null}
@@ -297,6 +307,7 @@ it("never requests the diff of a selected commit the pull request no longer has"
     <PullRequestCodeTab
       scrollerRef={() => {}}
       environmentId={EnvironmentId.make("environment")}
+      environmentConnected
       reference={detail}
       detail={{
         ...detail,
@@ -322,6 +333,30 @@ it("never requests the diff of a selected commit the pull request no longer has"
   expect(mocks.diffCommits).not.toContain("gone");
 });
 
+it("disables the Viewed checkbox on a connection that cannot mark files viewed", async () => {
+  setup({ paged: false, canMarkViewed: false });
+  mocks.viewedPaths = new Set();
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0), { container });
+
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeDisabled();
+});
+
+it("disables the Viewed checkbox while the environment is disconnected, then enables it on reconnect", async () => {
+  setup({ paged: false });
+  mocks.viewedPaths = new Set();
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0, null, undefined, undefined, false), { container });
+
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeDisabled();
+
+  await screen.rerender(tab(0, null, undefined, undefined, true));
+
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeEnabled();
+});
+
 it("answers a commit's diff link only once that commit's diff is shown", async () => {
   setup({ paged: false });
   const container = document.createElement("div");
@@ -337,6 +372,7 @@ it("answers a commit's diff link only once that commit's diff is shown", async (
     <PullRequestCodeTab
       scrollerRef={() => {}}
       environmentId={EnvironmentId.make("environment")}
+      environmentConnected
       reference={detail}
       detail={withCommit}
       selectedCommitOid={selectedCommitOid}
@@ -376,6 +412,7 @@ it("hides a resolved conversation behind avatars on its line until they are clic
     <PullRequestCodeTab
       scrollerRef={() => {}}
       environmentId={EnvironmentId.make("environment")}
+      environmentConnected
       reference={detail}
       detail={{
         ...detail,

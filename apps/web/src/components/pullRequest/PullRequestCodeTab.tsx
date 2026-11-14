@@ -42,7 +42,7 @@ import {
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
 } from "lucide-react";
-import { useAtomRefresh } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
   createContext,
@@ -270,6 +270,7 @@ function reviewThreadsByPath(threads: ReadonlyArray<PullRequestReviewThread>) {
 
 interface FileViewedToggleState {
   readonly enabled: boolean;
+  readonly canMarkViewed: boolean;
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
   readonly setFileViewed: (fileKey: string, viewed: boolean, extendRange: boolean) => void;
@@ -296,12 +297,13 @@ function FileViewedToggle({
       {stat}
       <label
         data-viewed-toggle=""
-        className="flex w-18 shrink-0 cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground"
+        className="flex w-18 shrink-0 cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground has-disabled:cursor-default"
         onClick={(event) => event.stopPropagation()}
       >
         <Checkbox
           aria-label={stale ? "Changed" : "Viewed"}
           checked={viewed}
+          disabled={!viewedFiles.canMarkViewed}
           onCheckedChange={(next, details) =>
             viewedFiles.setFileViewed(
               fileKey,
@@ -352,6 +354,7 @@ export interface PullRequestAgentSelectionInput {
 function PullRequestCodeTab({
   scrollerRef,
   environmentId,
+  environmentConnected,
   reference,
   detail,
   selectedCommitOid,
@@ -370,6 +373,7 @@ function PullRequestCodeTab({
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
   environmentId: EnvironmentId;
+  environmentConnected: boolean;
   reference: PullRequestRef;
   detail: PullRequestDetailView;
   selectedCommitOid: string | null;
@@ -542,6 +546,10 @@ function PullRequestCodeTab({
     reference,
     enabled: viewedFilesStore !== undefined,
   });
+  // The grant outlives a dropped connection, and a write without a session fails.
+  const canMarkViewed =
+    useAtomValue(pullRequestEnvironment.setFilesViewed.permissionAtom(environmentId)) &&
+    environmentConnected;
   const {
     setViewed,
     refresh: refreshFilesViewed,
@@ -867,6 +875,7 @@ function PullRequestCodeTab({
   };
   const fileViewedToggle = {
     enabled: filesViewedEnabled,
+    canMarkViewed,
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
     setFileViewed,
