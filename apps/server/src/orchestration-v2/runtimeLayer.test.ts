@@ -10734,7 +10734,20 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("PR link events", (it
         number: 2,
         watching: true,
       });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-link.unavailable",
+        commandId: CommandId.make("compact-pr-unavailable"),
+        threadId,
+        ...key,
+        number: 2,
+        reason: "Add the repository as a project.",
+      });
       const before = yield* orchestrator.getThreadShell(threadId);
+      assert.propertyVal(
+        before?.pullRequests?.[1],
+        "unavailable",
+        "Add the repository as a project.",
+      );
       yield* orchestrator.dispatch({
         type: "thread.pull-request-link.sync",
         commandId: CommandId.make("compact-pr-sync"),
@@ -10773,6 +10786,7 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("PR link events", (it
       assert.deepEqual(after?.pullRequests?.[0], before?.pullRequests?.[0]);
       assert.deepEqual(after?.pullRequests?.[2], before?.pullRequests?.[2]);
       assert.equal(after?.pullRequests?.[1]?.stack?.id, "updated");
+      assert.notProperty(after?.pullRequests?.[1], "unavailable");
       assert.propertyVal(after?.pullRequests?.[1], "repositoryWebUrl", repositoryWebUrl);
       assert.deepInclude(after?.pullRequests?.[2], watchedLink);
       assert.isTrue((yield* maintenance.rebuild).valid);

@@ -4,6 +4,7 @@ import {
   UNKNOWN_SOURCE_CONTROL_CLIENT,
 } from "@t3tools/client-runtime/source-control-clients";
 import {
+  isOpenThreadPullRequest,
   type PullRequestListLine,
   pullRequestListLines,
   resolveThreadPullRequestChains,
@@ -111,7 +112,7 @@ function LinkRowImpl({
     : undefined;
   const { link, depth, stack } = line;
   const snapshot = link.snapshot;
-  const open = snapshot === null || snapshot.state === "open";
+  const open = isOpenThreadPullRequest(link);
   const watching = link.watch !== undefined;
   const linkHost =
     sourceControlClients.findByChangeRequestUrl(link.url) ?? UNKNOWN_SOURCE_CONTROL_CLIENT;
@@ -145,7 +146,7 @@ function LinkRowImpl({
       {depth > 0 ? <span aria-hidden className="-ml-2 h-6 w-px shrink-0 bg-border/70" /> : null}
       {snapshot === null ? (
         <PullRequestGlyph.pullRequest
-          aria-label="Waiting for host state"
+          aria-label={link.unavailable ?? "Waiting for host state"}
           className="size-4 shrink-0 text-muted-foreground"
         />
       ) : (
@@ -236,6 +237,9 @@ function LinkRowImpl({
           }
           meta={
             <>
+              {snapshot === null && link.unavailable !== undefined ? (
+                <span className="min-w-0 truncate">{link.unavailable}</span>
+              ) : null}
               {stack ? (
                 <Tooltip>
                   <TooltipTrigger
@@ -388,9 +392,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   // Derive lines before later hooks to preserve compiler caching and avoid LegendList renders.
   const links = visibleThreadPullRequests(thread?.pullRequests ?? []);
   const lines = pullRequestListLines(resolveThreadPullRequestChains(links));
-  const openCount = links.filter(
-    (link) => link.snapshot === null || link.snapshot.state === "open",
-  ).length;
+  const openCount = links.filter(isOpenThreadPullRequest).length;
   const lastSynced = latestSyncedAt(links);
   const linkCount = links.length;
   const modifiers = useShortcutModifierState(true);

@@ -7,6 +7,11 @@ export function visibleThreadPullRequests(
   return links.filter((link) => link.source !== "stack-dismissed");
 }
 
+/** Unread links count as open, except those the server reported it cannot read. */
+export function isOpenThreadPullRequest(link: ThreadPullRequestLink): boolean {
+  return link.snapshot === null ? link.unavailable === undefined : link.snapshot.state === "open";
+}
+
 export function threadPullRequestUpdatedAtMs(link: ThreadPullRequestLink): number {
   const value = link.snapshot?.updatedAt ?? link.linkedAt;
   const ms = Date.parse(value);

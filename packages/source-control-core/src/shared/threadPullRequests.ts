@@ -4,7 +4,10 @@ import type {
   ThreadPullRequestKey,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
+import {
+  isOpenThreadPullRequest as isOpen,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 
 import type { SourceControlDefinitionRegistry } from "./definition.ts";
 
@@ -12,10 +15,6 @@ type ThreadPullRequestKeySource = ThreadPullRequestKey & {
   readonly authority?: string;
   readonly url?: string;
 };
-
-function isOpen(link: ThreadPullRequestLink): boolean {
-  return link.snapshot === null || link.snapshot.state === "open";
-}
 
 function latestUpdatedAt(link: ThreadPullRequestLink): number {
   const value = link.snapshot?.updatedAt ?? link.linkedAt;

@@ -53,6 +53,10 @@ type SyncCommand = Extract<
   { readonly type: "thread.pull-request-link.sync" }
 >;
 type LinkCommand = Extract<OrchestrationCommand, { readonly type: "thread.pull-request.link" }>;
+type UnavailableCommand = Extract<
+  OrchestrationV2InternalCommand,
+  { readonly type: "thread.pull-request-link.unavailable" }
+>;
 type ChecksReopenCommand = Extract<
   OrchestrationV2InternalCommand,
   { readonly type: "thread.pull-request-watch.checks-reopen" }
@@ -195,6 +199,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   const shellSnapshotReads = yield* Ref.make(0);
   const syncCommands = yield* Ref.make<ReadonlyArray<SyncCommand>>([]);
   const linkCommands = yield* Ref.make<ReadonlyArray<LinkCommand>>([]);
+  const unavailableCommands = yield* Ref.make<ReadonlyArray<UnavailableCommand>>([]);
   const reopenCommands = yield* Queue.unbounded<ChecksReopenCommand>();
   const summaryCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const stackCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
@@ -227,6 +232,11 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     }
     if (command.type === "thread.pull-request.link") {
       return Ref.update(linkCommands, (recorded) => [...recorded, command]).pipe(
+        Effect.as({ sequence: 1, storedEvents: [] }),
+      );
+    }
+    if (command.type === "thread.pull-request-link.unavailable") {
+      return Ref.update(unavailableCommands, (recorded) => [...recorded, command]).pipe(
         Effect.as({ sequence: 1, storedEvents: [] }),
       );
     }
@@ -296,6 +306,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     shellSnapshotReads,
     syncCommands,
     linkCommands,
+    unavailableCommands,
     reopenCommands,
     summaryCalls,
     stackCalls,
@@ -810,6 +821,17 @@ describe("PullRequestSyncReactor", () => {
         assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
         assert.strictEqual((yield* Ref.get(fixture.stackCalls)).length, 1);
         assert.strictEqual((yield* Ref.get(fixture.syncCommands)).length, 1);
+
+        // A read that succeeds after an unavailable one clears the recorded reason.
+        yield* Ref.update(fixture.snapshots, (snapshot) => ({
+          ...snapshot,
+          threads: snapshot.threads.map((thread) => ({
+            ...thread,
+            pullRequests: thread.pullRequests.map((link) => ({ ...link, unavailable: "Gone." })),
+          })),
+        }));
+        yield* sweepAgain(fixture, reactor);
+        assert.strictEqual((yield* Ref.get(fixture.syncCommands)).length, 2);
       }).pipe(Effect.provide(fixture.layer));
     }),
   );
@@ -1709,6 +1731,19 @@ describe("PullRequestSyncReactor", () => {
         assert.deepStrictEqual(
           { afterSweeps, afterItsRefresh, afterOtherRefreshes: yield* unsupportedReads },
           { afterSweeps: 1, afterItsRefresh: 2, afterOtherRefreshes: 2 },
+        );
+        // Clients learn why, instead of waiting on a snapshot that never comes.
+        assert.deepStrictEqual(
+          (yield* Ref.get(fixture.unavailableCommands)).map(({ threadId, number, reason }) => ({
+            threadId,
+            number,
+            reason,
+          })),
+          [0, 1].map(() => ({
+            threadId: ThreadId.make("unsupported"),
+            number: 9,
+            reason: "Change requests cannot be browsed for this project's host yet.",
+          })),
         );
       }).pipe(Effect.provide(fixture.layer));
     }),

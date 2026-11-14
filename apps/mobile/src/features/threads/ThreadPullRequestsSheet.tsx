@@ -15,6 +15,7 @@ import {
   useLinkedPullRequestLines,
 } from "./LinkedPullRequestList";
 import { useLinkedPullRequestActions } from "./useLinkedPullRequestActions";
+import { isOpenThreadPullRequest } from "@t3tools/client-runtime/thread-pull-requests";
 
 export function ThreadPullRequestsSheet(
   _props: StaticScreenProps<{ readonly environmentId: string; readonly threadId: string }>,
@@ -25,9 +26,7 @@ export function ThreadPullRequestsSheet(
     useThreadSelection();
   const lines = useLinkedPullRequestLines(selectedThread, selectedEnvironmentRuntime);
   const openCount = useMemo(
-    () =>
-      lines.filter((line) => line.link.snapshot === null || line.link.snapshot.state === "open")
-        .length,
+    () => lines.filter((line) => isOpenThreadPullRequest(line.link)).length,
     [lines],
   );
   const openPullRequest = useOpenPullRequest({

@@ -104,7 +104,9 @@ function settlementPullRequestLinks(
   links: ReadonlyArray<SettlementPullRequestLink>,
 ): ReadonlyArray<SettlementPullRequestLink> {
   return visibleThreadPullRequests(links).filter((link) => {
-    if (link.snapshot === null || link.snapshot.state === "open") return true;
+    // A link this server cannot read has no outcome to wait for.
+    if (link.snapshot === null) return link.unavailable === undefined;
+    if (link.snapshot.state === "open") return true;
     const linkedAtMs = Date.parse(link.linkedAt);
     return Number.isNaN(linkedAtMs) || linkTerminalAtMs(link) >= linkedAtMs;
   });

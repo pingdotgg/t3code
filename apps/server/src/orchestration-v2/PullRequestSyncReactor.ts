@@ -450,6 +450,7 @@ export const make = Effect.gen(function* () {
       const nextStack = fetchedStack === null ? link.stack : fetchedStack.stack;
       const changed =
         link.snapshot === null ||
+        link.unavailable !== undefined ||
         !snapshotFieldsEqual(link.snapshot, fields) ||
         !stacksEqual(link.stack, nextStack);
       // Persist siblings before terminal snapshots trigger settlement; settled threads get snapshots without new links.
@@ -497,6 +498,31 @@ export const make = Effect.gen(function* () {
       }
     }, Effect.withSpan("PullRequestSyncReactor.syncEntry"));
 
+    // Clients otherwise keep waiting on a link this server can never read.
+    const markUnavailable = (entries: ReadonlyArray<LinkEntry>, reason: string) =>
+      Effect.forEach(
+        entries.filter((entry) => entry.link.unavailable !== reason),
+        ({ thread, link }) =>
+          random.uuidV4().pipe(
+            Effect.flatMap((uuid) =>
+              engine.dispatch({
+                type: "thread.pull-request-link.unavailable",
+                commandId: CommandId.make(`server:pr-unavailable:${thread.id}:${uuid}`),
+                threadId: thread.id,
+                host: normalizeThreadPullRequestKey(link).host,
+                repository: link.repository,
+                number: link.number,
+                reason,
+              }),
+            ),
+            persistence.withPermits(1),
+            Effect.catchCause(
+              logSkipped("pull request unavailable state skipped", { threadId: thread.id }),
+            ),
+          ),
+        { discard: true },
+      );
+
     const syncGroup = Effect.fnUntraced(function* (key: string, entries: ReadonlyArray<LinkEntry>) {
       const first = entries[0]!;
       const ref = referenceOf(first);
@@ -518,7 +544,13 @@ export const make = Effect.gen(function* () {
                 missing.add(key);
                 lastSyncedAt.set(key, nowMs);
                 requested.delete(key);
-              })
+              }).pipe(
+                Effect.andThen(
+                  error._tag === "PullRequestUnavailableError"
+                    ? markUnavailable(entries, error.message)
+                    : Effect.void,
+                ),
+              )
             : Effect.void,
         ),
       );

@@ -3612,6 +3612,13 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     projectId: ProjectId,
   }),
+  Schema.Struct({
+    type: Schema.Literal("thread.pull-request-link.unavailable"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    ...ThreadPullRequestKey.fields,
+    reason: TrimmedNonEmptyString,
+  }),
   /**
    * After a push, the thread's watches forget whether their checks were running, since the push
    * can start new ones. Applied to the watches as they are then, so no earlier read overwrites them.

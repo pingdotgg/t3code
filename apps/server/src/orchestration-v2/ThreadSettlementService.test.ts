@@ -290,6 +290,20 @@ describe("resolveAutoSettlementAt", () => {
         autoSettleKeepPullRequests: false,
       }),
     ).toBeNull();
+    // One this server reported it cannot read holds nothing.
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        thread: shell({
+          latestUserMessageAt: at(-4 * DAY_MS),
+          pullRequests: [{ ...persistedLink(null, at(-5 * DAY_MS)), unavailable: "No checkout." }],
+        }),
+        pullRequest: null,
+        nowMs: NOW_MS,
+        autoSettleAfterDays: 3,
+        autoSettleOnMerge: true,
+        autoSettleKeepPullRequests: false,
+      }),
+    ).not.toBeNull();
   });
 
   it("uses the latest activity time when the inactivity window elapses", () => {
