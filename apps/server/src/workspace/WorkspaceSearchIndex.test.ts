@@ -614,3 +614,37 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       }),
     ).pipe(Effect.provide(testLayer)),
 );
+
+// Real fff: it parses glob and path syntax out of the query, which a native whole-word prefilter must not break.
+it.effect.each([
+  { query: "*.ts needle", expected: ["words.ts:2"] },
+  { query: "*.ts", expected: ["notes.md:1"] },
+  { query: "needle", expected: ["notes.md:1", "words.ts:2"] },
+])("matches whole words in a real workspace for $query", ({ query, expected }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-whole-word-" });
+      yield* fileSystem.writeFileString(
+        path.join(cwd, "words.ts"),
+        "needleSuffix\nneedle\ntrailer\n",
+      );
+      yield* fileSystem.writeFileString(path.join(cwd, "notes.md"), "needle *.ts\n");
+
+      const searchIndex = yield* WorkspaceSearchIndex.make(cwd, "content");
+      const result = yield* searchIndex.searchContents({
+        query,
+        limit: 500,
+        caseSensitive: true,
+        wholeWord: true,
+        useRegex: false,
+      });
+
+      expect(result.regexFallbackError).toBeUndefined();
+      expect(result.matches.map((match) => `${match.path}:${match.lineNumber}`).toSorted()).toEqual(
+        expected,
+      );
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);

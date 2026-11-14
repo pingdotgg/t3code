@@ -237,6 +237,7 @@ function mapMixedSearchResult(
 }
 
 const WORD_CHARACTER = /[\p{Letter}\p{Mark}\p{Number}_]/u;
+const ASCII_WORD = /^\w+$/;
 
 function codePointAt(line: string, index: number): string | undefined {
   const codePoint = line.codePointAt(index);
@@ -251,23 +252,17 @@ function codePointBefore(line: string, index: number): string | undefined {
   return codePointAt(line, previousIndex);
 }
 
-function escapeRegex(text: string): string {
-  return text.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
-}
-
 function buildContentSearchQuery(input: Omit<ProjectSearchContentsInput, "cwd">): {
   readonly searchQuery: string;
   readonly regexMode: boolean;
   readonly wholeWordPrefilter: boolean;
 } {
   // Without a native prefilter every substring hit crosses into JS, which takes seconds on large repos.
-  // fff compiles regexes bytewise, so `\W` also accepts non-ASCII and the JS check below stays authoritative;
-  // non-ASCII queries skip this because bytewise `(?i)` may not fold them.
-  if (input.wholeWord && !input.useRegex && /^[\x20-\x7e]+$/.test(input.query)) {
-    const left = /\w/.test(input.query[0] ?? "") ? String.raw`(?:^|\W)` : "";
-    const right = /\w/.test(input.query.at(-1) ?? "") ? String.raw`(?:\W|$)` : "";
+  // Only plain ASCII words qualify: fff rewrites queries with glob or path syntax even in regex mode, and its
+  // bytewise `\W` also accepts non-ASCII, so the JS whole-word check below stays authoritative.
+  if (input.wholeWord && !input.useRegex && ASCII_WORD.test(input.query)) {
     return {
-      searchQuery: `${input.caseSensitive ? "" : "(?i)"}${left}${escapeRegex(input.query)}${right}`,
+      searchQuery: `${input.caseSensitive ? "" : "(?i)"}(?:^|\\W)${input.query}(?:\\W|$)`,
       regexMode: true,
       wholeWordPrefilter: true,
     };
@@ -299,12 +294,12 @@ function mapContentMatchRanges(
   }));
 }
 
-function findLiteralRanges(
+function findWordQueryRanges(
   line: string,
   query: string,
   caseSensitive: boolean,
 ): Array<{ readonly start: number; readonly end: number }> {
-  const pattern = new RegExp(escapeRegex(query), caseSensitive ? "gu" : "giu");
+  const pattern = new RegExp(query, caseSensitive ? "gu" : "giu");
   return Array.from(line.matchAll(pattern), (match) => ({
     start: match.index,
     end: match.index + match[0].length,
@@ -1078,7 +1073,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         if (isIgnoredPath(ignoredPaths, match.relativePath, hostIsWindows)) continue;
         const matchRanges = (
           wholeWordPrefilter
-            ? findLiteralRanges(match.lineContent, input.query, input.caseSensitive)
+            ? findWordQueryRanges(match.lineContent, input.query, input.caseSensitive)
             : mapContentMatchRanges(match.lineContent, match.matchRanges)
         ).filter((range) => !input.wholeWord || isWholeWordRange(match.lineContent, range));
         // fff reports hits past its 512-char lineContent cap with no ranges, so whole words can't be verified there.
