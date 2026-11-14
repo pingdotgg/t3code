@@ -515,17 +515,9 @@ pub(super) async fn launch(cx: &Cx<'_>, args: &Args) -> ToolResult {
                 "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
             )
         })?;
+    // An instance the settings do not enable is refused by the engine's dispatch with T3's
+    // text (`ThreadManagementProviderInstanceDisabledError`); T3 checks nothing else here.
     let model_selection = normalize_selection(model_selection);
-    if let Some(instance) = model_selection["instanceId"].as_str()
-        && projects::provider(cx, instance).is_none()
-    {
-        return Err(fail(
-            "provider_unavailable",
-            format!(
-                "Provider {instance} is not available here. orchestrator_capabilities lists providers."
-            ),
-        ));
-    }
     let runtime_mode = resolve_runtime_mode(&limits.runtime_mode, str_arg(args, "runtimeMode"))?;
     let interaction_mode =
         resolve_interaction_mode(&limits.interaction_mode, str_arg(args, "interactionMode"))?;
@@ -670,15 +662,88 @@ pub(super) async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
     }))
 }
 
-/// Waits until a run ends or waits on a question or approval (a person must answer). No
-/// `run_id`: the thread's latest run. Returns the run, `None` for a thread with no run, and
-/// whether the wait timed out.
+/// When a wait is over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Until {
+    /// The run ended or waits on a person (`delegate_task`'s wait).
+    EndedOrWaiting,
+    /// The run reached a terminal status (`waitForThread`, `isTerminalRunStatus`).
+    Ended,
+    /// As `Ended`, then the thread's other work too: `untilDelegatedWorkSettled`.
+    WorkSettled,
+}
+
+const TERMINAL_RUN_STATUSES: [&str; 5] = [
+    "completed",
+    "failed",
+    "cancelled",
+    "interrupted",
+    "rolled_back",
+];
+
+fn is_terminal(run: &Value) -> bool {
+    TERMINAL_RUN_STATUSES.contains(&run["status"].as_str().unwrap_or_default())
+}
+
+/// `delegatedTaskProgress` and the wait's `delegatedWorkResult`: the run whose reply is the
+/// thread's answer, once no run is active and no subagent or background task holds the
+/// thread. `None` while work goes on.
+fn work_result(projection: &Value) -> Option<Value> {
+    let runs: Vec<&Value> = projection["runs"]
+        .as_array()
+        .map(|r| r.iter().collect())
+        .unwrap_or_default();
+    let work: Vec<&Value> = runs
+        .iter()
+        .copied()
+        .filter(|run| run["status"] != "rolled_back")
+        .collect();
+    let result = work
+        .iter()
+        .copied()
+        .filter(|run| is_terminal(run) && (!run["startedAt"].is_null() || run["ordinal"] == 1))
+        .max_by_key(|run| run["ordinal"].as_u64().unwrap_or(0));
+    if result.is_none() && runs.iter().all(|run| is_terminal(run)) {
+        return view::latest_run(projection).cloned();
+    }
+    let active = work
+        .iter()
+        .any(|run| !is_terminal(run) && !(run["status"] == "queued" && run["queueHeld"] == true));
+    let holding_subagent = projection["subagents"].as_array().is_some_and(|tasks| {
+        tasks.iter().any(|task| {
+            let status = task["status"].as_str().unwrap_or_default();
+            let delivery = task["completionDelivery"]["state"]
+                .as_str()
+                .unwrap_or_default();
+            matches!(status, "pending" | "running" | "waiting")
+                || (status != "idle" && matches!(delivery, "pending" | "claimed"))
+        })
+    });
+    let holding_background = projection["providerThreads"]
+        .as_array()
+        .is_some_and(|threads| {
+            threads.iter().any(|thread| {
+                thread["pendingBackgroundTasks"]
+                    .as_array()
+                    .is_some_and(|tasks| !tasks.is_empty())
+            })
+        });
+    if active || holding_subagent || holding_background {
+        return None;
+    }
+    result.cloned()
+}
+
+/// Waits for a run as `until` says. No `run_id`: the thread's latest run. Returns the run
+/// (`None` for a thread with no run), whether the wait timed out, and with
+/// [`Until::WorkSettled`] the run with the thread's answer.
 pub(super) async fn wait_for_run(
     cx: &Cx<'_>,
     thread: &str,
     run_id: Option<&str>,
     timeout: Duration,
-) -> Result<(Option<Value>, bool), ToolError> {
+    until: Until,
+) -> Result<(Option<Value>, bool, Option<Value>), ToolError> {
     let pick = |projection: &Value| -> Result<Option<Value>, ToolError> {
         match run_id {
             Some(id) => view::run_by_id(projection, id)
@@ -693,10 +758,28 @@ pub(super) async fn wait_for_run(
             None => Ok(view::latest_run(projection).cloned()),
         }
     };
-    let settled = |run: &Option<Value>| {
-        run.as_ref()
-            .is_none_or(|r| !view::is_live(r) || r["status"] == "waiting")
-    };
+    // The run, and whether the wait is over (with the answer's run for `WorkSettled`).
+    let evaluate =
+        |projection: &Value| -> Result<(Option<Value>, Option<Option<Value>>), ToolError> {
+            let run = pick(projection)?;
+            let Some(current) = &run else {
+                return Ok((run, Some(None)));
+            };
+            let over = match until {
+                Until::EndedOrWaiting => {
+                    (!view::is_live(current) || current["status"] == "waiting").then_some(None)
+                }
+                Until::Ended => is_terminal(current).then_some(None),
+                Until::WorkSettled => {
+                    if is_terminal(current) {
+                        work_result(projection).map(Some)
+                    } else {
+                        None
+                    }
+                }
+            };
+            Ok((run, over))
+        };
     let deadline = tokio::time::Instant::now() + timeout;
     // The stream starts with a snapshot, then carries each committed event.
     let input = from_json(json!({"threadId": thread})).map_err(internal)?;
@@ -710,45 +793,76 @@ pub(super) async fn wait_for_run(
         }
         Err(EngineError::Internal(message)) => return Err(internal(message)),
     };
-    let mut current = pick(&cx.projection(thread).await?)?;
+    let (mut current, mut over) = evaluate(&cx.projection(thread).await?)?;
     loop {
-        if settled(&current) {
-            return Ok((current, false));
+        if let Some(result) = over {
+            return Ok((current, false, result));
         }
         let item = match tokio::time::timeout_at(deadline, stream.recv()).await {
-            Err(_) => return Ok((current, true)),
+            Err(_) => return Ok((current, true, None)),
             Ok(None) | Ok(Some(Err(_))) => {
-                return Ok((pick(&cx.projection(thread).await?)?, false));
+                let (run, over) = evaluate(&cx.projection(thread).await?)?;
+                return Ok((run, over.is_none(), over.flatten()));
             }
             Ok(Some(Ok(item))) => conn_contract::to_json(&item),
         };
         let kind = item["event"]["type"].as_str().unwrap_or_default();
-        if kind.starts_with("run.") || kind.starts_with("runtime-request.") {
-            current = pick(&cx.projection(thread).await?)?;
+        let relevant = kind.starts_with("run.")
+            || kind.starts_with("runtime-request.")
+            || (until == Until::WorkSettled
+                && (kind.starts_with("subagent.") || kind.starts_with("provider-thread.")));
+        if relevant {
+            (current, over) = evaluate(&cx.projection(thread).await?)?;
         }
     }
 }
 
 pub(super) async fn wait(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let id = thread_id(args);
-    cx.projection(id).await?;
+    // `loadTargetThread` and `threadNotFound`: T3's text for this tool, with a hint when the
+    // id names an MCP-made thread without its `mcp:` prefix.
+    if let Err(error) = cx.projection(id).await {
+        let ToolError::Failure { code, .. } = &error else {
+            return Err(error);
+        };
+        if *code != "thread_not_found" {
+            return Err(error);
+        }
+        let prefixed = format!("mcp:{id}");
+        let message = if cx.projection(&prefixed).await.is_ok() {
+            format!("Thread {id} was not found. Did you mean `{prefixed}`?")
+        } else {
+            format!("Thread {id} was not found.")
+        };
+        return Err(fail("thread_not_found", message));
+    }
     let timeout = args
         .get("timeoutMs")
         .and_then(Value::as_f64)
         .map_or(DEFAULT_WAIT_MS, |ms| (ms.max(1.0) as u64).min(MAX_WAIT_MS));
-    let (run, timed_out) = wait_for_run(
+    let until = if bool_arg(args, "untilDelegatedWorkSettled") == Some(true) {
+        Until::WorkSettled
+    } else {
+        Until::Ended
+    };
+    let (run, timed_out, result_run) = wait_for_run(
         cx,
         id,
         str_arg(args, "runId"),
         Duration::from_millis(timeout),
+        until,
     )
     .await?;
-    Ok(json!({
+    let mut out = json!({
         "threadId": id,
         "runId": run.as_ref().map_or(Value::Null, |r| r["id"].clone()),
         "status": run.as_ref().map_or(json!("idle"), |r| r["status"].clone()),
         "timedOut": timed_out,
-    }))
+    });
+    if let Some(result) = result_run {
+        out["resultRun"] = json!({"runId": result["id"], "status": result["status"]});
+    }
+    Ok(out)
 }
 
 pub(super) async fn interrupt(cx: &Cx<'_>, args: &Args) -> ToolResult {

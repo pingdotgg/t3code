@@ -51,10 +51,15 @@ pub(crate) fn list_result() -> String {
 /// One tool's definition, parsed, and its argument names in advertised order (serde_json
 /// sorts object keys; error texts list them as TS does).
 pub(crate) fn tool(name: &str) -> Option<(Value, Vec<String>)> {
-    let prefix = format!("{{\"name\":{},", Value::String(name.to_owned()));
-    let line = lines().find(|line| line.starts_with(&prefix))?;
+    let line = line(name)?;
     let tool = serde_json::from_str(line).ok()?;
     Some((tool, argument_order(line)))
+}
+
+/// One tool's catalog line, unparsed: its keys keep the contract's order.
+pub(crate) fn line(name: &str) -> Option<&'static str> {
+    let prefix = format!("{{\"name\":{},", Value::String(name.to_owned()));
+    lines().find(|line| line.starts_with(&prefix))
 }
 
 /// The keys of `inputSchema.properties`, as written in the line.

@@ -997,6 +997,24 @@ impl Engine for SqliteEngine {
 
     fn launch_thread(&self, input: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
         Box::pin(async move {
+            // `ThreadLaunchService` asks `assertProviderInstanceEnabled` before it makes the
+            // thread, so a refused launch leaves no thread behind.
+            if let Some(host) = &self.inner.host
+                && let (Some(project), Some(instance)) = (
+                    input["projectId"].as_str(),
+                    input["modelSelection"]["instanceId"].as_str(),
+                )
+                && !host.provider_instance_enabled(Some(project), instance)
+            {
+                return Err(EngineError::Rejected(json!({
+                    "_tag": "OrchestrationV2ThreadLaunchError",
+                    "commandId": input["commandId"],
+                    "projectId": input["projectId"],
+                    "message": format!(
+                        "Provider instance \"{instance}\" is disabled for project {project}."
+                    ),
+                })));
+            }
             self.inner
                 .launch(input.clone())
                 .await
