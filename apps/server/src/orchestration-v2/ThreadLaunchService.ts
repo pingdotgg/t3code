@@ -41,6 +41,7 @@ import {
   isTemporaryWorktreeBranch,
 } from "@t3tools/shared/git";
 
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { parseGitCloneProgressLine } from "../project/gitCloneProgress.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -163,6 +164,7 @@ export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBas
     projectTitle: Schema.String,
     workspaceRoot: Schema.String,
     baseRef: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -216,6 +218,8 @@ export class ThreadLaunchService extends Context.Service<
       void,
       ThreadLaunchBaseRefError | ThreadLaunchBranchConflictError | ThreadLaunchNotRepositoryError
     >;
+    /** True only when the project's folder is known not to be a Git repository. */
+    readonly isNonGitProject: (projectId: ProjectId) => Effect.Effect<boolean>;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
@@ -244,6 +248,7 @@ const make = Effect.gen(function* () {
   const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
   const terminals = yield* TerminalManager.TerminalManager;
   const git = yield* GitWorkflow.GitWorkflowService;
+  const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -346,37 +351,54 @@ const make = Effect.gen(function* () {
     "ThreadLaunchService.checkWorktreeBase",
   )(function* (input) {
     const strategy = input.workspaceStrategy;
-    // launch() turns a Scratch worktree request into a root launch.
-    if (strategy.type !== "worktree" || (yield* managedFolders.isScratchProject(input.projectId)))
-      return;
-    if (input.commandId !== undefined) {
-      const receipt = yield* receipts
-        .getByCommandId(input.commandId)
-        .pipe(Effect.orElseSucceed(() => Option.none()));
-      if (Option.isSome(receipt) && receipt.value.status === "accepted") return;
-    }
-    const project = Option.getOrUndefined(
-      yield* projects.getById(input.projectId).pipe(Effect.orElseSucceed(() => Option.none())),
+    if (strategy.type !== "worktree") return;
+    const commandId = input.commandId;
+    const [isScratch, receipt, projectOption] = yield* Effect.all(
+      [
+        managedFolders.isScratchProject(input.projectId),
+        commandId === undefined
+          ? Effect.succeedNone
+          : receipts.getByCommandId(commandId).pipe(Effect.orElseSucceed(() => Option.none())),
+        projects.getById(input.projectId).pipe(Effect.orElseSucceed(() => Option.none())),
+      ],
+      { concurrency: "unbounded" },
     );
+    // launch() turns a Scratch worktree request into a root launch.
+    if (isScratch) return;
+    if (Option.isSome(receipt) && receipt.value.status === "accepted") return;
+    const project = Option.getOrUndefined(projectOption);
     if (project === undefined) return;
     const cwd = project.workspaceRoot;
-    const repositoryRoot = yield* git
-      .repositoryRoot(cwd)
-      .pipe(Effect.orElseSucceed(() => undefined));
+    const { baseRef, branch } = strategy;
+    const checksBranch = branch !== undefined && !isTemporaryWorktreeBranch(branch);
+    // Errors keep their order below: missing repository, then base ref, then branch conflict.
+    const [repositoryRoot, hasBaseCommit, localBranches] = yield* Effect.all(
+      [
+        git.repositoryRoot(cwd).pipe(Effect.orElseSucceed(() => undefined)),
+        // `:/text` is a commit search, which cannot be asked for a commit type.
+        baseRef.startsWith(":")
+          ? Effect.succeed(true)
+          : // `git worktree add` reads `-` as the previous checkout.
+            git
+              .hasCommit({ cwd, refName: baseRef === "-" ? "@{-1}" : baseRef })
+              .pipe(Effect.orElseSucceed(() => true)),
+        checksBranch
+          ? git
+              .listLocalBranchNames(cwd)
+              .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))
+          : Effect.succeed<ReadonlyArray<string>>([]),
+      ],
+      { concurrency: "unbounded" },
+    );
     if (repositoryRoot === null)
       return yield* new ThreadLaunchNotRepositoryError({
         projectId: project.id,
         projectTitle: project.title,
         workspaceRoot: cwd,
       });
-    const { baseRef, branch } = strategy;
     const baseResolves =
-      // `:/text` is a commit search, which cannot be asked for a commit type.
-      baseRef.startsWith(":") ||
+      hasBaseCommit ||
       (yield* Effect.gen(function* () {
-        // `git worktree add` reads `-` as the previous checkout.
-        if (yield* git.hasCommit({ cwd, refName: baseRef === "-" ? "@{-1}" : baseRef }))
-          return true;
         if (strategy.startFromOrigin === true) {
           const remote = yield* git.resolveWorktreeBaseRemote({ cwd, refName: baseRef });
           // The remote may have deleted the branch; ask it rather than trusting the name.
@@ -398,10 +420,8 @@ const make = Effect.gen(function* () {
         baseRef,
       });
     // Provisioning flattens temporary names that collide, so only explicit names are refused.
-    if (branch === undefined || isTemporaryWorktreeBranch(branch)) return;
-    const conflictingBranch = (yield* git
-      .listLocalBranchNames(cwd)
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).find(
+    if (!checksBranch) return;
+    const conflictingBranch = localBranches.find(
       (existing) => existing.startsWith(`${branch}/`) || branch.startsWith(`${existing}/`),
     );
     if (conflictingBranch !== undefined)
@@ -411,6 +431,20 @@ const make = Effect.gen(function* () {
         branch,
         conflictingBranch,
       });
+  });
+
+  const isNonGitProject: ThreadLaunchService["Service"]["isNonGitProject"] = Effect.fn(
+    "ThreadLaunchService.isNonGitProject",
+  )(function* (projectId) {
+    const project = yield* projects
+      .getById(projectId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isNone(project)) return false;
+    // Unlike `git.repositoryRoot`, this fails on a repository Git cannot read, which is not "no repository".
+    return yield* checkpointStore.isGitRepository(project.value.workspaceRoot).pipe(
+      Effect.map((isRepository) => !isRepository),
+      Effect.orElseSucceed(() => false),
+    );
   });
 
   const prepareInBackground = Effect.fn("ThreadLaunchService.prepareInBackground")(function* (
@@ -531,8 +565,9 @@ const make = Effect.gen(function* () {
             })
             .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
         }
-        let startRef = input.workspaceStrategy.baseRef;
-        let baseRefName = input.workspaceStrategy.baseRef;
+        const requestedBaseRef = input.workspaceStrategy.baseRef;
+        let startRef = requestedBaseRef;
+        let baseRefName = requestedBaseRef;
         const remote =
           input.workspaceStrategy.startFromOrigin === true
             ? yield* git
@@ -635,7 +670,22 @@ const make = Effect.gen(function* () {
               },
             },
           )
-          .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+          .pipe(
+            Effect.catchIf(
+              (error) => error.reason === "ref_not_found",
+              (cause) =>
+                Effect.fail(
+                  new ThreadLaunchBaseRefError({
+                    projectId: project.id,
+                    projectTitle: project.title,
+                    workspaceRoot: project.workspaceRoot,
+                    baseRef: requestedBaseRef,
+                    cause,
+                  }),
+                ),
+            ),
+            Effect.mapError(mapError(input, "provision-worktree", threadId)),
+          );
         worktreePath = worktree.worktree.path;
         branch = worktree.worktree.refName;
         createdWorktreePath = worktreePath;
@@ -996,7 +1046,7 @@ const make = Effect.gen(function* () {
         return yield* prepare;
       }
       const afterSequence = yield* threads.getThreadEventSequence(threadId);
-      const projection = yield* threads.getThreadRecords(threadId, ["runs"]);
+      const projection = yield* threads.getThreadRecords(threadId, ["runs"], { runIds: [runId] });
       if (projection.runs.find((run) => run.id === runId)?.status !== "preparing") return;
       const interruption = threads
         .streamStoredEventsFrom({ threadId, afterSequence, eventType: "run.updated" })
@@ -1118,6 +1168,26 @@ const make = Effect.gen(function* () {
         const initialBranch = yield* launchBranch(workspaceStrategy, project.workspaceRoot);
         const initialWorktreePath =
           workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null;
+        const initialMessage =
+          input.initialMessage === undefined
+            ? undefined
+            : {
+                messageId:
+                  input.initialMessage.messageId ??
+                  (yield* ids.allocate
+                    .message({ threadId: candidateThreadId, ordinal: 1 })
+                    .pipe(Effect.mapError(mapError(input, "dispatch-message", candidateThreadId)))),
+                text: input.initialMessage.text,
+                ...(input.initialMessage.scheduledTaskId === undefined
+                  ? {}
+                  : { scheduledTaskId: input.initialMessage.scheduledTaskId }),
+                ...(input.initialMessage.senderThreadId === undefined
+                  ? {}
+                  : { senderThreadId: input.initialMessage.senderThreadId }),
+                attachments: input.initialMessage.attachments,
+                ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
+                ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
+              };
         const claimDispatch =
           input.reuseExistingThread === true
             ? threads.dispatch({
@@ -1146,6 +1216,9 @@ const make = Effect.gen(function* () {
                   : { delegatedFrom: input.delegatedFrom }),
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
+                ...(initialMessage === undefined
+                  ? {}
+                  : { initialMessage: { ...initialMessage, workspaceStrategy } }),
               });
         const claimed = yield* claimDispatch.pipe(
           Effect.mapError(
@@ -1165,53 +1238,43 @@ const make = Effect.gen(function* () {
         let runId: RunId | null = null;
         let messageSequence: number | undefined;
         let messageWasAlreadyAccepted = false;
-        if (input.initialMessage !== undefined) {
-          const messageCommandId = CommandId.make(`${input.commandId}:initial-message`);
-          const messageReceipt = yield* readReceipt(input, messageCommandId);
-          messageWasAlreadyAccepted = Option.isSome(messageReceipt);
-          const messageId =
-            input.initialMessage.messageId ??
-            (yield* ids.allocate
-              .message({ threadId, ordinal: 1 })
-              .pipe(Effect.mapError(mapError(input, "dispatch-message", threadId))));
-          const dispatched = yield* threads
-            .dispatch({
-              type: "message.dispatch",
-              commandId: messageCommandId,
-              threadId,
-              messageId,
-              text: input.initialMessage.text,
-              ...(input.initialMessage.scheduledTaskId === undefined
-                ? {}
-                : { scheduledTaskId: input.initialMessage.scheduledTaskId }),
-              ...(input.initialMessage.senderThreadId === undefined
-                ? {}
-                : { senderThreadId: input.initialMessage.senderThreadId }),
-              attachments: input.initialMessage.attachments,
-              ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
-              ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
-              modelSelection: input.modelSelection,
-              dispatchMode: { type: "defer_start", workspaceStrategy },
-              createdBy: input.createdBy,
-              creationSource: input.creationSource,
-            })
-            .pipe(
-              // An agent's launch can land on a thread that a replay, or a concurrent
-              // launch with the same key, created with broader modes. The orchestrator
-              // refuses the message under the thread's lock; the user's own clients
-              // launch into their own drafts, whatever modes those hold.
-              input.createdBy === "agent"
-                ? Effect.provideService(DispatchModeLimit, {
-                    runtimeMode: input.runtimeMode,
-                    interactionMode: input.interactionMode,
-                  })
-                : (effect) => effect,
-              Effect.mapError(mapError(input, "dispatch-message", threadId)),
-            );
+        if (initialMessage !== undefined) {
+          // A new thread's claim carries its first message. A reused thread, or a replayed
+          // claim that carried none, takes it in a command of its own.
+          let accepted = claimed;
+          if (!claimed.storedEvents.some((stored) => stored.event.type === "run.created")) {
+            const messageCommandId = CommandId.make(`${input.commandId}:initial-message`);
+            const messageReceipt = yield* readReceipt(input, messageCommandId);
+            messageWasAlreadyAccepted = Option.isSome(messageReceipt);
+            accepted = yield* threads
+              .dispatch({
+                ...initialMessage,
+                type: "message.dispatch",
+                commandId: messageCommandId,
+                threadId,
+                modelSelection: input.modelSelection,
+                dispatchMode: { type: "defer_start", workspaceStrategy },
+                createdBy: input.createdBy,
+                creationSource: input.creationSource,
+              })
+              .pipe(
+                // An agent's launch can land on a thread that a replay, or a concurrent
+                // launch with the same key, created with broader modes. The orchestrator
+                // refuses the message under the thread's lock; the user's own clients
+                // launch into their own drafts, whatever modes those hold.
+                input.createdBy === "agent"
+                  ? Effect.provideService(DispatchModeLimit, {
+                      runtimeMode: input.runtimeMode,
+                      interactionMode: input.interactionMode,
+                    })
+                  : (effect) => effect,
+                Effect.mapError(mapError(input, "dispatch-message", threadId)),
+              );
+          }
           // A concurrent retry can read no receipt and still replay the dispatch.
-          messageWasAlreadyAccepted ||= dispatched.replayed === true;
-          messageSequence = dispatched.sequence;
-          const runCreated = dispatched.storedEvents.find(
+          messageWasAlreadyAccepted ||= accepted.replayed === true;
+          messageSequence = accepted.sequence;
+          const runCreated = accepted.storedEvents.find(
             (stored) => stored.event.type === "run.created",
           );
           runId = runCreated?.event.type === "run.created" ? runCreated.event.payload.id : null;
@@ -1224,49 +1287,43 @@ const make = Effect.gen(function* () {
           }
         }
 
+        // Fork preparation before the full projection read; it is only part of the reply.
+        const shouldSchedule = runId === null ? Option.isNone(launchReceipt) : true;
+        if (shouldSchedule && (yield* reservePreparation(input.commandId))) {
+          yield* Effect.gen(function* () {
+            const current =
+              runId === null
+                ? null
+                : yield* threads
+                    .getThreadRecords(threadId, ["runs"], { runIds: [runId] })
+                    .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
+            if (
+              current !== null &&
+              !current.runs.some((run) => run.id === runId && run.status === "preparing")
+            ) {
+              return yield* releasePreparation(input.commandId);
+            }
+            const boundWorktreePath = current?.thread.worktreePath ?? null;
+            const preparationStrategy: ThreadLaunchWorkspaceStrategy =
+              Option.isSome(launchReceipt) &&
+              workspaceStrategy.type === "root" &&
+              boundWorktreePath !== null
+                ? {
+                    type: "existing_worktree",
+                    worktreePath: boundWorktreePath,
+                    branch: workspaceStrategy.branch,
+                  }
+                : workspaceStrategy;
+            yield* schedulePreparation(
+              { ...input, workspaceStrategy: preparationStrategy },
+              threadId,
+              runId,
+            );
+          }).pipe(Effect.onError(() => releasePreparation(input.commandId)));
+        }
         const projection = yield* threads
           .getThreadProjection(threadId)
           .pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
-        const runIsPreparing =
-          runId !== null &&
-          projection.runs.some((run) => run.id === runId && run.status === "preparing");
-        const shouldSchedule = runId === null ? Option.isNone(launchReceipt) : runIsPreparing;
-        const boundWorktreePath = projection.thread.worktreePath;
-        const preparationStrategy: ThreadLaunchWorkspaceStrategy =
-          Option.isSome(launchReceipt) &&
-          workspaceStrategy.type === "root" &&
-          boundWorktreePath !== null
-            ? {
-                type: "existing_worktree",
-                worktreePath: boundWorktreePath,
-                branch: workspaceStrategy.branch,
-              }
-            : workspaceStrategy;
-        if (shouldSchedule) {
-          const ownsPreparation = yield* reservePreparation(input.commandId);
-          if (ownsPreparation) {
-            yield* Effect.gen(function* () {
-              const preparationStillRequired =
-                runId === null
-                  ? true
-                  : yield* threads.getThreadRecords(threadId, ["runs"], { runIds: [runId] }).pipe(
-                      Effect.map((current) =>
-                        current.runs.some((run) => run.id === runId && run.status === "preparing"),
-                      ),
-                      Effect.mapError(mapError(input, "update-thread", threadId)),
-                    );
-              if (preparationStillRequired) {
-                yield* schedulePreparation(
-                  { ...input, workspaceStrategy: preparationStrategy },
-                  threadId,
-                  runId,
-                );
-              } else {
-                yield* releasePreparation(input.commandId);
-              }
-            }).pipe(Effect.onError(() => releasePreparation(input.commandId)));
-          }
-        }
 
         return {
           threadId,
@@ -1360,7 +1417,13 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return ThreadLaunchService.of({ launch, checkWorktreeBase, retryPreparation, prepareRun });
+  return ThreadLaunchService.of({
+    launch,
+    checkWorktreeBase,
+    isNonGitProject,
+    retryPreparation,
+    prepareRun,
+  });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);

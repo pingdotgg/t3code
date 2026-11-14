@@ -15,6 +15,7 @@ import * as SqlError from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import type * as Tracer from "effect/Tracer";
 import { vi } from "vite-plus/test";
 
@@ -240,6 +241,25 @@ it.effect("reuses a worker query after an iterator constraint failure", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("commits on the worker writer after a returning write timed out on a lock", () =>
+  Effect.gen(function* () {
+    const { filename, other } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA busy_timeout = 0`;
+      yield* Effect.sync(() => other.exec("BEGIN IMMEDIATE"));
+      const error = yield* sql`UPDATE counters SET value = 1 WHERE id = 1 RETURNING value`.pipe(
+        Effect.flip,
+      );
+      assert.equal(error.reason._tag, "LockTimeoutError");
+      yield* Effect.sync(() => other.exec("COMMIT"));
+
+      yield* sql.withTransaction(sql`UPDATE counters SET value = 2 WHERE id = 1`);
+      assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`.values, [[2]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("keeps another connection from committing between a transaction's read and write", () =>
   Effect.gen(function* () {
     const { filename, other } = yield* makeTempDatabase;
@@ -403,6 +423,80 @@ it.effect("serves another read while a read-only transaction is open", () =>
           }),
         )
         .pipe(SqliteClient.readOnly);
+    }),
+  ),
+);
+
+it.effect("gives a queued read the first reader that frees up", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const holders = yield* Effect.forEach([0, 1, 2, 3], () =>
+        Effect.gen(function* () {
+          const held = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const fiber = yield* sql
+            .withTransaction(
+              countEntries(sql).pipe(
+                Effect.andThen(Deferred.succeed(held, undefined)),
+                Effect.andThen(Deferred.await(release)),
+              ),
+            )
+            .pipe(SqliteClient.readOnly, Effect.forkChild);
+          yield* Deferred.await(held);
+          return { fiber, release };
+        }),
+      );
+      const cancelled = yield* Effect.uninterruptibleMask((restore) =>
+        SqliteClient.readOnly(restore(sql.withTransaction(countEntries(sql)))),
+      ).pipe((effect) => Effect.forkChild(effect, { startImmediately: true }));
+      yield* Fiber.interrupt(cancelled);
+      const cancelledRead = yield* Effect.uninterruptibleMask((restore) =>
+        SqliteClient.readOnly(restore(countEntries(sql))),
+      ).pipe((effect) => Effect.forkChild(effect, { startImmediately: true }));
+      yield* Fiber.interrupt(cancelledRead);
+      const queuedSpan = yield* Deferred.make<Tracer.Span>();
+      const observeQueued: Statement.Transformer = (statement, _sql, _fiber, span) =>
+        Deferred.succeed(queuedSpan, span).pipe(Effect.as(statement));
+      const queued = yield* countEntries(sql).pipe(
+        Effect.provideService(Statement.CurrentTransformer, observeQueued),
+        Effect.provideService(Statement.SpanPropagationEnabled, true),
+        SqliteClient.readOnly,
+        (effect) => Effect.forkChild(effect, { startImmediately: true }),
+      );
+      // Masked read-only work keeps its cancellation pending and still runs once a reader frees up.
+      let maskedRan = 0;
+      const maskedRuns = yield* Effect.forEach(
+        [
+          Effect.scoped(
+            Effect.flatMap(sql.reserve, (connection) =>
+              connection.executeUnprepared("SELECT 1", [], undefined),
+            ),
+          ).pipe(Effect.asVoid),
+          sql.withTransaction(countEntries(sql)).pipe(Effect.asVoid),
+        ],
+        (effect) =>
+          effect.pipe(
+            Effect.andThen(Effect.sync(() => maskedRan++)),
+            Effect.uninterruptible,
+            SqliteClient.readOnly,
+            (masked) => Effect.forkChild(masked, { startImmediately: true }),
+          ),
+      );
+      const interrupting = yield* Effect.forEach(maskedRuns, (fiber) =>
+        Effect.forkChild(Fiber.interrupt(fiber), { startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.succeed(holders[1]!.release, undefined);
+      yield* Fiber.join(holders[1]!.fiber);
+      // Pinned to the first reader it saw, this read would wait for that reader's transaction.
+      assert.equal(yield* Fiber.join(queued), 1);
+      assert.equal((yield* Deferred.await(queuedSpan)).attributes.get("db.lock_wait_ms"), 1000);
+      for (const { fiber, release } of [holders[0]!, holders[2]!, holders[3]!]) {
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(fiber);
+      }
+      yield* Effect.forEach(interrupting, Fiber.join);
+      assert.equal(maskedRan, 2);
     }),
   ),
 );

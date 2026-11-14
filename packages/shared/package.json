@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./png": {
+      "types": "./src/png.ts",
+      "import": "./src/png.ts"
+    },
     "./pullRequestAnchor": {
       "types": "./src/pullRequestAnchor.ts",
       "import": "./src/pullRequestAnchor.ts"
@@ -34,6 +38,10 @@
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"
+    },
+    "./themeCss": {
+      "types": "./src/themeCss.ts",
+      "import": "./src/themeCss.ts"
     },
     "./themePreview": {
       "types": "./src/themePreview.ts",
@@ -411,6 +419,10 @@
       "types": "./src/thirdPartyLicenses.ts",
       "import": "./src/thirdPartyLicenses.ts"
     },
+    "./commandOutput": {
+      "types": "./src/commandOutput.ts",
+      "import": "./src/commandOutput.ts"
+    },
     "./claudeCompaction": {
       "types": "./src/claudeCompaction.ts",
       "import": "./src/claudeCompaction.ts"
@@ -570,6 +582,7 @@
     "@t3tools/contracts": "workspace:*",
     "effect": "catalog:",
     "ffi-rs": "1.3.2",
+    "get-east-asian-width": "^1.6.0",
     "mdast-util-directive": "catalog:",
     "mdast-util-to-hast": "^13.2.1",
     "micromark-extension-directive": "catalog:",

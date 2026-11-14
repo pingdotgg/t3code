@@ -23,7 +23,7 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
-  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-0dc7ed81.tgz": true
+  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-16db4c75.tgz": true
   sharp: true
   utf-8-validate: false
   workerd: false
@@ -137,6 +137,9 @@ overrides:
   # Move this with @react-navigation/native: an older core than it requires crashes
   # every native stack at launch.
   "@react-navigation/core": 7.24.0
+  # @cloudflare/unenv-preset peers on this exact version, but alchemy's runtime
+  # takes a caret range, so lockfile-free installs drift to a newer prerelease.
+  unenv: 2.0.0-rc.24
   # The dbus-next patch drops usocket from the package, but pnpm resolves from the
   # registry manifest, so the edge has to be cut here as well.
   "dbus-next>usocket": "-"

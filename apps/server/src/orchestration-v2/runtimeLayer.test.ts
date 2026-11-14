@@ -491,7 +491,8 @@ const layerProjectDeletionTest = Layer.mergeAll(
   Layer.provide(McpProviderSessions.layer),
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
-  Layer.provide(layerServerConfig),
+  // Exposed so tests can reach the attachments directory that resource cleanup removes from.
+  Layer.provideMerge(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerGitWorkflowTest),
@@ -678,6 +679,147 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
         assert.deepEqual(yield* devices.sessionsForThread(otherThreadId), otherSessions);
         assert.isTrue((yield* devices.state).devices[0]?.booted);
       }),
+  );
+
+  it.effect.each(["no fork", "a live fork"] as const)(
+    "a queued edit's cleanup keeps a file earlier history still shows, with %s",
+    (fork) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const key = `queued-edit-shared-file-${fork.replaceAll(" ", "-")}`;
+        const threadId = ThreadId.make(key);
+        const storedFile = (name: string) =>
+          ({
+            type: "image",
+            id: createAttachmentId(threadId)!,
+            name: `${name}.png`,
+            mimeType: "image/png",
+            sizeBytes: 5,
+          }) as const;
+        const shared = storedFile("shared");
+        const dropped = storedFile("dropped");
+        const filePath = (file: typeof shared) =>
+          path.join(config.attachmentsDir, `${file.id}.png`);
+        yield* fileSystem.writeFileString(filePath(shared), "bytes");
+        yield* fileSystem.writeFileString(filePath(dropped), "bytes");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${key}:create`),
+          createdBy: "user",
+          creationSource: "web",
+          threadId,
+          projectId: ProjectId.make("queued-edit-shared-file-project"),
+          title: "Shared file",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const writeRun = Effect.fn("test.writeQueuedEditRun")(function* (input: {
+          readonly name: string;
+          readonly ordinal: number;
+          readonly status: "completed" | "queued";
+          readonly attachments: ReadonlyArray<typeof shared>;
+        }) {
+          const now = yield* DateTime.now;
+          const runId = RunId.make(`${key}:${input.name}`);
+          const messageId = MessageId.make(`${key}:${input.name}`);
+          const completed = input.status === "completed";
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`${key}:${input.name}:run`),
+                type: "run.created",
+                threadId,
+                runId,
+                occurredAt: now,
+                payload: {
+                  id: runId,
+                  threadId,
+                  ordinal: input.ordinal,
+                  providerInstanceId: modelSelection.instanceId,
+                  modelSelection,
+                  providerThreadId: null,
+                  userMessageId: messageId,
+                  rootNodeId: null,
+                  activeAttemptId: null,
+                  status: input.status,
+                  requestedAt: now,
+                  startedAt: completed ? now : null,
+                  completedAt: completed ? now : null,
+                  checkpointId: null,
+                  contextHandoffId: null,
+                },
+              },
+              {
+                id: EventId.make(`${key}:${input.name}:message`),
+                type: "message.updated",
+                threadId,
+                runId,
+                occurredAt: now,
+                payload: {
+                  id: messageId,
+                  threadId,
+                  runId,
+                  nodeId: null,
+                  role: "user",
+                  text: `Send ${input.name} work`,
+                  attachments: input.attachments,
+                  streaming: false,
+                  createdBy: "user",
+                  creationSource: "web",
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+            ],
+          });
+          return runId;
+        });
+
+        const sourceRunId = yield* writeRun({
+          name: "source",
+          ordinal: 1,
+          status: "completed",
+          attachments: [shared],
+        });
+        if (fork !== "no fork") {
+          const forkThreadId = ThreadId.make(`${key}:fork`);
+          yield* orchestrator.dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make(`${key}:fork`),
+            sourceThreadId: threadId,
+            targetThreadId: forkThreadId,
+            sourcePoint: { type: "run", runId: sourceRunId },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        }
+        const queuedRunId = yield* writeRun({
+          name: "queued",
+          ordinal: 2,
+          status: "queued",
+          attachments: [shared, dropped],
+        });
+        yield* orchestrator.dispatch({
+          type: "queued-run.edit",
+          commandId: CommandId.make(`${key}:edit`),
+          threadId,
+          runId: queuedRunId,
+          text: "Send queued work without files",
+          attachments: [],
+        });
+        yield* worker.drain();
+
+        assert.isFalse(yield* fileSystem.exists(filePath(dropped)));
+        assert.equal(yield* fileSystem.readFileString(filePath(shared)), "bytes");
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("waits for an in-flight thread update before planning deletion", () =>
@@ -4932,6 +5074,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       const headSha = "6074dd48ff";
       let checks: PullRequestDetail["checks"] = [];
+      let activityUnavailable = false;
       const host = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
@@ -4947,13 +5090,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               checks,
             })),
           activity: () =>
-            Effect.succeed({
-              comments: [],
-              commentCount: 0,
-              commentsTruncated: false,
-              reviewThreads: [],
-              commits: [],
-            }),
+            activityUnavailable
+              ? Effect.die("comments unavailable")
+              : Effect.succeed({
+                  comments: [],
+                  commentCount: 0,
+                  commentsTruncated: false,
+                  reviewThreads: [],
+                  commits: [],
+                }),
         }),
       );
       const wakes = Effect.map(
@@ -4980,6 +5125,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* sweep;
       assert.lengthOf(yield* wakes, 1);
 
+      activityUnavailable = true;
       checks = [{ name: "lint", status: "success", description: null, url: null, required: true }];
       yield* TestClock.adjust("10 minutes");
       yield* sweep;
@@ -6400,7 +6546,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("settles past held automatic runs but not held user messages", () =>
+  it.effect("settles past held automatic messages but preserves a held user queue", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -6432,20 +6578,33 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         modelSelection,
         dispatchMode: { type: "start_immediately" },
       });
-      const queueMessage = (id: string, automatic: boolean) =>
+      const queueMessage = (id: string, sender: "notification" | "agent" | "scheduled" | "user") =>
         orchestrator.dispatch({
           type: "message.dispatch",
-          createdBy: automatic ? "agent" : "user",
-          creationSource: automatic ? "provider" : "web",
-          ...(automatic
-            ? {
+          ...(
+            {
+              notification: {
+                createdBy: "agent",
+                creationSource: "provider",
                 notification: {
-                  source: { kind: "background_task" as const },
-                  outcome: "updated" as const,
+                  source: { kind: "background_task" },
+                  outcome: "updated",
                   summary: "Background activity updated",
                 },
-              }
-            : {}),
+              },
+              agent: {
+                createdBy: "agent",
+                creationSource: "mcp",
+                senderThreadId: ThreadId.make("settle-automatic-sender"),
+              },
+              scheduled: {
+                createdBy: "user",
+                creationSource: "web",
+                scheduledTaskId: ScheduledTaskId.make("settle-automatic-schedule"),
+              },
+              user: { createdBy: "user", creationSource: "web" },
+            } as const
+          )[sender],
           commandId: CommandId.make(id),
           threadId,
           messageId: MessageId.make(id),
@@ -6454,7 +6613,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           modelSelection,
           dispatchMode: { type: "queue_after_active" },
         });
-      yield* queueMessage("settle-automatic-notification", true);
+      yield* queueMessage("settle-automatic-notification", "notification");
+      yield* queueMessage("settle-automatic-agent", "agent");
+      yield* queueMessage("settle-automatic-scheduled", "scheduled");
 
       const holdQueueAfterRestart = (commandId: string) =>
         Effect.gen(function* () {
@@ -6528,7 +6689,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         modelSelection,
         dispatchMode: { type: "start_immediately" },
       });
-      yield* queueMessage("settle-automatic-user-queued", false);
+      yield* queueMessage("settle-automatic-user-queued", "user");
+      yield* queueMessage("settle-automatic-agent-queued-2", "agent");
       yield* holdQueueAfterRestart("settle-automatic-restart-2");
       const error = yield* orchestrator
         .dispatch({
@@ -6541,6 +6703,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(
         error.cause,
         `Thread ${threadId} has a queued message. Send it or remove it from the queue before settling.`,
+      );
+      const blocked = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNull(blocked.thread.settledAt);
+      assert.deepEqual(
+        blocked.runs.filter((run) => run.status === "queued").map((run) => run.userMessageId),
+        ["settle-automatic-user-queued", "settle-automatic-agent-queued-2"],
       );
     }),
   );
@@ -9330,7 +9498,23 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   it.effect("edits and removes queued runs", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
       const threadId = ThreadId.make("runtime-layer-queued-edit-thread");
+      const attachment = (name: string) =>
+        ({
+          type: "image",
+          id: `runtime-layer-queued-edit-${name}`,
+          name: `${name}.png`,
+          mimeType: "image/png",
+          sizeBytes: 128,
+        }) as const;
+      const kept = attachment("kept");
+      const shared = attachment("shared");
+      const dropped = attachment("dropped");
+      const effectRequests = (commandId: string) =>
+        Effect.map(outbox.listByCommandId(CommandId.make(commandId)), (effects) =>
+          effects.map((effect) => effect.request),
+        );
 
       yield* orchestrator.dispatch({
         type: "thread.create",
@@ -9354,7 +9538,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
         messageId: MessageId.make("runtime-layer-queued-edit-active-message"),
         text: "Keep the provider occupied.",
-        attachments: [],
+        attachments: [shared],
         modelSelection,
         dispatchMode: { type: "start_immediately" },
       });
@@ -9399,22 +9583,33 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
         runId: queuedRun.id,
         text: "Updated queued text with an attachment.",
-        attachments: [
-          {
-            type: "image",
-            id: "runtime-layer-queued-edit-attachment",
-            name: "screenshot.png",
-            mimeType: "image/png",
-            sizeBytes: 128,
-          },
-        ],
+        attachments: [kept, shared, dropped],
+      });
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("runtime-layer-queued-edit-drop-attachments"),
+        threadId,
+        runId: queuedRun.id,
+        text: "Updated queued text with an attachment.",
+        attachments: [kept],
       });
       const afterAttachmentEdit = yield* orchestrator.getThreadProjection(threadId);
       assert.deepEqual(
         afterAttachmentEdit.messages
           .find((message) => message.id === queuedRun.userMessageId)
           ?.attachments.map((attachment) => attachment.id),
-        ["runtime-layer-queued-edit-attachment"],
+        [kept.id],
+      );
+      assert.deepEqual(
+        yield* effectRequests("runtime-layer-queued-edit-drop-attachments"),
+        [
+          {
+            type: "attachment.cleanup",
+            attachmentIds: [shared.id, dropped.id],
+            skipReferenced: true,
+          },
+        ],
+        "dropped files are queued for a cleanup that skips files the thread still references",
       );
 
       yield* orchestrator.dispatch({
@@ -9429,9 +9624,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         afterTextOnlyEdit.messages
           .find((message) => message.id === queuedRun.userMessageId)
           ?.attachments.map((attachment) => attachment.id),
-        ["runtime-layer-queued-edit-attachment"],
+        [kept.id],
         "an edit without attachments must leave the stored attachments untouched",
       );
+      assert.deepEqual(yield* effectRequests("runtime-layer-queued-edit-text-only"), []);
 
       const emptyEditError = yield* orchestrator
         .dispatch({
@@ -10017,7 +10213,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         commandId: CommandId.make("runtime-layer-snoozed-thread-create"),
         threadId,
         projectId,
-        title: "Snoozed thread",
+        title: "New thread",
         modelSelection,
         runtimeMode: "full-access",
         interactionMode: "default",
@@ -10810,6 +11006,17 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert.lengthOf(after.runs, 3);
         assert.equal(after.runs[1]?.status, "queued");
         assert.equal(after.runs[2]?.status, "starting");
+        assert.equal(after.runs[2]?.manualContinuationOfRunId, source.id);
+        const resumeMessage = after.messages.find(
+          (message) => message.id === resume("first").messageId,
+        );
+        assert.equal(resumeMessage?.text, "");
+        assert.equal(resumeMessage?.notification?.summary, "Resumed thread");
+        assert.isFalse(
+          after.turnItems.some(
+            (item) => item.runId === after.runs[2]?.id && item.type === "user_message",
+          ),
+        );
         assert.equal(
           (yield* orchestrator.dispatch(resume("second")).pipe(Effect.exit))._tag,
           "Failure",
@@ -10833,6 +11040,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     "replacement",
     "manual-snooze",
     "invalid-snooze",
+    "settled",
     "cancel-resume-keep-snooze",
     "independent-patches",
     "expired-snooze",
@@ -10984,6 +11192,38 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const current = yield* orchestrator.getThreadProjection(threadId);
         assert.isNull(current.thread.limitRecovery ?? null);
         assert.isNull(current.thread.snoozedUntil);
+        return;
+      }
+      if (scenario === "settled") {
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("recovery:arm-before-settle:settled"),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, autoResume: true, snooze: true },
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("recovery:settle:settled"),
+          threadId,
+        });
+        const error = yield* orchestrator
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make("recovery:arm:settled"),
+            threadId,
+            limitRecovery: { runId: run.id, resetAt, autoResume: true },
+          })
+          .pipe(Effect.flip);
+        assert(error._tag === "OrchestratorDispatchError");
+        assert.equal(error.cause, "The thread is settled. Un-settle it to resume at the reset.");
+        assert.deepInclude(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.limitRecovery,
+          {
+            runId: run.id,
+            autoResume: false,
+            snooze: false,
+          },
+        );
         return;
       }
       const snooze = scenario === "wake" || scenario === "cancel-resume-keep-snooze";

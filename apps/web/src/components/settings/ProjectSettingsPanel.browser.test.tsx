@@ -658,6 +658,33 @@ describe("project settings scope", () => {
     await expect.element(remoteOption()).toBeVisible();
   });
 
+  it("lists only the selected environment's projects and keeps it when one is opened", async () => {
+    setup();
+    const [primaryProject, remoteProject] = state.projects;
+    state.projects = [
+      primaryProject!,
+      {
+        ...remoteProject!,
+        title: "Remote only",
+        repositoryIdentity: null,
+      },
+    ];
+    await using screen = await mountSettings({ machine: primaryId });
+
+    await expect.element(page.getByRole("button", { name: /^Shared repo/ })).toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: /^Remote only/ }))
+      .not.toBeInTheDocument();
+
+    await userEvent.click(page.getByRole("button", { name: /^Shared repo/ }));
+    await vi.waitFor(() =>
+      expect(screen.router.state.location.search).toEqual({
+        project: projectKey(),
+        machine: primaryId,
+      }),
+    );
+  });
+
   it("offers only the selected project's checkout environments", async () => {
     setup();
     state.projects = state.projects.filter((project) => project.environmentId === primaryId);

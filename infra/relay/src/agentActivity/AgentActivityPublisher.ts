@@ -63,17 +63,18 @@ const make = Effect.gen(function* () {
     readonly state: RelayAgentActivityState | null;
     readonly nowMs: number;
   }) {
-    const activeStates = input.deliveryUser.liveActivitiesEnabled
-      ? yield* rows.listForUser({ userId: input.deliveryUser.userId })
-      : [];
-    const liveActivityAggregate = input.deliveryUser.liveActivitiesEnabled
-      ? makeAggregateState({
-          activeStates,
-          terminalState: input.state && isTerminalPhase(input.state) ? input.state : null,
-          nowMs: input.nowMs,
-        })
-      : null;
     const targets = yield* liveActivities.listTargets({ userId: input.deliveryUser.userId });
+    // Only iOS targets with a running Live Activity read the aggregate, and few users have one,
+    // so skip the per-user activity query otherwise.
+    const liveActivityAggregate =
+      input.deliveryUser.liveActivitiesEnabled &&
+      targets.some((target) => target.platform !== "android" && target.activity_push_token)
+        ? makeAggregateState({
+            activeStates: yield* rows.listForUser({ userId: input.deliveryUser.userId }),
+            terminalState: input.state && isTerminalPhase(input.state) ? input.state : null,
+            nowMs: input.nowMs,
+          })
+        : null;
     return yield* Effect.forEach(
       targets,
       Effect.fnUntraced(function* (target) {
