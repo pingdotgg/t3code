@@ -23,6 +23,7 @@ import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
@@ -309,6 +310,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
     }
   }
 
+  const fs = yield* FileSystem.FileSystem;
   const checkedStatePaths: Array<string> = [];
   let foreignServer: { readonly hostname: string; readonly statePath: string } | undefined;
   for (const baseDir of new Set(bases)) {
@@ -328,9 +330,20 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       const probed = isProcessAlive(state.value.pid)
         ? yield* probeEnvironmentDescriptor(state.value.origin)
         : undefined;
-      if (probed?._tag !== "descriptor") {
-        // Hostnames can change under a running server (DHCP), so a foreign one only names the error.
-        if (isRuntimeStateFromAnotherMachine(state.value)) {
+      const foreign = isRuntimeStateFromAnotherMachine(state.value);
+      // Hostnames change under running servers (DHCP), so a foreign record still pairs, but only
+      // with the server that owns this home: its recorded PID and port can be reused here.
+      const descriptor =
+        probed?._tag === "descriptor" &&
+        (!foreign ||
+          (yield* fs.readFileString(derivedPaths.environmentIdPath).pipe(
+            Effect.map((id) => id.trim()),
+            Effect.orElseSucceed(() => undefined),
+          )) === probed.descriptor.environmentId)
+          ? probed.descriptor
+          : undefined;
+      if (descriptor === undefined) {
+        if (foreign) {
           foreignServer ??= { hostname: state.value.hostname ?? "unknown", statePath };
         }
         continue;
@@ -339,7 +352,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
         baseDir,
         variant,
         state: state.value,
-        descriptor: probed.descriptor,
+        descriptor,
       } satisfies DiscoveredPairTarget;
     }
   }
