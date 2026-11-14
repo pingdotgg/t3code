@@ -118,7 +118,12 @@ device and cannot drift from the pinned CLI version. `device_open` returns a
 launcher bound to its agent-device session, so agents need no target flags.
 The launcher leaves out the flags a command refuses (`cdp` talks to Metro, not
 to the device), refuses the commands that would replace T3's connection, and
-checks that connection first: agent-device reports a sandboxed shell and a
+gives device selectors only to commands that choose the device or check its
+claim: agent-device runs any other command on a selected device without a claim
+check, so a session whose `open` lost to another thread could drive its device.
+`batch`, `replay` and `test` pass selectors to every step, so they refuse to run
+while another session holds the device. The launcher also checks T3's
+connection before each command: agent-device reports a sandboxed shell and a
 dropped tunnel alike as an unreachable daemon, so the launcher names which one it
 is. Ending a session (`device_close`, the Device panel, a shutdown) also closes
 its agent-device session, which quits the app that session opened and releases the CLI's claim on the device.

@@ -151,21 +151,59 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
   "--wait",
 ];
 
+/**
+ * agent-device 0.21.36 commands that pick their device from selectors: open, those that check its
+ * claim themselves, read-only listings, and batch/replay/test, whose steps inherit them (an open step
+ * needs them). Any other command given a selector and a session the daemon does not hold runs on that
+ * device without a claim check, even while another session holds it.
+ */
+const SELECTING_COMMANDS: ReadonlyArray<string> = [
+  "open",
+  "batch",
+  "replay",
+  "test",
+  "launch",
+  "relaunch",
+  "apps",
+  "appstate",
+  "capabilities",
+  "devices",
+  "doctor",
+  "boot",
+  "shutdown",
+  "prepare",
+  "install",
+  "reinstall",
+  "uninstall",
+  "install-from-source",
+  "push",
+];
+
+/**
+ * agent-device 0.21.36 hands a flow's selectors to every step, so a step other than open runs on
+ * the device without a claim check, as any command given a selector does.
+ */
+const FLOW_COMMANDS: ReadonlyArray<string> = ["batch", "replay", "test"];
+
 // Help gets no bound flags (agent-device reads --config even for help); only args before `--` are flags.
 // agent-device 0.21.31 refuses some bound flags per command; connect/disconnect/auth/daemon would
 // replace T3's connection; device status reads this machine's claims. It reports a sandboxed shell and a
 // dropped tunnel alike, so check first, at --daemon-base-url if given, as agent-device prefers it.
 const launcherSource = (node: string, entryPath: string, boundArgs: ReadonlyArray<string>) =>
-  `import { spawn } from "node:child_process";
+  `import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
 const entry = ${JSON.stringify(entryPath)};
 const bound = ${JSON.stringify(boundArgs)};
 const refused = new Map([["cdp", ["--platform", "--udid", "--config", "--session"]], ["connection", ["--platform", "--udid"]]]);
 const managed = ["connect", "disconnect", "auth", "daemon"];
+const selectors = ["--platform", "--target", "--device", "--udid", "--serial"];
+const selecting = ${JSON.stringify(SELECTING_COMMANDS)};
+const flows = ${JSON.stringify(FLOW_COMMANDS)};
+const selectorEnv = ["AGENT_DEVICE_PLATFORM", "AGENT_DEVICE_TARGET", "AGENT_DEVICE_DEVICE", "AGENT_DEVICE_UDID", "AGENT_DEVICE_SERIAL"];
 const args = process.argv.slice(2);
 const end = args.indexOf("--");
-const options = end < 0 ? args : args.slice(0, end);
+const given = end < 0 ? args : args.slice(0, end);
 const valued = new Set(${JSON.stringify(VALUE_FLAGS)});
 let name = "";
 for (let index = 0; index < args.length; index++) {
@@ -173,8 +211,14 @@ for (let index = 0; index < args.length; index++) {
   if (arg === "--") { name = args[index + 1] ?? ""; break; }
   if (!arg.startsWith("-")) { name = arg; break; }
   if (!arg.includes("=") && valued.has(arg)) index++;
+  // --save-script takes a value only when it looks like a path, as agent-device decides.
+  const next = args[index + 1];
+  if (arg === "--save-script" && next !== undefined && !next.startsWith("-") && /[\\/\\\\]/.test(next) && !/^[a-zA-Z][a-zA-Z0-9+.-]*:\\/\\//.test(next)) index++;
 }
-const informational = args.length === 0 || ["help", "--help", "-h", "--version", "version"].includes(args[0]) || options.includes("--help") || options.includes("-h");
+const informational = args.length === 0 || ["help", "--help", "-h", "--version", "version"].includes(args[0]) || given.includes("--help") || given.includes("-h");
+const selects = informational || selecting.includes(name.toLowerCase());
+const isSelector = arg => selectors.some(flag => arg === flag || arg.startsWith(flag + "="));
+const options = selects ? given : given.filter((arg, index) => !isSelector(arg) && !(selectors.includes(given[index - 1]) && !arg.startsWith("-")));
 if (!informational && managed.includes(name)) {
   console.error("T3 Code manages this command's connection to the device, so \`" + name + "\` is not available through it.");
   process.exit(1);
@@ -183,7 +227,7 @@ if (!informational && name === "device") {
   console.error("\`device status\` reads this machine's device claims, not those on the device's host, so it is not available through this command. Quote the DEVICE_IN_USE error instead.");
   process.exit(1);
 }
-const skip = refused.get(name) ?? [];
+const skip = [...(refused.get(name) ?? []), ...(selects ? [] : selectors)];
 if (!informational) for (let index = 0; index + 1 < bound.length; index += 2) if (!skip.includes(bound[index]) && !options.some(arg => arg === bound[index] || arg.startsWith(bound[index] + "="))) options.push(bound[index], bound[index + 1]);
 const command = end < 0 ? options : [...options, ...args.slice(end)];
 const hasValue = flag => { const index = options.indexOf(flag); return options.some(arg => arg.startsWith(flag + "=") && arg.length > flag.length + 1) || (index >= 0 && !!options[index + 1] && !options[index + 1].startsWith("--")); };
@@ -195,7 +239,8 @@ if (!existsSync(entry)) {
   console.error(${JSON.stringify(STALE_RUNTIME)});
   process.exit(1);
 }
-const valueOf = flag => { const inline = options.find(arg => arg.startsWith(flag + "=")); if (inline) return inline.slice(flag.length + 1); const index = options.indexOf(flag); return index >= 0 ? options[index + 1] : undefined; };
+// agent-device keeps the last of a repeated flag.
+const valueOf = flag => { let value; for (let index = 0; index < options.length; index++) { if (options[index].startsWith(flag + "=")) value = options[index].slice(flag.length + 1); else if (options[index] === flag) value = options[++index]; } return value; };
 const endpoint = () => { try { const url = new URL(valueOf("--daemon-base-url") ?? JSON.parse(readFileSync(valueOf("--config"), "utf8")).daemonBaseUrl); return ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && url.port ? url : undefined; } catch { return undefined; } };
 const local = informational || refused.has(name) ? undefined : endpoint();
 if (local) {
@@ -218,6 +263,25 @@ const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1" };
 delete env.AGENT_DEVICE_DAEMON_BASE_URL;
 delete env.AGENT_DEVICE_DAEMON_AUTH_TOKEN;
 delete env.AGENT_DEVICE_CONFIG;
+// agent-device reads selectors from the environment too.
+if (!selects) for (const key of selectorEnv) delete env[key];
+const held = valueOf("--udid") ?? valueOf("--serial");
+if (!informational && flows.includes(name.toLowerCase()) && held) {
+  // Ask the daemon the flow itself would reach.
+  const daemon = ["--config", "--state-dir", "--daemon-base-url", "--daemon-auth-token", "--daemon-transport", "--daemon-server-mode"].flatMap(flag => { const value = valueOf(flag); return value === undefined ? [] : [flag, value]; });
+  const listed = spawnSync(${JSON.stringify(node)}, [entry, "session", "list", "--json", ...daemon], { env, encoding: "utf8", timeout: 30000 });
+  let sessions;
+  try { sessions = JSON.parse(listed.stdout).data.sessions; } catch {}
+  if (!Array.isArray(sessions)) {
+    console.error("\`" + name + "\` did not run: T3 Code could not check whether another session holds this device. " + (listed.stderr || listed.stdout || listed.error?.message || "").trim());
+    process.exit(1);
+  }
+  const own = valueOf("--session");
+  if (sessions.some(session => session?.id === held && session?.name !== own)) {
+    console.error("Error (DEVICE_IN_USE): this device is in use by another session. \`" + name + "\` would run its steps there without a claim check, so it is not available until that session closes.");
+    process.exit(1);
+  }
+}
 const child = spawn(${JSON.stringify(node)}, [entry, ...command], { stdio: "inherit", env });
 child.on("error", error => { console.error(error.message); process.exitCode = 1; });
 child.on("exit", code => { process.exitCode = code ?? 1; });

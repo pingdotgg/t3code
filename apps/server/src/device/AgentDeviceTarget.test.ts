@@ -117,10 +117,11 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
           (result) => JSON.parse(result.stdout),
         );
       const bound = path.dirname(command);
+      const owned = target.slice(4);
       expect(yield* Effect.promise(() => launch(bound, ["snapshot", "-i"]))).toEqual([
         "snapshot",
         "-i",
-        ...target,
+        ...owned,
       ]);
       // A flag the agent passes itself wins over the bound one.
       expect(yield* Effect.promise(() => launch(bound, ["open", "--session", "mine"]))).toEqual([
@@ -137,10 +138,6 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
       expect(yield* Effect.promise(() => launch(bound, ["snapshot", "--session=mine"]))).toEqual([
         "snapshot",
         "--session=mine",
-        "--platform",
-        "ios",
-        "--udid",
-        "UDID-1",
         "--config",
         "/h.json",
       ]);
@@ -149,7 +146,7 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
         expect(yield* Effect.promise(() => launch(bound, ["fill", "@e5", "--", ...text]))).toEqual([
           "fill",
           "@e5",
-          ...target,
+          ...owned,
           "--",
           ...text,
         ]);
@@ -186,7 +183,11 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
       const path = yield* Path.Path;
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-commands-" });
       const entryPath = path.join(dir, "cli.mjs");
-      yield* fs.writeFileString(entryPath, "console.log(JSON.stringify(process.argv.slice(2)));");
+      // Answers the launcher's session list with no sessions; otherwise prints what it was given.
+      yield* fs.writeFileString(
+        entryPath,
+        'const args = process.argv.slice(2); console.log(JSON.stringify(args[0] === "session" ? { data: { sessions: [] } } : args));',
+      );
       const command = yield* bindAgentDeviceLauncher({
         entryPath,
         stateDir: dir,
@@ -207,6 +208,48 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
           path.join(path.dirname(command), "agent-device-launcher.mjs"),
           ...args,
         ]).then((result) => JSON.parse(result.stdout));
+      const owned = ["--config", "/h.json", "--session", "t3-a"];
+      const selected = ["--platform", "ios", "--udid", "UDID-1", ...owned];
+      // With a selector, agent-device runs a session's command on that device when it holds no
+      // such session, so a session whose open hit another's claim could drive the claimed device.
+      const unselected: ReadonlyArray<[ReadonlyArray<string>, ReadonlyArray<string>]> = [
+        [
+          ["press", "10", "20"],
+          ["press", "10", "20"],
+        ],
+        [
+          ["swipe", "0", "0", "0", "500", "--serial", "emulator-5554"],
+          ["swipe", "0", "0", "0", "500"],
+        ],
+        [
+          ["--platform=android", "close", "com.example"],
+          ["close", "com.example"],
+        ],
+      ];
+      for (const [args, passed] of unselected) {
+        expect(yield* Effect.promise(() => launch(args))).toEqual([...passed, ...owned]);
+      }
+      // Commands that choose a device take its selectors; those that mutate it check its claim.
+      // batch, replay and test pass them to their steps, so an open step opens the bound device.
+      for (const args of [
+        ["open", "com.example"],
+        ["Relaunch"],
+        ["apps"],
+        ["install", "a.app"],
+        ["batch", "--steps-file", "/s.json"],
+        ["replay", "flow.ad"],
+      ]) {
+        expect(yield* Effect.promise(() => launch(args))).toEqual([...args, ...selected]);
+      }
+      // --save-script takes the next argument only when it is a path, so open still selects.
+      for (const flags of [["--save-script", "./capture.ad"], ["--save-script"]]) {
+        expect(yield* Effect.promise(() => launch([...flags, "open", "com.example"]))).toEqual([
+          ...flags,
+          "open",
+          "com.example",
+          ...selected,
+        ]);
+      }
       // agent-device 0.21.31 rejects these flags with "unknown option" or "not supported for command".
       const cdp = ["cdp", "target", "list", "--url", "http://127.0.0.1:8081"];
       expect(yield* Effect.promise(() => launch(cdp))).toEqual(cdp);
@@ -247,6 +290,100 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
           ),
         );
       }
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcess.IsExecutable, false),
+      Effect.provideService(HostProcess.ExecutablePath, process.execPath),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+  );
+
+  it.effect("keeps another session's device out of reach of flows and environment selectors", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-claim-" });
+      const entryPath = path.join(dir, "cli.mjs");
+      // Lists the sessions in T3_TEST_SESSIONS (none on another daemon); otherwise prints its
+      // arguments and any selector agent-device would read from the environment.
+      yield* fs.writeFileString(
+        entryPath,
+        [
+          "const args = process.argv.slice(2);",
+          'if (args[0] === "session") console.log(JSON.stringify({ data: { sessions: args.includes("--daemon-base-url") ? [] : JSON.parse(process.env.T3_TEST_SESSIONS ?? "[]") } }));',
+          "else console.log(JSON.stringify([...args, ...Object.keys(process.env).filter((key) => /^AGENT_DEVICE_(PLATFORM|SERIAL)$/.test(key))]));",
+        ].join("\n"),
+      );
+      const command = yield* bindAgentDeviceLauncher({
+        entryPath,
+        stateDir: dir,
+        session: "t3-b",
+        targetArgs: [
+          "--platform",
+          "android",
+          "--serial",
+          "emulator-5554",
+          "--config",
+          "/h.json",
+          "--session",
+          "t3-b",
+        ],
+      });
+      const launch = (args: ReadonlyArray<string>, env: Record<string, string> = {}) =>
+        exec(
+          process.execPath,
+          [path.join(path.dirname(command), "agent-device-launcher.mjs"), ...args],
+          { env: { ...process.env, ...env } },
+        ).then((result) => JSON.parse(result.stdout));
+      const owned = ["--config", "/h.json", "--session", "t3-b"];
+      const selected = ["--platform", "android", "--serial", "emulator-5554", ...owned];
+      const selectorEnv = {
+        AGENT_DEVICE_PLATFORM: "android",
+        AGENT_DEVICE_SERIAL: "emulator-5554",
+      };
+      // Selectors in the environment would reach the device as flags would.
+      expect(yield* Effect.promise(() => launch(["snapshot", "-i"], selectorEnv))).toEqual([
+        "snapshot",
+        "-i",
+        ...owned,
+      ]);
+      // A command that selects its device gets the bound flags, which win over the environment.
+      expect(yield* Effect.promise(() => launch(["open", "com.example"], selectorEnv))).toEqual([
+        "open",
+        "com.example",
+        ...selected,
+        "AGENT_DEVICE_PLATFORM",
+        "AGENT_DEVICE_SERIAL",
+      ]);
+      // A flow's steps inherit its selectors, so it does not run while another session holds the device.
+      const held = (name: string) =>
+        JSON.stringify([{ name, address: name, platform: "android", id: "emulator-5554" }]);
+      for (const flow of [
+        ["batch", "--steps-file", "/s.json"],
+        ["replay", "flow.ad"],
+        ["test", "flows"],
+      ]) {
+        yield* Effect.promise(() =>
+          expect(launch(flow, { T3_TEST_SESSIONS: held("t3-a") })).rejects.toThrow(
+            `Error (DEVICE_IN_USE): this device is in use by another session. \`${flow[0]}\``,
+          ),
+        );
+        expect(
+          yield* Effect.promise(() => launch(flow, { T3_TEST_SESSIONS: held("t3-b") })),
+        ).toEqual([...flow, ...selected]);
+      }
+      // agent-device runs on the last of a repeated selector, so that is the one checked.
+      const repeated = ["batch", "--serial", "unused", "--serial", "emulator-5554"];
+      yield* Effect.promise(() =>
+        expect(launch(repeated, { T3_TEST_SESSIONS: held("t3-a") })).rejects.toThrow(
+          "Error (DEVICE_IN_USE)",
+        ),
+      );
+      // A flow sent to another daemon is checked against that daemon's sessions.
+      const elsewhere = ["batch", "--steps-file", "/s.json", "--daemon-base-url", "http://b:1"];
+      expect(
+        yield* Effect.promise(() => launch(elsewhere, { T3_TEST_SESSIONS: held("t3-a") })),
+      ).toEqual([...elsewhere, ...selected]);
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcess.IsExecutable, false),
