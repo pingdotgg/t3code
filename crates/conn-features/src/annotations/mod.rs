@@ -600,7 +600,7 @@ impl Annotations {
                     record
                 }
             };
-            let mut next = target.clone();
+            let mut next = target;
             let question = next.remove("question");
             let summary = next.remove("summary");
             next.remove("completedAt");
