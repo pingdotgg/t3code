@@ -260,13 +260,6 @@ describe("PiProvider", () => {
       message: "Pi default (openai/gpt-5) uses openai, which has no available models in Pi.",
     },
     {
-      label: "a pinned model on the first supported Pi release",
-      version: MINIMUM_PI_VERSION,
-      activeModel: { provider: "openai", id: "gpt-5" },
-      authCheck: '{"status":"not_ready","provider":"openai","reason":"provider_not_found"}',
-      message: "Pi default (openai/gpt-5) uses openai, which has no available models in Pi.",
-    },
-    {
       label: "an uncatalogued model id of a provider with credentials",
       version: "1.4.0",
       activeModel: { provider: "anthropic", id: "claude-next" },

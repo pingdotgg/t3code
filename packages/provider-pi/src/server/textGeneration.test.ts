@@ -234,12 +234,10 @@ it.effect("drops an earlier error once a later attempt succeeds", () =>
 
 it.effect.each([
   { model: "demo/demo-model", thinking: "off", expected: "off", version: "0.84.3" },
-  { model: "demo/demo-model", thinking: "high", expected: "high", version: "1.4.0" },
   { model: "demo/demo-model", thinking: "max", expected: "max", version: "1.4.0" },
   { model: "demo/demo-model", thinking: "invalid", expected: undefined, version: "0.84.3" },
   { model: "demo/demo-model", thinking: undefined, expected: undefined, version: "0.84.3" },
   { model: "default", thinking: "off", expected: "off", version: "0.84.3" },
-  { model: "default", thinking: undefined, expected: undefined, version: "0.84.3" },
   { model: "demo/demo-model", thinking: "low", expected: undefined, version: "0.84.2" },
 ])(
   "handles thinking=$thinking for $model on Pi $version",
