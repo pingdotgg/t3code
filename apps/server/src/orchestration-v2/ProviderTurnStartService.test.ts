@@ -75,9 +75,9 @@ const normalize = (target: string) => {
   }
   return `/${parts.join("/")}`;
 };
-const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
+const layerWorktreeLocation = (worktreesDir = managedWorktreesDir, pathLayer = Path.layer) =>
   Layer.mergeAll(
-    Path.layer,
+    pathLayer,
     Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
     ServerSettings.layerTest(),
   );
@@ -383,6 +383,7 @@ function makeLocalCommandHarness(input: {
   readonly workspaceRoot?: string;
   readonly gitWorkflow?: GitWorkflow.GitWorkflowService["Service"];
   readonly fileSystem?: FileSystem.FileSystem;
+  readonly path?: Path.Path;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
   readonly logoutFailure?: string;
@@ -1158,7 +1159,10 @@ function makeLocalCommandHarness(input: {
         }),
         IdAllocator.layer,
         Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({}),
-        layerWorktreeLocation(input.worktreesDir),
+        layerWorktreeLocation(
+          input.worktreesDir,
+          input.path === undefined ? Path.layer : Layer.succeed(Path.Path, input.path),
+        ),
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
@@ -1372,6 +1376,7 @@ effectIt.effect(
           worktreePath,
           worktreesDir,
           fileSystem,
+          path,
           gitWorkflow,
           failReadsAfterRunning: true,
         });
@@ -1424,6 +1429,7 @@ effectIt.effect("leaves a managed worktree folder without .git that holds user f
       worktreePath,
       worktreesDir,
       fileSystem,
+      path,
       failReadsAfterRunning: true,
     });
     yield* harness.start;
@@ -1447,6 +1453,7 @@ effectIt.effect(
         worktreesDir,
         worktreePath,
         fileSystem,
+        path,
         failReadsAfterRunning: true,
       });
       harness.createWorktree.mockImplementationOnce(() => Effect.interrupt);
@@ -1839,6 +1846,7 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
         worktreePath,
         worktreesDir: workspaceRoot,
         fileSystem,
+        path,
         failReadsAfterRunning: true,
       });
       harness.createWorktree.mockImplementation(() =>
