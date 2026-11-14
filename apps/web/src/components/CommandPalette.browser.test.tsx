@@ -350,7 +350,7 @@ describe("CommandPalette open intents", () => {
     const nameField = page.getByRole("textbox", { name: "Instance name" });
     await expect.element(nameField).toBeVisible();
     await expect.element(page.getByRole("option", { name: /fix/ })).toBeVisible();
-    await expect.element(page.getByText("Becomes the branch and the domain.")).toBeVisible();
+    await expect.element(page.getByText("Becomes the branch.")).toBeVisible();
 
     await userEvent.type(nameField, "fix");
     await expect.element(page.getByText("fix is taken in nckrtl.")).toBeVisible();
@@ -361,14 +361,14 @@ describe("CommandPalette open intents", () => {
       .toBeVisible();
     await userEvent.clear(nameField);
     await userEvent.type(nameField, "pricing");
-    await expect.element(page.getByText("pricing.nckrtl.test is available.")).toBeVisible();
+    await expect.element(page.getByText("pricing is available.")).toBeVisible();
     await userEvent.clear(nameField);
 
     const search = page.getByPlaceholder("Search instances…");
     await userEvent.type(search, "New Page");
     await expect.element(page.getByText("Nothing found.")).toBeVisible();
     await expect.element(nameField).toHaveValue("new-page");
-    await expect.element(page.getByText("new-page.nckrtl.test is available.")).toBeVisible();
+    await expect.element(page.getByText("new-page is available.")).toBeVisible();
     await userEvent.keyboard("{Enter}");
     await vi.waitFor(() => expect(orbit.openOrbitDraft).toHaveBeenCalledOnce());
     expect(orbit.openOrbitDraft.mock.calls[0]![1]).toMatchObject({
@@ -404,7 +404,8 @@ describe("CommandPalette open intents", () => {
     );
     const nameField = page.getByRole("textbox", { name: "Instance name" });
     await expect.element(nameField).toHaveValue("pricing");
-    await expect.element(page.getByText(".nckrtl.test")).toBeVisible();
+    // The name alone: no address suffix after the field.
+    await expect.element(page.getByText(".nckrtl.test")).not.toBeInTheDocument();
     await expect.element(page.getByText("pricing is available.")).toBeVisible();
     // The list is still loading: skeleton rows under the label, the name field already works.
     await expect.element(page.getByText("Existing instances")).toBeVisible();

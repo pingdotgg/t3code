@@ -212,6 +212,9 @@ it("shows a running Orbit setup with the create rows, Details closed and Cancel"
     .querySelectorAll<HTMLElement>("[data-orbit-create-row], [data-orbit-setup-stage]")) {
     const icon = row.querySelector<HTMLElement>("[data-orbit-row-icon]")!;
     expect(row.getBoundingClientRect().right - icon.getBoundingClientRect().right).toBeLessThan(4);
+    // One icon size, 16 px, for main rows and sub rows.
+    const svg = icon.querySelector<SVGElement>("svg")!;
+    expect(getComputedStyle(svg).width).toBe("16px");
   }
   expect(section.element().textContent).not.toContain("Instance setup failed");
   expect(screen.getByRole("button", { name: "Retry" }).query()).toBeNull();

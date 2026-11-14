@@ -507,6 +507,13 @@ export interface OrbitReadyTimelineInput {
   readonly threadRef: ScopedThreadRef;
   /** The start's first message; the row follows it and is left out while it is not loaded. */
   readonly messageId: string;
+  /**
+   * The first message as Conn sent it, shown until the thread's own copy loads, so the hand-over
+   * from the pending thread never drops the message or the card.
+   */
+  readonly firstMessage?: { readonly text: string; readonly createdAt: string } | null;
+  /** The composer stays disabled until the Instance is ready (the card folded), also on a failure. */
+  readonly locksComposer?: boolean;
 }
 
 export type MessagesTimelineRow = MessagesTimelineRowContent & {

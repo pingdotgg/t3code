@@ -72,7 +72,7 @@ describe("CommandPalette Orbit draft", () => {
     await page.getByRole("option", { name: /orbit · no instances/ }).click();
     await expect.element(page.getByText("No instances yet.")).toBeVisible();
     await userEvent.type(page.getByRole("textbox", { name: "Instance name" }), "form");
-    await expect.element(page.getByText("form.house.test is available.")).toBeVisible();
+    await expect.element(page.getByText("form is available.")).toBeVisible();
     await userEvent.keyboard("{Enter}");
 
     await vi.waitFor(() => expect(screen.router?.state.location.pathname).toMatch(/^\/draft\/.+/));

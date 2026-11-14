@@ -64,6 +64,17 @@ describe("OrbitPendingThreadView", () => {
     );
   });
 
+  it("shows the prompt box from the send, disabled: dimmed, not focusable, no text entry", async () => {
+    setup(start({ createStartedAt: 1, createKey: "k", createOperationId: 100, instanceId: 41 }));
+    await using screen = await render(view(), { router: "/orbit/s1" });
+    await expect.element(screen.getByText("Create Instance")).toBeVisible();
+    const box = screen.container.querySelector<HTMLElement>("[data-orbit-pending-composer]");
+    expect(box).not.toBeNull();
+    expect(box!.inert).toBe(true);
+    expect(box!.textContent).toContain("Ask anything");
+    expect(box!.querySelector("textarea, input, [contenteditable=true]")).toBeNull();
+  });
+
   it("replaces the route with the real thread once, when the clone's thread reached the window", async () => {
     const sent = start({
       environmentId: "env-41",

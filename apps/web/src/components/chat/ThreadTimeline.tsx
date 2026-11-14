@@ -9,6 +9,7 @@ import {
   resolveThreadSwitchTimeline,
   timelineHasEphemeralPreviewUrls,
 } from "../ChatView.logic";
+import { withOrbitFirstMessage } from "../../orbit/useOrbitReady";
 import { MessagesTimeline } from "./MessagesTimeline";
 
 /**
@@ -40,7 +41,10 @@ export function ThreadTimeline({
     ...entriesInput,
     visibleTurnItems,
   });
-  const entries = draftEntries ?? serverEntries;
+  // Conn: a thread handed over from a pending Orbit start shows its first message before it loads.
+  const entries =
+    draftEntries ??
+    withOrbitFirstMessage(serverEntries, timelineProps.orbitReady ?? null, detailLoading);
   const displayedEntries = resolveThreadSwitchTimeline({
     loading: entries.length === 0 && syncing,
     activeThreadKey,

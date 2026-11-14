@@ -123,12 +123,12 @@ describe("Orbit name check states", () => {
     });
   });
 
-  it("reads available with and without a domain, taken, and an address too long", () => {
+  it("reads available by the name alone (never the address), taken, and an address too long", () => {
     expect(
       hint("pricing", answered("pricing", { available: true, domain: "pricing.nckrtl.test" })),
     ).toMatchObject({
       tone: "ok",
-      text: "pricing.nckrtl.test is available.",
+      text: "pricing is available.",
       canCreate: true,
     });
     expect(hint("pricing", answered("pricing", { available: true }))).toMatchObject({

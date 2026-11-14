@@ -41,6 +41,7 @@ import {
   saveStart,
   updateStarts,
 } from "./orbitThreadStartStore";
+import { rememberOrbitComposerControls } from "./orbitComposerControls";
 
 /** Conn: runs the threads started in an Orbit Project (FORK.md, "Orbit"), in the main window only. */
 
@@ -103,6 +104,8 @@ export function sendOrbitDraft(input: {
 }): OrbitThreadStart | null {
   if (orbitThreadStartBlockedReason() !== null) return null;
   const start = saveOrbitDraftStart(input.start);
+  // The pending thread's disabled prompt box shows the same model controls as the draft did.
+  rememberOrbitComposerControls(start.id);
   void Promise.resolve(input.openPending(orbitPendingThreadPath(start.id)))
     .finally(input.clearDraft)
     .catch(() => {});

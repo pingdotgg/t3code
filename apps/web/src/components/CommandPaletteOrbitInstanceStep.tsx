@@ -124,7 +124,7 @@ export function useOrbitInstanceStep(input: {
   };
 }
 
-/** "New instance": the name field with the domain suffix, the plus, and the line under it. */
+/** "New instance": the name field, the plus, and the line under it. The name is unique per Project; the address is only a by-product, so it is not shown. */
 export function OrbitNewInstanceSection(props: {
   readonly project: OrbitStepProject;
   readonly step: OrbitInstanceStep;
@@ -163,11 +163,6 @@ export function OrbitNewInstanceSection(props: {
               create();
             }}
           />
-          {props.project.domainSuffix ? (
-            <span className="shrink-0 text-muted-foreground text-sm">
-              {props.project.domainSuffix}
-            </span>
-          ) : null}
         </span>
         <button
           type="button"

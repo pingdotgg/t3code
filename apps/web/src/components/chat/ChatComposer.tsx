@@ -379,6 +379,11 @@ export interface ChatComposerProps {
   isRevertingCheckpoint?: boolean;
   sendDisabledReason: string | null;
   isPreparingWorktree: boolean;
+  /**
+   * Conn: the box is disabled (dimmed, not typeable, send off) while an Orbit Instance is made.
+   * Banners above it (approvals, questions) stay usable.
+   */
+  inputLocked?: boolean;
   canSteer: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
   resumeCompactionTokens: number | null;
@@ -531,6 +536,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isRevertingCheckpoint = false,
     sendDisabledReason: externalSendDisabledReason,
     isPreparingWorktree,
+    inputLocked = false,
     canSteer,
     environmentUnavailable,
     activePendingApproval: incomingPendingApproval,
@@ -3393,7 +3399,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           onToggleMenu={toggleStashMenuStable}
         />
       </ComposerBanner.Dock>
-      <div className="relative">
+      <div
+        data-orbit-composer-locked={inputLocked ? "true" : undefined}
+        inert={inputLocked}
+        className={cn("relative transition-opacity duration-100", inputLocked && "opacity-50")}
+      >
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
           data-inline-resting-controls="true"

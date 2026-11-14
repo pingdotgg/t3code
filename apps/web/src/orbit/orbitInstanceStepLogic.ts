@@ -14,7 +14,7 @@ const ORBIT_DEFAULT_INSTANCE_NAME = "default";
 const NAME_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 export const ORBIT_NAME_FORMAT_ERROR = "Use letters, numbers and single dashes.";
-export const ORBIT_NAME_HINT = "Becomes the branch and the domain.";
+export const ORBIT_NAME_HINT = "Becomes the branch.";
 export const ORBIT_NAME_EMPTY_ERROR = "Enter an instance name.";
 export const ORBIT_NAME_CHECKING = "Checking…";
 export const ORBIT_NAME_CHECK_UNAVAILABLE =
@@ -134,7 +134,7 @@ export function orbitNameHint(input: {
   if (answer.available) {
     return {
       tone: "ok",
-      text: `${answer.domain ?? name} is available.`,
+      text: `${name} is available.`,
       plusEnabled: true,
       canCreate: true,
     };

@@ -28,20 +28,13 @@ import type { OrbitReadyTimelineInput } from "./MessagesTimeline.logic";
 import { WorkLogRow } from "./WorkLog";
 import { ShimmerOverlay, StageIcon, stageRowClassName } from "./WorktreeSetupCard";
 
-/** A row's status icon, at the right end of the row (today's icons and sizes). */
-function RowStatus({
-  status,
-  small = false,
-}: {
-  status: OrbitSetupViewStage["status"];
-  small?: boolean;
-}) {
+/** A row's status icon, at the right end of the row: one size (16 px) for main rows and sub rows. */
+function RowStatus({ status }: { status: OrbitSetupViewStage["status"] }) {
   return (
     <span
       className={cn(
         "flex w-6 shrink-0 items-center justify-center",
         status === "failed" ? "text-destructive-foreground" : "text-icon-muted",
-        small && "[&_svg]:size-3.5",
         status === "pending" && "opacity-40",
       )}
       data-orbit-row-icon
@@ -118,7 +111,7 @@ function OrbitCreateRow({ row }: { row: OrbitSetupViewRow }) {
               {row.detail}
             </span>
           ) : null}
-          <RowStatus status={row.status} small />
+          <RowStatus status={row.status} />
         </>
       }
     />
