@@ -74,7 +74,11 @@ import {
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
-import { PI_FILE_CHANGE_TOOLS, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import {
+  PI_FILE_CHANGE_TOOLS,
+  PI_T3_RESUME_COMMAND,
+  PI_T3_SERVICE_TIER_COMMAND,
+} from "./mcpExtensionSource.ts";
 import { PI_STANDARD_SERVICE_TIER } from "./modelCapabilities.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
@@ -3059,6 +3063,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 }),
             ),
           ),
+        resumeTurn: (input) => runtime.startTurn(ProviderAdapter.resumeTurnInput(input)),
         compactThread: (turnInput) =>
           runtime.startTurn({
             ...turnInput,
@@ -3112,8 +3117,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const compactCommand = continuation
               ? null
               : parsePiCompactCommand(turnInput.message.text);
-            const payload =
-              !continuation && compactCommand === null
+            const payload = turnInput.resume
+              ? { message: `/${PI_T3_RESUME_COMMAND}`, images: [] }
+              : !continuation && compactCommand === null
                 ? yield* resolvePromptPayload(turnInput.message.text, turnInput.message.attachments)
                 : null;
             const startedAt = yield* DateTime.now;

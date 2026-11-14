@@ -1514,6 +1514,124 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live.each([true, false])(
+    "resumes a Stopped turn natively in the live agent when it reached a tool call (%s)",
+    (reachedTool) =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("acp-test-native-resume");
+        const threadId = ThreadId.make("thread-acp-native-resume");
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const prompts: Array<ReadonlyArray<unknown>> = [];
+        const firstPromptRunning = yield* Deferred.make<void>();
+        const cancelled = yield* Deferred.make<void>();
+        const resumePrompt = yield* Deferred.make<ReadonlyArray<unknown>>();
+        let sessionUpdate:
+          | Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]>[0]
+          | undefined;
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            resumesStoppedTurnOnEmptyPrompt: true,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* bundledMockAgentPath,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (next) =>
+                  Effect.sync(() => {
+                    sessionUpdate = next;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+                prompt: (payload) =>
+                  Effect.gen(function* () {
+                    prompts.push(payload.prompt);
+                    if (prompts.length > 1) {
+                      yield* Deferred.succeed(resumePrompt, payload.prompt);
+                      return { stopReason: "end_turn" as const };
+                    }
+                    if (reachedTool) {
+                      yield* sessionUpdate!({
+                        sessionId: "mock-session-1",
+                        update: {
+                          sessionUpdate: "tool_call",
+                          toolCallId: "tool-1",
+                          title: "Create three.txt",
+                          kind: "execute",
+                          status: "in_progress",
+                        },
+                      });
+                    }
+                    yield* Deferred.succeed(firstPromptRunning, undefined);
+                    yield* Deferred.await(cancelled);
+                    return { stopReason: "cancelled" as const };
+                  }).pipe(Effect.orDie),
+                cancel: Deferred.succeed(cancelled, undefined).pipe(Effect.asVoid),
+              }),
+            }),
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-native-resume"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
+        );
+        yield* Deferred.await(firstPromptRunning);
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+        });
+        // User Stop: the live agent takes a soft cancel and keeps the stopped turn.
+        yield* runtime.interruptTurn({
+          providerThread,
+          providerTurnId,
+          requestRuntimeRestart: true,
+        });
+        assert.isTrue(yield* Deferred.isDone(cancelled));
+
+        const { message, ...resumeBase } = makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal: 2,
+        });
+        const resumed = yield* Effect.exit(
+          runtime.resumeTurn!({ ...resumeBase, messageId: message.messageId }),
+        );
+        if (reachedTool) {
+          assert.isTrue(Exit.isSuccess(resumed));
+          assert.deepEqual(yield* Deferred.await(resumePrompt), []);
+        } else {
+          // Without a tool step the agent keeps no interruption to continue from.
+          assert.isTrue(Exit.isFailure(resumed));
+          const failure = Cause.squash((resumed as Exit.Failure<void, unknown>).cause) as {
+            readonly cause?: { readonly _tag?: string };
+          };
+          assert.equal(failure.cause?._tag, "ProviderResumeUnsupportedError");
+          assert.lengthOf(prompts, 1);
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live("drops a late prompt response that lands after the turn finalized", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("acp-test-prompt-usage-late");

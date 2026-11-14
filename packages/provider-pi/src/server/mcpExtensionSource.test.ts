@@ -6,7 +6,11 @@ import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
 
-import { PI_T3_MCP_EXTENSION_SOURCE, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import {
+  PI_T3_MCP_EXTENSION_SOURCE,
+  PI_T3_RESUME_COMMAND,
+  PI_T3_SERVICE_TIER_COMMAND,
+} from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
 type RequestHook = (
@@ -608,5 +612,68 @@ describe("Pi skill references", () => {
     } finally {
       await NodeFSP.rm(directory, { recursive: true });
     }
+  });
+});
+
+describe("Pi resume", () => {
+  async function loadResume(branch: ReadonlyArray<unknown>) {
+    const handlers = new Map<string, (event: unknown) => unknown>();
+    const commands = new Map<string, (args: string, ctx: unknown) => Promise<void>>();
+    const sent: Array<{ readonly message: unknown; readonly options: unknown }> = [];
+    const source = NodeModule.stripTypeScriptTypes(
+      PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
+        "export default async function",
+        "async function",
+      ),
+    );
+    await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
+      process: { env: {} },
+      pi: {
+        on: (name: string, handler: (event: unknown) => unknown) => handlers.set(name, handler),
+        registerCommand: (
+          name: string,
+          options: { handler: (args: string, ctx: unknown) => Promise<void> },
+        ) => commands.set(name, options.handler),
+        sendMessage: (message: unknown, options: unknown) => sent.push({ message, options }),
+      },
+    });
+    const ctx = { isIdle: () => true, sessionManager: { getBranch: () => branch } };
+    return {
+      resume: () => commands.get(PI_T3_RESUME_COMMAND)!("", ctx),
+      context: handlers.get("context")!,
+      sent,
+    };
+  }
+  const user = { type: "message", message: { role: "user", content: "Write it" } };
+  const assistant = (stopReason: string) => ({
+    type: "message",
+    message: { role: "assistant", content: [], stopReason },
+  });
+
+  it.each(["aborted", "error"])(
+    "starts a run from the transcript after a %s reply, with nothing new for the model",
+    async (stopReason) => {
+      const { resume, context, sent } = await loadResume([user, assistant(stopReason)]);
+      await resume();
+      assert.equal(sent.length, 1);
+      const { message, options } = sent[0]!;
+      assert.deepEqual(options, { triggerTurn: true });
+      // Pi stores a sent custom message under the custom role.
+      const messages = [
+        { role: "user", content: "Write it" },
+        { role: "custom", ...(message as object) },
+      ];
+      assert.deepEqual(context({ messages }), { messages: [messages[0]] });
+    },
+  );
+
+  it("refuses a finished turn instead of answering it again", async () => {
+    const { resume, sent } = await loadResume([user, assistant("stop")]);
+    const failure = await resume().then(
+      () => undefined,
+      (error: Error) => error,
+    );
+    assert.equal(failure?.message, "Pi has no stopped turn to resume.");
+    assert.equal(sent.length, 0);
   });
 });

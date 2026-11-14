@@ -604,6 +604,11 @@ export interface AcpAdapterV2Flavor {
   readonly restartRuntimeOnEveryInterrupt?: boolean;
   readonly terminateRuntimeProcessGroupOnInterrupt?: boolean;
   readonly preserveRuntimeOnSettledInterrupt?: boolean;
+  /**
+   * After a cancel, the live agent answers an empty prompt by continuing the stopped turn with
+   * its own interruption framing. Grok does this once the stopped turn reached a tool call.
+   */
+  readonly resumesStoppedTurnOnEmptyPrompt?: boolean;
   readonly enablePostSettleContinuation?: boolean;
   /** Settle on native idle after the accepted user echo, only on negotiated ACP v2. */
   readonly followAgentWorkState?: boolean;
@@ -2102,6 +2107,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           flavor.compactSession !== undefined ||
           flavor.compactViaAdvertisedCommand === true;
         const runtimeRestartRequired = yield* Ref.make(false);
+        // The session whose stopped turn this live process can continue natively.
+        let nativeResumeSessionId: string | null = null;
         const runtimeTeardownState = yield* Ref.make<AcpRuntimeTeardownState>({ _tag: "Idle" });
         const runtimeCallbackGeneration = yield* Ref.make(0);
         const runtimeCallbackGenerationCounter = yield* Ref.make(0);
@@ -7189,6 +7196,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
 
         const restartAcpRuntime = Effect.fnUntraced(function* (threadId: ThreadId | null) {
+          nativeResumeSessionId = null;
           yield* spawnAcpRuntime(threadId);
           yield* wireAcpRuntimeHandlers(runtime, yield* Ref.get(runtimeCallbackGeneration));
         });
@@ -8386,6 +8394,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // load/resume can invoke client methods; install the incoming policy before activation.
             latestRuntimePolicy = turnInput.runtimePolicy;
             const requestedSessionId = yield* nativeThreadId(driver, turnInput.providerThread);
+            const resumeSessionId = nativeResumeSessionId;
+            nativeResumeSessionId = null;
+            if (
+              turnInput.resume === true &&
+              (resumeSessionId !== requestedSessionId || (yield* Ref.get(runtimeRestartRequired)))
+            ) {
+              return yield* new ProviderAdapter.ProviderResumeUnsupportedError({
+                driver,
+                providerThreadId: turnInput.providerThread.id,
+              });
+            }
             const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
               turnInput.threadId,
             );
@@ -8473,7 +8492,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             );
             const promptParts = isContinuationTurn
               ? null
-              : yield* resolvePromptParts(turnInput, requestedSessionId);
+              : turnInput.resume === true
+                ? {
+                    prompt: [],
+                    instructionState: undefined,
+                    runtimeInstructions: undefined,
+                    compactionMarker: undefined,
+                  }
+                : yield* resolvePromptParts(turnInput, requestedSessionId);
             const startedAt = yield* DateTime.now;
             const nativeTurnId = `${requestedSessionId}:turn:${turnInput.providerTurnOrdinal}`;
             const providerTurnId = deriveProviderTurnId(nativeTurnId);
@@ -9124,6 +9150,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ),
           ),
           startTurn,
+          ...(flavor.resumesStoppedTurnOnEmptyPrompt === true
+            ? {
+                resumeTurn: (input: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) =>
+                  startTurn(ProviderAdapter.resumeTurnInput(input)),
+              }
+            : {}),
           ...(compactsContext
             ? {
                 compactThread: Effect.fn("AcpAdapterV2.compactThread")(function* (
@@ -9462,6 +9494,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         // Settled soft interrupts have no prompt to cancel; cancel could kill background subagents.
                         if (!settledSoftInterrupt && (yield* promptStillRunsAfterHold(context))) {
                           yield* runtime.cancel;
+                          if (
+                            flavor.resumesStoppedTurnOnEmptyPrompt === true &&
+                            turnInput.requestRuntimeRestart === true &&
+                            context.tools.size > 0
+                          ) {
+                            nativeResumeSessionId = context.nativeThreadId;
+                          }
                         }
                         if (restartRuntime && flavor.restartRuntimeAfterInterrupt === true) {
                           yield* Ref.set(runtimeRestartRequired, true);
