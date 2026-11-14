@@ -429,7 +429,7 @@ export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connecti
       observePullRequestSummary(
         registry,
         pullRequestSummaryKey(environmentId, input),
-        { ...detail, checksState: pullRequestChecksState(detail.checks) },
+        { ...detail, checksState: pullRequestChecksState(detail.checks, detail.provider) },
         at,
       );
     }),
@@ -438,7 +438,7 @@ export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connecti
       if (checks === null) return;
       recordObservation(registry, pullRequestSummaryKey(environmentId, input), (current) =>
         observePullRequestChecks(current, {
-          checksState: pullRequestChecksState(checks.checks),
+          checksState: pullRequestChecksState(checks.checks, current.metadata?.summary.provider),
           readAt: checks.observedAt,
           observedAt,
         }),

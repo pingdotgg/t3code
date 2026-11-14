@@ -317,10 +317,21 @@ export function isPullRequestConflicting(
 
 export type PullRequestChecksState = "none" | "pending" | "failing" | "passing";
 
-export function classifyPullRequestChecks(
+// Forgejo branch protection gates merges on required checks only; its server rollup matches.
+export function gatingPullRequestChecks(
   checks: ReadonlyArray<PullRequestCheck>,
+  provider?: string,
+): ReadonlyArray<PullRequestCheck> {
+  const required = provider === "forgejo" ? checks.filter((check) => check.required === true) : [];
+  return required.length > 0 ? required : checks;
+}
+
+export function classifyPullRequestChecks(
+  allChecks: ReadonlyArray<PullRequestCheck>,
+  provider?: string,
 ): PullRequestChecksState {
-  if (checks.length === 0) return "none";
+  if (allChecks.length === 0) return "none";
+  const checks = gatingPullRequestChecks(allChecks, provider);
   if (checks.some((check) => check.status === "failure" || check.status === "cancelled")) {
     return "failing";
   }
@@ -363,14 +374,17 @@ export function groupPullRequestChecks(checks: ReadonlyArray<PullRequestCheck>) 
 type ThreadPanelPullRequestAction = "resolve" | "ready" | "fix" | "merge";
 
 export function resolveThreadPanelPullRequestAction(
-  detail: (PullRequestActionableDetail & Pick<PullRequestDetail, "checks">) | null,
+  detail:
+    | (PullRequestActionableDetail &
+        Pick<PullRequestDetail, "checks"> & { readonly provider?: string })
+    | null,
 ): ThreadPanelPullRequestAction | null {
   if (detail === null || detail.state !== "open") return null;
   if (isPullRequestConflicting(detail)) return "resolve";
   if (detail.isDraft) {
     return canPerformPullRequestAction(detail, "ready") ? "ready" : null;
   }
-  const checks = classifyPullRequestChecks(detail.checks);
+  const checks = classifyPullRequestChecks(detail.checks, detail.provider);
   if (checks === "failing") return "fix";
   if (checks === "pending") return null;
   return canPerformPullRequestAction(detail, "merge") &&

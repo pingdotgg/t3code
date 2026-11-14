@@ -1266,7 +1266,7 @@ export function PullRequestDetailPanel({
   const can = (action: PullRequestAction) =>
     detail?.capabilities.actions.includes(action) === true &&
     detail.viewerPermissions.actions.includes(action);
-  const detailChecksState = detail ? pullRequestChecksState(detail.checks) : null;
+  const detailChecksState = detail ? pullRequestChecksState(detail.checks, detail.provider) : null;
   const latestChecksState =
     sharedSummary?.checksState === undefined ? detailChecksState : sharedSummary.checksState;
   // List rollups can omit workflows awaiting approval. Only refreshed detail can clear those.

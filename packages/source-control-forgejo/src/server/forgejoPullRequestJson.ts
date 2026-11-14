@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import type {
   PullRequestActor,
   PullRequestCheck,
+  PullRequestChecksState,
   PullRequestCheckStatus,
   PullRequestComment,
   PullRequestCommit,
@@ -128,8 +129,22 @@ export function forgejoActor(
     : null;
 }
 
-export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {
+// Branch protection gates merges on required checks only; the web client's
+// `gatingPullRequestChecks` applies the same rule to Forgejo and compares with this value.
+function checksStateOf(checks: ReadonlyArray<PullRequestCheck>): PullRequestChecksState | null {
+  const required = checks.filter((check) => check.required === true);
+  const statuses = new Set((required.length > 0 ? required : checks).map((check) => check.status));
+  if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
+  if (statuses.has("pending") || statuses.has("action-required")) return "pending";
+  return statuses.has("success") ? "passing" : null;
+}
+
+export function forgejoChangeRequest(
+  pr: typeof ForgejoPullRequest.Type,
+  checks?: ReadonlyArray<PullRequestCheck>,
+) {
   return {
+    ...(checks === undefined ? {} : { checksState: checksStateOf(checks) }),
     number: pr.number,
     title: pr.title,
     url: pr.html_url,
