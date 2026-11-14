@@ -1,5 +1,8 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -19,7 +22,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as RelayClient from "@t3tools/shared/relayClient";
 
@@ -27,6 +30,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as RelayClientLedger from "./RelayClientLedger.ts";
 
 const layerRelayClientAvailable = Layer.succeed(
   RelayClient.RelayClient,
@@ -71,14 +75,16 @@ const runtimeDependencies = (
     Layer.succeed(HttpClient.HttpClient, httpClient),
     relayClientLayer,
     secretStoreLayer,
+    RelayClientLedger.layerTest,
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-managed-endpoint-" }),
-  ).pipe(Layer.provideMerge(NodeServices.layer));
+  ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const buildCloudManagedEndpointRuntime = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
   relayClientLayer = layerRelayClientAvailable,
   httpClient = unusedHttpClient,
   secretStoreLayer = emptySecretStoreLayer,
+  env: Record<string, string> = {},
 ) =>
   Effect.gen(function* () {
     const context = yield* Layer.build(
@@ -89,7 +95,10 @@ const buildCloudManagedEndpointRuntime = (
     return yield* Effect.service(ManagedEndpointRuntime.CloudManagedEndpointRuntime).pipe(
       Effect.provide(context),
     );
-  });
+  }).pipe(
+    Effect.provideService(HostProcess.Environment, env),
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+  );
 
 function makeHandle(input: {
   readonly pid: number;
@@ -250,6 +259,68 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
+  it.effect("reads the public hostname and its origin from cloudflared's remote config", () =>
+    Effect.gen(function* () {
+      let ingress: unknown = [
+        { hostname: "env.example.t3.codes", service: "http://127.0.0.1:3773" },
+        { service: "http_status:404" },
+      ];
+      const httpClient = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json(
+              request.url.endsWith("/config")
+                ? { config: ingress === undefined ? {} : { ingress } }
+                : { readyConnections: 4 },
+            ),
+          ),
+        ),
+      );
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const handle = makeHandle({
+            pid: 702,
+            onKill: () => {},
+            output: Stream.fromQueue(output),
+          });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        layerRelayClientAvailable,
+        httpClient,
+      );
+      yield* runtime.applyConfig({
+        providerKind: "cloudflare_tunnel",
+        connectorToken: "connector-token",
+        tunnelId: "tunnel-1",
+      });
+      yield* Queue.offer(
+        output,
+        new TextEncoder().encode(
+          "2026-10-06T00:00:01Z INF Starting metrics server on 127.0.0.1:20241/metrics\n" +
+            "2026-10-06T00:00:01Z INF Registered tunnel connection connIndex=0\n",
+        ),
+      );
+      yield* Stream.runHead(runtime.tunnelConnected);
+
+      expect(yield* runtime.inspectConnector).toMatchObject({
+        readyConnections: 4,
+        hostname: "env.example.t3.codes",
+        origin: "http://127.0.0.1:3773",
+      });
+      // Before the edge pushes a config, the origin is unknown rather than wrong.
+      for (const missing of [null, undefined]) {
+        ingress = missing;
+        expect(yield* runtime.inspectConnector).toMatchObject({ hostname: null, origin: null });
+      }
+    }),
+  );
+
   it.effect("logs a connection unregistration at info with the connector token redacted", () => {
     const logs: Array<{ readonly level: string; readonly message: unknown }> = [];
     const unregistrationLogged = Deferred.makeUnsafe<void>();
@@ -344,19 +415,6 @@ describe("CloudManagedEndpointRuntime", () => {
       isRunning?: Effect.Effect<boolean>;
     } = {},
   ) {
-    yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        const previous = process.env.TUNNEL_TRANSPORT_PROTOCOL;
-        if (options.transport === undefined) delete process.env.TUNNEL_TRANSPORT_PROTOCOL;
-        else process.env.TUNNEL_TRANSPORT_PROTOCOL = options.transport;
-        return previous;
-      }),
-      (previous) =>
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env.TUNNEL_TRANSPORT_PROTOCOL;
-          else process.env.TUNNEL_TRANSPORT_PROTOCOL = previous;
-        }),
-    );
     const spawned: Array<ChildProcess.StandardCommand> = [];
     const killed: Array<number> = [];
     const outputs: Array<Queue.Queue<Uint8Array>> = [];
@@ -409,13 +467,88 @@ describe("CloudManagedEndpointRuntime", () => {
         index,
         lines + "2026-10-16T20:30:00Z INF Registered tunnel connection connIndex=0\n",
       ).pipe(Effect.andThen(Stream.runHead(runtime.tunnelConnected)));
-    return { spawner, spawned, killed, exits, started, emit, observe };
+    const env: Record<string, string> =
+      options.transport === undefined ? {} : { TUNNEL_TRANSPORT_PROTOCOL: options.transport };
+    return { spawner, env, spawned, killed, exits, started, emit, observe };
   });
+
+  it.effect("restarts only the inspected connector and supervises its replacement", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeTransportSpawner();
+      const runtime = yield* buildCloudManagedEndpointRuntime(fixture.spawner);
+      expect(yield* runtime.restartConnector(800, Effect.succeed(true))).toBe(false);
+      yield* runtime.applyConfig(tunnelConfig);
+      yield* fixture.observe(runtime, 0);
+      expect(yield* runtime.inspectConnector).toMatchObject({ pid: 800 });
+      expect(yield* runtime.restartConnector(799, Effect.succeed(true))).toBe(false);
+      // A newer check saw the tunnel recover while this one waited for the lock.
+      expect(yield* runtime.restartConnector(800, Effect.succeed(false))).toBe(false);
+      expect(fixture.killed).toEqual([]);
+      expect(yield* runtime.restartConnector(800, Effect.succeed(true))).toBe(true);
+      expect(yield* Queue.take(fixture.started)).toBe(0);
+      expect(yield* Queue.take(fixture.started)).toBe(1);
+      yield* fixture.observe(runtime, 1);
+      expect(fixture.killed).toContain(800);
+      expect(yield* runtime.restartConnector(800, Effect.succeed(true))).toBe(false);
+      expect(yield* runtime.inspectConnector).toMatchObject({ pid: 801 });
+    }),
+  );
+
+  it.effect("still owns a relay client when activation is interrupted while recording it", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeTransportSpawner();
+      const recording = yield* Deferred.make<void>();
+      const recorded = yield* Deferred.make<void>();
+      const ledger = Layer.succeed(
+        RelayClientLedger.RelayClientLedger,
+        RelayClientLedger.RelayClientLedger.of({
+          track: () =>
+            Deferred.succeed(recording, undefined).pipe(
+              Effect.andThen(Deferred.await(recorded)),
+              Effect.as(Effect.void),
+            ),
+        }),
+      );
+      const context = yield* Layer.build(
+        ManagedEndpointRuntime.layer.pipe(
+          Layer.provide(Layer.merge(runtimeDependencies(fixture.spawner), ledger)),
+        ),
+      );
+      const runtime = yield* Effect.service(
+        ManagedEndpointRuntime.CloudManagedEndpointRuntime,
+      ).pipe(Effect.provide(context));
+
+      const activation = yield* Effect.forkChild(runtime.applyConfig(tunnelConfig));
+      yield* Deferred.await(recording);
+      const interrupting = yield* Effect.forkChild(Fiber.interrupt(activation), {
+        startImmediately: true,
+      });
+      yield* Deferred.succeed(recorded, undefined);
+      yield* Fiber.join(interrupting);
+
+      // The handed-over connector is supervised: its exit starts a replacement.
+      expect(yield* Queue.take(fixture.started)).toBe(0);
+      yield* Deferred.succeed(fixture.exits[0]!, ChildProcessSpawner.ExitCode(1));
+      expect(yield* Queue.take(fixture.started)).toBe(1);
+
+      yield* runtime.applyConfig(null);
+      expect(fixture.killed).toEqual([800, 801]);
+    }).pipe(
+      Effect.provideService(HostProcess.Environment, {}),
+      Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+    ),
+  );
 
   it.effect("preserves an explicit transport choice despite repeated QUIC stalls", () =>
     Effect.gen(function* () {
       const fixture = yield* makeTransportSpawner({ transport: "quic" });
-      const runtime = yield* buildCloudManagedEndpointRuntime(fixture.spawner);
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        fixture.spawner,
+        layerRelayClientAvailable,
+        unusedHttpClient,
+        emptySecretStoreLayer,
+        fixture.env,
+      );
       yield* runtime.applyConfig(tunnelConfig);
       yield* fixture.observe(runtime, 0, quicDialWarning.repeat(30));
       yield* fixture.observe(runtime, 0, quicDatagramWarning.repeat(30));
@@ -433,7 +566,7 @@ describe("CloudManagedEndpointRuntime", () => {
         const context = yield* Layer.build(
           ServerSecretStore.layer.pipe(
             Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-transport-test-" })),
-            Layer.provide(NodeServices.layer),
+            Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
         );
         const secretStoreLayer = Layer.succeed(
@@ -441,12 +574,13 @@ describe("CloudManagedEndpointRuntime", () => {
           context.pipe(Context.get(ServerSecretStore.ServerSecretStore)),
         );
         const fixture = yield* makeTransportSpawner();
-        const start = (spawner = fixture.spawner) =>
+        const start = (spawner = fixture.spawner, env = fixture.env) =>
           buildCloudManagedEndpointRuntime(
             spawner,
             layerRelayClientAvailable,
             unusedHttpClient,
             secretStoreLayer,
+            env,
           );
         yield* Effect.gen(function* () {
           const runtime = yield* start();
@@ -463,7 +597,7 @@ describe("CloudManagedEndpointRuntime", () => {
         for (const transport of [undefined, "quic", "http2", "auto", undefined]) {
           yield* Effect.gen(function* () {
             const next = yield* makeTransportSpawner(transport ? { transport } : {});
-            const restarted = yield* start(next.spawner);
+            const restarted = yield* start(next.spawner, next.env);
             yield* restarted.applyConfig(tunnelConfig);
             if (transport === undefined) {
               expect(next.spawned[0]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
@@ -489,6 +623,57 @@ describe("CloudManagedEndpointRuntime", () => {
           expect(next.spawned[1]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
         }).pipe(Effect.scoped);
       }),
+  );
+
+  it.effect("remembers an HTTP/2 fallback the relay client made on its own", () =>
+    Effect.gen(function* () {
+      const context = yield* Layer.build(
+        ServerSecretStore.layer.pipe(
+          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-transport-test-" })),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      );
+      const secretStoreLayer = Layer.succeed(
+        ServerSecretStore.ServerSecretStore,
+        context.pipe(Context.get(ServerSecretStore.ServerSecretStore)),
+      );
+      const start = (spawner: ReturnType<typeof ChildProcessSpawner.make>) =>
+        buildCloudManagedEndpointRuntime(
+          spawner,
+          layerRelayClientAvailable,
+          unusedHttpClient,
+          secretStoreLayer,
+        );
+      const registered = (protocol: string) =>
+        `2026-11-10T01:43:17Z INF Registered tunnel connection connIndex=0 connection=c1 event=0 ip=198.41.192.7 location=fra08 protocol=${protocol}\n`;
+
+      yield* Effect.gen(function* () {
+        const fixture = yield* makeTransportSpawner();
+        const runtime = yield* start(fixture.spawner);
+        yield* runtime.applyConfig(tunnelConfig);
+        yield* fixture.emit(0, registered("quic"));
+        yield* Stream.runHead(runtime.tunnelConnected);
+      }).pipe(Effect.scoped);
+      yield* Effect.gen(function* () {
+        const fixture = yield* makeTransportSpawner();
+        const runtime = yield* start(fixture.spawner);
+        yield* runtime.applyConfig(tunnelConfig);
+        expect(fixture.spawned[0]!.args).not.toContain("--protocol");
+        // cloudflared, started with `auto`, gave up on QUIC itself.
+        yield* fixture.emit(0, registered("http2"));
+        yield* Stream.runHead(runtime.tunnelConnected);
+        // The connector already runs on HTTP/2, so it is not restarted.
+        expect(fixture.spawned).toHaveLength(1);
+        expect(fixture.killed).toEqual([]);
+      }).pipe(Effect.scoped);
+
+      yield* Effect.gen(function* () {
+        const fixture = yield* makeTransportSpawner();
+        const runtime = yield* start(fixture.spawner);
+        yield* runtime.applyConfig(tunnelConfig);
+        expect(fixture.spawned[0]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+      }).pipe(Effect.scoped);
+    }),
   );
 
   it.effect(
@@ -553,6 +738,39 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(yield* runtime.applyConfig(requested)).toMatchObject({ status: "running", pid: 802 });
       yield* fixture.observe(runtime, 2);
       expect(fixture.spawned[2]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+    }),
+  );
+
+  it.effect("decides a restart only once it holds the reconcile lock", () =>
+    Effect.gen(function* () {
+      const checking = yield* Deferred.make<void>();
+      const releaseCheck = yield* Deferred.make<void>();
+      const fixture = yield* makeTransportSpawner({
+        isRunning: Deferred.succeed(checking, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseCheck)),
+          Effect.as(true),
+        ),
+      });
+      const runtime = yield* buildCloudManagedEndpointRuntime(fixture.spawner);
+      yield* runtime.applyConfig(tunnelConfig);
+      yield* fixture.observe(runtime, 0);
+
+      // Hold reconciliation in a process probe so the restart waits for the lock.
+      const probe = yield* runtime.applyConfig(tunnelConfig).pipe(Effect.forkChild);
+      yield* Deferred.await(checking);
+      let stillDead = true;
+      const restart = yield* runtime
+        .restartConnector(
+          800,
+          Effect.sync(() => stillDead),
+        )
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      stillDead = false;
+      yield* Deferred.succeed(releaseCheck, undefined);
+      yield* Fiber.join(probe);
+
+      expect(yield* Fiber.join(restart)).toBe(false);
+      expect(fixture.killed).toEqual([]);
     }),
   );
 
@@ -644,7 +862,7 @@ describe("CloudManagedEndpointRuntime", () => {
           ),
         ).toBe(true);
       }
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("discards a pending fallback when its connector is replaced or removed", () =>
@@ -895,6 +1113,54 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(spawned).toEqual([400, 401]);
       expect(killed).toEqual([400]);
     }),
+  );
+
+  it.effect.each(["SIGINT", "SIGTERM"] as const)(
+    "does not restart a connector that exits after the server receives %s",
+    (signal) =>
+      Effect.gen(function* () {
+        const spawned: Array<number> = [];
+        const firstExit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+        const firstKilled = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.gen(function* () {
+            const pid = 400 + spawned.length;
+            spawned.push(pid);
+            const handle = makeHandle({
+              pid,
+              exitCode:
+                pid === 400
+                  ? Deferred.await(firstExit)
+                  : (Effect.never as Effect.Effect<ChildProcessSpawner.ExitCode>),
+              onKill: () => {
+                if (pid === 400) Deferred.doneUnsafe(firstKilled, Exit.void);
+              },
+            });
+            yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+            return handle;
+          }),
+        );
+        // Invoke only the runtime's own listeners; emitting would reach the test worker's too.
+        const listenersBefore = new Set(process.listeners(signal));
+        const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+        const runtimeListeners = process
+          .listeners(signal)
+          .filter((listener) => !listenersBefore.has(listener));
+
+        yield* runtime.applyConfig({
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "token",
+          tunnelId: "tunnel-1",
+        });
+        for (const listener of runtimeListeners) listener(signal);
+        // The process group receives the signal too, so the connector exits cleanly.
+        yield* Deferred.succeed(firstExit, ChildProcessSpawner.ExitCode(0));
+        yield* Deferred.await(firstKilled);
+        // Holding the reconcile lock waits out the supervisor's restart decision.
+        yield* runtime.restartConnector(400, Effect.succeed(true));
+
+        expect(spawned).toEqual([400]);
+      }),
   );
 
   it.effect("serializes concurrent connector config changes", () =>

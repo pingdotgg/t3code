@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import type { AgentOptions, SDKModel } from "@cursor/sdk";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -33,7 +34,6 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { CursorDriver } from "./driver.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorSdk from "./CursorSdk.ts";
-import * as CursorKeychain from "./CursorKeychain.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -42,18 +42,13 @@ import { loadCursorSdk } from "./sdk.ts";
 const { Cursor } = loadCursorSdk();
 
 const layerTest = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(McpProviderSessions.layer),
-  Layer.provideMerge(CursorSdk.layer),
+  Layer.provideMerge(CursorSdk.layer.pipe(Layer.provide(NodeServices.layer))),
   Layer.provideMerge(
     Layer.mock(CursorAgentSdk.CursorAgentSdkRunner)({
       open: () => Effect.die("Maintenance resolution must not open a Cursor session"),
-    }),
-  ),
-  Layer.provideMerge(
-    Layer.succeed(CursorKeychain.CursorKeychain, {
-      accessToken: Effect.die("The driver test must not read the Keychain"),
     }),
   ),
   Layer.provideMerge(
@@ -188,7 +183,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
         ).toBe("Failure");
         expect(openedKeys).toEqual(["instance-browser-key"]);
         expect(closed).toBe(1);
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("budgets handoffs for the SDK model across catalog refreshes and option changes", () =>
@@ -394,7 +389,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
           allowance: DEFAULT_HANDOFF_TOKEN_CAP,
         },
         catalogDefault: {
-          model: { id: "claude-opus-5-5" },
+          model: { id: "claude-opus-5-5", params: [{ id: "context", value: "1m" }] },
           window: 1_000_000,
           allowance: DEFAULT_HANDOFF_TOKEN_CAP,
         },
@@ -410,6 +405,6 @@ it.layer(layerTest)("CursorDriver", (it) => {
         },
         retainedDefault: catalogDefault,
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 });

@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -640,27 +640,54 @@ describe("attachmentUploadQueue", () => {
     );
   });
 
-  it("restores the previous environment after a replacement upload fails", async () => {
-    const image = makeImage("image-move");
-    startAttachmentUpload({ environmentId: firstEnvironment, image });
-    await Promise.resolve();
-    let settled = awaitAttachmentUploads([image.id]);
-    TestXmlHttpRequest.requests[0]!.complete();
-    await settled;
+  it.each(["image", "file"] as const)(
+    "restores the previous environment after a replacement upload fails: %s",
+    async (kind) => {
+      const draftId = DraftId.make("draft-environment-roundtrip");
+      const store = useComposerDraftStore.getState();
+      const image = kind === "image" ? makeImage("image-move") : makeFile("file-move");
+      const moveDraftTo = (environmentId: EnvironmentId) => {
+        store.setProjectDraftThreadId(
+          { environmentId, projectId: ProjectId.make("project") },
+          draftId,
+        );
+        startAttachmentUpload({ environmentId, image, draftTarget: draftId });
+      };
+      try {
+        if (image.type === "file") store.addFiles(draftId, [image]);
+        moveDraftTo(firstEnvironment);
+        await Promise.resolve();
+        let settled = awaitAttachmentUploads([image.id]);
+        TestXmlHttpRequest.requests[0]!.complete();
+        await settled;
 
-    startAttachmentUpload({ environmentId: secondEnvironment, image });
-    await Promise.resolve();
-    settled = awaitAttachmentUploads([image.id]);
-    TestXmlHttpRequest.requests[1]!.complete(500);
-    await settled;
+        moveDraftTo(secondEnvironment);
+        await Promise.resolve();
+        settled = awaitAttachmentUploads([image.id]);
+        TestXmlHttpRequest.requests[1]!.complete(500);
+        await settled;
 
-    startAttachmentUpload({ environmentId: firstEnvironment, image });
-    expect(readAttachmentUpload(image.id)).toMatchObject({
-      status: "ready",
-      environmentId: firstEnvironment,
-      attachmentId: "pending-environment-1-image-move.png",
-    });
-  });
+        moveDraftTo(firstEnvironment);
+        const attachmentId = `pending-environment-1-${image.name}`;
+        expect(readAttachmentUpload(image.id)).toMatchObject({
+          status: "ready",
+          environmentId: firstEnvironment,
+          attachmentId,
+        });
+        if (image.type === "file") {
+          expect(store.getComposerDraft(draftId)?.files).toMatchObject([
+            {
+              id: image.id,
+              uploadedAttachmentId: attachmentId,
+              uploadEnvironmentId: firstEnvironment,
+            },
+          ]);
+        }
+      } finally {
+        store.clearDraftThread(draftId);
+      }
+    },
+  );
 
   it("does not let stalled uploads block another environment", async () => {
     const images = ["image-a", "image-b", "image-c", "image-d"].map(makeImage);

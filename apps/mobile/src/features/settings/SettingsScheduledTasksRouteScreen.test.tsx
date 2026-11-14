@@ -54,12 +54,13 @@ vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Child
 vi.mock("./components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));
 vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
-  AndroidSettingsEnvironmentFilter: () => null,
-  SettingsEnvironmentFilterHeader: () => null,
+  useSettingsEnvironmentMenu: () => null,
 }));
 vi.mock("./components/ScheduledTaskPromptField", () => ({ ScheduledTaskPromptField: () => null }));
-vi.mock("../../native/StackHeader", () => ({ NativeStackScreenOptions: () => null }));
-vi.mock("../layout/native-glass-header-items", () => ({ withNativeGlassHeaderItem: vi.fn() }));
+vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
+  useSelectWorkspaceDetail: () => vi.fn(),
+}));
+vi.mock("../../state/threads", () => ({ threadFamilies: {} }));
 vi.mock("../../lib/copyTextWithHaptic", () => ({ tryCopyTextWithHaptic: vi.fn() }));
 vi.mock("../voice-input/useVoiceInputController", () => ({
   useVoiceInputController: () => ({ blocksSubmission: false }),
@@ -99,6 +100,7 @@ vi.mock("../../state/entities", () => ({
   ],
   useServerConfigs: () => new Map(),
   useEnvironmentServerConfig: () => null,
+  useThreadShell: () => null,
 }));
 vi.mock("./settings-environment-filter", () => ({
   useSettingsEnvironmentFilter: () => ({
@@ -127,7 +129,7 @@ vi.mock("../../state/server", () => ({
   },
 }));
 vi.mock("../../state/query", () => ({
-  useEnvironmentQuery: () => ({ data: { tasks: mocks.tasks } }),
+  useEnvironmentQuery: () => ({ data: { tasks: mocks.tasks, threads: [] } }),
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.upsert }));
 
