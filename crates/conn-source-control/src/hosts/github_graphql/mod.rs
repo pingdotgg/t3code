@@ -87,7 +87,8 @@ fn render_parts(parts: &[&str], prefix: &str) -> String {
 impl Template {
     /// Effect's `templateUnsliceableReason` is `undefined`.
     fn sliceable(&self) -> bool {
-        self.directives.is_none_or(|d| d.len() <= 1) && self.selections.iter().all(|s| s.name.is_some())
+        self.directives.is_none_or(|d| d.len() <= 1)
+            && self.selections.iter().all(|s| s.name.is_some())
     }
 }
 
@@ -107,7 +108,10 @@ impl Operation {
             let mut vars = String::new();
             for prefix in prefixes {
                 for variable in t.variables {
-                    concat(&mut vars, &format!("${prefix}{}:{}", variable.name, variable.body));
+                    concat(
+                        &mut vars,
+                        &format!("${prefix}{}:{}", variable.name, variable.body),
+                    );
                 }
             }
             concat(&mut out, &format!("({vars})"));
@@ -121,7 +125,10 @@ impl Operation {
                 let key = if prefix.is_empty() {
                     selection.alias.map(str::to_owned)
                 } else {
-                    Some(format!("{prefix}{}", selection.alias.or(selection.name).unwrap_or_default()))
+                    Some(format!(
+                        "{prefix}{}",
+                        selection.alias.or(selection.name).unwrap_or_default()
+                    ))
                 };
                 let key = key.map(|k| format!("{k}:")).unwrap_or_default();
                 let piece = format!(
@@ -161,9 +168,16 @@ impl Operation {
             .filter(|f| f.body.len() <= 1)
             .map(|f| f.name)
             .collect();
-        let collides = self.template.fragments.iter().filter(|f| f.body.len() > 1).any(|f| {
-            prefixes.iter().any(|p| shared.contains(&format!("{p}{}", f.name).as_str()))
-        });
+        let collides = self
+            .template
+            .fragments
+            .iter()
+            .filter(|f| f.body.len() > 1)
+            .any(|f| {
+                prefixes
+                    .iter()
+                    .any(|p| shared.contains(&format!("{p}{}", f.name).as_str()))
+            });
         if collides {
             return Err(Unsliceable(self.name));
         }
@@ -193,7 +207,11 @@ mod tests {
         assert!(!TWO_SLICES.is_empty(), "the generator printed slices");
         for (name, expected) in TWO_SLICES {
             let operation = ALL.iter().find(|o| o.name == *name).expect("operation");
-            assert_eq!(operation.render_slices(2).as_deref(), Ok(*expected), "{name}");
+            assert_eq!(
+                operation.render_slices(2).as_deref(),
+                Ok(*expected),
+                "{name}"
+            );
         }
     }
 }
