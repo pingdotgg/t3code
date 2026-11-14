@@ -45,7 +45,7 @@ function isWhitespace(char: string): boolean {
   return char === " " || char === "\n" || char === "\t" || char === "\r";
 }
 
-/** A second slash makes the whole word a path, even when the caret precedes that slash. */
+/** A second slash or backslash makes the whole word a path, even when the caret precedes it. */
 export function isPathWord(
   text: string,
   wordStart: number,
@@ -56,7 +56,7 @@ export function isPathWord(
   while (wordEnd < text.length && !isWhitespaceChar(text[wordEnd] ?? "")) {
     wordEnd += 1;
   }
-  return text.slice(wordStart + 1, wordEnd).includes("/");
+  return /[/\\]/.test(text.slice(wordStart + 1, wordEnd));
 }
 
 /**
@@ -168,4 +168,15 @@ export function replaceTextRange(
   const safeEnd = Math.max(safeStart, Math.min(text.length, rangeEnd));
   const nextText = `${text.slice(0, safeStart)}${replacement}${text.slice(safeEnd)}`;
   return { text: nextText, cursor: safeStart + replacement.length };
+}
+
+/** `/clear` as the whole message arms a fresh session instead of sending. */
+export function isClearComposerCommand(text: string): boolean {
+  return /^\/clear\s*$/i.test(text.trim());
+}
+
+/** `/side [prompt]`, or its alias `/btw [prompt]`, as the whole message. */
+export function parseSideChatCommand(text: string): { prompt: string } | null {
+  const match = /^\/(?:side|btw)(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  return match ? { prompt: match[1]?.trim() ?? "" } : null;
 }

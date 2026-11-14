@@ -30,4 +30,32 @@ describe("provider auth state", () => {
       methods: [method],
     });
   });
+
+  it("refuses sign-in URLs that are not web pages", () => {
+    const state = {
+      instanceId: "cursor",
+      phase: "waiting",
+      flowId: "flow",
+      authorizationUrl: null,
+      expiresAt: null,
+      message: null,
+    };
+    const script = "javascript:alert(document.domain)";
+    expect(
+      decodeState({
+        ...state,
+        interaction: { type: "browser", id: "b", url: script, requiresConsent: true },
+      }),
+    ).toEqual(state);
+    expect(
+      decodeState({
+        ...state,
+        interaction: { type: "deviceCode", id: "d", url: script, userCode: "ABCD" },
+      }),
+    ).toEqual(state);
+    expect(() => decodeState({ ...state, authorizationUrl: script })).toThrow();
+    expect(
+      decodeState({ ...state, authorizationUrl: "https://cursor.com/login" }).authorizationUrl,
+    ).toBe("https://cursor.com/login");
+  });
 });
