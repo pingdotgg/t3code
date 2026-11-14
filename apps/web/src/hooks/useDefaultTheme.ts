@@ -72,7 +72,7 @@ function adoptDefaultTheme(): void {
 function adoptDefaultAppearance(): void {
   if (typeof window === "undefined") return;
   const environmentId = appAtomRegistry.get(themeEnvironmentIdAtom);
-  const { defaultAppearance, defaultAppearanceSetAt } =
+  const { defaultAppearance, defaultAppearanceSetAt, defaultTheme } =
     appAtomRegistry.get(themeServerSettingsAtom);
   const storageKey = `${APPLIED_DEFAULT_APPEARANCE_STORAGE_PREFIX}${environmentId}`;
   const generation = defaultThemeToApply({
@@ -83,6 +83,8 @@ function adoptDefaultAppearance(): void {
     resolves: true,
   });
   if (generation === null || defaultAppearance === "") return;
+  // A theme that arrives later sets its own mode when it applies, so the set mode waits for it.
+  if (defaultTheme !== "" && getThemeDefinition(defaultTheme) === null) return;
   if (setAppearanceMode(defaultAppearance)) writeAppliedGeneration(storageKey, generation);
 }
 
