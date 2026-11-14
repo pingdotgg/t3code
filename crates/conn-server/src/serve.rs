@@ -194,7 +194,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
         }
     };
     let addr = or_exit(listener.local_addr(), "cannot read the listening address");
-    let runtime = RuntimeState::new(&addr.ip().to_string(), addr.port(), auth::random_uuid());
+    let runtime = RuntimeState::new(&addr.ip().to_string(), addr.port(), conn_support::uuid_v4());
     if let Err(error) = runtime.publish(&state_dir) {
         eprintln!("conn-server: could not write server-runtime.json: {error}");
     }

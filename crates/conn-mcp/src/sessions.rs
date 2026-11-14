@@ -41,7 +41,7 @@ impl Sessions {
         {
             self.sessions.remove(&oldest);
         }
-        let id = crate::uuid_v4();
+        let id = conn_support::uuid_v4();
         self.sessions.insert(
             id.clone(),
             Session {

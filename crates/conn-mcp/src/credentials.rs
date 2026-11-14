@@ -52,7 +52,7 @@ impl Credentials {
         let token = crate::random_hex(32);
         let caller = ThreadCaller {
             thread_id: request.thread_id,
-            provider_session_id: crate::uuid_v4(),
+            provider_session_id: conn_support::uuid_v4(),
             provider_instance_id: request.provider_instance_id,
             subagent: request.subagent,
         };

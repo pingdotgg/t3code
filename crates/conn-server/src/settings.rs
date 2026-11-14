@@ -29,7 +29,7 @@ use tokio::sync::watch;
 
 use conn_contract::{ClientServerSettingsPatch, ProviderInstanceMutation, ServerSettings};
 
-use crate::auth::write_private;
+use conn_support::fs::write_private;
 
 /// What `redactServerSettingsForClient` shows instead of a saved secret.
 pub const SECRET_REDACTED: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}";

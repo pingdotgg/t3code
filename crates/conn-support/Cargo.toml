@@ -1,0 +1,18 @@
+[package]
+name = "conn-support"
+description = "Small helpers several crates share: time, hex, base64, HMAC, atomic file writes."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# HMAC-SHA256 needs the hash; already in the tree (workspace dependency).
+sha2.workspace = true
+uuid.workspace = true
+# The random bytes for v4 ids, from the OS random source.
+getrandom.workspace = true
+
+[lints]
+workspace = true

@@ -247,26 +247,8 @@ impl McpService {
 fn random_hex(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
     getrandom::fill(&mut buf).expect("OS random source");
-    buf.iter().map(|b| format!("{b:02x}")).collect()
+    conn_support::hex::hex(&buf)
 }
-
-/// A random RFC 4122 v4 id, as TS `uuidV4` makes for provider sessions and request keys.
-fn uuid_v4() -> String {
-    let mut b = [0u8; 16];
-    getrandom::fill(&mut b).expect("OS random source");
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[0..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..32]
-    )
-}
-
 /// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
 /// With `panic = "abort"` a release build stops at the panic itself.
 pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {

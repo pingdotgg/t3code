@@ -26,7 +26,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     Files, attachments, mime,
     paths::{self, InternalPaths},
-    signer, workspace,
+    workspace,
 };
 
 pub const ROUTE_PREFIX: &str = "/api/assets";
@@ -669,7 +669,10 @@ impl Files {
                         )
                     })?;
                 let name = source.rsplit(['/', '\\']).next().unwrap_or(source);
-                format!("v{}-{name}", signer::hex(&Sha256::digest(&bytes)))
+                format!(
+                    "v{}-{name}",
+                    conn_support::hex::hex(&Sha256::digest(&bytes))
+                )
             }
             _ => FAVICON_FALLBACK_MARKER.into(),
         };

@@ -12,6 +12,7 @@ name = "conn-server"
 path = "src/main.rs"
 
 [dependencies]
+conn-support.workspace = true
 conn-wire.workspace = true
 conn-contract.workspace = true
 conn-engine.workspace = true

@@ -28,7 +28,6 @@ use tokio::{
 };
 
 use crate::{
-    clock,
     error::{VcsError, VcsResult},
     repo::{self, git},
     worktree::{self, CreateWorktree, Removal},
@@ -131,7 +130,7 @@ impl WorktreeSetups {
             entry.tx.send_replace(Some(WorktreeSetupSnapshot {
                 thread_id: thread_id.to_owned(),
                 phase: Phase::Running,
-                started_at: clock::now_iso(),
+                started_at: conn_support::time::now_iso(),
                 ended_at: None,
                 branch,
                 base_ref,
@@ -180,7 +179,7 @@ impl WorktreeSetups {
         status: StageStatus,
         detail: Option<&str>,
     ) {
-        let now = clock::now_iso();
+        let now = conn_support::time::now_iso();
         self.update(thread_id, |s| {
             if let Some(stage) = s.stages.iter_mut().find(|st| st.id == id) {
                 if stage.started_at.is_none() && status != StageStatus::Pending {
@@ -212,7 +211,7 @@ impl WorktreeSetups {
     /// Ends the setup. Running stages become done, skipped or failed with the phase. The
     /// snapshot stays 30 s, then subscribers get `null`.
     pub fn finish(&self, thread_id: &str, phase: Phase, error: Option<&str>) {
-        let now = clock::now_iso();
+        let now = conn_support::time::now_iso();
         let stage_end = match phase {
             Phase::Done => StageStatus::Done,
             Phase::Cancelled => StageStatus::Skipped,
@@ -339,7 +338,7 @@ pub enum ProvisionError {
 /// `t3/<8 hex>`, the name of a branch the user did not choose.
 pub fn temporary_branch_name() -> String {
     let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-    hasher.write_u128(clock::now_ms() as u128);
+    hasher.write_u128(conn_support::time::now_ms() as u128);
     format!("t3/{:08x}", hasher.finish() as u32)
 }
 

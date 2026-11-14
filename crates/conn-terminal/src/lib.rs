@@ -17,7 +17,6 @@ mod history;
 mod pty;
 mod sanitize;
 mod store;
-mod time;
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
@@ -621,7 +620,7 @@ impl Inner {
                     filter: HistoryFilter::default(),
                     utf8: Utf8Stream::default(),
                     sequence: 0,
-                    updated_at: time::now_iso(),
+                    updated_at: conn_support::time::now_iso(),
                     touched,
                     cols,
                     rows,
@@ -1002,7 +1001,7 @@ impl Session {
     fn advance(&mut self) {
         self.sequence += 1;
         self.touched = tick();
-        self.updated_at = time::now_iso();
+        self.updated_at = conn_support::time::now_iso();
     }
 
     fn label(&self) -> String {
@@ -1073,7 +1072,7 @@ impl Session {
         self.cols = cols;
         self.rows = rows;
         self.sequence += 1;
-        self.updated_at = time::now_iso();
+        self.updated_at = conn_support::time::now_iso();
         Ok(Some(TerminalAttachStreamEvent::Activity(
             TerminalAttachStreamEventActivity {
                 thread_id: self.thread_id.clone(),

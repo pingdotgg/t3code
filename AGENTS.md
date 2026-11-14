@@ -127,6 +127,7 @@ a fork of T3 Code). This repository pins one Conn commit in `conn.pin`.
 | A settings rule | `crates/conn-server/src/settings.rs` | add a case to `crates/conn-server/tools/settings-cases.json`; `settings-diff.mjs` runs it against the T3 server's own functions |
 | A capability or `ServerConfig` flag | `capabilities` / `config_flags` in `crates/conn-server/src/environment.rs` | advertise only what the server serves |
 | A part that follows upstream files | a pathspec in `tools/upkeep/followed-files.txt` | the bump report then prints that part's upstream commits |
+| A helper two crates need (time, hex, base64, HMAC, atomic file write, ids) | `crates/conn-support`: std only (plus `sha2`, `uuid`, `getrandom`), no async, no state | a test there |
 | A dependency | the workspace `Cargo.toml` | state why and what it costs; `cargo deny` must pass |
 
 ## Skills

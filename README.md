@@ -142,6 +142,7 @@ See [`fixtures/README.md`](fixtures/README.md) for every scenario and which need
 | `conn-files`            | Project files, search, asset URLs, attachments                        |
 | `conn-terminal`         | Shells on PTYs: sessions, scrollback, viewers (`terminal.*`)          |
 | `conn-server`           | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
+| `conn-support`          | Helpers several crates share: time, hex, base64, HMAC, atomic writes, v4 ids |
 
 Dependencies point one way: `conn-server` → `conn-engine` → `conn-provider` → `conn-contract`;
 `conn-provider-claude` → `conn-provider`; `conn-server` → `conn-wire`. `conn-wire` and

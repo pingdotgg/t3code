@@ -25,10 +25,7 @@ use conn_contract::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{
-    mime, paths,
-    signer::{self, Signer},
-};
+use crate::{mime, paths, signer::Signer};
 
 pub const UPLOAD_ROUTE_PREFIX: &str = "/api/attachments/upload";
 /// `ATTACHMENT_UPLOAD_URL_TTL_MS`.
@@ -340,7 +337,7 @@ impl AttachmentStore {
         let extension = is_file.then(|| file_extension(&name));
         let attachment_id = format!(
             "{PENDING_SEGMENT}-{}{}",
-            signer::uuid_v4(),
+            conn_support::uuid_v4(),
             id_suffix(extension.as_deref())
         );
         let expires_at = now_ms + UPLOAD_URL_TTL_MS;
@@ -377,7 +374,7 @@ impl AttachmentStore {
             mime::image_extension(&claims.mime_type, &claims.name)
         };
         let relative = format!("{}{extension}", claims.attachment_id);
-        let part = self.path_for(&format!("{relative}.{}.part", signer::uuid_v4()))?;
+        let part = self.path_for(&format!("{relative}.{}.part", conn_support::uuid_v4()))?;
         Some((part, self.path_for(&relative)?))
     }
 
@@ -553,7 +550,7 @@ impl AttachmentStore {
             let (_, base64) = parse_base64_data_url(&attachment.data_url)
                 .filter(|(m, _)| *m == attachment.mime_type.to_lowercase())
                 .ok_or_else(|| error(format!("Attachment {name} has an invalid image payload.")))?;
-            let bytes = signer::base64_decode(&base64)
+            let bytes = conn_support::base64::decode(&base64)
                 .ok_or_else(|| error(format!("Attachment {name} is not valid base64.")))?;
             if bytes.len() as i64 != attachment.size_bytes {
                 return Err(error(format!(
@@ -563,14 +560,14 @@ impl AttachmentStore {
             let stable_key = format!(
                 "{}:{index}:{}",
                 input.message_id,
-                signer::hex(&Sha256::digest(&bytes))
+                conn_support::hex::hex(&Sha256::digest(&bytes))
             );
             let hashed = Sha256::digest(
                 serde_json::to_string(&[&input.thread_id, &stable_key])
                     .expect("strings encode")
                     .as_bytes(),
             );
-            let h = signer::hex(&hashed[..16]);
+            let h = conn_support::hex::hex(&hashed[..16]);
             let id = format!(
                 "{segment}-{}-{}-{}-{}-{}",
                 &h[..8],
@@ -633,7 +630,7 @@ impl AttachmentStore {
         }
         let final_id = format!(
             "{segment}-{}{}",
-            signer::uuid_v4(),
+            conn_support::uuid_v4(),
             id_suffix(parsed.extension.as_deref())
         );
         let target = self

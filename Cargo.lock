@@ -103,6 +103,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bumpalo"
+version = "3.20.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87a0cf66fd1eb2fb7b822cb78370d82303750809bc6ba855f3f58e517d3238db"
+
+[[package]]
 name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -138,6 +144,7 @@ version = "0.1.0"
 dependencies = [
  "conn-contract",
  "conn-provider",
+ "conn-support",
  "rusqlite",
  "serde",
  "serde_json",
@@ -150,6 +157,7 @@ name = "conn-files"
 version = "0.1.0"
 dependencies = [
  "conn-contract",
+ "conn-support",
  "getrandom",
  "grep-matcher",
  "grep-regex",
@@ -169,6 +177,7 @@ version = "0.1.0"
 dependencies = [
  "conn-contract",
  "conn-engine",
+ "conn-support",
  "getrandom",
  "http",
  "serde_json",
@@ -195,6 +204,7 @@ dependencies = [
  "conn-mcp",
  "conn-provider",
  "conn-provider-support",
+ "conn-support",
  "serde",
  "serde_json",
  "sha2",
@@ -208,6 +218,7 @@ dependencies = [
  "conn-contract",
  "conn-provider",
  "conn-provider-support",
+ "conn-support",
  "serde",
  "serde_json",
  "thiserror",
@@ -218,6 +229,7 @@ dependencies = [
 name = "conn-provider-support"
 version = "0.1.0"
 dependencies = [
+ "conn-support",
  "rustix",
  "serde_json",
  "tokio",
@@ -235,6 +247,7 @@ dependencies = [
  "conn-provider",
  "conn-provider-claude",
  "conn-provider-codex",
+ "conn-support",
  "conn-terminal",
  "conn-vcs",
  "conn-wire",
@@ -250,10 +263,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "conn-support"
+version = "0.1.0"
+dependencies = [
+ "getrandom",
+ "sha2",
+ "uuid",
+]
+
+[[package]]
 name = "conn-terminal"
 version = "0.1.0"
 dependencies = [
  "conn-contract",
+ "conn-support",
  "pty-process",
  "rustix",
  "serde_json",
@@ -265,6 +288,7 @@ name = "conn-vcs"
 version = "0.1.0"
 dependencies = [
  "conn-contract",
+ "conn-support",
  "rustix",
  "serde",
  "serde_json",
@@ -634,6 +658,17 @@ name = "itoa"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3bd1574e617a9a6c1f8f8181bd7e841e1f20e4277607ef28945765188d6284d4"
+
+[[package]]
+name = "js-sys"
+version = "0.3.107"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8dc09d2154098bbf4ef54eab6b117a3c24cbbffe94046b16ee6d6d4510584d3a"
+dependencies = [
+ "cfg-if",
+ "futures-util",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "libc"
@@ -1166,6 +1201,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
 
 [[package]]
+name = "uuid"
+version = "1.29.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bed99139f7dac9b5cfe5f17be4d66dc7079a34dee1d74bcc77217119240e267c"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1200,6 +1245,50 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
 dependencies = [
  "wit-bindgen",
+]
+
+[[package]]
+name = "wasm-bindgen"
+version = "0.2.130"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0181c14ddd6c7b8b0b0132a5f1ea2f32be0d893cd3ea97b6e3b28886b8a3d1c"
+dependencies = [
+ "cfg-if",
+ "rustversion",
+ "wasm-bindgen-macro",
+ "wasm-bindgen-shared",
+]
+
+[[package]]
+name = "wasm-bindgen-macro"
+version = "0.2.130"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e931a02a39abdbf66966fc35902b5ed58344750a70885bed4ebb3d8eaf28ed9"
+dependencies = [
+ "quote",
+ "wasm-bindgen-macro-support",
+]
+
+[[package]]
+name = "wasm-bindgen-macro-support"
+version = "0.2.130"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ca4b54280e455bd831e33a6b8e734baf432fe63fbc35c42ac14ce67a043a53a"
+dependencies = [
+ "bumpalo",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
+ "wasm-bindgen-shared",
+]
+
+[[package]]
+name = "wasm-bindgen-shared"
+version = "0.2.130"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b1f9c3798725016c6ee5f2f57869ec0831e8bbc0ab0310a86e787e97f41389e"
+dependencies = [
+ "unicode-ident",
 ]
 
 [[package]]

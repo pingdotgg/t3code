@@ -337,7 +337,7 @@ impl Cx<'_> {
     fn request_key(args: &Args) -> String {
         args.get("clientRequestId")
             .and_then(Value::as_str)
-            .map_or_else(crate::uuid_v4, str::to_owned)
+            .map_or_else(conn_support::uuid_v4, str::to_owned)
     }
 
     /// TS `stableCommandId`: `command:mcp:<namespace>:<operation>:<key>`, each part encoded.
@@ -354,7 +354,7 @@ impl Cx<'_> {
     fn hashed_id(&self, prefix: &str, key: &str) -> String {
         let pair = json!([self.caller.namespace(), key]).to_string();
         let digest = Sha256::digest(pair.as_bytes());
-        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        let hex = conn_support::hex::hex(&digest);
         format!("{prefix}{hex}")
     }
 }

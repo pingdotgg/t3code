@@ -21,6 +21,7 @@ conn-mcp = { path = "crates/conn-mcp" }
 conn-vcs = { path = "crates/conn-vcs" }
 conn-files = { path = "crates/conn-files" }
 conn-terminal = { path = "crates/conn-terminal" }
+conn-support = { path = "crates/conn-support" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -46,6 +47,10 @@ rusqlite = { version = "0.37", default-features = false, features = ["bundled"] 
 # Display and std::error::Error for the error types at crate boundaries. Already in the tree
 # through tungstenite; a proc macro, so no run-time code beyond the impls it writes.
 thiserror = "2"
+# v4 ids: the version and variant bits and the text form, in place of four hand-written copies.
+# Without its `v4` feature, which would bring getrandom 0.4 next to the 0.3 already in the
+# tree; conn-support fills the bytes from getrandom 0.3.
+uuid = { version = "1.29", default-features = false, features = ["std"] }
 axum = { version = "0.8", default-features = false, features = [
   "http1",
   "json",

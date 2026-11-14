@@ -174,7 +174,7 @@ pub fn subagent_thread_id(native_thread_id: &str) -> String {
         ids::encode_component(native_thread_id)
     );
     let digest = Sha256::digest(legacy.as_bytes());
-    let hex: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    let hex = conn_support::hex::hex(&digest[..8]);
     format!("thread:subagent:{hex}")
 }
 

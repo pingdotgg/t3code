@@ -18,7 +18,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
-use crate::auth::write_atomic;
+use conn_support::fs::write_atomic;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, serde::Serialize)]
 pub struct Rule {

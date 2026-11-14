@@ -478,7 +478,7 @@ pub(super) async fn launch(cx: &Cx<'_>, args: &Args) -> ToolResult {
     // and the key, and the engine replays a command it already accepted.
     let command_id = match str_arg(args, "clientRequestId") {
         Some(key) => cx.hashed_id("mcp:launch:", key),
-        None => format!("mcp:launch:{}", crate::uuid_v4()),
+        None => format!("mcp:launch:{}", conn_support::uuid_v4()),
     };
     let model_selection = args
         .get("modelSelection")
@@ -873,7 +873,7 @@ pub(super) async fn pending_request(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let sequence = cx
         .dispatch(json!({
             "type": "runtime-request.respond",
-            "commandId": format!("command:mcp:{}", crate::uuid_v4()),
+            "commandId": format!("command:mcp:{}", conn_support::uuid_v4()),
             "threadId": id,
             "requestId": request_id,
             "answers": answers,
