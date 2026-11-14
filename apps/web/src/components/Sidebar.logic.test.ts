@@ -38,6 +38,7 @@ import {
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
+  generateSpreadPinOrderKeys,
   sortActiveThreadsByOrderKey,
   sortPinnedThreadsByOrderKey,
 } from "@t3tools/client-runtime/state/thread-sort";
@@ -1373,6 +1374,24 @@ describe("Working shelf (beta)", () => {
 
           expect(result.plan).toEqual({ kind: "none" });
           expect(result.assignments).toEqual([]);
+        },
+      );
+
+      it.each(["active", "pinned"] as const)(
+        "rejects crossing the frozen keyless boundary in %s when the moved key is already spread",
+        (section) => {
+          const [first, second] = generateSpreadPinOrderKeys(2);
+          const neighbor = thread("neighbor");
+          const moved = thread(
+            "online",
+            onlineEnvironmentId,
+            section === "active" ? first : second,
+          );
+          const order =
+            section === "active" ? [moved, offline, neighbor] : [neighbor, offline, moved];
+          const result = planDrop({ section, rows: [offline, neighbor, moved], moved, order });
+
+          expect(result.plan).toEqual({ kind: "none" });
         },
       );
 

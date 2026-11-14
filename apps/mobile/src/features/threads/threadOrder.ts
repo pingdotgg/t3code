@@ -229,7 +229,9 @@ export function computeThreadMoveAvailability(input: {
       if ((beforeId === null || beforeKey != null) && (afterId === null || afterKey != null)) {
         if (fastPathKey(beforeKey, afterKey) !== null) return !movedCrossing;
       }
-      return totals.writes > 0 && totals.unwritable === 0 && totals.crossing === 0;
+      return (
+        !movedCrossing && totals.writes > 0 && totals.unwritable === 0 && totals.crossing === 0
+      );
     };
     result.set(movedId, {
       canMoveUp: adjacentAvailable(true),

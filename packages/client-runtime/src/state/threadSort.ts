@@ -312,7 +312,7 @@ export function planWritableReorder(input: {
   for (const id of orderedIds) {
     if (isFrozen(id)) frozenBefore += 1;
     else if (
-      assignedIds.has(id) &&
+      (assignedIds.has(id) || id === movedId) &&
       crossesFrozenKeyless(input.section, frozenBefore, frozenTotal)
     ) {
       return null;
