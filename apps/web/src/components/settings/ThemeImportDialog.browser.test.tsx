@@ -128,6 +128,29 @@ function isolateThemes() {
   };
 }
 
+it("sizes an oversized theme file just under 1 MB as 1.00 MB", async () => {
+  using _themes = isolateThemes();
+  await using _screen = await render(
+    <ThemeImportDialog
+      open
+      onOpenChange={() => {}}
+      onImported={() => true}
+      onImportedMany={() => {}}
+    />,
+  );
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  await userEvent.upload(
+    input,
+    new File(["x".repeat(1_048_100)], "huge.json", { type: "application/json" }),
+  );
+
+  await expect
+    .element(page.getByText(/^That file is/))
+    .toHaveTextContent(
+      "That file is 1.00 MB. Theme files are only a few KB, so this one was not read (limit 256 KB).",
+    );
+});
+
 function themeJsonc(name: string, background: string) {
   return `{
     // VS Code themes use JSONC even with a .json extension.
