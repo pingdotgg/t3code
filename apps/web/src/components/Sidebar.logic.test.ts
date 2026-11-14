@@ -10,7 +10,9 @@ import {
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
+  isSidebarThreadWoke,
   resolveSidebarRowThreadId,
+  resolveSidebarTopStatus,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
@@ -330,6 +332,43 @@ describe("resolveSidebarThreadStatus", () => {
       expect(resolveWindowTitleThreadStatus(thread)).toBe(title);
     }
   });
+
+  it.each([
+    [{ status: "working", goalActive: true }, "Goal"],
+    [{ status: "preparing", goalActive: true }, "Setting up"],
+    [{ status: "failed", isWoke: true }, "Failed"],
+    [{ status: "ready", isWoke: true, isUnread: true }, "Woke"],
+    [{ status: "ready", isUnread: true }, "Done"],
+  ] as const)("labels %o as %s", (input, label) => {
+    expect(
+      resolveSidebarTopStatus({ goalActive: false, isWoke: false, isUnread: false, ...input })
+        ?.label,
+    ).toBe(label);
+  });
+
+  it("has no top status for a seen, settled-down thread", () => {
+    expect(
+      resolveSidebarTopStatus({
+        status: "ready",
+        goalActive: false,
+        isWoke: false,
+        isUnread: false,
+      }),
+    ).toBeNull();
+  });
+
+  it.each([
+    [null, undefined, null, false],
+    ["2026-03-09T10:00:00.000Z", undefined, null, true],
+    ["2026-03-09T10:00:00.000Z", "2026-03-09T09:00:00.000Z", null, true],
+    ["2026-03-09T10:00:00.000Z", "2026-03-09T11:00:00.000Z", null, false],
+    ["2026-03-09T10:00:00.000Z", undefined, "settled", false],
+  ] as const)(
+    "woke at %s, visited at %s, override %s is woke: %s",
+    (wokeAt, lastVisitedAt, settledOverride, expected) => {
+      expect(isSidebarThreadWoke({ wokeAt, lastVisitedAt, settledOverride })).toBe(expected);
+    },
+  );
 });
 
 describe("resolveSidebarRowStatus", () => {

@@ -246,8 +246,6 @@ function buildThreadSearchSubject(
   projectTitle: string | null | undefined,
   environmentLabel: string | null | undefined,
 ): ThreadSearchSubject {
-  const activityAt = getThreadSortTimestamp(thread, "updated_at");
-  const localOpenedAt = localThreadOpens.get(`${thread.environmentId}:${thread.id}`) ?? 0;
   return {
     id: thread.id,
     title: thread.title,
@@ -255,6 +253,15 @@ function buildThreadSearchSubject(
     projectTitle: projectTitle ?? null,
     environmentLabel: environmentLabel ?? null,
     pullRequests: threadSearchPullRequests(thread),
+    ...threadSearchRecency(thread),
+  };
+}
+
+/** A thread search subject's recency alone, for callers that rank without searching. */
+export function threadSearchRecency(thread: ThreadSearchShell) {
+  const activityAt = getThreadSortTimestamp(thread, "updated_at");
+  const localOpenedAt = localThreadOpens.get(`${thread.environmentId}:${thread.id}`) ?? 0;
+  return {
     activityAt: Number.isFinite(activityAt) ? activityAt : null,
     // This client's own latest open counts too: the server merged it, or has
     // no record yet (an older server ignores opens).
