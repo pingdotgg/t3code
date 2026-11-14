@@ -1,8 +1,10 @@
 import { scopedProjectKey, scopeProjectRef } from "../environment/scoped.ts";
+import { sourceControlClients } from "../sourceControlClients.ts";
 import {
   repositoryGroupingDisplayNameOf,
   repositoryGroupingKeyOf,
   type EnvironmentId,
+  type RepositoryIdentity,
   type ScopedProjectRef,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
@@ -39,6 +41,17 @@ function uniqueNonEmptyValues(values: ReadonlyArray<string | null | undefined>):
     unique.push(trimmed);
   }
   return unique;
+}
+
+/** Labels of one group share a lower-case grouping key, so a case-only difference is one label. */
+function uniqueLabels(values: ReadonlyArray<string>): string[] {
+  const byKey = new Map<string, string>();
+  for (const value of values) {
+    const key = value.toLowerCase();
+    const kept = byKey.get(key);
+    if (kept === undefined || (kept === key && value !== key)) byKey.set(key, value);
+  }
+  return [...byKey.values()];
 }
 
 function deriveRepositoryRelativeProjectPath(
@@ -198,6 +211,15 @@ export function resolveScratchProjectScopeKey(
     : key;
 }
 
+/** Servers too old to send an origin's URL still send its key, whose first segment is the host. */
+function repositoryGroupingRemoteOf(identity: RepositoryIdentity): string {
+  const { origin } = identity;
+  if (!origin) return identity.locator.remoteUrl;
+  if (origin.remoteUrl) return origin.remoteUrl;
+  const [host] = origin.canonicalKey.split("/");
+  return `https://${origin.displayName ? `${host}/${origin.displayName}` : origin.canonicalKey}`;
+}
+
 export function deriveProjectGroupLabel(input: {
   readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
   readonly members: ReadonlyArray<
@@ -205,11 +227,19 @@ export function deriveProjectGroupLabel(input: {
   >;
 }): string {
   const sharedTitles = uniqueNonEmptyValues(input.members.map((member) => member.title));
-  const sharedDisplayNames = uniqueNonEmptyValues(
-    input.members.map((member) =>
-      member.repositoryIdentity ? repositoryGroupingDisplayNameOf(member.repositoryIdentity) : null,
+  const providerLabels = input.members.map((member) =>
+    member.repositoryIdentity
+      ? sourceControlClients.repositoryLabel(repositoryGroupingRemoteOf(member.repositoryIdentity))
+      : null,
+  );
+  const displayNames = uniqueNonEmptyValues(
+    input.members.map((member, index) =>
+      member.repositoryIdentity
+        ? (providerLabels[index] ?? repositoryGroupingDisplayNameOf(member.repositoryIdentity))
+        : null,
     ),
   );
+  const sharedDisplayNames = uniqueLabels(displayNames);
   const sharedRepositoryNames = uniqueNonEmptyValues(
     input.members.map((member) => member.repositoryIdentity?.name),
   );
@@ -218,7 +248,10 @@ export function deriveProjectGroupLabel(input: {
     sharedTitles.length === 1 &&
     sharedTitle !== undefined &&
     (input.members.some((member) => member.hasCustomTitle === true) ||
-      (!sharedDisplayNames.includes(sharedTitle) && !sharedRepositoryNames.includes(sharedTitle)))
+      (!displayNames.includes(sharedTitle) &&
+        !sharedRepositoryNames.includes(sharedTitle) &&
+        // A provider label's repository keeps the remote's case where the server's name may not.
+        !providerLabels.some((label) => label?.slice(label.lastIndexOf("/") + 1) === sharedTitle)))
   ) {
     return sharedTitle;
   }

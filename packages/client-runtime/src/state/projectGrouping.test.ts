@@ -265,6 +265,33 @@ describe("buildProjectGroups", () => {
     }
   });
 
+  it.each([
+    { name: "a checkout", identity: repositoryIdentity },
+    {
+      name: "a fork named after its origin",
+      identity: {
+        ...repositoryIdentity,
+        origin: {
+          canonicalKey: "github.com/forkowner/t3code",
+          remoteUrl: "https://github.com/ForkOwner/T3Code.git",
+          displayName: "ForkOwner/T3Code",
+        },
+      },
+    },
+  ])(
+    "keeps a shared title that differs from $name's repository name only in case",
+    ({ identity }) => {
+      const projects = [
+        makeProject("one", "/work/one", { title: "T3Code", repositoryIdentity: identity }),
+        makeProject("two", "/work/two", { title: "T3Code", repositoryIdentity: identity }),
+      ];
+
+      expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
+        "T3Code",
+      );
+    },
+  );
+
   it("keeps a fork apart from its upstream checkout and labels it by its own remote", () => {
     const fork = makeProject("fork", "/work/t3code-fork", {
       repositoryIdentity: {
@@ -287,6 +314,79 @@ describe("buildProjectGroups", () => {
     ]);
     expect(groups[1]?.members.map((member) => member.project.id)).toEqual(["fork", "fork-2"]);
     expect(groups[1]?.label).toBe("julius/t3code-fork");
+  });
+
+  it.each([
+    {
+      remoteUrl: "https://dev.azure.com/example-org/My%20Project/_git/my-repo",
+      canonicalKey: "dev.azure.com/example-org/my%20project/_git/my-repo",
+      displayName: "example-org/My%20Project/_git/my-repo",
+      title: "my-repo",
+      label: "My Project/my-repo",
+    },
+    {
+      remoteUrl: "git@ssh.dev.azure.com:v3/example-org/MiXeD%20Project/My-Repo",
+      canonicalKey: "dev.azure.com/example-org/mixed%20project/_git/my-repo",
+      displayName: "example-org/mixed%20project/_git/my-repo",
+      title: "My-Repo",
+      label: "MiXeD Project/My-Repo",
+    },
+  ])(
+    "labels Azure DevOps checkouts of $remoteUrl by project and repository",
+    ({ remoteUrl, canonicalKey, displayName, title, label }) => {
+      const identity = {
+        canonicalKey,
+        locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
+        provider: SourceControlProviderKind.make("azure-devops"),
+        owner: "example-org",
+        name: "my-repo",
+        displayName,
+      };
+      const projects = [
+        makeProject("checkout-1", `/work/one/${title}`, { title, repositoryIdentity: identity }),
+        makeProject("checkout-2", `/work/two/${title}`, { title, repositoryIdentity: identity }),
+      ];
+
+      const groups = buildProjectGroups({ projects, settings: settings("repository") });
+      expect(groups).toHaveLength(1);
+      expect(groups[0]?.label).toBe(label);
+    },
+  );
+
+  it("labels an Azure DevOps fork the same whether or not its server reports the origin URL", () => {
+    const identity = (origin: { readonly remoteUrl?: string }) => ({
+      canonicalKey: "dev.azure.com/org/platform/_git/upstream-repo",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "upstream",
+        remoteUrl: "https://dev.azure.com/org/Platform/_git/upstream-repo",
+      },
+      provider: SourceControlProviderKind.make("azure-devops"),
+      owner: "org",
+      name: "upstream-repo",
+      displayName: "org/Platform/_git/upstream-repo",
+      origin: {
+        canonicalKey: "dev.azure.com/org/forks/_git/fork-repo",
+        displayName: "org/forks/_git/fork-repo",
+        ...origin,
+      },
+    });
+    const projects = [
+      makeProject("one", "/work/one", {
+        title: "checkout-one",
+        repositoryIdentity: identity({}),
+      }),
+      makeProject("two", "/work/two", {
+        title: "checkout-two",
+        repositoryIdentity: identity({
+          remoteUrl: "git@ssh.dev.azure.com:v3/Org/Forks/fork-repo",
+        }),
+      }),
+    ];
+
+    const groups = buildProjectGroups({ projects, settings: settings("repository") });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.label).toBe("Forks/fork-repo");
   });
 
   // regression: #15049 a rename to the repository name snapped back to the display path

@@ -55,6 +55,33 @@ function decodeUrlPathSegment(segment: string): string {
   }
 }
 
+/**
+ * `{project}/{repository}` in the remote's own case, from the web spelling (with or without the
+ * `_full`/`_optimized` clone route) or the SSH (`v3/`) one. Null for any other path.
+ */
+function repositoryLabel(remoteUrl: string): string | null {
+  const scheme = remoteUrl.indexOf("://");
+  const path =
+    scheme === -1
+      ? remoteUrl.slice(remoteUrl.indexOf(":") + 1)
+      : remoteUrl.slice(remoteUrl.indexOf("/", scheme + 3) + 1);
+  const segments = path.split("/").filter((segment) => segment.length > 0);
+  const gitSegment = segments.indexOf("_git");
+  let project: string | undefined;
+  let rest: ReadonlyArray<string> = [];
+  if (gitSegment > 0) {
+    project = segments[gitSegment - 1];
+    rest = segments.slice(gitSegment + 1);
+    if (rest[0] === "_full" || rest[0] === "_optimized") rest = rest.slice(1);
+  } else if (segments[0] === "v3" && segments.length === 4) {
+    project = segments[2];
+    rest = segments.slice(3);
+  }
+  const [repository] = rest;
+  if (!project || !repository || rest.length !== 1) return null;
+  return `${decodeUrlPathSegment(project)}/${decodeUrlPathSegment(repository.replace(/\.git$/iu, ""))}`;
+}
+
 function checkoutCommandId(args: string): string | null {
   const parts = args.trim().split(/\s+/).filter(Boolean);
   for (const [index, part] of parts.entries()) {
@@ -143,6 +170,7 @@ export const definition = defineSourceControl({
     const name = identity.name || segments.at(-1);
     return name ? decodeUrlPathSegment(name) : null;
   },
+  repositoryLabel,
   repositoryKeyFromRemote,
   canonicalRepositoryKey,
   isChangeRequestInRepository: (identity, link) => {
