@@ -233,6 +233,7 @@ function NativeHeaderToolbarRoot(props: {
   const tabActivity = use(NativeWorkspaceTabActivityContext);
   const isTabActive = tabActivity?.isActive;
   const committedHandlers = useRef<(() => void)[]>([]);
+  const committedIsTabActive = useRef(isTabActive);
   const { items, handlers } = useMemo(() => {
     const handlers: (() => void)[] = [];
     const register: RegisterHandler = (handler) => {
@@ -244,13 +245,14 @@ function NativeHeaderToolbarRoot(props: {
   }, [props.children, committedHandlers]);
   // Native retains actions when unchanged presentation skips re-registration.
   // Publish only committed handlers; abandoned renders must not replace them.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed toolbar handlers to the ref native actions call; discarded renders must not leak
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed toolbar handlers and tab reader to refs native actions and the unmount cleanup call; discarded renders must not leak
   useLayoutEffect(() => {
     committedHandlers.current = handlers;
+    committedIsTabActive.current = isTabActive;
     return () => {
       committedHandlers.current = [];
     };
-  }, [handlers, committedHandlers]);
+  }, [handlers, committedHandlers, isTabActive, committedIsTabActive]);
   // UIKit's search placement item belongs to the toolbar, never a header group.
   const headerItems = items.filter(
     (item): item is NativeStackHeaderItem => item.type !== "searchBarPlacement",
@@ -260,6 +262,7 @@ function NativeHeaderToolbarRoot(props: {
   useLayoutEffect(() => {
     if (!setOptions) return;
     return () => {
+      const isTabActive = committedIsTabActive.current;
       if (isTabActive && !isTabActive()) return;
       if (props.placement === "bottom") {
         setOptions({
@@ -271,7 +274,7 @@ function NativeHeaderToolbarRoot(props: {
         setOptions({ unstable_headerRightItems: () => [] });
       }
     };
-  }, [setOptions, props.placement, isTabActive]);
+  }, [setOptions, props.placement, committedIsTabActive]);
 
   return (
     <NativeStackScreenOptions
