@@ -609,6 +609,25 @@ it.effect("checks each preview_act action against that action's own input", () =
 
       yield* callTool("preview_act", { action: "type", selector: "#name", text: "Ada" });
       expect(inputs.at(-2)).toEqual({ selector: "#name", text: "Ada" });
+
+      const sent = inputs.length;
+      const secretRef = yield* callTool("preview_act", {
+        action: "type",
+        selector: "#password",
+        text: " secret-ref:0123456789abcdef0123456789abcdef\n",
+      });
+      expect(secretRef.isError).toBe(true);
+      expect(secretRef.content).toEqual([
+        {
+          type: "text",
+          text: "`text` is a secretRef, not the secret's value. preview_act types `text` literally and cannot use a secretRef, so nothing was typed.",
+        },
+      ]);
+      expect(inputs).toHaveLength(sent);
+
+      const mention = "secret-ref:0123456789abcdef0123456789abcdef is a handle";
+      yield* callTool("preview_act", { action: "type", selector: "#note", text: mention });
+      expect(inputs.at(-2)).toEqual({ selector: "#note", text: mention });
     }),
   ).pipe(Effect.provide(layerTest)),
 );

@@ -4,6 +4,7 @@
 // A secret the user pasted in chat goes straight to such a file, with no card.
 import {
   CommandId,
+  SECRET_REF_PATTERN,
   SecretRef,
   SecretRequestError,
   type ProjectId,
@@ -32,7 +33,6 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 
 const SECRET_REF_PREFIX = "secret-ref:";
 const storeName = (ref: SecretRef) => `secret-request-${ref.slice(SECRET_REF_PREFIX.length)}`;
-const REF_PATTERN = /^secret-ref:[0-9a-f]{32}$/;
 const SECRET_REF_TTL_MS = 24 * 60 * 60 * 1000;
 const STORE_NAME_PATTERN = /^(secret-request-[0-9a-f]{32})\.bin$/;
 const FILE_NAME_PATTERN = /^[0-9a-f]{32}(\.partial)?$/;
@@ -238,7 +238,7 @@ const make = Effect.gen(function* () {
     readonly ref: SecretRef;
     readonly projectId: ProjectId;
   }) {
-    if (!REF_PATTERN.test(input.ref))
+    if (!SECRET_REF_PATTERN.test(input.ref))
       return yield* new SecretRequestError({ reason: "invalid_ref" });
     const stored = yield* store
       .get(storeName(input.ref))
