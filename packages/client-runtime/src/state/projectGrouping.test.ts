@@ -303,6 +303,50 @@ describe("buildProjectGroups", () => {
     expect(label(renamed)).toBe("t3code");
   });
 
+  it("labels a group by its repository when clones disagree on its casing", () => {
+    // A subfolder project, its repository root, and a clone whose remote URL is
+    // lowercased: no shared title or display name, but one repository.
+    const subfolder = makeProject("design-study", "/work/NewCo/reference/design-study");
+    const root = makeProject("NewCo", "/work/NewCo");
+    const lowercasedClone = makeProject("NewCo", "/remote/NewCo", {
+      environmentId: EnvironmentId.make("remote"),
+      repositoryIdentity: { ...repositoryIdentity, name: "T3CODE", displayName: "t3 code" },
+    });
+
+    const groups = buildProjectGroups({
+      projects: [subfolder, root, lowercasedClone],
+      settings: settings("repository"),
+      preferredEnvironmentId: environmentId,
+    });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.label).toBe("T3 Code");
+
+    // A subfolder group in repository_path mode keeps its own title.
+    const localIdentity = { ...repositoryIdentity, rootPath: "/work/t3code" };
+    const pathGroups = buildProjectGroups({
+      projects: [
+        makeProject("design", "/work/t3code/design", {
+          title: "Design docs",
+          hasCustomTitle: true,
+          repositoryIdentity: localIdentity,
+        }),
+        makeProject("design", "/remote/t3code/design", {
+          environmentId: EnvironmentId.make("remote"),
+          repositoryIdentity: {
+            ...repositoryIdentity,
+            rootPath: "/remote/t3code",
+            name: "T3CODE",
+            displayName: "t3 code",
+          },
+        }),
+        makeProject("t3code", "/work/t3code", { repositoryIdentity: localIdentity }),
+      ],
+      settings: settings("repository_path"),
+      preferredEnvironmentId: environmentId,
+    });
+    expect(pathGroups.map((group) => group.label)).toEqual(["Design docs", "t3code"]);
+  });
+
   it("applies a physical-project override without dropping its siblings", () => {
     const first = makeProject("t3code", "/work/t3code");
     const second = makeProject("t3code-2", "/work/t3code-2");

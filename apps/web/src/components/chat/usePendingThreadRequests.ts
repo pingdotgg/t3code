@@ -22,7 +22,6 @@ import { useShallow } from "zustand/react/shallow";
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { getUploadedAttachments, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
-import { reviewCommentContextRecord } from "../../lib/composerContextRecords";
 import {
   buildPendingUserInputAnswers,
   setPendingUserInputCustomAnswer,
@@ -33,6 +32,7 @@ import {
   carryDisplacedCustomAnswerIntoPrompt,
   withdrawDisplacedCustomAnswerFromPrompt,
   derivePendingUserInputProgress,
+  answerContextRecords,
   projectPendingUserInputAnswer,
   threadContextsReferencedByAnswer,
 } from "../../pendingUserInput";
@@ -300,10 +300,7 @@ export function usePendingThreadRequests(input: {
     if (userInputResponsesInFlight.current.has(responseKey)) return;
     const attachmentsByQuestionId = new Map<string, UserInputAttachments[string]>();
     const providerAnswers = { ...answers };
-    // Diff comments land in the thread draft even when their chip is in an answer.
-    const reviewCommentRecords = (
-      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments ?? []
-    ).map(reviewCommentContextRecord);
+    const threadDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
     for (const question of pendingInput.questions) {
       const target = questionAttachmentDraftId(
         environmentId,
@@ -313,10 +310,10 @@ export function usePendingThreadRequests(input: {
       );
       if ((useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0) return;
       const draft = useComposerDraftStore.getState().getComposerDraft(target);
-      providerAnswers[question.id] = projectPendingUserInputAnswer(answers[question.id], [
-        ...(draft?.threadContexts ?? []),
-        ...reviewCommentRecords,
-      ]);
+      providerAnswers[question.id] = projectPendingUserInputAnswer(
+        answers[question.id],
+        answerContextRecords(draft, threadDraft),
+      );
       const attachments = draft ? [...draft.images, ...draft.files] : [];
       if (attachments.length === 0) continue;
       const uploaded = getUploadedAttachments({ environmentId, images: attachments });
