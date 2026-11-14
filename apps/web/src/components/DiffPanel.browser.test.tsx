@@ -273,22 +273,37 @@ it.each([false, true])(
   },
 );
 
-it("says a turn diff cut off at the server's size limit is incomplete", async () => {
+function setNotARepo() {
+  state.status = Atom.make(
+    AsyncResult.success({
+      isRepo: false,
+      hasPrimaryRemote: false,
+      isDefaultRef: false,
+      refName: null,
+      hasWorkingTreeChanges: false,
+      workingTree: { rootPath: cwd, files: [], insertions: 0, deletions: 0 },
+      hasUpstream: false,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: null,
+    }),
+  );
+}
+
+it("explains a turn without a checkpoint in a folder outside git", async () => {
   using context = setup("origin/orphan");
+  setNotARepo();
   state.checkpoints = [
     {
       runId: "run",
       checkpointTurnCount: 1,
       checkpointRef: "ref",
-      status: "ready",
+      status: "missing",
       files: [],
       assistantMessageId: null,
       completedAt: "2026-01-01T00:00:00Z",
     },
   ];
-  state.checkpointDiff = {
-    diff: "diff --git a/first.txt b/first.txt\n--- a/first.txt\n+++ b/first.txt\n@@ -0,0 +1 @@\n+visible\n\n[truncated]",
-  };
   useDiffPanelStore.getState().selectTurn(context.threadRef, RunId.make("run"));
   await using screen = await render(
     <RegistryContext.Provider value={context.registry}>
@@ -297,11 +312,49 @@ it("says a turn diff cut off at the server's size limit is incomplete", async ()
       </div>
     </RegistryContext.Provider>,
   );
-  await expect.element(screen.getByText("first.txt", { exact: true }).first()).toBeVisible();
   await expect
-    .element(screen.getByText("This preview exceeds the size limit. Changes shown are incomplete."))
+    .element(
+      screen.getByText("Turn diffs are unavailable because this project is not a git repository."),
+    )
     .toBeVisible();
 });
+
+// A moved thread's turns diff in the folder they ran in, whatever the current project is.
+it.each([true, false])(
+  "says a turn diff cut off at the server's size limit is incomplete (current folder is git: %s)",
+  async (isRepo) => {
+    using context = setup("origin/orphan");
+    if (!isRepo) setNotARepo();
+    state.checkpoints = [
+      {
+        runId: "run",
+        checkpointTurnCount: 1,
+        checkpointRef: "ref",
+        status: "ready",
+        files: [],
+        assistantMessageId: null,
+        completedAt: "2026-01-01T00:00:00Z",
+      },
+    ];
+    state.checkpointDiff = {
+      diff: "diff --git a/first.txt b/first.txt\n--- a/first.txt\n+++ b/first.txt\n@@ -0,0 +1 @@\n+visible\n\n[truncated]",
+    };
+    useDiffPanelStore.getState().selectTurn(context.threadRef, RunId.make("run"));
+    await using screen = await render(
+      <RegistryContext.Provider value={context.registry}>
+        <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+          <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+        </div>
+      </RegistryContext.Provider>,
+    );
+    await expect.element(screen.getByText("first.txt", { exact: true }).first()).toBeVisible();
+    await expect
+      .element(
+        screen.getByText("This preview exceeds the size limit. Changes shown are incomplete."),
+      )
+      .toBeVisible();
+  },
+);
 
 // Paths as git's numstat reports them; the parsed patch trims the trailing space from its name.
 it.each([

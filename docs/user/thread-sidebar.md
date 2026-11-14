@@ -46,6 +46,20 @@ moves and the agent keeps working in the same place. Other threads in that folde
 move with it. Rename the project in its settings, and use **Initialize Git** to
 get branch and diff controls.
 
+### Move a thread to another project
+
+Started in the wrong place? Pick **Move to project** from the thread's menu, or
+**Move thread to...** in the command palette, and choose a project on the same
+machine. The thread keeps its history and continues in that project's root folder
+from your next message. Stop a running thread before moving it.
+
+Earlier turns keep their diffs for as long as the folder they ran in exists, but
+their files can't be restored. A thread that had its own worktree leaves it behind:
+the worktree and branch stay on disk, but the agent no longer sees changes left
+there. The old worktree shows as unused in
+[Storage cleanup](./project-settings.md#storage-cleanup). To keep working in a fresh
+worktree, hand the moved thread off to one.
+
 ### Start in the background
 
 In a desktop browser or the desktop app, press `Cmd+Enter` on macOS or `Ctrl+Enter`

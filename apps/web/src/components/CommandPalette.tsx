@@ -66,6 +66,7 @@ import {
   FileSearchIcon,
   FolderGit2Icon,
   FolderIcon,
+  FolderInputIcon,
   FolderPlusIcon,
   KeyboardIcon,
   MessageSquareDashedIcon,
@@ -126,6 +127,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useRestartAgentSession } from "../hooks/useRestartAgentSession";
+import { confirmThreadMove } from "../hooks/useThreadActions";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useScratchProject } from "../hooks/useScratchProject";
@@ -149,6 +151,7 @@ import {
   waitForProject,
 } from "../state/entities";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
+import { threadMoveTargets, threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
   resolveThreadActionProjectRef,
   startNewThreadFromContext,
@@ -485,6 +488,7 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
   });
   const restartAgentSession = useRestartAgentSession();
+  const moveThread = useAtomCommand(projectEnvironment.moveThread, { reportFailure: false });
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -1497,6 +1501,55 @@ function OpenCommandPaletteDialog(props: {
       run: async () => {
         openGuestShareDialog(threadRef);
       },
+    });
+  }
+
+  const moveTargets =
+    activeThread !== null &&
+    activeThreadServerConfig?.environment.capabilities.threadMoveToProject === true
+      ? threadMoveTargets(projects, activeThread, activeThreadServerConfig.scratchWorkspaceRoot)
+      : [];
+  if (activeThread !== null && moveTargets.length > 0) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "submenu",
+      value: "action:move-thread-to-project",
+      searchTerms: ["move", "project", "folder", "relocate", "wrong project"],
+      title: "Move thread to...",
+      icon: <FolderInputIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <FolderInputIcon className={ADDON_ICON_CLASS} />,
+      disabled: !threadRuntimeCanArchive(activeThread.runtime),
+      groups: [
+        {
+          value: "move-thread-to-project",
+          label: "Projects",
+          items: moveTargets.map((project) => ({
+            kind: "action" as const,
+            value: `move-thread-to:${project.environmentId}:${project.id}`,
+            searchTerms: [project.title, project.workspaceRoot],
+            title: project.title,
+            description: project.workspaceRoot,
+            icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+            run: async () => {
+              if (!(await confirmThreadMove(threadRef, project.id))) return;
+              const result = await moveThread({
+                environmentId: threadRef.environmentId,
+                input: { threadId: threadRef.threadId, projectId: project.id },
+              });
+              if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+                const error = squashAtomCommandFailure(result);
+                toastManager.add(
+                  stackedThreadToast({
+                    type: "error",
+                    title: "Could not move thread",
+                    description: error instanceof Error ? error.message : "An error occurred.",
+                  }),
+                );
+              }
+            },
+          })),
+        },
+      ],
     });
   }
 

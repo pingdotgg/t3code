@@ -474,6 +474,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** Set when a move changed the thread's folder, so later checkpoints keep their own repository. */
+  checkpointScopeProjectId: Schema.optional(ProjectId),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -3604,6 +3606,18 @@ const OrchestrationV2InternalCommand = Schema.Union([
     guestMessageId: GuestMessageId,
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  }),
+  /**
+   * Moves an idle thread into another project's root folder. A changed folder ends its provider
+   * sessions, so the next turn resumes or hands off the conversation there.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.project.move"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    projectId: ProjectId,
+    /** The target root's current branch, read by the caller. */
+    branch: Schema.NullOr(TrimmedNonEmptyString),
   }),
   /** Moves a thread to a project rooted at the folder it already works in, so its cwd never changes. */
   Schema.Struct({

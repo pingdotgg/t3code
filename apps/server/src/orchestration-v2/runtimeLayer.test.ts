@@ -87,6 +87,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "../project/ScratchThreadPromotion.ts";
+import * as ThreadProjectMove from "../project/ThreadProjectMove.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -10188,6 +10189,154 @@ it.layer(layerScratchPromotionTest)("turning a No project thread into a project"
         "Only a No project thread with its own folder can become a project.",
       );
     }),
+  );
+});
+
+const layerThreadProjectMoveTest = ThreadProjectMove.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        isScratchProject: (projectId) => Effect.succeed(projectId === SCRATCH_PROJECT_ID),
+        namedProjectsRoot: "/projects",
+      }),
+      Layer.mock(GitWorkflow.GitWorkflowService)({
+        currentBranch: (cwd) => Effect.succeed(`branch-of:${cwd}`),
+      }),
+      NodeCrypto.layer,
+    ),
+  ),
+  Layer.provideMerge(layerProjectDeletionTest),
+);
+
+it.layer(layerThreadProjectMoveTest)("moving a thread to another project", (it) => {
+  it.effect(
+    "moves an idle thread and its bound tasks, and refuses No project or busy threads",
+    () =>
+      Effect.gen(function* () {
+        const move = (yield* ThreadProjectMove.ThreadProjectMove).move;
+        const projects = yield* ProjectService.ProjectService;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+        const sourceId = ProjectId.make("thread-move-source");
+        const targetId = ProjectId.make("thread-move-target");
+        const otherId = ProjectId.make("thread-move-other");
+        for (const [projectId, workspaceRoot] of [
+          [sourceId, "/tmp/thread-move-source"],
+          [targetId, "/tmp/thread-move-target"],
+          [otherId, "/tmp/thread-move-other"],
+          [SCRATCH_PROJECT_ID, SCRATCH_ROOT],
+        ] as const) {
+          if (Option.isNone(yield* projects.getById(projectId))) {
+            yield* projects.create({
+              commandId: CommandId.make(`${projectId}-create`),
+              projectId,
+              title: projectId,
+              workspaceRoot,
+            });
+          }
+        }
+        const createThread = (name: string) =>
+          orchestrator
+            .dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`thread-move-${name}-create`),
+              threadId: ThreadId.make(`thread-move-${name}`),
+              projectId: sourceId,
+              title: name,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: "source-branch",
+              worktreePath: "/tmp/thread-move-source-worktree",
+            })
+            .pipe(Effect.as(ThreadId.make(`thread-move-${name}`)));
+        const threadId = yield* createThread("idle");
+        const busyId = yield* createThread("busy");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("thread-move-busy-message"),
+          threadId: busyId,
+          messageId: MessageId.make("thread-move-busy-message"),
+          text: "Keep this run active.",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        const { task } = yield* tasks.upsert({
+          id: ScheduledTaskId.make("thread-move-bound"),
+          title: "Bound",
+          prompt: "Check in",
+          enabled: true,
+          schedule: { type: "interval", everyMs: 60_000 },
+          projectId: sourceId,
+          threadId,
+          workspaceStrategy: { type: "root" },
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const shellOf = (id: ThreadId) => orchestrator.getThreadShell(id);
+
+        const scratch = yield* move({ threadId, projectId: SCRATCH_PROJECT_ID }).pipe(Effect.flip);
+        assert.equal(scratch.message, "A thread cannot move into No project.");
+        const busy = yield* move({ threadId: busyId, projectId: targetId }).pipe(Effect.flip);
+        assert.equal(
+          busy.message,
+          `Thread ${busyId} still has work in progress. Finish or stop it first.`,
+        );
+        assert.equal((yield* shellOf(busyId))?.projectId, sourceId);
+
+        const fromWorktree = yield* move({ threadId, projectId: targetId });
+        assert.include(fromWorktree.notice, "The worktree and its branch stay on disk");
+        const moved = yield* shellOf(threadId);
+        assert.equal(moved?.projectId, targetId);
+        // It lands in the project root; the old worktree stays where it was.
+        assert.isNull(moved?.worktreePath);
+        assert.equal(moved?.branch, "branch-of:/tmp/thread-move-target");
+        const saved = (yield* tasks.list()).tasks.find((candidate) => candidate.id === task.id);
+        assert.equal(saved?.projectId, targetId);
+
+        yield* move({ threadId, projectId: targetId });
+        const fromRoot = yield* move({ threadId, projectId: sourceId });
+        assert.notInclude(fromRoot.notice, "worktree");
+        assert.include(fromRoot.notice, "files from earlier turns can't be restored");
+        assert.equal((yield* shellOf(threadId))?.projectId, sourceId);
+
+        // Another move commits between this move's commit and its task update.
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        const racing = Layer.fresh(ThreadProjectMove.layer).pipe(
+          Layer.provide(
+            Layer.succeed(ThreadManagementService.ThreadManagementService, {
+              ...threads,
+              dispatch: (command) =>
+                threads.dispatch(command).pipe(
+                  Effect.tap(() =>
+                    command.type === "thread.project.move" && command.projectId === targetId
+                      ? threads.dispatch({
+                          ...command,
+                          commandId: CommandId.make("thread-move-racing"),
+                          projectId: otherId,
+                        })
+                      : Effect.void,
+                  ),
+                ),
+            }),
+          ),
+        );
+        yield* ThreadProjectMove.ThreadProjectMove.pipe(
+          Effect.flatMap((service) => service.move({ threadId, projectId: targetId })),
+          Effect.provide(racing),
+        );
+        assert.equal((yield* shellOf(threadId))?.projectId, otherId);
+        const raced = (yield* tasks.list()).tasks.find((candidate) => candidate.id === task.id);
+        assert.equal(raced?.projectId, otherId);
+      }),
   );
 });
 

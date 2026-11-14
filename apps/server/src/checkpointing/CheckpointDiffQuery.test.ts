@@ -15,7 +15,12 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as CheckpointDiffQuery from "./CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
-import { CheckpointRefUnavailableError, CheckpointTurnRangeUnavailableError } from "./Errors.ts";
+import {
+  CheckpointFolderMissingError,
+  CheckpointRangeSpansFoldersError,
+  CheckpointRefUnavailableError,
+  CheckpointTurnRangeUnavailableError,
+} from "./Errors.ts";
 
 const threadId = ThreadId.make("thread:checkpoint-diff-v2");
 const firstRunId = RunId.make("run:checkpoint-diff-v2:1");
@@ -51,6 +56,7 @@ function layerFor(input: {
   readonly projection: Effect.Effect<ProjectionCheckpointContext, OrchestratorProjectionError>;
   readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
   readonly authoredPaths?: ReadonlySet<string>;
+  readonly missingFolder?: string;
 }) {
   return CheckpointDiffQuery.layer.pipe(
     Layer.provide(
@@ -58,6 +64,7 @@ function layerFor(input: {
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getCheckpointContext: () => input.projection,
         }),
+        FileSystem.layerNoop({ exists: (path) => Effect.succeed(path !== input.missingFolder) }),
         Layer.mock(CheckpointStore.CheckpointStore)({
           diffCheckpoints: input.diffCheckpoints ?? (() => Effect.succeed("diff")),
           listAuthoredPaths: () => Effect.succeed(input.authoredPaths ?? null),
@@ -189,6 +196,70 @@ it.effect.each([false, true])(
     }).pipe(Effect.provide(layer));
   },
 );
+
+it.effect("diffs a moved thread's turns in their own folders and names a missing one", () => {
+  const checkpoint = (
+    scopeId: CheckpointScopeId,
+    ordinalWithinScope: number,
+    runId: RunId | null,
+    appRunOrdinal: number | null,
+  ): ProjectionCheckpointContext["checkpoints"][number] => ({
+    scopeId,
+    runId,
+    ordinalWithinScope,
+    appRunOrdinal,
+    status: "ready",
+    ref: CheckpointRef.make(`refs/t3/test/${scopeId}/${ordinalWithinScope}`),
+  });
+  const projection: ProjectionCheckpointContext = {
+    runs: [
+      { id: firstRunId, ordinal: 1, status: "completed" },
+      { id: secondRunId, ordinal: 2, status: "completed" },
+    ],
+    checkpointScopes: [
+      { id: firstScopeId, runId: firstRunId, kind: "root_run", cwd: "/repo-before-move" },
+      { id: secondScopeId, runId: secondRunId, kind: "root_run", cwd: "/repo-after-move" },
+    ],
+    checkpoints: [
+      checkpoint(firstScopeId, 0, null, null),
+      checkpoint(firstScopeId, 1, firstRunId, 1),
+      checkpoint(secondScopeId, 0, null, null),
+      checkpoint(secondScopeId, 1, secondRunId, 2),
+    ],
+  };
+  const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+    Effect.succeed("diff --git a/file b/file"),
+  );
+
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    yield* query.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 2 });
+    assert.deepEqual(
+      diffCheckpoints.mock.calls.map(([input]) => [input.cwd, input.fromCheckpointRef]),
+      [["/repo-after-move", `refs/t3/test/${secondScopeId}/0`]],
+    );
+    assert.instanceOf(
+      yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 }).pipe(Effect.flip),
+      CheckpointRangeSpansFoldersError,
+    );
+    const missing = yield* query
+      .getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 1 })
+      .pipe(Effect.flip);
+    assert.instanceOf(missing, CheckpointFolderMissingError);
+    assert.equal(
+      missing.message,
+      "The folder these changes were made in no longer exists: /repo-before-move",
+    );
+  }).pipe(
+    Effect.provide(
+      layerFor({
+        projection: Effect.succeed(projection),
+        diffCheckpoints,
+        missingFolder: "/repo-before-move",
+      }),
+    ),
+  );
+});
 
 const layerVcsProcess = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
 const layerStore = CheckpointStore.layer.pipe(

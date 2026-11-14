@@ -5,6 +5,7 @@ import {
   NodeId,
   OrchestrationV2Checkpoint,
   OrchestrationV2CheckpointScope,
+  type ProjectId,
   ProviderThreadId,
   RunId,
   ThreadId,
@@ -108,6 +109,7 @@ const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
 export interface CheckpointServiceV2Shape {
   readonly prepareRootRunScope: (input: {
     readonly threadId: ThreadId;
+    readonly scopeProjectId: ProjectId | undefined;
     readonly runId: RunId;
     readonly rootNodeId: NodeId;
     readonly providerThreadId: ProviderThreadId;
@@ -180,6 +182,7 @@ function checkpointIdForScopeOrdinal(
 const makeRootRunScope = Effect.fn("CheckpointService.makeRootRunScope")(function* (input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly threadId: ThreadId;
+  readonly scopeProjectId: ProjectId | undefined;
   readonly runId: RunId;
   readonly rootNodeId: NodeId;
   readonly providerThreadId: ProviderThreadId;
@@ -188,7 +191,11 @@ const makeRootRunScope = Effect.fn("CheckpointService.makeRootRunScope")(functio
 }) {
   const scopeId = yield* input.idAllocator.allocate.checkpointScope({
     threadId: input.threadId,
-    name: ROOT_CHECKPOINT_SCOPE_NAME,
+    // A moved thread's refs live in another repository, so each project gets its own scope.
+    name:
+      input.scopeProjectId === undefined
+        ? ROOT_CHECKPOINT_SCOPE_NAME
+        : `${ROOT_CHECKPOINT_SCOPE_NAME}:${input.scopeProjectId}`,
   });
   return {
     id: scopeId,

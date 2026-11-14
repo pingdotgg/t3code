@@ -18,11 +18,27 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { isScratchProject } from "./projects.ts";
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 export interface EnvironmentProject extends OrchestrationProjectShell {
   readonly environmentId: EnvironmentId;
   readonly isScratch?: true;
+}
+
+/** Where a thread can move: the other live projects on its environment, except No project. */
+export function threadMoveTargets(
+  projects: ReadonlyArray<EnvironmentProject>,
+  thread: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
+  scratchWorkspaceRoot: string | null | undefined,
+): ReadonlyArray<EnvironmentProject> {
+  return projects.filter(
+    (project) =>
+      project.environmentId === thread.environmentId &&
+      project.id !== thread.projectId &&
+      project.archivedAt == null &&
+      !isScratchProject(project, scratchWorkspaceRoot),
+  );
 }
 
 /**

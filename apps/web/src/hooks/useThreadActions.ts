@@ -6,17 +6,19 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
-import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
+import { threadMoveTargets, threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   EnvironmentAuthorizationError,
   EnvironmentId,
+  type ProjectId,
   type ScopedThreadRef,
   ThreadId,
   sessionGrantsScope,
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
+import { threadMoveNotice } from "@t3tools/shared/threadMove";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
@@ -42,6 +44,7 @@ import {
   readEnvironmentSupportsAutoSettleOptOut,
   readEnvironmentThreadRefs,
   readProject,
+  readProjects,
   readThreadShell,
   readThreadShells,
 } from "../state/entities";
@@ -261,6 +264,35 @@ export function canTurnThreadIntoProject(threadRef: ScopedThreadRef): boolean {
   return project !== null && isScratchProject(project, config.scratchWorkspaceRoot);
 }
 
+/** Projects this thread can move into, on a server that can move it. */
+export function readThreadMoveTargets(threadRef: ScopedThreadRef) {
+  const thread = readThreadShell(threadRef);
+  const config = appAtomRegistry.get(environmentServerConfigsAtom).get(threadRef.environmentId);
+  if (!thread || config?.environment.capabilities.threadMoveToProject !== true) return [];
+  return threadMoveTargets(readProjects(), thread, config.scratchWorkspaceRoot);
+}
+
+/** Says what the move changes for this thread before it happens. */
+export async function confirmThreadMove(
+  threadRef: ScopedThreadRef,
+  projectId: ProjectId,
+): Promise<boolean> {
+  const thread = readThreadShell(threadRef);
+  const project = readProject({ environmentId: threadRef.environmentId, projectId });
+  const api = readLocalApi();
+  if (!thread || !project || !api) return false;
+  const notice = threadMoveNotice({
+    projectTitle: project.title,
+    fromWorktree: thread.worktreePath !== null,
+  });
+  const confirmed = await settlePromise(() =>
+    api.dialogs.confirm(`Move "${thread.title}" to ${project.title}?\n${notice}`, {
+      initialFocus: "confirm",
+    }),
+  );
+  return confirmed._tag === "Success" && confirmed.value;
+}
+
 function threadOperationFailure(target: ScopedThreadRef) {
   return readEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope)
     ? null
@@ -315,6 +347,7 @@ export function useThreadActions() {
   const createProjectFromThread = useAtomCommand(projectEnvironment.createFromThread, {
     reportFailure: false,
   });
+  const moveThread = useAtomCommand(projectEnvironment.moveThread, { reportFailure: false });
   const stopThreadSession = useOrchestrationCommand(threadEnvironment.stopSession);
   const removeWorktree = useAtomCommand(vcsEnvironment.removeWorktree, {
     reportFailure: false,
@@ -1031,6 +1064,11 @@ export function useThreadActions() {
       createProjectFromThread({
         environmentId: target.environmentId,
         input: { threadId: target.threadId },
+      }),
+    moveThreadToProject: (target: ScopedThreadRef, projectId: ProjectId) =>
+      moveThread({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, projectId },
       }),
   };
 }
