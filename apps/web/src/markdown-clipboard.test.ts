@@ -241,6 +241,12 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(paragraph).toMatchObject({ type: "paragraph", children: [{ type: "text", value }] });
   });
 
+  it("copies a backslash before whitespace as shown", () => {
+    const value = String.raw`before\ after\	end`;
+    const container = new FakeElement("DIV").append(new FakeText(value));
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(value);
+  });
+
   it.each([
     ["*", "EM", "word", "emphasis"],
     ["\\", "CODE", "value", "inlineCode"],
