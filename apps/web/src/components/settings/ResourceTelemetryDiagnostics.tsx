@@ -994,7 +994,14 @@ function ResourceTelemetryDiagnosticsBody({
               </p>
             </div>
             <div className="flex items-center gap-2 text-3xs text-muted-foreground/65">
-              <span className="size-1.5 rounded-full bg-success" />
+              <span
+                className={cn(
+                  "size-1.5 rounded-full",
+                  snapshot && snapshot.sampleIntervalMs > 0
+                    ? "bg-success"
+                    : "bg-muted-foreground/55",
+                )}
+              />
               {snapshot ? formatSamplingStatus(snapshot.sampleIntervalMs) : "Sampling every ..."}
             </div>
           </div>
