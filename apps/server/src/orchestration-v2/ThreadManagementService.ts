@@ -45,6 +45,7 @@ import {
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -346,7 +347,7 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
   "ThreadManagementBackgroundWaitError",
   {
     threadId: ThreadId,
-    reason: Schema.Literals(["unsupported", "unavailable", "failed", "unmatched"]),
+    reason: Schema.Literals(["unsupported", "unavailable", "failed", "unmatched", "timed-out"]),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -360,6 +361,8 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
         return "Failed to update the awaited background work.";
       case "unmatched":
         return "None of these IDs is running background work on this thread, so this request registers no wait for them. If the task already finished, read its output now. Otherwise pass the task ID of a background command or Monitor you started. Subagent, Agent tool, and delegate_task IDs don't go here.";
+      case "timed-out":
+        return "Timed out after 15 seconds while updating the awaited background work. Retry the request with the same task IDs.";
     }
   }
 }
@@ -1569,7 +1572,7 @@ const make = Effect.gen(function* () {
           (cause) =>
             new ThreadManagementBackgroundWaitError({
               threadId: input.threadId,
-              reason: "failed",
+              reason: Cause.isTimeoutError(cause) ? "timed-out" : "failed",
               cause,
             }),
         ),
