@@ -1,29 +1,43 @@
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises Node HTTP and filesystem boundaries.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeHttp from "node:http";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AuthStandardClientScopes, ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
+import {
+  AuthStandardClientScopes,
+  EnvironmentHttpApi,
+  ORCHESTRATION_PROTOCOL_VERSION,
+} from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient } from "effect/http";
+import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command, CliError } from "effect/cli";
 
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as AuthHttp from "../auth/http.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import { cli } from "../binCli.ts";
+import * as ServerConfig from "../config.ts";
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
@@ -34,6 +48,7 @@ import {
   persistServerRuntimeState,
   type PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
+import { resolveCliAuthConfig } from "./config.ts";
 import { resolveHostCliCommand } from "./invocation.ts";
 import {
   DevServerNotProxiableError,
@@ -692,6 +707,123 @@ describe("auth scope options", () => {
       assert.equal(scopeError.option, "scope");
       assert.equal(scopeError.value, "admin");
     }),
+  );
+});
+
+class AuthRoutesApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.auth) {}
+
+describe("auth session list", () => {
+  // Only the running server knows which sessions hold an open WebSocket.
+  it.effect("reports a session connected to the running server as connected", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-auth-connected-test-"),
+      );
+      const config = yield* resolveCliAuthConfig({ baseDir: Option.some(baseDir) }, Option.none());
+      const services = yield* Layer.build(
+        HttpRouter.serve(
+          HttpApiBuilder.layer(AuthRoutesApi).pipe(
+            Layer.provide(AuthHttp.layer),
+            Layer.provide(AuthHttp.layerAuthenticatedAuth),
+          ),
+          { disableListenLog: true, disableLogger: true },
+        ).pipe(
+          Layer.provideMerge(EnvironmentAuth.layerRuntime),
+          Layer.provideMerge(ServerConfig.layer(config)),
+          Layer.provideMerge(NodeHttpServer.layerTest),
+        ),
+      );
+      const origin = HttpServer.formatAddress(Context.get(services, HttpServer.HttpServer).address);
+      yield* persistServerRuntimeState({
+        path: config.serverRuntimeStatePath,
+        state: yield* makePersistedServerRuntimeState({
+          config: { host: "127.0.0.1", devUrl: undefined },
+          port: Number(new URL(origin).port),
+        }),
+      });
+      const sessions = Context.get(services, SessionStore.SessionStore);
+      const session = yield* sessions.issue({
+        subject: "cli-issued-session",
+        client: { label: "connected-client", deviceType: "bot" },
+      });
+      // What the server does when that session's WebSocket opens.
+      yield* sessions.markConnected(session.sessionId);
+      const serverView = (yield* sessions.listActive()).find(
+        (entry) => entry.sessionId === session.sessionId,
+      );
+
+      const listed = JSON.parse(
+        yield* captureStdout(runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"])),
+      ) as ReadonlyArray<{ readonly sessionId: string; readonly connected: boolean }>;
+      const cliView = listed.find((entry) => entry.sessionId === session.sessionId);
+
+      assert.isTrue(serverView?.connected);
+      assert.isDefined(cliView);
+      assert.isTrue(cliView?.connected);
+    }).pipe(Effect.scoped, Effect.provide(layerCliRuntime)),
+  );
+
+  it.effect("lists sessions as disconnected when the recorded server process is gone", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-auth-stale-test-"));
+      const config = yield* resolveCliAuthConfig({ baseDir: Option.some(baseDir) }, Option.none());
+      // A runtime file a crashed server left behind: its process has exited.
+      const exited = NodeChildProcess.spawnSync(process.execPath, ["-e", ""]);
+      assert.strictEqual(exited.status, 0);
+      yield* persistServerRuntimeState({
+        path: config.serverRuntimeStatePath,
+        state: {
+          ...baseState,
+          pid: exited.pid,
+          origin: "http://127.0.0.1:1",
+        },
+      });
+      const issued = JSON.parse(
+        yield* captureStdout(runCli(["auth", "session", "issue", "--base-dir", baseDir, "--json"])),
+      ) as { readonly sessionId: string };
+
+      const listed = JSON.parse(
+        yield* captureStdout(runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"])),
+      ) as ReadonlyArray<{ readonly sessionId: string; readonly connected: boolean }>;
+
+      assert.isFalse(listed.find((entry) => entry.sessionId === issued.sessionId)?.connected);
+    }).pipe(Effect.provide(layerCliRuntime)),
+  );
+
+  it.effect("still lists sessions, with a warning, when the running server cannot be reached", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-auth-unreachable-test-"),
+      );
+      const config = yield* resolveCliAuthConfig({ baseDir: Option.some(baseDir) }, Option.none());
+      // A live server without the clients endpoint (an older release) fails the same way.
+      yield* persistServerRuntimeState({
+        path: config.serverRuntimeStatePath,
+        state: { ...baseState, pid: process.pid, origin: "http://127.0.0.1:1" },
+      });
+      const issued = JSON.parse(
+        yield* captureStdout(runCli(["auth", "session", "issue", "--base-dir", baseDir, "--json"])),
+      ) as { readonly sessionId: string };
+
+      const { stdout, stderr } = yield* provideCliTestLayers(
+        Effect.gen(function* () {
+          yield* runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"]);
+          return {
+            stdout: yield* TestConsole.logLines,
+            stderr: yield* TestConsole.errorLines,
+          };
+        }),
+      );
+
+      const listed = JSON.parse(String(stdout.at(-1))) as ReadonlyArray<{
+        readonly sessionId: string;
+        readonly connected: boolean;
+      }>;
+      assert.isFalse(listed.find((entry) => entry.sessionId === issued.sessionId)?.connected);
+      expect(stderr).toContain(
+        "Could not ask the T3 Code server at http://127.0.0.1:1 which sessions are connected; listing every session as disconnected.",
+      );
+    }).pipe(Effect.provide(layerCliRuntime)),
   );
 });
 
