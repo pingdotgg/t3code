@@ -1,6 +1,10 @@
 import { requireOptionalNativeModule } from "expo";
 
 import { MOBILE_THEME_IDS, type MobileThemeId } from "../../lib/mobileTheme";
+import {
+  parseShowcaseAgentActivityFixture,
+  type ShowcaseAgentActivityFixture,
+} from "./showcaseAgentActivity";
 
 const SHOWCASE_SCENES = [
   "threads",
@@ -55,13 +59,24 @@ export function getNativeShowcasePairingUrls(): ReadonlyArray<string> {
   }
 }
 
-export function getNativeShowcaseScene(): ShowcaseScene | null {
+// `agent-activity:handoff-approval` requests the agent-activity scene with a named Live Activity fixture.
+function nativeShowcaseSceneRequest(): readonly [string | undefined, string | undefined] {
   try {
-    const scene = nativeShowcaseControls()?.getShowcaseScene?.()?.trim();
-    return SHOWCASE_SCENES.find((candidate) => candidate === scene) ?? null;
+    const [scene, fixture] =
+      nativeShowcaseControls()?.getShowcaseScene?.()?.trim().split(":") ?? [];
+    return [scene, fixture];
   } catch {
-    return null;
+    return [undefined, undefined];
   }
+}
+
+export function getNativeShowcaseScene(): ShowcaseScene | null {
+  const [scene] = nativeShowcaseSceneRequest();
+  return SHOWCASE_SCENES.find((candidate) => candidate === scene) ?? null;
+}
+
+export function getNativeShowcaseAgentActivityFixture(): ShowcaseAgentActivityFixture {
+  return parseShowcaseAgentActivityFixture(nativeShowcaseSceneRequest()[1]);
 }
 
 export function getNativeShowcaseTheme(): MobileThemeId | null {
