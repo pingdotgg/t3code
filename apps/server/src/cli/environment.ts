@@ -1,8 +1,10 @@
 import { AuthMcpClientAccess, EnvironmentId, type PeerLinkSummary } from "@t3tools/contracts";
+import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Argument from "effect/cli/Argument";
@@ -93,8 +95,11 @@ const environmentLinkCommand = Command.make("link", {
     Flag.withDescription("Another address for the same environment, tried after the first."),
     Flag.atLeast(0),
   ),
-  pairingCode: Flag.String("pairing-code").pipe(
-    Flag.withDescription("A pairing code from the other environment (`t3 pair` there)."),
+  pairingCode: Flag.Redacted("pairing-code").pipe(
+    Flag.withDescription(
+      "A pairing code from `t3 pair` in the other environment (equivalent to T3CODE_PAIRING_CODE).",
+    ),
+    Flag.withFallbackConfig(Config.Redacted("T3CODE_PAIRING_CODE")),
   ),
   access: Flag.Literals("access", AuthMcpClientAccess.literals).pipe(
     Flag.withDescription(
@@ -112,7 +117,7 @@ const environmentLinkCommand = Command.make("link", {
         const linked = yield* links.link({
           url: flags.url,
           alternateUrls: flags.alternateUrl,
-          pairingCode: flags.pairingCode,
+          pairingCode: Redacted.value(flags.pairingCode),
           access: flags.access,
         });
         yield* Console.log(

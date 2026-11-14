@@ -362,8 +362,29 @@ holds the machines this app knows and those on your T3 Connect account. If this
 app has an address for that machine and is connected to it with a session that
 manages access there, it makes the pairing code itself; otherwise paste one
 from that machine's **Settings → Sharing & access**. An address you type always
-needs a pasted code. From a terminal, use
-`t3 environment link <address> --pairing-code <code> --access <mode>`.
+needs a pasted code. From a terminal, read the code into the environment
+variable without echoing it, then run the link. In bash or zsh:
+
+```sh
+IFS= read -rs T3CODE_PAIRING_CODE   # paste the code, then press Enter
+export T3CODE_PAIRING_CODE
+t3 environment link <address> --access <mode>
+unset T3CODE_PAIRING_CODE
+```
+
+In PowerShell 7.1 or later:
+
+```powershell
+$env:T3CODE_PAIRING_CODE = Read-Host -MaskInput "Pairing code"
+t3 environment link <address> --access <mode>
+Remove-Item Env:T3CODE_PAIRING_CODE
+```
+
+In fish, read it with `read --global --silent --export T3CODE_PAIRING_CODE` and
+clear it afterwards with `set --erase --global T3CODE_PAIRING_CODE`.
+
+You can pass the code with `--pairing-code <code>` instead, but entering it on
+the command line exposes it in process arguments and shell history.
 
 You can also ask an agent to link a machine by name, such as "delegate this to
 my vps". It shows a card in the thread where you pick the machine the same way
