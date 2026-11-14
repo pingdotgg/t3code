@@ -284,6 +284,55 @@ describe("EnvironmentProviderSettings routing", () => {
     );
   });
 
+  it.each([false, true])(
+    "builds a custom model save on the last one before its config echo (replied %s)",
+    async (replied) => {
+      await setup();
+      const first = { slug: "model-a", name: "Original A" };
+      const second = { slug: "model-b", name: "Original B" };
+      state.settings = {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerInstances: {
+          [customId]: {
+            driver: ProviderDriverKind.make("codex"),
+            config: { customModels: [first, second] },
+          },
+        },
+      };
+      const replies: Array<() => void> = [];
+      state.mutateProviderInstance.mockImplementation(
+        () => new Promise((resolve) => replies.push(() => resolve(AsyncResult.success({})))),
+      );
+      await using screen = await render(panel({ targetInstanceId: customId }));
+      const rename = async (slug: string, name: string) => {
+        await userEvent.click(screen.getByRole("button", { name: `Edit ${slug}`, exact: true }));
+        await userEvent.fill(
+          screen.getByRole("textbox", { name: "Display name", exact: true }),
+          name,
+        );
+        await userEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+      };
+
+      await rename("model-a", "Entered A");
+      if (replied) await act(() => replies[0]!());
+      await rename("model-b", "Entered B");
+
+      expect(state.mutateProviderInstance.mock.calls[1]?.[0]).toEqual({
+        operation: "upsert",
+        instanceId: customId,
+        instance: {
+          driver: ProviderDriverKind.make("codex"),
+          config: {
+            customModels: [
+              { ...first, name: "Entered A" },
+              { ...second, name: "Entered B" },
+            ],
+          },
+        },
+      });
+    },
+  );
+
   it("routes explicit ACP browser authentication consent to the selected environment", async () => {
     await setup();
     const instanceId = ProviderInstanceId.make("acpRegistry_antigravity");
