@@ -119,7 +119,6 @@ const autoEditRules = (name: string) => [
 
 const planRules = (name: string) => [
   { action: "*", resource: "*", effect: "allow" },
-  { action: "external_directory", resource: "*", effect: "allow" },
   ...BUILD_PATHS,
   { action: "edit", resource: "*", effect: "deny" },
   ...PLAN_PATHS.slice(BUILD_PATHS.length),

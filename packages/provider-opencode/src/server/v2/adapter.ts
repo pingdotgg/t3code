@@ -546,15 +546,10 @@ const agentPaths = (rules: ReadonlyArray<Rule>) =>
   rules.filter((entry) => isPathRule(entry) && entry.effect === "allow" && entry.resource !== "*");
 
 // Replayed in order after plan's edit deny, so a later native deny still beats an earlier allow.
+// A catch-all that does not deny would also override the session grants placed before it.
 const planPaths = (rules: ReadonlyArray<Rule>, policy: RulesPolicy) =>
   rules
-    .filter(
-      (entry) =>
-        isPathRule(entry) &&
-        (entry.action === "external_directory" ||
-          entry.resource !== "*" ||
-          entry.effect === "deny"),
-    )
+    .filter((entry) => isPathRule(entry) && (entry.resource !== "*" || entry.effect === "deny"))
     .map((entry) =>
       policy.runtimeMode === "full-access" && entry.effect === "ask"
         ? { ...entry, effect: "allow" as const }
