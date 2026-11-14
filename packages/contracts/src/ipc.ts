@@ -13,7 +13,7 @@ import { AuthAccessTokenResult, AuthSessionState } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
-import type { EditorId } from "./editor.ts";
+import { EditorId } from "./editor.ts";
 import { KeybindingShortcut, type PreviewForwardedShortcut } from "./keybindings.ts";
 
 import type {
@@ -1047,6 +1047,30 @@ export const DesktopMediaReadSchema = Schema.Struct({
 });
 export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 
+export const DesktopOpenLocalEditorInputSchema = Schema.Struct({
+  editor: EditorId,
+  path: TrimmedNonEmptyString,
+});
+export type DesktopOpenLocalEditorInput = typeof DesktopOpenLocalEditorInputSchema.Type;
+
+export const DesktopOpenLocalEditorFailureReason = Schema.Literals([
+  "not-allowed",
+  "unsupported-editor",
+  "invalid-path",
+  "path-missing",
+  "editor-unavailable",
+  "unsafe-path",
+  "unsupported-launcher",
+  "spawn-failed",
+]);
+export type DesktopOpenLocalEditorFailureReason = typeof DesktopOpenLocalEditorFailureReason.Type;
+
+export const DesktopOpenLocalEditorResultSchema = Schema.Union([
+  Schema.Struct({ ok: Schema.Literal(true) }),
+  Schema.Struct({ ok: Schema.Literal(false), reason: DesktopOpenLocalEditorFailureReason }),
+]);
+export type DesktopOpenLocalEditorResult = typeof DesktopOpenLocalEditorResultSchema.Type;
+
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
@@ -1150,6 +1174,12 @@ export interface DesktopBridge {
   openSystemSettings: (pane: SystemSettingsPane) => Promise<boolean>;
   checkSystemPermission: (pane: SystemSettingsPane) => Promise<boolean>;
   probeRemoteEditors: () => Promise<readonly EditorId[]>;
+  /** Editors this device can launch directly, including ones without a remote-SSH scheme. */
+  probeLocalEditors: () => Promise<readonly EditorId[]>;
+  /** Stable per-install id kept outside web storage; null when it cannot be read. */
+  getEditorClientId: () => string | null;
+  /** Starts an editor on this device for an existing absolute path; never contacts an environment. */
+  openLocalEditor: (input: DesktopOpenLocalEditorInput) => Promise<DesktopOpenLocalEditorResult>;
   pasteAsText: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent: (listener: (event: DesktopSnapShotEvent) => void) => () => void;

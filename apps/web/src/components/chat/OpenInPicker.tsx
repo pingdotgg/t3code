@@ -14,6 +14,9 @@ import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
 import {
   openRemoteEditorUrl,
+  openDeviceLocalEditor,
+  useDeviceLocalEditorPreference,
+  useLocalEditors,
   useRemoteCapableEditors,
   useRemoteOpenHint,
   useRemoteOpenState,
@@ -232,15 +235,22 @@ export const OpenInPicker = memo(function OpenInPicker({
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const remote = useRemoteOpenState(environmentId);
+  const devicePreference = useDeviceLocalEditorPreference(environmentId);
   const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const isHostEditorDenied = remote.mode === "local-exec" && !canOperateHost;
   const canOpenEditor = remote.mode !== "remote-unavailable" && !isHostEditorDenied;
   const [menuOpen, setMenuOpen] = useComposerMenuState(isHostEditorDenied);
   const remoteCapableEditors = useRemoteCapableEditors();
+  const localEditors = useLocalEditors();
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
   const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
   // Remote editors run on the viewing machine; only desktop can probe that PATH.
-  const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
+  const effectiveEditors =
+    remote.mode === "local-exec"
+      ? availableEditors
+      : remote.mode === "device-local"
+        ? localEditors
+        : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
 
   const openInEditor = async (editorId: EditorId | null): Promise<boolean> => {
@@ -248,6 +258,11 @@ export const OpenInPicker = memo(function OpenInPicker({
     const editor = editorId ?? preferredEditor;
     if (!editor) return false;
     if (remote.mode === "remote-unavailable") return false;
+    if (remote.mode === "device-local") {
+      const opened = await openDeviceLocalEditor(editor, openInCwd);
+      if (opened) setPreferredEditor(editor);
+      return opened;
+    }
     if (remote.mode === "remote-links") {
       const url = buildRemoteOpenUrl({
         editor,
@@ -296,6 +311,17 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   const editorItems = (
     <>
+      {devicePreference.available && (
+        <>
+          <MenuItem onClick={() => devicePreference.setEnabled(false)}>
+            Editor location: Automatic{!devicePreference.enabled ? " ✓" : ""}
+          </MenuItem>
+          <MenuItem onClick={() => devicePreference.setEnabled(true)}>
+            Editor location: This device{devicePreference.enabled ? " ✓" : ""}
+          </MenuItem>
+          <MenuItem disabled>Only this client and route. Local paths must match.</MenuItem>
+        </>
+      )}
       {unavailableReason !== null ? (
         <MenuItem density={presentation === "menu" ? "touch" : "default"} disabled>
           {unavailableReason}

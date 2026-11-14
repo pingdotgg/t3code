@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as NodeChildProcessSpawner from "@effect/platform-node/NodeChildProcessSpawner";
 
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
@@ -47,7 +48,10 @@ import {
   openSystemSettings,
   checkSystemPermission,
   pasteAsText,
+  probeLocalEditors,
   probeRemoteEditors,
+  openLocalEditor,
+  getEditorClientId,
   revealWindow,
   pickFolder,
   toLocalBackendPath,
@@ -98,6 +102,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handleSync(takeLegacyLocalStorage);
   yield* ipc.handle(completeLegacyLocalStorage);
   yield* ipc.handleSync(getAppBranding);
+  yield* ipc.handleSync(getEditorClientId);
   yield* installRelayTelemetryEnabled();
   yield* ipc.handleSync(getSystemLocale);
   yield* ipc.handleSync(getPreferredSystemLanguages);
@@ -161,6 +166,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(revealWindow);
   yield* ipc.handle(syncHtmlFullscreen);
   yield* ipc.handle(probeRemoteEditors);
+  yield* ipc.handle(probeLocalEditors);
+  yield* ipc.handle(openLocalEditor).pipe(Effect.provide(NodeChildProcessSpawner.layer));
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);
   yield* ipc.handle(downloadUpdate);

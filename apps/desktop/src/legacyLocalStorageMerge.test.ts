@@ -28,16 +28,18 @@ const drafts = (version: number, threadKey: string, prompt: string) =>
   });
 
 describe("mergeLegacyLocalStorage", () => {
-  it("copies V1 keys into an empty profile, except the per-install client id", () => {
+  it("copies V1 keys into an empty profile, except per-install identity and opt-ins", () => {
     const storage = memoryStorage();
     mergeLegacyLocalStorage(storage, {
       "t3code:theme": "dark",
       "t3code:prompt-stash:v2": stash("a"),
       "t3.backgroundActivity.clientId": "v1-client",
+      "t3code:device-local-editor-routes:v1": '["opt-in"]',
     });
     assert.equal(storage.getItem("t3code:theme"), "dark");
     assert.equal(storage.getItem("t3code:prompt-stash:v2"), stash("a"));
     assert.equal(storage.getItem("t3.backgroundActivity.clientId"), null);
+    assert.equal(storage.getItem("t3code:device-local-editor-routes:v1"), null);
   });
 
   it("keeps V2 values for plain keys", () => {

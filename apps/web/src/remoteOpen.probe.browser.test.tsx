@@ -1,0 +1,35 @@
+import { expect, it, vi } from "vite-plus/test";
+
+import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
+import { act, render, stubGlobal } from "../test/render";
+import { useLocalEditors, useRemoteCapableEditors } from "./remoteOpen";
+
+it("lists a probed Zed install instead of the VS Code fallback", async () => {
+  const probe = vi.fn(async () => ["zed", "vscode"] as const);
+  using _bridge = stubGlobal("desktopBridge", { probeRemoteEditors: probe });
+  function Probe() {
+    return <output>{useRemoteCapableEditors().join(",")}</output>;
+  }
+  await using screen = await render(
+    <AppAtomRegistryProvider>
+      <Probe />
+    </AppAtomRegistryProvider>,
+  );
+  await vi.waitFor(() => expect(screen.container.textContent).toBe("zed,vscode"));
+  await act(async () => undefined);
+  expect(probe).toHaveBeenCalledOnce();
+});
+
+it("lists probed local editors that have no remote scheme", async () => {
+  const probe = vi.fn(async () => ["kiro", "zed"] as const);
+  using _bridge = stubGlobal("desktopBridge", { probeLocalEditors: probe });
+  function Probe() {
+    return <output>{useLocalEditors().join(",")}</output>;
+  }
+  await using screen = await render(
+    <AppAtomRegistryProvider>
+      <Probe />
+    </AppAtomRegistryProvider>,
+  );
+  await vi.waitFor(() => expect(screen.container.textContent).toBe("kiro,zed"));
+});

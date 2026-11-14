@@ -4,6 +4,8 @@ import {
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
   DesktopMediaReadSchema,
+  DesktopOpenLocalEditorInputSchema,
+  DesktopOpenLocalEditorResultSchema,
   DesktopThemeSchema,
   EDITORS,
   EditorId,
@@ -18,6 +20,7 @@ import {
 import { PROJECT_FAVICON_EXTENSIONS } from "@t3tools/shared/projectFavicon";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -46,6 +49,8 @@ import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+import { readOrCreateEditorClientId } from "./editorClientId.ts";
+import { launchLocalEditor } from "./localEditorLaunch.ts";
 import {
   extractDistroFromUncPath,
   resolveWslPickFolderDefaultPath,
@@ -441,6 +446,49 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
       }
     }
     return available;
+  }),
+});
+
+export const probeLocalEditors = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PROBE_LOCAL_EDITORS_CHANNEL,
+  payload: Schema.Undefined,
+  result: Schema.Array(EditorId),
+  handler: Effect.fn("desktop.ipc.window.probeLocalEditors")(function* () {
+    const available: Array<EditorId> = [];
+    const env = yield* HostProcess.Environment;
+    for (const editor of EDITORS) {
+      if (editor.commands === null) continue;
+      const resolved = yield* resolveEditorCommand(editor, env);
+      if (Option.isNone(resolved)) continue;
+      // openLocalEditor refuses shell-only Windows launchers, so do not offer them.
+      const spawn = yield* resolveSpawnCommand(resolved.value.command, [], { env });
+      if (!spawn.shell) available.push(editor.id);
+    }
+    return available;
+  }),
+});
+
+export const getEditorClientId = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_EDITOR_CLIENT_ID_CHANNEL,
+  result: Schema.NullOr(Schema.String),
+  handler: () => Effect.sync(() => readOrCreateEditorClientId(Electron.app.getPath("userData"))),
+});
+
+export const openLocalEditor = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.OPEN_LOCAL_EDITOR_CHANNEL,
+  payload: DesktopOpenLocalEditorInputSchema,
+  result: DesktopOpenLocalEditorResultSchema,
+  handler: Effect.fn("desktop.ipc.window.openLocalEditor")(function* (input, event) {
+    const window = yield* (yield* ElectronWindow.ElectronWindow).main;
+    // Only the app's own renderer may start processes on this machine.
+    if (
+      event === undefined ||
+      Option.isNone(window) ||
+      window.value.webContents.id !== event.sender.id
+    ) {
+      return { ok: false as const, reason: "not-allowed" as const };
+    }
+    return yield* launchLocalEditor(input);
   }),
 });
 

@@ -156,7 +156,7 @@ import { readLocalApi } from "../localApi";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { cn } from "../lib/utils";
-import { resolveRemoteOpenState, useRemoteOpenResolution } from "../remoteOpen";
+import { resolveRemoteOpenState, useLocalEditors, useRemoteOpenResolution } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
@@ -578,8 +578,9 @@ function useChatMarkdownState({
   const isClientHost = useAtomValue(clientHostEnvironmentAtom(environmentId));
   const remoteOpen = useRemoteOpenResolution(environmentId);
   const canUseShellActions =
-    canOperateHost &&
-    canUseMarkdownFileShellActions(environmentId, remoteOpen.state.mode, remoteOpen.isResolved);
+    (remoteOpen.state.mode === "device-local" && remoteOpen.isResolved) ||
+    (canOperateHost &&
+      canUseMarkdownFileShellActions(environmentId, remoteOpen.state.mode, remoteOpen.isResolved));
   const openMarkdownMedia = (
     source: string,
     resolvedFilePath?: string,
@@ -650,7 +651,10 @@ function useChatMarkdownState({
     markdownServerConfigFieldsAtom(environmentId),
   );
   const projects = useProjects();
-  const [preferredEditor] = usePreferredEditor(availableEditors);
+  const localEditors = useLocalEditors();
+  const [preferredEditor] = usePreferredEditor(
+    remoteOpen.state.mode === "device-local" ? localEditors : availableEditors,
+  );
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
   const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors, cwd);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
@@ -948,7 +952,9 @@ function useChatMarkdownState({
         }
         openInEditorMenuLabel={canOpenApp ? "Open app" : preferredEditorMenuLabel}
         onReveal={
-          canUseShellActions && revealInFileManagerLabel !== undefined
+          canUseShellActions &&
+          remoteOpen.state.mode !== "device-local" &&
+          revealInFileManagerLabel !== undefined
             ? async () => revealFileInFileManager((await resolveHostPath()).absolutePath)
             : undefined
         }

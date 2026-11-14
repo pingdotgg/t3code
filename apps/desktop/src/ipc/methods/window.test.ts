@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ManagedPolicyLimits } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
@@ -33,7 +34,9 @@ import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   getLocalEnvironmentBootstraps,
   installRelayTelemetryEnabled,
+  openLocalEditor,
   pickProjectFavicon,
+  probeLocalEditors,
   probeRemoteEditors,
   readMedia,
   syncHtmlFullscreen,
@@ -328,6 +331,26 @@ describe("readMedia", () => {
   );
 });
 
+describe("openLocalEditor", () => {
+  it.effect("refuses callers other than the main window before touching the filesystem", () =>
+    Effect.gen(function* () {
+      const main = { webContents: { id: 1 } } as unknown as Electron.BrowserWindow;
+      const open = (event?: { sender: { id: number } }) =>
+        openLocalEditor
+          .handler({ editor: "vscode", path: "/" }, event)
+          .pipe(
+            Effect.provide(
+              Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(main) }),
+            ),
+          );
+
+      const refused = { ok: false, reason: "not-allowed" };
+      assert.deepEqual(yield* open({ sender: { id: 2 } }), refused);
+      assert.deepEqual(yield* open(undefined), refused);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
 describe("pickProjectFavicon", () => {
   const pickerLayer = (
     pickFiles: () => Effect.Effect<Array<string>>,
@@ -515,5 +538,40 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.include(editors, "cursor");
       assert.include(editors, "vscode");
       assert.include(editors, "webstorm");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "probes local editors that have no remote scheme",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-local-editors-" });
+      const bin = path.join(home, "bin");
+      yield* fs.makeDirectory(bin, { recursive: true });
+      for (const command of ["kiro", "trae"]) {
+        yield* fs.writeFileString(path.join(bin, command), "#!/bin/sh\n");
+        yield* fs.chmod(path.join(bin, command), 0o755);
+      }
+      const editors = yield* probeLocalEditors
+        .handler(undefined)
+        .pipe(
+          Effect.provideService(HostProcess.Environment, { HOME: home, PATH: bin }),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        );
+      assert.include(editors, "kiro");
+      assert.include(editors, "trae");
+      assert.notInclude(editors, "file-manager");
+      // A shell-only Windows launcher is not offered, since openLocalEditor refuses it.
+      yield* fs.writeFileString(path.join(bin, "code.cmd"), "@echo off\r\n");
+      const windowsEditors = yield* probeLocalEditors.handler(undefined).pipe(
+        Effect.provideService(HostProcess.Environment, { PATH: bin, PATHEXT: ".CMD;.EXE" }),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(SpawnExecutableResolution, (command) =>
+          command === "code" ? path.join(bin, "code.cmd") : undefined,
+        ),
+      );
+      assert.notInclude(windowsEditors, "vscode");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
