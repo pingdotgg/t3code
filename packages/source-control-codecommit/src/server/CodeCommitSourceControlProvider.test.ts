@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
@@ -182,6 +183,11 @@ it.effect("reads full clone URLs in their region and rejects inconsistent AWS me
     assert.strictEqual(urls.nameWithOwner, "Repo");
     assert.isTrue(calls[0]!.includes("us-east-1"));
     assert.strictEqual(calls.length, 2);
+    const fipsUrl = context.remoteUrl.replace("git-codecommit.", "git-codecommit-fips.");
+    assert.strictEqual(
+      (yield* provider.getRepositoryCloneUrls({ cwd: "/repo", repository: fipsUrl })).url,
+      fipsUrl,
+    );
     const hosted = yield* provider.getRepositoryCloneUrls({
       cwd: "/repo",
       context,
@@ -741,11 +747,28 @@ it.effect(
       assert.strictEqual(urls.sshUrl, helperUrl);
       assert.isTrue(calls.every((args) => args.includes("self")));
       assert.isTrue(calls.some((args) => args[0] === "configure"));
+      const branch = yield* provider.getDefaultBranch({ cwd: "/repo" });
+      assert.strictEqual(branch, "main");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
           TestSourceControlHost.layer({
+            git: {
+              remotes: () =>
+                Effect.succeed(
+                  Effect.succeed({
+                    remotes: [
+                      { name: "origin", url: helperUrl, isPrimary: true, pushUrl: Option.none() },
+                    ],
+                    freshness: {
+                      source: "live-local",
+                      observedAt: DateTime.makeUnsafe(0),
+                      expiresAt: Option.none(),
+                    },
+                  }),
+                ),
+            },
             process: {
               run: ({ args }) => {
                 calls.push(args);

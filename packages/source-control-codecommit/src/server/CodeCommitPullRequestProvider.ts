@@ -178,8 +178,13 @@ export const make = Effect.gen(function* () {
     if (pageTokens.size > 256) pageTokens.delete(pageTokens.keys().next().value ?? "");
     return key;
   };
-  const wrap = <A, E, R>(cwd: string, operation: string, effect: Effect.Effect<A, E, R>) =>
-    cli
+  const wrap = Effect.fn("CodeCommitPullRequestProvider.operation")(function* <A, E, R>(
+    cwd: string,
+    operation: string,
+    effect: Effect.Effect<A, E, R>,
+  ) {
+    yield* Effect.annotateCurrentSpan("operation", operation);
+    return yield* cli
       .withConfig(
         Effect.gen(function* () {
           const config = yield* cli.configuration;
@@ -194,6 +199,7 @@ export const make = Effect.gen(function* () {
             return yield* new CodeCommitCli.CodeCommitError({
               reason: "CodeCommit helper profile conflicts with selected AWS profile",
             });
+          if (config.accountId) yield* cli.verifyAccount(cwd, config.accountId);
           return yield* cli.provideConfig(effect, {
             ...config,
             profile: helper?.profile ?? config.profile,
@@ -229,6 +235,7 @@ export const make = Effect.gen(function* () {
           });
         }),
       );
+  });
   const remoteOf = (input: ProviderRepositoryRef) => {
     const remote = parseCodeCommitRemote(`https://${input.host}/${input.repository}`);
     return remote
@@ -607,7 +614,7 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const caller = yield* identity(input);
           const config = yield* cli.configuration;
-          return { caller, config };
+          return { caller, config: { ...config, accountId: caller.Account } };
         }),
       ).pipe(
         Effect.flatMap(({ caller, config }) =>
@@ -757,6 +764,8 @@ export const make = Effect.gen(function* () {
                         read.target.destinationCommit ?? read.summary.baseBranch,
                         "--merge-option",
                         "THREE_WAY_MERGE",
+                        "--conflict-detail-level",
+                        "LINE_LEVEL",
                         "--max-conflict-files",
                         "1",
                         "--no-paginate",
@@ -862,6 +871,9 @@ export const make = Effect.gen(function* () {
               pullRequestId: String(input.number),
               repositoryName: remote.repository,
               sourceCommitId: read.target.sourceCommit,
+              ...(operation === "merge-pull-request-by-fast-forward"
+                ? {}
+                : { conflictDetailLevel: "LINE_LEVEL" }),
             });
           } else if (input.action === "close") {
             if (read.summary.state === "merged")

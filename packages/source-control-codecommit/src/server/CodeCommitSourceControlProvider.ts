@@ -108,21 +108,29 @@ export const make = Effect.gen(function* () {
       });
     return resolved;
   });
+  const primaryRemote = Effect.fn("CodeCommit.primaryRemote")(function* (cwd: string) {
+    const remotes = yield* yield* host.git.remotes(cwd);
+    const entry =
+      remotes.remotes.find((item) => item.isPrimary) ??
+      remotes.remotes.find((item) => item.name === "origin");
+    if (!entry) return yield* new CodeCommitError({ reason: "CodeCommit remote missing" });
+    return entry;
+  });
   const resolve = Effect.fn("CodeCommit.resolve")(function* (input: {
     cwd: string;
     context?: SourceControlProvider.SourceControlProviderContext;
   }) {
     if (input.context) {
       const remote = yield* resolveRemote(input.context.remoteUrl, input.cwd);
-      return { ...remote, remoteName: input.context.remoteName };
+      return {
+        ...remote,
+        remoteName: input.context.remoteName,
+        remoteUrl: input.context.remoteUrl,
+      };
     }
-    const remotes = yield* yield* host.git.remotes(input.cwd);
-    const entry =
-      remotes.remotes.find((item) => item.isPrimary) ??
-      remotes.remotes.find((item) => item.name === "origin");
-    if (!entry) return yield* new CodeCommitError({ reason: "CodeCommit remote missing" });
+    const entry = yield* primaryRemote(input.cwd);
     const remote = yield* resolveRemote(entry.url, input.cwd);
-    return { ...remote, remoteName: entry.name };
+    return { ...remote, remoteName: entry.name, remoteUrl: entry.url };
   });
   const validateRepository = Effect.fn("CodeCommit.validateRepository")(function* (
     repo: typeof repositorySchema.Type.repositoryMetadata,
@@ -241,11 +249,20 @@ export const make = Effect.gen(function* () {
     operation: string,
     effect: Effect.Effect<A, E, R>,
     remoteUrl?: string,
+    discoverRemote = true,
   ) =>
     withConfig(
       Effect.gen(function* () {
         const config = yield* configuration;
-        const helper = remoteUrl ? parseCodeCommitHelperRemote(remoteUrl) : null;
+        const effectiveUrl =
+          remoteUrl ??
+          (discoverRemote
+            ? yield* primaryRemote(cwd).pipe(
+                Effect.map((remote) => remote.url),
+                Effect.orElseSucceed(() => undefined),
+              )
+            : undefined);
+        const helper = effectiveUrl ? parseCodeCommitHelperRemote(effectiveUrl) : null;
         if (helper?.profile && config.profile && helper.profile !== config.profile)
           return yield* new CodeCommitError({
             reason: "CodeCommit helper profile conflicts with selected AWS profile",
@@ -453,7 +470,9 @@ export const make = Effect.gen(function* () {
           const repository = explicit?.repository ?? input.repository;
           if (!/^[\w.-]+$/u.test(repository))
             return yield* new CodeCommitError({ reason: "Invalid repository name" });
-          let remote = explicit ? Option.some(explicit) : yield* resolve(input).pipe(Effect.option);
+          let remote = explicit
+            ? Option.some({ ...explicit, remoteUrl: input.repository })
+            : yield* resolve(input).pipe(Effect.option);
           if (input.host) {
             const requested =
               parseCodeCommitRemote(`https://${input.host}/v1/repos/${repository}`) ??
@@ -464,7 +483,12 @@ export const make = Effect.gen(function* () {
               );
             if (!requested || (Option.isSome(remote) && requested.host !== remote.value.host))
               return yield* new CodeCommitError({ reason: "Repository host mismatch" });
-            remote = Option.some(requested);
+            remote = Option.some({
+              ...requested,
+              remoteUrl: Option.isSome(remote)
+                ? remote.value.remoteUrl
+                : `https://${requested.host}/v1/repos/${repository}`,
+            });
           }
           if (Option.isNone(remote) && (input.host || input.context))
             return yield* new CodeCommitError({ reason: "Repository host unavailable" });
@@ -474,13 +498,23 @@ export const make = Effect.gen(function* () {
               ...(Option.isSome(remote) ? { region: remote.value.region } : {}),
             }),
           );
+          const transport = Option.isSome(remote) ? URL.parse(remote.value.remoteUrl) : null;
+          if (
+            transport?.protocol === "https:" &&
+            transport.hostname.startsWith("git-codecommit-fips.")
+          )
+            urls.url = urls.url.replace("https://git-codecommit.", "https://git-codecommit-fips.");
           const cloneHelper =
-            helper ?? (input.context && parseCodeCommitHelperRemote(input.context.remoteUrl));
+            helper ??
+            (Option.isSome(remote) ? parseCodeCommitHelperRemote(remote.value.remoteUrl) : null);
           if (!cloneHelper) return urls;
           const helperUrl = `codecommit${cloneHelper.region ? `::${cloneHelper.region}` : ""}://${cloneHelper.profile ? `${cloneHelper.profile}@` : ""}${repository}`;
           return { ...urls, url: helperUrl, sshUrl: helperUrl };
         }),
-        parseCodeCommitHelperRemote(input.repository) ? input.repository : input.context?.remoteUrl,
+        parseCodeCommitHelperRemote(input.repository)
+          ? input.repository
+          : (input.context?.remoteUrl ??
+              (parseCodeCommitRemote(input.repository) ? input.repository : undefined)),
       );
     }),
     createRepository: Effect.fn("CodeCommit.createRepository")(function (input) {
@@ -501,6 +535,8 @@ export const make = Effect.gen(function* () {
             yield* validateRepository(result.repositoryMetadata, { repository: input.repository }),
           );
         }),
+        undefined,
+        false,
       );
     }),
     getDefaultBranch: Effect.fn("CodeCommit.getDefaultBranch")(function (input) {

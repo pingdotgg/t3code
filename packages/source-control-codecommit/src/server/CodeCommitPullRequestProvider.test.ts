@@ -233,7 +233,12 @@ it.effect.each(["merge", "squash", "fast-forward"] as const)(
             : "merge-pull-request-by-fast-forward";
       assert.deepStrictEqual(writes.at(-1), {
         operation,
-        payload: { pullRequestId: "7", repositoryName: "Repo", sourceCommitId: "a".repeat(40) },
+        payload: {
+          pullRequestId: "7",
+          repositoryName: "Repo",
+          sourceCommitId: "a".repeat(40),
+          ...(method === "fast-forward" ? {} : { conflictDetailLevel: "LINE_LEVEL" }),
+        },
       });
       const refused = yield* Effect.result(api.runAction({ ...input, action: "reopen" }));
       assert.isTrue(Result.isFailure(refused));
@@ -481,7 +486,7 @@ it.effect(
           }),
         );
       const before = yield* run();
-      assert.deepStrictEqual(profiles, ["original", "original"]);
+      assert.deepStrictEqual(profiles, ["original", "original", "original"]);
       const after = yield* run();
       assert.notStrictEqual(before, after);
       const error = yield* Effect.result(
@@ -628,6 +633,50 @@ it.effect(
             },
           }),
         ),
+      ),
+    );
+  },
+);
+
+it.effect.each(["before-operation", "before-write"] as const)(
+  "refuses routed writes when the selected profile changes AWS accounts %s",
+  (phase) => {
+    let account = "123456789012";
+    let writes = 0;
+    return Effect.gen(function* () {
+      const api = yield* Provider.make;
+      const result = yield* Effect.result(
+        api.withVerifiedCredential!(ref, () =>
+          Effect.gen(function* () {
+            if (phase === "before-operation") account = "234567890123";
+            return yield* api.comment({ ...ref, number: 7, body: "Update" });
+          }),
+        ),
+      );
+      assert.isTrue(Result.isFailure(result));
+      assert.strictEqual(writes, 0);
+    }).pipe(
+      Effect.provide(
+        testHost({
+          process: {
+            run: ({ args }) => {
+              if (args.includes("--cli-input-json")) writes++;
+              if (phase === "before-write" && args[1] === "get-pull-request")
+                account = "234567890123";
+              return Effect.succeed(
+                TestSourceControlHost.processOutput(
+                  JSON.stringify(
+                    args[1] === "get-caller-identity"
+                      ? { Account: account, Arn: "arn:aws:iam::123456789012:user/alice" }
+                      : args[1] === "get-pull-request"
+                        ? fixture("7")
+                        : {},
+                  ),
+                ),
+              );
+            },
+          },
+        }),
       ),
     );
   },

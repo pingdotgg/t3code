@@ -3,6 +3,8 @@ import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
@@ -107,10 +109,19 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       yield* git(cwd, ["init"]);
       yield* git(cwd, ["remote", "add", "origin", `https://${host}/v1/repos/MyRepo`]);
       const account = yield* Ref.make("123456789012");
+      const block = yield* Ref.make(false);
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
       const resolver = yield* RepositoryIdentityResolver.make({
         refinementCacheKey: Ref.get(account),
         refine: (identity) =>
-          Ref.get(account).pipe(
+          Effect.gen(function* () {
+            if (yield* Ref.getAndSet(block, false)) {
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+            }
+            return yield* Ref.get(account);
+          }).pipe(
             Effect.map((accountId) =>
               accountId
                 ? { ...identity, canonicalKey: `${host}/${accountId}/v1/repos/MyRepo` }
@@ -129,6 +140,19 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       );
       yield* Ref.set(account, "");
       expect(yield* resolver.resolve(cwd)).toBeNull();
+      yield* Ref.set(account, "123456789012");
+      yield* Ref.set(block, true);
+      const pending = yield* resolver.resolve(cwd, { refresh: true }).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* Ref.set(account, "234567890123");
+      yield* Deferred.succeed(release, undefined);
+      expect((yield* Fiber.join(pending))?.canonicalKey).toBe(
+        `${host}/234567890123/v1/repos/MyRepo`,
+      );
+      yield* Ref.set(account, "123456789012");
+      expect((yield* resolver.resolve(cwd))?.canonicalKey).toBe(
+        `${host}/123456789012/v1/repos/MyRepo`,
+      );
     }),
   );
 

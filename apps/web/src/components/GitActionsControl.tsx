@@ -483,7 +483,10 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const [publishVisibility, setPublishVisibility] =
     useState<SourceControlRepositoryVisibility>("private");
   const [publishRemoteName, setPublishRemoteName] = useState("origin");
-  const [publishProtocol, setPublishProtocol] = useState<SourceControlCloneProtocol>("ssh");
+  const [publishProtocolChoice, setPublishProtocolChoice] = useState<{
+    provider: SourceControlProviderKind;
+    protocol: SourceControlCloneProtocol;
+  } | null>(null);
   const [publishWizardStep, setPublishWizardStep] = useState(0);
   const [publishAdvancedOpen, setPublishAdvancedOpen] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
@@ -541,6 +544,10 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const selectedPublishProviderReadiness = publishProviderReadiness(publishProvider);
   const publishAccount = publishAccountByProvider.get(publishProvider) ?? null;
   const currentPublishProvider = publishProviderOption(publishProvider);
+  const publishProtocol =
+    publishProtocolChoice?.provider === publishProvider
+      ? publishProtocolChoice.protocol
+      : (currentPublishProvider.definition.defaultCloneTransport ?? "ssh");
   const repositoryNameOnly = currentPublishProvider.definition.repositoryNameOnly === true;
   const publishRepositoryPrefill =
     !repositoryNameOnly && publishAccount ? `${publishAccount}/` : "";
@@ -662,6 +669,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
               value={publishProvider}
               onValueChange={(value) => {
                 setSelectedPublishProvider(value as SourceControlProviderKind);
+                setPublishProtocolChoice(null);
                 setPublishRepositoryOverride(null);
               }}
               aria-labelledby="publish-provider-cards-label"
@@ -864,7 +872,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       onValueChange={(next) => {
                         const protocol = next[0];
                         if (protocol === "ssh" || protocol === "https") {
-                          setPublishProtocol(protocol);
+                          setPublishProtocolChoice({ provider: publishProvider, protocol });
                         }
                       }}
                       aria-labelledby="publish-protocol-label"

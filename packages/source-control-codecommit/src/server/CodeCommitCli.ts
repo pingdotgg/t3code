@@ -25,14 +25,18 @@ const requestKeySchema = Schema.fromJsonString(
     cwd: Schema.String,
     profile: Schema.String,
     region: Schema.String,
+    accountId: Schema.optional(Schema.String),
     args: Schema.Array(Schema.String),
   }),
 );
 const encodeRequestKey = Schema.encodeSync(requestKeySchema);
 const decodeRequestKey = Schema.decodeSync(requestKeySchema);
+const decodeCallerAccount = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ Account: Schema.String })),
+);
 class AwsConfig extends Context.Service<
   AwsConfig,
-  { readonly profile: string; readonly region: string }
+  { readonly profile: string; readonly region: string; readonly accountId?: string }
 >()("@t3tools/source-control-codecommit/server/CodeCommitCli/AwsConfig") {}
 export const make = Effect.gen(function* () {
   const host = yield* SourceControlHost.SourceControlHost;
@@ -97,6 +101,19 @@ export const make = Effect.gen(function* () {
       return yield* new CodeCommitError({ reason: "Invalid AWS CLI response" });
     return result.stdout;
   });
+  const verifyAccount = Effect.fn("CodeCommit.verifyAccount")(function* (
+    cwd: string,
+    accountId: string,
+  ) {
+    const config = yield* AwsConfig;
+    const raw = yield* executeRaw({ cwd, args: ["sts", "get-caller-identity"], ...config });
+    const caller = yield* decodeCallerAccount(raw);
+    if (caller.Account !== accountId)
+      return yield* new CodeCommitError({
+        reason: "The AWS profile changed accounts. Refresh the repository before continuing.",
+        failureKind: "forbidden",
+      });
+  });
   const cache = yield* Cache.makeWith((key: string) => executeRaw(decodeRequestKey(key)), {
     capacity: 512,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? "3 seconds" : Duration.zero),
@@ -107,7 +124,13 @@ export const make = Effect.gen(function* () {
     region?: string,
   ) {
     const config = yield* AwsConfig;
-    const input = { cwd, args, profile: config.profile, region: region ?? config.region };
+    const input = {
+      cwd,
+      args,
+      profile: config.profile,
+      region: region ?? config.region,
+      ...(config.accountId ? { accountId: config.accountId } : {}),
+    };
     if (
       [
         "get-repository",
@@ -128,6 +151,7 @@ export const make = Effect.gen(function* () {
       args[1] === "evaluate-pull-request-approval-rules"
     )
       return yield* executeRaw(input);
+    if (config.accountId) yield* verifyAccount(cwd, config.accountId);
     yield* Cache.invalidateAll(cache);
     return yield* executeRaw(input).pipe(Effect.ensuring(Cache.invalidateAll(cache)));
   });
@@ -155,13 +179,14 @@ export const make = Effect.gen(function* () {
   });
   const provideConfig = <A, E, R>(
     effect: Effect.Effect<A, E, R>,
-    config: { readonly profile: string; readonly region: string },
+    config: { readonly profile: string; readonly region: string; readonly accountId?: string },
   ) => effect.pipe(Effect.provideService(AwsConfig, config));
   return {
     execute,
     request,
     withConfig,
     provideConfig,
+    verifyAccount,
     configuration: Effect.map(AwsConfig, (config) => config),
     invalidate: Cache.invalidateAll(cache),
   };

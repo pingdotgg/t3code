@@ -181,7 +181,9 @@ export function usePullRequestListActions(
               attributes: { destructive: true },
             },
           ]
-        : writableEnvironments.has(entry.environmentId) && entry.state === "closed"
+        : writableEnvironments.has(entry.environmentId) &&
+            entry.state === "closed" &&
+            !sourceControlClients.get(entry.provider).closeIsFinal
           ? [
               {
                 id: "reopen",

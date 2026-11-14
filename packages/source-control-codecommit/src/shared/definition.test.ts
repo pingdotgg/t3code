@@ -18,6 +18,7 @@ describe("CodeCommit remotes", () => {
   it("preserves case and equates HTTPS and SSH clones", () => {
     for (const remote of [
       "https://git-codecommit.us-east-1.amazonaws.com/v1/repos/MyRepo",
+      "https://git-codecommit-fips.us-east-1.amazonaws.com/v1/repos/MyRepo",
       "ssh://APKAEXAMPLE@git-codecommit.us-east-1.amazonaws.com/v1/repos/MyRepo",
       "APKAEXAMPLE@git-codecommit.us-east-1.amazonaws.com:v1/repos/MyRepo",
     ])
@@ -39,6 +40,11 @@ describe("CodeCommit remotes", () => {
     ).toBe("git-codecommit.us-east-1.amazonaws.com/v1/repos/MyRepo");
   });
   it("parses helper URLs without inventing a region or normalizing repository case", () => {
+    expect(parseCodeCommitHelperRemote("codecommit::us-east-1://dev+ops@MyRepo")).toEqual({
+      profile: "dev+ops",
+      region: "us-east-1",
+      repository: "MyRepo",
+    });
     expect(parseCodeCommitHelperRemote("codecommit://self@MyRepo")).toEqual({
       profile: "self",
       repository: "MyRepo",

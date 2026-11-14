@@ -52,7 +52,7 @@ export function parseCodeCommitHelperRemote(remoteUrl: string): {
   readonly repository: string;
 } | null {
   const match =
-    /^codecommit(?:::([a-z0-9-]+))?:\/\/(?:(?:([A-Za-z0-9_.-]+)@))?([A-Za-z0-9._-]{1,100})$/u.exec(
+    /^codecommit(?:::([a-z0-9-]+))?:\/\/(?:(?:([A-Za-z0-9_+.-]+)@))?([A-Za-z0-9._-]{1,100})$/u.exec(
       remoteUrl.trim(),
     );
   if (
@@ -96,13 +96,15 @@ export function parseCodeCommitRemote(
     host = url.hostname.toLowerCase();
     path = url.pathname;
   }
-  const match = /^git-codecommit\.([a-z0-9-]+)\.(amazonaws\.com(?:\.cn)?)$/u.exec(host);
+  const match = /^git-codecommit(?:-fips)?\.([a-z0-9-]+)\.(amazonaws\.com(?:\.cn)?)$/u.exec(host);
   const repository = /^\/v1\/repos\/([A-Za-z0-9._-]{1,100})\/?$/u.exec(path)?.[1];
   if (!match?.[1] || !repository) return null;
   const region = match[1];
   const partition = partitionForRegion(region);
   const result = { host, region, partition, repository };
-  return validRepository(result) && match[2] === domainForPartition(partition) ? result : null;
+  return validRepository(result) && match[2] === domainForPartition(partition)
+    ? { ...result, host: cloneHost(result) }
+    : null;
 }
 
 export function codeCommitRepositoryUrl(input: CodeCommitRepository): string {
