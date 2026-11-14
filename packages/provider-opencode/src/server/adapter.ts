@@ -712,6 +712,16 @@ export function openCodePermissionRules(
   return rules;
 }
 
+function openCodeTurnAgent(
+  modelSelection: ModelSelection,
+  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+): string | undefined {
+  return (
+    getModelSelectionStringOptionValue(modelSelection, "agent") ??
+    (runtimePolicy.interactionMode === "plan" ? "plan" : undefined)
+  );
+}
+
 function permissionRuleEquals(
   left: PermissionRuleset[number],
   right: PermissionRuleset[number],
@@ -2935,9 +2945,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         ) {
           const parentRules = openCodePermissionRules(policy);
           let rootRules = parentRules;
-          const agent =
-            getModelSelectionStringOptionValue(modelSelection, "agent") ??
-            (policy.interactionMode === "plan" ? "plan" : undefined);
+          const agent = openCodeTurnAgent(modelSelection, policy);
           if (
             state.parentSubagent === null &&
             agent !== undefined &&
@@ -3080,9 +3088,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         // OpenCode runs each step with the agent and system prompt of the latest
         // user message, so every prompt in a turn, steers included, repeats them.
         const turnPromptOptions = (turn: ActiveOpenCodeTurn) => {
-          const agent =
-            getModelSelectionStringOptionValue(turn.modelSelection, "agent") ??
-            (turn.runtimePolicy.interactionMode === "plan" ? "plan" : undefined);
+          const agent = openCodeTurnAgent(turn.modelSelection, turn.runtimePolicy);
           const variant = getModelSelectionStringOptionValue(turn.modelSelection, "variant");
           return {
             ...(agent === undefined ? {} : { agent }),
