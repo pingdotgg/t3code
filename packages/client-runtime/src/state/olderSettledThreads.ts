@@ -80,9 +80,9 @@ export function sortOlderSettledScopes(
 
 /**
  * Changes whenever the older count can: any removal (by largest sequence, so a repeat counts), an
- * older row that arrives or changes, or an old row arriving outside the set (unsettled). Threads
- * created after the cut never enter it, as threads settle after creation. Archived-thread events
- * arrive as removals too, each costing one count read.
+ * older row that arrives, changes or moves project, or an old row arriving outside the set
+ * (unsettled). Threads created after the cut never enter it, as threads settle after creation.
+ * Archived-thread events arrive as removals too, each costing one count read.
  */
 export function olderSettledCountKey(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
@@ -96,7 +96,7 @@ export function olderSettledCountKey(
     if (!isListedThreadLineage(thread.lineage)) continue;
     const older = isOlderSettledThreadShell(thread, beforeMs);
     if (older || DateTime.toEpochMillis(thread.createdAt) < beforeMs) {
-      rows.push(`${thread.id}:${older ? 1 : 0}`);
+      rows.push(`${thread.id}:${thread.projectId}:${older ? 1 : 0}`);
     }
   }
   return `${lastRemoval}|${rows.sort().join(",")}`;
