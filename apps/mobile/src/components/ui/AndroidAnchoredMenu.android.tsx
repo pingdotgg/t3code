@@ -61,6 +61,10 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
     setPath([]);
     setOverlay(null);
   };
+  // The in-window menu is pinned to the trigger's spot above the keyboard, which is stale once it hides.
+  if (anchor?.keyboardWasVisible === true && !keyboardVisible) {
+    close();
+  }
 
   const open = () => {
     anchorNode?.measureInWindow((x, y, width, height) => {
