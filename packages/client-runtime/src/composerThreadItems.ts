@@ -5,7 +5,12 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
+import {
+  foldSearchQuery,
+  rankSearchItems,
+  scoreThreadSearch,
+  startsSearchWord,
+} from "@t3tools/shared/paletteSearch";
 
 import type { EnvironmentThreadShell } from "./state/models.ts";
 import { threadSearchSubject, type ThreadSearchShell } from "./state/threadSearch.ts";
@@ -96,13 +101,13 @@ export function matchComposerEnvironmentItems(input: {
   environmentId: EnvironmentId;
   query: string;
 }): ComposerEnvironmentItem[] {
-  const query = input.query.trim().toLowerCase();
+  const query = foldSearchQuery(input.query);
   if (query.length === 0) return [];
   return input.environments
     .filter(
       (environment) =>
         environment.environmentId !== input.environmentId &&
-        environment.label.toLowerCase().includes(query),
+        startsSearchWord(environment.label, query),
     )
     .map((environment) => ({
       id: `environment:${environment.environmentId}`,
@@ -112,4 +117,26 @@ export function matchComposerEnvironmentItems(input: {
       label: environment.label,
       description: "Machine",
     }));
+}
+
+/**
+ * Orders `@` results by how surely they are what was typed: a file with exactly that name, then
+ * machines, threads with a word starting with it, models (in their own order), files starting
+ * with it, and the rest.
+ */
+export function rankComposerMentionItems<
+  T extends { readonly type: string; readonly label: string },
+>(items: ReadonlyArray<T>, rawQuery: string): T[] {
+  const query = foldSearchQuery(rawQuery);
+  if (query.length === 0) return [...items];
+  const rank = ({ type, label }: T) => {
+    if (type === "environment") return 1;
+    if (type === "model") return 2;
+    if (type === "thread") return startsSearchWord(label, query) ? 2 : 4;
+    const name = foldSearchQuery(label);
+    if (name === query || name.startsWith(`${query}.`)) return 0;
+    return name.startsWith(query) ? 3 : 5;
+  };
+  // Hermes lacks toSorted.
+  return [...items].sort((left, right) => rank(left) - rank(right));
 }

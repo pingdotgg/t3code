@@ -5,6 +5,7 @@ import {
 import {
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
+  rankComposerMentionItems,
 } from "@t3tools/client-runtime/composerThreadItems";
 import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
@@ -200,38 +201,41 @@ export function useComposerMenuItems({
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
-      return [
-        ...matchComposerThreadItems({
-          shells: environmentThreadShells,
-          environmentId,
-          linkedEnvironments,
-          excludeThreadId: activeThreadId,
-          query: composerTrigger.query,
-          now,
-        }),
-        // An answer to an agent's question carries thread links, not machines.
-        ...(questionAttachmentTarget === null && offersMachines
-          ? matchComposerEnvironmentItems({
-              environments: mentionableEnvironments,
-              environmentId,
-              query: composerTrigger.query,
-            })
-          : []),
-        ...matchComposerModelItems({
-          instanceEntries: modelMentions.instanceEntries,
-          modelOptionsByInstance: modelMentions.modelOptionsByInstance,
-          query: composerTrigger.query,
-        }),
-        ...workspaceEntries.entries.map((entry) => ({
-          id: `path:${entry.kind}:${entry.path}`,
-          type: "path" as const,
-          path: entry.path,
-          pathKind: entry.kind,
-          searchTarget: workspaceEntries.searchedTarget,
-          label: basenameOfPath(entry.path),
-          description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
-        })),
-      ];
+      return rankComposerMentionItems<ComposerCommandItem>(
+        [
+          ...matchComposerThreadItems({
+            shells: environmentThreadShells,
+            environmentId,
+            linkedEnvironments,
+            excludeThreadId: activeThreadId,
+            query: composerTrigger.query,
+            now,
+          }),
+          // An answer to an agent's question carries thread links, not machines.
+          ...(questionAttachmentTarget === null && offersMachines
+            ? matchComposerEnvironmentItems({
+                environments: mentionableEnvironments,
+                environmentId,
+                query: composerTrigger.query,
+              })
+            : []),
+          ...matchComposerModelItems({
+            instanceEntries: modelMentions.instanceEntries,
+            modelOptionsByInstance: modelMentions.modelOptionsByInstance,
+            query: composerTrigger.query,
+          }),
+          ...workspaceEntries.entries.map((entry) => ({
+            id: `path:${entry.kind}:${entry.path}`,
+            type: "path" as const,
+            path: entry.path,
+            pathKind: entry.kind,
+            searchTarget: workspaceEntries.searchedTarget,
+            label: basenameOfPath(entry.path),
+            description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
+          })),
+        ],
+        composerTrigger.query,
+      );
     }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [

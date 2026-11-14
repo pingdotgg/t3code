@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
+  rankComposerMentionItems,
   type ComposerThreadCandidate,
 } from "./composerThreadItems.ts";
 
@@ -85,6 +86,19 @@ describe("matchComposerEnvironmentItems", () => {
     { environmentId: EnvironmentId.make("env-mini"), label: "Mac mini", machine: "mac-mini" },
   ] as const;
 
+  it("matches a machine only from the start of a word", () => {
+    const labels = (query: string) =>
+      matchComposerEnvironmentItems({
+        environments,
+        environmentId: EnvironmentId.make("env-here"),
+        query,
+      }).map((item) => item.label);
+    expect(labels("het")).toEqual(["Hetzner VPS"]);
+    expect(labels("mini")).toEqual(["Mac mini"]);
+    expect(labels("mac mi")).toEqual(["Mac mini"]);
+    expect(labels("ner")).toEqual([]);
+  });
+
   it("offers the other machines matching the query, never the composer's own", () => {
     expect(
       matchComposerEnvironmentItems({
@@ -116,5 +130,59 @@ describe("matchComposerEnvironmentItems", () => {
         query: "",
       }),
     ).toEqual([]);
+  });
+});
+
+describe("rankComposerMentionItems", () => {
+  const thread = (label: string) => ({ type: "thread", label });
+  const machine = (label: string) => ({ type: "environment", label });
+  const file = (label: string) => ({ type: "path", label });
+  const model = (label: string) => ({ type: "model", label });
+
+  it.each([
+    [
+      "he",
+      [
+        thread("The other one"),
+        thread("He said no"),
+        machine("Hetzner VPS"),
+        file("the.json"),
+        file("Hexyz.json"),
+        file("He.json"),
+      ],
+      ["He.json", "Hetzner VPS", "He said no", "Hexyz.json", "The other one", "the.json"],
+    ],
+    [
+      "ner",
+      [thread("Partner sync"), thread("ner plan"), file("planner.md"), file("ner-notes.md")],
+      ["ner plan", "ner-notes.md", "Partner sync", "planner.md"],
+    ],
+    [
+      "sonnet",
+      [
+        thread("Sonnet pricing"),
+        model("Sonnet 5.5"),
+        model("Claude Sonnet 4"),
+        file("sonnet-notes.md"),
+      ],
+      ["Sonnet pricing", "Sonnet 5.5", "Claude Sonnet 4", "sonnet-notes.md"],
+    ],
+    [
+      "model",
+      [file("model-notes.md"), thread("FixModelPicker")],
+      ["FixModelPicker", "model-notes.md"],
+    ],
+    [
+      "resume",
+      [file("resume-notes.md"), thread("Résumé fixes")],
+      ["Résumé fixes", "resume-notes.md"],
+    ],
+  ])("orders results for %s", (query, items, expected) => {
+    expect(rankComposerMentionItems(items, query).map((item) => item.label)).toEqual(expected);
+  });
+
+  it("leaves a bare @ in the order it arrived", () => {
+    const items = [file("a.ts"), file(".env")];
+    expect(rankComposerMentionItems(items, " ")).toEqual(items);
   });
 });
