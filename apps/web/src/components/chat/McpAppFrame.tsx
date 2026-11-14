@@ -380,7 +380,10 @@ export function McpAppFrame(props: {
           setDisplayMode("inline");
           return;
         }
-        void host.teardown().then(() => setClosed(true));
+        // A replacement document may have mounted while this one wound down.
+        void host.teardown().then(() => {
+          if (hostRef.current === host) setClosed(true);
+        });
       },
       onSizeChanged: (size) => {
         // Ignore fullscreen height when restoring inline sizing.
