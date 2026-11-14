@@ -325,21 +325,15 @@ pub struct ProvisionedWorktree {
     pub base_ref: String,
 }
 
-#[derive(Debug)]
+/// Clients show these texts; keep them as they are.
+#[derive(Debug, thiserror::Error)]
 pub enum ProvisionError {
+    #[error("Worktree setup cancelled.")]
     Cancelled,
-    Failed(VcsError),
+    #[error("Workspace preparation failed: {0}")]
+    Failed(#[source] VcsError),
+    #[error("{0}")]
     SetupScript(String),
-}
-
-impl std::fmt::Display for ProvisionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProvisionError::Cancelled => f.write_str("Worktree setup cancelled."),
-            ProvisionError::Failed(e) => write!(f, "Workspace preparation failed: {e}"),
-            ProvisionError::SetupScript(e) => f.write_str(e),
-        }
-    }
 }
 
 /// `t3/<8 hex>`, the name of a branch the user did not choose.

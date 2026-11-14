@@ -66,10 +66,12 @@ impl std::fmt::Debug for Ownership {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum OwnershipError {
     /// Another server (this one or the TypeScript one) runs on this state directory.
+    #[error("another server is running on this state directory")]
     Owned,
+    #[error("{0}")]
     Io(String),
 }
 

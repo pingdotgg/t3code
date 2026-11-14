@@ -81,7 +81,8 @@ const LEGACY_PROJECT_MAPS: &[(&str, &str)] = &[
     ("projectScriptOverrides", "defaultProjectScripts"),
 ];
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{operation} {settings_path}: {detail}")]
 pub struct SettingsError {
     pub settings_path: String,
     pub operation: &'static str,

@@ -43,6 +43,9 @@ getrandom = "0.3"
 rustix = { version = "1", default-features = false, features = ["std"] }
 # Bundled SQLite with JSON1 (built in since 3.38). No statement cache, no extra features.
 rusqlite = { version = "0.37", default-features = false, features = ["bundled"] }
+# Display and std::error::Error for the error types at crate boundaries. Already in the tree
+# through tungstenite; a proc macro, so no run-time code beyond the impls it writes.
+thiserror = "2"
 axum = { version = "0.8", default-features = false, features = [
   "http1",
   "json",

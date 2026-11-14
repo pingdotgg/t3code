@@ -40,24 +40,17 @@ pub enum SessionMsg {
     Exited(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum CallError {
     /// The app-server is not running, or died before it answered.
+    #[error("the Codex app-server stopped")]
     Stopped,
+    #[error(transparent)]
     Rpc(RpcError),
+    #[error("the Codex app-server did not answer in time")]
     Timeout,
+    #[error("could not start the Codex app-server: {0}")]
     Spawn(String),
-}
-
-impl std::fmt::Display for CallError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Stopped => f.write_str("the Codex app-server stopped"),
-            Self::Rpc(e) => write!(f, "{e}"),
-            Self::Timeout => f.write_str("the Codex app-server did not answer in time"),
-            Self::Spawn(e) => write!(f, "could not start the Codex app-server: {e}"),
-        }
-    }
 }
 
 struct Live {

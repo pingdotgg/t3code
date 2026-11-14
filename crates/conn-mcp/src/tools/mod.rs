@@ -17,11 +17,13 @@ mod threads;
 
 pub(crate) type Args = Map<String, Value>;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub(crate) enum ToolError {
     /// `OrchestratorMcpFailure`: a tool result with `isError: true`.
+    #[error("{code}: {message}")]
     Failure { code: &'static str, message: String },
     /// Arguments the schema allows but the call cannot use: JSON-RPC -32602, as TS decoding.
+    #[error("invalid params: {0}")]
     InvalidParams(String),
 }
 

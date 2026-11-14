@@ -11,6 +11,7 @@ rust-version.workspace = true
 conn-contract.workspace = true
 conn-engine.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
 # Already in the tree through axum: request and response types without a framework.
 http = "1"

@@ -29,6 +29,7 @@ getrandom.workspace = true
 sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 # `signal`: a clean stop on SIGTERM and SIGINT. `fs` streams asset files and uploads
 # (tokio's own spawn_blocking file I/O).
 tokio = { workspace = true, features = ["signal", "fs"] }

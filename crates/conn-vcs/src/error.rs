@@ -14,17 +14,20 @@ use serde_json::Value;
 use crate::process::{ProcessContext, ProcessError};
 
 /// A failure of one VCS operation.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum VcsError {
     /// A `git` child failed.
-    Process(ProcessError),
+    #[error(transparent)]
+    Process(#[from] ProcessError),
     /// A precondition failed before or between git commands (bad input, not a repo, ...).
+    #[error("{operation}: {detail}")]
     Invalid {
         operation: &'static str,
         cwd: String,
         detail: String,
         reason: Option<&'static str>,
     },
+    #[error("{operation}: {detail}")]
     Unsupported {
         operation: &'static str,
         kind: VcsDriverKind,
@@ -33,28 +36,6 @@ pub enum VcsError {
 }
 
 pub type VcsResult<T> = Result<T, VcsError>;
-
-impl From<ProcessError> for VcsError {
-    fn from(error: ProcessError) -> Self {
-        VcsError::Process(error)
-    }
-}
-
-impl std::fmt::Display for VcsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            VcsError::Process(e) => e.fmt(f),
-            VcsError::Invalid {
-                operation, detail, ..
-            } => write!(f, "{operation}: {detail}"),
-            VcsError::Unsupported {
-                operation, detail, ..
-            } => write!(f, "{operation}: {detail}"),
-        }
-    }
-}
-
-impl std::error::Error for VcsError {}
 
 impl VcsError {
     pub fn invalid(operation: &'static str, cwd: &str, detail: impl Into<String>) -> Self {
