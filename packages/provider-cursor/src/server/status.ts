@@ -172,10 +172,12 @@ export function buildCursorDiscoveredModelsFromSdk(
       return [];
     }
     seen.add(slug);
+    const aliases = model.aliases?.map((alias) => alias.trim()).filter(Boolean) ?? [];
     return [
       {
         slug,
         name,
+        ...(aliases.length > 0 ? { aliases } : {}),
         isCustom: false,
         capabilities: buildCursorCapabilitiesFromSdkModel(model),
       } satisfies ServerProviderModel,

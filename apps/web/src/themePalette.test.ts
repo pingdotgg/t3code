@@ -271,8 +271,10 @@ describe("theme files", () => {
       variants: {
         dark: { canvas: "#101827", text: "#eef5ff" },
       },
+      css: "[data-chat-header] { border-bottom: 1px solid red; }",
     });
 
+    expect(JSON.parse(serializeThemeFile(theme)).css).toBe(theme.css);
     expect(getThemeModes(theme)).toEqual(["light", "dark"]);
     expect(getThemeColorsForMode(theme, "dark")).toMatchObject({
       canvas: canonical("#101827"),

@@ -86,6 +86,15 @@ const simlock = (device: string): DeviceProvider => {
     const daemon = yield* connect(request.env);
     const client = createAgentDeviceClient(daemon);
     const platform = request.platform === "android" ? "android" : "ios";
+    // A cache miss builds the dev client, which outlasts a test and can outlast a lease.
+    request.log(`preparing the ${platform} dev client`);
+    yield* run(
+      resolved.node,
+      ["scripts/mobile-native-client.ts", "ensure", platform, "--prepare"],
+      {
+        cwd: APP_DIR,
+      },
+    );
     const scope = { tenant: "t3-scenarios", runId: `${request.runId}-${request.slot}` };
     // Simlock takes the lease id from the caller: 32 hex characters.
     const leaseId = (yield* (yield* SecureRandom.SecureRandom).uuidV4()).replaceAll("-", "");
@@ -121,7 +130,10 @@ const simlock = (device: string): DeviceProvider => {
   return {
     name: "simlock",
     acquire: (request) =>
-      acquire(request).pipe(Effect.provide(NodeCrypto.layer), Effect.runPromise),
+      acquire(request).pipe(
+        Effect.provide([NodeCrypto.layer, NodeServices.layer]),
+        Effect.runPromise,
+      ),
     release: (lease, context) =>
       connect(context.env).pipe(
         Effect.flatMap((daemon) =>
