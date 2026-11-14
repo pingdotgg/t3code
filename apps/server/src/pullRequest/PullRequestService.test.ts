@@ -2408,6 +2408,18 @@ it.effect("refuses Azure cross-organization reads and writes without its checkou
     const writeError = yield* Effect.flip(service.runAction({ ...reference, action: "close" }));
     assert.strictEqual(readError._tag, "PullRequestUnavailableError");
     assert.strictEqual(writeError._tag, "PullRequestUnavailableError");
+    // Azure DevOps is supported; the refusal must name the missing checkout, not the host.
+    const siblingError = yield* Effect.flip(
+      service.summary(
+        { ...reference, repository: "org-a/project/_git/web-e2e" },
+        { recoverTransientFailure: false },
+      ),
+    );
+    assert.strictEqual(siblingError._tag, "PullRequestUnavailableError");
+    assert.notStrictEqual(
+      siblingError._tag === "PullRequestUnavailableError" ? siblingError.reason : undefined,
+      "provider-unsupported",
+    );
   }),
 );
 
