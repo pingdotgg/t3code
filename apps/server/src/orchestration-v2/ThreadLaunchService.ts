@@ -1130,7 +1130,9 @@ const make = Effect.gen(function* () {
                 },
               )
             : input.workspaceStrategy;
-        const initialBranch = yield* launchBranch(workspaceStrategy, project.workspaceRoot);
+        const initialBranch = yield* Effect.interruptible(
+          launchBranch(workspaceStrategy, project.workspaceRoot),
+        );
         const initialWorktreePath =
           workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null;
         const claimDispatch =
@@ -1290,6 +1292,9 @@ const make = Effect.gen(function* () {
         };
       });
     },
+    // The message commits a preparing run that only this call schedules, so a
+    // caller that goes away must not stop the launch between the two.
+    Effect.uninterruptible,
   );
 
   const prepareRun: ThreadLaunchService["Service"]["prepareRun"] = Effect.fn(
