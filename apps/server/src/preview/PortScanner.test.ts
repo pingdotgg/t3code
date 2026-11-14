@@ -915,6 +915,64 @@ effectIt.effect.each(["linux", "darwin"] as const)(
   },
 );
 
+effectIt.effect(
+  "attributes a macOS listener that renamed its process to the agent thread of its parent",
+  () => {
+    const port = 43_126;
+    // Next.js sets process.title, after which `ps -E` shows only the new title for that pid.
+    const environments: Record<number, string> = {
+      4242: "next-server (v16.4.6)",
+      4241: `node /app/node_modules/.bin/next dev PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent`,
+      4240: `bun run dev PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent`,
+    };
+    const layer = PortScanner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          layerNoProc,
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) => {
+              if (input.command === "lsof") {
+                return Effect.succeed(processOutput(`p4242\ncnext-server\nn127.0.0.1:${port}\n`));
+              }
+              if (input.args[0] === "-A") {
+                return Effect.succeed(
+                  processOutput("4242 4241 4240\n4241 4240 4240\n4240 4000 4240\n"),
+                );
+              }
+              const pids = (input.args[input.args.indexOf("-p") + 1] ?? "").split(",");
+              return Effect.succeed(
+                processOutput(
+                  pids
+                    .flatMap((pid) => {
+                      const environment = environments[Number(pid)];
+                      return environment === undefined ? [] : [`  ${pid} ${environment}\n`];
+                    })
+                    .join(""),
+                ),
+              );
+            },
+          }),
+          Layer.succeed(HostProcess.Platform, "darwin"),
+          FetchHttpClient.layer.pipe(
+            Layer.provide(
+              Layer.succeed(FetchHttpClient.Fetch, () =>
+                Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } })),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      expect(yield* scanner.scan()).toMatchObject([
+        { port, pid: 4242, terminal: null, agent: { threadId: "thread-agent" } },
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 effectIt.effect("stops only a job's own process group", () =>
   Effect.sync(() => {
     const serverPid = 100;
