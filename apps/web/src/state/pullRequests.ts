@@ -7,6 +7,7 @@ import {
   createPullRequestStackAtomFamily,
   pullRequestPendingEditsFor,
   pullRequestHostAnswer,
+  type PullRequestPendingEdit,
 } from "@t3tools/client-runtime/state/pull-requests";
 import {
   PullRequestListResult,
@@ -76,10 +77,17 @@ export function newestDisplayedPullRequestSummary(
   detail: PullRequestSummary | null,
   fromSnapshot: boolean,
   shared: PullRequestSummary | null,
+  reference: PullRequestRef,
+  edits: ReadonlyArray<PullRequestPendingEdit>,
 ): PullRequestSummary | null {
-  return fromSnapshot
-    ? newestPullRequestSummary(detail, shared)
-    : newestPullRequestSummary(shared, detail);
+  // With no shared summary the snapshot is all there is, and no answer applied its edits yet.
+  return applyPullRequestSummaryEdits(
+    reference,
+    fromSnapshot
+      ? newestPullRequestSummary(detail, shared)
+      : newestPullRequestSummary(shared, detail),
+    edits,
+  );
 }
 
 export function pullRequestListEntryToSummary(entry: PullRequestListEntry): PullRequestSummary {
@@ -702,21 +710,26 @@ export interface MergedPullRequestListView {
   readonly refresh: (targets?: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>>) => void;
 }
 
+// Merge inside each hook: the React Compiler memoizes it on `query.values` only there, and
+// PullRequestsPage sets state when the merged list's identity changes.
 export function usePullRequestList(
   targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>>,
 ): MergedPullRequestListView {
-  return mergedPullRequestListView(usePullRequestListsQuery(targets));
+  const query = usePullRequestListsQuery(targets);
+  const data = mergePullRequestLists(query.values);
+  return {
+    data,
+    error: query.error,
+    isPending: query.isPending,
+    observations: query.observations,
+    refresh: query.refresh,
+  };
 }
 
 export function usePullRequestHostList(
   targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>>,
 ): MergedPullRequestListView {
-  return mergedPullRequestListView(usePullRequestHostListsQuery(targets));
-}
-
-function mergedPullRequestListView(
-  query: ReturnType<typeof usePullRequestListsQuery>,
-): MergedPullRequestListView {
+  const query = usePullRequestHostListsQuery(targets);
   const data = mergePullRequestLists(query.values);
   return {
     data,
