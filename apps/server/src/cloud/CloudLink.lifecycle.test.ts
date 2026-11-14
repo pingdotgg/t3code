@@ -95,13 +95,14 @@ const decodeManagedTunnelRecoveryRegistration = Schema.decodeUnknownEffect(
 
 function makeSecretStore(
   create: ServerSecretStore.ServerSecretStore["Service"]["create"],
+  remove: ServerSecretStore.ServerSecretStore["Service"]["remove"] = unusedSecretStoreOperation,
 ): ServerSecretStore.ServerSecretStore["Service"] {
   return {
     get: unusedSecretStoreOperation,
     set: unusedSecretStoreOperation,
     create,
     getOrCreateRandom: unusedSecretStoreOperation,
-    remove: unusedSecretStoreOperation,
+    remove,
   };
 }
 
@@ -115,6 +116,56 @@ describe("consumeCloudReplayGuards", () => {
       });
 
       expect(consumed).toBe(false);
+    }),
+  );
+
+  it.effect.each(["cloud-jti", "cloud-nonce"])(
+    "rolls back a partial consume conflicting on %s",
+    (conflict) =>
+      Effect.gen(function* () {
+        const created = new Set<string>();
+        const removed: string[] = [];
+        const consumed = yield* consumeCloudReplayGuards({
+          secrets: makeSecretStore(
+            (name) =>
+              name === conflict
+                ? Effect.fail(storeFailure("AlreadyExists"))
+                : Effect.sync(() => {
+                    created.add(name);
+                  }),
+            (name) =>
+              Effect.sync(() => {
+                removed.push(name);
+                created.delete(name);
+              }),
+          ),
+          names: ["cloud-jti", "cloud-nonce"],
+          value: new Uint8Array([1]),
+        });
+
+        expect(consumed).toBe(false);
+        expect([...created]).toEqual([]);
+        expect(removed).toEqual([conflict === "cloud-jti" ? "cloud-nonce" : "cloud-jti"]);
+      }),
+  );
+
+  it.effect("reports rollback store failures", () =>
+    Effect.gen(function* () {
+      const failure = new ServerSecretStore.SecretStoreRemoveError({
+        resource: "cloud-jti",
+        cause: "permission denied",
+      });
+      const result = yield* consumeCloudReplayGuards({
+        secrets: makeSecretStore(
+          (name) =>
+            name === "cloud-nonce" ? Effect.fail(storeFailure("AlreadyExists")) : Effect.void,
+          () => Effect.fail(failure),
+        ),
+        names: ["cloud-jti", "cloud-nonce"],
+        value: new Uint8Array([1]),
+      }).pipe(Effect.flip);
+
+      expect(result).toBe(failure);
     }),
   );
 });
