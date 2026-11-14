@@ -11,11 +11,13 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -58,6 +60,7 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
           capabilities: { repositoryIdentity: false },
         }),
       }),
+      Layer.mock(HostResources.HostResources)({}),
       Layer.mock(Settings.ServerSettingsService)({
         getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
         updateSettings: () =>
@@ -95,3 +98,25 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
     );
   }),
 );
+
+it("accepts a linked environment's read that predates host resources", () => {
+  const decode = Schema.decodeUnknownSync(
+    EnvironmentToolkit.tools.t3_environment_read.successSchema,
+  );
+  const identity = {
+    environmentId,
+    label: "Test",
+    serverVersion: "0.0.0",
+    platform: { os: "linux", arch: "x64" },
+    preferences: EnvironmentHandlers.preferences(DEFAULT_SERVER_SETTINGS),
+  };
+  expect(decode(identity).hostResources).toBeUndefined();
+  const hostResources = {
+    sampledAt: 1_700_000_000_000,
+    cpuUtilization: null,
+    cpuCount: 4,
+    availableMemoryBytes: 1024,
+    totalMemoryBytes: 2048,
+  };
+  expect(decode({ ...identity, hostResources }).hostResources).toEqual(hostResources);
+});

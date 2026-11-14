@@ -390,6 +390,9 @@ ends, as for any delegated task. It keeps following the task across restarts.
 If the other machine revokes the link, or the link is removed here, the task
 fails with that reason.
 
+To choose between machines, an agent can read each one's current CPU and memory
+load with `t3_environment_read`.
+
 ## Manage or revoke access
 
 On the host, **Settings → Sharing & access** lets authorized administrators create
