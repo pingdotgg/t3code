@@ -1199,6 +1199,51 @@ it.effect("runs a Scratch scheduled task saved with a worktree in its own folder
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect.each([
+  {
+    name: "an existing worktree",
+    workspace: { type: "existing_worktree", worktreePath: "/wt/task" },
+    expected: "task-branch",
+  },
+  { name: "the project root", workspace: { type: "root" }, expected: "main" },
+  {
+    name: "a worktree whose branch lookup fails",
+    workspace: { type: "existing_worktree", worktreePath: "/wt/broken" },
+    expected: null,
+  },
+] as const)("a launch in $name that names no branch records branch $expected", (testCase) => {
+  const checkedOut: Record<string, string> = { "/wt/task": "task-branch", "/repo": "main" };
+  const harness = makeHarness({
+    git: {
+      currentBranch: (cwd) =>
+        testCase.expected === null
+          ? Effect.fail(
+              new GitCommandError({
+                operation: "GitWorkflowService.currentBranch",
+                command: "git symbolic-ref",
+                cwd,
+                detail: "Failed to read the checked-out branch.",
+              }),
+            )
+          : Effect.succeed(checkedOut[cwd] ?? null),
+    },
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:checkout-branch",
+        thread: "thread:launch:checkout-branch",
+        message: "Adopt the task",
+        workspace: testCase.workspace,
+      }),
+    );
+    const projection = yield* preparationSettled(launched.threadId);
+    assert.equal(projection.runs[0]?.status, "starting");
+    assert.equal(projection.thread.branch, testCase.expected);
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect.each(["stable", "upstream/release"])(
   "launches from %s with the fetched commit and remote PR base",
   (baseRef) =>
