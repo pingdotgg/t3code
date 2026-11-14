@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { MuseSettings } from "../settings.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -72,6 +74,34 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
       expect(snapshot.message).not.toContain("secret-test-value");
       expect(createHost).not.toHaveBeenCalled();
     }),
+  );
+
+  it.effect("checks a configured PowerShell launcher through PowerShell", () =>
+    Effect.gen(function* () {
+      const binaryPath = "C:\\Muse R&D\\.muse-launcher.ps1";
+      const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", binaryPath, "--version"];
+      const executable = yield* fakeCli(
+        `if (JSON.stringify(process.argv.slice(2)) !== ${JSON.stringify(JSON.stringify(args))}) process.exit(2);
+process.stdout.write("muse 1.0.3-R2198.1\\n");`,
+      );
+      const result = yield* checkMuseProviderStatus(
+        settings({ enabled: true, binaryPath }),
+        {},
+        undefined,
+        async () => makeHost(metaCatalog),
+      ).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(SpawnExecutableResolution, (command) =>
+          command === binaryPath
+            ? binaryPath
+            : command.toLowerCase().endsWith("powershell.exe")
+              ? executable
+              : undefined,
+        ),
+      );
+      expect(result.status).toBe("ready");
+      expect(result.version).toBe("1.0.3-R2198.1");
+    }).pipe(Effect.scoped),
   );
 
   it.effect("tells the user to finish setup when the launcher has not installed its runtime", () =>
