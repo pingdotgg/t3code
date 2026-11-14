@@ -92,8 +92,12 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
           { reportFailure: false },
         ).then((result) => {
           if (!AsyncResult.isFailure(result)) return;
-          // The server never heard it, so the next shell update (such as the
-          // reconnect snapshot) retries; a newer dispatch already covers it.
+          // A failure the shell already shows as seen (lost ack) must not
+          // retry, or a later mark-unread gets undone.
+          const seenAt = registry.get(options.threadShellAtom(ref))?.lastVisitedAt;
+          if (seenAt && Date.parse(seenAt) >= Date.parse(visitedAt)) return;
+          // Otherwise the next shell update (such as the reconnect snapshot)
+          // retries; a newer dispatch already covers it.
           if (opened) openPending = true;
           if (lastDispatchedUpdatedAt === visitedAt)
             lastDispatchedUpdatedAt = previousDispatchedUpdatedAt;

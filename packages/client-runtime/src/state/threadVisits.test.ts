@@ -30,13 +30,16 @@ function setup(threadName: string, initial: Omit<Shell, "environmentId" | "id"> 
   const shellAtom = Atom.make<Shell | null>(
     initial === null ? null : { environmentId, id: threadId, ...initial },
   );
+  // Visits the server accepted; offline ones fail without reaching it.
   const visits: Array<VisitThreadInput> = [];
   const localVisits: Array<string> = [];
+  let online = true;
   const tracker = createThreadVisitTracker({
     threadShellAtom: () => shellAtom,
     visit: {
       label: "test-visit",
       run: async (_registry, value) => {
+        if (!online) return AsyncResult.failure(Cause.fail("disconnected"));
         visits.push(value.input);
         return AsyncResult.success(undefined);
       },
@@ -49,6 +52,9 @@ function setup(threadName: string, initial: Omit<Shell, "environmentId" | "id"> 
     visits,
     localVisits,
     mount: () => registry.mount(tracker(ref)),
+    setOnline: (value: boolean) => {
+      online = value;
+    },
     update: (patch: Partial<Shell>) => {
       const current = registry.get(shellAtom);
       registry.set(shellAtom, {
@@ -194,47 +200,33 @@ it("advances the watermark to a wake without waiting for the throttle", () => {
 });
 
 it("retries a failed visit when the same shell returns after reconnect", async () => {
-  vi.useFakeTimers({ now: Date.UTC(2026, 0, 1) });
-  try {
-    const ref = { environmentId, threadId: ThreadId.make("thread-retry-failed-write") };
-    const shell: Shell = {
-      environmentId,
-      id: ref.threadId,
-      updatedAt: at(10),
-      lastVisitedAt: at(0),
-      latestRun: null,
-    };
-    const shellAtom = Atom.make<Shell | null>(shell);
-    const accepted: VisitThreadInput[] = [];
-    const attempts: VisitThreadInput[] = [];
-    let connected = false;
-    const tracker = createThreadVisitTracker({
-      threadShellAtom: () => shellAtom,
-      visit: {
-        label: "test-failed-visit",
-        run: async (_registry, value) => {
-          attempts.push(value.input);
-          if (!connected) return AsyncResult.failure(Cause.fail("disconnected"));
-          accepted.push(value.input);
-          return AsyncResult.success(undefined);
-        },
-      },
-    });
-    const registry = AtomRegistry.make();
-    const unmount = registry.mount(tracker(ref));
-    try {
-      await vi.advanceTimersByTimeAsync(VISIT_DISPATCH_THROTTLE_MS);
-      expect(attempts).toHaveLength(1);
-      expect(accepted).toEqual([]);
-      connected = true;
-      registry.set(shellAtom, { ...shell });
-      await vi.advanceTimersByTimeAsync(VISIT_DISPATCH_THROTTLE_MS);
-      expect(accepted).toEqual([{ threadId: ref.threadId, visitedAt: at(10), opened: true }]);
-    } finally {
-      unmount();
-      registry.dispose();
-    }
-  } finally {
-    vi.useRealTimers();
-  }
+  using t = setup("thread-retry-failed", {
+    updatedAt: at(10),
+    lastVisitedAt: at(0),
+    latestRun: null,
+  });
+  t.setOnline(false);
+  t.mount();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(t.visits).toEqual([]);
+
+  t.setOnline(true);
+  t.update({});
+  expect(t.visits).toEqual([{ threadId: t.ref.threadId, visitedAt: at(10), opened: true }]);
+});
+
+it("does not retry a failed visit the server already shows as seen", async () => {
+  using t = setup("thread-failed-seen", {
+    updatedAt: at(10),
+    lastVisitedAt: at(0),
+    latestRun: null,
+  });
+  t.setOnline(false);
+  t.mount();
+  t.update({ lastVisitedAt: at(10) });
+  await vi.advanceTimersByTimeAsync(0);
+
+  t.setOnline(true);
+  t.update({ lastVisitedAt: at(0) });
+  expect(t.visits).toEqual([]);
 });
