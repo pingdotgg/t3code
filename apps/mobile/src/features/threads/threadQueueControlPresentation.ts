@@ -1,6 +1,9 @@
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
-import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
+import {
+  isAttachmentOnlyBootstrapPrompt,
+  replaceComposerContextReferences,
+} from "@t3tools/shared/composerContextReferences";
 
 export const REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL = "Remove queued message";
 
@@ -22,6 +25,8 @@ export function resolveThreadQueueRowControls(input: {
   readonly isEditing?: boolean;
   /** A guest's message keeps the guest's words; the owner can cancel it, not rewrite it. */
   readonly isGuestMessage?: boolean;
+  /** The row already shows the message's images, so their chips add nothing to its text. */
+  readonly showsImageThumbnails?: boolean;
   readonly text: string;
 }): ThreadQueueRowControls {
   const mutationEnabled = !input.busy;
@@ -38,7 +43,13 @@ export function resolveThreadQueueRowControls(input: {
     // Editing and sending keep the original text so quoted citations stay linked.
     displayText: isAttachmentOnlyBootstrapPrompt(input.text)
       ? ""
-      : assistantCitationsToPlainText(input.text),
+      : assistantCitationsToPlainText(
+          replaceComposerContextReferences(input.text, (reference) =>
+            reference.kind === "image" && input.showsImageThumbnails === true
+              ? ""
+              : reference.label,
+          ),
+        ).trim(),
     isEditing,
   };
 }
