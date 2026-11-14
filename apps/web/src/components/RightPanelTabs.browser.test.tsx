@@ -6,6 +6,7 @@ import { userEvent } from "vite-plus/test/browser";
 
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import type { RightPanelSurface } from "~/rightPanelStore";
+import { paneLayout } from "~/terminalPaneLayout";
 import { render, stubGlobal } from "../../test/render";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import { RightPanelTabs, type RightPanelTabsProps } from "./RightPanelTabs";
@@ -61,6 +62,7 @@ const surfaces: RightPanelSurface[] = Array.from({ length: 16 }, (_, index) => (
   resourceId: `${index}`,
   terminalIds: [`${index}`],
   activeTerminalId: `${index}`,
+  layout: paneLayout(`${index}`),
 }));
 
 describe("RightPanelTabs", () => {

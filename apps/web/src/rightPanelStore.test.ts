@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { useClosedViewStore } from "./closedViewStore";
 import { reopenClosedView } from "./reopenClosedView";
+import { paneLayout } from "./terminalPaneLayout";
 import {
   hostRightPanel,
   migratePersistedRightPanelState,
@@ -549,7 +550,17 @@ describe("rightPanelStore", () => {
           "env-1:thread-A": {
             isOpen: true,
             activeSurfaceId: "terminal:term-1",
-            surfaces: [{ id: "terminal:term-1", kind: "terminal", resourceId: "term-1" }],
+            surfaces: [
+              { id: "terminal:term-1", kind: "terminal", resourceId: "term-1" },
+              {
+                id: "terminal:term-2",
+                kind: "terminal",
+                resourceId: "term-2",
+                terminalIds: ["term-2", "term-3"],
+                activeTerminalId: "term-3",
+                splitDirection: "vertical",
+              },
+            ],
           },
         },
       }),
@@ -565,6 +576,20 @@ describe("rightPanelStore", () => {
               resourceId: "term-1",
               terminalIds: ["term-1"],
               activeTerminalId: "term-1",
+              layout: paneLayout("term-1"),
+            },
+            {
+              id: "terminal:term-2",
+              kind: "terminal",
+              resourceId: "term-2",
+              terminalIds: ["term-2", "term-3"],
+              activeTerminalId: "term-3",
+              splitDirection: "vertical",
+              layout: {
+                kind: "split",
+                direction: "vertical",
+                children: [paneLayout("term-2"), paneLayout("term-3")],
+              },
             },
           ],
         },
@@ -1164,6 +1189,11 @@ describe("rightPanelStore", () => {
       resourceId: "term-1",
       terminalIds: ["term-1", "term-2"],
       activeTerminalId: "term-2",
+      layout: {
+        kind: "split",
+        direction: "horizontal",
+        children: [paneLayout("term-1"), paneLayout("term-2")],
+      },
     });
 
     useRightPanelStore.getState().activateTerminal(refA, "terminal:term-1", "term-1");
@@ -1174,6 +1204,7 @@ describe("rightPanelStore", () => {
       resourceId: "term-1",
       terminalIds: ["term-2"],
       activeTerminalId: "term-2",
+      layout: paneLayout("term-2"),
     });
   });
 
