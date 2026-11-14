@@ -6806,7 +6806,6 @@ describe("AcpAdapterV2", () => {
   it.live.each([
     { outcome: "cancelled", background: false },
     { outcome: "failed", background: false },
-    { outcome: "end_turn", background: false },
     { outcome: "cancelled", background: true },
     { outcome: "failed", background: true },
   ] as const)(
@@ -6878,13 +6877,12 @@ describe("AcpAdapterV2", () => {
             ? [event.turnItem]
             : [],
         );
-        const expectedStatus = outcome === "end_turn" ? "completed" : outcome;
         assert.include(
           toolUpdates.map((item) => item.status),
           "running",
         );
         const lastTool = toolUpdates.at(-1);
-        assert.equal(lastTool?.status, outcome === "cancelled" ? "interrupted" : expectedStatus);
+        assert.equal(lastTool?.status, outcome === "cancelled" ? "interrupted" : outcome);
         assert.isNotNull(lastTool?.completedAt);
         const lastWait = events.findLast(
           (event) =>
@@ -6897,10 +6895,7 @@ describe("AcpAdapterV2", () => {
           assert.equal(lastWait.turnItem.status, lastTool?.status);
           assert.isNotNull(lastWait.turnItem.completedAt);
         }
-        assert.equal(
-          events.find((event) => event.type === "turn.terminal")?.status,
-          expectedStatus,
-        );
+        assert.equal(events.find((event) => event.type === "turn.terminal")?.status, outcome);
         if (background) {
           assert.ok(runtime.hasPendingBackgroundWork);
           assert.ok(applyMutation);

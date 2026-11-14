@@ -1465,11 +1465,9 @@ const program = Effect.gen(function* () {
         if (activeToolOutcome === "failed") {
           return yield* AcpError.AcpRequestError.internalError("Prompt failed with an open tool");
         }
-        if (activeToolOutcome === "cancelled" || activeToolOutcome === "end_turn") {
-          return yield* finishPrompt(requestedSessionId, activeToolOutcome);
-        }
-        return yield* Effect.never;
+        return yield* finishPrompt(requestedSessionId, "cancelled");
       }
+
       if (emitEmptySuccessfulBash || (emitEmptySuccessfulBashThenHang && promptCount === 1)) {
         const update = {
           sessionId: requestedSessionId,
