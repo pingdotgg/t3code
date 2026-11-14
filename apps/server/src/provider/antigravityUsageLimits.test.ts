@@ -63,6 +63,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     tokenStatus?: number;
     refreshToken?: string;
     userId?: string;
+    omitUserEmail?: boolean;
     userInfoAt?: number;
     missingToken?: boolean;
     authMethod?: "oauth-personal" | "oauth-business" | "gemini-api-key";
@@ -107,7 +108,10 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
         return HttpClientResponse.fromWeb(
           request,
           options.userId
-            ? Response.json({ id: options.userId, email: "someone@example.com" })
+            ? Response.json({
+                id: options.userId,
+                ...(options.omitUserEmail ? {} : { email: "someone@example.com" }),
+              })
             : Response.json({}, { status: 403 }),
         );
       }
@@ -588,7 +592,20 @@ describe("Antigravity subscription limits", () => {
       expect(machineA.credentialFingerprint).toMatch(/^[0-9a-f]{64}$/);
       expect(machineB.credentialFingerprint).toBe(machineA.credentialFingerprint);
       expect(otherAccount.credentialFingerprint).not.toBe(machineA.credentialFingerprint);
-      expect(JSON.stringify(machineA)).not.toMatch(/google-user-1|someone@example.com/);
+      expect(machineA.credentialEmail).toBe("someone@example.com");
+      expect(JSON.stringify(machineA)).not.toMatch(/google-user-1/);
+      const unidentified = yield* fixture({ refreshToken: "refresh-a" }).pipe(
+        Effect.flatMap((usage) => usage.probe),
+      );
+      expect(unidentified.credentialFingerprint).not.toBe(machineA.credentialFingerprint);
+      expect(unidentified.credentialEmail).toBeUndefined();
+      const idOnly = yield* fixture({
+        refreshToken: "refresh-c",
+        userId: "google-user-1",
+        omitUserEmail: true,
+      }).pipe(Effect.flatMap((usage) => usage.probe));
+      expect(idOnly.credentialFingerprint).toBe(machineA.credentialFingerprint);
+      expect(idOnly.credentialEmail).toBeUndefined();
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
