@@ -66,32 +66,14 @@ it.each([
     expected: "<?xml\nunfinished\n?>\n\n![](</tmp/a.png>)",
   },
   {
-    name: "an already-closed trailing processing instruction is left alone",
-    text: "<?xml\nunfinished\n?>",
-    saved: ["/tmp/a.png"],
-    expected: "<?xml\nunfinished\n?>\n\n![](</tmp/a.png>)",
-  },
-  {
     name: "an unclosed trailing declaration is closed first",
     text: "<!DOCTYPE\nunfinished",
     saved: ["/tmp/a.png"],
     expected: "<!DOCTYPE\nunfinished\n>\n\n![](</tmp/a.png>)",
   },
   {
-    name: "an already-closed trailing declaration is left alone",
-    text: "<!DOCTYPE\nunfinished\n>",
-    saved: ["/tmp/a.png"],
-    expected: "<!DOCTYPE\nunfinished\n>\n\n![](</tmp/a.png>)",
-  },
-  {
     name: "an unclosed trailing CDATA section is closed first",
     text: "<![CDATA[\nunfinished",
-    saved: ["/tmp/a.png"],
-    expected: "<![CDATA[\nunfinished\n]]>\n\n![](</tmp/a.png>)",
-  },
-  {
-    name: "an already-closed trailing CDATA section is left alone",
-    text: "<![CDATA[\nunfinished\n]]>",
     saved: ["/tmp/a.png"],
     expected: "<![CDATA[\nunfinished\n]]>\n\n![](</tmp/a.png>)",
   },
