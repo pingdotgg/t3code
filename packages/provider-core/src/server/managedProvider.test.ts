@@ -1015,7 +1015,7 @@ describe("makeManagedServerProvider", () => {
           windows: [{ ...weekly }],
         });
         assert.strictEqual(yield* provider.getSnapshot, partial);
-        assert.deepStrictEqual((yield* provider.refresh).usageLimits, failedLimits);
+        assert.deepStrictEqual((yield* provider.refresh).usageLimits, partial.usageLimits);
 
         const completeLimits = {
           checkedAt: "2026-04-10T00:00:04.000Z",
