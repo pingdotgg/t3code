@@ -12,6 +12,7 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import { gitEnv } from "../../../tools/sealed-env.mjs";
 
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const { McpSession } = await import(
@@ -88,14 +89,14 @@ const sample = (label, pid) => {
 
 NodeFS.mkdirSync(state, { recursive: true });
 NodeFS.mkdirSync(workspace);
-NodeChildProcess.execFileSync("git", ["init", "-q", "-b", "main"], { cwd: workspace });
+NodeChildProcess.execFileSync("git", ["init", "-q", "-b", "main"], { cwd: workspace, env: gitEnv() });
 NodeFS.writeFileSync(NodePath.join(workspace, "README.md"), "# workspace\n");
-NodeChildProcess.execFileSync("git", ["add", "."], { cwd: workspace });
+NodeChildProcess.execFileSync("git", ["add", "."], { cwd: workspace, env: gitEnv() });
 NodeChildProcess.execFileSync(
   "git",
   ["-c", "user.name=m", "-c", "user.email=m@example.com", "-c", "commit.gpgsign=false"]
     .concat(["commit", "-qm", "init"]),
-  { cwd: workspace },
+  { cwd: workspace, env: gitEnv() },
 );
 
 const server = NodeChildProcess.spawn(

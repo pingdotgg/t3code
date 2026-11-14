@@ -14,6 +14,7 @@ import * as NodePath from "node:path";
 
 import { McpSession, oauthMcpToken, pairBearer } from "./mcp-client.mjs";
 import { monorepo } from "../../../tools/monorepo.mjs";
+import { gitEnv } from "../../../tools/sealed-env.mjs";
 
 const argv = process.argv.slice(2);
 const noModel = !argv.includes("--model");
@@ -44,11 +45,11 @@ process.once("exit", () => {
 function scratchProject(name) {
   const dir = NodePath.join(root, name, "parity");
   NodeFS.mkdirSync(dir, { recursive: true });
-  NodeChildProcess.execFileSync("git", ["init", "-q"], { cwd: dir });
+  NodeChildProcess.execFileSync("git", ["init", "-q"], { cwd: dir, env: gitEnv() });
   NodeChildProcess.execFileSync(
     "git",
     ["-c", "user.name=p", "-c", "user.email=p@p", "commit", "-q", "--allow-empty", "-m", "init"],
-    { cwd: dir },
+    { cwd: dir, env: gitEnv() },
   );
   return dir;
 }
@@ -93,6 +94,8 @@ async function startTs() {
   const project = scratchProject("ts");
   const base = NodePath.join(root, "ts", "base");
   NodeFS.mkdirSync(base);
+  const tsHome = NodePath.join(root, "ts", "home");
+  NodeFS.mkdirSync(tsHome);
   const port = await freePort();
   const node = process.execPath;
   const { origin, code } = await start(
@@ -112,18 +115,20 @@ async function startTs() {
     {
       cwd: project,
       env: {
-        HOME: NodeOS.homedir(),
+        // Without --model, a throwaway HOME and no folder of user tools on PATH: the T3
+        // server's provider probes then find no CLI, login or setting of this machine.
+        // `--model` runs one real Haiku turn, which needs the real `claude` and its login.
+        HOME: noModel ? tsHome : NodeOS.homedir(), // canary: allow (--model only)
         USER: NodeOS.userInfo().username,
         PATH: [
           NodePath.dirname(node),
-          NodePath.join(NodeOS.homedir(), ".local/bin"),
-          "/opt/homebrew/bin",
-          "/usr/local/bin",
+          ...(noModel ? [] : [NodePath.join(NodeOS.homedir(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"]),
           "/usr/bin",
           "/bin",
         ].join(":"),
         T3CODE_HOME: base,
         T3CODE_NO_BROWSER: "1",
+        SHELL: "/bin/sh",
       },
     },
     port,

@@ -13,7 +13,27 @@ cd "$repo" || exit 1
 
 release="$repo/target/release"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/conn-check.XXXXXX")"
-trap 'rm -rf "$scratch"' EXIT
+
+# The canary (tools/canary.mjs): every check runs with a decoy HOME, marker variables in the
+# shell, a stand-in SHELL and a TMPDIR the canary watches. The last check fails when a check
+# read a decoy file, changed the decoy home, or let a marker reach its output or a file.
+# Cargo and rustup keep their real folders, named here before HOME changes.
+export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+canary="$(mktemp -d /tmp/conn-canary.XXXXXX)"
+canary_log="$canary/output.log"
+canary_watch=""
+cleanup() {
+  [ -n "$canary_watch" ] && kill "$canary_watch" 2>/dev/null
+  rm -rf "$scratch" "$canary"
+}
+trap cleanup EXIT
+node tools/canary.mjs setup "$canary" || exit 1
+# shellcheck source=/dev/null
+. "$canary/env.sh"
+: >"$canary_log"
+node tools/canary.mjs watch "$canary" &
+canary_watch=$!
 
 passed=()
 failed=()
@@ -26,8 +46,10 @@ run() {
   local name="$1"
   shift
   printf '\n==> %s\n' "$name"
-  local started=$SECONDS
-  if "$@"; then
+  local started=$SECONDS status
+  "$@" 2>&1 | tee -a "$canary_log"
+  status=${PIPESTATUS[0]}
+  if [ "$status" -eq 0 ]; then
     passed+=("$name")
     printf 'ok %s\n' "$name" >>"$summary"
     printf '<== ok    %s (%ss)\n' "$name" $((SECONDS - started))
@@ -173,6 +195,12 @@ fi
 # orbit-flow needs no monorepo.
 run "orbit-flow (fake provider)" \
   node crates/conn-server/tools/orbit-flow.mjs "$release/examples/replay_server"
+
+# The canary goes last: it reads what every check above left.
+touch "$canary/stop"
+wait "$canary_watch"
+canary_watch=""
+run "canary" node tools/canary.mjs verify "$canary" "$canary_log" "$scratch"
 
 printf '\n== Summary\n'
 printf 'passed  %d\n' "${#passed[@]}"

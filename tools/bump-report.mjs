@@ -23,6 +23,7 @@ import * as NodePath from "node:path";
 
 import { repoRoot } from "./monorepo.mjs";
 import { binaryCoverage, registeredTags, servedCount as countOf } from "./served.mjs";
+import { gitEnv } from "./sealed-env.mjs";
 
 const args = process.argv.slice(2);
 
@@ -79,6 +80,7 @@ const git = (...gitArgs) => {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       maxBuffer: 64 * 1024 * 1024,
+      env: gitEnv(),
     });
   } catch {
     return undefined;

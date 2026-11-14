@@ -137,7 +137,9 @@ async function startServer(name = "project", prepare) {
   const port = await freePort();
   // env -i: the service launcher IPC channel of an outer T3 must not leak in.
   const env = {
-    HOME: NodeOS.homedir(),
+    // The real HOME: the recorder drives live turns on the real `claude` and its login. It
+    // is a manual tool, never run by tools/check.sh.
+    HOME: NodeOS.homedir(), // canary: allow (live recorder)
     USER: NodeOS.userInfo().username,
     PATH: [
       NodePath.dirname(process.execPath),

@@ -27,6 +27,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo, repoRoot } from "../../../tools/monorepo.mjs";
+import { sealedCargoEnv, sealedNodeEnv } from "../../../tools/sealed-env.mjs";
 
 const MONOREPO = monorepo();
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -713,6 +714,8 @@ try {
   tsStatus = NodeChildProcess.spawnSync("vp", ["test", "run", NodePath.relative(server, testFile)], {
     cwd: server,
     stdio: ["ignore", "inherit", "inherit"],
+    // Sealed: T3's code and the stub it starts get a throwaway HOME and only what node needs.
+    env: sealedNodeEnv(NodePath.join(work, "ts-env")),
   }).status;
 } finally {
   NodeFS.rmSync(testFile, { force: true });
@@ -729,7 +732,8 @@ if (tsStatus !== 0) {
 const rust = NodeChildProcess.spawnSync(
   "cargo",
   ["run", "--quiet", "-p", "conn-provider-codex", "--example", "conformance", "--", NodePath.join(work, "plan.json")],
-  { cwd: repoRoot, stdio: ["ignore", "inherit", "inherit"] },
+  // Sealed: the example and the stub it starts get a throwaway HOME; cargo keeps its folders.
+  { cwd: repoRoot, stdio: ["ignore", "inherit", "inherit"], env: sealedCargoEnv(NodePath.join(work, "rust-env")) },
 );
 // A Rust call that failed is reported by the example and shows as a difference below.
 const rustFailed = rust.status !== 0;

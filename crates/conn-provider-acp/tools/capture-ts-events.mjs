@@ -63,6 +63,7 @@ import * as Stream from "effect/Stream";
 import { ${harness.name} as HARNESS } from "../Adapters/${harness.file}";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import { itRunsReplayFixtures, runReplayFixture } from "./ProviderReplayFixtures.ts";
+import { gitEnv } from "../../../tools/sealed-env.mjs";
 
 const OUT = __OUT__;
 const ONLY: ReadonlyArray<string> = __ONLY__;
@@ -165,7 +166,7 @@ const testkit = NodePath.join(server, "src/orchestration-v2/testkit");
 const testFile = NodePath.join(testkit, `ConnAcpCapture${flavor}.${process.pid}.tmp.test.ts`);
 const scenarios = readScenarios(flavor, harness.transcript).filter((s) => only.length === 0 || only.includes(s.name));
 const out = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-acp-capture-"));
-const head = NodeChildProcess.execFileSync("git", ["-C", MONOREPO, "rev-parse", "--short", "HEAD"])
+const head = NodeChildProcess.execFileSync("git", ["-C", MONOREPO, "rev-parse", "--short", "HEAD"], { env: gitEnv() })
   .toString()
   .trim();
 const capturedOn = new Date().toISOString().slice(0, 10);

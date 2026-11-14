@@ -14,6 +14,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 
 import { importSource, packageImporter } from "../../../tools/monorepo.mjs";
+import { sealedEnvTemp } from "../../../tools/sealed-env.mjs";
 
 const load = packageImporter("apps/server");
 const Effect = await load("effect/Effect");
@@ -399,7 +400,12 @@ verify("unicode prefix exact", { ...github, prefix: "é=" }, [["x-hub-signature-
 // ---- Run ---------------------------------------------------------------------------------
 
 const input = cases.map(({ input }) => JSON.stringify(input)).join("\n");
-const child = NodeChildProcess.spawnSync(binary, [], { input: `${input}\n`, encoding: "utf8", maxBuffer: 64 << 20 });
+const child = NodeChildProcess.spawnSync(binary, [], {
+  input: `${input}\n`,
+  encoding: "utf8",
+  maxBuffer: 64 << 20,
+  env: sealedEnvTemp(),
+});
 if (child.status !== 0) {
   console.error(child.stderr);
   throw new Error(`${binary} exited with ${child.status}`);

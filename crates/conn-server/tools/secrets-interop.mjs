@@ -16,6 +16,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { importSource, packageImporter } from "../../../tools/monorepo.mjs";
+import { sealedEnv } from "../../../tools/sealed-env.mjs";
 
 const loadServer = packageImporter("apps/server");
 const loadContracts = packageImporter("packages/contracts");
@@ -191,6 +192,7 @@ function connReads(home, tag) {
   const run = NodeChildProcess.spawnSync(reader, [home.state], {
     input: JSON.stringify(expectedSecrets(tag)),
     encoding: "utf8",
+    env: sealedEnv(home.base),
   });
   return run.status === 0 ? [] : [`conn-server reads: ${run.stdout.trim() || run.stderr.trim()}`];
 }
@@ -204,6 +206,7 @@ async function withConn(home, use) {
   const server = NodeChildProcess.spawn(binary, ["--listen", "127.0.0.1:0", "--state-dir", home.state], {
     cwd: home.base,
     stdio: ["ignore", "pipe", "pipe"],
+    env: sealedEnv(home.base),
   });
   const stderr = [];
   server.stderr.on("data", (d) => stderr.push(String(d)));
