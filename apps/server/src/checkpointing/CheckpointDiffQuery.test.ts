@@ -300,7 +300,7 @@ it.effect("shares the turn and full-thread diff budget across real Git batches",
       turnPatchSizes.reduce((sum, size) => sum + size, 0),
       10_000_001,
     );
-  }).pipe(Effect.provide(layerTest), Effect.scoped),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("truncates a storage-cut UTF-8 character without replacement text", () => {

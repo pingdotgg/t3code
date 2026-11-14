@@ -11,6 +11,7 @@ import { PdfPreview } from "../../components/PdfPreview";
 import { ControlPill } from "../../components/ui/ControlPill";
 import { useHardwareBack } from "../../lib/backHandler";
 import { isPdfPreviewUri } from "../../lib/pdfPreview";
+import { webViewDecelerationRate } from "../../lib/webViewDecelerationRate";
 import { useContentTopInset } from "../../components/ui/useBarInset";
 
 export function WorkspaceFileWebPreview(props: { readonly uri: string | null }) {
@@ -58,9 +59,11 @@ function DocumentWebPreview(props: { readonly uri: string }) {
           source={{ uri: props.uri }}
           // react-native-webview defaults to "never", which starts the page under the header.
           contentInsetAdjustmentBehavior="automatic"
+          decelerationRate={webViewDecelerationRate}
           originWhitelist={["*"]}
           allowsBackForwardNavigationGestures
           allowsFullscreenVideo
+          allowsInlineMediaPlayback
           setSupportMultipleWindows={false}
           onShouldStartLoadWithRequest={(request) => {
             if (request.isTopFrame !== false && isPdfPreviewUri(request.url)) {
