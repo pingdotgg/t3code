@@ -39,6 +39,7 @@ import {
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
+import { scheduledTaskEditPatch } from "@t3tools/client-runtime/scheduled-task-edit";
 import { useRef, useState, type ReactNode } from "react";
 import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -711,6 +712,10 @@ function TaskForm({
     label: "scheduled task upsert",
     reportFailure: false,
   });
+  const update = useAtomCommand(serverEnvironment.updateScheduledTask, {
+    label: "scheduled task update",
+    reportFailure: false,
+  });
   const submissionPending = useRef(false);
   const [timePickerOpen, setTimePickerOpen] = useState(false);
   const [runAtPicker, setRunAtPicker] = useState<"date" | "time" | null>(null);
@@ -733,6 +738,7 @@ function TaskForm({
     config?.environment.capabilities.oneTimeSchedules === true ||
     draft.task?.schedule.type === "once";
   const offersThreadModes = config?.environment.capabilities.scheduledTaskThreadModes === true;
+  const offersUpdate = config?.environment.capabilities.scheduledTaskUpdate === true;
   const save = async () => {
     const current = readEditor();
     if (!current || current.environmentId !== environmentId) return;
@@ -828,7 +834,11 @@ function TaskForm({
     };
     submissionPending.current = true;
     setSaving(true);
-    const result = await upsert({ environmentId, input });
+    // An edit sends only the fields this form changed, so it keeps edits made elsewhere since.
+    const result =
+      draft.task !== null && offersUpdate
+        ? await update({ environmentId, input: scheduledTaskEditPatch(draft.task, input) })
+        : await upsert({ environmentId, input });
     setSaving(false);
     if (result._tag === "Failure") {
       submissionPending.current = false;
