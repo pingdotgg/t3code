@@ -4013,12 +4013,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* rearmDeferredFinalize(context);
             return;
           }
-          if (backgroundTaskId !== undefined) {
+          if (backgroundTaskId !== undefined && projectedStatus === undefined) {
             context.toolCallIdsByBackgroundTaskId.set(backgroundTaskId, toolCall.toolCallId);
             if (flavor.isPersistentBackgroundTool?.(toolCall) === true) {
               context.persistentBackgroundTaskIds.add(backgroundTaskId);
             }
-            const backgroundStatus = projectedStatus ?? toolStatus(toolCall.status);
+            const backgroundStatus = toolStatus(toolCall.status);
             yield* setBackgroundTaskRunning(
               backgroundTaskId,
               backgroundStatus === "pending" || backgroundStatus === "running",
@@ -7729,12 +7729,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         const terminalizeOpenRunOwnedItems = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
-          options: { readonly terminalizeSubagents: boolean },
+          options: {
+            readonly terminalizeSubagents: boolean;
+            readonly toolStatus: "interrupted" | "failed";
+          },
         ) {
           for (const tool of context.tools.values()) {
             const status = toolStatus(tool.status);
             if (status === "pending" || status === "running" || status === "waiting") {
-              yield* emitTool(context, tool, "interrupted");
+              yield* emitTool(context, tool, options.toolStatus);
             }
           }
           if (!options.terminalizeSubagents) return;
@@ -7839,9 +7842,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (settledStatus === "completed") {
             yield* terminalizeOpenForegroundTools(context);
-          } else if (settledStatus === "interrupted") {
+          } else if (options?.childTurnsContinue !== true) {
             yield* terminalizeOpenRunOwnedItems(context, {
               terminalizeSubagents: directStopQuarantine,
+              toolStatus: settledStatus === "failed" ? "failed" : "interrupted",
             });
           }
           yield* closeTextStreams(context);
