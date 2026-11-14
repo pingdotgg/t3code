@@ -7,12 +7,15 @@ import { describe, expect, it } from "@effect/vitest";
 import Constants from "expo-constants";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { Cookies, FetchHttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 import * as Dpop from "../cloud/dpop";
 import * as ManagedRelayLayer from "../cloud/managedRelayLayer";
@@ -20,12 +23,15 @@ import {
   clearAgentAwarenessRegistrationRecord,
   loadAgentAwarenessRegistrationRecord,
   loadOrCreateAgentAwarenessDeviceId,
+  loadPreferences,
   saveAgentAwarenessRegistrationRecord,
 } from "../../persistence/imperative";
+import type { Preferences } from "../../persistence/mobile-preferences";
 import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
 import {
   __resetAgentAwarenessRemoteRegistrationForTest,
   getAgentAwarenessRegistrationStatus,
+  refreshActiveLiveActivityRemoteRegistration,
   refreshAgentAwarenessRegistration,
   registerLiveActivityPushToken,
   releaseAgentAwarenessRelayTokenProvider,
@@ -49,6 +55,7 @@ const widgetMocks = vi.hoisted(() => ({
   getInstances: vi.fn(() => []),
   start: vi.fn(() => ({})),
 }));
+const publishWidgetMock = vi.hoisted(() => vi.fn((_source: unknown) => Promise.resolve()));
 const environmentConfigsMock = vi.hoisted(() => ({
   configs: new Map<
     string,
@@ -85,6 +92,10 @@ vi.mock("expo-widgets", () => ({
   addPushToStartTokenListener: vi.fn(() => ({ remove: vi.fn() })),
 }));
 
+vi.mock("../../widgets/publishAgentActivityWidget", () => ({
+  publishAgentActivityWidget: publishWidgetMock,
+}));
+
 vi.mock("./agentLiveActivity", () => ({
   dismissEndedAgentLiveActivities: widgetMocks.dismissEnded,
   getAgentLiveActivities: widgetMocks.getInstances,
@@ -103,6 +114,8 @@ vi.mock("../../state/server", () => ({
 }));
 
 vi.mock("expo-notifications", () => ({
+  AndroidImportance: { NONE: 0, HIGH: 4 },
+  getNotificationChannelAsync: vi.fn(() => Promise.resolve(null)),
   addPushTokenListener: vi.fn(() => ({ remove: vi.fn() })),
   getDevicePushTokenAsync: vi.fn(() => Promise.resolve({ type: "ios", data: "apns-token" })),
   getPermissionsAsync: vi.fn(() => Promise.resolve({ granted: true })),
@@ -127,6 +140,12 @@ vi.mock("expo-crypto", () => ({
     );
   },
 }));
+
+vi.mock("expo", async () => {
+  const { createNodeDpopKeysModule } = await import("../cloud/dpop.testing");
+  const dpopKeys = createNodeDpopKeysModule();
+  return { requireNativeModule: () => dpopKeys };
+});
 
 vi.mock("expo-secure-store", () => ({
   getItemAsync: (key: string) => Promise.resolve(secureStore.get(key) ?? null),
@@ -237,6 +256,11 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       type: "ios",
       data: "apns-token",
     });
+    vi.mocked(Notifications.getPermissionsAsync).mockReset();
+    vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({
+      granted: true,
+    } as Awaited<ReturnType<typeof Notifications.getPermissionsAsync>>);
+    vi.mocked(Notifications.getNotificationChannelAsync).mockResolvedValue(null);
     vi.unstubAllGlobals();
     vi.stubGlobal("__DEV__", false);
     secureStore.clear();
@@ -249,9 +273,11 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     vi.mocked(loadAgentAwarenessRegistrationRecord).mockClear();
     vi.mocked(clearAgentAwarenessRegistrationRecord).mockClear();
     vi.mocked(loadOrCreateAgentAwarenessDeviceId).mockResolvedValue("device-1");
+    vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: false });
     widgetMocks.getInstances.mockReset();
     widgetMocks.getInstances.mockReturnValue([]);
     widgetMocks.start.mockClear();
+    publishWidgetMock.mockClear();
     widgetMocks.dismissEnded.mockReset();
     environmentConfigsMock.configs.clear();
   });
@@ -520,12 +546,14 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     return Effect.gen(function* () {
       yield* runBackgroundOperations();
 
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      const [request, init] = fetchMock.mock.calls[1] as unknown as [
-        unknown,
-        RequestInit | undefined,
-      ];
-      const url = request instanceof Request ? request.url : String(request);
+      const requestUrl = (request: unknown) =>
+        request instanceof Request ? request.url : String(request);
+      const deviceCalls = fetchMock.mock.calls.filter(([request]) =>
+        requestUrl(request).endsWith("/v1/mobile/devices"),
+      );
+      expect(deviceCalls).toHaveLength(1);
+      const [request, init] = deviceCalls[0] as unknown as [unknown, RequestInit | undefined];
+      const url = requestUrl(request);
       const method = request instanceof Request ? request.method : init?.method;
       const headers = request instanceof Request ? request.headers : new Headers(init?.headers);
       const dpop = headers.get("dpop");
@@ -597,8 +625,11 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       },
     };
 
+    // Sign-in first reads the widget snapshot, then registers the device; fail
+    // both lookups so the queued registration is the one that must recover.
     const tokenProvider = vi
       .fn<() => Promise<string | null>>()
+      .mockRejectedValueOnce(new Error("auth unavailable"))
       .mockRejectedValueOnce(new Error("auth unavailable"))
       .mockResolvedValue("clerk-token-user-a");
     setAgentAwarenessRelayTokenProvider(tokenProvider);
@@ -610,13 +641,14 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       yield* runBackgroundOperations();
 
       expect(backgroundRuntime.pending).toHaveLength(0);
-      expect(tokenProvider).toHaveBeenCalledTimes(2);
+      expect(tokenProvider).toHaveBeenCalledTimes(3);
     }).pipe(Effect.provide(layerRelayTest));
   });
 
   it.effect.each(["ios", "android"] as const)(
     "does not enable %s notifications when a token rotates after permission is revoked",
     (os) => {
+      vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: true });
       vi.spyOn(Platform, "OS", "get").mockReturnValue(os);
       vi.spyOn(Platform, "Version", "get").mockReturnValue(os === "ios" ? 18 : 36);
       vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
@@ -643,7 +675,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       return Effect.gen(function* () {
         yield* runBackgroundOperations();
         expect(registrations.at(-1)).toMatchObject({
-          preferences: { notificationsEnabled: true },
+          preferences: { notificationsEnabled: true, liveActivitiesEnabled: true },
         });
         vi.mocked(Notifications.getPermissionsAsync).mockResolvedValueOnce({
           granted: false,
@@ -652,9 +684,21 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         listener({ type: os, data: "rotated" });
         yield* runBackgroundOperations();
         expect(registrations.at(-1)).toMatchObject({
-          preferences: { notificationsEnabled: false },
+          preferences: { notificationsEnabled: false, liveActivitiesEnabled: os === "ios" },
         });
-        expect(registrations.at(-1)).not.toHaveProperty("pushToken");
+        if (os === "android") {
+          expect(registrations.at(-1)).toMatchObject({ pushToken: "rotated" });
+          vi.mocked(Notifications.getPermissionsAsync).mockResolvedValueOnce({
+            granted: false,
+          } as Awaited<ReturnType<typeof Notifications.getPermissionsAsync>>);
+          yield* refreshAgentAwarenessRegistration();
+          expect(registrations.at(-1)).toMatchObject({
+            pushToken: "initial",
+            preferences: { notificationsEnabled: false, liveActivitiesEnabled: false },
+          });
+        } else {
+          expect(registrations.at(-1)).not.toHaveProperty("pushToken");
+        }
       }).pipe(
         Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
         Effect.provide(
@@ -662,6 +706,71 @@ describe("makeRelayDeviceRegistrationRequest", () => {
             Layer.provide(Layer.mergeAll(FetchHttpClient.layer, Dpop.layer)),
           ),
         ),
+      );
+    },
+  );
+  it.effect.each(["blocked", "unavailable"] as const)(
+    "keeps Android push delivery registered when the alert channel is %s",
+    (channelState) => {
+      vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: true });
+      vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
+      vi.spyOn(Platform, "Version", "get").mockReturnValue(36);
+      vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
+        type: "android",
+        data: "fcm-token",
+      });
+      vi.mocked(Notifications.getNotificationChannelAsync).mockResolvedValue({
+        id: "agent-alerts",
+        name: "Agent alerts",
+        importance: Notifications.AndroidImportance.NONE,
+      } as Awaited<ReturnType<typeof Notifications.getNotificationChannelAsync>>);
+      if (channelState === "unavailable") {
+        vi.mocked(Notifications.getNotificationChannelAsync).mockRejectedValue(
+          new Error("Android channel lookup failed"),
+        );
+      }
+      const registrations: unknown[] = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        if (request.url.endsWith("/v1/client/dpop-token")) {
+          return Response.json({
+            access_token: "dpop",
+            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+            token_type: "DPoP",
+            expires_in: 300,
+            scope: "mobile:registration",
+          });
+        }
+        registrations.push(await request.json());
+        return Response.json({ ok: true });
+      });
+      Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test" } };
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk"), "user-a");
+      return Effect.gen(function* () {
+        yield* runBackgroundOperations();
+        expect(registrations.at(-1)).toMatchObject({
+          pushToken: "fcm-token",
+          preferences: { notificationsEnabled: false, liveActivitiesEnabled: true },
+        });
+        expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+
+        const listener = vi.mocked(Notifications.addPushTokenListener).mock.calls.at(-1)![0];
+        listener({ type: "android", data: "rotated-fcm-token" });
+        yield* runBackgroundOperations();
+        expect(registrations.at(-1)).toMatchObject({
+          pushToken: "rotated-fcm-token",
+          preferences: { notificationsEnabled: false, liveActivitiesEnabled: true },
+        });
+
+        vi.mocked(Notifications.getNotificationChannelAsync).mockResolvedValue(null);
+        yield* refreshAgentAwarenessRegistration();
+        expect(registrations.at(-1)).toMatchObject({
+          pushToken: "fcm-token",
+          preferences: { notificationsEnabled: true },
+        });
+      }).pipe(
+        Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+        Effect.provide(layerRelayTest),
       );
     },
   );
@@ -728,4 +837,255 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       }).pipe(Effect.provide(layerRelayTest));
     },
   );
+
+  describe("home-screen widget", () => {
+    // These cover the widget path only, so keep the Live Activity from priming.
+    beforeEach(() => {
+      vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: false } as Preferences);
+    });
+
+    const aggregate: RelayAgentActivityAggregateState = {
+      title: "T3 Code",
+      subtitle: "Agent work in progress",
+      activeCount: 1,
+      updatedAt: "2026-10-18T10:00:00.000Z",
+      activities: [
+        {
+          environmentId: "env-1" as EnvironmentId,
+          threadId: "thread-1" as ThreadId,
+          projectTitle: "t3code",
+          threadTitle: "Fix the widget",
+          modelTitle: "GPT-5.5",
+          phase: "running",
+          status: "Working",
+          updatedAt: "2026-10-18T10:00:00.000Z",
+          deepLink: "/threads/env-1/thread-1",
+        },
+      ],
+    };
+
+    // The shared fetch-backed relay layer keeps the first test's fetch stub,
+    // so these tests answer the snapshot read through a fake client instead.
+    function fakeRelay(
+      getAgentActivitySnapshot: () => Effect.Effect<
+        { readonly aggregate: typeof aggregate },
+        ManagedRelay.ManagedRelayRequestFailedError
+      >,
+    ) {
+      Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+      const unexpected = () => Effect.die("Unexpected relay request");
+      return Layer.succeed(
+        ManagedRelay.ManagedRelayClient,
+        ManagedRelay.ManagedRelayClient.of({
+          relayUrl: "https://relay.example.test",
+          listEnvironments: unexpected,
+          listDevices: unexpected,
+          getT3ChatLink: unexpected,
+          createT3ChatLinkRequest: unexpected,
+          unlinkT3Chat: unexpected,
+          createEnvironmentLinkChallenge: unexpected,
+          linkEnvironment: unexpected,
+          unlinkEnvironment: unexpected,
+          getEnvironmentStatus: unexpected,
+          connectEnvironment: unexpected,
+          registerDevice: unexpected,
+          unregisterDevice: unexpected,
+          registerLiveActivity: unexpected,
+          getAgentActivitySnapshot,
+          resetTokenCache: Effect.void,
+        }),
+      );
+    }
+
+    it.effect("registers an existing Live Activity before waiting on the widget read", () => {
+      const order: Array<string> = [];
+      const activity = {
+        getId: () => "activity-1",
+        getPushToken: vi.fn(() => {
+          order.push("push-token");
+          return Promise.resolve(null);
+        }),
+        addPushTokenListener: vi.fn(),
+      };
+      widgetMocks.getInstances.mockReturnValue([activity] as never);
+      const relay = fakeRelay(() =>
+        Effect.sync(() => {
+          order.push("widget-snapshot");
+          return { aggregate };
+        }),
+      );
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+
+      return Effect.gen(function* () {
+        yield* refreshActiveLiveActivityRemoteRegistration();
+
+        expect(order).toEqual(["push-token", "widget-snapshot"]);
+        expect(publishWidgetMock).toHaveBeenLastCalledWith({
+          kind: "snapshot",
+          aggregate,
+        });
+      }).pipe(Effect.provide(relay));
+    });
+
+    it.effect("keeps the newest rows when an older overlapping read finishes last", () =>
+      Effect.gen(function* () {
+        const newer = { ...aggregate, activeCount: 2 };
+        const olderRequested = yield* Deferred.make<void>();
+        const olderResponse = yield* Deferred.make<{ readonly aggregate: typeof aggregate }>();
+        let reads = 0;
+        const relay = fakeRelay(() => {
+          reads++;
+          return reads === 1
+            ? Deferred.succeed(olderRequested, undefined).pipe(
+                Effect.andThen(Deferred.await(olderResponse)),
+              )
+            : Effect.succeed({ aggregate: newer });
+        });
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+
+        const older = yield* Effect.forkChild(
+          refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(relay)),
+        );
+        yield* Deferred.await(olderRequested);
+        yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(relay));
+        yield* Deferred.succeed(olderResponse, { aggregate });
+        yield* Fiber.join(older);
+
+        expect(publishWidgetMock).toHaveBeenLastCalledWith({
+          kind: "snapshot",
+          aggregate: newer,
+        });
+      }),
+    );
+
+    it.effect("an obsolete refresh does not discard the next account's read", () =>
+      Effect.gen(function* () {
+        let markTokenRequested = () => {};
+        const tokenRequested = new Promise<void>((resolve) => {
+          markTokenRequested = resolve;
+        });
+        let releaseToken = () => {};
+        widgetMocks.getInstances.mockReturnValueOnce([
+          {
+            getId: () => "activity-a",
+            getPushToken: () => {
+              markTokenRequested();
+              return new Promise<null>((resolve) => {
+                releaseToken = () => resolve(null);
+              });
+            },
+            addPushTokenListener: vi.fn(),
+          },
+        ] as never);
+        const requested = yield* Deferred.make<void>();
+        const response = yield* Deferred.make<{ readonly aggregate: typeof aggregate }>();
+        const relay = fakeRelay(() =>
+          Deferred.succeed(requested, undefined).pipe(Effect.andThen(Deferred.await(response))),
+        );
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-a"), "user-a");
+
+        const refreshA = yield* Effect.forkChild(
+          refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(relay)),
+        );
+        yield* Effect.promise(() => tokenRequested);
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-b"), "user-b");
+        const refreshB = yield* Effect.forkChild(
+          refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(relay)),
+        );
+        yield* Deferred.await(requested);
+        releaseToken();
+        yield* Fiber.join(refreshA);
+        yield* Deferred.succeed(response, { aggregate });
+        yield* Fiber.join(refreshB);
+
+        expect(publishWidgetMock).toHaveBeenLastCalledWith({
+          kind: "snapshot",
+          aggregate,
+        });
+      }),
+    );
+
+    it.effect("does not prime a Live Activity from a read a newer one replaced", () =>
+      Effect.gen(function* () {
+        let markRequested = () => {};
+        const requested = new Promise<void>((resolve) => {
+          markRequested = resolve;
+        });
+        let resolvePreferences = (_preferences: Preferences) => {};
+        vi.mocked(loadPreferences).mockImplementationOnce(() => {
+          markRequested();
+          return new Promise((resolve) => {
+            resolvePreferences = resolve;
+          });
+        });
+        const idle = { ...aggregate, activeCount: 0, activities: [] };
+        let reads = 0;
+        const relay = fakeRelay(() =>
+          Effect.succeed({ aggregate: ++reads === 1 ? aggregate : idle }),
+        );
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+
+        const older = yield* Effect.forkChild(
+          refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(relay)),
+        );
+        yield* Effect.promise(() => requested);
+        yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(relay));
+        resolvePreferences({ liveActivitiesEnabled: true } as Preferences);
+        yield* Fiber.join(older);
+
+        expect(widgetMocks.start).not.toHaveBeenCalled();
+      }),
+    );
+
+    it.effect("drops a snapshot that arrives after a sign-out, even on re-sign-in", () =>
+      Effect.gen(function* () {
+        const requested = yield* Deferred.make<void>();
+        const response = yield* Deferred.make<{ readonly aggregate: typeof aggregate }>();
+        const relay = fakeRelay(() =>
+          Deferred.succeed(requested, undefined).pipe(Effect.andThen(Deferred.await(response))),
+        );
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-a"), "user-a");
+
+        const refresh = yield* Effect.forkChild(
+          refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(relay)),
+        );
+        yield* Deferred.await(requested);
+        setAgentAwarenessRelayTokenProvider(null);
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-a"), "user-a");
+        publishWidgetMock.mockClear();
+        yield* Deferred.succeed(response, { aggregate });
+        yield* Fiber.join(refresh);
+
+        expect(publishWidgetMock).not.toHaveBeenCalled();
+      }),
+    );
+
+    it.effect("does not prime a Live Activity after sign-out during the preference read", () =>
+      Effect.gen(function* () {
+        let markRequested = () => {};
+        const requested = new Promise<void>((resolve) => {
+          markRequested = resolve;
+        });
+        let resolvePreferences = (_preferences: Preferences) => {};
+        vi.mocked(loadPreferences).mockImplementationOnce(() => {
+          markRequested();
+          return new Promise((resolve) => {
+            resolvePreferences = resolve;
+          });
+        });
+        const relay = fakeRelay(() => Effect.succeed({ aggregate }));
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+
+        const refresh = yield* Effect.forkChild(
+          refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(relay)),
+        );
+        yield* Effect.promise(() => requested);
+        setAgentAwarenessRelayTokenProvider(null);
+        resolvePreferences({ liveActivitiesEnabled: true } as Preferences);
+        yield* Fiber.join(refresh);
+
+        expect(widgetMocks.start).not.toHaveBeenCalled();
+      }),
+    );
+  });
 });
