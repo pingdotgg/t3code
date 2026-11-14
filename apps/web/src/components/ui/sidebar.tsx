@@ -30,6 +30,7 @@ import {
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
 import * as Schema from "effect/Schema";
 import { announceSidebarVisibility } from "~/lib/accessibilityAnnouncements";
+import { afterResizeObservers, liftSlideClips, slideTrackEdge } from "~/motion/slideTrack";
 
 const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing) * 3)";
@@ -141,15 +142,6 @@ function moveFocusOutOfCollapsingSidebar() {
 
 const SIDEBAR_SLIDE_ID = "sidebar-slide";
 
-// A `data-sidebar-slide-track` element goes straight from where it was to where it lands, whatever
-// the pane around it does: `end` holds a right-anchored element still, `center` follows a centered lane.
-function sidebarSlideEdge(element: HTMLElement): number {
-  const rect = element.getBoundingClientRect();
-  const track = element.dataset.sidebarSlideTrack;
-  if (track === "end") return rect.right;
-  return track === "center" ? (rect.left + rect.right) / 2 : rect.left;
-}
-
 function sidebarSlideTargets() {
   const scope = '[data-panel-animations="true"]';
   const containers = document.querySelectorAll<HTMLElement>(
@@ -173,7 +165,7 @@ function sidebarSlideTargets() {
         .filter((element) => spansSidebarInset(element, inset))
         .map((element) => ({ element, parent: inset, inset: false, tracked: true })),
     ]),
-  ].map((target) => ({ ...target, start: sidebarSlideEdge(target.element) }));
+  ].map((target) => ({ ...target, start: slideTrackEdge(target.element) }));
 }
 
 // Split panes still slide whole with the inset: the edge between two panes moves on its own.
@@ -187,23 +179,11 @@ function spansSidebarInset(element: HTMLElement, inset: HTMLElement) {
 function liftSidebarSlideClips(inset: HTMLElement, offset: number, elements: HTMLElement[]) {
   const insetStyle = getComputedStyle(inset);
   if (inset.scrollLeft !== 0 || inset.scrollTop !== 0) return () => {};
-  const lifted = new Set<HTMLElement>([inset]);
-  const walked = new Set<HTMLElement>();
-  for (const element of elements) {
-    for (let node = element.parentElement; node && node !== inset; node = node.parentElement) {
-      if (walked.has(node)) break;
-      walked.add(node);
-      const { overflowX, overflowY } = getComputedStyle(node);
-      const clips = overflowX === "hidden" || overflowX === "clip";
-      const scrolls = overflowY === "auto" || overflowY === "scroll";
-      if (clips && !scrolls && node.scrollLeft === 0 && node.scrollTop === 0) lifted.add(node);
-    }
-  }
+  const unlift = liftSlideClips(inset, elements);
   inset.style.clipPath = `inset(0 ${offset}px 0 0 round ${insetStyle.borderRadius})`;
-  for (const node of lifted) node.style.overflow = "visible";
   return () => {
     inset.style.removeProperty("clip-path");
-    for (const node of lifted) node.style.removeProperty("overflow");
+    unlift();
   };
 }
 
@@ -291,20 +271,6 @@ function cancelSidebarSlide(elements: Iterable<Element | null>) {
 let sidebarSlidePending = false;
 let restoreSidebarSlideClips: (() => void) | null = null;
 
-// After the app's resize observers commit what the new width moves (the chat lanes), before paint.
-function afterResizeObservers(callback: () => void) {
-  if (typeof ResizeObserver === "undefined") {
-    window.requestAnimationFrame(callback);
-    return;
-  }
-  // oxlint-disable-next-line t3code/no-raw-resize-observer -- No React state here: a fresh observer is delivered after the shared one, so it sees what that one committed.
-  const observer = new ResizeObserver(() => {
-    observer.disconnect();
-    callback();
-  });
-  observer.observe(document.documentElement);
-}
-
 function slideSidebar(commit: () => void) {
   if (sidebarSlidePending) {
     commit();
@@ -326,7 +292,7 @@ function slideSidebar(commit: () => void) {
       ...insets.flatMap((inset) => [inset.previousElementSibling, inset.nextElementSibling]),
     ]);
     const offsets = new Map(
-      targets.map(({ element, start }) => [element, start - sidebarSlideEdge(element)]),
+      targets.map(({ element, start }) => [element, start - slideTrackEdge(element)]),
     );
     const anchorStarts = anchors.map(({ element }) => element.getBoundingClientRect());
     const duration = Number.parseFloat(
@@ -357,7 +323,7 @@ function slideSidebar(commit: () => void) {
         if (!element.isConnected) continue;
         // Measured under its ancestors' slides: a transformed ancestor can become its containing
         // block until the slide ends, which moves where it lays out meanwhile.
-        const sliding = sidebarSlideEdge(element);
+        const sliding = slideTrackEdge(element);
         const from = start - sliding;
         const to = start - ownOffset - sliding + carried;
         if (Math.abs(from) < 0.5 && Math.abs(to) < 0.5) continue;
