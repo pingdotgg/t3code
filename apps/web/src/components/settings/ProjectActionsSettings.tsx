@@ -131,17 +131,6 @@ export function ProjectActionsSettings() {
         onResetOverride={() => void persist(() => null)}
         control={
           <div className="flex flex-wrap items-center gap-1.5">
-            {canSync ? (
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={saving || targets.length === 0}
-                onClick={() => setSyncOpen(true)}
-              >
-                <RefreshCwIcon />
-                Sync actions
-              </Button>
-            ) : null}
             {importableScripts.length > 0 ? (
               <Menu>
                 <MenuTrigger
@@ -208,6 +197,23 @@ export function ProjectActionsSettings() {
           onEdit={(script) => setRequest(editorRequestForScript(script, keybindings))}
         />
       )}
+      {canSync ? (
+        <SettingsRow
+          title="Copy actions between environments"
+          description="Choose a source checkout to replace the action lists on this project's other connected environments."
+          control={
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={saving || targets.length === 0}
+              onClick={() => setSyncOpen(true)}
+            >
+              <RefreshCwIcon />
+              Sync actions
+            </Button>
+          }
+        />
+      ) : null}
       {t3File.status === "invalid" ? (
         <SettingsRow
           title="t3.json is invalid"

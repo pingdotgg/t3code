@@ -63,6 +63,7 @@ export function useProjectScriptSettings(
   const projects = useProjects();
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const pendingShortcutRemovals = useRef(new Map<string, Set<string>>());
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, "project actions update");
   const upsertKeybinding = useAtomCommand(
     serverEnvironment.upsertKeybinding,
@@ -141,13 +142,21 @@ export function useProjectScriptSettings(
       });
       if (result._tag === "Failure") return reportScriptFailure(result, savedTargets);
       savedTargets += 1;
-      const changedIds = scriptId
-        ? [scriptId]
-        : current
-            .filter((script) => !effectiveScripts.some((next) => next.id === script.id))
-            .map((script) => script.id);
+      const targetKey = JSON.stringify([environmentId, project?.id ?? null]);
+      const pendingRemovals = pendingShortcutRemovals.current.get(targetKey) ?? new Set<string>();
+      for (const script of current) {
+        if (!effectiveScripts.some((next) => next.id === script.id)) pendingRemovals.add(script.id);
+      }
+      if (pendingRemovals.size > 0) {
+        pendingShortcutRemovals.current.set(targetKey, pendingRemovals);
+      }
+      const changedIds = new Set([...pendingRemovals, ...(scriptId ? [scriptId] : [])]);
       for (const id of changedIds) {
-        if (keybinding === undefined && effectiveScripts.some((script) => script.id === id)) {
+        if (
+          (id !== scriptId || keybinding === undefined) &&
+          effectiveScripts.some((script) => script.id === id)
+        ) {
+          pendingRemovals.delete(id);
           continue;
         }
         const command = commandForProjectScript(id);
@@ -155,7 +164,10 @@ export function useProjectScriptSettings(
         const previous = previousValue
           ? decodeProjectScriptKeybindingRule({ keybinding: previousValue, command })
           : null;
-        const next = decodeProjectScriptKeybindingRule({ keybinding, command });
+        const next = decodeProjectScriptKeybindingRule({
+          keybinding: id === scriptId ? keybinding : undefined,
+          command,
+        });
         const retainedElsewhere =
           !nextScripts?.some((script) => script.id === id) &&
           ((project && settings.defaultProjectScripts.some((script) => script.id === id)) ||
@@ -182,7 +194,9 @@ export function useProjectScriptSettings(
             : null;
         if (bindingResult?._tag === "Failure")
           return reportScriptFailure(bindingResult, savedTargets);
+        pendingRemovals.delete(id);
       }
+      if (pendingRemovals.size === 0) pendingShortcutRemovals.current.delete(targetKey);
     }
     return AsyncResult.success(undefined);
   }

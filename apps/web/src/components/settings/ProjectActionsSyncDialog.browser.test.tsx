@@ -2,6 +2,7 @@ import "~/index.css";
 
 import {
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
   ProjectId,
   type ProjectScript,
@@ -9,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -21,7 +22,11 @@ const state = vi.hoisted(() => ({
     environmentId: EnvironmentId;
     label: string;
     connection: { phase: "connected" | "disconnected" };
-    serverConfig: { settings: ServerSettings; keybindings: typeof DEFAULT_RESOLVED_KEYBINDINGS };
+    serverConfig: {
+      settings: ServerSettings;
+      keybindings: typeof DEFAULT_RESOLVED_KEYBINDINGS;
+      environment: { platform: { machine: "server" } };
+    };
   }[],
   projects: [] as SidebarProjectGroupMember[],
   writable: new Set<EnvironmentId>(),
@@ -34,15 +39,34 @@ const state = vi.hoisted(() => ({
 vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
   useEnvironments: (() => ({ environments: state.environments })) as never,
+  usePrimaryEnvironmentId: () => sourceId,
+  usePrimaryEnvironment: (() => state.environments[0] ?? null) as never,
 }));
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
   useProjects: () => state.projects,
+  useServerConfigs: (() =>
+    new Map(state.environments.map((entry) => [entry.environmentId, entry.serverConfig]))) as never,
 }));
 vi.mock(import("../../state/session"), async (original) => ({
   ...(await original()),
   useEnvironmentsWithScope: () => state.writable,
   readEnvironmentScope: (id: EnvironmentId) => state.writable.has(id),
+  useEnvironmentScope: (id: EnvironmentId | null) => id !== null && state.writable.has(id),
+}));
+vi.mock(import("../../hooks/useSettings"), async (original) => ({
+  ...(await original()),
+  usePrimarySettingsAvailable: () => true,
+  useClientSettings: ((selector?: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
+    selector ? selector(DEFAULT_CLIENT_SETTINGS) : DEFAULT_CLIENT_SETTINGS) as never,
+}));
+vi.mock(import("../files/projectFilesQueryState"), async (original) => ({
+  ...(await original()),
+  getProjectFileQueryAtom: () => missingProjectFile,
+}));
+vi.mock(import("../../hooks/useT3ProjectFileScripts"), async (original) => ({
+  ...(await original()),
+  useT3ProjectFileState: () => ({ status: "missing" as const, file: null, scripts: [] }),
 }));
 vi.mock(import("../../state/server"), async (original) => {
   const actual = await original();
@@ -67,11 +91,14 @@ vi.mock(import("../ui/toast"), async (original) => {
 });
 
 import { ProjectActionsSyncDialog } from "./ProjectActionsSyncDialog";
+import { ProjectActionsSettings } from "./ProjectActionsSettings";
+import { SettingsScopeProvider } from "./SettingsScopeContext";
 
 const sourceId = EnvironmentId.make("source");
 const destinationId = EnvironmentId.make("destination");
 const offlineId = EnvironmentId.make("offline");
 const projectId = ProjectId.make("same-project-id");
+const missingProjectFile = Atom.make(AsyncResult.initial<never, never>());
 const sourceScript: ProjectScript = {
   id: "source-dev",
   name: "Dev",
@@ -88,7 +115,14 @@ function setup() {
     environmentId,
     title: "Shared repo",
     workspaceRoot: `/work/${environmentId}/repo`,
-    repositoryIdentity: null,
+    repositoryIdentity: {
+      canonicalKey: "github.com/example/shared-repo",
+      locator: {
+        source: "git-remote",
+        remoteName: "origin",
+        remoteUrl: "https://github.com/example/shared-repo.git",
+      },
+    },
     defaultModelSelection: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -101,6 +135,7 @@ function setup() {
     label: environmentId,
     connection: { phase: environmentId === offlineId ? "disconnected" : "connected" },
     serverConfig: {
+      environment: { platform: { machine: "server" } },
       settings: {
         ...DEFAULT_SERVER_SETTINGS,
         projectSettingsOverrides: {
@@ -126,6 +161,37 @@ function setup() {
 }
 
 describe("ProjectActionsSyncDialog", () => {
+  it.each([sourceId, destinationId])("opens sync when %s is read-only", async (readOnlyId) => {
+    setup();
+    state.writable.delete(readOnlyId);
+    await using screen = await render(
+      <SettingsScopeProvider
+        search={{ project: "github.com/example/shared-repo" }}
+        onChange={vi.fn()}
+      >
+        <ProjectActionsSettings />
+      </SettingsScopeProvider>,
+    );
+    const sync = screen.getByRole("button", { name: "Sync actions", exact: true });
+    expect(sync.element().closest("[inert]")).toBeNull();
+    await userEvent.click(sync);
+    const dialog = page.getByRole("dialog", { name: "Sync actions" });
+    await expect.element(dialog).toBeVisible();
+    if (readOnlyId === destinationId) {
+      await expect
+        .element(dialog.getByRole("button", { name: "Sync actions", exact: true }))
+        .toBeDisabled();
+      expect(state.updateSettings).not.toHaveBeenCalled();
+      await userEvent.click(dialog.getByRole("combobox", { name: "Copy from" }));
+      await userEvent.click(page.getByRole("option", { name: "destination · repo" }));
+    }
+    await userEvent.click(dialog.getByRole("button", { name: "Sync actions", exact: true }));
+    await vi.waitFor(() => expect(state.updateSettings).toHaveBeenCalledOnce());
+    expect(state.updateSettings.mock.calls[0]![0].environmentId).toBe(
+      readOnlyId === sourceId ? destinationId : sourceId,
+    );
+  });
+
   it("copies the selected source to connected destinations without changing other settings", async () => {
     setup();
     const onClose = vi.fn();
