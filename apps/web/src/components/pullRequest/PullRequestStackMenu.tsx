@@ -29,6 +29,11 @@ import { PullRequestStackLayerContent } from "./PullRequestStackLayerContent";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { readableFailure } from "./pullRequestDetail.logic";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 export function PullRequestStackMenu({
   hostLabel,
   terminology,
@@ -99,7 +104,7 @@ export function PullRequestStackMenu({
     setConfirmation(null);
     const toastId = toastManager.add({
       type: "loading",
-      title: action === "merge" ? "Merging stack..." : "Rebasing stack...",
+      title: action === "merge" ? td("stack.merging") : td("stack.rebasing"),
     });
     const result = await runAction({
       environmentId,
@@ -117,7 +122,7 @@ export function PullRequestStackMenu({
     if (result._tag === "Failure") {
       toastManager.update(toastId, {
         type: "error",
-        title: action === "merge" ? "Could not merge the stack" : "Could not rebase the stack",
+        title: action === "merge" ? td("stack.mergeFailed") : td("stack.rebaseFailed"),
         description: readableFailure(
           squashAtomCommandFailure(result),
           action === "merge"
@@ -128,7 +133,7 @@ export function PullRequestStackMenu({
     } else {
       toastManager.update(toastId, {
         type: "success",
-        title: action === "merge" ? "Stack merge request completed" : "Stack rebased",
+        title: action === "merge" ? td("stack.mergeCompleted") : td("stack.rebased"),
         description:
           action === "merge"
             ? `${hostLabel} merged the stack or added it to its merge queue.`
@@ -166,7 +171,7 @@ export function PullRequestStackMenu({
         <MenuPopup align="start">
           <MenuGroup>
             <PullRequestStackHeader number={stack.number} notice={notice} stale={!!onRetry} />
-            {onRetry ? <MenuItem onClick={onRetry}>Retry stack refresh</MenuItem> : null}
+            {onRetry ? <MenuItem onClick={onRetry}>{td("stack.retryRefresh")}</MenuItem> : null}
             <PullRequestStackLayers
               stack={stack}
               reference={reference}
@@ -270,7 +275,7 @@ export function PullRequestStackMenu({
               Cancel
             </Button>
             <Button onClick={() => void run()}>
-              {confirmation === "merge" ? "Merge stack" : "Rebase stack"}
+              {confirmation === "merge" ? td("stack.merge") : td("stack.rebase")}
             </Button>
           </DialogFooter>
         </DialogPopup>

@@ -1578,9 +1578,8 @@ function PullRequestCodeTab({
                 </span>
                 <span className="sr-only">
                   {orphanThreads.length === 1
-                    ? t("counts.conversation", { count: 1 })
-                    : t("counts.conversations", {
-                        count: orphanThreads.length,
+                    ? t("counts.conversation_one")
+                    : t("counts.conversations_other", {
                         formatted: orphanThreads.length,
                       })}
                 </span>

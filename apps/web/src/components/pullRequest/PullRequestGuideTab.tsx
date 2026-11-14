@@ -19,6 +19,11 @@ import {
 } from "./pullRequestReviewStore";
 import type { PullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 export function PullRequestGuideTab({
   environmentId,
   reference,
@@ -95,7 +100,7 @@ export function PullRequestGuideTab({
     canWrite ? (
       <Button size={size} variant="outline" disabled={running} onClick={() => void write()}>
         {running ? <Spinner /> : <ScrollTextIcon aria-hidden className="size-3.5" />}
-        {running ? "Reading the change..." : label}
+        {running ? td("guide.readingChange") : label}
       </Button>
     ) : null;
 
@@ -111,10 +116,10 @@ export function PullRequestGuideTab({
       <div className="scrollbar-gutter-both flex h-full flex-col items-center justify-center-safe gap-2 overflow-y-auto px-4 py-10 text-center">
         <p className="text-sm font-medium text-foreground">
           {running
-            ? "Writing a review guide"
+            ? td("guide.writing")
             : failure === null
-              ? "No review guide yet"
-              : "Could not write a review guide"}
+              ? td("guide.noneYet")
+              : td("guide.couldNotWrite")}
         </p>
         <p className="max-w-md text-xs text-muted-foreground">
           {running
@@ -122,9 +127,9 @@ export function PullRequestGuideTab({
             : failure === null
               ? (query.error ??
                 "A guide is a tour of the change: stops through the code in reading order, with the calls only a maintainer can make.")
-              : FAILURE_HINT}
+              : td(FAILURE_HINT)}
         </p>
-        {writeButton(failure === null ? "Write guide" : "Try again", "sm")}
+        {writeButton(failure === null ? td("menu.writeGuide") : td("guide.tryAgain"), "sm")}
         {failure === null || running ? null : <FailureDetails detail={failure} />}
       </div>
     );
@@ -136,12 +141,12 @@ export function PullRequestGuideTab({
         {running ? <Spinner /> : <TriangleAlertIcon />}
         <AlertDescription>
           {running ? (
-            "Rewriting this guide. You will be told when the new one is ready."
+            td("guide.rewritingNote")
           ) : failure === null ? (
-            "Written before the latest push."
+            td("guide.writtenBeforePush")
           ) : (
             <>
-              {`Could not rewrite this guide. ${FAILURE_HINT}`}
+              {td("guide.couldNotRewrite", { hint: td(FAILURE_HINT) })}
               <FailureDetails detail={failure} />
             </>
           )}
@@ -174,7 +179,7 @@ export function PullRequestGuideTab({
   );
 }
 
-const FAILURE_HINT = "Check the review guide model in Settings → Source control.";
+const FAILURE_HINT = "guide.failureHint";
 
 function FailureDetails({ detail }: { detail: string }) {
   return (

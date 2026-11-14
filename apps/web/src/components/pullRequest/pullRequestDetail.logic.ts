@@ -250,14 +250,14 @@ export function pullRequestHandoffLabels(inThisThread: boolean) {
   // Beside a composer a remark's Fix shares its header with Add to chat.
   return inThisThread
     ? {
-        fixFinding: "Fix",
-        fixCheck: "Fix in this thread",
-        fixFindings: "Fix findings in this thread",
+        fixFinding: translateDynamic("pullRequest:handoff.fix"),
+        fixCheck: translateDynamic("pullRequest:handoff.fixCheckInThread"),
+        fixFindings: translateDynamic("pullRequest:handoff.fixFindingsInThread"),
       }
     : {
-        fixFinding: "Fix in a thread",
-        fixCheck: "Fix",
-        fixFindings: "Fix findings in a thread",
+        fixFinding: translateDynamic("pullRequest:code.fixInThread"),
+        fixCheck: translateDynamic("pullRequest:handoff.fix"),
+        fixFindings: translateDynamic("pullRequest:handoff.fixFindingsInThread"),
       };
 }
 

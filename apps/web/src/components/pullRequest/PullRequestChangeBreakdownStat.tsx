@@ -8,11 +8,16 @@ import { useEnvironmentQuery } from "~/state/query";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestDiffStat } from "./pullRequestPresentation";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 const KIND_LABELS = {
   code: "Code",
-  tests: "Tests",
-  mocks: "Mocks",
-  generated: "Generated",
+  tests: "breakdown.tests",
+  mocks: "breakdown.mocks",
+  generated: "breakdown.generated",
   docs: "Docs",
 } satisfies Record<keyof NonNullable<PullRequestChangeBreakdown>, string>;
 
@@ -64,7 +69,7 @@ export function PullRequestChangeBreakdownStat({
           <ChangeBreakdownGrid breakdown={breakdown} total={{ additions, deletions }} />
         </TooltipPopup>
       ) : query.isPending ? (
-        <TooltipPopup side="bottom">Loading breakdown</TooltipPopup>
+        <TooltipPopup side="bottom">{td("breakdown.loading")}</TooltipPopup>
       ) : null}
     </Tooltip>
   );
@@ -108,7 +113,7 @@ function ChangeBreakdownGrid({
         return additions === 0 && deletions === 0 ? null : (
           <BreakdownRow
             key={kind}
-            label={KIND_LABELS[kind]}
+            label={translateDynamic(`pullRequest:${KIND_LABELS[kind]}`)}
             additions={additions}
             deletions={deletions}
           />
@@ -117,7 +122,11 @@ function ChangeBreakdownGrid({
       {total ? (
         <>
           <div className="col-span-3 border-t border-border" />
-          <BreakdownRow label="Total" additions={total.additions} deletions={total.deletions} />
+          <BreakdownRow
+            label={td("breakdown.total")}
+            additions={total.additions}
+            deletions={total.deletions}
+          />
         </>
       ) : null}
     </div>

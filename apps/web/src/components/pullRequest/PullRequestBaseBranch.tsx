@@ -9,6 +9,11 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 interface BaseFreshness {
   readonly behindBy: number | null;
   readonly methods: ReadonlyArray<PullRequestUpdateMethod>;
@@ -34,10 +39,11 @@ function PullRequestBaseFreshnessWarning({
   const behind =
     freshness.behindBy === null
       ? ""
-      : ` by ${freshness.behindBy.toLocaleString()} ${
-          freshness.behindBy === 1 ? "commit" : "commits"
-        }`;
-  const summary = `This branch is out-of-date with ${baseBranch}${behind}.`;
+      : translateDynamic(
+          `pullRequest:base.behindBy_${freshness.behindBy === 1 ? "one" : "other"}`,
+          { formatted: freshness.behindBy.toLocaleString() },
+        );
+  const summary = td("base.outOfDate", { branch: baseBranch, behind });
   return (
     <Popover>
       <PopoverTrigger
@@ -72,7 +78,7 @@ function PullRequestBaseFreshnessWarning({
                 onClick={() => onUpdate(method)}
               >
                 <PullRequestGlyph.merged aria-hidden className="size-3" />
-                {method === "rebase" ? "Update with rebase" : "Update branch"}
+                {method === "rebase" ? td("base.updateWithRebase") : td("base.updateBranch")}
               </Button>
             ))}
           </span>
@@ -131,7 +137,9 @@ export function PullRequestBaseBranch({
           </span>
         }
       />
-      <TooltipPopup side="top">{stacked ? `Stacked on ${baseBranch}` : baseBranch}</TooltipPopup>
+      <TooltipPopup side="top">
+        {stacked ? td("base.stackedOn", { branch: baseBranch }) : baseBranch}
+      </TooltipPopup>
     </Tooltip>
   );
 }

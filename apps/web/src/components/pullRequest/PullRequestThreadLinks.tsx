@@ -32,6 +32,11 @@ import { MenuItem } from "../ui/menu";
 import { toastManager } from "../ui/toast";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 interface PullRequestThreadLinksProps {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -127,7 +132,7 @@ function EnabledPullRequestThreadLinks({
   const linkedThreadsLabel =
     linkedThreads.length > 0
       ? `Linked from ${linkedThreads.length} ${linkedThreads.length === 1 ? "thread" : "threads"}`
-      : "Linked threads";
+      : td("links.linkedThreads");
   return (
     <>
       {display === "count" && (linkedThreads.length > 0 || relations.error !== null) ? (
@@ -174,8 +179,8 @@ function EnabledPullRequestThreadLinks({
           {linkedHere
             ? "Unlink from this thread"
             : currentThreadRef
-              ? "Link to this thread"
-              : "Link to thread"}
+              ? td("links.linkToThisThread")
+              : td("links.linkToThread")}
         </MenuItem>
       ) : null}
       {display === "picker" ? (
@@ -229,8 +234,13 @@ function ThreadPicker({
     )
     .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return (
-    <Command mode="none" value={query} onValueChange={setQuery} aria-label="Choose a thread">
-      <CommandInput placeholder="Search threads or projects..." disabled={pending} />
+    <Command
+      mode="none"
+      value={query}
+      onValueChange={setQuery}
+      aria-label={td("links.chooseThread")}
+    >
+      <CommandInput placeholder={td("links.searchThreads")} disabled={pending} />
       <CommandList className="max-h-80 overflow-y-auto">
         {candidates.length === 0 ? (
           <div className="px-3 py-6 text-center text-sm text-muted-foreground">
@@ -248,7 +258,7 @@ function ThreadPicker({
               >
                 <MessageSquareIcon aria-hidden className="size-4 shrink-0" />
                 <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate">{thread.title || "Untitled thread"}</span>
+                  <span className="truncate">{thread.title || td("links.untitledThread")}</span>
                   <span className="truncate text-xs text-muted-foreground">
                     {projectNames.get(thread.projectId)}
                   </span>
@@ -256,7 +266,7 @@ function ThreadPicker({
                 {linked ? (
                   <>
                     <CheckIcon aria-hidden className="size-3.5" />
-                    <span className="text-xs text-muted-foreground">Linked</span>
+                    <span className="text-xs text-muted-foreground">{td("links.linked")}</span>
                   </>
                 ) : null}
               </CommandItem>

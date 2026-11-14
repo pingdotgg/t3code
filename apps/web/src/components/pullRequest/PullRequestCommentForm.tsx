@@ -17,6 +17,11 @@ import {
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 export function PullRequestCommentForm({
   environmentId,
   active,
@@ -96,7 +101,7 @@ export function PullRequestCommentForm({
     });
     if (result._tag === "Failure") {
       setSubmitting(null);
-      toastManager.add({ type: "error", title: "Could not post the comment" });
+      toastManager.add({ type: "error", title: td("errors.postComment") });
       return;
     }
     setBody("");
@@ -119,8 +124,10 @@ export function PullRequestCommentForm({
         readOnly={speech.freezesEditor}
         value={body}
         rows={3}
-        placeholder="Leave a comment"
-        aria-label={`Comment on this ${sourceControlClients.get(detail.provider).changeRequest.singular}`}
+        placeholder={td("commentForm.leaveComment")}
+        aria-label={td("commentForm.commentOnTerm", {
+          term: sourceControlClients.get(detail.provider).changeRequest.singular,
+        })}
         onValueChange={setBody}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -162,16 +169,16 @@ export function PullRequestCommentForm({
                 </span>
                 <span className="col-start-1 row-start-1">
                   {submitting === "close"
-                    ? "Closing..."
+                    ? td("commentForm.closing")
                     : inlineConfirm.isArmed("close")
-                      ? "Confirm close?"
-                      : "Close with comment"}
+                      ? td("actions.confirmClose")
+                      : td("commentForm.closeWithComment")}
                 </span>
               </span>
             ) : submitting === "reopen" ? (
-              "Reopening..."
+              td("commentForm.reopening")
             ) : (
-              "Reopen with comment"
+              td("commentForm.reopenWithComment")
             )}
           </Button>
         )}
@@ -182,7 +189,7 @@ export function PullRequestCommentForm({
           onClick={() => submitAfterDictation("comment")}
         >
           <SendIcon className="size-3.5" />
-          {submitting === "comment" ? "Posting..." : "Comment"}
+          {submitting === "comment" ? td("commentForm.posting") : td("commentForm.comment")}
         </Button>
       </div>
     </div>

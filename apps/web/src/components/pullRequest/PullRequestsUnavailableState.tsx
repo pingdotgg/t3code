@@ -5,8 +5,10 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
+import { translateDynamic } from "../../i18nCore";
+
 export function PullRequestsUnavailableState({
-  title = "Could not load pull requests",
+  title = translateDynamic("pullRequest:list.couldNotLoad"),
   error,
   onRetry,
   refreshing = false,

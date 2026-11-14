@@ -57,12 +57,17 @@ import { PullRequestGlyph } from "./pullRequestIcons";
 import { pullRequestQuickActions } from "./pullRequestList.logic";
 import { PullRequestSpeedActions, PullRequestSpeedModeContext } from "./PullRequestSpeedActions";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 const SOURCE_LABELS: Record<ThreadPullRequestLink["source"], string> = {
-  manual: "Linked by you",
-  created: "Created from this thread",
-  agent: "Linked by the agent",
-  stack: "Found in the stack",
-  "stack-dismissed": "Dismissed",
+  manual: "panel.linkedByYou",
+  created: "panel.createdFromThread",
+  agent: "panel.linkedByAgent",
+  stack: "panel.foundInStack",
+  "stack-dismissed": "panel.dismissed",
 };
 
 function ChecksGlyph({
@@ -76,11 +81,11 @@ function ChecksGlyph({
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
         <presentation.Icon
           role="img"
-          aria-label={presentation.label}
+          aria-label={translateDynamic(`pullRequest:${presentation.label}`)}
           className={cn("size-3.5", presentation.toneClassName)}
         />
       </TooltipTrigger>
-      <TooltipPopup>{presentation.label}</TooltipPopup>
+      <TooltipPopup>{translateDynamic(`pullRequest:${presentation.label}`)}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -142,7 +147,7 @@ function LinkRowImpl({
       {depth > 0 ? <span aria-hidden className="-ml-2 h-6 w-px shrink-0 bg-border/70" /> : null}
       {snapshot === null ? (
         <PullRequestGlyph.pullRequest
-          aria-label="Waiting for host state"
+          aria-label={td("panel.waitingForHost")}
           className="size-4 shrink-0 text-muted-foreground"
         />
       ) : (
@@ -183,7 +188,8 @@ function LinkRowImpl({
                 #{link.number}
               </TooltipTrigger>
               <TooltipPopup>
-                {SOURCE_LABELS[link.source]} · <RelativeTime timestamp={link.linkedAt} />
+                {translateDynamic(`pullRequest:${SOURCE_LABELS[link.source]}`)} ·{" "}
+                <RelativeTime timestamp={link.linkedAt} />
               </TooltipPopup>
             </Tooltip>
           }
@@ -245,8 +251,14 @@ function LinkRowImpl({
                   </TooltipTrigger>
                   <TooltipPopup>
                     {stack.kind === "native"
-                      ? `${sourceControlClients.hostLabelForChangeRequestUrl(link.url)} stack of ${stack.size}: merging a layer lands the ones below it.`
-                      : `${stack.size} ${linkHost.changeRequest.plural} chained by base branch.`}
+                      ? td("panel.hostStack", {
+                          host: sourceControlClients.hostLabelForChangeRequestUrl(link.url),
+                          count: stack.size,
+                        })
+                      : td("panel.chainedByBase", {
+                          count: stack.size,
+                          term: linkHost.changeRequest.plural,
+                        })}
                   </TooltipPopup>
                 </Tooltip>
               ) : null}
@@ -309,7 +321,7 @@ function LinkRowImpl({
               <Button
                 variant="ghost"
                 size="icon-micro"
-                aria-label={`Actions for #${link.number}`}
+                aria-label={td("panel.actionsFor", { number: link.number })}
                 className="relative"
               >
                 <MoreHorizontalIcon className="size-3.5" />
@@ -333,7 +345,7 @@ function LinkRowImpl({
             {onSetWatching !== null && open ? (
               <MenuItem onClick={() => onSetWatching(link, !watching)}>
                 {watching ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
-                {watching ? "Stop watching" : "Watch for changes"}
+                {watching ? td("panel.stopWatching") : td("panel.watch")}
               </MenuItem>
             ) : null}
             <MenuItem onClick={() => onUnlink(link)}>
@@ -366,8 +378,8 @@ export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   if (configs.get(threadRef.environmentId) === undefined) {
     return (
       <PullRequestsUnavailableState
-        title="Linked pull requests unavailable"
-        error="This environment does not support multiple linked pull requests."
+        title={td("panel.unavailable")}
+        error={td("panel.unsupported")}
       />
     );
   }

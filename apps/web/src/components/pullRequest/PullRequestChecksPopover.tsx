@@ -26,6 +26,11 @@ import {
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 // Fetch only on open to avoid per-row requests.
 function LazyChecksBody({
   environmentId,
@@ -45,7 +50,7 @@ function LazyChecksBody({
   if (detailQuery.data === null) {
     return (
       <p className="text-muted-foreground text-xs">
-        {detailQuery.isPending ? "Loading checks…" : "No checks reported"}
+        {detailQuery.isPending ? td("checks.loading") : td("checks.noChecksReported")}
       </p>
     );
   }
@@ -101,7 +106,7 @@ function ChecksBody({
                       if (!check.url) return;
                       void openLink(check.url).catch((error: unknown) => {
                         console.error(error);
-                        toastManager.add({ type: "error", title: "Unable to open check details" });
+                        toastManager.add({ type: "error", title: td("errors.openCheckDetails") });
                       });
                     }}
                   >
@@ -120,7 +125,7 @@ function ChecksBody({
           aria-expanded={showAll}
           onClick={() => setShowAll(!showAll)}
         >
-          {showAll ? "Show less" : "Show all"}
+          {showAll ? td("checks.showLess") : td("checks.showAll")}
         </Button>
       ) : null}
     </>
@@ -162,8 +167,10 @@ export function PullRequestChecksPopover({
         nativeButton={variant === "count"}
         aria-label={
           variant === "count"
-            ? `Open checks: ${summary ?? presentation.label}`
-            : `Checks: ${presentation.label}`
+            ? td("checks.openWithSummary", {
+                summary: summary ?? td(`pullRequest:${presentation.label}`),
+              })
+            : td("checks.withSummary", { summary: td(`pullRequest:${presentation.label}`) })
         }
         render={
           variant === "count" ? (

@@ -1754,10 +1754,12 @@ export function PullRequestDetailPanel({
                     aria-label={
                       activityError
                         ? t("counts.commentsUnavailable")
-                        : t("counts.comments", {
-                            count: detail.commentCount,
-                            formatted: detail.commentCount.toLocaleString(),
-                          })
+                        : t(
+                            detail.commentCount === 1
+                              ? "counts.comments_one"
+                              : "counts.comments_other",
+                            { formatted: detail.commentCount.toLocaleString() },
+                          )
                     }
                   >
                     <MessageSquareIcon aria-hidden className="size-3" />
@@ -1772,10 +1774,12 @@ export function PullRequestDetailPanel({
                     aria-label={
                       activityError
                         ? t("counts.commitsUnavailable")
-                        : t("counts.commits", {
-                            count: detail.commits.length,
-                            formatted: detail.commits.length.toLocaleString(),
-                          })
+                        : t(
+                            detail.commits.length === 1
+                              ? "counts.commits_one"
+                              : "counts.commits_other",
+                            { formatted: detail.commits.length.toLocaleString() },
+                          )
                     }
                   >
                     <GitCommitHorizontalIcon aria-hidden className="size-3" />

@@ -273,8 +273,7 @@ export function PullRequestDetailGhost({
                 changedFiles === null ? (
                   <GhostBar className="h-3 w-10" />
                 ) : (
-                  t("files.count", {
-                    count: changedFiles,
+                  t(changedFiles === 1 ? "files.count_one" : "files.count_other", {
                     formatted: changedFiles.toLocaleString(),
                   })
                 )
