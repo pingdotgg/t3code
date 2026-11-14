@@ -1004,3 +1004,71 @@ async fn launch_prepares_a_worktree() {
     .await;
     assert_eq!(host.requests.lock().unwrap().len(), 1);
 }
+
+/// The JSON-RPC error of a call the arguments check refused.
+async fn rpc_error(c: &mut Client<'_>, tool: &str, args: Value) -> (i64, String) {
+    let reply = c
+        .request("tools/call", json!({"name": tool, "arguments": args}))
+        .await;
+    (
+        reply["error"]["code"].as_i64().unwrap_or_default(),
+        reply["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+    )
+}
+
+/// `send_to_user` (`toolkits/message`): `actsAsCaller`, so only a live thread caller; the
+/// message is 1 to 4,000 UTF-16 units; the result echoes it as `sentMessage`.
+#[tokio::test(flavor = "current_thread")]
+async fn send_to_user_echoes_the_message_to_a_live_thread_caller() {
+    let f = fixture("send-to-user");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let (code, _) = swamp
+        .failure("send_to_user", json!({"message": "hi"}))
+        .await;
+    assert_eq!(code, "thread_credential_required");
+    let mut reader = Client::open(&f.service, client(false)).await;
+    let (code, _) = reader
+        .failure("send_to_user", json!({"message": "hi"}))
+        .await;
+    assert_eq!(code, "thread_credential_required");
+
+    let live = launch_as_swamp(&mut swamp, "Live", "hang", "approval-required", "plan").await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &live)).await;
+    let (code, message) = rpc_error(&mut agent, "send_to_user", json!({"message": ""})).await;
+    assert_eq!(code, -32602, "{message}");
+    // 4,000 UTF-16 units pass; one more fails. A CJK character is one unit, an emoji two.
+    let long = "漢".repeat(4_000);
+    let sent = agent.ok("send_to_user", json!({"message": long})).await;
+    assert_eq!(sent["sentMessage"], long.as_str());
+    let (code, _) = rpc_error(
+        &mut agent,
+        "send_to_user",
+        json!({"message": "😀".repeat(2_001)}),
+    )
+    .await;
+    assert_eq!(code, -32602);
+    // Plan mode and the narrowest runtime mode may still use it: it touches only this thread.
+    let sent = agent
+        .ok(
+            "send_to_user",
+            json!({"message": "**Draft**\n\n```\ncode\n```"}),
+        )
+        .await;
+    assert_eq!(
+        sent,
+        json!({"sentMessage": "**Draft**\n\n```\ncode\n```", "message": "Shown to the user. Don't repeat it."})
+    );
+
+    dispatch(
+        &f,
+        json!({"type": "thread.archive", "commandId": "archive-live", "threadId": live}),
+    )
+    .await;
+    let (code, _) = agent
+        .failure("send_to_user", json!({"message": "late"}))
+        .await;
+    assert_eq!(code, "parent_not_active");
+}

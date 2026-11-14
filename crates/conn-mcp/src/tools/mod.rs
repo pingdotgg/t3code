@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{Caller, McpConfig, McpService};
 
+mod message;
 mod projects;
 mod tasks;
 mod threads;
@@ -38,7 +39,8 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 16] = [
+pub(crate) const HANDLED: [&str; 17] = [
+    "send_to_user",
     "orchestrator_capabilities",
     "delegate_task",
     "task_status",
@@ -87,6 +89,7 @@ pub(crate) async fn call(
         "t3_thread_interrupt" => threads::interrupt(&cx, &args).await,
         "t3_thread_update" => threads::update(&cx, &args).await,
         "t3_pending_request" => threads::pending_request(&cx, &args).await,
+        "send_to_user" => message::send_to_user(&cx, &args).await,
         "delegate_task" => tasks::delegate(&cx, &args).await,
         "task_status" => tasks::status(&cx, &args).await,
         "task_cancel" => tasks::cancel(&cx, &args).await,

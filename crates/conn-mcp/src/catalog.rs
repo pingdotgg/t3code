@@ -153,12 +153,13 @@ fn type_problem(schema: &Value, value: &Value) -> Option<String> {
         let names: Vec<String> = allowed.iter().map(Value::to_string).collect();
         return Some(format!("Expected {}, got {value}", names.join(" | ")));
     }
+    if schema["type"] == "string"
+        && let Some(text) = value.as_str()
+    {
+        return length_problem(schema, text);
+    }
     let fits = match schema["type"].as_str() {
-        Some("string") => value.as_str().is_some_and(|text| {
-            schema["maxLength"]
-                .as_u64()
-                .is_none_or(|max| text.chars().count() as u64 <= max)
-        }),
+        Some("string") => false,
         Some("integer") => value.as_i64().is_some_and(|n| in_range(schema, n as f64)),
         Some("number") => value.as_f64().is_some_and(|n| in_range(schema, n)),
         Some("boolean") => value.is_boolean(),
@@ -174,6 +175,22 @@ fn type_problem(schema: &Value, value: &Value) -> Option<String> {
         Some(kind) => format!("Expected {kind}, got {value}"),
         None => format!("Unexpected {value}"),
     })
+}
+
+/// Effect's `isMinLength` and `isMaxLength`: a JavaScript string's length, in UTF-16 units.
+fn length_problem(schema: &Value, text: &str) -> Option<String> {
+    let length = text.encode_utf16().count() as u64;
+    if let Some(min) = schema["minLength"].as_u64()
+        && length < min
+    {
+        return Some(format!("Expected a value with a length of at least {min}"));
+    }
+    if let Some(max) = schema["maxLength"].as_u64()
+        && length > max
+    {
+        return Some(format!("Expected a value with a length of at most {max}"));
+    }
+    None
 }
 
 fn in_range(schema: &Value, n: f64) -> bool {
@@ -245,5 +262,26 @@ mod tests {
             .unwrap()
             .clone();
         check_arguments(&schema, &order, &mut args).unwrap();
+        // String lengths count UTF-16 units, as a JavaScript string's length.
+        let (send, send_order) = tool("send_to_user").unwrap();
+        let send = send["inputSchema"].clone();
+        for (text, problem) in [
+            (
+                String::new(),
+                Some("Expected a value with a length of at least 1"),
+            ),
+            ("漢".repeat(4_000), None),
+            ("😀".repeat(2_000), None),
+            (
+                "😀".repeat(2_001),
+                Some("Expected a value with a length of at most 4000"),
+            ),
+        ] {
+            let mut args = json!({"message": text}).as_object().unwrap().clone();
+            assert_eq!(
+                check_arguments(&send, &send_order, &mut args).err(),
+                problem.map(|p| format!("{p}\n  at [\"message\"]"))
+            );
+        }
     }
 }

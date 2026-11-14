@@ -293,6 +293,10 @@ const steps = [
   ["delegate_task", () => ({ task: "x" })],
   ["task_status", () => ({ taskId: "task:none" })],
   ["task_cancel", () => ({ taskId: "task:none" })],
+  // send_to_user acts as the calling thread; its argument check runs first.
+  ["send_to_user", () => ({ message: "hi" })],
+  ["send_to_user", () => ({ message: "" })],
+  ["send_to_user", () => ({ message: "x".repeat(4001) })],
 ];
 // The steps that launch a thread (a model turn on the T3 server) or act on it.
 const onLaunchedThread = (tool, input, options) =>
