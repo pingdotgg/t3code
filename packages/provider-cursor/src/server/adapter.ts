@@ -2788,6 +2788,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 modelSelection: threadInput.modelSelection,
                 runtimePolicy: threadInput.runtimePolicy,
               });
+              yield* Ref.set(told, {
+                agent: opened.nativeThreadId,
+                orchestration: false,
+                device: false,
+              });
               const now = yield* DateTime.now;
               return makeProviderThread({
                 idAllocator,

@@ -1361,9 +1361,9 @@ const VisualInstructions = Schema.NullOr(
   Schema.String.check(
     Schema.isMaxLength(1_000),
     Schema.makeFilter((value) =>
-      hasOnlyPairedSurrogates(value)
+      hasOnlyPairedSurrogates(value) && !value.includes("\0")
         ? true
-        : "Visual instructions must contain well-formed Unicode.",
+        : "Visual instructions must contain well-formed Unicode without NUL characters.",
     ),
   ),
 );

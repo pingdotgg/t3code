@@ -558,7 +558,12 @@ describe("visual delivery settings", () => {
     }
     expect(() => decodeServerSettingsPatch({ visualInstructions: "x".repeat(1_001) })).toThrow();
     for (const decode of [decodeServerSettings, decodeServerSettingsPatch]) {
-      for (const visualInstructions of ["\ud800", "\udfff", "prefix\ud800suffix"]) {
+      for (const visualInstructions of [
+        "\ud800",
+        "\udfff",
+        "prefix\ud800suffix",
+        "prefix\0suffix",
+      ]) {
         expect(() => decode({ visualInstructions })).toThrow();
       }
     }
