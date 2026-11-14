@@ -33,6 +33,7 @@ import {
   serializeSelection,
   skillChipReplacements,
   stepCaretAcrossStyledEdge,
+  surroundSelectionWithMark,
 } from "./composer-rich-text-doc";
 
 function stubAtom(name: string, attrs: Record<string, { default: unknown }>) {
@@ -66,6 +67,11 @@ const schema = getSchemaByResolvedExtensions(
       skillName: { default: "" },
       skillLabel: { default: "" },
       skillDescription: { default: null },
+    }),
+    stubAtom("composer-model", {
+      instanceId: { default: "" },
+      model: { default: "" },
+      source: { default: "" },
     }),
     stubAtom("composer-citation", {
       citation: { default: null },
@@ -187,6 +193,11 @@ const plainSchema = getSchemaByResolvedExtensions(
       skillName: { default: "" },
       skillLabel: { default: "" },
       skillDescription: { default: null },
+    }),
+    stubAtom("composer-model", {
+      instanceId: { default: "" },
+      model: { default: "" },
+      source: { default: "" },
     }),
     stubAtom("composer-citation", {
       citation: { default: null },
@@ -747,17 +758,21 @@ describe("composer rich text document model", () => {
   });
 
   it("keeps a chip's source in a fence as literal text", () => {
-    const value = "```\nsee @b.md and $babysit now\n```\nafter";
+    const value = "```\nsee @b.md and $babysit now model:codex/gpt-6.1 ok\n```\nafter";
     const known = () => ({ label: "Babysit", description: null });
-    const doc = ProseMirrorNode.fromJSON(schema, buildDocJson(value, known));
+    const anyModel = () => true;
+    const doc = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson(value, known, { isKnownModel: anyModel }),
+    );
     const map = serializeEditorDoc(doc);
     expect(map.value).toBe(value);
     expect(map.runs.filter((run) => run.kind === "token")).toEqual([]);
     for (let flat = 0; flat <= map.docLength; flat += 1) {
       expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
     }
-    // Reconciling against the provider's skills leaves the code alone too.
-    expect(skillChipReplacements(doc, known)).toEqual([]);
+    // Reconciling against the provider's skills and models leaves the code alone too.
+    expect(skillChipReplacements(doc, known, anyModel)).toEqual([]);
   });
 
   it.each([
@@ -831,6 +846,54 @@ describe("pasting into a list item or quote", () => {
   });
 });
 
+describe("model mention chips", () => {
+  const skillLabelFor = (name: string) => ({ label: name, description: null });
+  const isCodexModel = (instanceId: string, model: string) =>
+    instanceId === "codex" && model === "gpt-6.1";
+  const modelAttrs = (doc: ProseMirrorNode) => {
+    const attrs: unknown[] = [];
+    doc.descendants((node) => {
+      if (node.type.name === "composer-model") attrs.push(node.attrs);
+    });
+    return attrs;
+  };
+  const replace = (doc: ProseMirrorNode, isKnownModel?: typeof isCodexModel) => {
+    const transaction = EditorState.create({ doc }).tr;
+    for (const { from, to, node } of skillChipReplacements(doc, skillLabelFor, isKnownModel)) {
+      transaction.replaceWith(from, to, node);
+    }
+    return transaction.doc;
+  };
+  const chip = { instanceId: "codex", model: "gpt-6.1", source: "model:codex/gpt-6.1" };
+
+  it.each([
+    ["Ask model:codex/gpt-6.1 now", [chip]],
+    ["Ask model:openai/gpt-4o now", []],
+    // Still being typed: `gpt-6` must not chip on the way to `gpt-6.1`.
+    ["Ask model:codex/gpt-6.1", []],
+  ])("chips only a known reference followed by whitespace: %s", (value, expected) => {
+    const doc = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson(value, skillLabelFor, { isKnownModel: isCodexModel }),
+    );
+    doc.check();
+    expect(modelAttrs(doc)).toEqual(expected);
+    expect(serializeEditorDoc(doc).value).toBe(value);
+  });
+
+  it("reconciles references when the environment's models load or change", () => {
+    const value = "Ask model:codex/gpt-6.1 now";
+    const text = ProseMirrorNode.fromJSON(schema, buildDocJson(value, skillLabelFor));
+    expect(modelAttrs(text)).toEqual([]);
+    const loaded = replace(text, isCodexModel);
+    expect(modelAttrs(loaded)).toEqual([chip]);
+    expect(serializeEditorDoc(loaded).value).toBe(value);
+    const removed = replace(loaded);
+    expect(modelAttrs(removed)).toEqual([]);
+    expect(serializeEditorDoc(removed).value).toBe(value);
+  });
+});
+
 describe("pasting into a path query", () => {
   const skillLabelFor = (name: string) => ({ label: name, description: null });
 
@@ -891,7 +954,7 @@ describe("pasting into a path query", () => {
   });
 
   it("parses markdown when the paste does not continue a path query", () => {
-    expect(boldText(paste("Open ", "src/__test__.tsx"))).toEqual(["test"]);
+    expect(boldText(paste("Open ", "__test__ now"))).toEqual(["test"]);
     expect(boldText(paste("Open @a ", "__b__"))).toEqual(["b"]);
     expect(boldText(paste("Open @", " __b__"))).toEqual(["b"]);
   });
@@ -1295,5 +1358,85 @@ describe("inline code entry", () => {
     type(editor, open);
     expect(serializeEditorDoc(editor.state.doc).value).toBe(`${open}foo${open}`);
     expect(marked(editor, mark)).toEqual(["foo"]);
+  });
+});
+
+describe("surroundSelectionWithMark", () => {
+  it("keeps markers inside math literal across draft restoration", () => {
+    const doc = schema.node("doc", null, [schema.node("paragraph", null, schema.text("$x$"))]);
+    const state = EditorState.create({ doc, selection: TextSelection.create(doc, 2, 3) });
+    expect(surroundSelectionWithMark(state, 2, 3, "*")).toBeNull();
+  });
+
+  it.each([
+    ["`", "hello", "say `hello` now"],
+    ["*", "hello", "say *hello* now"],
+    ["_", "hello", "say *hello* now"],
+    ["`", "   ", "say `   ` now"],
+  ])("formats a selection with %s like typed markers (%j)", (marker, selected, expected) => {
+    const doc = schema.node("doc", null, [
+      schema.node("paragraph", null, schema.text(`say ${selected} now`)),
+    ]);
+    const to = 5 + selected.length;
+    const state = EditorState.create({ doc, selection: TextSelection.create(doc, 5, to) });
+    const tr = surroundSelectionWithMark(state, 5, to, marker);
+    expect(tr).not.toBeNull();
+    const formatted = state.apply(tr!);
+    const typed = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson(`say ${marker}${selected}${marker} now`, (name) => ({
+        label: name,
+        description: null,
+      })),
+    );
+    expect(formatted.doc.eq(typed)).toBe(true);
+    expect(serializeEditorDoc(formatted.doc).value).toBe(expected);
+    expect(formatted.doc.textBetween(formatted.selection.from, formatted.selection.to)).toBe(
+      selected,
+    );
+  });
+
+  it.each([
+    ["*", "   "],
+    ["_", "   "],
+    ["*", "a*b"],
+    ["`", "foo`bar"],
+  ])("leaves %s around %j to literal wrapping when the mark cannot round-trip", (marker, text) => {
+    const doc = schema.node("doc", null, [schema.node("paragraph", null, schema.text(text))]);
+    const to = 1 + text.length;
+    const state = EditorState.create({ doc, selection: TextSelection.create(doc, 1, to) });
+    expect(surroundSelectionWithMark(state, 1, to, marker)).toBeNull();
+  });
+
+  it.each([
+    [
+      "plain mode",
+      plainSchema.node("doc", null, [plainSchema.node("paragraph", null, plainSchema.text("one"))]),
+    ],
+    [
+      "paragraphs",
+      schema.node("doc", null, [
+        schema.node("paragraph", null, schema.text("one")),
+        schema.node("paragraph", null, schema.text("two")),
+      ]),
+    ],
+    [
+      "a hard break",
+      schema.node("doc", null, [
+        schema.node("paragraph", null, [
+          schema.text("one"),
+          schema.node("hardBreak"),
+          schema.text("two"),
+        ]),
+      ]),
+    ],
+    [
+      "a code block",
+      schema.node("doc", null, [schema.node("codeBlock", null, schema.text("one"))]),
+    ],
+  ])("leaves selections in %s to literal wrapping", (_, doc) => {
+    doc.check();
+    const state = EditorState.create({ doc });
+    expect(surroundSelectionWithMark(state, 1, doc.content.size - 1, "`")).toBeNull();
   });
 });
