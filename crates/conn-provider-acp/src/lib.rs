@@ -55,17 +55,25 @@ pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, 
 
 /// One agent line may be this long; longer lines are dropped and logged.
 const MAX_LINE_BYTES: usize = 64 * 1024 * 1024;
+/// How long the end of input may take before the SIGKILL goes anyway (a writer stuck on a
+/// full pipe must not hold the kill back).
+const END_INPUT_WAIT: Duration = Duration::from_millis(200);
 /// `processGroupTerminationGrace`: SIGTERM to SIGKILL on Stop.
 const TERMINATE_GRACE: Duration = Duration::from_secs(1);
 
 /// Ends an agent as T3 ends one it owns in a detached process group.
-async fn stop_process(process: Process, kind: session::StopKind) {
+async fn stop_process(mut process: Process, kind: session::StopKind) {
     #[cfg(unix)]
     {
         use conn_provider_support::process::signal_group;
         use rustix::process::Signal;
         match kind {
-            session::StopKind::Kill => signal_group(process.pid, Signal::KILL),
+            // The scope's close: the end of input first (T3's ACP writer completes and ends
+            // stdin), then SIGKILL to the group at once.
+            session::StopKind::Kill => {
+                process.end_input(END_INPUT_WAIT).await;
+                signal_group(process.pid, Signal::KILL);
+            }
             session::StopKind::Terminate => {
                 signal_group(process.pid, Signal::TERM);
                 let pid = process.pid;

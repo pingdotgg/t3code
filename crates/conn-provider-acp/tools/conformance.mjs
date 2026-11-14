@@ -268,6 +268,18 @@ NodeChildProcess.execFileSync(
 
 // ---- compare ------------------------------------------------------------------------------
 
+// Each stub process's worker writes `worker-exit` last, after the end of input; its log is
+// complete once every started process has one (the worker outlives the client's SIGKILL).
+const settled = (file) => {
+  if (!NodeFS.existsSync(file)) return true;
+  const entries = NodeFS.readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  return entries.filter((e) => e.kind === "start").length <= entries.filter((e) => e.kind === "worker-exit").length;
+};
+const until = Date.now() + 20_000;
+while (Date.now() < until && !plan.every((s) => settled(NodePath.join(s.dir, "ts", "stub.ndjson")) && settled(NodePath.join(s.dir, "rust", "stub.ndjson")))) {
+  NodeChildProcess.execFileSync("sleep", ["0.1"]);
+}
+
 const readLog = (file) =>
   NodeFS.existsSync(file)
     ? NodeFS.readFileSync(file, "utf8")
@@ -329,16 +341,12 @@ for (const scenario of plan) {
     }
   }
   const lines = (log, workspace) =>
-    log.filter((e) => e.kind !== "start" && e.kind !== "agent-exit").map((e) =>
+    log.filter((e) => e.kind !== "start" && e.kind !== "agent-exit" && e.kind !== "worker-exit" && e.kind !== "stub-gone").map((e) =>
       e.kind === "stdin" ? `stdin ${scrubTrace(e.line.replaceAll(workspace, "<workspace>"))}` : e.kind,
     );
   const tsWorkspace = tsStarts[0]?.cwd ?? "\u0000";
-  // T3 sometimes ends the agent's stdin just before its SIGKILL to the group, and the stub
-  // logs that only when it runs first: a last "stdin-closed" is not compared (as the probe
-  // check does).
-  const dropLastClose = (l) => (l.at(-1) === "stdin-closed" ? l.slice(0, -1) : l);
-  const tsLines = dropLastClose(lines(ts, tsWorkspace));
-  const rustLines = dropLastClose(lines(rust, scenario.workspace));
+  const tsLines = lines(ts, tsWorkspace);
+  const rustLines = lines(rust, scenario.workspace);
   for (let i = 0; i < Math.max(tsLines.length, rustLines.length); i += 1) {
     if (tsLines[i] !== rustLines[i]) {
       problems.push(`stdin entry ${i}:\n    T3   ${(tsLines[i] ?? "(none)").slice(0, 600)}\n    Rust ${(rustLines[i] ?? "(none)").slice(0, 600)}`);
