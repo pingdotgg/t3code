@@ -190,6 +190,7 @@ function makeAllocations(
     updatedAt: "2026-05-25T00:00:00.000Z",
     generation: 1,
     tunnelReleasedAt: null,
+    recoveryEnabledAt: null,
   },
 ): ManagedEndpointAllocations.ManagedEndpointAllocations["Service"] {
   return {
@@ -427,6 +428,7 @@ describe("EnvironmentConnector", () => {
             updatedAt: "2026-05-25T00:00:00.000Z",
             generation: 1,
             tunnelReleasedAt: null,
+            recoveryEnabledAt: null,
           }),
         }),
       ),
@@ -486,6 +488,7 @@ describe("EnvironmentConnector", () => {
       updatedAt: "2026-05-25T00:00:00.000Z",
       generation: 2,
       tunnelReleasedAt: "2026-05-26T00:00:00.000Z",
+      recoveryEnabledAt: null,
     });
 
     return Effect.gen(function* () {

@@ -32,6 +32,7 @@ const allocationFor = (
   dnsRecordId: "dns-record-id",
   readyAt: ready ? "2026-05-25T00:00:00.000Z" : null,
   tunnelReleasedAt: null,
+  recoveryEnabledAt: null,
   origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
   updatedAt: "2026-05-25T00:00:00.000Z",
   generation: 1,
