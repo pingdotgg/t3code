@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -32,6 +33,7 @@ import {
   hasClaudeManagedMcpConfig,
   makeClaudeEnvironment,
 } from "../provider/Drivers/ClaudeHome.ts";
+import { runCliUntilResult } from "./runCliUntilResult.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
 /** `--tools` takes bare names; patterns go in the allow list. */
@@ -93,6 +95,26 @@ function claudeErrorResult(stdout: string): string | undefined {
     .findLast((result) => result.length > 0);
 }
 
+// Claude prints its result, then spends most of a second flushing telemetry before it exits.
+// Failed results wait for the exit so their reporting stays on the exit-code path.
+function claudeSuccessReader() {
+  let stdout = "";
+  return (chunk: string): string | undefined => {
+    stdout += chunk;
+    if (!/[}\]]\s*$/.test(stdout)) return undefined;
+    const output = Option.getOrUndefined(decodeJsonOption(stdout));
+    const result = Array.isArray(output)
+      ? output.findLast(
+          (message) => Predicate.hasProperty(message, "type") && message.type === "result",
+        )
+      : output;
+    return Predicate.hasProperty(result, "structured_output") &&
+      !(Predicate.hasProperty(result, "is_error") && result.is_error === true)
+      ? stdout
+      : undefined;
+  };
+}
+
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
@@ -104,21 +126,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
   );
-
-  const readStreamAsString = <E>(
-    operation: string,
-    stream: Stream.Stream<Uint8Array, E>,
-  ): Effect.Effect<string, TextGenerationError> =>
-    stream.pipe(
-      Stream.decodeText(),
-      Stream.runFold(
-        () => "",
-        (acc, chunk) => acc + chunk,
-      ),
-      Effect.mapError((cause) =>
-        normalizeCliError("claude", operation, cause, "Failed to collect process output"),
-      ),
-    );
 
   const encodeJsonForOperation = (
     operation: TextGenerationOperations.Operation,
@@ -197,9 +204,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       "Failed to encode Claude CLI settings.",
     );
 
-    const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* (
+    const makeCommand = Effect.fn("runClaudeJson.makeCommand")(function* (
       noSessionPersistence: boolean,
     ) {
+      // Scoped to the process, which may still be exiting in this directory after its result.
       const workingDirectory =
         operation === "generateThreadTitle"
           ? yield* fileSystem
@@ -243,7 +251,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         ],
         { env: claudeEnvironment },
       );
-      const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      return ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env: claudeEnvironment,
         cwd: workingDirectory,
         shell: spawnCommand.shell,
@@ -252,38 +260,28 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         },
         forceKillAfter: "1 second",
       });
-
-      const child = yield* commandSpawner
-        .spawn(command)
-        .pipe(
-          Effect.mapError((cause) =>
-            normalizeCliError("claude", operation, cause, "Failed to spawn Claude CLI process"),
-          ),
-        );
-
-      const [stdout, stderr, exitCode] = yield* Effect.all(
-        [
-          readStreamAsString(operation, child.stdout),
-          readStreamAsString(operation, child.stderr),
-          child.exitCode.pipe(
-            Effect.mapError((cause) =>
-              normalizeCliError("claude", operation, cause, "Failed to read Claude CLI exit code"),
-            ),
-          ),
-        ],
-        { concurrency: "unbounded" },
-      );
-
-      return { stdout, stderr, exitCode };
     });
+    const runClaudeCommand = (noSessionPersistence: boolean) =>
+      runCliUntilResult({
+        spawner: commandSpawner,
+        cliName: "claude",
+        label: "Claude",
+        operation,
+        command: makeCommand(noSessionPersistence),
+        readResult: claudeSuccessReader(),
+      });
 
     const rawStdout = yield* runClaudeCommand(true).pipe(
       Effect.filterOrElse(
-        (result) =>
-          result.exitCode === 0 || !result.stderr.includes(NO_SESSION_PERSISTENCE_REJECTED),
+        (run) =>
+          run._tag === "Result" ||
+          run.exitCode === 0 ||
+          !run.stderr.includes(NO_SESSION_PERSISTENCE_REJECTED),
         () => runClaudeCommand(false),
       ),
-      Effect.flatMap(({ stdout, stderr, exitCode }) => {
+      Effect.flatMap((run) => {
+        if (run._tag === "Result") return Effect.succeed(run.result);
+        const { stdout, stderr, exitCode } = run;
         if (exitCode === 0) return Effect.succeed(stdout);
         const stderrDetail = stderr.trim();
         const stdoutDetail = stdout.trim();
@@ -300,7 +298,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           }),
         );
       }),
-      Effect.scoped,
       Effect.timeoutOption(investigate?.timeoutMs ?? CLAUDE_TIMEOUT_MS),
       Effect.flatMap(
         Option.match({

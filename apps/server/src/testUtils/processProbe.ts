@@ -20,6 +20,8 @@ export const makeProcessProbe = Effect.gen(function* () {
         }
       }
     });
+    // Windows resets the socket of a fixture that exits or is killed; "close" still follows.
+    socket.on("error", () => {});
     socket.on("close", () => {
       sockets.delete(socket);
       Deferred.doneUnsafe(exited, Effect.void);
@@ -62,6 +64,11 @@ export const makeProcessProbe = Effect.gen(function* () {
       ),
     ),
     exited: Deferred.await(exited).pipe(Effect.timeout("4 seconds"), TestClock.withLive),
+    hasExited: Deferred.isDone(exited),
+    /** Asks a fixture that waits for a message on its probe socket to exit. */
+    release: Effect.sync(() => {
+      for (const socket of sockets) socket.write("release\n");
+    }),
   };
 });
 
