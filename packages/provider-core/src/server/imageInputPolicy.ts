@@ -1,13 +1,37 @@
 import type { ChatAttachment } from "@t3tools/contracts";
 import { isProviderNativeImageAttachment } from "./attachmentPrompt.ts";
 
+function field(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)[key]
+    : undefined;
+}
+
+function imageSupportFromInput(value: unknown): boolean | undefined {
+  const image = field(value, "image");
+  if (typeof image === "boolean") return image;
+  if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+    return value.includes("image");
+  }
+  return undefined;
+}
+
 /**
- * Determine whether an attachment may be forwarded as a native image.
+ * Read native image input support from provider model metadata.
  *
- * Unknown capability intentionally preserves existing provider behavior until
- * a trustworthy capability value is available. Providers must not infer vision
- * support from the MIME type alone.
+ * OpenCode exposes `capabilities.input.image`, while Pi reports an `input`
+ * modality list. Missing or unrecognized metadata is intentionally unknown,
+ * not false, so other providers retain their previous attachment behavior.
  */
+export function modelImageInputSupport(model: unknown): boolean | undefined {
+  return (
+    imageSupportFromInput(field(field(model, "capabilities"), "input")) ??
+    imageSupportFromInput(field(model, "input")) ??
+    imageSupportFromInput(field(field(model, "modalities"), "input"))
+  );
+}
+
+/** Keep text/file-path context even when the selected model has no vision input. */
 export function shouldSendNativeImage(input: {
   readonly attachment: ChatAttachment;
   readonly supportsImageInput: boolean | undefined;
