@@ -755,7 +755,7 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
       })
       .pipe(Effect.withTracer(command.tracer));
     for (const [table, seeks] of [
-      ["turn_items", ["USING INDEX orchestration_v2_projection_turn_items_conversation_idx"]],
+      ["turn_items", ["turn_items_thread_type_idx (thread_id=? AND type=?)"]],
       ["nodes", ["nodes_settled_leaf_idx (thread_id=? AND <expr>=?)"]],
       ["subagents", ["USING COVERING INDEX orchestration_v2_projection_subagents_settled_idx"]],
       [
@@ -1292,9 +1292,9 @@ it.effect("record reads filter notification sources without dropping matching me
       `EXPLAIN QUERY PLAN ${ordinalLookup}`,
       [threadId, "[]"],
     )).map((row) => row.detail);
-    // User-only reads must stay on the partial index instead of scanning every turn item.
+    // User-only reads must stay on a type-bounded index instead of scanning every turn item.
     assert.isTrue(
-      plan.some((detail) => detail.includes("turn_items_user_message_idx")),
+      plan.some((detail) => /turn_items_(user_message|thread_type)_idx/.test(detail)),
       plan.join("\n"),
     );
     // With every user item loaded, the items give the order and the lookup does not run.
@@ -2816,11 +2816,25 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
     assert.deepEqual([...(yield* family(id("missing")))], []);
 
     // Includes another root's idle child on the same path, which a shell may leave out.
-    const onWorktree = yield* store.getShellSnapshot({ location: "active", worktreePath });
+    const { statements, tracer } = traceSqlStatements();
+    const onWorktree = yield* store
+      .getShellSnapshot({ location: "active", worktreePath })
+      .pipe(Effect.withTracer(tracer));
     assert.sameMembers(
       onWorktree.threads.map((thread) => thread.id),
       [id("root"), id("child"), id("other-child")],
     );
+    // A path names a few threads; scanning every thread parses every payload.
+    const sql = yield* SqlClient.SqlClient;
+    const threadQuery = statements.find((statement) =>
+      statement.includes("AS latest_run_stop_requested"),
+    );
+    assert.isDefined(threadQuery);
+    const threadPlan = (yield* sql.unsafe<{ readonly detail: string }>(
+      `EXPLAIN QUERY PLAN ${threadQuery}`,
+      [],
+    )).map((row) => row.detail);
+    assert.notInclude(threadPlan, "SCAN t", threadPlan.join("\n"));
     // A fork keeps its deleted source's root, so the deleted root still names the live tree.
     yield* store.apply({
       id: EventId.make("event:family:root-deleted"),
@@ -4328,9 +4342,16 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         workCursor = page.nextCursor;
       }
       assert.strictEqual(workIds.size, 999);
-      for (const toolName of ["t3-code.delegate_task", "mcp__t3_code__delegate_task"]) {
+      for (const [toolName, output] of [
+        ["t3-code.delegate_task", null],
+        ["mcp__t3_code__delegate_task", null],
+        ["mcp__t3-code__send_to_user", null],
+        // OpenCode Code Mode reports a nested send_to_user call as one `execute` item.
+        ["execute", JSON.stringify({ sentMessage: "Draft" })],
+      ] as const) {
         yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool',
-          payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', ${toolName})
+          payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', ${toolName},
+            '$.output', ${output})
           WHERE thread_id = ${threadId} AND ordinal = 2`;
         const window = yield* projectionStore.getThreadSnapshotWindow(threadId, {
           rowLimit: sqlPageLimit,
@@ -5813,7 +5834,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       let windowReads = 0;
       let foldedGroups = 0;
 
-      for (let round = 0; round < 4; round += 1) {
+      for (let round = 0; round < 5; round += 1) {
         const threadId = ThreadId.make(`thread:window-equivalence:${round}`);
         const created = {
           id: EventId.make(`event:window-equivalence:${round}`),
@@ -5845,35 +5866,41 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           },
         } satisfies Parameters<typeof projectionStore.apply>[0];
         yield* projectionStore.apply(created);
+        // The last thread puts three things below a window: a user turn under a hidden queued
+        // turn, the start of a long run that folds, and the start of the run before it, which
+        // has later rows among the first rows of the long run.
+        const windowEdges = round === 4;
         // One run of each kind in a random order, then an active run. Every other thread has
         // one user turn and then only wake turns.
-        // The last thread is a long run that a late notification wakes, then enough one-row
-        // runs that a page stops at the raw turn limit only if it counts that wake as a turn.
+        // The fourth thread is a turn, many rolled-back rows, a late notification of that turn,
+        // then 149 one-row turns. A page stops at that notification only if it counts as a turn.
         const kinds =
           round === 3
-            ? ["late wake", ...Array.from({ length: 148 }, () => "one row")]
-            : [
-                "rolled back",
-                "cancelled queued turn",
-                "held queued turn",
-                "replaced attempt",
-                "stopped",
-                "stopped",
-                "folds work",
-                "folds work",
-                "short",
-                "short",
-                "short",
-              ]
-                .map((kind) => ({ kind, order: random() }))
-                .toSorted((left, right) => left.order - right.order)
-                .map(({ kind }) => kind);
+            ? ["rolled back", "late wake", ...Array.from({ length: 149 }, () => "one row")]
+            : windowEdges
+              ? ["short", "cancelled queued turn", "folds work", "long fold", "stopped"]
+              : [
+                  "rolled back",
+                  "cancelled queued turn",
+                  "held queued turn",
+                  "replaced attempt",
+                  "stopped",
+                  "stopped",
+                  "folds work",
+                  "folds work",
+                  "short",
+                  "short",
+                  "short",
+                ]
+                  .map((kind) => ({ kind, order: random() }))
+                  .toSorted((left, right) => left.order - right.order)
+                  .map(({ kind }) => kind);
         const agentDriven = round === 1;
         const runs: Array<unknown> = [];
         const attempts: Array<unknown> = [];
         const items: Array<unknown> = [];
         const tiedWithHidden: Array<TurnItemId> = [];
-        const repliesInStoppedRuns: Array<string> = [];
+        const pageEnds: Array<string> = [];
         let ordinal = 0;
         for (const [index, kind] of [...kinds, "active"].entries()) {
           const run = index + 1;
@@ -5967,7 +5994,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           const wakes =
             kind === "one row"
               ? run % 10 !== 0
-              : kind !== "late wake" && (agentDriven ? run > 1 : chance(0.2));
+              : windowEdges
+                ? ["folds work", "long fold", "stopped"].includes(kind)
+                : kind !== "late wake" && (agentDriven ? run > 1 : chance(0.2));
+          if (round === 3 && kind === "active")
+            pageEnds.push(`turn-item:window-equivalence:${round}:${items.length}`);
           if (wakes) notification();
           else
             userMessage(
@@ -5983,25 +6014,40 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
                 ? 320 + Math.floor(random() * 60)
                 : kind === "folds work"
                   ? 155 + Math.floor(random() * 60)
-                  : kind === "one row"
-                    ? 0
-                    : Math.floor(random() * 30);
+                  : kind === "long fold"
+                    ? 300
+                    : kind === "one row"
+                      ? 0
+                      : Math.floor(random() * 30);
           for (let row = 0; row < work; row += 1) {
-            if (chance(0.5)) add("command_execution", { input: "echo", output: "ok", exitCode: 0 });
-            else add("reasoning", { text: "", streaming: false });
+            // The first rows of a long fold and the work of a late wake belong to the run before.
+            const owner =
+              (kind === "long fold" && row < 140) || kind === "late wake"
+                ? {
+                    runId: `run:window-equivalence:${round}:${run - 1}`,
+                    nodeId: `node:window-equivalence:${round}:${run - 1}`,
+                  }
+                : {};
+            if (chance(0.5))
+              add("command_execution", { input: "echo", output: "ok", exitCode: 0, ...owner });
+            else add("reasoning", { text: "", streaming: false, ...owner });
             // A reply deep in a stopped run: a page that ends on it has enough work below it
             // to fold, and only the stop request above it says that it does not.
             const reply = kind === "stopped" && row === 200;
-            if (reply)
-              repliesInStoppedRuns.push(`turn-item:window-equivalence:${round}:${items.length}`);
-            if (reply || chance(0.02))
+            if (reply) pageEnds.push(`turn-item:window-equivalence:${round}:${items.length}`);
+            // With these replies, the part of a long fold in one window is too small to fold,
+            // and a shown row lies below the notification of a late wake.
+            const replies = kind === "long fold" || kind === "late wake";
+            if (reply || (replies && row % 5 === 0) || chance(0.02))
               add("assistant_message", {
                 messageId: `message:window-equivalence:${round}:${items.length}`,
                 text: "Reply",
                 streaming: false,
               });
-            if (chance(0.01)) notification();
-            if (chance(0.004) && !agentDriven) userMessage("steer");
+            // A late wake has no other input above its turn start.
+            if (chance(0.01) && kind !== "late wake") notification();
+            if (chance(0.004) && !agentDriven && !windowEdges && kind !== "late wake")
+              userMessage("steer");
           }
           if (kind === "late wake") notification();
           if (kind === "stopped") add("run_interrupt_request", { message: "Stop" });
@@ -6096,7 +6142,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             cursor = page.nextCursor;
           }
         }
-        for (const sourceItemId of repliesInStoppedRuns) {
+        for (const sourceItemId of pageEnds) {
           const cursor = encodeThreadHistoryCursor({
             snapshotSequence: 0,
             sourceThreadId: threadId,
@@ -6613,6 +6659,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.isNotEmpty(countQueries);
       for (const countQuery of countQueries) {
         for (const detail of yield* planOf(countQuery)) {
+          // A thread's counts read only each run's status, never its row and payload.
+          if (/^SEARCH (r|run) /.test(detail)) {
+            assert.include(detail, "COVERING INDEX", detail);
+          }
           if (detail.includes("orchestration_v2_projection_turn_items")) {
             // Only held input is read from the sparse index; transcript history stays unread.
             assert.include(
