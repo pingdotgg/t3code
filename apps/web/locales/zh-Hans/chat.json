@@ -141,7 +141,7 @@
     "resume": "恢复",
     "clear": "清除",
     "agentNotRespondingToStop": "Agent 未响应停止指令",
-    "stopping": "正在停止",
+    "stopping": "正在停止…",
     "forceStopDetail": "可能内存不足。强制停止会终止其进程。",
     "forceStop": "强制停止",
     "forceStopping": "正在强制停止...",

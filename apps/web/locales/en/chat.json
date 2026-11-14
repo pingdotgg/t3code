@@ -141,7 +141,7 @@
     "resume": "Resume",
     "clear": "Clear",
     "agentNotRespondingToStop": "Agent not responding to Stop",
-    "stopping": "Stopping",
+    "stopping": "Stopping...",
     "forceStopDetail": "It may be short on memory. Force stop kills its processes.",
     "forceStop": "Force stop",
     "forceStopping": "Force stopping...",
