@@ -4,13 +4,14 @@ import { MotionAnimation, playMotion, toDevicePixel, type MotionRun } from "./an
 
 let current: { scroller: HTMLElement; run: MotionRun } | null = null;
 
-const nativeScrollLeft = Object.getOwnPropertyDescriptor(Element.prototype, "scrollLeft");
 const claimed = new WeakSet<HTMLElement>();
 
 /** Drop external scroll writes while camera motion owns the strip; editor focus otherwise follows
  * transformed caret geometry and flashes undrawn content. */
 function claimStripScroll(scroller: HTMLElement): void {
-  if (claimed.has(scroller) || !nativeScrollLeft?.get || !nativeScrollLeft.set) return;
+  if (claimed.has(scroller)) return;
+  const nativeScrollLeft = Object.getOwnPropertyDescriptor(Element.prototype, "scrollLeft");
+  if (!nativeScrollLeft?.get || !nativeScrollLeft.set) return;
   claimed.add(scroller);
   const { get, set } = nativeScrollLeft;
   Object.defineProperty(scroller, "scrollLeft", {
