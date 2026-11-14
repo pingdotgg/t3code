@@ -158,6 +158,7 @@ export function remoteFallbackEditors(identity: BrowserIdentity): ReadonlyArray<
 
 // Probed once per page: installed editors rarely change, and the probe spawns processes.
 const remoteCapableEditorsAtom = Atom.make((get): ReadonlyArray<EditorId> => {
+  if (window.desktopBridge === undefined) return REMOTE_CAPABLE_EDITOR_IDS;
   const probe = window.desktopBridge?.probeRemoteEditors;
   probe?.().then(
     (ids) => {
