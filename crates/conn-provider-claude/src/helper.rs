@@ -140,6 +140,12 @@ pub struct Helper {
     inner: Arc<Inner>,
 }
 
+impl std::fmt::Debug for Helper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Helper").finish_non_exhaustive()
+    }
+}
+
 /// The host driver this crate uses.
 pub const DRIVER: &str = "claude";
 
@@ -296,7 +302,7 @@ impl Helper {
 
 impl Inner {
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+        crate::lock(&self.state)
     }
 
     /// The running helper's stdin, starting the helper first if needed.
@@ -542,6 +548,14 @@ pub struct Query {
     events: Option<mpsc::Receiver<QueryEvent>>,
 }
 
+impl std::fmt::Debug for Query {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Query")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Query {
     pub fn id(&self) -> &str {
         &self.id
@@ -565,6 +579,14 @@ impl Query {
 pub struct QueryHandle {
     id: String,
     helper: Helper,
+}
+
+impl std::fmt::Debug for QueryHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QueryHandle")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
 }
 
 impl QueryHandle {

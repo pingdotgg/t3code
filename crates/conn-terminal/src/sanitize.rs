@@ -10,22 +10,23 @@ const MAX_PENDING: usize = 4096;
 
 /// Strips queries from a stream of output, carrying a sequence split across chunks.
 #[derive(Debug, Default)]
-pub struct HistoryFilter {
+pub(crate) struct HistoryFilter {
     pending: String,
 }
 
 impl HistoryFilter {
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.pending = String::new();
     }
 
     /// The part of `data` history keeps. An incomplete trailing sequence waits for the next
     /// chunk.
-    pub fn filter(&mut self, data: &str) -> String {
+    pub(crate) fn filter(&mut self, data: &str) -> String {
         if self.pending.is_empty() && !data.as_bytes().contains(&ESC) {
             return data.to_owned();
         }
-        let input = std::mem::take(&mut self.pending) + data;
+        let mut input = std::mem::take(&mut self.pending);
+        input.push_str(data);
         let bytes = input.as_bytes();
         let mut out = String::with_capacity(input.len());
         let mut i = 0;
@@ -176,14 +177,14 @@ fn strip_osc(content: &str) -> bool {
 /// Sent after history read from disk: leaves an alternate screen the old shell left open, and
 /// turns off the input modes (mouse, bracketed paste, Kitty keyboard) a dead program set, so
 /// the new shell does not receive their reports. Same bytes as `INHERITED_INPUT_RESET`.
-pub const INHERITED_INPUT_RESET: &str = concat!(
+pub(crate) const INHERITED_INPUT_RESET: &str = concat!(
     "\u{1b}[?1049h\u{1b}[<100u\u{1b}[=0;1u\u{1b}[?1049l",
     "\u{1b}[?1;9;66;67;1000;1002;1003;1004;1005;1006;1015;2004l",
     "\u{1b}[?25;1035;1036h\u{1b}[<100u\u{1b}[=0;1u\u{1b}[>4m",
 );
 
 /// The suffix that makes inherited history safe to replay ahead of a new shell.
-pub fn inherited_suffix(history: &str) -> String {
+pub(crate) fn inherited_suffix(history: &str) -> String {
     if !history.as_bytes().contains(&ESC) {
         return String::new();
     }
@@ -221,7 +222,7 @@ pub fn inherited_suffix(history: &str) -> String {
         }
     }
     let leave = alternate.map_or_else(String::new, |mode| format!("\u{1b}7\u{1b}[?{mode}l"));
-    leave + INHERITED_INPUT_RESET
+    format!("{leave}{INHERITED_INPUT_RESET}")
 }
 
 #[cfg(test)]

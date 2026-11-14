@@ -134,39 +134,10 @@ pub fn prompt_text(text: &str, attachments: &[Value], dir: Option<&Path>) -> Str
     }
     prompt
 }
-
-/// Standard base64 with padding. Small enough not to need a dependency.
-pub fn base64(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b = |i: usize| u32::from(chunk.get(i).copied().unwrap_or(0));
-        let n = b(0) << 16 | b(1) << 8 | b(2);
-        for i in 0..4 {
-            if i <= chunk.len() {
-                let index = (n >> (18 - 6 * i) & 63) as usize;
-                out.push(char::from(TABLE.get(index).copied().unwrap_or(b'A')));
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn base64_matches_the_standard() {
-        assert_eq!(base64(b""), "");
-        assert_eq!(base64(b"f"), "Zg==");
-        assert_eq!(base64(b"fo"), "Zm8=");
-        assert_eq!(base64(b"foo"), "Zm9v");
-        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
-    }
 
     #[test]
     fn paths_follow_the_attachment_store() {

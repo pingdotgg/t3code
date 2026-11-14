@@ -421,14 +421,14 @@ pub async fn init(input: VcsInitInput) -> VcsResult<()> {
         Some(VcsDriverKind::Jj) => {
             return Err(VcsError::Unsupported {
                 operation: "VcsDriverRegistry.get",
-                kind: "jj",
+                kind: VcsDriverKind::Jj,
                 detail: "No jj VCS driver is registered.".into(),
             });
         }
         Some(VcsDriverKind::Unknown) => {
             return Err(VcsError::Unsupported {
                 operation: "VcsProvisioningService.resolveRequestedKind",
-                kind: "unknown",
+                kind: VcsDriverKind::Unknown,
                 detail: "A concrete VCS driver kind is required for repository provisioning."
                     .into(),
             });

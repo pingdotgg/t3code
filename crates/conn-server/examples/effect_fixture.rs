@@ -3,6 +3,11 @@
 //! [`SNAPSHOTS`] times, more than the ack window, then stays open. It prints
 //! `stream dropped` on stderr when the client interrupts it.
 
+#![expect(
+    clippy::unwrap_used,
+    reason = "a test fixture server: a failure should stop it"
+)]
+
 use std::sync::Arc;
 
 use conn_server::{

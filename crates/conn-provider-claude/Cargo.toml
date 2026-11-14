@@ -5,21 +5,23 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 
 [dependencies]
+conn-support.workspace = true
 conn-contract.workspace = true
 conn-provider.workspace = true
 conn-provider-support.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2 = { version = "0.10", default-features = false }
+sha2.workspace = true
 tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros"] }
 
 [dev-dependencies]
 # The live MCP test serves a tiny HTTP MCP server.
 tokio = { workspace = true, features = ["net"] }
 # The conformance example sends the server's own MCP instructions text.
-conn-mcp = { path = "../conn-mcp" }
+conn-mcp.workspace = true
 
 [lints]
 workspace = true

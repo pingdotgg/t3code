@@ -6,13 +6,13 @@ use serde_json::{Map, Value};
 
 const CATALOG: &str = include_str!("catalog.jsonl");
 
-pub fn lines() -> impl Iterator<Item = &'static str> {
+pub(crate) fn lines() -> impl Iterator<Item = &'static str> {
     CATALOG.lines().filter(|line| !line.is_empty())
 }
 
 /// Every tool's name, in catalog order.
 #[cfg(test)]
-pub fn names() -> impl Iterator<Item = &'static str> {
+pub(crate) fn names() -> impl Iterator<Item = &'static str> {
     lines().filter_map(|line| {
         line.strip_prefix("{\"name\":\"")
             .and_then(|rest| rest.split_once('"'))
@@ -21,7 +21,7 @@ pub fn names() -> impl Iterator<Item = &'static str> {
 }
 
 /// The `tools/list` result body.
-pub fn list_result() -> String {
+pub(crate) fn list_result() -> String {
     let mut out = String::with_capacity(CATALOG.len() + 16);
     out.push_str("{\"tools\":[");
     for (i, line) in lines().enumerate() {
@@ -36,7 +36,7 @@ pub fn list_result() -> String {
 
 /// One tool's definition, parsed, and its argument names in advertised order (serde_json
 /// sorts object keys; error texts list them as TS does).
-pub fn tool(name: &str) -> Option<(Value, Vec<String>)> {
+pub(crate) fn tool(name: &str) -> Option<(Value, Vec<String>)> {
     let prefix = format!("{{\"name\":{},", Value::String(name.to_owned()));
     let line = lines().find(|line| line.starts_with(&prefix))?;
     let tool = serde_json::from_str(line).ok()?;
@@ -89,7 +89,7 @@ const MAX_NAMED_ARGUMENTS: usize = 5;
 /// as omitted (and is removed), an argument the schema does not list is refused by name, and
 /// required fields and simple types are checked. Nested objects stay lenient, as in TS.
 /// The error text follows Effect's where an agent relies on it (unknown and missing keys).
-pub fn check_arguments(
+pub(crate) fn check_arguments(
     schema: &Value,
     order: &[String],
     arguments: &mut Map<String, Value>,

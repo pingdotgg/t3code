@@ -145,7 +145,7 @@ macro_rules! stream {
     }};
 }
 
-pub fn register(table: &mut MethodTable, deps: &Deps) {
+pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
     let Some(engine) = deps.engine.clone() else {
         return;
     };

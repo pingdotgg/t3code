@@ -17,7 +17,6 @@ mod history;
 mod pty;
 mod sanitize;
 mod store;
-mod time;
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
@@ -118,6 +117,12 @@ type Key = (String, String);
 #[derive(Clone)]
 pub struct TerminalManager {
     inner: Arc<Inner>,
+}
+
+impl std::fmt::Debug for TerminalManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TerminalManager").finish_non_exhaustive()
+    }
 }
 
 struct Inner {
@@ -536,7 +541,7 @@ impl TerminalManager {
 
 impl Inner {
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().expect("terminal state lock")
+        crate::lock(&self.state)
     }
 
     fn open_locked(
@@ -615,7 +620,7 @@ impl Inner {
                     filter: HistoryFilter::default(),
                     utf8: Utf8Stream::default(),
                     sequence: 0,
-                    updated_at: time::now_iso(),
+                    updated_at: conn_support::time::now_iso(),
                     touched,
                     cols,
                     rows,
@@ -998,7 +1003,7 @@ impl Session {
     fn advance(&mut self) {
         self.sequence += 1;
         self.touched = tick();
-        self.updated_at = time::now_iso();
+        self.updated_at = conn_support::time::now_iso();
     }
 
     fn label(&self) -> String {
@@ -1069,7 +1074,7 @@ impl Session {
         self.cols = cols;
         self.rows = rows;
         self.sequence += 1;
-        self.updated_at = time::now_iso();
+        self.updated_at = conn_support::time::now_iso();
         Ok(Some(TerminalAttachStreamEvent::Activity(
             TerminalAttachStreamEventActivity {
                 thread_id: self.thread_id.clone(),
@@ -1146,6 +1151,15 @@ pub struct Subscription {
     ready: VecDeque<TerminalAttachStreamEvent>,
 }
 
+impl std::fmt::Debug for Subscription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Subscription")
+            .field("key", &self.key)
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Subscription {
     /// The next event. Never ends by itself: a closed terminal sends `closed`, and a terminal
     /// opened again under the same id sends a new snapshot.
@@ -1199,6 +1213,14 @@ pub struct MetadataSubscription {
     id: u64,
     feed: Arc<Feed<TerminalMetadataStreamEvent>>,
     ready: VecDeque<TerminalMetadataStreamEvent>,
+}
+
+impl std::fmt::Debug for MetadataSubscription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MetadataSubscription")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
 }
 
 impl MetadataSubscription {
@@ -1399,6 +1421,12 @@ async fn process_name(pid: i32) -> Option<String> {
         .trim_end_matches([')', ']'])
         .trim_start_matches('-');
     (!name.is_empty()).then(|| name.chars().take(MAX_LABEL_CHARS).collect())
+}
+
+/// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
+/// With `panic = "abort"` a release build stops at the panic itself.
+pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().expect("conn-terminal lock poisoned")
 }
 
 #[cfg(test)]

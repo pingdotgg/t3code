@@ -10,12 +10,12 @@ use std::{
     path::PathBuf,
 };
 
-pub struct Store {
+pub(crate) struct Store {
     dir: PathBuf,
 }
 
 impl Store {
-    pub fn new(dir: PathBuf) -> Self {
+    pub(crate) fn new(dir: PathBuf) -> Self {
         Self { dir }
     }
 
@@ -28,7 +28,7 @@ impl Store {
     }
 
     /// The last `max_bytes` of the file, starting at a code point.
-    pub fn read(&self, thread_id: &str, terminal_id: &str, max_bytes: usize) -> String {
+    pub(crate) fn read(&self, thread_id: &str, terminal_id: &str, max_bytes: usize) -> String {
         let Ok(mut file) = fs::File::open(self.path(thread_id, terminal_id)) else {
             return String::new();
         };
@@ -47,7 +47,7 @@ impl Store {
 
     /// Appends `tail`, or rewrites the file with `full` when appending would pass `limit`.
     /// Returns the file's new length.
-    pub fn append(
+    pub(crate) fn append(
         &self,
         thread_id: &str,
         terminal_id: &str,
@@ -68,7 +68,7 @@ impl Store {
         Ok(file_len + tail.len() as u64)
     }
 
-    pub fn write(&self, thread_id: &str, terminal_id: &str, text: &str) -> io::Result<u64> {
+    pub(crate) fn write(&self, thread_id: &str, terminal_id: &str, text: &str) -> io::Result<u64> {
         fs::create_dir_all(&self.dir)?;
         let path = self.path(thread_id, terminal_id);
         let temp = path.with_extension("tmp");
@@ -77,11 +77,11 @@ impl Store {
         Ok(text.len() as u64)
     }
 
-    pub fn delete(&self, thread_id: &str, terminal_id: &str) {
+    pub(crate) fn delete(&self, thread_id: &str, terminal_id: &str) {
         let _ = fs::remove_file(self.path(thread_id, terminal_id));
     }
 
-    pub fn delete_thread(&self, thread_id: &str) {
+    pub(crate) fn delete_thread(&self, thread_id: &str) {
         let prefix = format!("{:016x}-", fnv(thread_id));
         let Ok(entries) = fs::read_dir(&self.dir) else {
             return;

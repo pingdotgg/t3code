@@ -42,6 +42,16 @@ pub struct FakeProvider {
     close_delay: std::time::Duration,
 }
 
+impl std::fmt::Debug for FakeProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FakeProvider")
+            .field("id", &self.id)
+            .field("sessions", &self.sessions)
+            .field("closed", &self.closed)
+            .finish_non_exhaustive()
+    }
+}
+
 impl FakeProvider {
     pub fn new(instance_id: &str) -> Self {
         Self {
@@ -317,7 +327,7 @@ impl Session for FakeSession {
                     started.push(terminal(&turn, TurnStatus::Completed, None));
                 }
             }
-            *self.turn.lock().unwrap() = Some(turn);
+            *crate::lock(&self.turn) = Some(turn);
             tokio::spawn(async move { emit(&tx, started).await });
             Ok(())
         })
@@ -331,7 +341,7 @@ impl Session for FakeSession {
                 });
             }
             let events = {
-                let turn = self.turn.lock().unwrap();
+                let turn = crate::lock(&self.turn);
                 let turn = turn.as_ref().ok_or(ProviderError::SessionStopped)?;
                 let steer = |status: &str| {
                     event(json!({"type": "steer.updated", "threadId": turn.thread_id,
@@ -357,7 +367,7 @@ impl Session for FakeSession {
     fn interrupt_turn(&self, _input: InterruptInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
             let event = {
-                let turn = self.turn.lock().unwrap();
+                let turn = crate::lock(&self.turn);
                 let turn = turn.as_ref().ok_or(ProviderError::SessionStopped)?;
                 vec![
                     provider_turn(turn, "interrupted"),
@@ -375,7 +385,7 @@ impl Session for FakeSession {
     ) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
             let events = {
-                let turn = self.turn.lock().unwrap();
+                let turn = crate::lock(&self.turn);
                 let turn = turn.as_ref().ok_or(ProviderError::SessionStopped)?;
                 let decision = conn_contract::to_json(&input.decision);
                 let mut events = vec![event(json!({"type": "runtime_request.updated",
@@ -423,7 +433,7 @@ impl Session for FakeSession {
             ));
             events.push(provider_turn(&turn, "completed"));
             events.push(terminal(&turn, TurnStatus::Completed, None));
-            *self.turn.lock().unwrap() = Some(turn);
+            *crate::lock(&self.turn) = Some(turn);
             let tx = self.events.clone();
             tokio::spawn(async move { emit(&tx, events).await });
             Ok(())
@@ -431,7 +441,7 @@ impl Session for FakeSession {
     }
 
     fn set_mcp_servers(&self, servers: Vec<McpServer>) -> BoxFuture<'_, ProviderResult<()>> {
-        *self.mcp_servers.lock().unwrap() = servers;
+        *crate::lock(&self.mcp_servers) = servers;
         Box::pin(async { Ok(()) })
     }
 

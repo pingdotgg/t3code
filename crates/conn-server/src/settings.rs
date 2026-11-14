@@ -29,7 +29,7 @@ use tokio::sync::watch;
 
 use conn_contract::{ClientServerSettingsPatch, ProviderInstanceMutation, ServerSettings};
 
-use crate::auth::write_private;
+use conn_support::fs::write_private;
 
 /// What `redactServerSettingsForClient` shows instead of a saved secret.
 pub const SECRET_REDACTED: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}";
@@ -81,7 +81,8 @@ const LEGACY_PROJECT_MAPS: &[(&str, &str)] = &[
     ("projectScriptOverrides", "defaultProjectScripts"),
 ];
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{operation} {settings_path}: {detail}")]
 pub struct SettingsError {
     pub settings_path: String,
     pub operation: &'static str,
@@ -110,6 +111,15 @@ pub struct SettingsStore {
     sparse: Mutex<Map<String, Value>>,
     /// Bumped after each write; `subscribeServerConfig` sends `settingsUpdated` on it.
     revision: watch::Sender<u64>,
+}
+
+impl std::fmt::Debug for SettingsStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The settings may hold secrets (provider keys, tokens).
+        f.debug_struct("SettingsStore")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SettingsStore {
@@ -223,9 +233,7 @@ impl SettingsStore {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Map<String, Value>> {
-        self.sparse
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        crate::lock(&self.sparse)
     }
 }
 

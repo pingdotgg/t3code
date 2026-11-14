@@ -59,6 +59,12 @@ pub struct OpenedSession {
     pub events: mpsc::Receiver<ProviderEvent>,
 }
 
+impl std::fmt::Debug for OpenedSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenedSession").finish_non_exhaustive()
+    }
+}
+
 /// One live native session. Methods return once the provider accepted the request; results
 /// arrive as events.
 pub trait Session: Send + Sync {
@@ -166,12 +172,28 @@ pub trait Session: Send + Sync {
 }
 
 /// One MCP server a session passes to its agent (`McpServerConfig`, HTTP transport).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpServer {
     pub name: String,
     pub url: String,
     #[serde(default)]
     pub headers: Vec<(String, String)>,
+}
+
+impl std::fmt::Debug for McpServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Header values carry the agent's bearer token.
+        let headers: Vec<(&str, &str)> = self
+            .headers
+            .iter()
+            .map(|(name, _)| (name.as_str(), "<redacted>"))
+            .collect();
+        f.debug_struct("McpServer")
+            .field("name", &self.name)
+            .field("url", &self.url)
+            .field("headers", &headers)
+            .finish()
+    }
 }
 
 /// `ProviderAdapterV2RollbackTarget`.

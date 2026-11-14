@@ -50,6 +50,10 @@ pub fn is_declared(tag: &str) -> bool {
 /// # Panics
 ///
 /// When `tag` has no entry; the method table checks that when a handler registers.
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "a tag without an entry is a bug that the method table rules out at start"
+)]
 pub fn check(tag: &str, ctx: &CallContext, payload: &Value) -> Result<(), Failure> {
     let Some(principal) = &ctx.principal else {
         return Ok(());
@@ -324,7 +328,8 @@ mod tests {
         assert!(table.get("server.probe").is_some());
         // The T3 server checks a scope inside these handlers, outside the table (the bump
         // report lists new ones). Serving one means applying that rule in the handler.
-        for (rule, tag) in [("requiredScopeForDeviceList", "device.list")] {
+        const IN_HANDLER: &[(&str, &str)] = &[("requiredScopeForDeviceList", "device.list")];
+        for &(rule, tag) in IN_HANDLER {
             if generated::IN_HANDLER_RULES.contains(&rule) {
                 assert!(
                     table.get(tag).is_none(),

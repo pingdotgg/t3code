@@ -314,7 +314,7 @@ fn delivery(tx: &Tx<'_>, c: &MessageDispatch) -> Result<(Delivery, Option<Value>
             }
         }
         "start_immediately" => match c.delivery_intent.as_deref() {
-            Some("steer" | "restart" | "auto") => Some(active.clone()),
+            Some("steer" | "restart" | "auto") => Some(active),
             _ => None,
         },
         _ => None,
@@ -509,7 +509,7 @@ fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     };
     let mut effects = vec![];
     if let Some(seed) = seed {
-        let mut thread = thread.clone();
+        let mut thread = thread;
         thread["title"] = json!(seed);
         if tx.generates_titles {
             thread["titleRegeneration"] = json!({"requestId": c.command_id, "startedAt": now});

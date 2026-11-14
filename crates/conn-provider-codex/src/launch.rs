@@ -418,7 +418,7 @@ pub fn user_input(
         let mime = attachment["mimeType"].as_str().unwrap_or_default();
         items.push(json!({
             "type": "image",
-            "url": format!("data:{mime};base64,{}", attachments::base64(&bytes)),
+            "url": format!("data:{mime};base64,{}", conn_support::base64::encode(&bytes)),
         }));
     }
     if items.is_empty() {

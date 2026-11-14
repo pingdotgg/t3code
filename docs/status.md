@@ -50,7 +50,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 24 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
+`main` is in a working state. `tools/check.sh` passes 25 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
 
 | Part | State |
 | --- | --- |
@@ -136,19 +136,15 @@ remembering: an own server brings its own defects.
 
 ## What is left, in the planned order
 
-1. **Rust hygiene, step 1.** The lint set of BeautifulRust (`lints/beautiful-rust/`), stage 1:
-   `unwrap_used`, `panic_in_result_fn`, `allow_attributes`, `allow_attributes_without_reason`,
-   `dbg_macro`, `todo`, `wildcard_imports`, `string_add`, `missing_assert_message`,
-   `redundant_clone`, `rc_buffer`, `missing_debug_implementations`, `unreachable_pub`,
-   `rust_2018_idioms`, plus `large_futures`. Measured with clippy 0.1.95: 533 warnings, most
-   fixed by `cargo clippy --fix`, 162 by hand. Stage 2: the `bool` parameter lints (56 hits at
-   BeautifulRust's limit of zero), `clone_on_ref_ptr` (110), the print lints with a `tracing`
-   switch, `clippy::all` and `clippy::pedantic`. Stage 3: the cast lints (about 295 places).
-   The `[lib]` lints stay off. Also in step 1: typed construction at the 7 places that build a
-   contract error with `from_json(json!(..)).expect(..)`; `thiserror` on eight boundary error
-   types; a `conn-support` crate for the time, hex, HMAC and base64 helpers that exist 2 to 6
-   times; the `uuid` crate; the store's sequence counter that is not restored when a commit
-   fails; a `Drop` on `CodexSession`; an unchecked offset in `reads.rs`; a pinned toolchain.
+1. **Rust hygiene, step 1: done (2026-11-14).** The toolchain is pinned to 1.99.1; BeautifulRust's
+   stage-1 lints and `large_futures` are on, and the workspace is clean under clippy with
+   `--all-features`. Also done: typed contract errors in `conn-vcs` and `conn-server`; start-up
+   errors exit with status 1; one lock helper per crate; `thiserror` on eight boundary error
+   types; `crates/conn-support` for the shared time, hex, base64, HMAC, atomic-write and v4-id
+   helpers (`uuid` crate); `rustix` for the liveness check; the store's sequence counter, a
+   `Drop` on `CodexSession`, and the find offset in `reads.rs`, each with a test. Next stages
+   (bool parameters, `clone_on_ref_ptr`, print lints with `tracing`, pedantic; then the cast
+   lints) are in `CRATES.md`, "Lint set".
 2. **Provider interface.** A sandbox and approval policy (closes Claude's read-only sandbox and
    `dontAsk`, and 3 failing transcripts); MCP servers at session open; a host handle for
    agents that ask the server for files and terminals; `background_work.updated`; a

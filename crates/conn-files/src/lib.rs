@@ -115,3 +115,9 @@ fn git_worktrees(project: &Path) -> Vec<PathBuf> {
         .filter_map(|p| std::fs::canonicalize(p).ok())
         .collect()
 }
+
+/// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
+/// With `panic = "abort"` a release build stops at the panic itself.
+pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().expect("conn-files lock poisoned")
+}

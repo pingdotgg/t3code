@@ -23,7 +23,6 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    clock,
     error::{VcsError, VcsResult},
     process::{GitCommand, OnLimit, ProcessError},
     repo::{self, PROBE_TIMEOUT, git},
@@ -120,7 +119,7 @@ pub fn parse_numstat(output: &str) -> Vec<FileStat> {
 pub fn diff_hash(diff: &str, files: &[FileStat]) -> String {
     let json = serde_json::to_string(&(diff, files)).expect("serializable");
     let digest = Sha256::digest(json.as_bytes());
-    digest.iter().map(|b| format!("{b:02x}")).collect()
+    conn_support::hex::hex(&digest)
 }
 
 struct TrackedDiff {
@@ -483,7 +482,7 @@ fn source(
 fn empty_preview(cwd: &str) -> ReviewDiffPreviewResult {
     ReviewDiffPreviewResult {
         cwd: cwd.to_owned(),
-        generated_at: clock::now_iso(),
+        generated_at: conn_support::time::now_iso(),
         sources: Vec::new(),
         incomplete: None,
     }
@@ -631,7 +630,7 @@ async fn diff_preview_inner(input: ReviewDiffPreviewInput) -> VcsResult<ReviewDi
     }
     Ok(ReviewDiffPreviewResult {
         cwd: input.cwd,
-        generated_at: clock::now_iso(),
+        generated_at: conn_support::time::now_iso(),
         sources,
         incomplete: (input.tracked_only == Some(true)).then_some(true),
     })
@@ -794,7 +793,7 @@ async fn commit_preview(
     }
     Ok(ReviewDiffPreviewResult {
         cwd: input.cwd.clone(),
-        generated_at: clock::now_iso(),
+        generated_at: conn_support::time::now_iso(),
         sources: vec![source],
         incomplete: None,
     })

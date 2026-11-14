@@ -165,7 +165,7 @@ pub(crate) fn delegated_task_request(tx: &mut Tx<'_>, c: Value) -> Outcome {
             "runId": parent_run_id, "nodeId": node_id,
             "providerThreadId": parent_run["providerThreadId"], "providerTurnId": null,
             "nativeItemRef": null, "parentItemId": null, "ordinal": 0, "status": "running",
-            "title": title.clone().unwrap_or_else(|| child_title(None, &task, "")),
+            "title": title.unwrap_or_else(|| child_title(None, &task, "")),
             "startedAt": now, "completedAt": null, "updatedAt": now, "type": "subagent",
             "subagentId": node_id, "origin": "app_owned", "driver": model["instanceId"],
             "providerInstanceId": model["instanceId"], "childThreadId": child_id,

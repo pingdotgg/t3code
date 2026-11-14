@@ -19,9 +19,7 @@ use conn_contract::{
 use serde_json::{Value, json};
 
 use crate::{
-    auth::{self, AuthStore},
-    http::ORCHESTRATION_PROTOCOL_VERSION,
-    keybindings::KeybindingsStore,
+    auth::AuthStore, http::ORCHESTRATION_PROTOCOL_VERSION, keybindings::KeybindingsStore,
     settings::SettingsStore,
 };
 
@@ -40,6 +38,19 @@ pub struct Environment {
     pub keybindings: KeybindingsStore,
     /// Sessions and pairing links (`auth.json`).
     pub auth: Arc<AuthStore>,
+}
+
+impl std::fmt::Debug for Environment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Environment")
+            .field("descriptor", &self.descriptor)
+            .field("cwd", &self.cwd)
+            .field("state_dir", &self.state_dir)
+            .field("settings", &self.settings)
+            .field("keybindings", &self.keybindings)
+            .field("auth", &self.auth)
+            .finish()
+    }
 }
 
 impl Environment {
@@ -80,7 +91,7 @@ fn load_or_create_id(file: &Path) -> io::Result<String> {
             "empty environment-id",
         )),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let id = auth::random_uuid();
+            let id = conn_support::uuid_v4();
             // `create_new` so two processes starting at once cannot both write one.
             match fs::OpenOptions::new()
                 .write(true)
@@ -192,7 +203,7 @@ mod tests {
 
     #[test]
     fn keeps_the_typescript_servers_environment_id() {
-        let dir = std::env::temp_dir().join(format!("conn-env-{}", auth::random_hex(6)));
+        let dir = std::env::temp_dir().join(format!("conn-env-{}", crate::auth::random_hex(6)));
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join("environment-id"),

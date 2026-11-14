@@ -6,7 +6,7 @@
 //! When the turn ends, every row gets a final version and the streaming versions leave the log.
 
 use std::{
-    sync::{Arc, Mutex, MutexGuard, atomic::Ordering},
+    sync::{Arc, Mutex, atomic::Ordering},
     time::Duration,
 };
 
@@ -24,6 +24,7 @@ use tokio::{
 
 use crate::commands::{failure, finish_run, hold_queue, start_next_queued};
 use crate::engine::Inner;
+use crate::lock;
 use crate::store::Draft;
 
 /// A thread whose provider session is open.
@@ -81,13 +82,6 @@ impl LiveThread {
     fn take_active(&self) -> Option<ActiveRun> {
         lock(&self.state).active.take()
     }
-}
-
-/// A poisoned lock still holds consistent data here: every critical section only swaps values.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// What a turn start needs from the store.

@@ -56,6 +56,14 @@ pub struct ClaudeSession {
     inner: Arc<Inner>,
 }
 
+impl std::fmt::Debug for ClaudeSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClaudeSession")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
 struct Inner {
     /// The provider instance (`providerInstanceId` on threads).
     instance_id: String,
@@ -150,7 +158,7 @@ impl ClaudeSession {
 
 impl Inner {
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+        crate::lock(&self.state)
     }
 
     /// Sends events and callback answers in order. Holds no lock.

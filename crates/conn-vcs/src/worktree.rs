@@ -65,7 +65,7 @@ pub fn worktree_folder_name(common_dir: &str, branch: &str) -> String {
         prefix.push(c);
     }
     let digest = Sha256::digest(format!("{common_dir}\0{branch}").as_bytes());
-    let hash: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
+    let hash = conn_support::hex::hex(digest.get(..8).unwrap_or_default());
     format!("{prefix}-{hash}")
 }
 

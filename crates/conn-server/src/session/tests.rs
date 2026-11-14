@@ -199,7 +199,10 @@ async fn bad_json_and_bad_payloads_do_not_end_the_connection() {
     let mut table = MethodTable::new();
     #[derive(serde::Deserialize)]
     struct Input {
-        #[allow(dead_code)]
+        #[expect(
+            dead_code,
+            reason = "only decoded, to test a payload that does not fit"
+        )]
         name: String,
     }
     table.unary("server.getConfig", |_, _: Input| async { Ok(json!(1)) });

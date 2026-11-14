@@ -20,6 +20,12 @@ pub mod network_gate;
 pub mod protocol;
 pub mod session;
 
+/// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
+/// With `panic = "abort"` a release build stops at the panic itself.
+pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().expect("conn-provider-codex lock poisoned")
+}
+
 #[cfg(test)]
 mod live_tests;
 #[cfg(test)]
@@ -48,6 +54,14 @@ pub struct CodexProvider {
     config: CodexConfig,
     server: Arc<client::AppServer>,
     models: Arc<Mutex<Vec<(String, String)>>>,
+}
+
+impl std::fmt::Debug for CodexProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CodexProvider")
+            .field("instance_id", &self.instance_id)
+            .finish_non_exhaustive()
+    }
 }
 
 impl CodexProvider {
@@ -159,7 +173,7 @@ impl Provider for CodexProvider {
     }
 
     fn server_provider_entry(&self, checked_at: &str) -> Option<Value> {
-        let models = self.models.lock().ok()?.clone();
+        let models = crate::lock(&self.models).clone();
         Some(server_provider_entry(
             self.instance_id.as_str(),
             checked_at,

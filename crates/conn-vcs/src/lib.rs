@@ -23,7 +23,6 @@
 //!
 //! Every git child has a timeout and bounded stdout and stderr ([`process`]).
 
-pub mod clock;
 pub mod discovery;
 pub mod error;
 pub mod hub;
@@ -38,3 +37,9 @@ pub mod worktree;
 pub use error::{VcsError, VcsResult};
 pub use hub::VcsHub;
 pub use setup::WorktreeSetups;
+
+/// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
+/// With `panic = "abort"` a release build stops at the panic itself.
+pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().expect("conn-vcs lock poisoned")
+}

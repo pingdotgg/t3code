@@ -35,8 +35,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Same as rust-version in Cargo.toml.
-  RUST_TOOLCHAIN: "1.95.0"
+  # Same as `channel` in rust-toolchain.toml; tools/check.sh fails when they differ.
+  RUST_TOOLCHAIN: "1.99.1"
 
 jobs:
   rust:
@@ -69,7 +69,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Clippy
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
       # Without the SDK host's dependencies its tests in conn-provider-claude skip quietly.
       # Node as the T3 server pins it (helpers/sdk-host/README.md).

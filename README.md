@@ -73,7 +73,8 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 
 | Check               | Command                                                                                                                         | Proves                                                                                               |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Format, lint, tests | `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`                          | All crates, offline                                                                                  |
+| Toolchain pin       | `rust-toolchain.toml` against `RUST_TOOLCHAIN` in `.github/workflows/ci.yml`                                                    | CI builds with the pinned toolchain                                                                  |
+| Format, lint, tests | `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`           | All crates, offline, under the lint set (`CRATES.md`, "Lint set")                                    |
 | Release build       | `cargo build --release --workspace --bins --examples`                                                                           | The binaries below build                                                                             |
 | Recordings decode   | `cargo test --manifest-path fixtures/decode-check/Cargo.toml`                                                                   | Every recorded frame decodes with `conn_wire`                                                        |
 | Contract current    | `node crates/conn-contract/tools/gen-contract.mjs --check`                                                                      | Generated types match `packages/contracts`                                                           |
@@ -141,6 +142,7 @@ See [`fixtures/README.md`](fixtures/README.md) for every scenario and which need
 | `conn-files`            | Project files, search, asset URLs, attachments                        |
 | `conn-terminal`         | Shells on PTYs: sessions, scrollback, viewers (`terminal.*`)          |
 | `conn-server`           | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
+| `conn-support`          | Helpers several crates share: time, hex, base64, HMAC, atomic writes, v4 ids |
 
 Dependencies point one way: `conn-server` → `conn-engine` → `conn-provider` → `conn-contract`;
 `conn-provider-claude` → `conn-provider`; `conn-server` → `conn-wire`. `conn-wire` and

@@ -35,6 +35,30 @@ pub struct CodexSession {
     inner: Arc<Inner>,
 }
 
+impl std::fmt::Debug for CodexSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CodexSession")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Best-effort cleanup for a session dropped without [`Session::close`]: it leaves the
+/// app-server, and stops the process when it was the last session. After `close` this finds
+/// nothing to do.
+impl Drop for CodexSession {
+    fn drop(&mut self) {
+        let Some(process) = self.inner.server.detach_session(&self.inner.id) else {
+            return;
+        };
+        // Stopping takes a grace period, so it runs as its own task. Without a runtime, the
+        // process's own `Drop` kills it.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(process.terminate(crate::client::FORCE_KILL_AFTER));
+        }
+    }
+}
+
 struct Inner {
     id: String,
     instance_id: String,
@@ -100,7 +124,7 @@ impl CodexSession {
 
 impl Inner {
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+        crate::lock(&self.state)
     }
 
     /// Fails once the session closed; checked after each await of a multi-step call.
@@ -1017,6 +1041,63 @@ done
                 return seen;
             }
         }
+    }
+
+    /// A session dropped without `close` (a task ended early) still leaves the app-server, and
+    /// the process stops when it was the last session.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_dropped_session_leaves_the_app_server() {
+        let provider = provider();
+        let OpenedSession {
+            session,
+            mut events,
+        } = provider
+            .open_session(OpenSessionInput {
+                thread_id: "t1".into(),
+                provider_session_id: "s1".into(),
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                resume_from_session: None,
+            })
+            .await
+            .unwrap();
+        until(&mut events, "provider_session.updated").await;
+        session
+            .ensure_thread(EnsureThreadInput {
+                thread_id: "t1".into(),
+                title: None,
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                existing_provider_thread: None,
+            })
+            .await
+            .unwrap();
+        let pid = provider.server.pid().expect("the app-server runs");
+        assert_eq!(provider.server.session_count(), 1);
+
+        drop(session);
+        assert_eq!(provider.server.session_count(), 0, "the session left");
+        assert_eq!(
+            provider.server.pid(),
+            None,
+            "the server let go of the process"
+        );
+        let alive = || {
+            std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        };
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while alive() {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the app-server process stopped within 10 s");
     }
 
     #[tokio::test(flavor = "current_thread")]

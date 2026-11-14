@@ -21,6 +21,12 @@ pub mod ordered;
 pub mod protocol;
 pub mod session;
 
+/// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
+/// With `panic = "abort"` a release build stops at the panic itself.
+pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().expect("conn-provider-claude lock poisoned")
+}
+
 #[cfg(test)]
 mod live_tests;
 #[cfg(test)]
@@ -49,6 +55,14 @@ pub struct ClaudeProvider {
     config: ClaudeConfig,
     /// One SDK host for all sessions; it runs only while a query is open.
     helper: Helper,
+}
+
+impl std::fmt::Debug for ClaudeProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClaudeProvider")
+            .field("instance_id", &self.instance_id)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ClaudeProvider {
