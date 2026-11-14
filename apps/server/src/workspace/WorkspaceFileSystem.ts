@@ -435,22 +435,22 @@ export const make = Effect.gen(function* () {
             offset += bytesRead;
           }
           const fileBytes = buffer.subarray(0, offset);
-          if (fileBytes.includes(0)) {
-            return yield* new WorkspaceBinaryFileError({
+          const truncated = stat.size > PROJECT_READ_FILE_MAX_BYTES;
+          const binaryFileError = () =>
+            new WorkspaceBinaryFileError({
               workspaceRoot: input.cwd,
               relativePath: input.relativePath,
               resolvedPath: realTargetPath,
             });
-          }
-
-          const truncated = stat.size > PROJECT_READ_FILE_MAX_BYTES;
-          return {
-            relativePath: target.relativePath,
-            // Streaming decode drops a character the byte limit split, instead of ending in U+FFFD.
-            contents: new TextDecoder("utf-8").decode(fileBytes, { stream: truncated }),
-            byteLength: stat.size,
-            truncated,
-          };
+          if (fileBytes.includes(0)) return yield* binaryFileError();
+          // Fatal decoding rejects invalid UTF-8, since U+FFFD contents would corrupt the file on save.
+          // Streaming decode drops a character the byte limit split, instead of rejecting it.
+          const contents = yield* Effect.try({
+            try: () =>
+              new TextDecoder("utf-8", { fatal: true }).decode(fileBytes, { stream: truncated }),
+            catch: binaryFileError,
+          });
+          return { relativePath: target.relativePath, contents, byteLength: stat.size, truncated };
         }),
       (handle) =>
         handle === null
