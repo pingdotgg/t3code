@@ -4,7 +4,12 @@ import {
   isSharedAddressSpaceHost,
   isTailnetHost,
 } from "@t3tools/shared/hostClassification";
-import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
+import {
+  AuthGrantScope,
+  type DesktopSshEnvironmentTarget,
+  type SessionGrantInput,
+  sessionGrantsScope,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import {
@@ -152,6 +157,45 @@ export function insertRoute(
   return index === -1
     ? [...routes, route]
     : [...routes.slice(0, index), route, ...routes.slice(index)];
+}
+
+/** The scopes a route's session grants, as its host reports them. */
+export type RouteGrant = ReadonlySet<AuthGrantScope>;
+
+export function routeGrantFromSession(session: SessionGrantInput): Option.Option<RouteGrant> {
+  if (!session.authenticated) return Option.none();
+  return Option.some(
+    new Set(AuthGrantScope.literals.filter((scope) => sessionGrantsScope(session, scope))),
+  );
+}
+
+export function grantIsBroader(grant: RouteGrant, than: RouteGrant): boolean {
+  return grant.size > than.size && [...than].every((scope) => grant.has(scope));
+}
+
+/**
+ * Moves each route ahead of the routes whose known grant it strictly exceeds,
+ * so an old narrow pairing cannot shadow a route that can do more. Equal,
+ * incomparable and unknown grants keep the saved order.
+ */
+export function orderRoutesByGrant(
+  routes: ReadonlyArray<ConnectionRoute>,
+  grants: ReadonlyMap<string, RouteGrant>,
+): ReadonlyArray<ConnectionRoute> {
+  const ordered: Array<ConnectionRoute> = [];
+  for (const route of routes) {
+    const grant = grants.get(connectionRouteId(route.target));
+    const index =
+      grant === undefined
+        ? -1
+        : ordered.findIndex((placed) => {
+            const placedGrant = grants.get(connectionRouteId(placed.target));
+            return placedGrant !== undefined && grantIsBroader(grant, placedGrant);
+          });
+    if (index === -1) ordered.push(route);
+    else ordered.splice(index, 0, route);
+  }
+  return ordered;
 }
 
 export function upsertRoute(
