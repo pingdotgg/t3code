@@ -32,13 +32,13 @@ const MAC_HELPER_STRIP_MAX_THICKNESS_RATIO = 0.25;
 const MacActiveWindowLookup = Schema.Struct({
   owner: Schema.Struct({
     name: Schema.String,
-    processId: Schema.Number,
     path: Schema.String,
     bundleId: Schema.String,
   }),
   windows: Schema.Array(
     Schema.Struct({
       id: Schema.Number,
+      processId: Schema.Number,
       title: Schema.String,
       bounds: Schema.Struct({
         x: Schema.Number,
@@ -61,7 +61,8 @@ function run() {
   const app = $.NSWorkspace.sharedWorkspace.frontmostApplication;
   if (app.isNil()) return "";
   const pid = app.processIdentifier;
-  let ownerName = String(app.localizedName.js || "");
+  const appName = String(app.localizedName.js || "");
+  let ownerName = appName;
   const list = $.CGWindowListCopyWindowInfo(
     $.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements,
     $.kCGNullWindowID,
@@ -71,14 +72,16 @@ function run() {
   const windows = [];
   for (let i = 0; i < count; i++) {
     const w = ObjC.castRefToObject($.CFArrayGetValueAtIndex(list, i));
-    if (w.objectForKey("kCGWindowOwnerPID").js !== pid) continue;
     if (w.objectForKey("kCGWindowLayer").js !== 0) continue;
-    if (!ownerName) {
-      ownerName = String(ObjC.unwrap(w.objectForKey("kCGWindowOwnerName")) || "");
-    }
+    const windowPid = w.objectForKey("kCGWindowOwnerPID").js;
+    const windowOwnerName = String(ObjC.unwrap(w.objectForKey("kCGWindowOwnerName")) || "");
+    // Nested apps such as Device Hub can be frontmost while NSWorkspace reports PID -1.
+    if (pid > 0 ? windowPid !== pid : !appName || windowOwnerName !== appName) continue;
+    if (!ownerName) ownerName = windowOwnerName;
     const b = ObjC.deepUnwrap(w.objectForKey("kCGWindowBounds"));
     windows.push({
       id: w.objectForKey("kCGWindowNumber").js,
+      processId: windowPid,
       title: String(ObjC.unwrap(w.objectForKey("kCGWindowName")) || ""),
       bounds: { x: b.X, y: b.Y, width: b.Width, height: b.Height },
       alpha: w.objectForKey("kCGWindowAlpha").js,
@@ -87,7 +90,6 @@ function run() {
   return JSON.stringify({
     owner: {
       name: ownerName,
-      processId: pid,
       path: String(app.bundleURL.path.js || ""),
       bundleId: String(app.bundleIdentifier.js || ""),
     },
@@ -148,7 +150,7 @@ async function macActiveWindow(): Promise<ActiveWindow | undefined> {
     bounds: window.bounds,
     owner: {
       name: lookup.owner.name,
-      processId: lookup.owner.processId,
+      processId: window.processId,
       path: lookup.owner.path,
       ...(lookup.owner.bundleId ? { bundleId: lookup.owner.bundleId } : {}),
     },
