@@ -40,6 +40,7 @@ import {
   SERVICE_UNIT_ENV,
   compareExactServiceVersions,
   disabledServiceTask,
+  escapeXmlText,
   serviceTaskIsDisabled,
   serviceUnitBaseDirOf as bootServiceBaseDirOf,
   serviceUnitEnvironmentValueOf,
@@ -143,10 +144,6 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "WantedBy=default.target",
     "",
   ].join("\n");
-}
-
-function escapeXmlText(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 /** Launch agents cannot rely on the user's shell or PATH. */

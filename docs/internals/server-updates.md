@@ -40,7 +40,8 @@ A launchd plist names a [copy](../../apps/server/src/cloud/stableLauncher.ts) of
 selected runtime's executable at a fixed path instead of the runtime, because TCC keys a launch agent's
 privacy grants to its program path. Installs and the launcher replace that copy by
 rename under the unit lease rather than rewriting the plist, so a running launcher
-keeps its old inode.
+keeps its old inode. A launcher that finds a plist still naming a versioned runtime
+moves it to the copy, so services that only update remotely migrate too.
 
 Task Scheduler tracks only the console host it started, not the launcher. `schtasks /End`
 kills that host and nothing else; the launcher takes its closed console as SIGTERM. The task

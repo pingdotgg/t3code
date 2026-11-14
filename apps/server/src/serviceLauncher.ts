@@ -21,6 +21,7 @@ import type {
 import {
   compareExactServiceVersions,
   decodeServiceLauncherChildMessage,
+  escapeXmlText,
   isExactServiceVersion,
   parseLegacyServiceState,
   disabledServiceTask,
@@ -199,12 +200,10 @@ async function serviceUnitFromEnvironment(
   };
 }
 
-// systemd's ExecStart value, or the plist string or task argument before __service-launcher.
+// systemd's ExecStart value, or the task argument before __service-launcher.
 // Only the version segment changes, so quoted or escaped paths stay as rendered.
-// The launch agent's PATH names a versions directory without the executable; leave it.
 const SERVICE_UNIT_PROGRAMS = [
   /^(ExecStart=.*?[\\/]runtime[\\/]versions[\\/])([^\\/\s"]+)([\\/]t3)(?=["\s])/m,
-  /(<string>[^<]*?[\\/]runtime[\\/]versions[\\/])([^\\/<]+)([\\/]t3<\/string>\s*<string>__service-launcher<\/string>)/,
   /(<Arguments>--headless "[^"<]*?[\\/]runtime[\\/]versions[\\/])([^\\/"<]+)([\\/]t3\.exe" "__service-launcher")/,
 ] as const;
 
@@ -224,6 +223,33 @@ function repointServiceUnit(contents: string, version: string): string {
     return contents.replace(program, () => `${prefix}${version}${suffix}`);
   }
   return contents;
+}
+
+// The launch agent's PATH names a versions directory without the executable; leave it.
+const LAUNCH_AGENT_RUNTIME_PROGRAM =
+  /<string>[^<]*?[\\/]runtime[\\/]versions[\\/]([^\\/<]+)[\\/]t3<\/string>(\s*<string>__service-launcher<\/string>)/;
+
+/**
+ * A launch agent that names a versioned runtime, moved to the stable launcher. One naming a
+ * runtime newer than `version` is returned unchanged, like in `repointServiceUnit`.
+ */
+function moveLaunchAgentToStableLauncher(
+  contents: string,
+  version: string,
+  launcherEntryPath: string,
+): string {
+  const current = LAUNCH_AGENT_RUNTIME_PROGRAM.exec(contents)?.[1];
+  if (
+    current === undefined ||
+    (isExactServiceVersion(current) && compareExactServiceVersions(current, version) > 0)
+  ) {
+    return contents;
+  }
+  return contents.replace(
+    LAUNCH_AGENT_RUNTIME_PROGRAM,
+    (_program, _version, launcherArgument: string) =>
+      `<string>${escapeXmlText(launcherEntryPath)}</string>${launcherArgument}`,
+  );
 }
 
 const SERVICE_LOG_MAX_BYTES = 10 * 1024 * 1024;
@@ -1297,8 +1323,18 @@ export class Launcher {
             );
           }
         } else {
-          const repointed = repointServiceUnit(contents, version);
-          if (repointed !== contents) await replaceFileDurably(unit.path, repointed);
+          const moved = moveLaunchAgentToStableLauncher(contents, version, launcher.entryPath);
+          if (moved !== contents) {
+            await publishStableLauncher(
+              this.#baseDir,
+              runtimePaths(this.#baseDir, version).entryPath,
+              version,
+            );
+            await replaceFileDurably(unit.path, moved);
+          } else {
+            const repointed = repointServiceUnit(contents, version);
+            if (repointed !== contents) await replaceFileDurably(unit.path, repointed);
+          }
         }
         // A previous rename may have succeeded before reload failed.
         await unit.reload();
