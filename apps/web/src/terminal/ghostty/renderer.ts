@@ -18,10 +18,33 @@ export interface GhosttyCellRange {
 }
 
 const DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
-const POWERLINE_SOLID_RIGHT = "\ue0b0";
-const POWERLINE_SOLID_LEFT = "\ue0b2";
-const POWERLINE_ROUND_RIGHT = "\ue0b4";
-const POWERLINE_ROUND_LEFT = "\ue0b6";
+const POWERLINE_LINE_WIDTH = 1;
+
+type CellPoint = readonly [x: number, y: number];
+type PowerlineShape =
+  | { readonly kind: "fill"; readonly points: readonly CellPoint[] }
+  | { readonly kind: "stroke"; readonly points: readonly CellPoint[] }
+  | { readonly kind: "cap"; readonly flatEdge: "left" | "right"; readonly filled: boolean };
+
+// prettier-ignore
+const POWERLINE_SHAPES: ReadonlyMap<string, PowerlineShape> = new Map([
+  ["\ue0b0", { kind: "fill", points: [[0, 0], [1, 0.5], [0, 1]] }],
+  ["\ue0b1", { kind: "stroke", points: [[0, 0], [1, 0.5], [0, 1]] }],
+  ["\ue0b2", { kind: "fill", points: [[1, 0], [0, 0.5], [1, 1]] }],
+  ["\ue0b3", { kind: "stroke", points: [[1, 0], [0, 0.5], [1, 1]] }],
+  ["\ue0b4", { kind: "cap", flatEdge: "left", filled: true }],
+  ["\ue0b5", { kind: "cap", flatEdge: "left", filled: false }],
+  ["\ue0b6", { kind: "cap", flatEdge: "right", filled: true }],
+  ["\ue0b7", { kind: "cap", flatEdge: "right", filled: false }],
+  ["\ue0b8", { kind: "fill", points: [[0, 0], [1, 1], [0, 1]] }],
+  ["\ue0b9", { kind: "stroke", points: [[0, 0], [1, 1]] }],
+  ["\ue0ba", { kind: "fill", points: [[1, 0], [1, 1], [0, 1]] }],
+  ["\ue0bb", { kind: "stroke", points: [[1, 0], [0, 1]] }],
+  ["\ue0bc", { kind: "fill", points: [[0, 0], [1, 0], [0, 1]] }],
+  ["\ue0bd", { kind: "stroke", points: [[1, 0], [0, 1]] }],
+  ["\ue0be", { kind: "fill", points: [[0, 0], [1, 0], [1, 1]] }],
+  ["\ue0bf", { kind: "stroke", points: [[0, 0], [1, 1]] }],
+]);
 
 function cssColor(color: GhosttyColor): string {
   return `rgb(${color.r}, ${color.g}, ${color.b})`;
@@ -37,48 +60,59 @@ function sameTextStyle(left: GhosttyCell, right: GhosttyCell): boolean {
   );
 }
 
-function isSolidPowerlineSeparator(text: string): boolean {
-  return (
-    text === POWERLINE_SOLID_RIGHT ||
-    text === POWERLINE_SOLID_LEFT ||
-    text === POWERLINE_ROUND_RIGHT ||
-    text === POWERLINE_ROUND_LEFT
-  );
-}
-
-// Fallback fonts inset or scale these private-use glyphs, leaving a gap where
-// the separator should meet the next cell. Fill the triangle or half-ellipse
-// from the cell's own edges instead, as native terminals do.
-function fillSolidPowerlineSeparator(
+// Fonts inset or scale these private-use glyphs, leaving gaps where they should
+// meet the neighboring cells. Draw them from the cell's own edges, as Ghostty does.
+function drawPowerlineShape(
   context: CanvasRenderingContext2D,
-  text: string,
+  shape: PowerlineShape,
+  color: string,
   left: number,
   top: number,
   width: number,
   height: number,
   seamOverlap: number,
 ): void {
-  const right = left + width;
-  const middle = top + height / 2;
-  if (text === POWERLINE_ROUND_RIGHT || text === POWERLINE_ROUND_LEFT) {
-    const [base, start, inward] =
-      text === POWERLINE_ROUND_RIGHT ? [left, -Math.PI / 2, -1] : [right, Math.PI / 2, 1];
+  const filled = shape.kind === "fill" || (shape.kind === "cap" && shape.filled);
+  context.save();
+  if (!filled) {
     context.beginPath();
-    context.ellipse(base, middle, width, height / 2, 0, start, start + Math.PI);
-    context.closePath();
-    // Overlap the segment this cap closes so anti-aliasing at a fractional
-    // cell edge does not leave a hairline seam.
-    context.rect(Math.min(base, base + inward * seamOverlap), top, seamOverlap, height);
-    context.fill();
-    return;
+    context.rect(left, top, width, height);
+    context.clip();
   }
-  const [base, point] = text === POWERLINE_SOLID_RIGHT ? [left, right] : [right, left];
   context.beginPath();
-  context.moveTo(base, top);
-  context.lineTo(point, middle);
-  context.lineTo(base, top + height);
-  context.closePath();
-  context.fill();
+  if (shape.kind === "cap") {
+    const inset = filled ? 0 : POWERLINE_LINE_WIDTH / 2;
+    const [base, start] =
+      shape.flatEdge === "left" ? [left, -Math.PI / 2] : [left + width, Math.PI / 2];
+    context.ellipse(
+      base,
+      top + height / 2,
+      width - inset,
+      height / 2 - inset,
+      0,
+      start,
+      start + Math.PI,
+    );
+    if (filled) {
+      context.closePath();
+      // Overlap the segment this cap closes so anti-aliasing at a fractional
+      // cell edge does not leave a hairline seam.
+      const inward = shape.flatEdge === "left" ? -1 : 1;
+      context.rect(Math.min(base, base + inward * seamOverlap), top, seamOverlap, height);
+    }
+  } else {
+    for (const [x, y] of shape.points) context.lineTo(left + x * width, top + y * height);
+  }
+  if (filled) {
+    context.fillStyle = color;
+    context.fill();
+  } else {
+    context.strokeStyle = color;
+    context.lineWidth = POWERLINE_LINE_WIDTH;
+    context.lineCap = "butt";
+    context.stroke();
+  }
+  context.restore();
 }
 
 function ghosttyTextRunEnd(
@@ -94,7 +128,7 @@ function ghosttyTextRunEnd(
       end += 1;
       continue;
     }
-    if (next.text.length === 0 || isSolidPowerlineSeparator(next.text) || !sameStyle(next)) break;
+    if (next.text.length === 0 || POWERLINE_SHAPES.has(next.text) || !sameStyle(next)) break;
     end += 1;
   }
   return end;
@@ -294,12 +328,13 @@ export function renderGhosttySnapshot(options: {
         runStart += 1;
         continue;
       }
-      if (isSolidPowerlineSeparator(first.text)) {
+      const powerlineShape = POWERLINE_SHAPES.get(first.text);
+      if (powerlineShape) {
         if (!first.invisible) {
-          context.fillStyle = cssColor(first.foreground);
-          fillSolidPowerlineSeparator(
+          drawPowerlineShape(
             context,
-            first.text,
+            powerlineShape,
+            cssColor(first.foreground),
             padding + runStart * metrics.width,
             top,
             metrics.width,
@@ -384,10 +419,20 @@ export function renderGhosttySnapshot(options: {
       const cell = cells[snapshot.cursorX];
       context.fillRect(left, top, width, height);
       if (cell?.text) {
-        context.fillStyle = cssColor(snapshot.background);
-        if (isSolidPowerlineSeparator(cell.text)) {
-          fillSolidPowerlineSeparator(context, cell.text, left, top, metrics.width, height, 0);
+        const powerlineShape = POWERLINE_SHAPES.get(cell.text);
+        if (powerlineShape) {
+          drawPowerlineShape(
+            context,
+            powerlineShape,
+            cssColor(snapshot.background),
+            left,
+            top,
+            metrics.width,
+            height,
+            0,
+          );
         } else {
+          context.fillStyle = cssColor(snapshot.background);
           context.font = fontForCell(cell, fontSize, fontFamily);
           context.textAlign = wide ? "center" : "start";
           context.fillText(
