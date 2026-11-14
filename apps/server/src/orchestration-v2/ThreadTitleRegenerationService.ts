@@ -182,17 +182,20 @@ const make = Effect.gen(function* () {
           projection.messages.filter((message) => !message.streaming),
         );
       }
-      if (context.message.length === 0 && context.attachments.length === 0) {
+      // A deleted source should not cost the fork its title.
+      const inherited = yield* forkSource(projection.thread).pipe(
+        Effect.orElseSucceed(() => undefined),
+      );
+      if (
+        context.message.length === 0 &&
+        context.attachments.length === 0 &&
+        inherited === undefined
+      ) {
         return {
           status: "failed" as const,
           message: "This thread has no messages to title yet.",
         };
       }
-
-      // A deleted source should not cost the fork its title.
-      const inherited = yield* forkSource(projection.thread).pipe(
-        Effect.orElseSucceed(() => undefined),
-      );
       const settings = resolveProjectSettings(
         yield* serverSettings.getSettings,
         projection.thread.projectId,
