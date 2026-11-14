@@ -161,8 +161,8 @@ it.effect.each([
     ]);
     const notices = ofType(events, "turn-item.updated").map(noticeOf);
     expect(notices).toMatchObject([
-      { threadId: "t", ordinal: 7, runId: null, previousFolder: from },
-      { threadId: "side", ordinal: 3, runId: null, previousFolder: from },
+      { threadId: "t", ordinal: 7, runId: null, previousFolder: from, level: "info" },
+      { threadId: "side", ordinal: 3, runId: null, previousFolder: from, level: "info" },
     ]);
     assert.isTrue(notices.every((item) => item.startedAt === movedAt));
     assert.include(notices[0]?.message ?? "", `The next turn runs in \`${receipt.folder}\`.`);

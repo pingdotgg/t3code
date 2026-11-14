@@ -93,6 +93,7 @@ export function moveReceiptTurnItem(input: {
     type: "system_notice",
     message: input.message,
     previousFolder: input.previousFolder,
+    level: "info",
   };
 }
 
