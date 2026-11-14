@@ -2686,7 +2686,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     draftKey: string,
   ) => {
     const bridge = window.desktopBridge;
-    let insertedAny = false;
+    const links: string[] = [];
     for (const entry of entries) {
       const droppedPath = resolveDroppedFolderPath(entry, bridge?.getPathForFile);
       const path =
@@ -2705,21 +2705,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         continue;
       }
-      const inserted = insertComposerTextAtEndStable(`${serializeComposerFileLink(path)} `, {
-        ensureLeadingBoundary: true,
+      links.push(serializeComposerFileLink(path));
+    }
+    const inserted =
+      links.length > 0 &&
+      insertComposerTextStable(`${links.join(" ")} `, "cursor", { ensureLeadingBoundary: true });
+    if (links.length > 0 && !inserted) {
+      toastManager.add({
+        type: "error",
+        title: "Unable to add path",
+        description: "The composer is busy; try again once it is ready.",
       });
-      if (!inserted) {
-        toastManager.add({
-          type: "error",
-          title: "Unable to add path",
-          description: "The composer is busy; try again once it is ready.",
-        });
-        break;
-      }
-      insertedAny = true;
     }
     // An insert focuses the editor next frame; focusing now would write the old prompt back.
-    if (!insertedAny) focusComposer();
+    if (!inserted) focusComposer();
   };
 
   const addComposerPathReferences = (entries: File[]) => {

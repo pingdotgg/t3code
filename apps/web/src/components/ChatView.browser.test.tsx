@@ -360,7 +360,7 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
   expect(kept).toEqual([]);
 });
 
-it("a path dropped with the caret inside the prompt keeps the prompt", async () => {
+it("a path dropped with the caret inside the prompt lands at the caret", async () => {
   const thread = threadWithHistory("shift-drop", 1);
   using _environment = installFakeEnvironment([thread]);
   __setClientSettingsForTests({
@@ -404,5 +404,5 @@ it("a path dropped with the caret inside the prompt keeps the prompt", async () 
   }
 
   await expect.element(page.getByRole("button", { name: "Preview /tmp/report.pdf" })).toBeVisible();
-  expect(editor.element().textContent).toContain("fix this");
+  expect(editor.element().textContent).toMatch(/^fix this\s*report\.pdf\s*bug/);
 });
