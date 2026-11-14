@@ -1225,6 +1225,15 @@ function failureResetAt(
     : codexUsageLimitResetAt(snapshot);
 }
 
+/** Safety stops carry Codex's public explanation apart from the generic message. */
+function withCodexMisalignmentExplanation(
+  message: string,
+  explanation: string | null | undefined,
+): string {
+  const trimmed = explanation?.trim();
+  return trimmed ? `${message}\n\n${trimmed}` : message;
+}
+
 interface ActiveCodexTurnContext {
   hookStopReason?: string;
   capacityRetryAttempt?: number;
@@ -1233,6 +1242,7 @@ interface ActiveCodexTurnContext {
   latestProviderFailure?: {
     readonly nativeMessage: string;
     readonly nativeCode: string | null;
+    readonly nativeExplained?: boolean;
     readonly failure: OrchestrationV2ProviderFailure;
   };
   readonly nativeStartReady?: Deferred.Deferred<void>;
@@ -1264,6 +1274,7 @@ interface ActiveCodexProviderRetry {
   readonly context?: ActiveCodexTurnContext;
   readonly nativeMessage: string;
   readonly nativeCode: string | null;
+  readonly nativeExplained?: boolean;
   readonly retry: OrchestrationV2ProviderRetry;
   readonly failure: OrchestrationV2ProviderFailure;
   readonly startedAt: DateTime.Utc;
@@ -5111,13 +5122,21 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
             const notificationCode = codexErrorInfoCode(payload.error.codexErrorInfo);
+            const nativeExplained = Boolean(
+              payload.error.misalignment?.detailedExplanation?.trim(),
+            );
+            const failureMessage = withCodexMisalignmentExplanation(
+              payload.error.additionalDetails?.trim() || payload.error.message,
+              payload.error.misalignment?.detailedExplanation,
+            );
             if (!payload.willRetry) {
               context.latestProviderFailure = {
                 nativeMessage: payload.error.message,
                 nativeCode: notificationCode,
+                nativeExplained,
                 failure: withCodexManagedFailure(
                   makeProviderFailure({
-                    message: payload.error.additionalDetails?.trim() || payload.error.message,
+                    message: failureMessage,
                     code: notificationCode,
                     class: codexUsageLimitError(notificationCode, payload.error.codexErrorInfo)
                       ? "usage_limit"
@@ -5138,13 +5157,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               retryDelayMs: null,
             };
             const code = codexErrorInfoCode(payload.error.codexErrorInfo);
-            const additionalDetails = payload.error.additionalDetails?.trim();
             const failure = withCodexManagedFailure(
               makeProviderFailure({
-                message:
-                  additionalDetails === undefined || additionalDetails.length === 0
-                    ? payload.error.message
-                    : additionalDetails,
+                message: failureMessage,
                 code,
                 class: codexUsageLimitError(code, payload.error.codexErrorInfo)
                   ? "usage_limit"
@@ -5162,6 +5177,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(previous?.context === undefined ? {} : { context: previous.context }),
               nativeMessage: payload.error.message,
               nativeCode: code,
+              nativeExplained,
               retry,
               failure,
               startedAt: previous?.startedAt ?? updatedAt,
@@ -6249,6 +6265,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly context: ActiveCodexTurnContext;
             readonly status: OrchestrationV2ProviderTurn["status"];
             readonly failureMessage?: string;
+            readonly failureExplanation?: string;
             readonly failureErrorInfo?: CodexErrorInfo;
             readonly providerRetry?: ActiveCodexProviderRetry;
           }): Effect.fn.Return<CodexRootTerminalEvent> {
@@ -6272,10 +6289,25 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   input.failureMessage === previousFailure.nativeMessage) &&
                 (failureCode === undefined || failureCode === previousFailure.nativeCode) &&
                 (exhaustionStatus === null || previousFailure.failure.class === failureClass)
-                  ? previousFailure.failure
+                  ? previousFailure.nativeExplained === true || !input.failureExplanation?.trim()
+                    ? previousFailure.failure
+                    : {
+                        ...previousFailure.failure,
+                        message: makeProviderFailure({
+                          message: withCodexMisalignmentExplanation(
+                            previousFailure.failure.message,
+                            input.failureExplanation,
+                          ),
+                        }).message,
+                      }
                   : withCodexManagedFailure(
                       makeProviderFailure({
-                        message: input.failureMessage,
+                        message:
+                          input.failureMessage &&
+                          withCodexMisalignmentExplanation(
+                            input.failureMessage,
+                            input.failureExplanation,
+                          ),
                         code: failureCode,
                         class: failureClass,
                       }),
@@ -6405,6 +6437,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly nativeTurnId: string;
             readonly status: OrchestrationV2ProviderTurn["status"];
             readonly failureMessage?: string;
+            readonly failureExplanation?: string;
             readonly failureErrorInfo?: CodexErrorInfo;
             readonly providerRetry?: ActiveCodexProviderRetry;
             readonly goalHoldTurn?: OrchestrationV2ProviderTurn;
@@ -6627,6 +6660,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly status: OrchestrationV2ProviderTurn["status"];
           readonly completedAt: DateTime.Utc;
           readonly failureMessage?: string;
+          readonly failureExplanation?: string;
           readonly failureErrorInfo?: CodexErrorInfo;
           readonly continueRun?: boolean;
           readonly stalledRetry?: {
@@ -7177,6 +7211,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ? {}
                 : {
                     failureMessage: payload.turn.error.message,
+                    ...(payload.turn.error.misalignment?.detailedExplanation == null
+                      ? {}
+                      : {
+                          failureExplanation: payload.turn.error.misalignment.detailedExplanation,
+                        }),
                     ...(payload.turn.error.codexErrorInfo == null
                       ? {}
                       : { failureErrorInfo: payload.turn.error.codexErrorInfo }),
