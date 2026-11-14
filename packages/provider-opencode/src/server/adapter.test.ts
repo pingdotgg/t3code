@@ -2252,38 +2252,22 @@ describe("OpenCodeAdapterV2", () => {
               Effect.forkScoped,
             );
           yield* TestClock.adjust("10 seconds");
-          const foregroundWasBounded = foregroundReturned;
+          assert.isFalse(foregroundReturned, "foreground installation waits for routing");
           routeFinished.resolve();
           yield* Fiber.join(stopping);
-          yield* Fiber.join(foreground);
-          yield* Fiber.interrupt(routing);
+          yield* Fiber.join(routing);
+          assert.isTrue(Exit.isSuccess(yield* Fiber.join(foreground)));
           assert.deepEqual(
             cleanedBeforeRoutingCompleted,
             [root, "ses_descendant"],
             "Stop bypasses stalled event I/O",
           );
-          assert.isTrue(
-            foregroundWasBounded,
-            "foreground installation cannot wait indefinitely on event I/O",
+          assert.equal(
+            promptIds.length,
+            2,
+            "slow routing delays events without breaking the session",
           );
           assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
-          const events = yield* harness.runtime.events.pipe(
-            Stream.takeUntil(
-              (event) =>
-                event.type === "provider_session.updated" &&
-                event.providerSession.status === "error",
-            ),
-            Stream.runCollect,
-          );
-          assert.isTrue(
-            events.some(
-              (event) =>
-                event.type === "provider_session.updated" &&
-                event.providerSession.status === "error" &&
-                event.providerSession.lastError?.includes("OpenCode event routing timed out") &&
-                event.providerSession.lastError.includes("reconnect"),
-            ),
-          );
           return;
         }
         if (end === "owned-exit" || end === "failed-stream") {

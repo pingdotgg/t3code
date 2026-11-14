@@ -2964,23 +2964,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             method: event.type,
             payload: event,
           });
-          // Routing may fetch native sessions; stalled I/O must release foreground installation.
-          yield* eventPermit.withPermit(
-            acceptEvent(event).pipe(
-              Effect.timeout("10 seconds"),
-              Effect.catchTags({
-                TimeoutError: (cause) =>
-                  Effect.fail(
-                    new OpenCodeRuntime.OpenCodeRuntimeError({
-                      operation: "event.route",
-                      detail:
-                        "OpenCode event routing timed out after 10 seconds; reconnect the provider session.",
-                      cause,
-                    }),
-                  ),
-              }),
-            ),
-          );
+          // A slow native call only delays events, as on main; Stop goes through lifecyclePermit.
+          yield* eventPermit.withPermit(acceptEvent(event));
         });
 
         const routeEvent = Effect.fnUntraced(function* (
