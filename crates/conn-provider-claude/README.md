@@ -11,7 +11,7 @@ in the Conn monorepo at the pinned commit.
 
 | Module             | Holds                                                                                   |
 | ------------------ | --------------------------------------------------------------------------------------- |
-| `helper`           | The shared SDK host process: start on first query, stop after the last, a router per process |
+| `helper`           | The `claude` driver of the SDK host (`conn_provider_support::sdk_host`), with T3's key order |
 | `launch`           | The `query()` option object, its environment, the runtime policy → permission mode       |
 | `catalog`          | `compileClaudeModelSelection` over T3's bundled catalog (`model_catalog.json`, generated) |
 | `ordered`          | JSON with T3's key order for what the SDK writes to the CLI verbatim                    |

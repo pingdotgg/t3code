@@ -66,5 +66,5 @@ Write `drivers/<name>.mjs` exporting `createDriver({describeError})`, which retu
   SDK host exited"), the turn fails, and each `claude` child loses its fd 3 pipe: its watcher
   sends SIGTERM to the CLI's group and SIGKILL 5 s later. Jobs that left the group are not
   caught then (the descendant tracker lived in the host). Tested by
-  `host_death_ends_sessions_and_children` in `conn-provider-claude`.
+  `host_death_ends_sessions_and_children` in `conn-provider-support` (`sdk_host`).
 - Each `msg` write waits while stdout is full, so a slow server slows the SDK and the CLI.

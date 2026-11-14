@@ -136,7 +136,7 @@ See [`fixtures/README.md`](fixtures/README.md) for every scenario and which need
 | `conn-provider`         | `Provider` and `Session` traits, `ProviderEvent`                      |
 | `conn-provider-claude`  | The Claude provider, through the official Agent SDK in the SDK host (see [Claude](#claude)) |
 | `conn-provider-codex`   | The Codex provider over `codex app-server` (JSON-RPC on stdio)        |
-| `conn-provider-support` | Ids, line framing and the process supervisor shared by CLI providers  |
+| `conn-provider-support` | Ids, line framing, the process supervisor, the SDK host client (`sdk_host`) and a rooted file host, shared by providers |
 | `conn-mcp`              | `/mcp`: T3 tools over MCP Streamable HTTP; see its README             |
 | `conn-vcs`              | Git status, refs, review diffs, worktrees and their setup             |
 | `conn-files`            | Project files, search, asset URLs, attachments                        |

@@ -317,7 +317,7 @@ async fn live_interrupt_then_continue() {
     // The concrete session, to check which process served each turn.
     let (tx, mut events) = mpsc::channel(crate::session::EVENT_CAPACITY);
     let config = provider().config().clone();
-    let helper = crate::Helper::new(config.helper.clone(), "claudeAgent");
+    let helper = crate::helper::claude_host(config.helper.clone(), "claudeAgent");
     let session = ClaudeSession::open(
         "provider-session-live".into(),
         "claudeAgent",
@@ -468,7 +468,7 @@ fn thread_of(events: &[Value]) -> conn_contract::ProviderThread {
 
 fn concrete(config: ClaudeConfig) -> (ClaudeSession, crate::Helper, mpsc::Receiver<ProviderEvent>) {
     let (tx, events) = mpsc::channel(crate::session::EVENT_CAPACITY);
-    let helper = crate::Helper::new(config.helper.clone(), "claudeAgent");
+    let helper = crate::helper::claude_host(config.helper.clone(), "claudeAgent");
     (
         ClaudeSession::open(
             "provider-session-live".into(),

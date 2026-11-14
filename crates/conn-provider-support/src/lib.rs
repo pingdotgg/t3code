@@ -15,3 +15,4 @@ pub mod ids;
 pub mod lines;
 pub mod process;
 pub mod redact;
+pub mod sdk_host;

@@ -150,8 +150,7 @@ remembering: an own server brings its own defects.
    (`ProviderHost`: only the trait and a rooted file host exist; no terminals, and the
    server passes none); Claude's background roster
    (`background_work.updated`, `stopTask`, `awaitBackgroundTasks`: in the trait, not built in
-   the provider). Move the Rust side of the
-   SDK host (`helper.rs`) into `conn-provider-support` before a second SDK driver.
+   the provider).
 3. **Other providers.** One ACP provider for Grok, Kiro, fx, Antigravity and the ACP registry.
    The T3 server offers ACP protocol version 2 with version 1 as fallback and uses a
    hand-written client. The official Rust crate (`agent-client-protocol` 5.2.0) runs on a

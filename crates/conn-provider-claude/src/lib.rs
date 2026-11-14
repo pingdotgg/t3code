@@ -66,7 +66,7 @@ impl std::fmt::Debug for ClaudeProvider {
 
 impl ClaudeProvider {
     pub fn new(instance_id: ProviderInstanceId, config: ClaudeConfig) -> Self {
-        let helper = Helper::new(config.helper.clone(), instance_id.as_str());
+        let helper = helper::claude_host(config.helper.clone(), instance_id.as_str());
         Self {
             instance_id,
             config,
