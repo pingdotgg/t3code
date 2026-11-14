@@ -140,6 +140,11 @@ export function useDelegatedUnderParent(): ReadonlySet<string> {
   return useAtomValue(environmentThreadShells.delegatedUnderParentAtom);
 }
 
+/** Projects holding tasks that show under a delegating parent, by `projectKey`. */
+export function useDelegatedUnderParentProjectKeys(): ReadonlySet<string> {
+  return useAtomValue(environmentThreadShells.delegatedUnderParentProjectKeysAtom);
+}
+
 export function useThreadShellsForProjectRefs(
   refs: ReadonlyArray<ScopedProjectRef>,
 ): ReadonlyArray<EnvironmentThreadShell> {

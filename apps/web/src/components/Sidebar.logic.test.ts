@@ -34,7 +34,6 @@ import {
   type SidebarSection,
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
-  hasSidebarV2ScopedThreadsUnderDelegatingParent,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
@@ -44,7 +43,6 @@ import {
   sortPinnedThreadsByOrderKey,
 } from "@t3tools/client-runtime/state/thread-sort";
 import { resolveProjectExpanded } from "../uiStateStore";
-import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 
@@ -1518,25 +1516,6 @@ describe("pendingSidebarRouteReveal", () => {
     pendingSidebarRouteReveal(reveal, "env:a1");
     expect(pendingSidebarRouteReveal(reveal, null)).toBeNull();
     expect(pendingSidebarRouteReveal(reveal, "env:a1")).toBe("env:a1");
-  });
-});
-
-describe("hasSidebarV2ScopedThreadsUnderDelegatingParent", () => {
-  it("finds a scoped task that shows under its delegating parent", () => {
-    const task = makeThreadFixture({ projectId: ProjectId.make("project-scoped") });
-    const scope = new Set([`${task.environmentId}:project-scoped`]);
-    const underParent = new Set([
-      threadKey({ environmentId: task.environmentId, threadId: task.id }),
-    ]);
-    expect(hasSidebarV2ScopedThreadsUnderDelegatingParent([task], scope, underParent)).toBe(true);
-    expect(hasSidebarV2ScopedThreadsUnderDelegatingParent([task], scope, new Set())).toBe(false);
-    expect(
-      hasSidebarV2ScopedThreadsUnderDelegatingParent(
-        [{ ...task, archivedAt: "2026-01-01T00:00:00.000Z" }],
-        scope,
-        underParent,
-      ),
-    ).toBe(false);
   });
 });
 

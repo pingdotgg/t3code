@@ -25,7 +25,8 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useProjects } from "../../state/entities";
-import { steadyNavigationThreadShellsAtom } from "../../state/threads";
+import { environmentThreadShells, steadyNavigationThreadShellsAtom } from "../../state/threads";
+import { projectKey } from "@t3tools/client-runtime/state/entities";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 import { useThreadListNow } from "./use-thread-list-now";
@@ -124,6 +125,9 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const { fabClearance, fabSize } = useAndroidControlSizing();
   const projects = useProjects();
   const threads = useAtomValue(steadyNavigationThreadShellsAtom);
+  const delegatedUnderParentProjectKeys = useAtomValue(
+    environmentThreadShells.delegatedUnderParentProjectKeysAtom,
+  );
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
@@ -580,7 +584,11 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 ? "Searching thread messages…"
                 : "No matching threads"
               : selectedProjectScope !== null
-                ? `No threads in ${selectedProjectScope.title}`
+                ? selectedProjectScope.projectRefs.some((ref) =>
+                    delegatedUnderParentProjectKeys.has(projectKey(ref)),
+                  )
+                  ? `Threads in ${selectedProjectScope.title} show under the threads that delegated them`
+                  : `No threads in ${selectedProjectScope.title}`
                 : "No threads yet"}
       </Text>
       {showAddEnvironment ? (

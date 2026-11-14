@@ -67,6 +67,8 @@ import { useSearchScrollRestoration } from "../layout/workspace/useSearchScrollR
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
+import { environmentThreadShells } from "../../state/threads";
+import { projectKey } from "@t3tools/client-runtime/state/entities";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
@@ -335,6 +337,9 @@ export function HomeScreen(props: HomeScreenProps) {
   })();
 
   const v2ProjectScopeKey = props.selectedProjectKey;
+  const delegatedUnderParentProjectKeys = useAtomValue(
+    environmentThreadShells.delegatedUnderParentProjectKeysAtom,
+  );
   // An archived project's filter reads as all projects, matching the filter menu.
   const v2ScopedProjectGroup = findHomeProjectScope(
     pickableProjectGroups(projectScopes),
@@ -714,7 +719,13 @@ export function HomeScreen(props: HomeScreenProps) {
       />
     ) : v2ScopedProjectGroup !== null ? (
       <EmptyState
-        title={`No threads in ${v2ScopedProjectGroup.title}`}
+        title={
+          v2ScopedProjectGroup.projectRefs.some((ref) =>
+            delegatedUnderParentProjectKeys.has(projectKey(ref)),
+          )
+            ? `Threads in ${v2ScopedProjectGroup.title} show under the threads that delegated them`
+            : `No threads in ${v2ScopedProjectGroup.title}`
+        }
         detail="Choose another project or create a new task."
         variant={Platform.OS === "android" ? "plain" : undefined}
       />

@@ -143,10 +143,12 @@ import {
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
   useDelegatedUnderParent,
+  useDelegatedUnderParentProjectKeys,
   useProjects,
   useServerConfigs,
   useQuietThreadShells,
 } from "../state/entities";
+import { projectKey } from "@t3tools/client-runtime/state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { environmentProjects } from "../state/projects";
@@ -176,7 +178,6 @@ import {
 import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
-  hasSidebarV2ScopedThreadsUnderDelegatingParent,
   groupSidebarThreadsByProject,
   sidebarFolderExpansionKeys,
   buildBulkTitleRegenerationContextMenuItem,
@@ -913,6 +914,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projectScopeItems: lookupProjectScopeItems,
   } = useSidebarLookups();
   const delegatedUnderParent = useDelegatedUnderParent();
+  const delegatedUnderParentProjectKeys = useDelegatedUnderParentProjectKeys();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -3299,11 +3301,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 <>
                   <span>
                     {settledCount === 0 &&
-                    scopedProjectKeys !== null &&
-                    hasSidebarV2ScopedThreadsUnderDelegatingParent(
-                      threads,
-                      scopedProjectKeys,
-                      delegatedUnderParent,
+                    scopedProjectRefs.some((ref) =>
+                      delegatedUnderParentProjectKeys.has(projectKey(ref)),
                     )
                       ? `Threads in ${scopedProjectLabel} show under the threads that delegated them`
                       : `No ${settledCount > 0 ? "active threads" : "threads"} in ${scopedProjectLabel}${
