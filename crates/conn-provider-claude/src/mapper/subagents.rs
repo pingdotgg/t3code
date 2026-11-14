@@ -288,6 +288,7 @@ impl<E: Env> Mapper<E> {
             return;
         };
         if matches!(msg.task_type.as_deref(), Some("local_bash")) {
+            self.tail_bash_task(msg, out);
             return;
         }
         let launch = self.subagents.launches.remove(tool_use_id);

@@ -9,7 +9,7 @@
 //! behind one `std` mutex that is never held across an `.await`.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
@@ -97,6 +97,8 @@ struct State {
     bypass_cache: Option<(Option<String>, BypassAvailability)>,
     closed: bool,
     logged_skips: HashSet<String>,
+    /// Live output tails per Bash call (`taskOutputTails`); the mapper caps them per turn.
+    tails: HashMap<String, crate::tail::Tail>,
 }
 
 struct Live {
@@ -123,6 +125,8 @@ struct Live {
     last_activity: Instant,
     /// Since when background work keeps this idle query alive.
     held_since: Option<Instant>,
+    /// Where Claude Code writes task output (`claudeTaskOutputRoot`), from the CLI's environment.
+    task_output_root: std::path::PathBuf,
 }
 
 impl ClaudeSession {
@@ -153,6 +157,7 @@ impl ClaudeSession {
                 bypass_cache: None,
                 closed: false,
                 logged_skips: HashSet::new(),
+                tails: HashMap::new(),
             }),
             turn_control: tokio::sync::Mutex::new(()),
             stop_confirm_timeout: STOP_CONFIRM_TIMEOUT,
@@ -200,6 +205,35 @@ impl Inner {
                 Out::Write(line) => {
                     if let (Some(query), Some((id, result))) = (query, callback_answer(&line)) {
                         query.answer(&id, result).await;
+                    }
+                }
+                Out::TailOutput {
+                    tool_use_id,
+                    thread_id,
+                    item_id,
+                    session_id,
+                    task_id,
+                } => {
+                    let Some(events) = &events else { continue };
+                    let mut state = self.lock();
+                    let Some(root) = state.live.as_ref().map(|l| l.task_output_root.clone()) else {
+                        continue;
+                    };
+                    let target = crate::tail::Target {
+                        root,
+                        session_id,
+                        task_id,
+                        thread_id,
+                        item_id,
+                    };
+                    if let Some(tail) = crate::tail::spawn(target, events.clone()) {
+                        state.tails.insert(tool_use_id, tail);
+                    }
+                }
+                Out::StopTail { tool_use_id } => {
+                    let tail = self.lock().tails.remove(&tool_use_id);
+                    if let Some(tail) = tail {
+                        tail.finish().await;
                     }
                 }
                 Out::Skipped(kind) => {
@@ -1144,6 +1178,10 @@ impl ClaudeSession {
     async fn launch(&self, input: QueryInput) -> ProviderResult<()> {
         let inner = &self.inner;
         let env = self.environment(&input.thread_id, input.resume).await;
+        // T3 resolves a relative CLAUDE_CODE_TMPDIR against the real cwd; this uses the cwd
+        // as given (it differs only through a symlinked cwd and a relative value).
+        let task_output_root =
+            crate::tail::output_root(&env, input.cwd.as_deref().map(std::path::Path::new));
         let options = launch::query_options(&inner.config, &input, env);
         let mut query = inner.helper.open(options, json!({}))?;
         let Some(rx) = query.take_events() else {
@@ -1174,6 +1212,7 @@ impl ClaudeSession {
                 restart_needed: false,
                 last_activity: Instant::now(),
                 held_since: None,
+                task_output_root,
             });
             generation
         };
@@ -1735,7 +1774,9 @@ impl Session for ClaudeSession {
                 .mapper
                 .on_exit(true, "The session closed.");
             self.inner.deliver(None, outs).await;
-            self.inner.lock().events = None;
+            let mut state = self.inner.lock();
+            state.events = None;
+            state.tails.clear();
         })
     }
 }

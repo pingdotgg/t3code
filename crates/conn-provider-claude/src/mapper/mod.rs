@@ -43,6 +43,20 @@ pub enum Out {
     Write(String),
     /// A kind the mapper skipped; the session logs it.
     Skipped(String),
+    /// A foreground Bash call started a task: tail its output file for live output
+    /// (`tailClaudeTaskOutput`), as `command_output.delta` for the row `item_id`.
+    TailOutput {
+        tool_use_id: String,
+        thread_id: String,
+        item_id: String,
+        session_id: String,
+        task_id: String,
+    },
+    /// The call settled or the turn ended: read the file once more, then stop the tail.
+    /// Comes before the row's final update, so the live output lands first.
+    StopTail {
+        tool_use_id: String,
+    },
 }
 
 const DEFAULT_CONTEXT_TOKENS: u64 = 200_000;
@@ -214,6 +228,8 @@ struct Turn {
     stream_order: Vec<String>,
     emitted: HashSet<String>,
     tools: HashMap<String, ToolCall>,
+    /// Calls whose output file is tailed (`taskOutputTails`).
+    tailing: Vec<String>,
     tool_order: Vec<String>,
     usage: Option<(String, Usage, u64)>,
     model: Option<String>,
@@ -430,6 +446,7 @@ impl<E: Env> Mapper<E> {
             stream_order: Vec::new(),
             emitted: HashSet::new(),
             tools: HashMap::new(),
+            tailing: Vec::new(),
             tool_order: Vec::new(),
             usage: None,
             model: None,
@@ -772,6 +789,7 @@ impl<E: Env> Mapper<E> {
                 continue;
             };
             turn.tool_order.retain(|id| *id != tool_use_id);
+            stop_tail(turn, &tool_use_id, out);
             let kind = msg
                 .tool_result_meta
                 .iter()
@@ -1131,6 +1149,9 @@ impl<E: Env> Mapper<E> {
             complete_stream(&mut turn, &item_id, None, item_status, &now, out);
         }
         let tool_status = if completed { "failed" } else { status_text };
+        for id in std::mem::take(&mut turn.tailing) {
+            out.push(Out::StopTail { tool_use_id: id });
+        }
         for id in std::mem::take(&mut turn.tool_order) {
             if let Some(call) = turn.tools.remove(&id) {
                 tool_artifacts(
@@ -2055,6 +2076,53 @@ pub fn classify_tool(name: &str) -> (&'static str, &'static str) {
         "glob" | "grep" | "ls" | "read" => ("dynamic_tool", "file-read"),
         "webfetch" | "websearch" => ("web_search", "command"),
         _ => ("dynamic_tool", "command"),
+    }
+}
+
+/// Stops the tail of a settled call, if it has one.
+fn stop_tail(turn: &mut Turn, tool_use_id: &str, out: &mut Vec<Out>) {
+    if let Some(index) = turn.tailing.iter().position(|id| id == tool_use_id) {
+        turn.tailing.remove(index);
+        out.push(Out::StopTail {
+            tool_use_id: tool_use_id.to_string(),
+        });
+    }
+}
+
+/// At most this many tailed calls per turn; Claude runs one foreground command at a time.
+const TAIL_CAP: usize = 8;
+
+impl<E: Env> Mapper<E> {
+    /// `task_started` of a foreground `local_bash` task for a command row of this turn: tail
+    /// its output file (T3 checks `is_backgrounded !== true`).
+    pub(super) fn tail_bash_task(&mut self, msg: &SystemMsg, out: &mut Vec<Out>) {
+        let (Some(task_id), Some(tool_use_id), Some(session_id)) =
+            (&msg.task_id, &msg.tool_use_id, &msg.session_id)
+        else {
+            return;
+        };
+        let Some(turn) = self.turn.as_mut() else {
+            return;
+        };
+        let is_command = turn
+            .tools
+            .get(tool_use_id)
+            .is_some_and(|call| classify_tool(&call.name).0 == "command_execution");
+        if msg.is_backgrounded == Some(true)
+            || !is_command
+            || turn.tailing.contains(tool_use_id)
+            || turn.tailing.len() >= TAIL_CAP
+        {
+            return;
+        }
+        turn.tailing.push(tool_use_id.clone());
+        out.push(Out::TailOutput {
+            tool_use_id: tool_use_id.clone(),
+            thread_id: turn.thread_id.clone(),
+            item_id: ids::turn_item_from_item(DRIVER, tool_use_id),
+            session_id: session_id.clone(),
+            task_id: task_id.clone(),
+        });
     }
 }
 

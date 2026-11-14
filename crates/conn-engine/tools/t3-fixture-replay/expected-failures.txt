@@ -33,7 +33,6 @@ claude_compact_after_peer_turn/claudeAgent           provider: Claude background
 claude_idle_resume/claudeAgent                       provider: Claude background wakes after an idle release are not built
 
 # --- Claude provider: event mapping differs from T3's ClaudeAdapterV2 ---
-command_output_streaming/claudeAgent       provider: Claude emits no live command output (command_output.delta)
 turn_interrupt_restart/claudeAgent         provider: after a restarted turn completes, Claude's last thread update says active; T3's says idle
 
 # --- Engine: differences found, not fixed yet ---

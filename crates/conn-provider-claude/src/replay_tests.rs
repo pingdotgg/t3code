@@ -191,6 +191,7 @@ fn replay(name: &str, runtime_mode: &str) -> Replay {
                 }
                 Out::Write(line) => replay.writes.push(serde_json::from_str(&line).unwrap()),
                 Out::Skipped(kind) => replay.skipped.push(kind),
+                Out::TailOutput { .. } | Out::StopTail { .. } => {}
             }
         }
     }
@@ -576,7 +577,7 @@ fn subagent_compaction_and_retry_frames_decode_without_failing() {
                     kinds.push(serde_json::to_value(&event).unwrap()["type"].clone())
                 }
                 Out::Skipped(kind) => kinds.push(json!(format!("skip:{kind}"))),
-                Out::Write(_) => {}
+                Out::Write(_) | Out::TailOutput { .. } | Out::StopTail { .. } => {}
             }
         }
     }
