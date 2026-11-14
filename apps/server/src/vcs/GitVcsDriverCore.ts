@@ -2,6 +2,7 @@ import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -631,7 +632,6 @@ export function isNonRepositoryGitStderr(stderr: string): boolean {
   const normalized = stderr.toLowerCase();
   return NON_REPOSITORY_STDERR_PHRASES.some((phrase) => normalized.includes(phrase));
 }
-// Unknown spellings count as hidden so their untracked files are still found by a full scan.
 const UNTRACKED_FILES_SHOWN_CONFIG_VALUES = new Set(["normal", "all", "true", "yes", "on", "1"]);
 function untrackedFilesHiddenByConfig(value: string | null): boolean {
   return value !== null && !UNTRACKED_FILES_SHOWN_CONFIG_VALUES.has(value.toLowerCase());
@@ -1024,7 +1024,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const hostPlatform = yield* HostProcess.Platform;
   const serviceScope = yield* Effect.scope;
   const automaticFetchInterval = yield* VcsAutomaticFetchInterval;
-  const statusFetches = new Map<string, Fiber.Fiber<void, GitCommandError>>();
+  type StatusFetchState = {
+    phase: "queued" | "running" | "claimed";
+    claimed: Deferred.Deferred<void>;
+    finished: Deferred.Deferred<boolean>;
+  };
+  const statusFetches = new Map<
+    string,
+    {
+      state: StatusFetchState;
+      fiber: Fiber.Fiber<void, GitCommandError>;
+    }
+  >();
   const statusFetchProcesses = yield* Semaphore.make(4);
 
   const executeRaw: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
@@ -1451,11 +1462,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const fiber = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const pending = statusFetches.get(key);
-        if (pending) return pending;
+        if (pending) return pending.fiber;
+        const claimed = yield* Deferred.make<void>();
+        const finished = yield* Deferred.make<boolean>();
+        const state: StatusFetchState = { phase: "queued", claimed, finished };
         // Frequent poll deadlines and disconnected clients must not interrupt a
         // healthy writer. A separate safety limit prevents a hung transport from
         // occupying its worker slot indefinitely.
-        const started = yield* executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, args, {
+        const fetch = executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, args, {
           env: STATUS_UPSTREAM_REFRESH_ENV,
           fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
           timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
@@ -1468,18 +1482,39 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
           Effect.tapError(() => recordStatusRemoteRefreshFailure(key)),
           Effect.tapCause((cause) => Effect.logWarning("Background Git fetch failed", cause)),
-          statusFetchProcesses.withPermits(1),
+        );
+        const started = yield* Effect.raceFirst(
+          Effect.uninterruptibleMask((restore) =>
+            Effect.gen(function* () {
+              if (state.phase !== "queued") return false;
+              state.phase = "running";
+              yield* restore(fetch);
+              return true;
+            }),
+          ).pipe(statusFetchProcesses.withPermits(1)),
+          Deferred.await(claimed).pipe(Effect.as(false)),
+        ).pipe(
+          Effect.flatMap((completed) =>
+            completed
+              ? Effect.void
+              : Deferred.await(finished).pipe(
+                  Effect.flatMap((succeeded) =>
+                    succeeded ? Effect.void : fetch.pipe(statusFetchProcesses.withPermits(1)),
+                  ),
+                ),
+          ),
           Effect.onExit(() =>
             Effect.sync(() => {
-              statusFetches.delete(key);
+              if (statusFetches.get(key)?.state === state) statusFetches.delete(key);
             }),
           ),
           Effect.forkIn(serviceScope, { startImmediately: false, uninterruptible: false }),
         );
-        statusFetches.set(key, started);
+        statusFetches.set(key, { state, fiber: started });
         return started;
       }),
     );
+    yield* Effect.annotateCurrentSpan("statusFetch.joining", true);
     const result = yield* Fiber.join(fiber).pipe(
       Effect.timeoutOption(STATUS_UPSTREAM_REFRESH_TIMEOUT),
     );
@@ -2302,11 +2337,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     options?: GitVcsDriver.GitLocalStatusOptions,
   ) {
     const includeDivergence = options?.includeDivergence !== false;
+    // Hidden untracked files could not be committed; `all` stays as configured.
+    const untrackedFilesHidden = untrackedFilesHiddenByConfig(
+      yield* readConfigValue(cwd, "status.showUntrackedFiles").pipe(
+        Effect.orElseSucceed(() => null),
+      ),
+    );
     const statusArgs = [
       "status",
       "--porcelain=2",
       "--branch",
       "-z",
+      ...(untrackedFilesHidden ? ["--untracked-files=normal"] : []),
       ...(includeDivergence ? [] : ["--no-ahead-behind"]),
     ];
     const indexResult = yield* executeGitWithStableDiagnostics(
@@ -3339,12 +3381,31 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
     const remote = yield* readConfigValue(cwd, `branch.${refName}.remote`);
+    // The upstream-only retry leaves other remote-tracking refs stale, so a claimed status
+    // fetch must still run after it.
+    let fetchedUpstreamOnly = false;
     if (remote) {
       const gitCommonDir = yield* resolveGitCommonDir(cwd);
       const pending = statusFetches.get(`${gitCommonDir}\0${remote}`);
       // The status wait can finish while its fetch still owns reference locks.
       // Let our existing writer finish before starting the pull's fetch.
-      if (pending) yield* Fiber.await(pending);
+      if (pending) {
+        const claimed = yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            if (pending.state.phase !== "queued") return false;
+            pending.state.phase = "claimed";
+            yield* Effect.addFinalizer((exit) =>
+              Deferred.succeed(
+                pending.state.finished,
+                Exit.isSuccess(exit) && !fetchedUpstreamOnly,
+              ),
+            );
+            yield* Deferred.succeed(pending.state.claimed, undefined);
+            return true;
+          }),
+        );
+        if (!claimed) yield* Fiber.await(pending.fiber);
+      }
     }
     const beforeSha = yield* runGitStdout(
       "GitVcsDriver.pullCurrentBranch.beforeSha",
@@ -3398,6 +3459,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         currentSha === beforeSha
       ) {
         args = ["pull", "--ff-only", "--", remote, mergeRef];
+        fetchedUpstreamOnly = true;
         result = yield* executeGitWithStableDiagnostics(
           "GitVcsDriver.pullCurrentBranch.pull",
           cwd,
@@ -3426,11 +3488,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     const refreshed = yield* readStatusDetailsLocal(cwd);
     return {
-      status: beforeSha.length > 0 && beforeSha === afterSha ? "skipped_up_to_date" : "pulled",
+      status:
+        beforeSha.length > 0 && beforeSha === afterSha
+          ? ("skipped_up_to_date" as const)
+          : ("pulled" as const),
       refName,
       upstreamRef: refreshed.upstreamRef,
     };
-  });
+  }, Effect.scoped);
 
   const readRangeContext: GitVcsDriver.GitVcsDriver["Service"]["readRangeContext"] = Effect.fn(
     "readRangeContext",
@@ -3776,14 +3841,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         detail: remembered.detail,
       });
     }
-    // Empty status means no untracked files unless config hides them; then scan the whole tree.
+    // Status always lists untracked files, so no roots means there are none to scan.
     const untracked =
-      roots.length === 0 &&
-      !untrackedFilesHiddenByConfig(
-        yield* readConfigValue(cwd, "status.showUntrackedFiles").pipe(
-          Effect.orElseSucceed(() => "no"),
-        ),
-      )
+      roots.length === 0
         ? { env: undefined, omitted: false }
         : yield* prepareUntrackedReviewIndexOrReason(cwd, pathspecs, undefined, false);
     if ("unavailable" in untracked) {
