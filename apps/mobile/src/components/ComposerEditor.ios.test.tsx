@@ -33,6 +33,7 @@ const native = vi.hoisted(() => ({
   mounts: 0,
   props: null as NativeProps | null,
   deliver: null as ((event: NativeEvent) => void) | null,
+  readGate: null as Promise<void> | null,
 }));
 
 function NativeView({ ref, ...props }: NativeProps) {
@@ -41,15 +42,24 @@ function NativeView({ ref, ...props }: NativeProps) {
     Object.assign(native, { text: "", eventCount: 0, resetGeneration: 0, pasteEventCount: 0 });
     native.mounts += 1;
   }, []);
-  useImperativeHandle(ref, () => ({
-    readState: async () => ({
-      value: native.text,
-      selection: { start: native.text.length, end: native.text.length },
-      eventCount: native.eventCount,
-      resetGeneration: native.resetGeneration,
-      pasteEventCount: native.pasteEventCount,
+  useImperativeHandle(
+    ref,
+    () => ({
+      readState: async () => {
+        const state = {
+          value: native.text,
+          selection: { start: native.text.length, end: native.text.length },
+          eventCount: native.eventCount,
+          resetGeneration: native.resetGeneration,
+          pasteEventCount: native.pasteEventCount,
+        };
+        await native.readGate;
+        return state;
+      },
     }),
-  }));
+    // Expo keeps one native view instance for the component's lifetime.
+    [],
+  );
   useLayoutEffect(() => {
     propsRef.current = props;
     native.props = props;
@@ -155,17 +165,26 @@ const DRAFT_KEY = "environment:thread";
 function ThreadComposer({
   draftKey = DRAFT_KEY,
   editorRef,
+  locked = false,
+  hidden = false,
 }: {
   draftKey?: string;
   editorRef?: Ref<ComposerEditorHandle>;
+  locked?: boolean;
+  hidden?: boolean;
 }) {
   const draft = useComposerDraft(draftKey);
+  // Mirrors ThreadComposer's submission lock (e.g. while voice input is recording or transcribing).
   return (
     <ComposerEditor
       ref={editorRef}
       draftKey={draftKey}
       value={draft.text}
-      onChangeText={(text) => setComposerDraftText(draftKey, text)}
+      readOnly={locked}
+      hidden={hidden}
+      onChangeText={(text) => {
+        if (!locked) setComposerDraftText(draftKey, text);
+      }}
     />
   );
 }
@@ -231,19 +250,22 @@ it("keeps a pending event from the previous native editor out of the selected dr
   expect(native.text).toBe("Draft B");
 });
 
-async function renderFlushableComposer() {
+async function renderFlushableComposer(initialDraftKey = DRAFT_KEY) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const editor = createRef<ComposerEditorHandle>();
   const root = createRoot(document.createElement("div"));
-  await act(async () =>
-    root.render(
-      <RegistryContext.Provider value={appAtomRegistry}>
-        <ThreadComposer editorRef={editor} />
-      </RegistryContext.Provider>,
-    ),
-  );
+  const renderComposer = (locked: boolean, draftKey = initialDraftKey, hidden = false) =>
+    act(async () =>
+      root.render(
+        <RegistryContext.Provider value={appAtomRegistry}>
+          <ThreadComposer editorRef={editor} locked={locked} draftKey={draftKey} hidden={hidden} />
+        </RegistryContext.Provider>,
+      ),
+    );
+  await renderComposer(false);
   return {
     editor,
+    setLocked: renderComposer,
     [Symbol.asyncDispose]: async () => act(() => root.unmount()),
   };
 }
@@ -277,4 +299,76 @@ it("does not flush past a paste whose event has not reached JS", async () => {
   expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("Before pasted");
   await act(async () => native.deliver!(caretMove));
   expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("Before pasted");
+});
+
+it("sends text the native editor kept while the composer was locked for voice input", async () => {
+  await using screen = await renderFlushableComposer();
+  await act(async () => emit("Draft"));
+
+  await screen.setLocked(true);
+  await act(async () => emit("Draft plus more"));
+  await screen.setLocked(false);
+
+  await act(async () => screen.editor.current!.flushPendingInput());
+  expect(native.text).toBe("Draft plus more");
+  expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe(native.text);
+});
+
+it("does not flush away a parent edit the native editor has not applied yet", async () => {
+  await using screen = await renderFlushableComposer();
+  await act(async () => emit("Draft"));
+
+  await act(async () => setComposerDraftText(DRAFT_KEY, "Draft @file"));
+  native.text = "Draft";
+
+  await act(async () => screen.editor.current!.flushPendingInput());
+  expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("Draft @file");
+});
+
+it("keeps a parent edit committed while a flush waits on the native editor", async () => {
+  await using screen = await renderFlushableComposer();
+  await act(async () => emit("Draft"));
+  await screen.setLocked(true);
+  await act(async () => emit("Draft plus more"));
+  await screen.setLocked(false);
+
+  await flushAcross(screen, () =>
+    act(async () => setComposerDraftText(DRAFT_KEY, "Draft plus more @file")),
+  );
+  expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("Draft plus more @file");
+});
+
+async function flushAcross(
+  screen: Awaited<ReturnType<typeof renderFlushableComposer>>,
+  change: () => Promise<void>,
+) {
+  const response = Promise.withResolvers<void>();
+  native.readGate = response.promise;
+  let flushed!: Promise<void>;
+  await act(async () => {
+    flushed = screen.editor.current!.flushPendingInput();
+  });
+  await change();
+  native.readGate = null;
+  await act(async () => {
+    response.resolve();
+    await flushed;
+  });
+}
+
+it("does not restore dropped text through an editor recreated while a flush waits", async () => {
+  const draftKey = "flush-recreate:draft";
+  await using screen = await renderFlushableComposer(draftKey);
+  await act(async () => emit("Draft"));
+  await screen.setLocked(true);
+  await act(async () => emit("Draft plus more"));
+  await screen.setLocked(false);
+
+  await flushAcross(screen, async () => {
+    // Hiding the composer recreates its editor.
+    await screen.setLocked(false, draftKey, true);
+    await screen.setLocked(false, draftKey, false);
+    await act(async () => emit("Newer parent text"));
+  });
+  expect(getComposerDraftSnapshot(draftKey).text).toBe("Newer parent text");
 });
