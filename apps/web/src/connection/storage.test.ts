@@ -1,11 +1,14 @@
 import {
   ConnectionTransientError,
+  BearerConnectionCredential,
+  CredentialStore,
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { ConnectionCatalogDocument, Persistence } from "@t3tools/client-runtime/platform";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -60,6 +63,65 @@ describe("ConnectionStorage.makeCatalogStore", () => {
       });
 
       expect(yield* Effect.flip(store.read)).toBe(failure);
+    }),
+  );
+});
+
+describe("platform bearer conditional eviction", () => {
+  it.effect("checks the credential under the catalog lock after a queued replacement commits", () =>
+    Effect.gen(function* () {
+      let replacing!: () => void;
+      const replacingPromise = new Promise<void>((resolve) => {
+        replacing = resolve;
+      });
+      let release!: () => void;
+      const releasePromise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const old = new BearerConnectionCredential({ token: "old" });
+      const fresh = new BearerConnectionCredential({ token: "replacement" });
+      let raw: string | null = null;
+      let writes = 0;
+      vi.stubGlobal(
+        "window",
+        Object.assign(new EventTarget(), {
+          desktopBridge: {
+            getConnectionCatalog: async () => raw,
+            setConnectionCatalog: async (next: string) => {
+              if (++writes === 2) {
+                replacing();
+                await releasePromise;
+              }
+              raw = next;
+              return true;
+            },
+          },
+        }),
+      );
+      yield* Effect.gen(function* () {
+        const store = yield* CredentialStore.ConnectionCredentialStore;
+        yield* store.put("backend", old);
+        const observed = Option.getOrThrow(yield* store.get("backend"));
+        const replacement = yield* store
+          .put("backend", fresh)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => replacingPromise);
+        const removal = yield* store.removeIfMatches!("backend", observed).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        release();
+        yield* Fiber.join(replacement);
+        yield* Fiber.join(removal);
+        expect(yield* store.get("backend")).toEqual(Option.some(fresh));
+        expect(yield* store.wasRejected!("backend", old)).toBe(false);
+        yield* store.removeIfMatches!("backend", fresh);
+        expect(yield* store.get("backend")).toEqual(Option.none());
+        expect(yield* store.wasRejected!("backend", fresh)).toBe(true);
+        yield* store.put("backend", fresh);
+        expect(yield* store.wasRejected!("backend", fresh)).toBe(true);
+        yield* store.removeIfMatches!("backend", fresh);
+        expect(decodeCatalog(raw!).credentials).toEqual([]);
+      }).pipe(Effect.provide(ConnectionStorage.layer), Effect.scoped);
     }),
   );
 });

@@ -15,6 +15,16 @@ export class ConnectionCredentialStore extends Context.Service<
       connectionId: string,
       credential: ConnectionCredential,
     ) => Effect.Effect<void, ConnectionAttemptError>;
+    /** Tracks explicit authentication eviction even if reconciliation stores the old token again. */
+    readonly wasRejected?: (
+      connectionId: string,
+      credential: ConnectionCredential,
+    ) => Effect.Effect<boolean, ConnectionAttemptError>;
+    /** Atomically removes only the credential that failed authentication. */
+    readonly removeIfMatches?: (
+      connectionId: string,
+      credential: ConnectionCredential,
+    ) => Effect.Effect<void, ConnectionAttemptError>;
     readonly remove: (connectionId: string) => Effect.Effect<void, ConnectionAttemptError>;
   }
 >()("@t3tools/client-runtime/connection/credentialStore/ConnectionCredentialStore") {}

@@ -370,7 +370,38 @@ export const make = Effect.gen(function* () {
             learnRoutes: (input) => learnRoutes({ environmentId, ...input }),
           }).pipe(
             Effect.provideService(Connectivity.Connectivity, connectivity),
-            Effect.provideService(ConnectionDriver.ConnectionDriver, driver),
+            Effect.provideService(ConnectionDriver.ConnectionDriver, {
+              ...driver,
+              // A rejected platform bearer is evicted so the platform source exchanges a fresh one.
+              connect: Effect.fn("EnvironmentRegistry.connectPlatformBearer")(
+                function* (current, reportProgress) {
+                  const target = current.target;
+                  if (
+                    target._tag !== "BearerConnectionTarget" ||
+                    !(yield* Ref.get(platformEnvironmentIds)).has(environmentId)
+                  ) {
+                    return yield* driver.connect(current, reportProgress);
+                  }
+                  const before = yield* credentials
+                    .get(target.connectionId)
+                    .pipe(Effect.orElseSucceed(() => Option.none<ConnectionCredential>()));
+                  return yield* driver
+                    .connect(current, reportProgress)
+                    .pipe(
+                      Effect.tapError((error) =>
+                        error._tag === "ConnectionBlockedError" &&
+                        error.reason === "authentication" &&
+                        Option.isSome(before) &&
+                        credentials.removeIfMatches !== undefined
+                          ? credentials
+                              .removeIfMatches(target.connectionId, before.value)
+                              .pipe(Effect.ignore)
+                          : Effect.void,
+                      ),
+                    );
+                },
+              ),
+            }),
             Effect.provideService(ConnectionWakeups.ConnectionWakeups, wakeups),
             Scope.provide(scope),
             Effect.onError(() => Scope.close(scope, Exit.void)),
@@ -668,12 +699,20 @@ export const make = Effect.gen(function* () {
           // token instead of the primary's same-origin cookie. Stash it where
           // the resolver's bearer broker looks it up.
           let bearerChanged = false;
+          let bearerRejected = false;
           if (registration._tag === "BearerConnectionRegistration") {
-            const stored = yield* credentials
-              .get(registration.target.connectionId)
-              .pipe(Effect.orElseSucceed(() => Option.none<ConnectionCredential>()));
-            bearerChanged =
-              Option.isSome(stored) && !Equal.equals(stored.value, registration.credential);
+            bearerRejected = yield* (
+              credentials
+                .wasRejected?.(registration.target.connectionId, registration.credential)
+                .pipe(Effect.orElseSucceed(() => false)) ?? Effect.succeed(false)
+            );
+            if (!bearerRejected) {
+              const stored = yield* credentials
+                .get(registration.target.connectionId)
+                .pipe(Effect.orElseSucceed(() => Option.none<ConnectionCredential>()));
+              bearerChanged =
+                Option.isNone(stored) || !Equal.equals(stored.value, registration.credential);
+            }
           }
 
           if (persisted) {
@@ -700,7 +739,7 @@ export const make = Effect.gen(function* () {
           }
 
           let bearerReplaced = false;
-          if (registration._tag === "BearerConnectionRegistration") {
+          if (registration._tag === "BearerConnectionRegistration" && !bearerRejected) {
             const written = yield* credentials
               .put(registration.target.connectionId, registration.credential)
               .pipe(
@@ -718,9 +757,16 @@ export const make = Effect.gen(function* () {
             applied &&= written;
           }
 
+          const existingScope = (yield* SubscriptionRef.get(serviceScopes)).get(
+            target.environmentId,
+          );
           yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
 
-          if (bearerReplaced && registration._tag === "BearerConnectionRegistration") {
+          if (
+            existingScope !== undefined &&
+            bearerReplaced &&
+            registration._tag === "BearerConnectionRegistration"
+          ) {
             const scope = (yield* SubscriptionRef.get(serviceScopes)).get(target.environmentId);
             if (scope !== undefined) {
               const state = yield* SubscriptionRef.get(scope.supervisor.state);
