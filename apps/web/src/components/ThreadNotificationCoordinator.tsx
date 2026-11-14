@@ -294,7 +294,6 @@ export function startThreadNotifications(
         settled,
         completedAt: settled ? completedAt : null,
         backgroundWake: rawThread.latestRunBackgroundWake === true,
-        snoozed: isSnoozedForNotification(thread, settled ? completedAt : null, Date.now()),
       };
       next.set(thread.id, state);
       changed.push([prior, state]);
@@ -302,11 +301,12 @@ export function startThreadNotifications(
     entry.reconnecting = false;
     entry.previous = next;
     entry.gate.retain(new Set(next.keys()));
+    const now = Date.now();
     for (const [prior, state] of changed) {
       entry.gate.observe(state.thread.id, prior, state, {
         archived: state.thread.archivedAt !== null,
         quiet: state.raw.latestRunStopRequested === true,
-        snoozed: state.snoozed,
+        snoozed: isSnoozedForNotification(state.thread, state.completedAt, now),
       });
     }
   };
