@@ -233,6 +233,10 @@ Cursor and Antigravity update with T3 Code. Homebrew and Chocolatey installs
 compare against the version their package manager offers, which can trail the
 npm release; update Claude installed with Chocolatey through Chocolatey.
 
+The managed runtimes for Antigravity and for Codex connected through ChatGPT
+first install the release T3 Code tested. When T3 Code finds a newer compatible
+release, their setup in **Settings → Providers** offers an update.
+
 Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom
 base URL. Mark secret values as sensitive; after saving, T3 Code does not display
@@ -242,6 +246,47 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
 [Antigravity](./providers-antigravity.md), [Kiro](./providers-kiro.md),
 [Pi](./providers-pi.md), [Muse Code](./providers-muse.md), and [fx](./providers-fx.md).
+
+### Provider check timeouts
+
+If a provider works in its CLI but T3 Code reports a timeout while checking it,
+allow more time in the T3 server's environment. For example, give Codex and
+Claude readiness checks 60 seconds:
+
+```bash
+T3CODE_CODEX_PROBE_TIMEOUT_MS=60000 T3CODE_CLAUDE_PROBE_TIMEOUT_MS=60000 t3 serve
+```
+
+For a remote environment, set these on the machine running the T3 server.
+Keep them in your launcher or service configuration to retain them across
+updates, then restart the server. For systemd, add
+`Environment=T3CODE_CODEX_PROBE_TIMEOUT_MS=60000` under `[Service]` in a service
+override, reload systemd, and restart the service. Provider instances can also
+set their own overrides in Settings → Providers.
+
+Each variable extends that provider's readiness-probe deadlines; a phase whose
+default is already longer keeps its default. Providers with several phases can
+take longer than one deadline in total. Values must be whole milliseconds no
+greater than 2147483647; unset or invalid values keep the defaults.
+
+| Provider            | Environment variable                   |
+| ------------------- | -------------------------------------- |
+| Codex               | `T3CODE_CODEX_PROBE_TIMEOUT_MS`        |
+| Claude              | `T3CODE_CLAUDE_PROBE_TIMEOUT_MS`       |
+| Cursor              | `T3CODE_CURSOR_PROBE_TIMEOUT_MS`       |
+| Antigravity         | `T3CODE_ANTIGRAVITY_PROBE_TIMEOUT_MS`  |
+| Grok                | `T3CODE_GROK_PROBE_TIMEOUT_MS`         |
+| Kiro                | `T3CODE_KIRO_PROBE_TIMEOUT_MS`         |
+| fx                  | `T3CODE_FX_PROBE_TIMEOUT_MS`           |
+| Pi                  | `T3CODE_PI_PROBE_TIMEOUT_MS`           |
+| Muse Code           | `T3CODE_MUSE_PROBE_TIMEOUT_MS`         |
+| OpenCode            | `T3CODE_OPENCODE_PROBE_TIMEOUT_MS`     |
+| ACP Registry agents | `T3CODE_ACP_REGISTRY_PROBE_TIMEOUT_MS` |
+
+Longer deadlines also take longer to report a stalled check. These overrides
+cover readiness and discovery, including OpenCode server startup. Usage and
+config enrichment retain their own shorter limits. Turn execution, package
+installation, update checks, and shutdown limits keep their existing behavior.
 
 ## Next steps
 
