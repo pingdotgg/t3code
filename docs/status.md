@@ -58,7 +58,7 @@ settings; about 140 MiB for the `claude` program alone).
 | Engine commands | 43 of 56 |
 | T3 testkit fixtures through this engine | 69 of 159 variants pass T3's own assertions (Claude 34 of 34, Codex 25 of 25, Grok 10 of 15; the other 85 are providers this server does not offer) |
 | HTTP routes | 17 of 57 (the 4 of `/api/hooks/:hookId/:token`) |
-| `/mcp` tools | 33 of 87 |
+| `/mcp` tools | 34 of 87 |
 | Providers | Claude, Codex and Grok (with background work and subagents), of the 10 the T3 server has without Pi |
 
 Proven:
@@ -920,6 +920,23 @@ lane, and a Claude cold start showed "Stopping" for up to about 6.5 minutes.
   thread has no provider thread while `starting`, so a Stop then writes no request or result
   item (T3 has one); after the running write it does.
 
+## `t3_background_wait` (2026-11-14)
+
+`/mcp` serves it as T3's `toolkits/orchestrator` does (`tools.ts:143`, `handlers.ts:64`):
+a live thread caller only (`actsAsCaller`), `taskIds` 1 to 20 trimmed non-blank strings,
+`waiting` (default true), result `{matched, unmatched}`. `Engine::await_background_tasks` is
+`ThreadManagementService.awaitBackgroundTasks` (1532-1576): the thread's active provider
+thread and its live session, 15 s for the provider, reasons `unavailable` and `failed`
+(`orchestration_error`), `unsupported` (Codex, Grok) and `unmatched` (`invalid_request`),
+with T3's texts. Claude marks the tasks on its roster; the engine stores nothing. Proof:
+`gen-tools.mjs --check`; `parity.mjs` 10 more calls against the T3 server, values compared
+(the access refusal and every argument error; the success path needs a running provider task
+and is proven by the engine test `marks_and_clears_awaited_tasks_on_the_live_session` on the fake provider). Named in our
+instruction texts and still unserved (13): `create_threads`, `device_list`, `device_open`,
+`device_screenshot`, `html_preview`, `html_render`, `preview_open`, `preview_status` (and the
+other `preview_*`), `request_secret`, `t3_environment_link`, `t3_environment_links`,
+`watch_pull_request`, `unwatch_pull_request`.
+
 ## Faults found in the T3 server
 
 Faults that the T3 server has and this server fixes on purpose. Each is to be written up for
@@ -992,8 +1009,7 @@ T3 Code.
    lints) are in `CRATES.md`, "Lint set".
 2. **Provider interface.** The server side of the host handle
    (`ProviderHost`: only the trait and a rooted file host exist; no terminals, and the
-   server passes none); `/mcp` `t3_background_wait` (Claude's `await_background_tasks` is
-   built; the engine lookup and the tool are not); titles through an agent provider (see
+   server passes none); titles through an agent provider (see
    "Claude provider: background work, …"); Claude's workflow tasks and `stopTask`.
 3. **Other providers.** One ACP provider for Grok, Kiro, fx, Antigravity and the ACP registry:
    `crates/conn-provider-acp`. **Grok is offered by the server (2026-11-14):** T3's default

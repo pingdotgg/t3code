@@ -182,10 +182,10 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `unwatch_pull_request` | not served | writesThreads | server: pull request watches; hidden from delegated children | P |
 | `write_pull_request_guides` | not served | writesWithCapability | server: pull request review guides | |
 | `read_pull_request_guide` | not served | reads | server: pull request review guides | |
-| `schedule_task` | not served | either(writesEnvironment, writes) | server: scheduled tasks | O |
-| `list_scheduled_tasks` | not served | reads | server: scheduled tasks | |
-| `delete_scheduled_task` | not served | writes | server: scheduled tasks | |
-| `run_scheduled_task_now` | not served | writesEnvironment | server: scheduled tasks | |
+| `schedule_task` | served | either(writesEnvironment, writes) | | O |
+| `list_scheduled_tasks` | served | reads | | |
+| `delete_scheduled_task` | served | writes | | |
+| `run_scheduled_task_now` | served | writesEnvironment | | |
 | `preview_status` | not served | readsAsCaller | desktop client: previews | O, B |
 | `preview_open` | not served | actsAsCaller | desktop client: previews | O, B |
 | `preview_navigate`, `preview_resize`, `preview_set_appearance`, `preview_act`, `preview_evaluate`, `preview_dialog`, `preview_cdp_endpoint`, `preview_recording_start`, `preview_recording_stop` (9) | not served | actsAsCaller | desktop client: previews | O |
@@ -202,10 +202,10 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `mcp_call` | not served | actsAsCaller | desktop client: panels (the MCP panel) | |
 | `html_preview` | not served | readsAsCaller | server: HTML renders (`HtmlRender`) | O |
 | `html_render` | not served | actsAsCaller | server: HTML renders (`HtmlRender`) | O |
-| `annotations_list` | not served | readsAsCaller | server: annotations | |
-| `annotations_claim` | not served | actsAsCaller | server: annotations | |
-| `annotations_complete` | not served | actsAsCaller | server: annotations | |
-| `annotations_release` | not served | actsAsCaller | server: annotations | |
+| `annotations_list` | served | readsAsCaller | | |
+| `annotations_claim` | served | actsAsCaller | | |
+| `annotations_complete` | served | actsAsCaller | | |
+| `annotations_release` | served | actsAsCaller | | |
 | `request_credentials` | not served | readsAsCaller | server: credentials | |
 | `fill_credential` | not served | actsAsCaller | server: credentials | |
 | `save_test_login` | not served | actsAsCaller | server: credentials (test logins) | |
