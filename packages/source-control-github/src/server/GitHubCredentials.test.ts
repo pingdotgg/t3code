@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { HttpClient } from "effect/http";
@@ -63,6 +64,7 @@ function harness(
       }),
     ),
     Layer.provide(NodeCrypto.layer),
+    Layer.provide(FileSystem.layerNoop({})),
     Layer.provide(
       Layer.succeed(
         HttpClient.HttpClient,

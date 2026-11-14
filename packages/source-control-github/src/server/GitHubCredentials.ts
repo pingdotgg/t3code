@@ -23,6 +23,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitHubClient from "../shared/definition.ts";
+import { makeGhProcess } from "./gitHubCliProcess.ts";
 
 /**
  * Every gh run on the server shares this. A burst of them (a status poll across many checkouts)
@@ -139,7 +140,7 @@ export function environmentToken(
 /** @public */
 export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
-  const process = sourceControlHost.process;
+  const process = yield* makeGhProcess;
   const crypto = yield* Digest.Digest;
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;

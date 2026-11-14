@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest"
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -113,6 +114,7 @@ function harness(options: {
     Layer.provideMerge(SourceControlRateLimit.layer),
     Layer.provideMerge(options.settingsWritesFail === true ? failingWrites : host),
     Layer.provide(NodeCrypto.layer),
+    Layer.provide(FileSystem.layerNoop({})),
     Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
   );
   return { layer, requests };

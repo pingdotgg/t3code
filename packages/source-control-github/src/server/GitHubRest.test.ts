@@ -10,6 +10,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
@@ -611,6 +612,7 @@ describe("GitHubCredentials", () => {
     GitHubCredentials.layer.pipe(
       Layer.provide(TestSourceControlHost.layer({ process: { run } })),
       Layer.provide(NodeCrypto.layer),
+      Layer.provide(FileSystem.layerNoop({})),
       Layer.provide(Layer.succeed(HttpClient.HttpClient, unexpectedHttp)),
     );
 
