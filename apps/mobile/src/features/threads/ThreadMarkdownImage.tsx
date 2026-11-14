@@ -20,6 +20,7 @@ import { useMediaActions } from "../../state/mediaActions";
 import type { MediaActionsSource } from "../../lib/mediaActionsSource";
 import { useAssetUrlState } from "../../state/assets";
 import { WorkspaceMutationIdContext } from "./workspaceMutationIdContext";
+import { ZoomableImagePressable } from "./ZoomableImagePressable";
 import { assetImageCacheKey } from "../../lib/assetImageSource";
 import {
   MARKDOWN_IMAGE_MAX_WIDTH,
@@ -167,7 +168,8 @@ export function ThreadMarkdownImageView(props: {
       ) : (
         <PresentationSource identifier={sourceIdentifier} style={{ alignSelf: "flex-start" }}>
           <MediaActionsMenu media={mediaActions}>
-            <Pressable
+            <ZoomableImagePressable
+              key={props.sourceKey}
               accessibilityRole="imagebutton"
               accessibilityLabel={props.alt ?? "Markdown image"}
               accessibilityHint={
@@ -184,34 +186,29 @@ export function ThreadMarkdownImageView(props: {
                   }),
                 )
               }
-              style={{ alignSelf: "flex-start" }}
+              className="overflow-hidden rounded-[10px] bg-md-code-bg"
+              style={{ alignSelf: "flex-start", ...frameStyle }}
             >
-              <View
-                className="items-center justify-center overflow-hidden rounded-[10px] bg-md-code-bg"
-                style={frameStyle}
-              >
-                {props.format === "svg" ? (
-                  <ThreadMarkdownSvg ast={svgDocument?.ast ?? null} />
-                ) : (
-                  <ThreadMarkdownImageRequest
-                    key={props.sourceKey}
-                    uri={props.uri}
-                    cacheKey={props.cacheKey}
-                    onLoad={(size) =>
-                      // Only the first decode counts: later loads report the bitmap
-                      // downsampled for the current frame (969 vs 970 wide), so keeping
-                      // them resizes the frame, which reloads the image, and so on.
-                      setDecoded((current) =>
-                        current?.sourceKey === props.sourceKey
-                          ? current
-                          : { sourceKey: props.sourceKey, size },
-                      )
-                    }
-                    onError={() => setFailure({ uri: props.uri, failed: true })}
-                  />
-                )}
-              </View>
-            </Pressable>
+              {props.format === "svg" ? (
+                <ThreadMarkdownSvg ast={svgDocument?.ast ?? null} />
+              ) : (
+                <ThreadMarkdownImageRequest
+                  uri={props.uri}
+                  cacheKey={props.cacheKey}
+                  onLoad={(size) =>
+                    // Only the first decode counts: later loads report the bitmap
+                    // downsampled for the current frame (969 vs 970 wide), so keeping
+                    // them resizes the frame, which reloads the image, and so on.
+                    setDecoded((current) =>
+                      current?.sourceKey === props.sourceKey
+                        ? current
+                        : { sourceKey: props.sourceKey, size },
+                    )
+                  }
+                  onError={() => setFailure({ uri: props.uri, failed: true })}
+                />
+              )}
+            </ZoomableImagePressable>
           </MediaActionsMenu>
         </PresentationSource>
       )}
