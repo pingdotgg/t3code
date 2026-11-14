@@ -32,7 +32,6 @@ import {
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
 } from "../../provider/acp/AntigravityChildWork.ts";
-import { readAntigravityInstructions } from "../../provider/acp/AntigravityInstructions.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
@@ -76,8 +75,7 @@ export interface AntigravityAdapterV2Options {
   readonly userHome: string;
   readonly selfInvocation: SelfInvocation;
   readonly makeRuntime: (
-    input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner"> &
-      Pick<AcpAdapterV2RuntimeInput, "runtimePolicy">,
+    input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError | ProviderSetupError,
@@ -127,6 +125,8 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
   };
 };
 
+const RULES_FILE_MAX_BYTES = 256n * 1024n;
+
 interface AntigravityFlavorServices {
   readonly random: SecureRandom.SecureRandom["Service"];
   readonly fileSystem: FileSystem.FileSystem;
@@ -140,6 +140,25 @@ export function makeAntigravityAcpAdapterFlavor(
   const { profileDirectory } = options;
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
+  // agy acp loads no rules files itself, so they ride the session system prompt append.
+  const readRulesFile = (filePath: string) =>
+    options.fileSystem.stat(filePath).pipe(
+      Effect.flatMap((info) =>
+        info.type === "File" && info.size <= RULES_FILE_MAX_BYTES
+          ? options.fileSystem.readFileString(filePath)
+          : Effect.logWarning("Skipping Antigravity rules file", {
+              filePath,
+              reason: `not a regular file of at most ${RULES_FILE_MAX_BYTES} bytes`,
+            }).pipe(Effect.as("")),
+      ),
+      Effect.catch((error) =>
+        error.reason._tag === "NotFound"
+          ? Effect.succeed("")
+          : Effect.logWarning("Skipping Antigravity rules file", { filePath, error }).pipe(
+              Effect.as(""),
+            ),
+      ),
+    );
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
       const instructions: Array<string> = [];
@@ -148,8 +167,8 @@ export function makeAntigravityAcpAdapterFlavor(
         options.path.join(input.cwd, "AGENTS.md"),
         options.path.join(input.cwd, "GEMINI.md"),
       ]) {
-        const contents = yield* readAntigravityInstructions(filePath);
-        if (contents?.trim()) instructions.push(`# ${filePath}\n\n${contents}`);
+        const contents = yield* readRulesFile(filePath);
+        if (contents.trim()) instructions.push(`# ${filePath}\n\n${contents}`);
       }
       instructions.push(PULL_REQUEST_LINKING_INSTRUCTIONS);
       const scope = yield* Scope.fork(yield* Effect.scope);
@@ -226,7 +245,6 @@ export function makeAntigravityAcpAdapterFlavor(
     // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
-    replaceRuntimeOnActivation: antigravityAppendsSystemPrompt,
     makeRuntime,
     buildAttachmentPrompt: ({
       text,
