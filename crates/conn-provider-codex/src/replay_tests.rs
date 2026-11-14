@@ -498,3 +498,82 @@ fn a_failed_turns_text_loses_its_secrets() {
         assert!(!message.contains(secret), "{secret} in {message}");
     }
 }
+
+/// An MCP elicitation is an approval with the app's name and its persistence choices; the
+/// answer goes back as the form's option (`CodexMcpElicitation.ts`). One an approval cannot
+/// answer is declined at once.
+#[test]
+fn an_mcp_elicitation_is_an_approval_answered_with_the_forms_option() {
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    let input = turn_input(&ts["startTurn"][0]);
+    let mut mapper = Mapper::new(FixedEnv::default());
+    mapper.begin_turn("th", &input);
+    let _ = mapper.turn_start_result("th", &json!({"turn": {"id": "tu", "startedAt": null}}));
+    let reply_of = |outs: &[Out]| -> Option<Value> {
+        outs.iter().find_map(|o| match o {
+            Out::Write(line) => serde_json::from_str(line).ok(),
+            _ => None,
+        })
+    };
+
+    let url = json!({"method": "mcpServer/elicitation/request", "id": 3, "params": {
+        "threadId": "th", "turnId": "tu", "serverName": "s", "mode": "url",
+        "message": "Sign in", "elicitationId": "e1", "url": "https://example.com"}});
+    let outs = mapper.handle(Inbound::from_value(url));
+    assert_eq!(
+        reply_of(&outs).unwrap(),
+        json!({"id": 3, "result": {"action": "decline"}})
+    );
+
+    let form = json!({"method": "mcpServer/elicitation/request", "id": 4, "params": {
+        "threadId": "th", "turnId": "tu", "serverName": "computer-use", "mode": "form",
+        "message": "Allow ChatGPT to use Safari?",
+        "_meta": {"persist": ["session"]},
+        "requestedSchema": {"type": "object", "properties": {"approval": {"type": "string",
+            "enum": ["once", "session"]}}, "required": ["approval"]}}});
+    let outs = mapper.handle(Inbound::from_value(form));
+    assert!(reply_of(&outs).is_none(), "waits for the user");
+    let event = |kind: &str, key: &str| {
+        outs.iter()
+            .find_map(|o| match o {
+                Out::Event(e) => {
+                    let v = serde_json::to_value(e).unwrap();
+                    (v["type"] == kind).then(|| v[key].clone())
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
+    let item = event("turn_item.updated", "turnItem");
+    assert_eq!(item["requestKind"], "mcp-elicitation");
+    assert_eq!(item["appName"], "Safari");
+    assert_eq!(item["prompt"], "Allow ChatGPT to use Safari?");
+    let decisions: Vec<&str> = item["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["decision"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        decisions,
+        ["cancel", "decline", "acceptForSession", "accept"]
+    );
+    let request = event("runtime_request.updated", "runtimeRequest");
+    assert_eq!(
+        request["nativeRequestRef"]["nativeId"],
+        "mcp-elicitation:computer-use"
+    );
+    let answer = RuntimeRequestResponse {
+        request_id: request["id"].as_str().unwrap().into(),
+        decision: from_json(json!("acceptForSession")).ok(),
+        feedback: None,
+        answers: None,
+    };
+    let outs = mapper.respond(&answer).unwrap();
+    assert_eq!(
+        reply_of(&outs).unwrap(),
+        json!({"id": 4, "result": {"action": "accept", "_meta": {"persist": "session"},
+            "content": {"approval": "session"}}})
+    );
+}

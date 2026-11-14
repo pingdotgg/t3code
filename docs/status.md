@@ -56,7 +56,7 @@ settings; about 140 MiB for the `claude` program alone).
 | --- | --- |
 | RPC methods | 98 of 236 served; 98 have a run that the real client's decoders accept |
 | Engine commands | 43 of 56 |
-| T3 testkit fixtures through this engine | 33 of 159 variants pass T3's own assertions (Claude 17 of 34, Codex 16 of 25; the other 100 are providers this server does not offer) |
+| T3 testkit fixtures through this engine | 35 of 159 variants pass T3's own assertions (Claude 18 of 34, Codex 17 of 25; the other 100 are providers this server does not offer) |
 | HTTP routes | 13 of 57 |
 | `/mcp` tools | 28 of 87 |
 | Providers | Claude, Codex and Grok, of the 10 the T3 server has without Pi |
@@ -68,7 +68,7 @@ Proven:
   stdin as from the T3 server. 18 of the T3 server's 39 Claude transcripts pass (all that the
   driver runs). 11 live tests
   pass on Claude Haiku on macOS.
-- **Codex** runs on `codex app-server`, as in the T3 server. 35 scenarios show no difference,
+- **Codex** runs on `codex app-server`, as in the T3 server. 37 scenarios show no difference,
   20 of them the T3 server's own recordings. **No live Codex turn has run.**
 - Orbit's container flow (start, add a project on the running server, a Swamp session, a
   thread through `/mcp`, wait, read, revoke, SIGTERM with no child left) passes on the fake
@@ -274,10 +274,8 @@ Differences the replay found and this work fixed, each with a test:
   writes them and hands that row to the provider, as T3's `runningProviderThread`.
 - `thread.create` refused an unknown project. T3's does not look the project up.
 
-Left open, engine: after a rollback on a new Codex process, T3 sends `thread/resume` again
-before the next turn (it calls `resumeThread` at every turn start; its adapter skips a loaded
-thread). Ours resumes only on a new session. Matching it needs the Codex provider to skip a
-loaded thread first.
+Left open then, fixed since (next section): after a rollback on a new Codex process, T3
+sends `thread/resume` again before the next turn.
 
 Seams the replay needed: `EngineConfig::clock` (`ManualClock` for a replay, as T3's
 `TestClock`; stored timestamps and the idle release read it),
@@ -309,8 +307,69 @@ Memory (macOS, `memory_load` 1,000 fake turns, release): live heap 365 KiB on `m
 allocator keeps those pages). The new state is one gate per running rollback.
 
 Not done from the brief: merge-back and the portable fork path (`ContextHandoffService`),
-prepared runs and setup scripts the T3 way, rollback recovery (T3 retries the effect up to 5
-times), the remaining 13 commands.
+prepared runs and setup scripts the T3 way, the remaining 13 commands. Rollback recovery is
+done since (next section).
+
+## Codex: the turn start, the effect order and elicitations (2026-11-14)
+
+The fixture replay now passes 35 of 159 variants: Codex 17 of 25 (was 16), Claude 18 of 34
+(was 17). Codex conformance: 0 open differences in 37 scenarios (two new: `elicitation`,
+`login`).
+
+- **The load of a provider thread at a turn start** (T3's `providerThreadLoadKey` in
+  `ProviderSessionManager`). The engine keeps one key per live session: the native thread, the
+  provider's load part of the model selection (`Session::thread_load_model_selection`, T3's
+  `normalizeThreadLoadModelSelection`; Codex drops the effort) and the runtime policy. A turn
+  start resumes the thread when the key differs, as T3 does at every turn start. A rollback's
+  own resume does not count, so after a rollback on a new Codex process Codex gets
+  `thread/resume` again before `turn/start`. Proof: `thread_rollback_after_restart/codex`
+  passes; engine test `a_turn_start_resumes_the_thread_only_when_its_load_changes`.
+- **`active` and `idle`.** The turn start marks the provider thread `active` with the write's
+  time (`runningProviderThread`); the run's end marks it `idle`, or `error` for a broken
+  thread (`finalProviderThreadStatus` in `RunExecutionService`). T3's Codex adapter sends no
+  idle update for a root thread; T3's engine writes it. Proof:
+  `turn_interrupt_restart/claudeAgent` passes; engine test
+  `the_provider_thread_is_active_during_a_turn_and_idle_after`.
+- **One effect per thread at a time** (T3's `EffectOutbox.ts` claim query). A thread's effects
+  run in the order they were made, one after another; title generation runs outside, as T3
+  gives it its own lane. This replaces the rollback gate. Proof: engine tests
+  `a_stop_finishes_before_the_next_send_starts`, `a_turn_sent_during_a_rollback_starts_after_it`
+  (both fail without the lanes) and `two_sends_start_in_order`. The Claude provider's own lock
+  (`turn_control` in `conn-provider-claude/src/session.rs`) serializes only `start_turn` and
+  `interrupt_turn`. Through this engine both are lane effects of one thread (Force stop closes
+  the session and calls neither), so the lock is no longer needed there. It still guards a
+  caller that drives a session directly (the crate's tests and tools). Not removed: another
+  worker is in that crate.
+- **Rollback retries.** Up to 5 attempts, 100 ms after the first failure and doubling (at most
+  30 s); only the last failure sets `rollbackFailure` (T3's `EffectWorker`). As in T3, a
+  failure after the provider rolled back (in the file restore) retries the provider rollback
+  too. Proof: `a_rollback_that_fails_twice_then_works_is_retried`; the failing test now
+  expects 5 tries.
+- **MCP elicitations for Codex** (`CodexMcpElicitation.ts`). A form elicitation is an
+  approval with the app name and the persistence choices; the answer is the form's option,
+  with `_meta.persist`. A URL elicitation, a form an approval cannot fill, or one without an
+  active turn is declined at once. Proof: T3's nine tests ported case for case, a mapper test,
+  and the conformance scenario `elicitation` (T3's approval recording with the command
+  approval swapped for a form elicitation; both servers send the same reply).
+- **The login shell environment, proven.** Conformance scenario `login`: each server starts
+  with a stand-in login shell; TS runs `os-jank.ts` `fixPath`, Rust the start-up `hydrate`.
+  Both find `codex-conn-login`, which only the stand-in's `PATH` holds, and give it the same
+  `PATH` (T3's merge), `__MISE_DIFF` and `JAVA_HOME`. The check fails when the Rust side skips
+  the login shell (tried).
+
+Open from that brief:
+- **Codex subagents** (6 variants): not started. T3's part is about 1,500 lines of its Codex
+  adapter (child threads, task updates, child approvals, per-agent usage). `subagent_v2`
+  sends no extra request to Codex; it is a mapping job.
+- **`queued_turn`**: a provider clock seam does not make it pass (tried, reverted). Both
+  servers stamp agent messages with Codex's `startedAtMs`; why T3's queued message and first
+  answer tie is not established.
+
+Memory (macOS, `memory_load` 1,000 fake turns, release): live heap 414 KiB at turn 1,000 and
+345 KiB after close (`main`, as recorded in "Engine, part 2": 365 KiB); RSS at the end 57.1 MiB
+(`main`: 55.2 to 57.5). Measured on this branch only; the `main` numbers are the earlier
+record, not a run beside it. New state: one lane entry per thread with effects waiting (removed when its last
+effect ends) and one load key per live session.
 
 ## Source control, part 3 (2026-11-14)
 
@@ -362,12 +421,11 @@ passed all 30 checks with `CONN_MONOREPO` set; the fixture replay is unchanged.
    terminal host (`ProviderHost`; in T3 only Antigravity's files and the registry's terminals
    use it). Cursor, OpenCode and Muse go in the SDK host as driver modules.
 4. **Replay of the T3 server's `testkit` fixtures: done (2026-11-14), Claude and Codex.** See
-   "Engine, part 2". Next: a replay gate in the stand-ins (3 variants), a clock seam in the
-   providers (2), Grok once the server offers it (15 transcripts are there).
+   "Engine, part 2" and "Codex: the turn start, …". Next: Codex subagents (6 variants), a
+   replay gate in the stand-ins (3), the `queued_turn` tie (2; a provider clock seam is not
+   enough), Grok once the server offers it (15 transcripts are there).
 5. **Engine.** Merge-back and the portable fork path (both need T3's `ContextHandoffService`);
-   prepared runs and setup scripts in a `setup-<id>` terminal; rollback recovery (T3 retries
-   the effect up to 5 times); `resumeThread` at every turn start (needs the Codex provider to
-   skip a loaded thread); bounded thread snapshots and the `/history`, `/bounded` and
+   prepared runs and setup scripts in a `setup-<id>` terminal; bounded thread snapshots and the `/history`, `/bounded` and
    `/transcript` routes (a full snapshot of a long thread peaks at about 13 bytes per byte of
    JSON); a workspace strategy for delegated tasks; search details (no NFC normalization, the
    old snippet rule); no title generation, so a thread keeps its first message as title. A
@@ -383,7 +441,7 @@ passed all 30 checks with `CONN_MONOREPO` set; the fixture replay is unchanged.
    request commands and the `/mcp` tools.
    Also: the Conn-only methods
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest
-   share); 67 more `/mcp` tools (11 need nothing new: `crates/conn-mcp/README.md`, "All 87 tools"); Codex subagents and MCP elicitation; worktree setup scripts
+   share); 67 more `/mcp` tools (11 need nothing new: `crates/conn-mcp/README.md`, "All 87 tools"); Codex subagents; worktree setup scripts
    the T3 way (typed into a thread terminal, with a completion marker).
 7. **Small leftovers.** Done on 2026-11-14 (`docs/server-area.md`, end): the contract's
    limits on terminal environment variables and `assets.createUrl` strings (generated,

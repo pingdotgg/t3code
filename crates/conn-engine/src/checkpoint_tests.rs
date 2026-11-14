@@ -698,7 +698,47 @@ async fn a_failed_provider_rollback_changes_nothing_and_tells_the_client() {
         Some("two\n"),
         "files untouched"
     );
-    assert_eq!(provider.rollbacks.lock().unwrap().len(), 1, "tried once");
+    assert_eq!(
+        provider.rollbacks.lock().unwrap().len(),
+        5,
+        "tried five times, as T3's effect worker"
+    );
+}
+
+/// A rollback that fails and then works is not reported, and the send after it waits for it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_rollback_that_fails_twice_then_works_is_retried() {
+    let db = TempDb::new("rollback-retry");
+    let repo = Repo::new("rollback-retry");
+    let (engine, provider) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent").with_rollback_failures(2),
+        create_in(&repo, "t1", "c1"),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    dispatch(
+        &engine,
+        rollback("rb-1", &checkpoint_at(&p, 1), Some(false)),
+    )
+    .await;
+    dispatch(&engine, message("t1", "c3", "after")).await;
+    let p = until(&engine, |p| p["runs"][2]["status"] == "completed").await;
+    assert_eq!(p["runs"][1]["status"], "rolled_back", "{}", p["runs"]);
+    assert!(p["thread"]["rollbackFailure"].is_null(), "{}", p["thread"]);
+    let calls = provider.calls.lock().unwrap().clone();
+    assert_eq!(
+        calls[calls.len() - 5..],
+        [
+            "rollback",
+            "rollback",
+            "rollback",
+            "rolled back",
+            "start run:t1:3"
+        ]
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

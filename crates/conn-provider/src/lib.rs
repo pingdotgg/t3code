@@ -206,6 +206,14 @@ pub trait Session: Send + Sync {
         false
     }
 
+    /// `normalizeThreadLoadModelSelection`: the part of a model selection that the loaded
+    /// native thread depends on. The engine resumes the thread at a turn start when the
+    /// native thread, this selection or the runtime policy differ from the last load
+    /// (`providerThreadLoadKey` in T3's `ProviderSessionManager`). The default keeps all of it.
+    fn thread_load_model_selection(&self, selection: &ModelSelection) -> ModelSelection {
+        selection.clone()
+    }
+
     /// `stopTask`: stops one background task the agent started on this thread (Claude: a
     /// workflow task). Errors when no such task runs.
     fn stop_task(&self, _input: StopTaskInput) -> BoxFuture<'_, ProviderResult<()>> {

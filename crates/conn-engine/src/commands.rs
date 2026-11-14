@@ -59,6 +59,25 @@ pub(crate) enum Effect {
     },
 }
 
+impl Effect {
+    /// The thread whose effect lane this effect waits in; `None` runs at once (title
+    /// generation, which T3 keeps out of a thread's lane).
+    pub(crate) fn lane(&self) -> Option<&str> {
+        match self {
+            Self::Rollback(request) => Some(&request.thread_id),
+            Self::CaptureCheckpoint { thread_id, .. }
+            | Self::StartTurn { thread_id, .. }
+            | Self::Steer { thread_id, .. }
+            | Self::Interrupt { thread_id, .. }
+            | Self::Respond { thread_id, .. }
+            | Self::CloseSession { thread_id }
+            | Self::ApplyModelSelection { thread_id, .. }
+            | Self::ThreadClosed { thread_id, .. } => Some(thread_id),
+            Self::GenerateTitle { .. } => None,
+        }
+    }
+}
+
 pub(crate) enum CommandError {
     /// The client asked for something this state does not allow. A typed `Fail`.
     Rejected(String),
@@ -1698,7 +1717,7 @@ pub(crate) fn finish_run_as(
     };
     run["status"] = json!(persisted);
     run["completedAt"] = completed_at.clone();
-    tx.append(draft("run.updated", run))?;
+    tx.append(draft("run.updated", run.clone()))?;
     if let Some(root) = &root
         && let Some(mut node) = tx.entity(thread_id, "nodes", root)?
     {
@@ -1710,7 +1729,36 @@ pub(crate) fn finish_run_as(
         node["completedAt"] = completed_at;
         tx.append(draft("node.updated", node))?;
     }
+    settle_provider_thread(tx, thread_id, &run, "idle")?;
     tx.compact_streaming(thread_id)
+}
+
+/// The run's provider thread goes back from `active` when the run ends: `idle`, or `error`
+/// when the provider says the native thread cannot take another turn
+/// (`finalProviderThreadStatus` in T3's `RunExecutionService`). Only while this run is the
+/// thread's last (`lastRunOrdinal`), so a later run's row is never overwritten.
+pub(crate) fn settle_provider_thread(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    run: &Value,
+    status: &str,
+) -> StoreResult<()> {
+    let Some(id) = run["providerThreadId"].as_str() else {
+        return Ok(());
+    };
+    let Some(mut thread) = tx.entity(thread_id, "providerThreads", id)? else {
+        return Ok(());
+    };
+    let current = thread["status"].as_str().unwrap_or_default();
+    if !(current == "active" || (status == "error" && current == "idle"))
+        || thread["lastRunOrdinal"] != run["ordinal"]
+    {
+        return Ok(());
+    }
+    thread["status"] = json!(status);
+    thread["updatedAt"] = json!(tx.now());
+    tx.append(Draft::new(thread_id, "provider-thread.updated", thread))?;
+    Ok(())
 }
 
 /// A provider failure in the contract's shape (`OrchestrationV2ProviderFailure`).
