@@ -372,10 +372,29 @@ export function useQueuedRunEdit(input: {
     });
     setThreadError(editing.threadId, error);
     const current = finishSave(error === null);
+    if (!current) {
+      // A failed save can recover into the thread draft; a newer edit can also retain resources.
+      const drafts = Object.values(useComposerDraftStore.getState().draftsByThreadKey);
+      const retainedIds = new Set(
+        drafts.flatMap((draft) =>
+          [...draft.images, ...draft.files].map((attachment) => attachment.id),
+        ),
+      );
+      releaseDraftAttachments(
+        newAttachments.filter((attachment) => !retainedIds.has(attachment.id)),
+      );
+      const retainedPreviews = new Set(
+        drafts.flatMap((draft) => draft.images.map((image) => image.previewUrl)),
+      );
+      for (const image of content.images) {
+        if (image.previewUrl.startsWith("blob:") && !retainedPreviews.has(image.previewUrl)) {
+          URL.revokeObjectURL(image.previewUrl);
+        }
+      }
+      return;
+    }
     if (error !== null) return;
     releaseDraftAttachments(newAttachments);
-    // The edit was cancelled or begun again while this save ran; its drafts are the newer edit's.
-    if (!current) return;
     promptRef.current = "";
     clearEditDraft(editing.runId);
     composerRef.current?.resetCursorState();
