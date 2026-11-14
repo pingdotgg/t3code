@@ -1,0 +1,57 @@
+{
+  "menu": {
+    "addToChat": "添加到聊天",
+    "copy": "复制",
+    "paste": "粘贴",
+    "selectAll": "全选",
+    "jumpToLatest": "跳到最新输出"
+  },
+  "status": {
+    "terminalClosed": "终端已关闭",
+    "processExited": "进程已退出"
+  },
+  "errors": {
+    "copySelection": "无法复制终端选区",
+    "readClipboard": "无法读取剪贴板",
+    "openContextMenu": "无法打开终端右键菜单",
+    "moveCursor": "移动光标失败",
+    "deleteInput": "删除终端输入失败",
+    "clearTerminal": "清空终端失败",
+    "openLinkInBrowserUnavailable": "此浏览器中无法打开链接。",
+    "openLink": "无法打开链接",
+    "generic": "发生错误。",
+    "openPath": "无法打开路径",
+    "writeFailed": "终端写入失败",
+    "init": "无法初始化 libghostty-vt",
+    "initRetry": "{{message}}。关闭并重新打开终端以重试。"
+  },
+  "close": {
+    "confirmOne": "关闭终端“{{label}}”？",
+    "confirmOneDetail": "这会停止正在运行的进程并清空其历史记录。",
+    "confirmMany_other": "关闭 {{count}} 个终端？",
+    "confirmManyDetail": "这会停止这些正在运行的进程并清空它们的历史记录：{{labels}}。"
+  },
+  "groups": {
+    "single": "单个",
+    "stacked": "纵向堆叠",
+    "sideBySide": "并排"
+  },
+  "sidebar": {
+    "closeTerminalLabel": "关闭 {{label}}{{shortcut}}"
+  },
+  "labels": {
+    "terminal": "终端"
+  },
+  "actions": {
+    "splitHorizontal": "水平拆分终端",
+    "splitVertical": "垂直拆分终端",
+    "splitHorizontalMax": "水平拆分终端（每组最多 {{max}} 个）",
+    "splitVerticalMax": "垂直拆分终端（每组最多 {{max}} 个）",
+    "withShortcut": "{{label}} ({{shortcut}})",
+    "new": "新建终端",
+    "close": "关闭终端"
+  },
+  "empty": {
+    "noSessions": "此线程还没有终端会话。"
+  }
+}

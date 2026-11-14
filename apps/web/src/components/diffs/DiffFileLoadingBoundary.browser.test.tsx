@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import "../../i18n";
 import { render } from "../../../test/render";
 import { DiffFileLoadingBoundary } from "./DiffFileLoadingBoundary";
 

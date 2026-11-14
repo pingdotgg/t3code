@@ -1,3 +1,4 @@
+import { translateDynamic } from "../i18nCore";
 import { readLocalApi } from "~/localApi";
 
 let pendingConfirmations = 0;
@@ -16,14 +17,14 @@ export async function confirmTerminalClose(
     return await localApi.dialogs.confirm(
       labels.length === 1
         ? [
-            `Close terminal "${labels[0]}"?`,
-            "This stops the running process and clears its history.",
+            translateDynamic("terminal:close.confirmOne", { label: labels[0] }),
+            translateDynamic("terminal:close.confirmOneDetail"),
           ].join("\n")
         : [
-            `Close ${labels.length} terminals?`,
-            `This stops their running processes and clears their histories: ${labels
-              .map((label) => `"${label}"`)
-              .join(", ")}.`,
+            translateDynamic("terminal:close.confirmMany", { count: labels.length }),
+            translateDynamic("terminal:close.confirmManyDetail", {
+              labels: labels.map((label) => `"${label}"`).join(", "),
+            }),
           ].join("\n"),
       { variant: "destructive" },
     );

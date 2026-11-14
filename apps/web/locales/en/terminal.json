@@ -1,0 +1,58 @@
+{
+  "menu": {
+    "addToChat": "Add to chat",
+    "copy": "Copy",
+    "paste": "Paste",
+    "selectAll": "Select all",
+    "jumpToLatest": "Jump to latest"
+  },
+  "status": {
+    "terminalClosed": "Terminal closed",
+    "processExited": "Process exited"
+  },
+  "errors": {
+    "copySelection": "Unable to copy terminal selection",
+    "readClipboard": "Unable to read the clipboard",
+    "openContextMenu": "Unable to open the terminal context menu",
+    "moveCursor": "Failed to move cursor",
+    "deleteInput": "Failed to delete terminal input",
+    "clearTerminal": "Failed to clear terminal",
+    "openLinkInBrowserUnavailable": "Opening links is unavailable in this browser.",
+    "openLink": "Unable to open link",
+    "generic": "An error occurred.",
+    "openPath": "Unable to open path",
+    "writeFailed": "Terminal write failed",
+    "init": "Unable to initialize libghostty-vt",
+    "initRetry": "{{message}}. Close and reopen the terminal to retry."
+  },
+  "close": {
+    "confirmOne": "Close terminal \"{{label}}\"?",
+    "confirmOneDetail": "This stops the running process and clears its history.",
+    "confirmMany_one": "Close {{count}} terminal?",
+    "confirmMany_other": "Close {{count}} terminals?",
+    "confirmManyDetail": "This stops their running processes and clears their histories: {{labels}}."
+  },
+  "groups": {
+    "single": "Single",
+    "stacked": "Stacked",
+    "sideBySide": "Side by side"
+  },
+  "sidebar": {
+    "closeTerminalLabel": "Close {{label}}{{shortcut}}"
+  },
+  "labels": {
+    "terminal": "Terminal"
+  },
+  "actions": {
+    "splitHorizontal": "Split Terminal Horizontally",
+    "splitVertical": "Split Terminal Vertically",
+    "splitHorizontalMax": "Split Terminal Horizontally (max {{max}} per group)",
+    "splitVerticalMax": "Split Terminal Vertically (max {{max}} per group)",
+    "withShortcut": "{{label}} ({{shortcut}})",
+    "new": "New Terminal",
+    "close": "Close Terminal"
+  },
+  "empty": {
+    "noSessions": "No terminal sessions for this thread yet."
+  }
+}
