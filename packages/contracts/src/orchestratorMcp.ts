@@ -32,7 +32,7 @@ import {
   ThreadPullRequestKey,
   ThreadPullRequestLinkSource,
 } from "./threadPullRequest.ts";
-import { secretRequestPageUrl } from "./secretRequest.ts";
+import { httpPageUrl } from "./httpPageUrl.ts";
 import { hasOnlyPairedSurrogates } from "./threadMetadataMcp.ts";
 import { LastThreadTitleRegeneration, ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
@@ -794,7 +794,7 @@ export const OrchestratorMcpRequestSecretInput = Schema.Struct({
   }),
   url: Schema.optional(
     TrimmedNonEmptyString.check(
-      Schema.makeFilter((value) => secretRequestPageUrl(value) !== null, {
+      Schema.makeFilter((value) => httpPageUrl(value) !== null, {
         expected: "an http(s) URL",
       }),
     ),

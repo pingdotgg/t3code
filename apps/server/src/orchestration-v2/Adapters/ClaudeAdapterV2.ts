@@ -35,7 +35,10 @@ import {
   type ClaudeLedgerUsage,
   type ClaudeModelLedger,
 } from "../../provider/ClaudeTurnTokenUsage.ts";
-import { toMcpElicitationResponse } from "../../provider/CodexMcpElicitation.ts";
+import {
+  MCP_URL_ELICITATION_OPTIONS,
+  toMcpElicitationResponse,
+} from "../../provider/CodexMcpElicitation.ts";
 import {
   type CanUseTool,
   type ElicitationRequest,
@@ -4215,7 +4218,11 @@ const withoutSchemaDefaults = (schema: Record<string, unknown>): Record<string, 
 export function claudeMcpElicitationAcceptance(
   request: ElicitationRequest,
 ): ElicitationResult | undefined {
-  if (request.mode === "url" || request.requestedSchema === undefined) return undefined;
+  if (request.mode === "url") {
+    const response = toMcpElicitationResponse({ mode: "url", url: request.url }, "accept");
+    return response.action === "accept" ? { action: "accept" } : undefined;
+  }
+  if (request.requestedSchema === undefined) return undefined;
   const response = toMcpElicitationResponse(
     { mode: "form", requestedSchema: withoutSchemaDefaults(request.requestedSchema) },
     "accept",
@@ -8380,6 +8387,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly requestKind: OrchestrationV2RuntimeRequest["kind"];
           readonly prompt?: string;
           readonly appName?: string;
+          readonly elicitationUrl?: string;
           readonly options?: ReadonlyArray<ProviderApprovalOption>;
           readonly presentation?: ReturnType<typeof claudeApprovalPresentation>;
 
@@ -8473,6 +8481,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   requestKind: input.requestKind as ProviderRequestKind,
                   ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
                   ...(input.appName === undefined ? {} : { appName: input.appName }),
+                  ...(input.elicitationUrl === undefined
+                    ? {}
+                    : { elicitationUrl: input.elicitationUrl }),
                   ...(input.options === undefined ? {} : { options: input.options }),
                   ...input.presentation,
                 }
@@ -11893,7 +11904,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             requestKind: "mcp-elicitation",
             prompt: request.message,
             appName: request.displayName ?? request.title ?? request.serverName,
-            options: CLAUDE_MCP_ELICITATION_OPTIONS,
+            ...(request.mode === "url" ? { elicitationUrl: request.url } : {}),
+            options:
+              request.mode === "url" ? MCP_URL_ELICITATION_OPTIONS : CLAUDE_MCP_ELICITATION_OPTIONS,
           });
           const decision = yield* Deferred.make<ClaudeApprovalResponse>();
           yield* Ref.update(pendingRuntimeRequests, (current) => {
