@@ -7,12 +7,12 @@ import {
   resolvedQuestionDraftKeys,
   userInputDraftKey,
 } from "@t3tools/client-runtime/state/thread-requests";
-import {
-  type EnvironmentId,
-  type RuntimeRequestId,
-  type ScopedThreadRef,
-  type ThreadContextRecord,
-  type ThreadId,
+import type {
+  EnvironmentId,
+  RuntimeRequestId,
+  ScopedThreadRef,
+  ThreadContextRecord,
+  ThreadId,
 } from "@t3tools/contracts";
 import { create } from "zustand";
 import { toastManager } from "./components/ui/toast";

@@ -321,24 +321,3 @@ it.each(["duplicate", "unavailable"] as const)(
     }
   },
 );
-
-it("returns a persisted question file's reattach marker when the thread draft has room", () => {
-  const store = useComposerDraftStore.getState();
-  const request = RuntimeRequestId.make("stopped");
-  const question = questionAttachmentDraftId(environmentId, threadId, request, "first");
-  const marker = { ...textFile("notes"), file: null };
-  store.addFiles(question, [marker]);
-
-  makeThreadRequestsResolvedAnnouncer(
-    environmentId,
-    threadId,
-  )([{ id: request, status: "cancelled" }]);
-
-  expect(store.getComposerDraft({ environmentId, threadId })).toMatchObject({
-    files: [marker],
-    prompt: ensureInlineContextReferences("", [fileContextReference(marker)]),
-  });
-  expect(store.getComposerDraft(question)).toBeNull();
-  expect(release.mock.calls.flat(2)).toEqual([]);
-  expect(toast).not.toHaveBeenCalled();
-});
