@@ -246,6 +246,12 @@ that list.
     (`methods/text_generation.rs`). T3 fills it in for any `settings:write` caller, to any
     host. A legitimate user loses nothing: only the generator edit form sends the marker, and
     saving that form needs `providers:manage`.
+  - *Link-local hosts.* A base URL whose host resolves to a link-local address
+    (169.254.0.0/16, fe80::/10, where a cloud host serves its metadata and credentials) is
+    refused: the check runs on the addresses of the one lookup, and only addresses that pass
+    are dialled (`LinkLocal::Refuse` in `conn_source_control::http`). The client sees "Couldn't
+    reach …". Loopback and private ranges stay open for Ollama, LM Studio and similar. A user
+    loses only a model server on a link-local address.
 
 ### Other uses of text generation in the T3 server
 

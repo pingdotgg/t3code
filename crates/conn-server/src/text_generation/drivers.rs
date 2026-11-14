@@ -10,7 +10,7 @@ use std::time::Duration;
 use conn_contract::TextGeneratorModel;
 use conn_source_control::{
     Secret,
-    http::{self, HttpRequest, HttpResponse, Method},
+    http::{self, HttpRequest, HttpResponse, LinkLocal, Method},
 };
 use serde_json::Value;
 
@@ -101,8 +101,11 @@ impl Connection {
         request: HttpRequest,
         timeout: Duration,
     ) -> Result<Value, RequestError> {
+        // A deliberate difference from the T3 server: a base URL that resolves to a link-local
+        // address (a cloud host's metadata service) is refused.
         let request = HttpRequest {
             max_response_bytes: MAX_ANSWER_BYTES,
+            link_local: LinkLocal::Refuse,
             ..request.timeout(timeout)
         };
         let response = http::send(request).await.map_err(|error| match error {

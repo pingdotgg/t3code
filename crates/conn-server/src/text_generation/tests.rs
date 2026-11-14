@@ -647,3 +647,23 @@ mod titles {
         );
     }
 }
+
+/// A deliberate difference from the T3 server: a link-local base URL (a cloud host's metadata
+/// service) is refused without a connection; loopback, as every case here shows, stays open.
+#[tokio::test(flavor = "current_thread")]
+async fn a_link_local_base_url_is_refused_without_a_call() {
+    for base in ["http://169.254.169.254", "http://[fe80::1]:11434"] {
+        let f = fixture("link-local", generator(base, json!({"apiKey": "k"})));
+        let started = std::time::Instant::now();
+        let error = f
+            .generators
+            .list_models(input(json!({"id": ID})))
+            .await
+            .unwrap_err();
+        assert!(error.starts_with("Couldn't reach "), "{error}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "{base}"
+        );
+    }
+}
