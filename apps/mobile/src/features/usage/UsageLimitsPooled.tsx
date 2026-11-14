@@ -623,6 +623,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                 <Text className="text-sm font-t3-medium text-foreground">Reset credits</Text>
                 <ResetCredits
                   key={account.key}
+                  provider={providerClients.get(account.driver)?.label ?? account.driver}
                   environmentId={account.redeem.environmentId}
                   input={account.redeem.input}
                   credits={account.limits.resetCredits}
