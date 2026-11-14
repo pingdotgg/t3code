@@ -318,6 +318,8 @@ function toChecks(
     {
       name: "Pipeline",
       status: toPipelineStatus(pipeline.status),
+      // GitLab folds gating downstream pipelines into the head pipeline's status.
+      required: true,
       description: trimmed(pipeline.source),
       url: trimmed(pipeline.web_url),
     },
@@ -459,6 +461,7 @@ export function decodePipelineStageChecksJson(
         name,
         status: toPipelineStatus(stage.status),
         description: trimmed(stage.detailedStatus?.label),
+        required: true,
         url: link(trimmed(stage.detailedStatus?.detailsPath) ?? trimmed(pipeline?.path)),
       });
       continue;
@@ -474,6 +477,8 @@ export function decodePipelineStageChecksJson(
         status: status === "failure" && job.allowFailure === true ? "neutral" : status,
         description: downstream ? "Downstream pipeline" : trimmed(job.detailedStatus?.label),
         url: link(trimmed(downstream ? downstream.path : job.webPath)),
+        // A trigger job that already passed lacks `strategy: depend`, so its child cannot gate.
+        required: !downstream || toPipelineStatus(job.status) !== "success",
       });
     }
   }
@@ -649,6 +654,7 @@ export function decodeTriggerJobChecksJson(
       status: status === "failure" && job.value.allow_failure === true ? "neutral" : status,
       description: "Downstream pipeline",
       url: trimmed(downstream.web_url),
+      required: false,
     });
   }
   return Result.succeed({ checks, rawCount: decoded.success.length });

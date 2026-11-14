@@ -1792,57 +1792,66 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("shows a failed child pipeline that left the head pipeline green", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockImplementation((request) => {
-        switch (request.args[1]) {
-          case "graphql":
-            return Effect.succeed(output("{}"));
-          case "projects/12/pipelines/31/bridges?per_page=100":
-            return Effect.succeed(
-              output(
-                JSON.stringify([
-                  {
-                    name: "deploy",
-                    status: "success",
-                    downstream_pipeline: {
-                      status: "failed",
-                      web_url: "https://gitlab.com/bilal/web/-/pipelines/32",
+  it.effect.each(["running", "failed"] as const)(
+    "keeps a %s child pipeline advisory when the head pipeline is green",
+    (childStatus) =>
+      Effect.gen(function* () {
+        mockedExecute.mockImplementation((request) => {
+          switch (request.args[1]) {
+            case "graphql":
+              return Effect.succeed(output("{}"));
+            case "projects/12/pipelines/31/bridges?per_page=100":
+              return Effect.succeed(
+                output(
+                  JSON.stringify([
+                    {
+                      name: "deploy",
+                      status: "success",
+                      downstream_pipeline: {
+                        status: childStatus,
+                        web_url: "https://gitlab.com/bilal/web/-/pipelines/32",
+                      },
                     },
-                  },
-                  { name: "docs", status: "created", downstream_pipeline: null },
-                ]),
-              ),
-            );
-          default:
-            return Effect.succeed(
-              output(
-                mergeRequestJson({
-                  // A fork's pipeline runs in the source project, so its id is not the target's.
-                  head_pipeline: {
-                    id: 31,
-                    project_id: 12,
-                    status: "success",
-                    web_url: "https://gitlab.com/bilal/web/-/pipelines/31",
-                  },
-                }),
-              ),
-            );
-        }
-      });
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+                    { name: "docs", status: "created", downstream_pipeline: null },
+                  ]),
+                ),
+              );
+            default:
+              return Effect.succeed(
+                output(
+                  mergeRequestJson({
+                    // A fork's pipeline runs in the source project, so its id is not the target's.
+                    head_pipeline: {
+                      id: 31,
+                      project_id: 12,
+                      status: "success",
+                      web_url: "https://gitlab.com/bilal/web/-/pipelines/31",
+                    },
+                  }),
+                ),
+              );
+          }
+        });
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      const detail = yield* cli.getMergeRequestDetail({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-      });
+        const detail = yield* cli.getMergeRequestDetail({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
 
-      expect(detail.checks.map((check) => [check.name, check.status, check.url])).toEqual([
-        ["Pipeline", "success", "https://gitlab.com/bilal/web/-/pipelines/31"],
-        ["deploy", "failure", "https://gitlab.com/bilal/web/-/pipelines/32"],
-      ]);
-    }),
+        expect(
+          detail.checks.map((check) => [check.name, check.status, check.url, check.required]),
+        ).toEqual([
+          ["Pipeline", "success", "https://gitlab.com/bilal/web/-/pipelines/31", true],
+          [
+            "deploy",
+            childStatus === "running" ? "pending" : "failure",
+            "https://gitlab.com/bilal/web/-/pipelines/32",
+            false,
+          ],
+        ]);
+      }),
   );
 
   it.effect("keeps the one pipeline check when the trigger jobs cannot be read whole", () =>
@@ -2833,18 +2842,21 @@ layer("GitLabPullRequestCli.layer", (it) => {
             status: "success",
             description: "passed",
             url: "https://gitlab.com/acme/web/-/pipelines/9",
+            required: true,
           },
           {
             name: "test / unit",
             status: "failure",
             description: null,
             url: "https://gitlab.com/acme/web/-/jobs/3",
+            required: true,
           },
           {
             name: "deploy / child-pipeline",
             status: "failure",
             description: "Downstream pipeline",
             url: "https://gitlab.com/acme/child/-/pipelines/10",
+            required: false,
           },
         ]);
       }),
@@ -2871,12 +2883,14 @@ layer("GitLabPullRequestCli.layer", (it) => {
             status: "failure",
             description: "merge_request_event",
             url: "https://gitlab.com/acme/web/-/pipelines/9",
+            required: true,
           },
           {
             name: "child-pipeline",
             status: "failure",
             description: "Downstream pipeline",
             url: "https://gitlab.com/acme/child/-/pipelines/10",
+            required: false,
           },
         ]);
       }),
