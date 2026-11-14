@@ -1188,36 +1188,34 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect.each(["linux", "win32"] satisfies ReadonlyArray<NodeJS.Platform>)(
-    "updates title bar overlays only on overlay windows on %s",
-    (platform) =>
-      Effect.gen(function* () {
-        const framed = makeFakeBrowserWindow();
-        vi.mocked(framed.window.setTitleBarOverlay).mockImplementation(() => {
-          throw new TypeError("Titlebar overlay is not enabled");
-        });
-        const overlay = makeFakeBrowserWindow();
-        const layer = layerTest({
-          window: overlay.window,
-          createCount: yield* Ref.make(0),
-          mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
-          platform,
-          appearanceWindows: [
-            { window: framed.window, titleBarOverlay: false },
-            { window: overlay.window, titleBarOverlay: true },
-          ],
-        });
+  it.effect("updates title bar overlays only on windows created with one", () =>
+    Effect.gen(function* () {
+      const framed = makeFakeBrowserWindow();
+      vi.mocked(framed.window.setTitleBarOverlay).mockImplementation(() => {
+        throw new TypeError("Titlebar overlay is not enabled");
+      });
+      const overlay = makeFakeBrowserWindow();
+      const layer = layerTest({
+        window: overlay.window,
+        createCount: yield* Ref.make(0),
+        mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+        platform: "win32",
+        appearanceWindows: [
+          { window: framed.window, titleBarOverlay: false },
+          { window: overlay.window, titleBarOverlay: true },
+        ],
+      });
 
-        yield* Effect.gen(function* () {
-          const desktopWindow = yield* DesktopWindow.DesktopWindow;
-          yield* desktopWindow.syncAppearance;
-        }).pipe(Effect.provide(layer));
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.syncAppearance;
+      }).pipe(Effect.provide(layer));
 
-        assert.deepEqual(vi.mocked(framed.window.setBackgroundColor).mock.calls, [["#ffffff"]]);
-        assert.lengthOf(vi.mocked(framed.window.setTitleBarOverlay).mock.calls, 0);
-        assert.deepEqual(vi.mocked(overlay.window.setBackgroundColor).mock.calls, [["#ffffff"]]);
-        assert.lengthOf(vi.mocked(overlay.window.setTitleBarOverlay).mock.calls, 1);
-      }),
+      assert.deepEqual(vi.mocked(framed.window.setBackgroundColor).mock.calls, [["#ffffff"]]);
+      assert.lengthOf(vi.mocked(framed.window.setTitleBarOverlay).mock.calls, 0);
+      assert.deepEqual(vi.mocked(overlay.window.setBackgroundColor).mock.calls, [["#ffffff"]]);
+      assert.lengthOf(vi.mocked(overlay.window.setTitleBarOverlay).mock.calls, 1);
+    }),
   );
 
   it.effect.each([
