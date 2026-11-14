@@ -7684,6 +7684,124 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each(["retry", "workspace change"] as const)(
+    "keeps the queue held after failed worktree setup until %s",
+    (recovery) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`runtime-layer-worktree-setup-hold:${recovery}`);
+        const projectId = ProjectId.make(`${threadId}:project`);
+        yield* seedProject({
+          projectId,
+          title: "Worktree project",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: "2026-11-14T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId,
+          title: "Worktree setup",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "worktree-setup-hold",
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const send = (key: string, setup: boolean) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${threadId}:${key}`),
+            threadId,
+            messageId: MessageId.make(`${threadId}:${key}`),
+            text: key,
+            attachments: [],
+            modelSelection,
+            createdBy: "user",
+            creationSource: "web",
+            dispatchMode: setup
+              ? { type: "defer_start", workspaceStrategy: { type: "worktree", baseRef: "main" } }
+              : { type: "queue_after_active" },
+          });
+        yield* send("setup", true);
+        yield* send("queued", false);
+        const { runs } = yield* orchestrator.getThreadProjection(threadId);
+        const setup = runs.find((run) => run.status === "preparing")!;
+        const queued = runs.find((run) => run.status === "queued")!;
+        yield* orchestrator.dispatch({
+          type: "prepared-run.fail",
+          commandId: CommandId.make(`${threadId}:fail`),
+          threadId,
+          runId: setup.id,
+          failure: {
+            class: "provider_error",
+            message: "Git checkout failed",
+            code: "checkout_failed",
+            retryable: null,
+          },
+        });
+        yield* eventSink.stream({ threadId, afterSequence: 0, eventType: "run.updated" }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "run.updated" &&
+              stored.event.payload.id === queued.id &&
+              stored.event.payload.queueHeld === true,
+          ),
+          Stream.runHead,
+        );
+        const queuedRun = Effect.map(orchestrator.getThreadProjection(threadId), (projection) =>
+          projection.runs.find((run) => run.id === queued.id),
+        );
+        // Starting now would run the follow-up in the project checkout.
+        for (const start of [
+          { type: "queue.resume" },
+          { type: "queued-run.start", runId: queued.id },
+        ] as const) {
+          yield* orchestrator
+            .dispatch({
+              ...start,
+              commandId: CommandId.make(`${threadId}:${start.type}`),
+              threadId,
+            })
+            .pipe(Effect.flip);
+          const held = yield* queuedRun;
+          assert.equal(held?.status, "queued");
+          assert.isTrue(held?.queueHeld);
+        }
+        assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.worktreePath);
+
+        if (recovery === "retry") {
+          yield* orchestrator.dispatch({
+            type: "prepared-run.retry",
+            commandId: CommandId.make(`${threadId}:retry`),
+            threadId,
+            runId: setup.id,
+          });
+          const following = yield* queuedRun;
+          assert.equal(following?.status, "queued");
+          assert.isFalse(following?.queueHeld);
+        } else {
+          yield* orchestrator.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`${threadId}:workspace`),
+            threadId,
+            worktreePath: process.cwd(),
+          });
+          yield* orchestrator.dispatch({
+            type: "queue.resume",
+            commandId: CommandId.make(`${threadId}:resume-after-workspace`),
+            threadId,
+          });
+          assert.equal((yield* queuedRun)?.status, "starting");
+        }
+      }),
+  );
+
   it.effect("keeps held agent messages while the thread's worktree setup is unresolved", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
