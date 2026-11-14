@@ -1978,14 +1978,17 @@ it.effect.each(["thread.archive", "thread.delete"] as const)(
         createdBy: "agent" as const,
         creationSource: "mcp" as const,
       };
-      const accepted = yield* orchestrator.dispatch(command);
+      // Archive refuses running delegated tasks, so only delete follows an accepted request.
+      const accepted = operation === "thread.delete" ? yield* orchestrator.dispatch(command) : null;
       yield* lifecycle(operation);
-      const replayed = yield* orchestrator.dispatch(command);
-      assert.equal(replayed.sequence, accepted.sequence);
-      assert.deepEqual(
-        replayed.storedEvents.map((entry) => entry.event.id),
-        accepted.storedEvents.map((entry) => entry.event.id),
-      );
+      if (accepted !== null) {
+        const replayed = yield* orchestrator.dispatch(command);
+        assert.equal(replayed.sequence, accepted.sequence);
+        assert.deepEqual(
+          replayed.storedEvents.map((entry) => entry.event.id),
+          accepted.storedEvents.map((entry) => entry.event.id),
+        );
+      }
       const rejected = { ...command, commandId: CommandId.make(`rejected:${operation}`) };
       const error = yield* orchestrator.dispatch(rejected).pipe(Effect.flip);
       assert.equal(error._tag, "OrchestratorDispatchError");
@@ -1996,18 +1999,9 @@ it.effect.each(["thread.archive", "thread.delete"] as const)(
       if (operation === "thread.archive") yield* lifecycle("thread.unarchive");
       const replay = yield* orchestrator.dispatch(rejected).pipe(Effect.flip);
       assert.equal(replay._tag, "OrchestratorCommandPreviouslyRejectedError");
+      if (operation === "thread.archive") yield* orchestrator.dispatch(command);
       const parent = yield* projections.getThreadRecords(threadId, ["subagents"]);
       assert.lengthOf(parent.subagents, 1);
-      if (operation === "thread.archive") {
-        yield* orchestrator.dispatch({
-          ...command,
-          commandId: CommandId.make("restored-delegation"),
-        });
-        assert.lengthOf(
-          (yield* projections.getThreadRecords(threadId, ["subagents"])).subagents,
-          2,
-        );
-      }
     }).pipe(Effect.provide(layerTest)),
 );
 
