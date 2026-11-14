@@ -8056,15 +8056,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }
                   return updated;
                 });
-                const remainingActiveTurns = yield* Ref.get(activeTurns);
                 yield* Ref.update(runningCommandItemsByTurn, (current) => {
                   const updated = new Map(current);
                   for (const target of interruptTargets) {
-                    if (
-                      settledTurnContexts.includes(target.context) ||
-                      remainingActiveTurns.get(target.context.nativeTurnId) === target.context
-                    )
-                      continue;
+                    if (settledTurnContexts.includes(target.context)) continue;
                     updated.delete(target.context.nativeTurnId);
                   }
                   return updated;
