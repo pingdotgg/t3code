@@ -41,7 +41,38 @@ interface XmlNode {
   hasTextChoice?: boolean;
 }
 
+// ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
+// space runs and trims the ends; only <text:s>, <text:tab> and <text:line-break> keep literal ones.
+function collapseOdfWhitespace(paragraph: XmlNode) {
+  let afterSpace = true;
+  let tail: { node: XmlNode; index: number; value: string } | undefined;
+  const visit = (node: XmlNode) => {
+    for (const [index, child] of node.children.entries()) {
+      if (typeof child !== "string") {
+        if (HIDDEN.has(child.name)) continue;
+        if (child.spaceCount === undefined && !["tab", "line-break", "p", "h"].includes(child.name))
+          visit(child);
+        else {
+          afterSpace = false;
+          tail = undefined;
+        }
+        continue;
+      }
+      let value = child.replaceAll(/[ \t\r\n]+/g, " ");
+      if (afterSpace && value.startsWith(" ")) value = value.slice(1);
+      if (value) {
+        afterSpace = value.endsWith(" ");
+        tail = { node, index, value };
+      }
+      node.children[index] = value;
+    }
+  };
+  visit(paragraph);
+  if (tail && afterSpace) tail.node.children[tail.index] = tail.value.slice(0, -1);
+}
+
 function xml(source: string, extension: string): XmlNode {
+  const odf = [".odt", ".ods", ".odp"].includes(extension);
   const root: XmlNode = { name: "root", attrs: {}, children: [] };
   const stack = [root];
   let nodes = 0;
@@ -59,14 +90,14 @@ function xml(source: string, extension: string): XmlNode {
       ),
       children: [],
     };
-    if ([".odt", ".ods", ".odp"].includes(extension) && node.name === "s")
-      node.spaceCount = repeatCount(node.attrs.c);
+    if (odf && node.name === "s") node.spaceCount = repeatCount(node.attrs.c);
     stack.at(-1)!.children.push(node);
     stack.push(node);
   });
   parser.on("closetag", () => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (extension === ".docx" && node.name === "del") {
       parent.children.pop();
       return;
@@ -113,6 +144,23 @@ function* text(node: XmlNode): Generator<string, void> {
       if (typeof child === "string") yield child;
       else yield* text(child);
     }
+}
+// SpreadsheetML `t` and `v` values are ST_Xstring: `_xHHHH_` is one UTF-16 code unit, and an
+// escaped lead underscore (`_x005F_xHHHH_`) keeps the literal `_xHHHH_`. Decoded in one pass.
+function* xstringText(node: XmlNode): Generator<string, void> {
+  if (HIDDEN.has(node.name)) return;
+  if (node.name !== "t" && node.name !== "v") {
+    for (const child of children(node)) yield* xstringText(child);
+    return;
+  }
+  yield node.children
+    .filter((child) => typeof child === "string")
+    .join("")
+    .replaceAll(
+      /_x005[Ff]_(x[\dA-Fa-f]{4}_)|_x([\dA-Fa-f]{4})_/g,
+      (_, literal?: string, hex?: string) =>
+        literal ? `_${literal}` : String.fromCharCode(Number.parseInt(hex!, 16)),
+    );
 }
 function* paragraphs(node: XmlNode): Generator<TextPart, void> {
   if (HIDDEN.has(node.name)) return;
@@ -542,10 +590,12 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             const raw = value?.children.find((child) => typeof child === "string") ?? "";
             if (cell.attrs.t === "s") {
               const shared = strings[Number(raw)];
-              if (shared) yield* inCell(text(shared));
-            } else if (cell.attrs.t === "inlineStr") yield* inCell(text(cell));
+              if (shared) yield* inCell(xstringText(shared));
+            } else if (cell.attrs.t === "inlineStr") yield* inCell(xstringText(cell));
+            else if (cell.attrs.t === "b" && (raw.trim() === "0" || raw.trim() === "1"))
+              yield* inCell([raw.trim() === "1" ? "true" : "false"]);
             else {
-              if (value && hasCellText(value)) yield* inCell(text(value));
+              if (value && hasCellText(value)) yield* inCell(xstringText(value));
               else for (const formula of all(cell, "f")) yield* inCell(text(formula));
               const formatId = formats[Number(cell.attrs.s ?? 0)]?.attrs.numFmtId;
               const format = formatId ? customFormats.get(formatId) : undefined;
