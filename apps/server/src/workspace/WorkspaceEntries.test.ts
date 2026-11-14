@@ -963,9 +963,12 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           if (created.ok) {
             const finder = created.value;
             finders += 1;
-            // The synchronous rescan waits on fff's picker lock on the event loop.
+            // The synchronous rescan and grep wait on fff's picker lock on the event loop.
             finder.scanFiles = () => {
               throw new Error("refresh must not rescan on the JS thread");
+            };
+            finder.grep = () => {
+              throw new Error("search must not grep on the JS thread");
             };
             const scanFilesAsync = finder.scanFilesAsync.bind(finder);
             finder.scanFilesAsync = () => {
