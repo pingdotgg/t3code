@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ThreadId,
+  TurnItemId,
+  type OrchestrationV2TurnItem,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import { isJsonToolText, turnItemOutputImages, turnItemOutputText } from "./itemDetail.ts";
@@ -160,5 +165,49 @@ describe("MCP app tool output", () => {
       ],
     });
     expect(turnItemOutputText(bounded)).toBe("chart\n[image]");
+  });
+});
+
+describe("command output", () => {
+  const envelope =
+    '{"stdout":"line 1\\n行 2 🚀","stderr":"é warning","interrupted":false,"requestId":"keep-me"}\n';
+  const commandItem = (input: {
+    readonly driver: "claudeAgent" | "codex";
+    readonly startedAt: string;
+  }): OrchestrationV2TurnItem => ({
+    id: TurnItemId.make("command"),
+    threadId: ThreadId.make("thread"),
+    runId: null,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: {
+      driver: ProviderDriverKind.make(input.driver),
+      nativeId: "tool-1",
+      strength: "strong",
+    },
+    parentItemId: null,
+    ordinal: 1,
+    status: "completed",
+    title: null,
+    startedAt: DateTime.makeUnsafe(input.startedAt),
+    completedAt: null,
+    updatedAt: DateTime.makeUnsafe(input.startedAt),
+    type: "command_execution",
+    input: "node print-json.js",
+    output: envelope,
+  });
+
+  it("shows an early Claude row's raw Bash result as its stdout and stderr", () => {
+    expect(
+      turnItemOutputText(commandItem({ driver: "claudeAgent", startedAt: "2026-10-03T12:00:00Z" })),
+    ).toBe("line 1\n行 2 🚀\né warning");
+  });
+
+  it.each([
+    ["codex", "2026-10-03T12:00:00Z"],
+    ["claudeAgent", "2026-11-01T12:00:00Z"],
+  ] as const)("keeps literal JSON a %s command printed at %s", (driver, startedAt) => {
+    expect(turnItemOutputText(commandItem({ driver, startedAt }))).toBe(envelope);
   });
 });
