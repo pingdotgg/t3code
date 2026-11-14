@@ -203,7 +203,7 @@ function createPaneStrip(): PaneStrip {
     stripPlacers.get(strip)?.(0);
     markStripOverflow(strip);
   });
-  resize.observe(strip);
+  resize.observe(strip, { box: "border-box" });
   new MutationObserver(() => {
     for (const tab of strip.querySelectorAll(":scope > [data-strip-layer] > *")) {
       resize.observe(tab);
