@@ -69,6 +69,10 @@ const branchBaseConfigKey = (branch: string) => `branch.${branch}.t3-merge-base`
  * CLI's key, which branches cut before then still carry instead.
  */
 const legacyBranchBaseConfigKey = (branch: string) => `branch.${branch}.gh-merge-base`;
+// Differently named upstreams are bases, not publish targets; pushing HEAD there would write features to shared branches.
+const isAliasOfUpstreamHead = (branch: string, upstreamBranch: string, upstreamRef: string) =>
+  branch === upstreamBranch ||
+  (branch.endsWith(`/${upstreamBranch}`) && upstreamRef.endsWith(`/${branch}`));
 const gitProcesses = Semaphore.makeUnsafe(8);
 const backgroundGitProcesses = Semaphore.makeUnsafe(2);
 // The fetch before `git worktree add` downloads everything the remote gained since
@@ -93,6 +97,8 @@ const REVIEW_UNTRACKED_MAX_BYTES = 256 * 1024 * 1024;
 const UNTRACKED_TOTALS_RETRY_MIN_MS = 60_000;
 const UNTRACKED_TOTALS_RETRY_MAX_MS = 30 * 60_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+// Git's ident clean step (convert.c ident_to_git): `$Id:` up to the next `$` on the same line.
+const GIT_IDENT_KEYWORD = /\$Id:[^$\n]*\$/g;
 const REVIEW_BRANCH_COMMIT_LIMIT = 100;
 const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
 const REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES = 128 * 1024;
@@ -1857,10 +1863,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const resolvePushRemoteName = Effect.fn("resolvePushRemoteName")(function* (
     cwd: string,
     refName: string,
+    fallbackRemoteName: string | null = null,
   ) {
     const configuredRemote = yield* resolveConfiguredPushRemoteName(cwd, refName);
     if (configuredRemote) {
       return configuredRemote;
+    }
+
+    if (fallbackRemoteName) {
+      return fallbackRemoteName;
     }
 
     return yield* resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null));
@@ -2362,6 +2373,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     let refName: string | null = null;
     let upstreamRef: string | null = null;
+    // Git omits branch.ab when the upstream ref is gone, e.g. deleted after its PR merged,
+    // and also for an unborn HEAD, which can still track a fetched upstream.
+    let upstreamRefExists = false;
+    let isUnbornHead = false;
     let aheadCount = 0;
     let behindCount = 0;
     let aheadOfDefaultCount = 0;
@@ -2372,6 +2387,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const statusRecords = statusStdout.split("\0");
     for (let index = 0; index < statusRecords.length; index++) {
       const line = statusRecords[index]!;
+      if (line === "# branch.oid (initial)") {
+        isUnbornHead = true;
+        continue;
+      }
       if (line.startsWith("# branch.head ")) {
         const value = line.slice("# branch.head ".length).trim();
         refName = value === "(detached)" ? null : value;
@@ -2382,11 +2401,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         upstreamRef = value.length > 0 ? value : null;
         continue;
       }
-      if (includeDivergence && line.startsWith("# branch.ab ")) {
-        const value = line.slice("# branch.ab ".length).trim();
-        const parsed = parseBranchAb(value);
-        aheadCount = parsed.ahead;
-        behindCount = parsed.behind;
+      if (line.startsWith("# branch.ab ")) {
+        upstreamRefExists = true;
+        if (includeDivergence) {
+          const parsed = parseBranchAb(line.slice("# branch.ab ".length).trim());
+          aheadCount = parsed.ahead;
+          behindCount = parsed.behind;
+        }
         continue;
       }
       if (line.length > 0 && !line.startsWith("#")) {
@@ -2404,6 +2425,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }
       }
     }
+
+    if (!upstreamRefExists && !isUnbornHead) upstreamRef = null;
 
     const isDefaultBranch =
       refName !== null &&
@@ -2928,10 +2951,40 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     hasUpstream: boolean,
   ) {
     if (!hasUpstream) {
-      const remoteName = yield* resolvePushRemoteName(cwd, branch);
+      // A deleted upstream keeps its config: republish to it when it was this branch's own,
+      // otherwise it was the base, so keep that before publishing.
+      let goneUpstream: { remoteName: string; branchName: string } | null = null;
+      let goneBaseUpstream: { remoteName: string; branchName: string; upstreamRef: string } | null =
+        null;
+      const mergeRef = yield* readConfigValue(cwd, `branch.${branch}.merge`);
+      const mergeBranch = mergeRef?.startsWith("refs/heads/")
+        ? mergeRef.slice("refs/heads/".length)
+        : null;
+      const configuredRemoteName = yield* readConfigValue(cwd, `branch.${branch}.remote`);
+      if (mergeBranch && configuredRemoteName && configuredRemoteName !== ".") {
+        if (isAliasOfUpstreamHead(branch, mergeBranch, `${configuredRemoteName}/${mergeBranch}`)) {
+          goneUpstream = { remoteName: configuredRemoteName, branchName: mergeBranch };
+        } else {
+          goneBaseUpstream = {
+            remoteName: configuredRemoteName,
+            branchName: mergeBranch,
+            upstreamRef: `${configuredRemoteName}/${mergeBranch}`,
+          };
+        }
+      }
+      const remoteName = yield* resolvePushRemoteName(cwd, branch, goneUpstream?.remoteName);
       if (!remoteName) return null;
-      const branchName = yield* resolvePublishBranchName(cwd, branch);
-      return { remoteName, branchName, publishes: true, upstream: null, pushRemote: null };
+      // A gone local upstream still gets the full local name, as below.
+      const branchName =
+        goneUpstream?.branchName ??
+        (configuredRemoteName === "." ? branch : yield* resolvePublishBranchName(cwd, branch));
+      return {
+        remoteName,
+        branchName,
+        publishes: true,
+        upstream: goneBaseUpstream,
+        pushRemote: null,
+      };
     }
 
     if ((yield* readConfigValue(cwd, `branch.${branch}.remote`)) === ".") {
@@ -2955,11 +3008,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     const upstream = yield* resolveCurrentUpstream(cwd).pipe(Effect.orElseSucceed(() => null));
     if (!upstream) return null;
-    // Differently named upstreams are bases, not publish targets; pushing HEAD there would write features to shared branches.
-    const isAliasOfUpstreamHead =
-      branch === upstream.branchName ||
-      (branch.endsWith(`/${upstream.branchName}`) && upstream.upstreamRef.endsWith(`/${branch}`));
-    if (isAliasOfUpstreamHead) {
+    if (isAliasOfUpstreamHead(branch, upstream.branchName, upstream.upstreamRef)) {
       // A fork workflow pushes to the configured push remote and keeps the upstream for pulls, as plain `git push` does.
       const configuredPushRemote = yield* resolveConfiguredPushRemoteName(cwd, branch).pipe(
         Effect.orElseSucceed(() => null),
@@ -4169,7 +4218,43 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (bytes.includes(0)) {
       return yield* fileError("fs.readFile", `Cannot expand binary file '${input.newPath}'.`);
     }
-    return new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+    const contents = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+    if (!contents.includes("$Id:")) return contents;
+    const collapsed = contents.replace(GIT_IDENT_KEYWORD, () => "$Id$");
+    if (collapsed === contents) return contents;
+    // check-attr reports both boolean ident and literal ident=set as "set".
+    const attribute = yield* runGitStdout(
+      "GitVcsDriver.getReviewDiffFileContents.workingTree.ident",
+      repositoryRoot,
+      ["check-attr", "-z", "ident", "filter", "--", input.newPath],
+    );
+    const attributes = attribute.split("\0");
+    if (attributes[2] !== "set" || attributes[5] !== "unspecified") return contents;
+
+    // Literal filter=unspecified is indistinguishable from an absent filter in check-attr.
+    const filters = yield* executeGit(
+      "GitVcsDriver.getReviewDiffFileContents.workingTree.filters",
+      repositoryRoot,
+      ["config", "--name-only", "--get-regexp", "^filter\\.unspecified\\."],
+      { allowNonZeroExit: true },
+    );
+    if (filters.exitCode !== 1 || filters.stdout.length > 0) return contents;
+    // Probe a nonoverlapping keyword so ident conversion runs once on the actual file.
+    const [canonicalHash, collapsedHash] = yield* Effect.all([
+      runGitStdoutWithOptions(
+        "GitVcsDriver.getReviewDiffFileContents.workingTree.canonicalHash",
+        repositoryRoot,
+        ["hash-object", "--stdin", `--path=${input.newPath}`],
+        { stdin: "$Id: probe $" },
+      ),
+      runGitStdoutWithOptions(
+        "GitVcsDriver.getReviewDiffFileContents.workingTree.collapsedHash",
+        repositoryRoot,
+        ["hash-object", "--stdin", `--path=${input.newPath}`],
+        { stdin: "$Id$" },
+      ),
+    ]);
+    return canonicalHash === collapsedHash ? collapsed : contents;
   });
 
   const getReviewDiffFileContents = Effect.fn("getReviewDiffFileContents")(function* (

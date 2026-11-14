@@ -10,6 +10,7 @@ import {
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
+  getMenuActionDisabledReason,
 } from "./GitActionsControl.logic";
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
@@ -30,6 +31,12 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
     pr: null,
     ...overrides,
   };
+}
+
+function pushDisabledReason(gitStatus: VcsStatusResult): string | null {
+  const item = buildMenuItems(gitStatus, false).find((menuItem) => menuItem.id === "push");
+  assert.isDefined(item);
+  return getMenuActionDisabledReason({ item, gitStatus, isBusy: false, hasPrimaryRemote: true });
 }
 
 describe("when: ref is clean, ahead, and has an open PR", () => {
@@ -77,6 +84,7 @@ describe("when: ref is clean, up to date, and has no open PR", () => {
       buildMenuItems(dirtyFeature, false).find((item) => item.id === "pr")?.disabled,
       false,
     );
+    assert.equal(pushDisabledReason(dirtyFeature), "No local commits to push.");
   });
 
   it("offers the actions menu only when something in it is usable", () => {
@@ -129,6 +137,10 @@ describe("when: local changes are behind upstream", () => {
       action: "commit",
     } as const;
     assert.deepEqual(resolveQuickAction(behind, false), commit);
+    assert.equal(
+      pushDisabledReason({ ...behind, aheadCount: 1 }),
+      "Branch is behind upstream. Pull/rebase before pushing.",
+    );
     assert.deepEqual(
       resolveQuickAction(
         {

@@ -4476,10 +4476,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: "The reset time has passed. Retry the thread manually.",
         });
       }
+      if (thread.settledOverride === "settled") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The thread is settled. Un-settle it to resume at the reset.",
+        });
+      }
       if (
         !Number.isFinite(resetMs) ||
         thread.archivedAt !== null ||
-        thread.settledOverride === "settled" ||
         run?.id !== command.limitRecovery.runId ||
         failure?.class !== "usage_limit" ||
         failure.resetAt !== command.limitRecovery.resetAt ||
@@ -4599,6 +4605,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             settledOverride: "settled",
             settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
+            // Settled threads refuse recovery, so an armed resume would stay hidden until un-settled.
+            limitRecovery: thread.limitRecovery
+              ? { ...thread.limitRecovery, autoResume: false, snooze: false }
+              : thread.limitRecovery,
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
             unsettledAt: null,
             pinnedAt: null,
@@ -11529,6 +11539,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchQueuedRunEdit = Effect.fn("Orchestrator.dispatchQueuedRunEdit")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "queued-run.edit" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     if (command.text.trim().length === 0) {
       return yield* new OrchestratorDispatchError({
@@ -11621,6 +11632,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           updatedAt: now,
         }),
       });
+    }
+    // Thread deletion only cleans files the thread still references.
+    const keptAttachmentIds = new Set(
+      (command.attachments ?? queuedMessage.attachments).map((attachment) => attachment.id),
+    );
+    const droppedAttachmentIds = queuedMessage.attachments
+      .map((attachment) => attachment.id)
+      .filter((id) => !keptAttachmentIds.has(id));
+    if (droppedAttachmentIds.length > 0) {
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        {
+          id: `effect:${command.commandId}:attachment.cleanup`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: {
+            type: "attachment.cleanup",
+            attachmentIds: droppedAttachmentIds,
+            skipReferenced: true,
+          },
+        } satisfies PendingOrchestrationEffectV2,
+      ]);
     }
   });
 
@@ -15113,7 +15146,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchQueuedRunCancel(command, events);
         break;
       case "queued-run.edit":
-        yield* dispatchQueuedRunEdit(command, events);
+        yield* dispatchQueuedRunEdit(command, events, effects);
         break;
       case "checkpoint.rollback":
         yield* dispatchCheckpointRollback(command, events, effects);

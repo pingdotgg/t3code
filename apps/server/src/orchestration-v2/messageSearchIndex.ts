@@ -18,7 +18,7 @@ export const nonPlaceholderMessageCondition = (sql: SqlClient.SqlClient, row = "
 
 /**
  * Exclude attachment placeholders, generated notices and subagent threads. ACP subagents
- * rewrite their finished answer on every streamed chunk.
+ * rewrite their finished answer while it streams.
  * Migration triggers, backfill, rebuild and scans share this predicate; `row` may be `new`.
  */
 export const indexedMessageCondition = (sql: SqlClient.SqlClient, row = "messages") =>
