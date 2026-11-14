@@ -589,6 +589,10 @@ export interface AcpAdapterV2Flavor {
   readonly reportsPerTurnPromptUsage?: boolean;
   /** Gemini-style usage: inputTokens leaves out cachedReadTokens, outputTokens leaves out thoughtTokens. */
   readonly geminiPromptUsage?: boolean;
+  /** Live context size an agent reports in update or prompt-result `_meta` instead of `usage_update`. */
+  readonly contextTokensFromMeta?: (
+    meta: { readonly [key: string]: unknown } | null | undefined,
+  ) => number | undefined;
   /**
    * Fails a dispatched prompt after this long with no update for its session while no
    * agent request, tool or subagent is open, and replaces the agent before the next turn.
@@ -5108,6 +5112,70 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ),
             );
 
+        const recordContextUsage = Effect.fnUntraced(function* (
+          sessionId: string,
+          usage: ThreadTokenUsageSnapshot,
+          context: ActiveAcpTurn | null,
+        ) {
+          yield* Ref.update(contextUsageBySessionId, (current) =>
+            new Map(current).set(sessionId, usage),
+          );
+          if (context?.nativeThreadId === sessionId) {
+            context.contextUsage = usage;
+          }
+        });
+
+        const publishProviderThreadState = Effect.fnUntraced(function* (sessionId: string) {
+          const knownProviderThread = (yield* Ref.get(providerThreadByNativeSessionId)).get(
+            sessionId,
+          );
+          if (knownProviderThread === undefined) return;
+          const now = yield* DateTime.now;
+          const providerThread: OrchestrationV2ProviderThread = {
+            ...knownProviderThread,
+            contextUsage:
+              (yield* Ref.get(contextUsageBySessionId)).get(sessionId) ??
+              knownProviderThread.contextUsage ??
+              null,
+            nativeMetadata:
+              (yield* Ref.get(nativeMetadataBySessionId)).get(sessionId) ??
+              knownProviderThread.nativeMetadata ??
+              null,
+            updatedAt: now,
+          };
+          yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+            new Map(current).set(sessionId, providerThread),
+          );
+          yield* emitProviderEvent({
+            type: "provider_thread.updated",
+            driver,
+            providerThread,
+          });
+        });
+
+        // Runs for every streamed chunk, so it publishes only when the size or window changed.
+        const recordMetaContextUsage = Effect.fnUntraced(function* (
+          sessionId: string,
+          meta: { readonly [key: string]: unknown } | null | undefined,
+        ) {
+          const usedTokens = flavor.contextTokensFromMeta?.(meta);
+          if (usedTokens === undefined) return;
+          const setup = yield* Ref.get(activeSessionSetup);
+          const selection = yield* Ref.get(activeSelection);
+          const maxTokens =
+            setup === null || selection === null || sessionId !== (yield* Ref.get(activeSessionId))
+              ? undefined
+              : flavor.getModelContextWindow?.(selection, setup);
+          const current = (yield* Ref.get(contextUsageBySessionId)).get(sessionId);
+          if (current?.usedTokens === usedTokens && current.maxTokens === maxTokens) return;
+          yield* recordContextUsage(
+            sessionId,
+            { usedTokens, ...(maxTokens === undefined ? {} : { maxTokens }) },
+            yield* Ref.get(activeTurn),
+          );
+          yield* publishProviderThreadState(sessionId);
+        });
+
         const handleSessionUpdate = Effect.fnUntraced(function* (
           notification: EffectAcpSchema.SessionNotification,
         ) {
@@ -5120,6 +5188,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             (yield* Ref.get(stoppedRunQuarantine))
           )
             return;
+          yield* recordMetaContextUsage(notification.sessionId, notification._meta);
           if (yield* projectAgentTerminalUpdate(notification, context)) return;
           if (
             update.sessionUpdate === "usage_update" ||
@@ -5130,12 +5199,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             );
             if (stateEvent === undefined) return;
             if (stateEvent._tag === "UsageUpdated") {
-              yield* Ref.update(contextUsageBySessionId, (current) =>
-                new Map(current).set(notification.sessionId, stateEvent.usage),
-              );
-              if (context?.nativeThreadId === notification.sessionId) {
-                context.contextUsage = stateEvent.usage;
-              }
+              yield* recordContextUsage(notification.sessionId, stateEvent.usage, context);
             } else {
               const metadata = yield* Ref.modify(nativeMetadataBySessionId, (current) => {
                 const merged = {
@@ -5148,32 +5212,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 context.nativeMetadata = metadata;
               }
             }
-            const knownProviderThread = (yield* Ref.get(providerThreadByNativeSessionId)).get(
-              notification.sessionId,
-            );
-            if (knownProviderThread !== undefined) {
-              const now = yield* DateTime.now;
-              const providerThread: OrchestrationV2ProviderThread = {
-                ...knownProviderThread,
-                contextUsage:
-                  (yield* Ref.get(contextUsageBySessionId)).get(notification.sessionId) ??
-                  knownProviderThread.contextUsage ??
-                  null,
-                nativeMetadata:
-                  (yield* Ref.get(nativeMetadataBySessionId)).get(notification.sessionId) ??
-                  knownProviderThread.nativeMetadata ??
-                  null,
-                updatedAt: now,
-              };
-              yield* Ref.update(providerThreadByNativeSessionId, (current) =>
-                new Map(current).set(notification.sessionId, providerThread),
-              );
-              yield* emitProviderEvent({
-                type: "provider_thread.updated",
-                driver,
-                providerThread,
-              });
-            }
+            yield* publishProviderThreadState(notification.sessionId);
             return;
           }
           if (yield* followNativeChild(notification, context)) return;
@@ -8675,7 +8714,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         return updated;
                       });
                     }
-                    if (context.finalized || followsAgentWorkState) return;
+                    if (context.finalized) return;
+                    yield* recordMetaContextUsage(requestedSessionId, result._meta);
+                    if (followsAgentWorkState) return;
                     // ACP v2 reports a failed prompt as an idle `error`, not an RPC error.
                     const idleError = result.stopReason === "error" && !context.interrupted;
                     const hiddenFailure =

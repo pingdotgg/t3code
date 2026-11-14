@@ -2,6 +2,7 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   XAiPromptFailureText,
   isXAiTaskCompletedWakeNotification,
+  xAiContextTokensFromMeta,
   xAiRateLimitedErrorCode,
 } from "./xaiAcpExtension.ts";
 import { discoverGrokSkills, leadingGrokSkillMention } from "./skills.ts";
@@ -351,10 +352,12 @@ export function makeGrokAcpAdapterFlavor(
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
     getModelContextWindow: (selection, session) => {
       if (selection.instanceId !== options.instanceId) return undefined;
-      const modelId = resolveGrokAcpBaseModelId(selection.model);
+      const requestedModelId = resolveGrokAcpBaseModelId(selection.model);
       const models =
         session.sessionSetupResult.models ??
         sessionModelStateFromInitialize(session.initializeResult);
+      const modelId =
+        requestedModelId === GROK_DEFAULT_MODEL_SLUG ? models?.currentModelId : requestedModelId;
       const window = models?.availableModels.find((model) => model.modelId === modelId)?._meta
         ?.totalContextTokens;
       // contextWindows includes selectable larger windows; totalContextTokens is the default.
@@ -410,6 +413,7 @@ export function makeGrokAcpAdapterFlavor(
     ],
     isPersistentBackgroundTool: isXAiPersistentMonitor,
     isProviderWakeNotification: isXAiTaskCompletedWakeNotification,
+    contextTokensFromMeta: xAiContextTokensFromMeta,
     deferFinalizeForBackgroundWork: true,
     enablePostSettleContinuation: true,
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),
