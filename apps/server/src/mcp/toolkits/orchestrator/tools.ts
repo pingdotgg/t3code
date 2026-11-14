@@ -1,6 +1,8 @@
 import {
   OrchestratorMcpCapabilitiesInput,
   OrchestratorMcpCapabilitiesResult,
+  OrchestratorMcpUsageLimitsInput,
+  OrchestratorMcpUsageLimitsResult,
   OrchestrationV2StopWorkflowInput,
   OrchestratorMcpEnvironmentLinkInput,
   OrchestratorMcpEnvironmentLinkResult,
@@ -82,6 +84,20 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   dependencies,
 })
   .annotate(Tool.Title, "Get orchestration capabilities")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const OrchestratorUsageLimitsTool = Tool.make("orchestrator_usage_limits", {
+  description:
+    "Read provider account usage snapshots: percentages, resets, timestamps and unavailable reasons. Supports linked environments.",
+  parameters: OrchestratorMcpUsageLimitsInput,
+  success: OrchestratorMcpUsageLimitsResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: linkDependencies,
+})
+  .annotate(Tool.Title, "Read provider usage limits")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
@@ -358,6 +374,7 @@ const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
 
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
+  OrchestratorUsageLimitsTool,
   DelegateTaskTool,
   TaskStatusTool,
   TaskCancelTool,

@@ -4,14 +4,44 @@ import * as Schema from "effect/Schema";
 import {
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
+  OrchestratorMcpUsageLimitsResult,
   OrchestratorMcpThreadWaitResult,
 } from "./orchestratorMcp.ts";
 
+const decodeUsageLimitsResult = Schema.decodeUnknownSync(OrchestratorMcpUsageLimitsResult);
 const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
 const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskResult);
 const decodeThreadWaitResult = Schema.decodeUnknownSync(OrchestratorMcpThreadWaitResult);
 
 describe("orchestrator MCP contracts", () => {
+  it("preserves known usage windows when a newer peer returns an unknown window kind", () => {
+    const checkedAt = "2026-10-31T09:00:00.000Z";
+    const window = {
+      id: "weekly",
+      kind: "weekly",
+      label: "Weekly",
+      usedPercent: 73,
+      remainingPercent: 27,
+    };
+    const result = decodeUsageLimitsResult({
+      environmentId: "peer",
+      checkedAt,
+      providers: [
+        {
+          id: "codex",
+          driver: "codex",
+          label: "Codex",
+          limits: {
+            checkedAt,
+            windows: [window, { ...window, id: "future", kind: "future" }],
+          },
+        },
+      ],
+      notices: [],
+    });
+    expect(result.providers[0]?.limits.windows).toEqual([window]);
+  });
+
   it("decodes cross-provider delegated task requests and durable results", () => {
     const request = decodeDelegateTaskInput({
       task: "Inspect the workspace and report the result.",
