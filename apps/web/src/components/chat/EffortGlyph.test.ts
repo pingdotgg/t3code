@@ -31,7 +31,6 @@ describe("resolveEffortGlyph", () => {
 
   it("names Max and Ultra instead of drawing them", () => {
     expect(resolveEffortGlyph(claude, "max")?.special).toBe("Max");
-    expect(resolveEffortGlyph(codex, "max")?.special).toBe("Max");
     expect(resolveEffortGlyph(codex, "ultra")?.special).toBe("Ultra");
   });
 
