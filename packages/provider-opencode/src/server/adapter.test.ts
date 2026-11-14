@@ -35,6 +35,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -157,6 +158,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   host: Partial<ProviderHost.ProviderHost["Service"]> = {},
   turnSettings: {
     readonly model?: string;
+    readonly exitCode?: Effect.Effect<number>;
     readonly options?: ReadonlyArray<ProviderOptionSelection>;
     readonly interactionMode?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["interactionMode"];
   } = {},
@@ -178,7 +180,12 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     environment: {},
   }).pipe(
     Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, {
-      connectToOpenCodeServer: () => Effect.succeed({ url: "http://test.invalid", external: true }),
+      connectToOpenCodeServer: () =>
+        Effect.succeed({
+          url: "http://test.invalid",
+          external: turnSettings.exitCode === undefined,
+          exitCode: turnSettings.exitCode ?? null,
+        }),
       createOpenCodeSdkClient: () => client,
     } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"]),
     Effect.provideService(ProviderHost.ProviderHost, {
@@ -205,6 +212,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     turnPolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy = policy,
     resume = false,
     turnKey = suffix,
+    continuation?: { model?: string },
   ) =>
     runtime.startTurn({
       appThread: {
@@ -239,13 +247,13 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
       providerThread: startProviderThread,
       ...(resume ? { resume: true as const } : {}),
       message: {
-        createdBy: "user",
-        creationSource: "web",
+        createdBy: continuation === undefined ? "user" : "agent",
+        creationSource: continuation === undefined ? "web" : "provider",
         messageId: MessageId.make(`message-opencode-${turnKey}`),
         text,
         attachments: [],
       },
-      modelSelection,
+      modelSelection: { ...modelSelection, model: continuation?.model ?? modelSelection.model },
       runtimePolicy: turnPolicy,
     });
   return {
@@ -1400,8 +1408,24 @@ describe("OpenCodeAdapterV2", () => {
   it.effect.each([
     { state: "active", end: null },
     { state: "settled", end: "stop" },
+    { state: "settled", end: "stop-before-busy" },
+    { state: "settled", end: "stop-before-busy-timeout" },
     { state: "settled", end: "cancelled" },
+    { state: "settled", end: "stop-failure" },
+    { state: "settled", end: "cancelled-failure" },
     { state: "settled", end: "foreground" },
+    { state: "settled", end: "foreground-buffered" },
+    { state: "settled", end: "foreground-stop" },
+    { state: "settled", end: "foreground-eof" },
+    { state: "settled", end: "invalid-continuation" },
+    { state: "settled", end: "policy-failure" },
+    { state: "settled", end: "closed" },
+    { state: "settled", end: "owned-exit" },
+    { state: "settled", end: "failed-stream" },
+    { state: "settled", end: "sequential" },
+    { state: "settled", end: "idle-only" },
+    { state: "settled", end: "error-only" },
+    { state: "settled", end: "routing-stalled" },
   ] as const)(
     "routes the OpenCode 1.19.5 root background prompt while $state, ending by $end",
     ({ state, end }) =>
@@ -1411,24 +1435,67 @@ describe("OpenCodeAdapterV2", () => {
         const root = "ses_root";
         const promptIds: Array<string> = [];
         const aborted: Array<string> = [];
+        const nativeExit = yield* Deferred.make<number>();
+        const routeStarted = promiseGate<void>();
+        const routeFinished = promiseGate<void>();
+        const abortStarted = promiseGate<void>();
+        const abortFinished = promiseGate<void>();
+        let aborting = false;
+        let submittedWhileAborting = false;
         const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
-        const harness = yield* makeOpenCodeRuntimeHarness("root-background-wake", root, {
-          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
-          session: {
-            create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
-            get: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
-            promptAsync: async (input: { messageID: string }) => {
-              promptIds.push(input.messageID);
-              return { data: true };
-            },
-            messages: async () => ({ data: [] }),
-            children: async () => ({ data: [] }),
-            abort: async (input: { sessionID: string }) => {
-              aborted.push(input.sessionID);
-              return { data: true };
+        const sessionScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(sessionScope, Exit.void));
+        const harness = yield* makeOpenCodeRuntimeHarness(
+          "root-background-wake",
+          root,
+          {
+            event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+            session: {
+              create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+              get: async (input: { sessionID: string }) => {
+                if (input.sessionID === "ses_unrelated") {
+                  routeStarted.resolve();
+                  await routeFinished.promise;
+                }
+                return { data: { id: root, time: { created: 1, updated: 1 } } };
+              },
+              promptAsync: async (input: { messageID: string }) => {
+                submittedWhileAborting ||= aborting;
+                promptIds.push(input.messageID);
+                return { data: true };
+              },
+              messages: async () => ({ data: [] }),
+              children: async (input: { sessionID: string }) => ({
+                data: input.sessionID === root ? [{ id: "ses_descendant" }] : [],
+              }),
+              update: async () => {
+                if (end === "policy-failure") throw new Error("permission update failed");
+                return { data: { id: root } };
+              },
+              abort: async (input: { sessionID: string }) => {
+                aborted.push(input.sessionID);
+                if (
+                  input.sessionID === root &&
+                  (end === "stop" ||
+                    end === "cancelled" ||
+                    end === "stop-failure" ||
+                    end === "cancelled-failure")
+                ) {
+                  aborting = true;
+                  abortStarted.resolve();
+                  await abortFinished.promise;
+                  aborting = false;
+                  if (end === "stop-failure" || end === "cancelled-failure")
+                    throw new Error("root abort failed");
+                }
+                return { data: true };
+              },
             },
           },
-        }).pipe(
+          {},
+          end === "owned-exit" ? { exitCode: Deferred.await(nativeExit) } : {},
+        ).pipe(
+          Effect.provideService(Scope.Scope, sessionScope),
           Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
             offer: (offer) =>
               Effect.sync(() => {
@@ -1500,11 +1567,173 @@ describe("OpenCodeAdapterV2", () => {
             },
           },
         });
+        if (end === "stop-before-busy-timeout") {
+          const stopping = yield* harness.runtime
+            .interruptTurn({
+              providerThread: harness.providerThread,
+              providerTurnId: ProviderTurnId.make("provider-turn:settled"),
+              requestRuntimeRestart: true,
+            })
+            .pipe(Effect.exit, Effect.forkScoped);
+          yield* TestClock.adjust("10 seconds");
+          assert.isTrue(Exit.isFailure(yield* Fiber.join(stopping)));
+          assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+          assert.isTrue(
+            Exit.isFailure(
+              yield* harness.startTurn("after uncertain cancellation").pipe(Effect.exit),
+            ),
+          );
+          return;
+        }
+        if (end === "stop-before-busy") {
+          const stopping = yield* harness.runtime
+            .interruptTurn({
+              providerThread: harness.providerThread,
+              providerTurnId: ProviderTurnId.make("provider-turn:settled"),
+              requestRuntimeRestart: true,
+            })
+            .pipe(Effect.forkScoped);
+          yield* TestClock.adjust(0);
+          assert.deepEqual(aborted, [], "abort waits for native prompt registration");
+          yield* push(status("busy"));
+          yield* Fiber.join(stopping);
+          assert.deepEqual(aborted, [root, "ses_descendant"]);
+          assert.equal(offers.length, 0, "a stopped registering prompt must not offer a wake");
+          assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+          return;
+        }
+        if (end === "idle-only" || end === "error-only") {
+          yield* push(
+            end === "idle-only"
+              ? { type: "session.idle", properties: { sessionID: root } }
+              : {
+                  type: "session.error",
+                  properties: {
+                    sessionID: root,
+                    error: { name: "UnknownError", data: { message: "failed before busy" } },
+                  },
+                },
+          );
+          assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+          yield* push(status("busy"));
+          assert.equal(offers.length, 0, "a terminal-only update cannot offer a wake");
+          return;
+        }
         yield* push(status("busy"));
         assert.equal(offers.length, state === "settled" ? 1 : 0, "only a settled root needs a run");
-        // The user's prompt joins the run OpenCode already started, taking its held events.
-        if (end === "foreground")
-          yield* harness.startTurn("follow up", undefined, undefined, false, "next");
+        if (end === "invalid-continuation" || end === "policy-failure") {
+          const failed = yield* harness
+            .startTurn(
+              "",
+              undefined,
+              end === "policy-failure"
+                ? runtimePolicy("approval-required", { cwd: "/workspace" })
+                : undefined,
+              false,
+              "continuation",
+              { model: end === "invalid-continuation" ? "invalid" : "anthropic/claude-sonnet" },
+            )
+            .pipe(Effect.exit);
+          assert.isTrue(Exit.isFailure(failed));
+          assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+          assert.deepEqual(aborted, [root, "ses_descendant"]);
+          assert.isTrue(
+            Option.isNone(yield* offers[0]!.dispatchIfCurrent!(Effect.succeed("stale"))),
+          );
+          return;
+        }
+        if (end === "routing-stalled") {
+          const routing = yield* push({
+            type: "question.asked",
+            properties: {
+              id: "question_unrelated",
+              sessionID: "ses_unrelated",
+              questions: [
+                {
+                  header: "Choice",
+                  question: "Choose",
+                  options: [{ label: "Yes", description: "Continue" }],
+                },
+              ],
+            },
+          }).pipe(Effect.forkScoped);
+          yield* Effect.promise(() => routeStarted.promise);
+          const stopping = yield* offers[0]!.onRunEndedWithoutStarting!().pipe(Effect.forkScoped);
+          yield* TestClock.adjust(0);
+          const cleanedBeforeRoutingCompleted = [...aborted];
+          let foregroundReturned = false;
+          const foreground = yield* harness
+            .startTurn("after Stop", undefined, undefined, false, "after-stop")
+            .pipe(
+              Effect.exit,
+              Effect.ensuring(
+                Effect.sync(() => {
+                  foregroundReturned = true;
+                }),
+              ),
+              Effect.forkScoped,
+            );
+          yield* TestClock.adjust("10 seconds");
+          const foregroundWasBounded = foregroundReturned;
+          routeFinished.resolve();
+          yield* Fiber.join(stopping);
+          yield* Fiber.join(foreground);
+          yield* Fiber.interrupt(routing);
+          assert.deepEqual(
+            cleanedBeforeRoutingCompleted,
+            [root, "ses_descendant"],
+            "Stop bypasses stalled event I/O",
+          );
+          assert.isTrue(
+            foregroundWasBounded,
+            "foreground installation cannot wait indefinitely on event I/O",
+          );
+          assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+          return;
+        }
+        if (end === "owned-exit" || end === "failed-stream") {
+          if (end === "owned-exit") yield* Deferred.succeed(nativeExit, 1);
+          else nativeEvents.close();
+          yield* harness.runtime.events.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "provider_session.updated" &&
+                event.providerSession.status === "error",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+          );
+          yield* TestClock.adjust(0);
+          assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+          yield* offers[0]!.onRunEndedWithoutStarting!();
+          assert.deepEqual(aborted, [], "failed-session callbacks cannot abort a replacement");
+          assert.isTrue(
+            Option.isNone(yield* offers[0]!.dispatchIfCurrent!(Effect.succeed("stale"))),
+          );
+          return;
+        }
+        if (end === "closed") {
+          yield* Scope.close(sessionScope, Exit.void);
+          const beforeCallback = [...aborted];
+          yield* offers[0]!.onRunEndedWithoutStarting!();
+          assert.deepEqual(
+            aborted,
+            beforeCallback,
+            "a closed session callback cannot abort replacement work",
+          );
+          assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+          return;
+        }
+        const foreground =
+          end === "foreground" || end === "foreground-stop" || end === "foreground-eof"
+            ? yield* harness
+                .startTurn("follow up", undefined, undefined, false, "next")
+                .pipe(Effect.forkScoped)
+            : null;
+        if (foreground !== null) {
+          yield* TestClock.adjust(0);
+          assert.equal(promptIds.length, 1, "foreground prompt waits for the old native loop");
+        }
         yield* push(assistant(false));
         yield* push({
           type: "message.part.updated",
@@ -1522,10 +1751,116 @@ describe("OpenCodeAdapterV2", () => {
           },
         });
         yield* push(assistant(true));
-        if (end === "foreground") yield* push(user(promptIds[1]!));
+        if (end === "foreground-stop" || end === "foreground-eof") {
+          if (end === "foreground-eof") nativeEvents.close();
+          else {
+            const snapshot = yield* harness.runtime.readThreadSnapshot({
+              providerThread: harness.providerThread,
+            });
+            yield* harness.runtime.interruptTurn({
+              providerThread: harness.providerThread,
+              providerTurnId: snapshot.providerTurns.at(-1)!.id,
+              requestRuntimeRestart: true,
+            });
+          }
+          if (foreground !== null) yield* Fiber.join(foreground);
+          assert.equal(
+            promptIds.length,
+            1,
+            "cancelled or failed waiting foreground must never submit",
+          );
+          return;
+        }
         yield* push(status("idle"));
         yield* push({ type: "session.idle", properties: { sessionID: root } });
-        if (end === "foreground") {
+        if (foreground !== null) yield* Fiber.join(foreground);
+        if (end === "sequential") {
+          yield* harness.startTurn("", undefined, undefined, false, "wake-one", {});
+          yield* awaitTerminal;
+          yield* push(user("msg_second_background_result"));
+          yield* push(status("busy"));
+          yield* push({
+            type: "message.part.updated",
+            properties: {
+              sessionID: root,
+              time: 4,
+              part: {
+                id: "prt_second_wake",
+                sessionID: root,
+                messageID: "msg_second_wake_assistant",
+                type: "text",
+                text: "SECOND_WAKE_OK",
+                time: { start: 4, end: 5 },
+              },
+            },
+          });
+          yield* push(status("idle"));
+          assert.equal(offers.length, 2, "completed sequential wakes each offer once");
+          yield* harness.startTurn("", undefined, undefined, false, "wake-two", {});
+          const events = yield* harness.runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          );
+          const terminal = events.find((event) => event.type === "turn.terminal");
+          assert.isTrue(
+            events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "assistant_message" &&
+                event.turnItem.text === "SECOND_WAKE_OK" &&
+                event.turnItem.providerTurnId === terminal?.providerTurnId,
+            ),
+          );
+          assert.equal(promptIds.length, 1, "continuations never submit another prompt");
+          const snapshot = yield* harness.runtime.readThreadSnapshot({
+            providerThread: harness.providerThread,
+          });
+          assert.deepEqual(
+            snapshot.providerTurns.map((turn) => turn.status),
+            ["completed", "completed", "completed"],
+          );
+          return;
+        }
+        if (end === "foreground-buffered" || end === "foreground") {
+          if (end === "foreground-buffered")
+            yield* harness.startTurn("follow up", undefined, undefined, false, "next");
+          assert.equal(promptIds.length, 2, "the foreground prompt is submitted");
+          const snapshot = yield* harness.runtime.readThreadSnapshot({
+            providerThread: harness.providerThread,
+          });
+          assert.equal(snapshot.providerTurns.at(-1)?.status, "running");
+          yield* push(user(promptIds[1]!));
+          yield* push({
+            type: "message.part.updated",
+            properties: {
+              sessionID: root,
+              time: 4,
+              part: {
+                id: "prt_foreground",
+                sessionID: root,
+                messageID: "msg_foreground_assistant",
+                type: "text",
+                text: "FOREGROUND_OK",
+                time: { start: 4, end: 5 },
+              },
+            },
+          });
+          yield* push({
+            type: "message.updated",
+            properties: {
+              sessionID: root,
+              info: {
+                id: "msg_foreground_assistant",
+                sessionID: root,
+                role: "assistant",
+                parentID: promptIds[1]!,
+                time: { created: 4, completed: 5 },
+              },
+            },
+          });
+          yield* push(status("idle"));
+        }
+        if (end === "foreground" || end === "foreground-buffered") {
           const events = yield* harness.runtime.events.pipe(
             Stream.takeUntil((event) => event.type === "turn.terminal"),
             Stream.runCollect,
@@ -1542,6 +1877,16 @@ describe("OpenCodeAdapterV2", () => {
             ),
             "the foreground turn carries the wake's output",
           );
+          assert.isTrue(
+            Array.from(events).some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "assistant_message" &&
+                event.turnItem.providerTurnId === terminal?.providerTurnId &&
+                event.turnItem.text === "FOREGROUND_OK",
+            ),
+            "the foreground prompt retains its own output",
+          );
         } else {
           yield* push(user("msg_background_result"));
           yield* push(status("idle"));
@@ -1554,17 +1899,39 @@ describe("OpenCodeAdapterV2", () => {
         );
         const offer = offers[0];
         if (offer?.dispatchIfCurrent === undefined) return;
-        if (end === "stop") {
-          yield* harness.runtime.interruptTurn({
-            providerThread: harness.providerThread,
-            providerTurnId: ProviderTurnId.make("provider-turn:settled"),
-            requestRuntimeRestart: true,
-          });
-        } else if (end === "cancelled") yield* offer.onRunEndedWithoutStarting!();
+        if (
+          end === "stop" ||
+          end === "cancelled" ||
+          end === "stop-failure" ||
+          end === "cancelled-failure"
+        ) {
+          const stopping = yield* (
+            end === "stop" || end === "stop-failure"
+              ? harness.runtime.interruptTurn({
+                  providerThread: harness.providerThread,
+                  providerTurnId: ProviderTurnId.make("provider-turn:settled"),
+                  requestRuntimeRestart: true,
+                })
+              : offer.onRunEndedWithoutStarting!()
+          ).pipe(Effect.exit, Effect.forkScoped);
+          yield* Effect.promise(() => abortStarted.promise);
+          const replacement = yield* harness
+            .startTurn("replacement", undefined, undefined, false, "replacement")
+            .pipe(Effect.exit, Effect.forkScoped);
+          const submittedDuringAbort = yield* TestClock.adjust(0).pipe(
+            Effect.andThen(Effect.sync(() => promptIds.length)),
+            Effect.ensuring(Effect.sync(() => abortFinished.resolve())),
+          );
+          const stopped = yield* Fiber.join(stopping);
+          assert.equal(Exit.isFailure(stopped), end === "stop-failure");
+          assert.isTrue(Exit.isSuccess(yield* Fiber.join(replacement)));
+          assert.isFalse(submittedWhileAborting, "old abort cannot target replacement work");
+          assert.equal(submittedDuringAbort, 1, "replacement waits for native cleanup");
+        }
         assert.deepEqual(
           aborted,
-          end === "foreground" ? [] : [root],
-          "an unadmitted wake is aborted; a taken one keeps running",
+          end === "foreground" || end === "foreground-buffered" ? [] : [root, "ses_descendant"],
+          "an unadmitted wake cleans up its root and descendants",
         );
         const dispatched = yield* offer.dispatchIfCurrent(Effect.succeed("run"));
         assert.isTrue(Option.isNone(dispatched), "an ended or taken wake must not start a run");
@@ -1578,6 +1945,11 @@ describe("OpenCodeAdapterV2", () => {
     { case: "is aborted", ending: "abort", outcome: "interrupted" },
     { case: "fails before its first turn", ending: "error", outcome: "failed" },
     { case: "never starts and the thread is stopped", ending: "stop", outcome: "interrupted" },
+    {
+      case: "is stopped despite a failed root abort",
+      ending: "stop-failure",
+      outcome: "interrupted",
+    },
   ])("keeps a background task's subagent running until its child $case", ({ ending, outcome }) =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
@@ -1585,6 +1957,7 @@ describe("OpenCodeAdapterV2", () => {
       const root = "ses_root";
       const child = "ses_child";
       let promptId = "";
+      const aborted: Array<string> = [];
       const harness = yield* makeOpenCodeRuntimeHarness("background-child", root, {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
         session: {
@@ -1597,8 +1970,15 @@ describe("OpenCodeAdapterV2", () => {
             promptId = input.messageID;
             return { data: true };
           },
-          abort: async () => ({ data: true }),
-          children: async () => ({ data: [] }),
+          abort: async (input: { sessionID: string }) => {
+            aborted.push(input.sessionID);
+            if (ending === "stop-failure" && input.sessionID === root)
+              throw new Error("root abort failed");
+            return { data: true };
+          },
+          children: async (input: { sessionID: string }) => ({
+            data: input.sessionID === root ? [{ id: child }] : [],
+          }),
         },
       });
       const hasPendingBackgroundWork = harness.runtime.hasPendingBackgroundWork;
@@ -1663,7 +2043,7 @@ describe("OpenCodeAdapterV2", () => {
         },
       });
       yield* push(taskPart("running"));
-      const starts = ending !== "stop" && ending !== "error";
+      const starts = ending !== "stop" && ending !== "stop-failure" && ending !== "error";
       if (starts) {
         yield* push({
           type: "message.updated",
@@ -1678,12 +2058,26 @@ describe("OpenCodeAdapterV2", () => {
       yield* push(status(root, "idle"));
       assert.equal(yield* hasPendingBackgroundWork, starts, "a running child pins idle release");
 
-      if (ending === "stop") {
-        yield* harness.runtime.interruptTurn({
-          providerThread: harness.providerThread,
-          providerTurnId: ProviderTurnId.make("provider-turn:settled"),
-          requestRuntimeRestart: true,
-        });
+      if (ending === "stop" || ending === "stop-failure") {
+        if (ending === "stop-failure") {
+          yield* push({
+            type: "message.updated",
+            properties: {
+              sessionID: root,
+              info: { id: "msg_wake", sessionID: root, role: "user", time: { created: 4 } },
+            },
+          });
+          yield* push(status(root, "busy"));
+        }
+        const stopped = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: ProviderTurnId.make("provider-turn:settled"),
+            requestRuntimeRestart: true,
+          })
+          .pipe(Effect.exit);
+        assert.equal(Exit.isFailure(stopped), ending === "stop-failure");
+        assert.include(aborted, child, "root abort failure must not skip native child cleanup");
       } else {
         if (ending !== "idle") {
           yield* push({
