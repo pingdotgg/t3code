@@ -8,7 +8,10 @@ import {
   snoozeWakeLabel,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
-import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  hasUnseenRunFailure,
+  type SnoozePreset,
+} from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
 import {
@@ -296,6 +299,17 @@ export function resolveThreadListV2Status(
   return "ready";
 }
 
+/** Row status: a failure the user has already opened settles to ready, like Done. */
+export function resolveThreadListV2RowStatus(
+  thread: Parameters<typeof resolveThreadListV2Status>[0] &
+    Pick<EnvironmentThreadShell, "latestRun" | "lastVisitedAt">,
+): ThreadListV2Status {
+  const status = resolveThreadListV2Status(thread);
+  // A runtime failure without a failed run has nothing to date it, so it stays.
+  if (status !== "failed" || thread.latestRun?.status !== "failed") return status;
+  return hasUnseenRunFailure(thread) ? status : "ready";
+}
+
 function parseTimestampMs(isoDate: string): number {
   const parsed = Date.parse(isoDate);
   return Number.isNaN(parsed) ? 0 : parsed;
@@ -506,7 +520,7 @@ function resolveThreadListV2ItemTimeLabel(
   if (showSnoozeWakeLabel) return "";
   if (
     variant === "card" &&
-    (resolveThreadListV2Status(thread) !== "ready" ||
+    (resolveThreadListV2RowStatus(thread) !== "ready" ||
       item.wokeAt !== null ||
       threadHasUnseenCompletion(thread))
   )
