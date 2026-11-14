@@ -1,13 +1,13 @@
-import { findProjectByPath } from "@t3tools/client-runtime/state/projects";
+import {
+  findProjectByPath,
+  normalizeProjectPathForComparison,
+} from "@t3tools/client-runtime/state/projects";
 import type { AgentSessionProjectCandidate, EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 const RECENT_PROJECT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const DEFAULT_SELECTION_MIN_THREADS = 3;
 
-/**
- * Servers that predate the git scan omit `git`; their candidates are treated as repositories so old
- * computers still get a useful default selection.
- */
+/** Treat candidates missing git as repositories for servers predating git scans. */
 export function partitionOnboardingProjects<T extends AgentSessionProjectCandidate>(
   candidates: ReadonlyArray<T>,
   now = Date.now(),
@@ -102,6 +102,32 @@ export function resolveOnboardingProjectId(
   const currentRootMatch = findProjectByPath(environmentProjects, candidate.path);
   if (currentRootMatch !== undefined) return currentRootMatch.id;
   return null;
+}
+
+/**
+ * Whether a candidate is not a project yet, by the same rules as `resolveOnboardingProjectId`.
+ * It reads the project list once, so a long candidate list costs one pass, not one per candidate.
+ */
+export function isNewOnboardingProject(
+  projects: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly workspaceRoot: string;
+  }>,
+) {
+  const roots = new Set(
+    projects.map(
+      (project) =>
+        `${project.environmentId}\u0000${normalizeProjectPathForComparison(project.workspaceRoot)}`,
+    ),
+  );
+  return (
+    environmentId: EnvironmentId,
+    candidate: Pick<AgentSessionProjectCandidate, "path" | "projectId">,
+  ) => {
+    if (candidate.projectId !== undefined) return false;
+    const path = normalizeProjectPathForComparison(candidate.path);
+    return path.length === 0 || !roots.has(`${environmentId}\u0000${path}`);
+  };
 }
 
 export function resolveOnboardingLandingProject<T>(

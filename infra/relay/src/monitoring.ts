@@ -1,5 +1,5 @@
 import * as Alchemy from "alchemy";
-import * as Axiom from "alchemy/Axiom";
+import * as Axiom from "@alchemy.run/axiom";
 import * as Output from "alchemy/Output";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -49,7 +49,7 @@ interface RelayMonitor {
 }
 
 // Thresholds come from 2026-10-16..19 prod data: the worst healthy window,
-// and the #16810 outage (Cloudflare API 429s stalling every provision).
+// and the outage (Cloudflare API 429s stalling every provision).
 // Paging monitors need two bad runs in a row; warnings catch the slow
 // degradations an outage threshold has to ignore.
 const relayMonitors: ReadonlyArray<RelayMonitor> = [
@@ -343,7 +343,7 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
   ];
 };
 
-const notifierConfig = (name: string) =>
+export const notifierConfig = (name: string) =>
   Config.String(name).pipe(
     Config.option,
     Config.map(Option.flatMap((value) => Option.liftPredicate(value.trim(), Boolean))),

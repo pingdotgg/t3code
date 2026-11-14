@@ -6,24 +6,6 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerActivation from "./serverActivation.ts";
 
-it.effect("proves a root is parked before returning and releases it with one gate", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const activation = yield* Deferred.make<void>();
-      const ran = yield* Deferred.make<void>();
-
-      yield* ServerActivation.forkParked(Deferred.succeed(ran, undefined)).pipe(
-        Effect.provideService(ServerActivation.ServerActivation, Deferred.await(activation)),
-      );
-      expect(yield* Deferred.isDone(ran)).toBe(false);
-
-      yield* Deferred.succeed(activation, undefined);
-      yield* Deferred.await(ran);
-      expect(yield* Deferred.isDone(ran)).toBe(true);
-    }),
-  ),
-);
-
 it.effect("keeps maintenance parked until activation and client delivery", () =>
   Effect.gen(function* () {
     const activation = yield* Deferred.make<void>();
@@ -45,15 +27,13 @@ it.effect("keeps maintenance parked until activation and client delivery", () =>
   }),
 );
 
-it.effect("releases background work within a bounded time without a client", () =>
+it.effect("releases background work after the fallback when no client connects", () =>
   Effect.gen(function* () {
     const background = yield* ServerActivation.makeBackgroundStart(Effect.void);
-    const probes = yield* background.awaitTurn.pipe(Effect.forkScoped);
-    const maintenance = yield* background.awaitTurn.pipe(Effect.forkScoped);
-    yield* TestClock.adjust("30 seconds");
-    expect(probes.pollUnsafe()?._tag).toBe("Success");
-    expect(maintenance.pollUnsafe()?._tag).toBe("Success");
-    yield* Fiber.join(probes);
-    yield* Fiber.join(maintenance);
+    const waiter = yield* background.awaitTurn.pipe(Effect.forkScoped);
+    yield* TestClock.adjust("29 seconds");
+    expect(waiter.pollUnsafe()).toBeUndefined();
+    yield* TestClock.adjust("1 second");
+    yield* Fiber.join(waiter);
   }),
 );

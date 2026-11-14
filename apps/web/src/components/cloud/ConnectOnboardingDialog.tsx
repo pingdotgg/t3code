@@ -1,6 +1,12 @@
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
-import { AuthRelayReadScope, AuthRelayWriteScope, type AuthSessionState } from "@t3tools/contracts";
+import {
+  AuthAccessWriteScope,
+  AuthRelayReadScope,
+  AuthRelayWriteScope,
+  type AuthSessionState,
+  managedCapabilityDenial,
+} from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 
@@ -9,17 +15,25 @@ import {
   ConnectOnboardingOptOutSchema,
   EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
 } from "~/cloud/connectOnboarding";
+import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { useUpdatePrimarySettings } from "~/hooks/useSettings";
 import { isHostedStaticApp } from "~/hostedPairing";
 import {
   useEnvironments,
   usePrimaryEnvironment,
   usePrimaryEnvironmentId,
 } from "~/state/environments";
+import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
 import { environmentSession, readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import {
+  type T3ConnectAccountPageUrl,
+  useT3ConnectAccountPage,
+} from "../clerk/T3ConnectAccountPages";
 import { CloudEnvironmentConnectRows } from "./CloudEnvironmentConnectList";
+import { TunnelLimitAlert } from "./TunnelUsage";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Dialog } from "../ui/dialog";
@@ -38,8 +52,7 @@ type OnboardingStep = "publish" | "devices";
 const EMPTY_SESSION_STATE_ATOM = Atom.make(AsyncResult.initial<AuthSessionState>());
 
 function ConfiguredConnectOnboardingDialog() {
-  // Mirrors ManagedRelayAuthProvider: a pending Clerk session must not read as
-  // signed-out, or its later activation would look like a fresh sign-in.
+  // Pending Clerk sessions must not look signed out or activation would look like a new sign-in.
   const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const [optOutState, setOptOutState] = useLocalStorage(
     CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
@@ -59,11 +72,19 @@ function ConfiguredConnectOnboardingDialog() {
   );
   const canReadRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope);
   const canWriteRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope);
-  const canManageRelay = canReadRelay && canWriteRelay;
+  // A policy that turns Connect off leaves nothing to publish; reaching other devices still works.
+  const connectAllowed =
+    managedCapabilityDenial(usePrimaryManagedPolicy(), "connect") === undefined;
+  const canManageRelay = canReadRelay && canWriteRelay && connectAllowed;
+  const canRequireDeviceApproval = useEnvironmentScope(primaryEnvironmentId, AuthAccessWriteScope);
+  const deviceApprovalRequired =
+    usePrimaryEnvironment()?.serverConfig?.settings.requireConnectDeviceApproval === true;
+  const updatePrimarySettings = useUpdatePrimarySettings();
   const sessionScopesKnown =
     primaryEnvironmentId === null ? environmentsReady : primarySessionState._tag !== "Initial";
 
-  const controller = useCloudLinkController();
+  const controller = useCloudLinkController(primaryEnvironmentId);
+  const accountPage = useT3ConnectAccountPage();
   const showPublishStep = canManageRelay && controller.linkState.target !== null;
   const steps: ReadonlyArray<OnboardingStep> = showPublishStep
     ? ["publish", "devices"]
@@ -74,11 +95,11 @@ function ConfiguredConnectOnboardingDialog() {
   const [step, setStep] = useState<OnboardingStep>("devices");
   const [exposeEnvironment, setExposeEnvironment] = useState(true);
   const [publishAgentActivity, setPublishAgentActivity] = useState(true);
+  const [requireDeviceApproval, setRequireDeviceApproval] = useState(false);
   const [dontShowAgain, setDontShowAgain] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [prefilledFromLinkState, setPrefilledFromLinkState] = useState(false);
-  // undefined until auth first settles, so the account already signed in at load
-  // never reads as a fresh sign-in.
+  // Start undefined so an existing account never looks like a fresh sign-in.
   const [observedAccount, setObservedAccount] = useState<string | null | undefined>(undefined);
 
   if (step === "publish" && sessionScopesKnown && !showPublishStep && !isApplying) {
@@ -87,9 +108,7 @@ function ConfiguredConnectOnboardingDialog() {
 
   const optOutAccounts = optOutState.optOutAccounts;
 
-  // A loaded-but-incomplete snapshot (signed in, user id not yet populated)
-  // must not be recorded as signed-out — the next render would then look
-  // like a fresh sign-in on a cold load.
+  // A signed-in snapshot without userId is incomplete; recording signed-out would fake a fresh sign-in.
   if (isLoaded && !(isSignedIn && !userId)) {
     const nextAccount = isSignedIn && userId ? userId : null;
     if (nextAccount !== observedAccount) {
@@ -107,10 +126,8 @@ function ConfiguredConnectOnboardingDialog() {
     setRequestedAccount(null);
   }
 
-  // A manageable session implies a primary environment, so when the scopes
-  // allow publishing, wait for the connection target too — otherwise the
-  // wizard could open on the devices step moments before the publish step
-  // becomes available and freeze there.
+  // Wait for the publish target before opening; otherwise the wizard can freeze on devices before publish
+  // becomes available.
   const publishStepDecided = !canManageRelay || controller.linkState.target !== null;
 
   if (requestedAccount !== null && openForAccount === null) {
@@ -121,6 +138,7 @@ function ConfiguredConnectOnboardingDialog() {
       setPrefilledFromLinkState(false);
       setExposeEnvironment(true);
       setPublishAgentActivity(true);
+      setRequireDeviceApproval(false);
       setDontShowAgain(false);
       setStep(canManageRelay && controller.linkState.target !== null ? "publish" : "devices");
       setOpenForAccount(requestedAccount);
@@ -155,6 +173,19 @@ function ConfiguredConnectOnboardingDialog() {
 
   const applyPublishSelection = async () => {
     if (isApplying) return;
+    // Onboarding only turns approval on; turning it off stays in Settings. Publishing waits
+    // for the save, so a failed save cannot leave the machine reachable without approval.
+    if (requireDeviceApproval && !deviceApprovalRequired) {
+      setIsApplying(true);
+      const saved = await new Promise<boolean>((resolve) =>
+        updatePrimarySettings(
+          { requireConnectDeviceApproval: true },
+          { onSaved: () => resolve(true), onFailed: () => resolve(false) },
+        ),
+      );
+      setIsApplying(false);
+      if (!saved) return;
+    }
     if (
       primaryEnvironmentId === null ||
       !readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) ||
@@ -164,8 +195,7 @@ function ConfiguredConnectOnboardingDialog() {
       return;
     }
     if (linkStateData === null || controller.linkState.error !== null) return;
-    // The wizard only ever enables — with both toggles off there is nothing to
-    // apply, and an existing link must not be torn down from onboarding.
+    // Onboarding only enables links; both toggles off must preserve existing links.
     if (!exposeEnvironment && !publishAgentActivity) {
       setStep("devices");
       return;
@@ -187,6 +217,15 @@ function ConfiguredConnectOnboardingDialog() {
     setStep("devices");
   };
 
+  const openAccountPage = accountPage.open;
+  // The account page is a Clerk modal, so close this dialog before it opens.
+  const leaveForAccountPage = openAccountPage
+    ? (page: T3ConnectAccountPageUrl) => {
+        complete();
+        openAccountPage(page);
+      }
+    : null;
+
   return (
     <Dialog
       open={openForAccount !== null}
@@ -199,7 +238,7 @@ function ConfiguredConnectOnboardingDialog() {
           title="Set up T3 Connect"
           description={
             <>
-              Mesh your devices together — publish this environment and connect the rest, all in one
+              Mesh your devices together. Publish this environment and connect the rest, all in one
               place.
             </>
           }
@@ -228,8 +267,15 @@ function ConfiguredConnectOnboardingDialog() {
             <PublishStep
               exposeEnvironment={exposeEnvironment}
               publishAgentActivity={publishAgentActivity}
+              requireDeviceApproval={
+                canRequireDeviceApproval ? requireDeviceApproval || deviceApprovalRequired : null
+              }
+              requireDeviceApprovalLocked={deviceApprovalRequired}
+              onRequireDeviceApprovalChange={setRequireDeviceApproval}
               disabled={isApplying || !canManageRelay || linkStateData === null}
               operationError={controller.operationError ?? controller.linkState.error}
+              tunnelLimit={controller.tunnelLimit}
+              onOpenAccountPage={leaveForAccountPage}
               onExposeEnvironmentChange={(enabled) => {
                 if (
                   primaryEnvironmentId !== null &&
@@ -281,6 +327,8 @@ function ConfiguredConnectOnboardingDialog() {
           )}
         </WizardFooter>
       </WizardPopup>
+      {/* Base UI renders Root children while closed, so this keeps the account page mounted. */}
+      {accountPage.portals}
     </Dialog>
   );
 }
@@ -293,15 +341,26 @@ const STEP_LABELS: Record<OnboardingStep, string> = {
 function PublishStep({
   exposeEnvironment,
   publishAgentActivity,
+  requireDeviceApproval,
+  requireDeviceApprovalLocked,
+  onRequireDeviceApprovalChange,
   disabled,
   operationError,
+  tunnelLimit,
+  onOpenAccountPage,
   onExposeEnvironmentChange,
   onPublishAgentActivityChange,
 }: {
   readonly exposeEnvironment: boolean;
   readonly publishAgentActivity: boolean;
+  /** Null when this session cannot change who may connect. */
+  readonly requireDeviceApproval: boolean | null;
+  readonly requireDeviceApprovalLocked: boolean;
+  readonly onRequireDeviceApprovalChange: (enabled: boolean) => void;
   readonly disabled: boolean;
   readonly operationError: string | null;
+  readonly tunnelLimit: number | null;
+  readonly onOpenAccountPage: ((page: T3ConnectAccountPageUrl) => void) | null;
   readonly onExposeEnvironmentChange: (enabled: boolean) => void;
   readonly onPublishAgentActivityChange: (enabled: boolean) => void;
 }) {
@@ -322,9 +381,36 @@ function PublishStep({
           disabled={disabled}
           onCheckedChange={onPublishAgentActivityChange}
         />
+        {requireDeviceApproval !== null ? (
+          <OnboardingToggleRow
+            title="Require approval for new devices"
+            description="Devices that sign in to your T3 Connect account wait until someone already connected here approves them."
+            checked={requireDeviceApproval}
+            disabled={disabled || requireDeviceApprovalLocked}
+            onCheckedChange={onRequireDeviceApprovalChange}
+          />
+        ) : null}
       </div>
       {operationError ? <p className="text-xs text-destructive">{operationError}</p> : null}
+      {tunnelLimit !== null ? (
+        <OnboardingTunnelLimitAlert onOpenAccountPage={onOpenAccountPage} />
+      ) : null}
     </div>
+  );
+}
+
+function OnboardingTunnelLimitAlert({
+  onOpenAccountPage,
+}: {
+  readonly onOpenAccountPage: ((page: T3ConnectAccountPageUrl) => void) | null;
+}) {
+  const { upgrade } = useManagedTunnelUsage();
+  return (
+    <TunnelLimitAlert
+      upgrade={upgrade}
+      onLinkT3Chat={onOpenAccountPage ? () => onOpenAccountPage("t3-chat") : null}
+      onManageTunnels={onOpenAccountPage ? () => onOpenAccountPage("t3-connect") : null}
+    />
   );
 }
 

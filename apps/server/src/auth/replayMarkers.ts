@@ -21,11 +21,7 @@ const REPLAY_MARKER_PREFIXES = [DPOP_REPLAY_MARKER_PREFIX, ...CLOUD_REPLAY_MARKE
  */
 export const REPLAY_MARKER_MAX_AGE = Duration.days(1);
 
-/**
- * `ServerSecretStore` saves each secret as `<name>.bin`, so only
- * `<marker prefix>*.bin` names match. Other secrets and the `*.bin.<uuid>.tmp`
- * files that `set` writes are never touched.
- */
+/** Prunes only <marker prefix>*.bin, excluding other secrets and temporary files. */
 export const pruneExpiredReplayMarkers = Effect.fn("replayMarkers.pruneExpired")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

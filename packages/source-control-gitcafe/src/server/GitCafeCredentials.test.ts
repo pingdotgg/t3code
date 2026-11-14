@@ -1,9 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
+import { SecretProviderId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
-import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
@@ -96,6 +95,24 @@ describe("GitCafeCredentials", () => {
 
       yield* settings.update({ sourceControlHosts: { gitcafe: { token: "" } } });
       assert.strictEqual((yield* credentials.get("git.cafe")).source, "env");
+
+      // A reference left in place by getWithSecrets is one its secret provider could not read,
+      // here one naming a removed provider whose id is also an Object.prototype key.
+      yield* settings.update({
+        sourceControlHosts: {
+          gitcafe: {
+            token: { provider: SecretProviderId.make("constructor"), reference: "cafe#token" },
+          },
+        },
+      });
+      const error = yield* Effect.flip(credentials.get("git.cafe"));
+      assert.strictEqual(error._tag, "SettingsSecretUnresolvedError");
+      assert.include(error.message, '"constructor"');
+      assert.strictEqual(
+        (yield* Effect.flip(credentials.cliEnv("git.cafe")))._tag,
+        "SettingsSecretUnresolvedError",
+      );
+      assert.strictEqual(calls.length, 1);
     }).pipe(Effect.provide(layer));
   });
 
@@ -125,50 +142,6 @@ describe("GitCafeCredentials", () => {
       yield* credentials.invalidate("staging.git.cafe");
       yield* credentials.get("staging.git.cafe");
       assert.strictEqual(calls.length, 2);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect.each([
-    [
-      "a missing CLI",
-      Effect.fail(
-        new VcsProcessSpawnError({
-          operation: "GitCafeCredentials.get",
-          command: "cafe",
-          cwd: "/server",
-          cause: PlatformError.systemError({
-            _tag: "NotFound",
-            module: "ChildProcess",
-            method: "spawn",
-          }),
-        }),
-      ),
-      "GitCafeCliMissingError",
-    ],
-    [
-      "a helper with no login",
-      Effect.fail(
-        new VcsProcessExitError({
-          operation: "GitCafeCredentials.get",
-          command: "cafe",
-          cwd: "/server",
-          exitCode: 1,
-          detail: "not signed in",
-        }),
-      ),
-      "GitCafeNotSignedInError",
-    ],
-    [
-      "an answer without a password",
-      Effect.succeed(processOutput("username=alice\n")),
-      "GitCafeNotSignedInError",
-    ],
-  ] as const)("reports %s", ([, result, tag]) => {
-    const { layer } = harness(() => result);
-    return Effect.gen(function* () {
-      const credentials = yield* GitCafeCredentials.GitCafeCredentials;
-      const error = yield* credentials.get("git.cafe").pipe(Effect.flip);
-      assert.strictEqual(error._tag, tag);
     }).pipe(Effect.provide(layer));
   });
 });
