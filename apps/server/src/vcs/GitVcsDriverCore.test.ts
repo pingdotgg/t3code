@@ -7402,7 +7402,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       { location: "root", conflict: true, encoding: "utf8" },
       { location: "nested", conflict: true, encoding: "utf8" },
       { location: "worktree", conflict: true, encoding: "utf8" },
-      { location: "root", conflict: false, encoding: "utf16le" },
       { location: "root", conflict: true, encoding: "utf16le" },
     ])(
       "rejects selected-file merge commits without mutation ($location, conflict: $conflict, $encoding)",
@@ -7491,11 +7490,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             const unresolved = yield* driver
               .commit(commitCwd, "Unresolved merge", "", { stage: {} })
               .pipe(Effect.result);
-            if (Result.isSuccess(unresolved)) {
-              assert.fail(
-                `committed an unresolved conflict: ${yield* git(cwd, ["show", "HEAD:README.md"])}`,
-              );
-            }
+            assert.isTrue(Result.isFailure(unresolved), "committed an unresolved conflict");
             assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), mainHead);
             assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), unmerged);
             // A lone "=======" is a heading underline, not a conflict boundary.

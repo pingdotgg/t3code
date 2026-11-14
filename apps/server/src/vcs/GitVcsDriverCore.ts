@@ -2708,8 +2708,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           );
           if (markerLines.size === 0) continue;
           emptyTree ??= yield* readEmptyTreeHash(cwd);
-          // Git numbers lines after working-tree-encoding and clean filters, so read them the same
-          // way: diffing against the empty tree prints every line of Git's view of the file.
+          // --check numbers lines after working-tree-encoding and clean filters; a diff from the
+          // empty tree prints that same view of the file.
           const fileDiff = yield* runGitStdoutWithOptions(
             "GitVcsDriver.commit.conflictMarkers",
             cwd,
