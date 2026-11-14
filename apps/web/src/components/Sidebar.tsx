@@ -201,6 +201,7 @@ import {
   sidebarThreadKeyAtY,
   sortInboxThreadsByReturn,
   sortPinnedThreadsForSidebar,
+  sortSidebarFolderThreadsByStatus,
   sortThreadsForSidebar,
   sortWorkingThreadsBySend,
   useSnoozeWakeClock,
@@ -680,7 +681,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   // Availability gates dragging only; sorting must stay consistent across clients.
   const sortedPinned = sortPinnedThreadsForSidebar(pinned);
   const sortedActive = sortActiveBySend
-    ? sortWorkingThreadsBySend(active)
+    ? sortSidebarFolderThreadsByStatus(sortWorkingThreadsBySend(active))
     : workingShelfEnabled
       ? sortInboxThreadsByReturn(active, inboxObservation.returnedAt)
       : sortThreadsForSidebar(active);
