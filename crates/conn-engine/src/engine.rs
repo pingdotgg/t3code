@@ -736,6 +736,23 @@ impl Inner {
         }
     }
 
+    /// The branch checked out in the launch's project folder; `None` without a host, a
+    /// project or a branch.
+    async fn project_branch(&self, input: &Value) -> Option<String> {
+        let host = self.host.as_ref()?;
+        let project_id = input["projectId"].as_str()?.to_owned();
+        let root = self
+            .db(move |store| -> Result<Option<String>, String> {
+                let tx = store.tx()?;
+                let project = tx.project(&project_id);
+                tx.rollback();
+                Ok(project?.and_then(|p| p["workspaceRoot"].as_str().map(str::to_owned)))
+            })
+            .await
+            .ok()??;
+        host.current_branch(&root).await
+    }
+
     async fn provision_worktree(
         &self,
         thread_id: &str,
@@ -774,6 +791,11 @@ impl Inner {
             .map_or_else(|| format!("thread:{command_id}"), str::to_owned);
         let strategy = &input["workspaceStrategy"];
         let (branch, worktree_path) = match strategy["type"].as_str() {
+            // `launchBranch`: a project-folder launch that names no branch records the
+            // folder's checkout, as the composer does.
+            Some("root") if !strategy["branch"].is_string() => {
+                (json!(self.project_branch(&input).await), Value::Null)
+            }
             Some("root") => (strategy["branch"].clone(), Value::Null),
             Some("existing_worktree") => {
                 (strategy["branch"].clone(), strategy["worktreePath"].clone())

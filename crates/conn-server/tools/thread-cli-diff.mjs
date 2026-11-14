@@ -66,14 +66,9 @@ const freePort = () =>
  */
 const KNOWN = [
   {
-    path: /\.branch$/,
-    reason:
-      "t3_thread_read: the T3 server records the checkout's branch on a thread in the project folder; the engine leaves it null (engine track)",
-  },
-  {
     path: /\.itemCount$/,
     reason:
-      "the T3 server's timeline counts items the engine does not record yet (checkpoint and status rows), so positions differ; the messages are the same (engine track)",
+      "the T3 launch starts its first message deferred (ThreadLaunchService.ts:1209, dispatchMode defer_start) and records a 'Workspace ready' command_execution item (Orchestrator.ts:8000-8025, completed at 11680-11695 by prepared-run.release); this engine starts at once (conn-engine engine.rs, start_immediately) and refuses prepared-run.* (commands.rs:160-163). Orbit reads no itemCount",
   },
 ];
 
