@@ -25,7 +25,7 @@ const UNLINKED_TYPES = new Set([
   "html",
   "definition",
 ]);
-const HTML_TAG = /<!--[\s\S]*?(?:-->|$)|<\/?[a-z][^>]*>/giu;
+const HTML_TAG = /<!--[\s\S]*?(?:-->|$)|<\/?[a-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/giu;
 const PROTECTED_TAG = /^<(\/)?(?:a|code|pre|script|style)(?=[\s>])/iu;
 
 /**
@@ -38,52 +38,50 @@ export function linkReferenceAutolinks(
 ): string {
   if (autolinks === null) return markdown;
   const edits: { start: number; end: number; value: string }[] = [];
-  const linkText = (start: number, end: number) => {
-    for (const link of autolinks(markdown.slice(start, end))) {
-      edits.push({
-        start: start + link.index,
-        end: start + link.index + link.text.length,
-        value: `[${link.label}](${link.url})`,
-      });
-    }
-  };
-  const visit = (node: MarkdownNode) => {
+  // `base` is where the parsed source starts in `markdown`.
+  const visit = (node: MarkdownNode, base: number) => {
     if (UNLINKED_TYPES.has(node.type)) return;
     if (node.type === "text") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
-      if (start !== undefined && end !== undefined) linkText(start, end);
+      if (start === undefined || end === undefined) return;
+      for (const link of autolinks(markdown.slice(base + start, base + end))) {
+        edits.push({
+          start: base + start + link.index,
+          end: base + start + link.index + link.text.length,
+          value: `[${link.label}](${link.url})`,
+        });
+      }
     } else if (node.children !== undefined) {
       let protectedHtmlDepth = 0;
       for (const child of node.children) {
         if (child.type !== "html") {
-          if (protectedHtmlDepth === 0) visit(child);
+          if (protectedHtmlDepth === 0) visit(child, base);
           continue;
         }
         const start = child.position?.start.offset;
         const end = child.position?.end.offset;
         if (start === undefined || end === undefined) continue;
-        // The native renderer shows text between an HTML block's tags as markdown, so link it too.
-        let from = start;
+        // The native renderer shows text between an HTML block's tags as markdown, so link its prose.
+        let from = base + start;
         const linkHtmlText = (to: number) => {
-          // Backticks there may be a code span the renderer keeps.
-          if (protectedHtmlDepth === 0 && !markdown.slice(from, to).includes("`")) {
-            linkText(from, to);
+          if (protectedHtmlDepth === 0 && from < to) {
+            visit(parser.parse(markdown.slice(from, to)), from);
           }
         };
-        for (const tag of markdown.slice(start, end).matchAll(HTML_TAG)) {
-          linkHtmlText(start + tag.index);
+        for (const tag of markdown.slice(base + start, base + end).matchAll(HTML_TAG)) {
+          linkHtmlText(base + start + tag.index);
           const protectedTag = PROTECTED_TAG.exec(tag[0]);
           if (protectedTag) {
             protectedHtmlDepth = Math.max(0, protectedHtmlDepth + (protectedTag[1] ? -1 : 1));
           }
-          from = start + tag.index + tag[0].length;
+          from = base + start + tag.index + tag[0].length;
         }
-        linkHtmlText(end);
+        linkHtmlText(base + end);
       }
     }
   };
-  visit(parser.parse(markdown));
+  visit(parser.parse(markdown), 0);
   let linked = markdown;
   for (let index = edits.length - 1; index >= 0; index--) {
     const edit = edits[index]!;
