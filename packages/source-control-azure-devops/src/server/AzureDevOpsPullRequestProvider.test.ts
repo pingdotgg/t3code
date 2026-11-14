@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import type { PullRequestCheck, PullRequestCheckStatus } from "@t3tools/contracts";
 
@@ -196,35 +198,46 @@ describe("getChangeRequest", () => {
       }),
   );
 
-  it.effect("reads the pull request once for its detail, diff and conversation", () =>
-    Effect.gen(function* () {
-      let reads = 0;
-      const provider = yield* make.pipe(
-        Effect.provide(
-          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
-            getPullRequest: () =>
-              Effect.sync(() => {
-                reads += 1;
-                return PULL_REQUEST;
-              }),
-            listIterations: () => Effect.succeed([ITERATION]),
-            listIterationChanges: () =>
-              Effect.succeed({ changes: [change("a.ts")], truncated: false }),
-            readItemContent: () => Effect.succeed({ contents: side("new", 2, 4), isBinary: false }),
-            ...NO_BLOBS,
-            listPolicyChecks: () => Effect.succeed([]),
-            listThreads: () => Effect.succeed([]),
-          }),
-        ),
-      );
-      const input = { cwd: "/w", repository: "acme/web", host: "dev.azure.com", number: 7 };
+  it.effect(
+    "reads the pull request once for overlapping detail and conversation, then its diff",
+    () =>
+      Effect.gen(function* () {
+        let reads = 0;
+        const release = yield* Deferred.make<void>();
+        const provider = yield* make.pipe(
+          Effect.provide(
+            Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+              getPullRequest: () =>
+                Effect.sync(() => {
+                  reads += 1;
+                }).pipe(Effect.andThen(Deferred.await(release)), Effect.as(PULL_REQUEST)),
+              listIterations: () => Effect.succeed([ITERATION]),
+              listIterationChanges: () =>
+                Effect.succeed({ changes: [change("a.ts")], truncated: false }),
+              readItemContent: () =>
+                Effect.succeed({ contents: side("new", 2, 4), isBinary: false }),
+              ...NO_BLOBS,
+              listPolicyChecks: () => Effect.succeed([]),
+              listThreads: () => Effect.succeed([]),
+            }),
+          ),
+        );
+        const input = { cwd: "/w", repository: "acme/web", host: "dev.azure.com", number: 7 };
 
-      yield* provider.getChangeRequest(input);
-      yield* provider.getDiff(input);
-      yield* provider.getChangeRequestActivity(input);
+        // Clients request detail and conversation together; both start before the read returns.
+        const detail = yield* Effect.forkChild(provider.getChangeRequest(input), {
+          startImmediately: true,
+        });
+        const activity = yield* Effect.forkChild(provider.getChangeRequestActivity(input), {
+          startImmediately: true,
+        });
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(detail);
+        yield* Fiber.join(activity);
+        yield* provider.getDiff(input);
 
-      expect(reads).toBe(1);
-    }),
+        expect(reads).toBe(1);
+      }),
   );
 });
 
