@@ -1,22 +1,25 @@
 import { useSyncExternalStore } from "react";
 import { KeyboardController, KeyboardEvents } from "react-native-keyboard-controller";
 
-// `useKeyboardState` only flips on willShow and didHide. This follows the will-events, so a
-// layout that makes room for the keyboard gives it back as soon as the keyboard starts hiding.
+// Follows the will-events so a layout gives the keyboard's room back as soon as it starts hiding.
+// Android can skip them: a cancelled show ends with didHide alone, and a nonanimated IME change
+// resyncs with a lone did-event. The did-events settle the state, or a missed willHide would
+// leave the keyboard reported shown, hiding the navigation bar until the app restarts.
 let keyboardShowing = KeyboardController.isVisible();
 function subscribeKeyboardShowing(onChange: () => void) {
   keyboardShowing = KeyboardController.isVisible();
-  const willShow = KeyboardEvents.addListener("keyboardWillShow", () => {
-    keyboardShowing = true;
+  const update = (showing: boolean) => () => {
+    keyboardShowing = showing;
     onChange();
-  });
-  const willHide = KeyboardEvents.addListener("keyboardWillHide", () => {
-    keyboardShowing = false;
-    onChange();
-  });
+  };
+  const subscriptions = [
+    KeyboardEvents.addListener("keyboardWillShow", update(true)),
+    KeyboardEvents.addListener("keyboardDidShow", update(true)),
+    KeyboardEvents.addListener("keyboardWillHide", update(false)),
+    KeyboardEvents.addListener("keyboardDidHide", update(false)),
+  ];
   return () => {
-    willShow.remove();
-    willHide.remove();
+    for (const subscription of subscriptions) subscription.remove();
   };
 }
 const getKeyboardShowing = () => keyboardShowing;
