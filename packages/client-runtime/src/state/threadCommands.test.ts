@@ -375,7 +375,11 @@ describe("remote thread lifecycle commands", () => {
   const actions = [
     ["settle", {}, { settledOverride: "settled", pinnedAt: null, snoozedUntil: null }],
     ["unsettle", { reason: "user" }, { settledOverride: "active", settledAt: null }],
-    ["snooze", { snoozedUntil: "2099-01-01T00:00:00.000Z" }, { snoozedUntil: FUTURE }],
+    [
+      "snooze",
+      { snoozedUntil: "2099-01-01T00:00:00.000Z" },
+      { snoozedUntil: FUTURE, settledOverride: "active", settledAt: null },
+    ],
     ["unsnooze", { reason: "user" }, { snoozedUntil: null, snoozedAt: null }],
     ["pin", { orderKey: "a" }, { pinnedAt: expect.any(Object), pinOrderKey: "a" }],
     ["unpin", {}, { pinnedAt: null, pinOrderKey: null }],
@@ -395,7 +399,7 @@ describe("remote thread lifecycle commands", () => {
           threads: [
             {
               ...SNAPSHOT.threads[0]!,
-              ...(action === "unsettle" || action === "pin"
+              ...(action === "unsettle" || action === "pin" || action === "snooze"
                 ? { settledOverride: "settled" as const, settledAt: NOW }
                 : {}),
               ...(action === "unsnooze" || action === "settle" || action === "pin"

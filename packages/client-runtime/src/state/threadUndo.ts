@@ -36,6 +36,7 @@ export function invalidate(kind: string, threadKey: string) {
 }
 
 export type ThreadUndoStep =
+  | { readonly action: "settle" }
   | { readonly action: "unsettle" }
   | { readonly action: "unsnooze" }
   | { readonly action: "pin"; readonly orderKey?: string }
@@ -49,9 +50,13 @@ export function planThreadUndo(
     readonly pinnedAt?: string | null;
     readonly pinOrderKey?: string | null;
     readonly snoozedUntil?: string | null;
+    readonly settledOverride?: "settled" | "active" | null;
   } | null,
 ): ThreadUndoPlan {
-  if (action === "snooze") return [{ action: "unsnooze" }];
+  // Snoozing settled work takes it out of Settled; settling again also clears the snooze.
+  if (action === "snooze") {
+    return [{ action: thread?.settledOverride === "settled" ? "settle" : "unsnooze" }];
+  }
   const pin: ThreadUndoStep = {
     action: "pin",
     ...(thread?.pinOrderKey != null ? { orderKey: thread.pinOrderKey } : {}),

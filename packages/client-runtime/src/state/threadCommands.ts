@@ -504,6 +504,9 @@ export function createThreadEnvironmentAtoms<R, E>(
         ? thread
         : {
             ...thread,
+            ...(thread.settledOverride === "settled"
+              ? { settledOverride: "active" as const, settledAt: null, unsettledAt: now }
+              : {}),
             snoozedUntil: DateTime.makeUnsafe(input.snoozedUntil),
             snoozedAt: now,
           },

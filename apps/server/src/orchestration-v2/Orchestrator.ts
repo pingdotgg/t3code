@@ -4590,8 +4590,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         case "thread.snooze": {
           // Re-snoozing acknowledges the latest wake even at the same time; commandId deduplicates retries.
+          // Snoozing settled work is a reminder: it wakes into the active list, like a pin.
+          const wasSettled = thread.settledOverride === "settled";
           return {
             ...thread,
+            ...(wasSettled ? { settledOverride: "active", settledAt: null, unsettledAt: now } : {}),
             snoozedUntil,
             limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
             snoozedAt: now,

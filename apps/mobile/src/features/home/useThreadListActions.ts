@@ -262,6 +262,8 @@ export function useThreadListActions(): {
             plan,
             async (step) => {
               switch (step.action) {
+                case "settle":
+                  return (await executeAction("settle", thread)) === true;
                 case "unsettle":
                   return unsettleThread(thread);
                 case "unsnooze":
@@ -363,7 +365,7 @@ export function useThreadListActions(): {
         );
         return false;
       }
-      offerUndo(thread, "Snoozed", claim, ThreadUndo.planThreadUndo("snooze"));
+      offerUndo(thread, "Snoozed", claim, ThreadUndo.planThreadUndo("snooze", thread));
       return true;
     })();
     snoozeInFlightThreadKeys.current.delete(key);

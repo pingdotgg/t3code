@@ -62,6 +62,7 @@ const threadShell = vi.hoisted(() => ({
   pinOrderKey: "a0",
   pinnedAt: null as string | null,
   snoozedUntil: null as string | null,
+  settledOverride: null as "settled" | "active" | null,
   projectId: "project",
   environmentId: "undo-env",
   session: null,
@@ -120,6 +121,7 @@ beforeEach(() => {
   router.state.matches[0]!.params = {};
   threadShell.pinnedAt = null;
   threadShell.snoozedUntil = null;
+  threadShell.settledOverride = null;
   shellLoaded.current = true;
 });
 afterEach(() => {
@@ -309,6 +311,17 @@ describe("settle and snooze Undo", () => {
       environmentId: target.environmentId,
       input: { threadId: target.threadId, snoozedUntil },
     });
+  });
+
+  it("returns work snoozed from Settled to Settled instead of waking it", async () => {
+    threadShell.settledOverride = "settled";
+    await useThreadActions().snoozeThread(target, "2099-01-01T09:00:00.000Z");
+    await currentUndo()();
+    expect(commands.settle).toHaveBeenCalledExactlyOnceWith({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId },
+    });
+    expect(commands.unsnooze).not.toHaveBeenCalled();
   });
 
   it("stops settle restoration if restoring the pin fails", async () => {
