@@ -71,8 +71,14 @@ export function makeSpeechTextCorrector(
 
   const customWordKeys = (words: readonly string[]): CustomWordKey[] =>
     words.flatMap((word) => {
-      const keys = [matchKey(word)];
-      if (word.includes("&")) keys.push(matchKey(word.replaceAll("&", " and ")));
+      const sources = [word];
+      if (word.includes("&")) sources.push(word.replaceAll("&", " and "));
+      const keys = sources.flatMap((source) => {
+        const key = matchKey(source);
+        // A term that loses its symbols to one letter (C# -> c) would claim every standalone letter.
+        const lostSymbols = key !== source.replace(/\s+/gu, "").toLocaleLowerCase();
+        return key.length < 2 && lostSymbols ? [] : [key];
+      });
       return [...new Set(keys)].filter(isAsciiKey).map((key) => ({ word, key }));
     });
 

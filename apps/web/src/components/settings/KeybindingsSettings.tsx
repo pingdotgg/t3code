@@ -132,8 +132,10 @@ function KeybindingsSearchInput({
         onKeyDown={(event) => {
           if (event.key !== "Escape") return;
           event.preventDefault();
-          if (query.length > 0) onChange("");
-          else event.currentTarget.blur();
+          if (query.length > 0) {
+            event.stopPropagation();
+            onChange("");
+          } else event.currentTarget.blur();
         }}
         placeholder="Search keybindings"
         aria-label="Search keybindings"

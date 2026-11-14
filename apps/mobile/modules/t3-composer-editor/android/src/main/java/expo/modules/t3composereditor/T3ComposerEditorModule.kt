@@ -66,6 +66,7 @@ internal object T3ComposerClipboard {
 }
 
 class T3ComposerEditorModule : Module() {
+  @Suppress("LongMethod") // A flat list of the view's props and events.
   override fun definition() = ModuleDefinition {
     Name("T3ComposerEditor")
 
@@ -108,6 +109,12 @@ class T3ComposerEditorModule : Module() {
       Prop("readOnly") { view: T3ComposerEditorView, readOnly: Boolean ->
         view.setReadOnly(readOnly)
       }
+      Prop("enterBehavior") { view: T3ComposerEditorView, behavior: String ->
+        view.setEnterBehavior(behavior)
+      }
+      Prop("submitEnabled") { view: T3ComposerEditorView, enabled: Boolean ->
+        view.setSubmitEnabled(enabled)
+      }
       Prop("scrollEnabled") { view: T3ComposerEditorView, scrollEnabled: Boolean ->
         view.setScrollEnabled(scrollEnabled)
       }
@@ -132,6 +139,7 @@ class T3ComposerEditorModule : Module() {
         "onComposerSelectionChange",
         "onComposerFocus",
         "onComposerBlur",
+        "onComposerSubmit",
         "onComposerPasteImages",
         "onComposerContextPress",
         "onComposerPasteContext",

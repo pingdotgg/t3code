@@ -119,11 +119,11 @@ export interface McpAppHost {
   readonly dispose: () => void;
 }
 
-function jsonBytes(value: unknown): number {
+function stringifyJson(value: unknown): string | undefined {
   try {
-    return encoder.encode(JSON.stringify(value) ?? "").byteLength;
+    return JSON.stringify(value);
   } catch {
-    return Number.POSITIVE_INFINITY;
+    return undefined;
   }
 }
 
@@ -395,10 +395,14 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
   const hostHandle: McpAppHost = {
     receive: (data) => {
       if (disposed || !Predicate.isObject(data) || data.jsonrpc !== "2.0") return;
-      if (jsonBytes(data) > MAX_MESSAGE_BYTES) {
-        if (isId(data.id) && typeof data.method === "string") {
-          fail(data.id, -32600, "Message too large.");
-        }
+      const requestId = isId(data.id) && typeof data.method === "string" ? data.id : undefined;
+      const json = stringifyJson(data);
+      if (json === undefined) {
+        if (requestId !== undefined) fail(requestId, -32602, "Params must be JSON.");
+        return;
+      }
+      if (encoder.encode(json).byteLength > MAX_MESSAGE_BYTES) {
+        if (requestId !== undefined) fail(requestId, -32600, "Message too large.");
         return;
       }
       const method = data.method;
@@ -406,7 +410,9 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
         if (isId(data.id) && ("result" in data || "error" in data)) handleResponse(data.id);
         return;
       }
-      const params = Predicate.isObject(data.params) ? data.params : {};
+      // postMessage keeps undefined, which the RPC's JSON codec rejects; pass on the JSON form.
+      const { params: jsonParams }: { params?: unknown } = JSON.parse(json);
+      const params = Predicate.isObject(jsonParams) ? jsonParams : {};
       if (isId(data.id)) handleRequest(data.id, method, params);
       else handleNotification(method, params);
     },
@@ -476,10 +482,13 @@ function downloadName(uri: unknown, name: unknown): string {
       : typeof uri === "string"
         ? (uri.split(/[/?#]/).findLast(Boolean) ?? "download")
         : "download";
-  const safe = Array.from(raw, (char) =>
-    /[\\/:*?"<>|]/.test(char) || char.charCodeAt(0) < 32 ? "-" : char,
-  ).join("");
-  return safe.slice(0, MAX_DOWNLOAD_NAME) || "download";
+  let safe = "";
+  for (const char of raw) {
+    const next = /[\\/:*?"<>|]/.test(char) || char.charCodeAt(0) < 32 ? "-" : char;
+    if (safe.length + next.length > MAX_DOWNLOAD_NAME) break;
+    safe += next;
+  }
+  return safe || "download";
 }
 
 function readDownloads(contents: unknown): ReadonlyArray<McpAppDownload> | undefined {

@@ -33,12 +33,17 @@ describe("reading qualifiers out of a typed query", () => {
       review: "changes-requested",
       checks: "failing",
     });
+    expect(parsePullRequestQuery("-draft:true").filters).toEqual({ draft: "hide" });
   });
 
   it("leaves an unknown value and a stray colon as text, and reads an unknown key as a label", () => {
     const parsed = parsePullRequestQuery("milestone:v2 draft:maybe status: parser");
     expect(parsed.filters).toEqual({ labels: [["milestone:v2"]] });
     expect(parsed.text).toBe("draft:maybe status: parser");
+    expect(parsePullRequestQuery("review:constructor checks:__proto__ Status:toString")).toEqual({
+      text: "review:constructor checks:__proto__ Status:toString",
+      filters: {},
+    });
   });
 
   it("reads a quoted name holding a comma as the one label it is", () => {
@@ -53,13 +58,30 @@ describe("reading qualifiers out of a typed query", () => {
     ]);
   });
 
+  // regression: #30131 a query pasted from github.com lists nothing
+  it("ignores GitHub's own search qualifiers instead of reading them as labels", () => {
+    expect(
+      parsePullRequestQuery(
+        "is:pr state:open archived:false repo:org/repo org:org user:alice sort:updated-desc -repo:org/fork -state:closed fix",
+      ),
+    ).toEqual({ text: "fix", filters: {} });
+  });
+
+  it("sets no author when the query names more than one", () => {
+    expect(parsePullRequestQuery("author:alice author:bob").filters).toEqual({});
+    expect(parsePullRequestQuery("author:me author:@me").filters).toEqual({ author: "me" });
+  });
+
   it("cuts a typed query back to what the contract carries", () => {
     const many = Array.from({ length: 14 }, (_, index) => `l${index}`).join(",");
     const long = "x".repeat(240);
-    const parsed = parsePullRequestQuery(`label:${many} label:${long} author:${long}`);
+    const parsed = parsePullRequestQuery(
+      `label:${many} label:${long} author:${long} ${"fix ".repeat(80)}`,
+    );
     expect(parsed.filters.labels?.[0]).toHaveLength(10);
     expect(parsed.filters.labels?.[1]).toEqual(["x".repeat(200)]);
     expect(parsed.filters.author).toBe("x".repeat(200));
+    expect(parsed.text).toBe("fix ".repeat(50).trim());
   });
 });
 

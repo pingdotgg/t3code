@@ -1,4 +1,5 @@
 import { assert, it, describe } from "@effect/vitest";
+import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import {
   EventId,
   MessageId,
@@ -19,6 +20,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import { vi } from "vite-plus/test";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -30,6 +33,8 @@ import {
   THREAD_HISTORY_PAGE_POLICY,
 } from "./threadHistoryPaging.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
+
+vi.mock("@t3tools/shared/threadFindText", { spy: true });
 
 const layerTest = Layer.mergeAll(EventStore.layer, ProjectionStore.layer, ProjectStore.layer).pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
@@ -367,6 +372,28 @@ describe("V2 thread find", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("skips the empty-response fallback the timeline hides beside an HTML render", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      const shownRunId = RunId.make("run:shown");
+      yield* commit([run(threadId, shownRunId, 2)]);
+      yield* putItems([
+        {
+          ...item("render", 0, ""),
+          type: "dynamic_tool",
+          toolName: "html_render",
+          input: {},
+          output: { htmlRender: { attachmentId: "visual", title: "Result", height: 120 } },
+        },
+        item("hidden", 1, ""),
+        { ...item("shown", 2, ""), runId: shownRunId },
+      ]);
+      const result = yield* projection.searchThread({ threadId, query: "empty" });
+      assert.equal(result.totalMatches, 1);
+      assert.equal(result.match?.entryId, "shown");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("searches displayed skill labels and invalidates parsed text when labels change", () =>
     Effect.gen(function* () {
       const projection = yield* setup;
@@ -460,6 +487,40 @@ describe("V2 thread find", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("keeps its caches while Find is in use and drops them after one idle minute", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      yield* putItems([item("one", 1, "idle needle one"), item("two", 2, "idle needle two")]);
+      const parses = () =>
+        vi
+          .mocked(searchableMessageSegments)
+          .mock.calls.filter(([message]) => message.text.startsWith("idle needle")).length;
+      const search = (query: string) => projection.searchThread({ threadId, query });
+      // One idle minute passes inside this search. The later counts fail if it let the caches go.
+      yield* projection.searchThreadStream({ threadId, query: "needle" }).pipe(
+        Stream.tap((frame) =>
+          frame.complete === false ? TestClock.adjust("1 minute") : Effect.void,
+        ),
+        Stream.runDrain,
+      );
+      assert.equal(parses(), 2);
+      yield* TestClock.adjust("40 seconds");
+      yield* search("idle");
+      yield* TestClock.adjust("40 seconds");
+      // A repeated query is answered from the completed scan and still counts as use.
+      const repeated = yield* projection
+        .searchThreadStream({ threadId, query: "needle" })
+        .pipe(Stream.runCollect);
+      assert.equal(repeated.length, 1);
+      yield* TestClock.adjust("40 seconds");
+      yield* search("one");
+      assert.equal(parses(), 2);
+      yield* TestClock.adjust("1 minute");
+      yield* search("needle");
+      assert.equal(parses(), 4);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("invalidates cached counts when streamed text changes or a run rolls back", () =>
     Effect.gen(function* () {
       const projection = yield* setup;
@@ -522,6 +583,50 @@ describe("V2 thread find", () => {
         assert.equal(result.totalMatches, 0);
         assert.isNull(result.match);
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("finds an async answer that started a later run", () =>
+    Effect.gen(function* () {
+      yield* createProject(projectId);
+      const projection = yield* ProjectionStore.ProjectionStoreV2;
+      const queuedRun = RunId.make("run:queued");
+      const answerRun = RunId.make("run:answer");
+      yield* commit([
+        thread(threadId, projectId),
+        run(),
+        run(threadId, queuedRun, 2),
+        run(threadId, answerRun, 3),
+      ]);
+      const requestId = RuntimeRequestId.make("late");
+      const question: OrchestrationV2TurnItem = {
+        ...item("question", 1, ""),
+        type: "user_input_request",
+        requestId,
+        questions: [],
+        questionAnswer: { requestId, answers: {}, attachmentsByQuestionId: {} },
+      };
+      const items = [
+        question,
+        { ...item("queued", 2, "queued follow-up", "user_message"), runId: queuedRun },
+        { ...item(`async-answer:${requestId}`, 3, "needle", "user_message"), runId: answerRun },
+      ];
+      yield* commit(
+        items.map((payload) => ({
+          id: EventId.make(`${payload.id}:initial`),
+          threadId,
+          occurredAt: at(1),
+          type: "turn-item.updated" as const,
+          payload,
+        })),
+      );
+      const result = yield* projection.searchThread({ threadId, query: "needle" });
+      assert.equal(result.totalMatches, 1);
+      assert.deepEqual(result.match, {
+        entryId: `async-answer:${requestId}`,
+        runId: answerRun,
+        occurrence: 0,
+      });
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect(

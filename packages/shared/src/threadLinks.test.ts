@@ -117,6 +117,16 @@ describe("thread links", () => {
       relabelThreadLinks("[Kept label](<t3-thread://v2/local/t1>)", local, () => undefined),
     ).toBe("Kept label");
     expect(threadLinkRefs("[a](<t3-thread://v2/there/t2>)", local)).toEqual([ref("there", "t2")]);
+    for (const threadId of ["mcp:launch:qa(1)", "mcp:launch:qa)"]) {
+      const thread = ref("there", threadId);
+      const link = formatThreadLink(thread, "Original");
+      expect(link).toBe(`[Original](<t3-thread://v2/there/${threadId}>)`);
+      expect(threadLinkRefs(link, local)).toEqual([thread]);
+      expect(relabelThreadLinks(link, local, () => "Renamed")).toBe(
+        `[Renamed](<t3-thread://v2/there/${threadId}>)`,
+      );
+      expect(relabelThreadLinks(link, local, () => undefined)).toBe("Original");
+    }
   });
 
   it("turns a v2 link it cannot resolve into plain text, never the raw link", () => {
@@ -250,5 +260,30 @@ describe("hosted thread links", () => {
     expect(threadLinkRefs("Open https://app.t3.codes/threads/there/t%3A1", local)).toEqual([
       ref("there", "t:1"),
     ]);
+  });
+
+  it("leaves a hosted link that is part of another link as written", () => {
+    const hosted = "https://app.t3.codes/threads/there/t1";
+    const relabeled = "[There](t3-thread://v2/there/t1)";
+    const title = titlesIn({ there: { t1: "There" } });
+    for (const [markdown, expected] of [
+      [`https://example.com/?next=${hosted}`],
+      [`[Example](https://example.com/?next=${hosted})`],
+      [`[ ${hosted} ](https://example.com)`],
+      [`[${hosted}](<https://example.com/a b> "Title")`],
+      [`[a](https://example.com/x_(y)) ${hosted}`, `[a](https://example.com/x_(y)) ${relabeled}`],
+      [`(${hosted}) **${hosted}**`, `(${relabeled}) **${relabeled}**`],
+      [`[[[ [old](${hosted})`, `[[[ ${relabeled}`],
+      [`\\\\[old](${hosted})`, `\\\\${relabeled}`],
+      [`\\\\\\\\[old](${hosted})`, `\\\\\\\\${relabeled}`],
+      [`\\[old](${hosted})`, `\\[old](${relabeled})`],
+      [`\\[ ${hosted} ](https://example.com)`, `\\[ ${relabeled} ](https://example.com)`],
+      ["\\[old](t3-thread://v2/there/t1) \\<t3-thread://v2/there/t1>"],
+    ] as const) {
+      expect(relabelThreadLinks(markdown, local, title)).toBe(expected ?? markdown);
+      expect(threadLinkRefs(markdown, local)).toEqual(
+        expected === undefined ? [] : [ref("there", "t1")],
+      );
+    }
   });
 });
