@@ -126,13 +126,23 @@ export function evaluatePullRequestWatch(
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
     // Required checks can finish between sweeps; detect new names. With no required checks, ignore advisory gate growth.
     const gateGrew = required.length > 0 && gateNames.some((name) => !told.includes(name));
-    // Other checks still pending when required ones passed are owed one wake when all settle.
-    // Only those are owed, so later advisory churn never wakes. One turned required is gate news.
+    // Actions work can start after the gate passes, including same-head retries. Keep its debt
+    // when a workflow placeholder disappears; unrelated advisory churn still stays quiet.
     const owed =
       passedNow && passed
-        ? checks
-            .filter((check) => check.required !== true && owedChecks.includes(check.name))
-            .map((check) => check.name)
+        ? [
+            ...new Set([
+              ...owedChecks,
+              ...checks
+                .filter(
+                  (check) =>
+                    check.required !== true &&
+                    check.status === "pending" &&
+                    workflowRunOf(check.url) !== null,
+                )
+                .map((check) => check.name),
+            ]),
+          ].filter((name) => !required.some((check) => check.name === name))
         : [];
     const settled =
       failed.length === 0 &&
