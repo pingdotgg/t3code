@@ -132,34 +132,32 @@ const refuse = Effect.fn("Workflows.disabled")(function* () {
 });
 
 /** The service with nothing registered and no engine behind it. */
-export const layerDisabled = Layer.succeed(
-  Workflows,
-  Workflows.of({
-    start: refuse,
-    signal: refuse,
-    resume: refuse,
-    cancel: refuse,
-    get: Effect.fn("Workflows.get")(function* (runId) {
-      return yield* new WorkflowRunNotFoundError({ runId });
-    }),
-    list: Effect.fn("Workflows.list")(function* () {
-      return yield* Effect.succeed<ReadonlyArray<WorkflowStore.WorkflowRun>>([]);
-    }),
-    waitFor: Effect.fn("Workflows.waitFor")(function* () {
-      return yield* Effect.never;
-    }),
-    questions: Effect.succeed([]),
-    hooks: Effect.succeed([]),
-    deliver: Effect.fn("Workflows.deliver")(function* () {
-      return yield* Effect.succeed(Option.none<{ readonly runId: string }>());
-    }),
-    stored: Effect.fn("Workflows.stored")(function* () {
-      return yield* Effect.succeed<ReadonlyArray<{ key: string; value: Schema.Json }>>([]);
-    }),
-    storeSet: refuse,
-    storeDelete: refuse,
-    watch: Stream.concat(Stream.make({ workflows: [], runs: [], questions: [] }), Stream.never),
-    counts: Stream.concat(Stream.make({ needsYou: 0, active: 0, total: 0 }), Stream.never),
-    sweep: Effect.void,
+export const disabled = Workflows.of({
+  start: refuse,
+  signal: refuse,
+  resume: refuse,
+  cancel: refuse,
+  get: Effect.fn("Workflows.get")(function* (runId) {
+    return yield* new WorkflowRunNotFoundError({ runId });
   }),
-);
+  list: Effect.fn("Workflows.list")(function* () {
+    return yield* Effect.succeed<ReadonlyArray<WorkflowStore.WorkflowRun>>([]);
+  }),
+  waitFor: Effect.fn("Workflows.waitFor")(function* () {
+    return yield* Effect.never;
+  }),
+  questions: Effect.succeed([]),
+  hooks: Effect.succeed([]),
+  deliver: Effect.fn("Workflows.deliver")(function* () {
+    return yield* Effect.succeed(Option.none<{ readonly runId: string }>());
+  }),
+  stored: Effect.fn("Workflows.stored")(function* () {
+    return yield* Effect.succeed<ReadonlyArray<{ key: string; value: Schema.Json }>>([]);
+  }),
+  storeSet: refuse,
+  storeDelete: refuse,
+  watch: Stream.concat(Stream.make({ workflows: [], runs: [], questions: [] }), Stream.never),
+  counts: Stream.concat(Stream.make({ needsYou: 0, active: 0, total: 0 }), Stream.never),
+  sweep: Effect.void,
+});
+export const layerDisabled = Layer.succeed(Workflows, disabled);
