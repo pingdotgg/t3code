@@ -2,7 +2,6 @@ import {
   isProviderAvailable,
   type ModelSelection,
   type ProviderDriverKind,
-  type ProviderOptionDescriptor,
   type ServerProvider,
 } from "@t3tools/contracts";
 
@@ -131,18 +130,6 @@ function autoLevelOf(selection: ModelSelection): AutoLevel {
   return AUTO_LEVELS.find((level) => level === value) ?? DEFAULT_LEVEL;
 }
 
-/** The `effort` descriptor an `auto` custom model declares, so pickers show Low/Medium/High. */
-export const AUTO_LEVEL_DESCRIPTOR: ProviderOptionDescriptor = {
-  id: "effort",
-  label: "Auto level",
-  type: "select",
-  options: [
-    { id: "low", label: "Low", description: "Sonnet orchestrates; cheaper models do more" },
-    { id: "medium", label: "Medium", description: "Opus orchestrates", isDefault: true },
-    { id: "high", label: "High", description: "Fable orchestrates" },
-  ],
-};
-
 /** Accounts whose 5-hour use differs by less than this many points count as equally far along. */
 const SESSION_BAND_PERCENT = 10;
 
@@ -187,9 +174,12 @@ function peakUsedPercent(provider: ServerProvider): number {
   return Math.max(0, ...(provider.usageLimits?.windows ?? []).map((w) => w.usedPercent ?? 0));
 }
 
-/** Instances that list the `auto` model carry the Auto-mode prompt, so they win ties. */
+/**
+ * Instances named "Auto…" carry the Auto-mode prompt (their launch args), so they win ties. Every
+ * Claude provider lists the Auto levels, so listing them says nothing about the prompt.
+ */
 function isAutoAware(provider: ServerProvider): boolean {
-  return provider.models.some((model) => isAutoModelSlug(model.slug));
+  return /^auto\b/i.test(provider.displayName ?? "");
 }
 
 function usable(provider: ServerProvider, model: string, now: number): boolean {
