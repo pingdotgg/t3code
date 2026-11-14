@@ -1737,6 +1737,11 @@ body {
   overscroll-behavior: none;
 }
 
+/* Chromium applies the root overscroll policy to nested scroll bounce. */
+html.electron {
+  overscroll-behavior-y: contain;
+}
+
 body {
   height: 100%;
   overflow: hidden;
