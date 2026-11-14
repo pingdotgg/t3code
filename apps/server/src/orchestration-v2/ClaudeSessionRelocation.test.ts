@@ -160,18 +160,32 @@ it.effect("supersedes an occupant and a stale subagent folder in the new folder'
 
 it.effect("copies across devices like Claude", () =>
   Effect.gen(function* () {
-    const { fs, oldDir, oldSubs, newSubs, run, expectLayout } = yield* setup();
+    const { fs, record, oldDir, oldSubs, newSubs, run, expectLayout } = yield* setup();
     yield* fs.chmod(oldSubs, 0o755);
     const crossDevice = FileSystem.FileSystem.of({
       ...fs,
       rename: (from, to) =>
-        from.startsWith(oldDir) ? Effect.fail(errno("EXDEV", from)) : fs.rename(from, to),
+        from.startsWith(oldDir) && !to.startsWith(oldDir)
+          ? Effect.fail(errno("EXDEV", from))
+          : fs.rename(from, to),
+      // Removing the folder that holds the subagent transcript deletes that file and then fails.
+      remove: (target, options) =>
+        fs.remove(`${target}/agent-1.jsonl`).pipe(
+          Effect.matchEffect({
+            onFailure: () => fs.remove(target, options),
+            onSuccess: () => Effect.fail(errno("EACCES", target, "remove")),
+          }),
+        ),
     });
 
+    yield* Effect.flip(run(crossDevice, false));
     yield* run(crossDevice);
 
-    yield* expectLayout("new", "new");
-    assert.equal((yield* fs.stat(newSubs)).mode & 0o777, 0o700);
+    yield* expectLayout("new", "new", record, 2);
+    // Windows has no directory modes.
+    if (HostProcess.Platform.defaultValue() !== "win32") {
+      assert.equal((yield* fs.stat(newSubs)).mode & 0o777, 0o700);
+    }
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -266,7 +280,7 @@ it.effect.each([
 );
 
 // The worker does not repeat its last attempt, so the record must already match the disk.
-it.effect.each(["transcript", "subagents", "record"] as const)(
+it.effect.each(["read", "transcript", "subagents", "record"] as const)(
   "records the folder the transcript is in when the last attempt is denied at the %s",
   (at) =>
     Effect.gen(function* () {
@@ -275,6 +289,10 @@ it.effect.each(["transcript", "subagents", "record"] as const)(
         at === "transcript" ? oldFile : at === "subagents" ? oldSubs : undefined;
       const denied = FileSystem.FileSystem.of({
         ...fs,
+        readFileString: (file, encoding) =>
+          at === "read"
+            ? Effect.fail(errno("EACCES", file, "open"))
+            : fs.readFileString(file, encoding),
         rename: (from, to) =>
           from === faultedRename ? Effect.fail(errno("EACCES", from)) : fs.rename(from, to),
         writeFileString: (file, data, options) =>
@@ -282,7 +300,7 @@ it.effect.each(["transcript", "subagents", "record"] as const)(
             ? Effect.fail(errno("EACCES", file, "open"))
             : fs.writeFileString(file, data, options),
       });
-      const moved = at !== "transcript";
+      const moved = at === "subagents" || at === "record";
 
       const outcome = yield* Effect.exit(run(denied, true, true));
 

@@ -126,7 +126,14 @@ const relocateClaudeTranscript = Effect.fn("ClaudeSessionRelocation.relocateTran
                   ),
                 ),
             ),
-            Effect.andThen(fileSystem.remove(from, { recursive: true, force: true })),
+            // One rename takes the copied source off its path, so a repeated move cannot copy a
+            // partly removed source over the complete destination.
+            Effect.andThen(setAside(from)),
+            Effect.flatMap((aside) =>
+              aside === undefined
+                ? Effect.void
+                : fileSystem.remove(aside, { recursive: true, force: true }).pipe(Effect.ignore),
+            ),
           );
         }),
       );
@@ -139,6 +146,8 @@ const relocateClaudeTranscript = Effect.fn("ClaudeSessionRelocation.relocateTran
     const record = encodeJson({ type: "relocated", sessionId: input.sessionId, relocatedCwd });
     const sourcePresent = yield* fileSystem.exists(oldFile);
     if (!sourcePresent && !(yield* fileSystem.exists(newFile))) return;
+    // Read before the move, so a transcript that cannot be read stays in the folder on record.
+    const contents = yield* fileSystem.readFileString(sourcePresent ? oldFile : newFile);
     if (sourcePresent && oldDir !== newDir) {
       yield* fileSystem.makeDirectory(newDir, { recursive: true, mode: 0o700 });
       const [from, to] = yield* Effect.all([fileSystem.stat(oldDir), fileSystem.stat(newDir)]);
@@ -148,7 +157,6 @@ const relocateClaudeTranscript = Effect.fn("ClaudeSessionRelocation.relocateTran
         Effect.tapError(() => restore(superseded, newFile)),
       );
     }
-    const contents = yield* fileSystem.readFileString(newFile);
     // As the SDK does, read which session a transcript belongs to from its first sessionId.
     const owner = Arr.findFirst(contents.split("\n"), (line) => decodeSessionRecord(line));
     if (!sourcePresent && Option.getOrUndefined(owner)?.sessionId !== input.sessionId) {
