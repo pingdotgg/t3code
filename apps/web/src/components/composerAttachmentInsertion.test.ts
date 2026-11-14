@@ -98,6 +98,31 @@ it("maps source-marker rewrites before the paste point when the caret enters sty
   }
 });
 
+it("gives up the paste point when the prompt is replaced wholesale", () => {
+  const editor = createEditor({
+    type: "doc",
+    content: [{ type: "paragraph", content: [{ type: "text", text: "Hello world" }] }],
+  });
+  try {
+    using _alive = vi.spyOn(editor, "isDestroyed", "get").mockReturnValue(false);
+    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 7)));
+    const insertion = captureComposerAttachmentInsertion(editor);
+    editor.commands.setContent(
+      {
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "Hello world @src/a.ts" }] },
+        ],
+      },
+      { emitUpdate: false },
+    );
+    expect(insertion.insert([image])).toBe(false);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("Hello world @src/a.ts");
+  } finally {
+    editor.destroy();
+  }
+});
+
 it("keeps a pending image reference as text inside a code block", () => {
   const editor = createEditor({
     type: "doc",

@@ -15,11 +15,15 @@ import { markAsClipboardEdit } from "../composer-undo-grouping";
 
 export function captureComposerAttachmentInsertion(editor: Editor) {
   let { from, to } = editor.state.selection;
+  let lost = false;
   const track = ({ transaction, appendedTransactions }: EditorEvents["transaction"]) => {
     // Keep the attachment before text typed at the paste point while its image is preparing.
     for (const tr of [transaction, ...appendedTransactions]) {
       const start = tr.mapping.mapResult(from, -1);
       const end = tr.mapping.mapResult(to, -1);
+      // A replacement spanning the paste point (such as a controlled setContent) leaves no
+      // position to keep, so the caller falls back to the current caret.
+      lost ||= start.deletedAcross || end.deletedAcross;
       from = start.pos;
       to = start.deletedAfter || end.deletedBefore ? from : end.pos;
     }
@@ -31,7 +35,7 @@ export function captureComposerAttachmentInsertion(editor: Editor) {
   return {
     insert: (references: ReadonlyArray<ComposerContextReference>): boolean => {
       dispose();
-      if (editor.isDestroyed || references.length === 0) return false;
+      if (lost || editor.isDestroyed || references.length === 0) return false;
       const nodeType = editor.schema.nodes["composer-context-reference"];
       if (!nodeType) return false;
       const map = serializeEditorDoc(editor.state.doc);
