@@ -44,6 +44,7 @@ export function cachedTestTasks(
   if (!Array.isArray(uncached) || !uncached.every((file) => typeof file === "string")) {
     throw new Error("Invalid uncached test files");
   }
+  const uncachedSet = new Set(uncached);
   const files: Array<string> = [];
   for (const file of request.files) {
     if (
@@ -86,18 +87,18 @@ export function cachedTestTasks(
     if (!command.startsWith("vp test run")) {
       throw new Error(`Unsupported test command in ${directory}`);
     }
-    const cacheable = entries.filter((file) => !uncached.includes(file));
+    const cacheable = entries.filter((file) => !uncachedSet.has(file));
     const groups: Array<Array<string>> = [];
     for (let index = 0; index < cacheable.length; index += request.groupSize) {
       groups.push(cacheable.slice(index, index + request.groupSize));
     }
-    groups.push(...entries.filter((file) => uncached.includes(file)).map((file) => [file]));
+    groups.push(...entries.filter((file) => uncachedSet.has(file)).map((file) => [file]));
     for (const group of groups) {
       const key = NodeCrypto.createHash("sha256").update(group.join("\0")).digest("hex");
       tasks[`test-cache:${key}`] = {
         command: `${command} ${group.map((file) => `'${NodePath.relative(directory, NodePath.join(root, file)).replaceAll("'", "'\"'\"'")}'`).join(" ")}`,
         ...(directory === root ? {} : { cwd: NodePath.relative(root, directory) }),
-        cache: uncached.includes(group[0]!)
+        cache: uncachedSet.has(group[0]!)
           ? false
           : {
               // Vitest reads and rewrites these caches while running otherwise unchanged tests.
