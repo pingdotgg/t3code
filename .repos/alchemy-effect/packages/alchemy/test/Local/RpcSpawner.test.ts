@@ -1,9 +1,18 @@
+import { describe, expect, it } from "@alchemy.run/test";
+import { newWebSocketRpcSession, type RpcStub } from "capnweb";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 import { unwrapRpcHandlers } from "@/Local/RpcSerialization.ts";
 import type { RpcProxyApi } from "@/Local/RpcServer.ts";
-import {
-  encodeSessionEnvironment,
-  SESSION_ENV_PARAM,
-} from "@/Local/RpcServerEnvironment.ts";
+import { encodeSessionEnvironment, SESSION_ENV_PARAM } from "@/Local/RpcServerEnvironment.ts";
 import {
   layerServer,
   RpcSpawner,
@@ -12,18 +21,6 @@ import {
   type RpcSpawnPayload,
 } from "@/Local/RpcSpawner.ts";
 import { PlatformServices } from "@/Util/PlatformServices.ts";
-import { describe, expect, it } from "alchemy-test";
-import { newWebSocketRpcSession, type RpcStub } from "capnweb";
-import * as Duration from "effect/Duration";
-import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
-import * as Stream from "effect/Stream";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import * as HttpBody from "effect/http/HttpBody";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import {
   assertPidExited,
   canOpenWebSocket,
@@ -32,27 +29,14 @@ import {
   pgidOf,
   pidListeningOn,
 } from "./fixtures/process-effect.ts";
+import type { EchoClient } from "./fixtures/rpc-echo.ts";
 
-const FIXTURE_TS_URL = new URL(
-  "./fixtures/rpc-server-entry.ts",
-  import.meta.url,
-).toString();
-const FIXTURE_B_TS_URL = new URL(
-  "./fixtures/rpc-server-entry-b.ts",
-  import.meta.url,
-).toString();
-const CRASH_FIXTURE_TS_URL = new URL(
-  "./fixtures/rpc-server-crash.ts",
-  import.meta.url,
-).toString();
-const LOGS_FIXTURE_TS_URL = new URL(
-  "./fixtures/rpc-server-logs.ts",
-  import.meta.url,
-).toString();
+const FIXTURE_TS_URL = new URL("./fixtures/rpc-server-entry.ts", import.meta.url).toString();
+const FIXTURE_B_TS_URL = new URL("./fixtures/rpc-server-entry-b.ts", import.meta.url).toString();
+const CRASH_FIXTURE_TS_URL = new URL("./fixtures/rpc-server-crash.ts", import.meta.url).toString();
+const LOGS_FIXTURE_TS_URL = new URL("./fixtures/rpc-server-logs.ts", import.meta.url).toString();
 
-const samplePayload = (serverEntryUrl: string): RpcSpawnPayload => ({
-  serverEntryUrl,
-});
+const samplePayload = (serverEntryUrl: string): RpcSpawnPayload => ({ serverEntryUrl });
 
 // The spawner inherits the runtime that vitest itself is running under
 // (it shells out to `bun` or `node` based on `typeof Bun`). These tests
@@ -87,6 +71,45 @@ describe(
     );
 
     it.live(
+      "omitEnv withholds matching env vars from the sidecar",
+      () =>
+        Effect.acquireUseRelease(
+          Effect.sync(() => {
+            process.env.ALCHEMY_TEST_OMITTED_SECRET = "omitted";
+            process.env.ALCHEMY_TEST_KEPT_VALUE = "kept";
+          }),
+          () =>
+            Effect.gen(function* () {
+              const url = yield* RpcSpawner.useSync((spawner) => spawner.url);
+              const wsUrl = yield* post(url, samplePayload(FIXTURE_TS_URL));
+              const env = yield* sidecarEnv(wsUrl, [
+                "ALCHEMY_TEST_OMITTED_SECRET",
+                "ALCHEMY_TEST_KEPT_VALUE",
+              ]);
+              expect(env).toEqual([undefined, "kept"]);
+            }).pipe(
+              Effect.provide(
+                Layer.provideMerge(
+                  layerServer({
+                    profile: undefined,
+                    envFile: undefined,
+                    omitEnv: ["ALCHEMY_TEST_OMITTED_"],
+                  }),
+                  Layer.merge(PlatformServices, FetchHttpClient.layer),
+                ),
+              ),
+            ),
+          () =>
+            Effect.sync(() => {
+              delete process.env.ALCHEMY_TEST_OMITTED_SECRET;
+              delete process.env.ALCHEMY_TEST_KEPT_VALUE;
+            }),
+        ),
+      // sets process-global env vars the sidecar inherits at spawn
+      { timeout: 60_000, exclusive: true },
+    );
+
+    it.live(
       "rejects malformed spawn payloads and non-file URLs",
       () =>
         Effect.gen(function* () {
@@ -118,9 +141,7 @@ describe(
         Effect.gen(function* () {
           const url = yield* RpcSpawner.useSync((spawner) => spawner.url);
           const client = yield* HttpClient.HttpClient;
-          const response = yield* client.get(
-            new URL(LOGS_PATH, url).toString(),
-          );
+          const response = yield* client.get(new URL(LOGS_PATH, url).toString());
           const frames = yield* response.stream.pipe(
             Stream.decodeText,
             Stream.splitLines,
@@ -130,10 +151,7 @@ describe(
             Stream.runCollect,
             Effect.timeout(Duration.seconds(7)),
           );
-          expect(Array.from(frames)).toEqual([
-            { channel: "heartbeat" },
-            { channel: "heartbeat" },
-          ]);
+          expect(Array.from(frames)).toEqual([{ channel: "heartbeat" }, { channel: "heartbeat" }]);
         }).pipe(Effect.provide(services)),
       { timeout: 10_000 },
     );
@@ -228,16 +246,11 @@ describe(
             return { unusable: !usable } as const;
           }).pipe(
             Effect.flatMap((r) =>
-              r.unusable
-                ? Effect.void
-                : Effect.fail(new Error("endpoint was still usable")),
+              r.unusable ? Effect.void : Effect.fail(new Error("endpoint was still usable")),
             ),
             // Mirrors the original `for (let i = 0; i < 4 && !failed; i++)`
             // loop: up to 4 retries spaced 250ms apart.
-            Effect.retry({
-              schedule: Schedule.spaced(Duration.millis(250)),
-              times: 4,
-            }),
+            Effect.retry({ schedule: Schedule.spaced(Duration.millis(250)), times: 4 }),
           );
         }).pipe(Effect.provide(services)),
       { timeout: 60_000 },
@@ -253,15 +266,11 @@ describe(
           // Subscribe BEFORE spawning (headers received = subscription
           // registered server-side) — with a subscriber connected, the
           // spawner must route sidecar output here instead of its console.
-          const response = yield* client.get(
-            new URL(LOGS_PATH, url).toString(),
-          );
+          const response = yield* client.get(new URL(LOGS_PATH, url).toString());
           const collector = yield* response.stream.pipe(
             Stream.decodeText,
             Stream.splitLines,
-            Stream.map(
-              (line) => JSON.parse(line) as { channel: string; line?: string },
-            ),
+            Stream.map((line) => JSON.parse(line) as { channel: string; line?: string }),
             // drop heartbeats (no `line`) and any non-fixture noise
             Stream.filter(
               (entry): entry is { channel: string; line: string } =>
@@ -276,14 +285,10 @@ describe(
           expect(wsUrl).toMatch(/^ws:\/\//);
 
           const received = Array.from(
-            yield* Fiber.join(collector).pipe(
-              Effect.timeout(Duration.seconds(20)),
-            ),
+            yield* Fiber.join(collector).pipe(Effect.timeout(Duration.seconds(20))),
           );
           const channels = new Set(received.map((entry) => entry.channel));
-          expect(
-            received.every((entry) => entry.line.startsWith("fixture-")),
-          ).toBe(true);
+          expect(received.every((entry) => entry.line.startsWith("fixture-"))).toBe(true);
           expect(channels.has("stdout")).toBe(true);
           expect(channels.has("stderr")).toBe(true);
         }).pipe(Effect.provide(services)),
@@ -304,19 +309,14 @@ const postRaw = (
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     const req = HttpClientRequest.post(url).pipe(
-      HttpClientRequest.setBody(
-        HttpBody.text(JSON.stringify(body), "application/json"),
-      ),
+      HttpClientRequest.setBody(HttpBody.text(JSON.stringify(body), "application/json")),
     );
     const res = yield* client.execute(req);
     const text = yield* res.text;
     return { status: res.status, body: text };
   }).pipe(Effect.orDie);
 
-const post = (
-  url: string,
-  body: unknown,
-): Effect.Effect<string, Error, HttpClient.HttpClient> =>
+const post = (url: string, body: unknown): Effect.Effect<string, Error, HttpClient.HttpClient> =>
   postRaw(url, body).pipe(
     Effect.flatMap((r) =>
       r.status === 200
@@ -325,10 +325,20 @@ const post = (
     ),
   );
 
-const echoWebSocket = (
+const echoWebSocket = (rpcUrl: string, msg: string): Effect.Effect<string, Error> =>
+  withEchoHandlers(rpcUrl, (handlers) => handlers.echo(msg));
+
+/** Read env vars as the sidecar process sees them. */
+const sidecarEnv = (
   rpcUrl: string,
-  msg: string,
-): Effect.Effect<string, Error> =>
+  keys: ReadonlyArray<string>,
+): Effect.Effect<Array<string | undefined>, Error> =>
+  withEchoHandlers(rpcUrl, (handlers) => Effect.forEach(keys, handlers.env));
+
+const withEchoHandlers = <A>(
+  rpcUrl: string,
+  use: (handlers: Pick<EchoClient, "echo" | "env">) => Effect.Effect<A>,
+): Effect.Effect<A, Error> =>
   Effect.gen(function* () {
     yield* openWebSocket(new URL("/parent", rpcUrl));
     // Sessions carry their stack environment (real clients — the
@@ -337,11 +347,7 @@ const echoWebSocket = (
     sessionUrl.searchParams.set(
       SESSION_ENV_PARAM,
       encodeSessionEnvironment({
-        alchemyContext: {
-          dotAlchemy: "/tmp/.alchemy",
-          dev: true,
-          adopt: false,
-        },
+        alchemyContext: { dotAlchemy: "/tmp/.alchemy", dev: true, adopt: false },
         stack: { name: "test", stage: "dev" },
       }),
     );
@@ -349,13 +355,9 @@ const echoWebSocket = (
       // Cast through `unknown`: comparing capnweb's deeply-recursive Stub
       // type against RpcStub<RpcProxyApi> exceeds the compiler's
       // instantiation depth (TS2589/TS2321).
-      const stub = newWebSocketRpcSession(
-        sessionUrl.toString(),
-      ) as unknown as RpcStub<RpcProxyApi>;
+      const stub = newWebSocketRpcSession(sessionUrl.toString()) as unknown as RpcStub<RpcProxyApi>;
       const provider = await stub.getProvider("Test.Echo", FIXTURE_TS_URL);
-      const handlers = unwrapRpcHandlers(provider as any) as {
-        echo: (m: string) => Effect.Effect<string>;
-      };
-      return await Effect.runPromise(handlers.echo(msg));
+      const handlers = unwrapRpcHandlers(provider as any) as Pick<EchoClient, "echo" | "env">;
+      return await Effect.runPromise(use(handlers));
     });
   }).pipe(Effect.scoped);
