@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -52,6 +53,9 @@ export type RoutePreflight = "ready" | "unprepared" | "silent" | "unchecked";
 
 const ROUTE_CHECK_TIMEOUT_MS = 2_500;
 const GRANT_CHECK_TIMEOUT_MS = 6_000;
+// The T3 Connect sign-in loads after launch, often after the first route check.
+const SESSION_PENDING_RETRY = Schedule.spaced("1 second");
+const SESSION_PENDING_RETRIES = 30;
 // Preferred direct routes share one head start, so a relay connection does not
 // wait the full probe timeout for a LAN the device has already left. A route
 // that misses it connects over relay, then upgrades with a second reconnect.
@@ -309,6 +313,13 @@ export const make = Effect.gen(function* () {
       return Option.none<RouteGrant>();
     }
     return yield* resolver.prepare(routeEntry(entry, route)).pipe(
+      // Reporting the route silent here would back it off for minutes.
+      Effect.retry({
+        schedule: SESSION_PENDING_RETRY,
+        times: SESSION_PENDING_RETRIES,
+        while: (error) =>
+          error._tag === "ConnectionTransientError" && error.reason === "session-pending",
+      }),
       Effect.flatMap(askGrant),
       Effect.orElseSucceed(() => Option.none<RouteGrant>()),
     );
