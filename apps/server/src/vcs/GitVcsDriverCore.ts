@@ -69,6 +69,10 @@ const branchBaseConfigKey = (branch: string) => `branch.${branch}.t3-merge-base`
  * CLI's key, which branches cut before then still carry instead.
  */
 const legacyBranchBaseConfigKey = (branch: string) => `branch.${branch}.gh-merge-base`;
+// Differently named upstreams are bases, not publish targets; pushing HEAD there would write features to shared branches.
+const isAliasOfUpstreamHead = (branch: string, upstreamBranch: string, upstreamRef: string) =>
+  branch === upstreamBranch ||
+  (branch.endsWith(`/${upstreamBranch}`) && upstreamRef.endsWith(`/${branch}`));
 const gitProcesses = Semaphore.makeUnsafe(8);
 const backgroundGitProcesses = Semaphore.makeUnsafe(2);
 // The fetch before `git worktree add` downloads everything the remote gained since
@@ -2956,11 +2960,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : null;
       const configuredRemoteName = yield* readConfigValue(cwd, `branch.${branch}.remote`);
       if (mergeBranch && configuredRemoteName && configuredRemoteName !== ".") {
-        if (
-          mergeBranch === branch ||
-          (branch.endsWith(`/${mergeBranch}`) &&
-            `${configuredRemoteName}/${mergeBranch}`.endsWith(`/${branch}`))
-        ) {
+        if (isAliasOfUpstreamHead(branch, mergeBranch, `${configuredRemoteName}/${mergeBranch}`)) {
           goneUpstream = { remoteName: configuredRemoteName, branchName: mergeBranch };
         } else {
           goneBaseUpstream = {
@@ -2976,7 +2976,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const branchName =
         goneUpstream?.branchName ??
         (configuredRemoteName === "." ? branch : yield* resolvePublishBranchName(cwd, branch));
-      return { remoteName, branchName, publishes: true, upstream: goneBaseUpstream, pushRemote: null };
+      return {
+        remoteName,
+        branchName,
+        publishes: true,
+        upstream: goneBaseUpstream,
+        pushRemote: null,
+      };
     }
 
     if ((yield* readConfigValue(cwd, `branch.${branch}.remote`)) === ".") {
@@ -3000,11 +3006,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     const upstream = yield* resolveCurrentUpstream(cwd).pipe(Effect.orElseSucceed(() => null));
     if (!upstream) return null;
-    // Differently named upstreams are bases, not publish targets; pushing HEAD there would write features to shared branches.
-    const isAliasOfUpstreamHead =
-      branch === upstream.branchName ||
-      (branch.endsWith(`/${upstream.branchName}`) && upstream.upstreamRef.endsWith(`/${branch}`));
-    if (isAliasOfUpstreamHead) {
+    if (isAliasOfUpstreamHead(branch, upstream.branchName, upstream.upstreamRef)) {
       // A fork workflow pushes to the configured push remote and keeps the upstream for pulls, as plain `git push` does.
       const configuredPushRemote = yield* resolveConfiguredPushRemoteName(cwd, branch).pipe(
         Effect.orElseSucceed(() => null),
