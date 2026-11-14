@@ -637,6 +637,11 @@ The check is the one to trust; several review findings did not hold.
 
 ## Branches
 
+- `t3/1e495946` (review fixes in source control and text generation, 2026-11-14, not merged):
+  all 31 checks pass on macOS (`check exit: 0`, none skipped). An earlier run on the loaded
+  machine failed `codex conformance` (a shutdown kill at 1.9 s against 0.1 s) and
+  `acp conformance` (a missing `stdin-closed`) once each. Both passed on the rerun.
+
 - `t3/32cd278b` (text generators, titles, `runNow`, the redacting `Debug`): all 31 checks pass
   on macOS (2026-11-14). No new dependency; the release binary grew by 93,648 bytes
   (16,558,944 to 16,652,592, macOS arm64).
