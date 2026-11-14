@@ -75,3 +75,28 @@ it.each(plugins)("%s finds each escape's word after earlier escapes in the text"
     ],
   });
 });
+
+it.each([
+  [String.raw`C:\work folder\.t3\shot.png`, String.raw`C:\work folder\.t3\shot.png`],
+  [String.raw`C:\R&D folder\.t3\shot.png`, String.raw`C:\R&D folder\.t3\shot.png`],
+  [String.raw`C:\R&amp;D folder\.t3\shot.png`, String.raw`C:\R&D folder\.t3\shot.png`],
+])(
+  "keeps separators in Windows destinations containing ampersands: %s",
+  (destination, expected) => {
+    const processor = unified().use(remarkParse).use(remarkKeepWindowsPaths);
+    const markdown = `![shot](<${destination}>) [link](<${destination}>)\n\n[ref]: <${destination}>`;
+    expect(processor.parse(markdown)).toMatchObject({
+      children: [
+        {
+          type: "paragraph",
+          children: [
+            { type: "image", url: expected },
+            { type: "text" },
+            { type: "link", url: expected },
+          ],
+        },
+        { type: "definition", url: expected },
+      ],
+    });
+  },
+);

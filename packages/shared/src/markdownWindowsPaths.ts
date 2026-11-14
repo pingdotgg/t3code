@@ -1,3 +1,4 @@
+import { decodeString } from "micromark-util-decode-string";
 import type { Processor } from "unified";
 import { isWindowsAbsolutePath } from "./path.ts";
 
@@ -11,9 +12,12 @@ function keepWindowsPathDestination(this: DestinationCompileContext, token: unkn
   const decoded = this.resume();
   const authored = this.sliceSerialize(token);
   const node = this.stack.at(-1);
-  // Character references still need decoding, so those destinations keep the parsed URL.
+  // Escaping each separator keeps it while character references still decode. `\&` stays an
+  // escape, as mobile's `markdownWithWindowsPathDestinations` reads it.
   if (node)
-    node.url = isWindowsAbsolutePath(authored) && !authored.includes("&") ? authored : decoded;
+    node.url = isWindowsAbsolutePath(authored)
+      ? decodeString(authored.replace(/\\(?!&)/g, "\\\\"))
+      : decoded;
 }
 
 // A drive path that has not reached whitespace yet: `C:`, `C:\Users\me`, `C:/work`.
