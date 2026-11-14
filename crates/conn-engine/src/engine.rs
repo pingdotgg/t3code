@@ -273,6 +273,20 @@ impl SqliteEngine {
 
     /// Puts a completed run back to `waiting` with no checkpoint, as a kill between the
     /// provider's end and the capture leaves it.
+    /// Holds a workspace's checkpoint lock, so a capture or a rollback there waits.
+    #[cfg(test)]
+    pub(crate) async fn test_hold_workspace(
+        &self,
+        cwd: &str,
+    ) -> crate::checkpoint::WorkspaceLock<'_> {
+        self.inner
+            .checkpoints
+            .as_ref()
+            .expect("checkpoints on")
+            .workspace(cwd)
+            .await
+    }
+
     #[cfg(test)]
     pub(crate) async fn test_force_waiting(&self, thread_id: &str, run_id: &str) {
         let (tid, rid) = (thread_id.to_owned(), run_id.to_owned());

@@ -1060,3 +1060,75 @@ async fn a_restart_finishes_or_fails_a_rollback_left_pending() {
         }
     }
 }
+
+/// A rollback admitted while a run still waits for its checkpoint runs after that capture, so
+/// it rolls that run back too (review finding 2.2): T3 runs `checkpoint.capture` as an effect
+/// in the thread's lane. The workspace lock holds the capture back while the rollback comes in.
+#[tokio::test(flavor = "current_thread")]
+async fn a_rollback_admitted_while_a_run_waits_for_its_capture_rolls_it_back() {
+    let db = TempDb::new("rb-waiting");
+    let repo = Repo::new("rb-waiting");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let target = checkpoint_at(&p, 1);
+    let cwd = p["checkpointScopes"][0]["cwd"].as_str().unwrap().to_owned();
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    dispatch(&engine, message("t1", "c3", "hang")).await;
+    until_provider_turn(&mut stream).await;
+    let held = engine.test_hold_workspace(&cwd).await;
+    // The steer ends the provider turn; the run then waits for its capture.
+    dispatch(
+        &engine,
+        message_with(
+            "t1",
+            "c4",
+            "finish",
+            json!({"type": "steer_active", "targetRunId": "run:t1:3"}),
+            None,
+        ),
+    )
+    .await;
+    until(&engine, |p| p["runs"][2]["status"] == "waiting").await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    dispatch(&engine, rollback("rb-1", &target, None)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    drop(held);
+    let p = until(&engine, |p| {
+        p["runs"][1]["status"] == "rolled_back" || p["thread"]["rollbackFailure"].is_object()
+    })
+    .await;
+    // Both writes are done once the lane is empty again.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let p = if p["runs"][2]["status"] == "waiting" {
+        until(&engine, |p| p["runs"][2]["status"] != "waiting").await
+    } else {
+        projection(&engine, "t1").await
+    };
+    let statuses: Vec<_> = p["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["status"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        statuses,
+        ["completed", "rolled_back", "rolled_back"],
+        "the waiting run is rolled back too"
+    );
+    assert_eq!(
+        checkpoint_at(&p, 3)["status"],
+        "stale",
+        "its checkpoint too"
+    );
+}

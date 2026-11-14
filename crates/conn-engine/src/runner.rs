@@ -222,7 +222,14 @@ impl Inner {
             .await;
         match next {
             Ok(Some(effects)) => effects.into_iter().for_each(|e| self.spawn_effect(e)),
-            Ok(None) => return self.capture_run(thread, run).await,
+            // `checkpoint.capture` waits in the thread's lane, as T3's effect: a rollback admitted
+            // meanwhile runs after it and sees the run completed. The capture ends the run's end.
+            Ok(None) => {
+                return self.spawn_effect(crate::commands::Effect::CaptureCheckpoint {
+                    thread_id: thread,
+                    run_id: run,
+                });
+            }
             Err(e) => eprintln!("conn-engine: could not end run: {e}"),
         }
         if let Some(observer) = &self.observer {
