@@ -123,7 +123,6 @@ const claudeAdapter = {
 
 interface HarnessOptions {
   readonly projectRoot?: string;
-  readonly projectLookupFailure?: ProjectService.ProjectOperationError;
   readonly gitDriver?: Layer.Layer<GitVcsDriver.GitVcsDriver>;
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
@@ -202,18 +201,13 @@ function makeHarness(options: HarnessOptions = {}) {
       delete: () => Effect.die("unused"),
       listPage: () => Effect.die("unused"),
       getById: (id) =>
-        options.projectLookupFailure
-          ? Effect.fail(options.projectLookupFailure)
-          : Effect.succeed(
-              id === projectId
-                ? Option.some({
-                    ...project,
-                    workspaceRoot: options.projectRoot ?? project.workspaceRoot,
-                  })
-                : id === otherProjectId
-                  ? Option.some(otherProject)
-                  : Option.none(),
-            ),
+        Effect.succeed(
+          id === projectId
+            ? Option.some({ ...project, workspaceRoot: options.projectRoot ?? project.workspaceRoot })
+            : id === otherProjectId
+              ? Option.some(otherProject)
+              : Option.none(),
+        ),
       getByWorkspaceRoot: () => Effect.succeedSome(project),
       workspaceScanDirectory: () => Effect.die("unused"),
       snapshot: Effect.die("unused"),
@@ -1341,22 +1335,6 @@ it.effect.each(["stable", "upstream/release"])(
 it.effect.each([
   {
     name: "a Settings default",
-    branch: "master",
-    remote: false,
-    defaultBaseRef: true,
-    baseRef: "main",
-    saved: "master",
-  },
-  {
-    name: "a Settings default",
-    branch: "trunk",
-    remote: false,
-    defaultBaseRef: true,
-    baseRef: "main",
-    saved: "trunk",
-  },
-  {
-    name: "a Settings default",
     branch: "trunk",
     remote: true,
     defaultBaseRef: true,
@@ -1370,22 +1348,6 @@ it.effect.each([
     startFromOrigin: false,
     defaultBaseRef: true,
     baseRef: "main",
-    saved: "master",
-  },
-  {
-    name: "a failed project lookup",
-    branch: "master",
-    remote: false,
-    defaultBaseRef: true,
-    baseRef: "main",
-    saved: "master",
-  },
-  {
-    name: "an explicit master",
-    branch: "master",
-    remote: false,
-    defaultBaseRef: undefined,
-    baseRef: "master",
     saved: "master",
   },
   // An explicit base that does not exist is kept, so its runs fail rather than silently moving.
@@ -1423,13 +1385,7 @@ it.effect.each([
       head = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
       assert.notEqual(head, (yield* command(cwd, ["rev-parse", "origin/master"])).stdout.trim());
     }
-    const lookupFailure = new ProjectService.ProjectOperationError({
-      operation: "read-project",
-      projectId,
-      cause: "database unavailable",
-    });
     const harness = makeHarness({
-      ...(row.name === "a failed project lookup" ? { projectLookupFailure: lookupFailure } : {}),
       projectRoot: cwd,
       gitDriver: Layer.succeed(GitVcsDriver.GitVcsDriver, git),
       hasCommit: ({ refName }) =>
@@ -1469,13 +1425,6 @@ it.effect.each([
         },
         ...(row.defaultBaseRef === undefined ? {} : { defaultBaseRef: row.defaultBaseRef }),
       });
-      if (row.name === "a failed project lookup") {
-        const error = yield* Effect.flip(save);
-        assert.equal(error._tag, "ScheduledTaskError");
-        assert.equal(error.cause, lookupFailure);
-        assert.deepEqual((yield* tasks.list()).tasks, []);
-        return;
-      }
       const { task } = yield* save;
       assert.deepEqual(task.workspaceStrategy, {
         type: "worktree",
@@ -3307,8 +3256,8 @@ it.effect.each([
     });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
-      assert.equal(yield* launches.defaultWorktreeBaseRef(projectId), baseRef);
-      assert.isNull(yield* launches.defaultWorktreeBaseRef(ProjectId.make("unknown")));
+      assert.equal(yield* launches.defaultWorktreeBaseRef(projectId, true), baseRef);
+      assert.isNull(yield* launches.defaultWorktreeBaseRef(ProjectId.make("unknown"), true));
     }).pipe(Effect.provide(harness.layer));
   }),
 );

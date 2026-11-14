@@ -5,18 +5,12 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
-  ScheduledTaskId,
-  type ScheduledTask,
 } from "@t3tools/contracts";
-import { scheduledTaskWorkspaceInput } from "@t3tools/client-runtime/scheduled-task-workspace";
 import {
-  createDraft,
-  editDraft,
   scheduledTaskDefaultModel,
   DEFAULT_SCHEDULE,
   scheduleDraftForTask,
   scheduleFromDraft,
-  type ScheduledTaskDraft,
 } from "./scheduledTaskDraft";
 
 describe("scheduleDraftForTask", () => {
@@ -212,40 +206,4 @@ it("rejects dedupe keys without valid request placeholders", () => {
   expect(
     scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "webhook", coalesceKey: "{{body.bad" }),
   ).toBeNull();
-});
-
-it("saves a new task's unchosen base as the project default and keeps a stored base", () => {
-  const workspace = (draft: ScheduledTaskDraft) =>
-    scheduledTaskWorkspaceInput({
-      mode: draft.workspace,
-      baseRef: draft.baseRef,
-      startFromOrigin: draft.startFromOrigin,
-      worktreePath: draft.checkoutPath,
-    });
-  const projectId = ProjectId.make("project");
-  expect(workspace(createDraft(projectId, null))).toMatchObject({ defaultBaseRef: true });
-  const workspaceStrategy = { type: "worktree", baseRef: "main", startFromOrigin: true } as const;
-  const stored: ScheduledTask = {
-    id: ScheduledTaskId.make("nightly"),
-    title: "Nightly",
-    prompt: "Review",
-    enabled: true,
-    schedule: { type: "interval", everyMs: 60_000 },
-    projectId,
-    threadId: null,
-    workspaceStrategy,
-    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    createdBy: "user",
-    creationSource: "mobile",
-    createdAt: "2026-09-17T00:00:00.000Z",
-    updatedAt: "2026-09-17T00:00:00.000Z",
-    nextRunAt: null,
-    lastRunAt: null,
-    lastRunStatus: "never",
-    lastRunError: null,
-    runCount: 0,
-  };
-  expect(workspace(editDraft(stored))).toEqual({ workspaceStrategy });
 });

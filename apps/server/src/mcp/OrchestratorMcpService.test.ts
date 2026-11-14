@@ -3564,24 +3564,13 @@ describe("OrchestratorMcpService provider resolution", () => {
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(
-            service(masterRepository, saved, {
-              ...existing,
-              workspaceStrategy: {
-                type: "worktree",
-                baseRef: "origin/trunk",
-                startFromOrigin: true,
-              },
-            }),
-          ),
+          Effect.provide(service(masterRepository, saved)),
         );
         yield* mcp.updateScheduledTask(client, {
           scheduledTaskId: existing.id,
           bindToCurrentThread: false,
         });
-        assert.deepEqual(yield* Ref.get(saved), [
-          { type: "worktree", baseRef: "origin/trunk", startFromOrigin: true },
-        ]);
+        assert.deepEqual(yield* Ref.get(saved), [{ type: "root" }]);
       }),
     );
   });

@@ -224,7 +224,7 @@ export class ThreadLaunchService extends Context.Service<
     /** The base a new worktree gets when none was chosen; null when the project is unknown. */
     readonly defaultWorktreeBaseRef: (
       projectId: ProjectId,
-      startFromOrigin?: boolean,
+      startFromOrigin: boolean,
     ) => Effect.Effect<string | null, ProjectService.ProjectOperationError>;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
@@ -501,7 +501,7 @@ const make = Effect.gen(function* () {
   const defaultWorktreeBaseRef: ThreadLaunchService["Service"]["defaultWorktreeBaseRef"] =
     Effect.fn("ThreadLaunchService.defaultWorktreeBaseRef")(function* (
       projectId,
-      startFromOrigin = true,
+      startFromOrigin,
     ) {
       const project = yield* projects.getById(projectId);
       if (Option.isNone(project)) return null;
