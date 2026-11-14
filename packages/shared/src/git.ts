@@ -141,8 +141,13 @@ export function parseGitRemoteRepository(
 
   if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
     try {
-      const url = new URL(normalized);
-      const repositorySegments = url.pathname.split("/").filter((segment) => segment.length > 0);
+      // Parse the raw remote: `.git` may sit before a query or fragment, so strip it from the path once.
+      const url = new URL(value.trim().toLowerCase());
+      const repositorySegments = url.pathname
+        .replace(/\/+$/, "")
+        .replace(/\.git$/, "")
+        .split("/")
+        .filter((segment) => segment.length > 0);
       if (url.hostname && repositorySegments.length > 1) {
         return { host: url.hostname, path: repositorySegments.join("/") };
       }
@@ -154,10 +159,19 @@ export function parseGitRemoteRepository(
   // A userless one-letter prefix is a Windows drive, not an SCP host.
   const scpStyleHostAndPath = /^[a-z]:/i.test(normalized)
     ? null
-    : /^(?:[a-zA-Z0-9._-]+@)?([^@:/\\\s]+):\/?([^/\s]+(?:\/[^/\s]+)+)$/i.exec(normalized);
+    : /^(?:[a-zA-Z0-9._-]+@)?(\[[0-9a-f:.]+\]|[^@:/\\\s[\]]+):\/?([^/\s]+(?:\/[^/\s]+)+)$/i.exec(
+        normalized,
+      );
   const scpHost = scpStyleHostAndPath?.[1];
   const scpPath = scpStyleHostAndPath?.[2];
-  return scpHost && scpPath ? { host: scpHost, path: scpPath } : null;
+  if (!scpHost || !scpPath) return null;
+  if (!scpHost.startsWith("[")) return { host: scpHost, path: scpPath };
+  try {
+    // Spell an IPv6 host as the URL branch does, so `[::1]:a/b` and `ssh://[::1]/a/b` share a key.
+    return { host: new URL(`ssh://${scpHost}`).hostname, path: scpPath };
+  } catch {
+    return null;
+  }
 }
 
 /**
