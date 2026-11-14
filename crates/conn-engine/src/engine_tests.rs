@@ -2396,9 +2396,12 @@ async fn the_host_grants_tools_claims_attachments_and_hears_closes() {
         json!({"type": "thread.delete", "commandId": "c5", "threadId": "t1"}),
     )
     .await;
-    // Effects run on spawned tasks; let them finish.
-    for _ in 0..20 {
-        tokio::task::yield_now().await;
+    // Effects run on spawned tasks, one after another per thread; let them finish.
+    for _ in 0..200 {
+        if host.closed.lock().unwrap().len() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
     assert_eq!(
         *host.closed.lock().unwrap(),

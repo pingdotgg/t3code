@@ -384,15 +384,50 @@ fn read_context(
     }))
 }
 
+/// T3's `maxAttempts` for an effect.
+const ROLLBACK_ATTEMPTS: u32 = 5;
+
+/// T3's retry delay after the `attempt`-th failure: `min(30 s, 100 ms * 2^(attempt - 1))`.
+fn retry_delay(attempt: u32) -> std::time::Duration {
+    let factor = 2u64.saturating_pow(attempt.saturating_sub(1));
+    std::time::Duration::from_millis(100u64.saturating_mul(factor).min(30_000))
+}
+
+impl RollbackFailure {
+    fn detail(&self) -> String {
+        match self {
+            Self::Invalid(reason) => (*reason).to_owned(),
+            Self::Shared => "shared-workspace".to_owned(),
+            Self::Failed(detail) => detail.clone(),
+        }
+    }
+}
+
 impl Inner {
     /// Runs a rollback the command admitted. Never fails: a failure is recorded on the thread.
+    /// As T3's effect worker: up to [`ROLLBACK_ATTEMPTS`] attempts, 100 ms after the first
+    /// failure and twice as long after each next one (at most 30 s); only the last failure is
+    /// recorded. The effect holds its thread's lane meanwhile, so no turn starts in between.
     pub(crate) async fn rollback(self: &Arc<Self>, request: RollbackRequest) {
-        if let Err(failure) = self.try_rollback(&request).await {
-            let detail = match &failure {
-                RollbackFailure::Invalid(reason) => (*reason).to_owned(),
-                RollbackFailure::Shared => "shared-workspace".to_owned(),
-                RollbackFailure::Failed(detail) => detail.clone(),
-            };
+        let mut attempt = 1;
+        let outcome = loop {
+            match self.try_rollback(&request).await {
+                Ok(()) => break Ok(()),
+                Err(failure) if attempt < ROLLBACK_ATTEMPTS => {
+                    eprintln!(
+                        "conn-engine: rollback {} of {} failed (attempt {attempt}), retrying: {}",
+                        request.checkpoint_id,
+                        request.thread_id,
+                        failure.detail()
+                    );
+                    tokio::time::sleep(retry_delay(attempt)).await;
+                    attempt += 1;
+                }
+                Err(failure) => break Err(failure),
+            }
+        };
+        if let Err(failure) = outcome {
+            let detail = failure.detail();
             eprintln!(
                 "conn-engine: rollback {} of {} failed: {detail}",
                 request.checkpoint_id, request.thread_id
@@ -648,4 +683,20 @@ fn commit_rollback(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::retry_delay;
+    use std::time::Duration;
+
+    #[test]
+    fn the_retry_delay_doubles_from_100_ms_up_to_30_s() {
+        let delays: Vec<Duration> = (1..=4).map(retry_delay).collect();
+        assert_eq!(
+            delays,
+            [100, 200, 400, 800].map(Duration::from_millis).to_vec()
+        );
+        assert_eq!(retry_delay(20), Duration::from_secs(30));
+    }
 }
