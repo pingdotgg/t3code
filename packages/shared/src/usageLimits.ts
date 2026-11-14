@@ -19,6 +19,8 @@ import {
 
 import * as DateTime from "effect/DateTime";
 
+import { bindAntigravityEmails } from "./fork/antigravityEmailBindings.ts";
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -232,16 +234,21 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
 });
 
 // Include every enabled login, even unreadable workspaces.
-function accountKeyResolver(reports: Iterable<AccountReport>) {
+function accountKeyResolver(reports: readonly AccountReport[]) {
+  const bind = bindAntigravityEmails(reports);
+  const keyOf = (report: AccountReport) => {
+    const { driver, email, usageLimits } = bind(report);
+    return accountKey(driver, email, usageLimits);
+  };
   const workspaces = new Map<string, Set<string>>();
   for (const report of reports) {
-    const key = accountKey(report.driver, report.email, report.usageLimits);
+    const key = keyOf(report);
     if (key && report.workspaceId) {
       workspaces.set(key, (workspaces.get(key) ?? new Set()).add(report.workspaceId));
     }
   }
   return (report: AccountReport): string | null => {
-    const key = accountKey(report.driver, report.email, report.usageLimits);
+    const key = keyOf(report);
     if (!key) return null;
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
     const known = workspaces.get(key);
@@ -335,6 +342,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
               displayName?.toLowerCase() === PROVIDER_DISPLAY_NAMES[previous.driver]?.toLowerCase()
             ? null
             : displayName,
+      email: previous.email ?? next.email,
       plan: planSources.get(key)?.plan ?? previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,

@@ -21,6 +21,10 @@ import {
   readAntigravityCliUsageLogin,
   type AntigravityRuntimeState,
 } from "../fork/antigravityCliRuntime/antigravityCliRuntime.ts";
+import {
+  type AntigravityAccountIdentity,
+  withAntigravityAccountEmail,
+} from "../fork/antigravityAccountEmail/antigravityAccountEmail.ts";
 
 export function antigravityUserAgent(platform: NodeJS.Platform, architecture: NodeJS.Architecture) {
   return `antigravity/hub/2.24.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`;
@@ -227,7 +231,12 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
   let cached:
-    | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
+    | {
+        fingerprint: string;
+        account: AntigravityAccountIdentity;
+        accessToken: string;
+        expiresAt: number;
+      }
     | undefined;
   let generation = 0;
 
@@ -263,7 +272,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     );
     const now = yield* Clock.currentTimeMillis;
     let accessToken: string;
-    let account: string;
+    let account: AntigravityAccountIdentity;
     if (cached?.fingerprint !== fingerprint || cached.expiresAt <= now + 60_000) {
       cached = undefined;
       const refreshed = yield* request(
@@ -283,8 +292,14 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
           HttpClientRequest.setHeaders({ Authorization: `Bearer ${accessToken}` }),
         ),
       ).pipe(
-        Effect.flatMap(antigravityAccountFingerprint),
-        Effect.orElseSucceed(() => fingerprint),
+        Effect.flatMap((userInfo) =>
+          antigravityAccountFingerprint(userInfo).pipe(
+            Effect.map((credentialFingerprint) =>
+              withAntigravityAccountEmail(credentialFingerprint, userInfo),
+            ),
+          ),
+        ),
+        Effect.orElseSucceed(() => ({ credentialFingerprint: fingerprint })),
       );
       if (generation === startedGeneration) {
         cached = {
@@ -349,7 +364,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         message: "Antigravity did not return usable quota information.",
       });
     }
-    return { ...makeUsageLimits({ checkedAt, windows }), credentialFingerprint: account };
+    return { ...makeUsageLimits({ checkedAt, windows }), ...account };
   });
   const probe = read.pipe(
     Effect.provideService(Digest.Digest, crypto),

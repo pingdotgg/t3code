@@ -52,6 +52,8 @@ export const ServerProviderUsageLimits = Schema.Struct({
   /** A $0 monthly spend cap has no percentage, so it cannot be a window. */
   zeroSpendCap: Schema.optional(Schema.Boolean),
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
+  /** The account e-mail read in the same identity answer as `credentialFingerprint`. */
+  credentialEmail: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
   externalUsage: Schema.optional(
     Schema.Struct({
