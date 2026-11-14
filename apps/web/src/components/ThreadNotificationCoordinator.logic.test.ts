@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createThreadNotificationGate,
+  isSnoozedForNotification,
   RELEASED_COMPLETION_GRACE_MS,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
@@ -25,7 +26,8 @@ const woke = (at: number): ThreadNotificationObservation => ({
   ...completed(at),
   backgroundWake: true,
 });
-const visible = { archived: false, quiet: false };
+const visible = { archived: false, quiet: false, snoozed: false };
+const snoozed = { ...visible, snoozed: true };
 
 function fakeTimers(): Disposable {
   vi.useFakeTimers();
@@ -44,6 +46,16 @@ function harness() {
 }
 
 describe("createThreadNotificationGate", () => {
+  it("skips a completion seen while snoozed, but still notifies attention", () => {
+    const { notify, observe } = harness();
+    observe(working);
+    observe(completed(1), snoozed);
+    observe({ ...completed(1) });
+    expect(notify).not.toHaveBeenCalled();
+    observe({ ...working, attention: "run-2:approval" }, snoozed);
+    expect(notify.mock.calls).toEqual([["thread", "input"]]);
+  });
+
   it("notifies a completion immediately and only once", () => {
     const { notify, observe } = harness();
     observe(working);
@@ -180,6 +192,16 @@ describe("createThreadNotificationGate", () => {
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
+  it("drops a pending wake completion when the thread is snoozed", () => {
+    using _timers = fakeTimers();
+    const { notify, observe } = harness();
+    observe(waking);
+    observe(woke(1));
+    observe({ ...woke(1) }, snoozed);
+    vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   it("drops a pending wake completion when the thread is removed or the gate is cleared", () => {
     using _timers = fakeTimers();
     for (const reset of [
@@ -193,5 +215,32 @@ describe("createThreadNotificationGate", () => {
       vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
       expect(notify).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe("isSnoozedForNotification", () => {
+  const snoozedAt = Date.parse("2026-01-01T11:00:00.000Z");
+  const wakeAt = Date.parse("2026-01-01T12:00:00.000Z");
+  const thread = {
+    snoozedAt: new Date(snoozedAt).toISOString(),
+    snoozedUntil: new Date(wakeAt).toISOString(),
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+  };
+  const later = wakeAt + 60_000;
+
+  it.each([
+    ["during the snooze, processed after the wake", thread, wakeAt - 1, later, true],
+    ["before the snooze, processed after the wake", thread, snoozedAt - 1, later, false],
+    ["after the wake", thread, wakeAt + 1, later, false],
+    [
+      "after an early wake for attention",
+      { ...thread, hasPendingApprovals: true },
+      wakeAt - 1,
+      wakeAt - 1,
+      false,
+    ],
+  ])("a completion %s is suppressed: %s", (_name, shell, completedAt, now, expected) => {
+    expect(isSnoozedForNotification(shell, completedAt, now)).toBe(expected);
   });
 });
