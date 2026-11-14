@@ -568,7 +568,7 @@ describe("DesktopBackendPool", () => {
     }),
   );
 
-  it.effect("replaces a live WSL primary that never becomes ready with Windows", () =>
+  it.effect("keeps a live WSL primary that misses readiness on the recovery path", () =>
     Effect.gen(function* () {
       const spawned = yield* Queue.unbounded<string>();
       const errors = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -590,10 +590,13 @@ describe("DesktopBackendPool", () => {
         // Past the manager's default readiness timeout.
         yield* TestClock.adjust(Duration.minutes(3));
 
-        assert.equal(yield* Queue.take(spawned), "wsl.exe");
-        assert.equal(yield* Queue.take(spawned), "/electron");
-        assert.deepEqual(yield* Ref.get(errors), ["WSL backend is still unavailable"]);
-        assert.isFalse((yield* (yield* DesktopAppSettings.DesktopAppSettings).get).wslOnly);
+        const startup = yield* SubscriptionRef.get(
+          (yield* DesktopState.DesktopState).primaryBackendStartup,
+        );
+        assert.equal(startup._tag, "Failing");
+        assert.deepEqual(yield* Queue.takeAll(spawned), ["wsl.exe"]);
+        assert.deepEqual(yield* Ref.get(errors), []);
+        assert.isTrue((yield* (yield* DesktopAppSettings.DesktopAppSettings).get).wslOnly);
       }).pipe(Effect.provide(layer));
     }),
   );
