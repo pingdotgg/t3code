@@ -297,7 +297,6 @@ const McpToolUseWorld = Schema.StructWithRest(
   Rest,
 );
 
-/** One fake thread, one JSON object per line in a case file. */
 /** The parts of a PR watch wake that cases use, typed by the contracts `pullRequestWatchMessage` reads. */
 const PullRequestWake = Schema.Struct({
   number: Schema.Number,
@@ -328,6 +327,7 @@ const PullRequestWake = Schema.Struct({
   }),
 });
 
+/** One fake thread, one JSON object per line in a case file. */
 export const McpToolUseCase = Schema.Struct({
   id: Schema.String,
   area: Schema.String,
