@@ -802,11 +802,11 @@ export const OrchestratorMcpRequestSecretInput = Schema.Struct({
       }),
     ),
   ).annotate({
-    description: "Sign-in or setup page for the value. Shown as a button.",
+    description: "Sign-in or setup page, shown as a button.",
   }),
   placeholder: Schema.optional(TrimmedNonEmptyString),
   delivery: Schema.optional(Schema.Literals(["secretRef", "file"])).annotate({
-    description: "secretRef (default) for a T3 tool; file for a command.",
+    description: "secretRef (default): T3 tools. file: commands.",
   }),
   value: Schema.optional(PastedSecretValue).annotate({
     description: "Pasted in this thread; no card.",
