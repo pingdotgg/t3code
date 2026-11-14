@@ -246,7 +246,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
-  remarkEndAutolinksAtCjkPunctuation,
+  remarkEndAutolinksAtScriptPunctuation,
   remarkKeepAutolinkSuffixes,
   remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
@@ -261,7 +261,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
-  remarkEndAutolinksAtCjkPunctuation,
+  remarkEndAutolinksAtScriptPunctuation,
   remarkKeepAutolinkSuffixes,
   remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
@@ -471,20 +471,21 @@ function remarkKeepAutolinkSuffixes(): Transformer<Root> {
   };
 }
 
-// Punctuation and symbols from CJK Symbols and Punctuation and from Halfwidth and Fullwidth Forms.
-const CJK_PUNCTUATION = /(?=[　-〿＀-￯])[\p{P}\p{S}]/u;
+// Punctuation and symbols from CJK Symbols and Punctuation and from Halfwidth and Fullwidth Forms,
+// plus the Arabic-script comma, semicolon, question mark, and full stop.
+const SCRIPT_PUNCTUATION = /(?=[　-〿＀-￯،؛؟۔])[\p{P}\p{S}]/u;
 
 /**
- * GFM runs a bare URL on until whitespace, so Chinese and Japanese punctuation joins it, along with
- * the rest of the sentence and any `**` that should have closed around it. A URL that is ASCII up to
- * such a mark ends there. Unicode earlier in the URL means the mark may belong to it, so it stays.
+ * GFM runs a bare URL on until whitespace, so Chinese, Japanese, and Arabic punctuation joins it,
+ * along with the rest of the sentence and any `**` that should have closed around it. A URL that is
+ * ASCII up to such a mark ends there. Unicode earlier in the URL means the mark may belong to it, so it stays.
  */
-function cjkPunctuationIndex(link: Link): number {
+function scriptPunctuationIndex(link: Link): number {
   const label = link.children.length === 1 ? link.children[0] : undefined;
   if (label?.type !== "text" || !/^https?:\/\//i.test(link.url)) return -1;
   if (link.url !== label.value && link.url !== `http://${label.value}`) return -1;
   const index = label.value.search(/[^!-~]/u);
-  return index > 0 && CJK_PUNCTUATION.test(label.value.charAt(index)) ? index : -1;
+  return index > 0 && SCRIPT_PUNCTUATION.test(label.value.charAt(index)) ? index : -1;
 }
 
 /** GFM's text pass links bare URLs without positions; its tokenizer's links span their URL. */
@@ -502,14 +503,14 @@ function isBareLink(link: Link, source: string): boolean {
 }
 
 /** Source offsets of the marks that tokenized bare URLs run past. */
-function cjkPunctuationOffsets(node: RootContent, source: string): number[] {
+function scriptPunctuationOffsets(node: RootContent, source: string): number[] {
   if (node.type === "link") {
-    const index = cjkPunctuationIndex(node);
+    const index = scriptPunctuationIndex(node);
     const start = node.position?.start.offset;
     return index > 0 && start !== undefined && isBareLink(node, source) ? [start + index] : [];
   }
   return "children" in node && node.type !== "linkReference"
-    ? (node.children as RootContent[]).flatMap((child) => cjkPunctuationOffsets(child, source))
+    ? (node.children as RootContent[]).flatMap((child) => scriptPunctuationOffsets(child, source))
     : [];
 }
 
@@ -537,7 +538,7 @@ function countBelow(sorted: readonly number[], value: number): number {
  * dropped and positions mapped back to the source. Returns false and leaves the block alone when its
  * text would parse differently on its own, as a quote's continuation lines do.
  */
-function reparseAtCjkPunctuation(
+function reparseAtScriptPunctuation(
   processor: Processor,
   block: Paragraph | Heading | TableCell,
   source: string,
@@ -570,7 +571,7 @@ function reparseAtCjkPunctuation(
       .join("\t");
     const [paragraph, ...rest] = (processor.parse(marked) as Root).children;
     if (paragraph?.type !== "paragraph" || rest.length > 0) return false;
-    const more = cjkPunctuationOffsets(paragraph, marked);
+    const more = scriptPunctuationOffsets(paragraph, marked);
     if (more.length > 0) {
       marks.push(...more.map(unmarked));
       continue;
@@ -613,16 +614,16 @@ function reparseAtCjkPunctuation(
 }
 
 /** Ends the bare URLs a reparse could not, and those GFM's text pass linked after emphasis. */
-function splitAtCjkPunctuation(node: RootContent, source: string) {
+function splitAtScriptPunctuation(node: RootContent, source: string) {
   if (!("children" in node) || node.type === "link" || node.type === "linkReference") return;
   const children = node.children as RootContent[];
   for (let index = 0; index < children.length; index++) {
     const child = children[index]!;
     if (child.type !== "link") {
-      splitAtCjkPunctuation(child, source);
+      splitAtScriptPunctuation(child, source);
       continue;
     }
-    const at = isBareLink(child, source) ? cjkPunctuationIndex(child) : -1;
+    const at = isBareLink(child, source) ? scriptPunctuationIndex(child) : -1;
     const label = child.children[0];
     if (at < 0 || label?.type !== "text") continue;
     // GFM drops this punctuation from the end of a URL; remarkKeepAutolinkSuffixes restores `_` and `~`.
@@ -646,15 +647,15 @@ function splitAtCjkPunctuation(node: RootContent, source: string) {
   }
 }
 
-function remarkEndAutolinksAtCjkPunctuation(this: Processor): Transformer<Root> {
+function remarkEndAutolinksAtScriptPunctuation(this: Processor): Transformer<Root> {
   return (tree, file) => {
     const source = String(file);
-    if (!CJK_PUNCTUATION.test(source)) return;
+    if (!SCRIPT_PUNCTUATION.test(source)) return;
     const visit = (node: RootContent) => {
       if (node.type === "paragraph" || node.type === "heading" || node.type === "tableCell") {
-        const offsets = cjkPunctuationOffsets(node, source);
-        if (offsets.length > 0) reparseAtCjkPunctuation(this, node, source, offsets);
-        splitAtCjkPunctuation(node, source);
+        const offsets = scriptPunctuationOffsets(node, source);
+        if (offsets.length > 0) reparseAtScriptPunctuation(this, node, source, offsets);
+        splitAtScriptPunctuation(node, source);
       } else if ("children" in node) {
         (node.children as RootContent[]).forEach(visit);
       }
