@@ -40,9 +40,9 @@ import {
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SwipeActions,
   resolveThreadListV2SnoozePresets,
+  resolveThreadListV2RowStatus,
   resolveThreadListV2Status,
   resolveThreadListV2WokeAt,
-  sortThreadsForListV2,
   threadListV2ListItemsAreEqual,
   threadHasUnseenCompletion,
   type ThreadListV2ListItem,
@@ -175,6 +175,22 @@ describe("resolveThreadListV2Status", () => {
     );
   });
 
+  it("settles a failure the user opened to ready in the row, keeping the raw status", () => {
+    const failed = presentThreadShell(
+      environmentId,
+      makeRawThreadShell({
+        status: "failed",
+        latestRunId: RunId.make("run-failed"),
+        latestRunCompletedAt: DateTime.makeUnsafe("2026-06-01T23:59:00.000Z"),
+        lastVisitedAt: DateTime.makeUnsafe(NOW),
+      }),
+    );
+
+    expect(resolveThreadListV2Status(failed)).toBe("failed");
+    expect(resolveThreadListV2RowStatus(failed)).toBe("ready");
+    expect(resolveThreadListV2RowStatus({ ...failed, lastVisitedAt: null })).toBe("failed");
+  });
+
   it("shows a waiting guest message as Request, after the agent's own requests", () => {
     const thread = presentThreadShell(
       environmentId,
@@ -267,17 +283,6 @@ describe("search lists ranked matches", () => {
       ["mentioned", "card"],
     ]);
     expect([...layout.contentOnlyThreadKeys]).toEqual([matchKey("mentioned")]);
-  });
-});
-
-describe("sortThreadsForListV2", () => {
-  it("honors a saved active order and leaves new threads above it", () => {
-    const sorted = sortThreadsForListV2([
-      { id: "newer-arranged", createdAt: "2026-06-01T12:00:00.000Z", activeOrderKey: "t" },
-      { id: "older-arranged", createdAt: "2026-06-01T08:00:00.000Z", activeOrderKey: "f" },
-      { id: "new", createdAt: "2026-06-01T13:00:00.000Z" },
-    ]);
-    expect(sorted.map((thread) => thread.id)).toEqual(["new", "older-arranged", "newer-arranged"]);
   });
 });
 
@@ -1561,6 +1566,30 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
     settledAt: isoAt(BASE_MS - 3 * 24 * 60 * MINUTE_MS),
   });
   const allEnvironments = new Set<EnvironmentId>([environmentId]);
+
+  it("ages a read row from its latest reply", () => {
+    using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
+    vi.useFakeTimers({ now: BASE_MS });
+    const label = (latestUserMessageAt: string, completedAt: string) => {
+      const thread = makeThread({
+        id: ThreadId.make("stamp-read"),
+        title: "stamp read",
+        latestUserMessageAt,
+        lastVisitedAt: isoAt(BASE_MS),
+        latestRun: {
+          runId: RunId.make("stamp-read-run"),
+          status: "completed",
+          requestedAt: latestUserMessageAt,
+          startedAt: latestUserMessageAt,
+          completedAt,
+          assistantMessageId: null,
+        },
+      });
+      const row = buildTickList([thread], BASE_MS, [])[0]!;
+      return row.type === "v2-thread" ? row.timeLabel : null;
+    };
+    expect(label(isoAt(BASE_MS - 40 * MINUTE_MS), isoAt(BASE_MS - 2 * MINUTE_MS))).toBe("2m");
+  });
 
   it("stamps queued outbox messages onto the matching row and notices removal", () => {
     const queued = buildTickList([readyThread, settledThread], BASE_MS, [], {

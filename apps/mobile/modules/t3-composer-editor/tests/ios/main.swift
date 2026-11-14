@@ -1,3 +1,4 @@
+import UniformTypeIdentifiers
 import UIKit
 
 func check(_ passed: Bool, _ message: String) {
@@ -10,13 +11,16 @@ func check(_ passed: Bool, _ message: String) {
 extension T3ComposerEditorView {
   var editor: UITextView { textView }
   var text: String { textView.serializedText() }
+  func chip(at location: Int) -> NSTextAttachment? {
+    textView.textStorage.attribute(.attachment, at: location, effectiveRange: nil) as? NSTextAttachment
+  }
 }
 
-func document(_ value: String, revision: Int, resetGeneration: Int = 0, isNativeEcho: Bool = false) -> String {
+func document(_ value: String, revision: Int, resetGeneration: Int = 0, isNativeEcho: Bool = false, tokensJson: String = "[]") -> String {
   let payload: [String: Any] = [
     "value": value,
     "selection": NSNull(),
-    "tokensJson": "[]",
+    "tokensJson": tokensJson,
     "mostRecentEventCount": revision,
     "isNativeEcho": isNativeEcho,
     "resetGeneration": resetGeneration,
@@ -32,10 +36,14 @@ func replace(_ view: T3ComposerEditorView, _ target: String, with replacement: S
   editor.replace(editor.textRange(from: start, to: end)!, withText: replacement)
 }
 
-func makeEditor(_ value: String) -> T3ComposerEditorView {
+func mention(_ label: String, at start: Int, source: String = "@README.md") -> String {
+  #"[{"type":"mention","source":"\#(source)","label":"\#(label)","start":\#(start),"end":\#(start + source.utf16.count)}]"#
+}
+
+func makeEditor(_ value: String, tokensJson: String = "[]") -> T3ComposerEditorView {
   let view = T3ComposerEditorView()
   view.frame = CGRect(x: 0, y: 0, width: 320, height: 200)
-  view.setControlledDocumentJson(document(value, revision: 0))
+  view.setControlledDocumentJson(document(value, revision: 0, tokensJson: tokensJson))
   check(view.text == value, "Initial controlled value was not applied")
   return view
 }
@@ -107,4 +115,119 @@ do {
   )
 }
 
+// An echo that only shifts a chip keeps the rendered text; moving or relabeling the chip redraws it.
+do {
+  let draft = "hi! @README.md @README.md"
+  let view = makeEditor("hi @README.md @README.md", tokensJson: mention("README.md", at: 3))
+  let rendered = view.chip(at: 3)
+  check(rendered != nil, "Harness could not render the chip")
+  view.editor.selectedRange = NSRange(location: 2, length: 0)
+  view.editor.insertText("!")
+  let revision = view.onComposerChange.payloads.last?["eventCount"] as? Int ?? 0
+  view.setControlledDocumentJson(document(draft, revision: revision, isNativeEcho: true, tokensJson: mention("README.md", at: 4)))
+  check(view.chip(at: 4) === rendered, "An echo that only moved a chip replaced the text")
+  view.setControlledDocumentJson(document(draft, revision: revision, tokensJson: mention("Readme", at: 4)))
+  check((view.chip(at: 4) as? ComposerTextAttachment)?.label == "Readme", "A relabeled chip was not redrawn")
+  view.setControlledDocumentJson(document(draft, revision: revision, tokensJson: mention("Readme", at: 15)))
+  check(view.chip(at: 4) == nil && view.chip(at: 15) != nil, "A chip moved to another copy of its source stayed on the old one")
+}
+
+// A chip source that changes only in Unicode normalization is rebuilt from the new text.
+do {
+  let view = makeEditor("@\u{00E9}", tokensJson: mention("e", at: 0, source: "@\u{00E9}"))
+  view.setControlledDocumentJson(document("@e\u{0301}", revision: 0, tokensJson: mention("e", at: 0, source: "@e\u{0301}")))
+  check(view.text.utf16.elementsEqual("@e\u{0301}".utf16), "A renormalized chip source kept the old text")
+}
+
+// The placeholder label is hidden from VoiceOver, so the text view must carry it.
+do {
+  let view = makeEditor("")
+  view.setPlaceholder("Ask anything")
+  check(view.editor.accessibilityLabel == "Ask anything", "VoiceOver label: \(String(describing: view.editor.accessibilityLabel))")
+}
+
 print("composer editor tests passed")
+
+private let dropEditor = ComposerTextView()
+private let image = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).image { context in
+  UIColor.red.setFill()
+  context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+}
+private let imageProvider = NSItemProvider(object: image)
+private let pngProvider = NSItemProvider(item: image.pngData()! as NSData, typeIdentifier: UTType.png.identifier)
+private let textProvider = NSItemProvider(object: "plain text" as NSString)
+private let fileProvider = NSItemProvider(item: Data("file".utf8) as NSData, typeIdentifier: UTType.data.identifier)
+
+check(dropEditor.canPaste([imageProvider]), "An image drag must reach the composer's UITextDropDelegate")
+check(dropEditor.canPaste([pngProvider]), "A PNG representation must reach the image drop handler")
+check(dropEditor.canPaste([imageProvider, pngProvider]), "A multi-image drag must be accepted")
+
+private let defaultEditor = UITextView()
+for providers in [[textProvider], [], [fileProvider], [imageProvider, textProvider], [imageProvider, fileProvider]] {
+  check(dropEditor.canPaste(providers) == defaultEditor.canPaste(providers), "Non-image-only sessions must retain UIKit behavior")
+}
+
+dropEditor.isReadOnly = true
+check(!dropEditor.canPaste([imageProvider]), "A read-only composer must reject image drops")
+dropEditor.isReadOnly = false
+dropEditor.isEditable = false
+check(!dropEditor.canPaste([imageProvider]), "A noneditable composer must reject image drops")
+dropEditor.isEditable = true
+check(dropEditor.canPaste([imageProvider]), "An unlocked composer must accept image drops again")
+print("Composer image-drop eligibility checks passed")
+
+private final class ImmediateImageProvider: NSItemProvider {
+  let image: UIImage
+  private(set) var loadCount = 0
+
+  init(image: UIImage) {
+    self.image = image
+    super.init()
+    registerObject(image, visibility: .all)
+  }
+
+  override func loadObject(
+    ofClass aClass: NSItemProviderReading.Type,
+    completionHandler: @escaping @Sendable (NSItemProviderReading?, Error?) -> Void
+  ) -> Progress {
+    loadCount += 1
+    completionHandler(image, nil)
+    return Progress(totalUnitCount: 1)
+  }
+}
+
+private let pasteEditor = ComposerTextView()
+private let pasteProvider = ImmediateImageProvider(image: image)
+private var pastedImages: [[String]] = []
+pasteEditor.text = "Keep this draft"
+pasteEditor.onPasteImages = { pastedImages.append($0) }
+pasteEditor.paste(itemProviders: [pasteProvider])
+
+for readOnly in [true, false] {
+  let lockedEditor = ComposerTextView()
+  let provider = ImmediateImageProvider(image: image)
+  lockedEditor.isReadOnly = readOnly
+  lockedEditor.isEditable = readOnly
+  lockedEditor.paste(itemProviders: [provider])
+  check(provider.loadCount == 0, "Locked inputs must not load pasted image providers")
+}
+
+// Inline provider completion places the attachment callback before this main-queue check.
+DispatchQueue.main.async {
+  check(pastedImages.count == 1, "An accepted provider-based paste must emit exactly one attachment batch")
+  check(pastedImages[0].count == 1, "One pasted image must produce one attachment")
+  guard let url = URL(string: pastedImages[0][0]),
+        let data = try? Data(contentsOf: url),
+        let decoded = UIImage(data: data) else {
+    check(false, "Provider-based paste must create a readable image file")
+    return
+  }
+  try? FileManager.default.removeItem(at: url)
+  check(decoded.cgImage?.width == image.cgImage?.width &&
+        decoded.cgImage?.height == image.cgImage?.height && data == image.pngData(),
+        "The attachment must contain the pasted image's pixels")
+  check(pasteEditor.text == "Keep this draft", "Image paste must preserve the draft text")
+  print("Composer provider-paste checks passed")
+  exit(0)
+}
+dispatchMain()
