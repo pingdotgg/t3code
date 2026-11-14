@@ -1,8 +1,13 @@
-import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { describe, expect, it } from "vite-plus/test";
 
-import { settingInheritanceLayers } from "./SettingInheritance";
+import { mixedSettingSummary, settingInheritanceLayers } from "./SettingInheritance";
 
 const environmentId = EnvironmentId.make("laptop");
 const projectId = ProjectId.make("project");
@@ -98,5 +103,53 @@ describe("settingInheritanceLayers", () => {
       ["Inherits", false],
       ["Current checkout", false],
     ]);
+  });
+});
+
+describe("mixedSettingSummary", () => {
+  it("names the environments holding each value", () => {
+    const on = { ...DEFAULT_SERVER_SETTINGS, autoResumeLimitedThreads: true };
+    const off = { ...DEFAULT_SERVER_SETTINGS, autoResumeLimitedThreads: false };
+    expect(
+      mixedSettingSummary(
+        [
+          { label: "laptop", settings: on },
+          { label: "vps", settings: off },
+          { label: "desktop", settings: on },
+        ],
+        "autoResumeLimitedThreads",
+      ),
+    ).toBe("On for laptop, desktop · Off for vps");
+  });
+
+  it("stays silent when names repeat or distinct values print alike", () => {
+    const on = { ...DEFAULT_SERVER_SETTINGS, autoResumeLimitedThreads: true };
+    const off = { ...DEFAULT_SERVER_SETTINGS, autoResumeLimitedThreads: false };
+    expect(
+      mixedSettingSummary(
+        [
+          { label: "laptop", settings: on },
+          { label: "laptop", settings: off },
+        ],
+        "autoResumeLimitedThreads",
+      ),
+    ).toBeNull();
+    const model = (instanceId: string) => ({
+      ...DEFAULT_SERVER_SETTINGS,
+      textGenerationModelSelection: {
+        ...DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+        instanceId: ProviderInstanceId.make(instanceId),
+        model: "gpt-5",
+      },
+    });
+    expect(
+      mixedSettingSummary(
+        [
+          { label: "laptop", settings: model("codex") },
+          { label: "vps", settings: model("codex-work") },
+        ],
+        "textGenerationModelSelection",
+      ),
+    ).toBeNull();
   });
 });
