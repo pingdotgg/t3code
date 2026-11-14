@@ -18,7 +18,6 @@ import {
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
 } from "./acpSupport.ts";
-
 import { xAiRateLimitedErrorCode } from "./xaiAcpExtension.ts";
 
 const GROK_TIMEOUT_MS = 180_000;
@@ -31,6 +30,7 @@ function grokAcpFailureDetail(cause: EffectAcpErrors.AcpError, fallback: string)
   switch (cause.code) {
     case xAiRateLimitedErrorCode:
       return "Grok usage limit reached. Try again later.";
+    // ACP auth_required
     case -32000:
       return "Grok authentication is required.";
     default:

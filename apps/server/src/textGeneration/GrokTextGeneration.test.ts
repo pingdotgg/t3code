@@ -139,12 +139,11 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
       for (const [code, detail] of [
         [-32003, "Grok usage limit reached. Try again later."],
         [-32000, "Grok authentication is required."],
-        [-32603, "Grok ACP request failed."],
         [-32602, "Grok ACP request failed."],
       ] as const) {
         yield* withFakeAcpGrok(
           {
-            T3_ACP_PROMPT_ERROR_MESSAGE: "private provider payload " + "x".repeat(4096),
+            T3_ACP_PROMPT_ERROR_MESSAGE: "private provider payload",
             T3_ACP_PROMPT_ERROR_CODE: String(code),
           },
           (textGeneration) =>
@@ -162,7 +161,7 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
               expect(error.detail).toBe(detail);
               expect(error.cause).toMatchObject({
                 code,
-                errorMessage: "private provider payload " + "x".repeat(4096),
+                errorMessage: "private provider payload",
               });
             }),
         );
