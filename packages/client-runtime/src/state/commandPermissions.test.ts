@@ -157,6 +157,7 @@ describe("command permissions", () => {
     { method: WS_METHODS.serverReclaimDatabaseSpace, scope: AuthEnvironmentMaintainScope },
     { method: WS_METHODS.serverGetSourceUpdateStatus, scope: AuthEnvironmentMaintainScope },
     { method: WS_METHODS.serverRunSourceUpdate, scope: AuthEnvironmentMaintainScope },
+    { method: WS_METHODS.serverCancelSourceUpdate, scope: AuthEnvironmentMaintainScope },
     { method: WS_METHODS.serverPullUpstream, scope: AuthEnvironmentMaintainScope },
   ])("requires the destination $scope grant for $method", ({ method, scope }) =>
     Effect.gen(function* () {

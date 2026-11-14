@@ -13,6 +13,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Deferred from "effect/Deferred";
@@ -100,8 +101,10 @@ export const serverUpdateStateAtom = Atom.family((environmentId: EnvironmentId) 
   ),
 );
 
+/** An update this client started, until its outcome is dismissed. */
 export type SourceUpdateRun = {
-  readonly previousResultFinishedAt: string | null;
+  readonly runId: string;
+  readonly startedAtMs: number;
 };
 
 const sourceUpdateRunAtom = Atom.family((environmentId: EnvironmentId) =>
@@ -1364,8 +1367,11 @@ export function createServerEnvironmentAtoms<R, E>(
   const sourceUpdateStatus = createGuardedEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:server:source-update-status",
     tag: WS_METHODS.serverGetSourceUpdateStatus,
-    // Remote fetches are cached on the server; this only rereads the local checkout.
+    // Follows a running update closely. Otherwise the counts move only when the server's
+    // background fetch does, every few minutes.
     refreshIntervalMs: 30_000,
+    finalRefreshIntervalMs: 5 * 60_000,
+    isFinal: (status) => !status.updateRunning,
     idleTtlMs: 0,
   });
   const welcome = (target: {
@@ -1399,16 +1405,22 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:run-source-update",
       tag: WS_METHODS.serverRunSourceUpdate,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+      onSuccess: Effect.fn("SourceUpdate.onStarted")(function* (
+        { environmentId },
+        registry,
+        { runId },
+      ) {
+        const startedAtMs = yield* Clock.currentTimeMillis;
+        registry.set(sourceUpdateRunAtom(environmentId), { runId, startedAtMs });
+        registry.refresh(sourceUpdateStatus({ environmentId, input: {} }));
+      }),
+    }),
+    cancelSourceUpdate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:cancel-source-update",
+      tag: WS_METHODS.serverCancelSourceUpdate,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
       onSuccess: ({ environmentId }, registry) =>
-        Effect.sync(() => {
-          const status = registry.get(sourceUpdateStatus({ environmentId, input: {} }));
-          registry.set(sourceUpdateRunAtom(environmentId), {
-            previousResultFinishedAt: AsyncResult.isSuccess(status)
-              ? (status.value.lastResult?.finishedAt ?? null)
-              : null,
-          });
-          registry.refresh(sourceUpdateStatus({ environmentId, input: {} }));
-        }),
+        Effect.sync(() => registry.refresh(sourceUpdateStatus({ environmentId, input: {} }))),
     }),
     pullUpstream: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:pull-upstream",

@@ -130,6 +130,7 @@ import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { useStartTriage } from "../hooks/useStartTriage";
 import {
+  canCancelSourceUpdate,
   canPullUpstream,
   canRunSourceUpdate,
   newCommitsLabel,
@@ -1369,7 +1370,21 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (sourceUpdateEnvironmentId !== null && canRunSourceUpdate(sourceUpdate.phase)) {
+  if (sourceUpdateEnvironmentId !== null && canCancelSourceUpdate(sourceUpdate.phase)) {
+    actionItems.push({
+      kind: "action",
+      value: "action:cancel-source-update",
+      searchTerms: ["cancel", "stop", "update", "source", "rebuild"],
+      title: "Cancel source update",
+      description: "Stop the running update; the server keeps its current build",
+      icon: <CircleArrowUpIcon className={ITEM_ICON_CLASS} />,
+      run: () => sourceUpdateActions.cancel(sourceUpdateEnvironmentId),
+    });
+  }
+  if (
+    sourceUpdateEnvironmentId !== null &&
+    canRunSourceUpdate(sourceUpdate.status, sourceUpdate.phase)
+  ) {
     actionItems.push({
       kind: "action",
       value: "action:source-update",

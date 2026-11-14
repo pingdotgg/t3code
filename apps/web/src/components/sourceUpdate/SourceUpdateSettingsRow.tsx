@@ -3,6 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { Button } from "../ui/button";
 import { SettingsRow } from "../settings/settingsLayout";
 import {
+  canCancelSourceUpdate,
   canPullUpstream,
   canRunSourceUpdate,
   isSourceUpdateSettled,
@@ -22,14 +23,14 @@ export function SourceUpdateSettingsRow() {
 
 function SourceUpdateRow({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const { status, failed, phase } = useSourceUpdateState(environmentId);
-  const { update, pullUpstream } = useSourceUpdateActions();
+  const { update, cancel, pullUpstream } = useSourceUpdateActions();
   const description =
     phase.kind === "running"
       ? "Updating. The server restarts when the build finishes."
       : phase.kind === "failed"
         ? `The last update failed: ${phase.message}`
         : phase.kind === "succeeded"
-          ? `Updated to ${phase.sha}.`
+          ? phase.message || `Updated to ${phase.sha}.`
           : status === null
             ? failed
               ? "Could not read the source checkout. Check the server log."
@@ -42,6 +43,10 @@ function SourceUpdateRow({ environmentId }: { readonly environmentId: Environmen
                 status.upstreamAhead
                   ? `upstream/main has ${newCommitsLabel(status.upstreamAhead)}.`
                   : null,
+                status.updateUnavailableReason,
+                status.upstreamAhead && status.pullUpstreamUnavailableReason
+                  ? `Pull upstream: ${status.pullUpstreamUnavailableReason}`
+                  : null,
               ]
                 .filter(Boolean)
                 .join(" ");
@@ -51,7 +56,12 @@ function SourceUpdateRow({ environmentId }: { readonly environmentId: Environmen
       description={description}
       control={
         <div className="flex flex-wrap items-center gap-1.5">
-          {canRunSourceUpdate(phase) ? (
+          {canCancelSourceUpdate(phase) ? (
+            <Button size="sm" variant="outline" onClick={() => void cancel(environmentId)}>
+              Cancel update
+            </Button>
+          ) : null}
+          {canRunSourceUpdate(status, phase) ? (
             <Button size="sm" variant="outline" onClick={() => void update(environmentId)}>
               {phase.kind === "failed" ? "Retry update" : "Update"}
             </Button>
@@ -65,7 +75,7 @@ function SourceUpdateRow({ environmentId }: { readonly environmentId: Environmen
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => dismissSourceUpdateOutcome(environmentId)}
+              onClick={() => dismissSourceUpdateOutcome(environmentId, phase)}
             >
               Dismiss
             </Button>

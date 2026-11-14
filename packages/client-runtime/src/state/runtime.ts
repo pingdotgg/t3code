@@ -97,6 +97,8 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends Omit<
   readonly staleTimeMs?: number;
   readonly idleTtlMs?: number;
   readonly refreshIntervalMs?: number;
+  /** Keeps refreshing a final value, at this slower interval. */
+  readonly finalRefreshIntervalMs?: number;
   readonly refreshTrigger?: (target: {
     readonly environmentId: EnvironmentIdType;
     readonly input: Input;
@@ -543,15 +545,16 @@ const refreshOnSignalWhileRead =
   };
 
 const refreshEveryUntilFinal =
-  <V>(intervalMs: number, isFinal: (value: V) => boolean) =>
+  <V>(intervalMs: number, isFinal: (value: V) => boolean, finalIntervalMs?: number) =>
   <A extends V>(self: Atom.Atom<A>): Atom.Atom<A> =>
     Atom.transform(
       self,
       (get) => {
         const value = get(self);
-        if (!isFinal(value)) {
+        const delayMs = isFinal(value) ? finalIntervalMs : intervalMs;
+        if (delayMs !== undefined) {
           // @effect-diagnostics-next-line globalTimers:off - Mirrors `Atom.withRefresh`, outside an Effect runtime.
-          const handle = setTimeout(() => get.refresh(self), intervalMs);
+          const handle = setTimeout(() => get.refresh(self), delayMs);
           get.addFinalizer(() => clearTimeout(handle));
         }
         return value;
@@ -851,7 +854,13 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
     const intervalQuery =
       options.refreshIntervalMs === undefined
         ? queryAtom
-        : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal));
+        : queryAtom.pipe(
+            refreshEveryUntilFinal(
+              options.refreshIntervalMs,
+              isFinal,
+              options.finalRefreshIntervalMs,
+            ),
+          );
     const refreshTrigger = options.refreshTrigger?.(target);
     const cache = (
       refreshTrigger === undefined
@@ -1001,6 +1010,8 @@ export function createGuardedEnvironmentRpcQueryAtomFamily<
     readonly tag: TTag;
     readonly idleTtlMs?: number;
     readonly refreshIntervalMs?: number;
+    readonly finalRefreshIntervalMs?: number;
+    readonly isFinal?: (value: EnvironmentRpcSuccess<TTag>) => boolean;
   },
 ) {
   return createEnvironmentQueryAtomFamily(runtime, {
@@ -1009,6 +1020,10 @@ export function createGuardedEnvironmentRpcQueryAtomFamily<
     ...(options.refreshIntervalMs === undefined
       ? {}
       : { refreshIntervalMs: options.refreshIntervalMs }),
+    ...(options.finalRefreshIntervalMs === undefined
+      ? {}
+      : { finalRefreshIntervalMs: options.finalRefreshIntervalMs }),
+    ...(options.isFinal === undefined ? {} : { isFinal: options.isFinal }),
     // requestGuarded owns the request span.
     execute: Effect.fnUntraced(function* (input: EnvironmentRpcInput<TTag>) {
       const registry = yield* AtomRegistry.AtomRegistry;

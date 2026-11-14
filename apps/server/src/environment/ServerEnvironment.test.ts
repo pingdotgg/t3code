@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -166,6 +167,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
           serverSelfUpdateProgress: advertised,
         });
       }),
+  );
+  it.effect.each([
+    { env: {}, advertised: undefined },
+    { env: { T3CODE_SOURCE_CHECKOUT: "  " }, advertised: undefined },
+    { env: { T3CODE_SOURCE_CHECKOUT: "/src/t3code" }, advertised: true },
+  ])("advertises source updates only with a source checkout ($env)", ({ env, advertised }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped();
+      const descriptor = yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        return yield* serverEnvironment.getDescriptor;
+      }).pipe(
+        Effect.provide(
+          layerServerEnvironment(baseDir).pipe(
+            Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+          ),
+        ),
+      );
+      expect(descriptor.capabilities.sourceUpdate).toBe(advertised);
+    }),
   );
   it.effect.each([
     { platform: "darwin", architecture: "arm64", supported: true },

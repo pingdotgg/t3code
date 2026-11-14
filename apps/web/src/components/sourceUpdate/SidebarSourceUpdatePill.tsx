@@ -5,6 +5,7 @@ import { cn } from "~/lib/utils";
 import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuTrigger } from "../ui/menu";
 import { SidebarMenuItem } from "../ui/sidebar";
 import {
+  canCancelSourceUpdate,
   canPullUpstream,
   canRunSourceUpdate,
   isSourceUpdateSettled,
@@ -14,6 +15,7 @@ import {
 } from "./sourceUpdate.logic";
 import {
   dismissSourceUpdateOutcome,
+  refreshSourceUpdateStatus,
   useSourceUpdateActions,
   useSourceUpdateEnvironmentId,
   useSourceUpdateState,
@@ -38,13 +40,17 @@ export function SidebarSourceUpdatePill() {
 
 function SourceUpdatePill({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const { status, phase } = useSourceUpdateState(environmentId);
-  const { update, pullUpstream } = useSourceUpdateActions();
+  const { update, cancel, pullUpstream } = useSourceUpdateActions();
   const label = sourceUpdatePillLabel(phase);
   if (label === null) return null;
 
   return (
     <SidebarMenuItem className="ml-auto flex min-w-0 flex-1">
-      <Menu>
+      <Menu
+        onOpenChange={(open) => {
+          if (open) refreshSourceUpdateStatus(environmentId);
+        }}
+      >
         <MenuTrigger
           render={
             <button
@@ -68,7 +74,15 @@ function SourceUpdatePill({ environmentId }: { readonly environmentId: Environme
           {phase.kind === "failed" ? (
             <div className="max-w-64 px-2 py-1.5 text-destructive text-xs">{phase.message}</div>
           ) : null}
-          {canRunSourceUpdate(phase) ? (
+          {phase.kind === "succeeded" && phase.message ? (
+            <div className="max-w-64 px-2 py-1.5 text-muted-foreground text-xs">
+              {phase.message}
+            </div>
+          ) : null}
+          {canCancelSourceUpdate(phase) ? (
+            <MenuItem onClick={() => void cancel(environmentId)}>Cancel update</MenuItem>
+          ) : null}
+          {canRunSourceUpdate(status, phase) ? (
             <MenuItem onClick={() => void update(environmentId)}>
               {phase.kind === "failed" ? "Retry update" : "Update and restart"}
               {status?.behindOrigin ? (
@@ -83,7 +97,9 @@ function SourceUpdatePill({ environmentId }: { readonly environmentId: Environme
             </MenuItem>
           ) : null}
           {isSourceUpdateSettled(phase) ? (
-            <MenuItem onClick={() => dismissSourceUpdateOutcome(environmentId)}>Dismiss</MenuItem>
+            <MenuItem onClick={() => dismissSourceUpdateOutcome(environmentId, phase)}>
+              Dismiss
+            </MenuItem>
           ) : null}
         </MenuPopup>
       </Menu>

@@ -6,6 +6,7 @@ node_modules
 *.tsbuildinfo
 apps/*/dist
 apps/*/dist-exe
+apps/*/.dist-previous*
 infra/*/dist
 .astro
 packages/*/dist

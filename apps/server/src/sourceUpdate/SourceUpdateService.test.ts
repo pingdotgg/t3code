@@ -1,9 +1,17 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+  ThreadId,
+} from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -12,6 +20,7 @@ import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceUpdateService from "./SourceUpdateService.ts";
 
@@ -30,10 +39,35 @@ const output = (stdout: string, code = 0): ProcessRunner.ProcessRunOutput => ({
   stderrInvalidUtf8: false,
 });
 
-const makeService = (env: Record<string, string> = { T3CODE_SOURCE_CHECKOUT: CHECKOUT }) => {
+const claude: ServerProvider = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  driver: ProviderDriverKind.make("claudeAgent"),
+  enabled: true,
+  installed: true,
+  version: "test",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-01-01T00:00:00.000Z",
+  models: [],
+  slashCommands: [],
+  skills: [],
+};
+
+const makeService = (
+  options: {
+    readonly env?: Record<string, string>;
+    readonly unitActive?: boolean;
+    readonly systemd?: boolean;
+    readonly providers?: ReadonlyArray<ServerProvider>;
+    /** Every fetch waits on this, so a test can hold one in flight. */
+    readonly fetchGate?: Deferred.Deferred<void>;
+  } = {},
+) => {
+  const env = options.env ?? { T3CODE_SOURCE_CHECKOUT: CHECKOUT };
   const calls: Array<ReadonlyArray<string>> = [];
   const launches: Array<ThreadLaunch.ThreadLaunchInput> = [];
   const bootstraps: Array<ProjectService.ProjectBootstrapInput> = [];
+  const fetchStarted = Deferred.makeUnsafe<void>();
   const layer = SourceUpdateService.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
@@ -41,13 +75,34 @@ const makeService = (env: Record<string, string> = { T3CODE_SOURCE_CHECKOUT: CHE
           run: (input) => {
             calls.push([input.command, ...input.args]);
             const args = input.args.join(" ");
-            if (input.command === "systemctl") return Effect.succeed(output("inactive\n", 3));
-            if (input.command === "systemd-run") return Effect.succeed(output(""));
+            if (input.command === "systemd-run" && args === "--version") {
+              return Effect.succeed(output("", options.systemd === false ? 1 : 0));
+            }
+            if (input.command === "systemctl" && args.includes("show")) {
+              return Effect.succeed(output("Version=256\n", options.systemd === false ? 1 : 0));
+            }
+            if (input.command === "systemctl" && args.includes("is-active")) {
+              return Effect.succeed(
+                options.unitActive === true ? output("active\n") : output("inactive\n", 3),
+              );
+            }
+            if (input.command === "systemctl" || input.command === "systemd-run") {
+              return Effect.succeed(output(""));
+            }
+            if (args.includes(" fetch ")) {
+              return Deferred.succeed(fetchStarted, undefined).pipe(
+                Effect.andThen(options.fetchGate ? Deferred.await(options.fetchGate) : Effect.void),
+                Effect.as(output("")),
+              );
+            }
             if (args.includes("log -1")) return Effect.succeed(output("abc1234\0Add a thing\n"));
             if (args.includes("HEAD..origin/main")) return Effect.succeed(output("3\n"));
             if (args.includes("HEAD..upstream/main")) return Effect.succeed(output("", 128));
             return Effect.succeed(output(""));
           },
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed(options.providers ?? [claude]),
         }),
         Layer.mock(ProjectService.ProjectService)({
           bootstrap: (input) => {
@@ -83,31 +138,56 @@ const makeService = (env: Record<string, string> = { T3CODE_SOURCE_CHECKOUT: CHE
     ),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
-  return { calls, launches, bootstraps, layer };
+  return { calls, launches, bootstraps, fetchStarted, layer };
 };
 
+const fetchCalls = (calls: ReadonlyArray<ReadonlyArray<string>>) =>
+  calls.filter((call) => call.includes("fetch")).length;
+
 describe("SourceUpdateService", () => {
-  it("reads the last outcome line the update script wrote", () => {
+  it("reads the logged run and only its own outcome", () => {
     assert.deepEqual(
-      SourceUpdateService.parseLastSourceUpdateResult(
+      SourceUpdateService.parseSourceUpdateLog(
         [
-          "[source-update] failed 2026-01-01T00:00:00Z Old failure",
+          "[source-update] started run-1",
           "Already up to date.",
-          "[source-update] succeeded 2026-01-02T00:00:00Z Updated to abc1234 Add a thing",
+          "[source-update] succeeded run-1 2026-01-02T00:00:00Z Updated to abc1234 Add a thing",
           "",
         ].join("\n"),
       ),
       {
-        outcome: "succeeded",
-        finishedAt: "2026-01-02T00:00:00.000Z",
-        message: "Updated to abc1234 Add a thing",
+        lastRunId: "run-1",
+        lastResult: {
+          runId: "run-1",
+          outcome: "succeeded",
+          finishedAt: "2026-01-02T00:00:00.000Z",
+          message: "Updated to abc1234 Add a thing",
+        },
       },
     );
-    assert.isNull(SourceUpdateService.parseLastSourceUpdateResult("Updating /src\n"));
+    assert.deepEqual(SourceUpdateService.parseSourceUpdateLog("[source-update] started run-2\n"), {
+      lastRunId: "run-2",
+      lastResult: null,
+    });
+    // The format before run ids, still in the log of a server that just updated to this one.
+    assert.deepEqual(
+      SourceUpdateService.parseSourceUpdateLog(
+        "[source-update] succeeded 2026-01-02T00:00:00Z Updated to abc1234 Add a thing\n",
+      ),
+      { lastRunId: null, lastResult: null },
+    );
+  });
+
+  it.each([
+    ["0::/user.slice/user-1000.slice/user@1000.service/app.slice/t3code.service", true],
+    ["0::/user.slice/user-1000.slice/user@1000.service/app.slice/t3code-dev.service", false],
+    ["0::/user.slice/user-1000.slice/session-2.scope", false],
+  ])("finds the unit in %s: %s", (cgroup, inside) => {
+    assert.equal(SourceUpdateService.runsInSystemdUnit(cgroup, "t3code"), inside);
   });
 
   it.effect("is unavailable without a source checkout", () => {
-    const { layer } = makeService({});
+    const { layer } = makeService({ env: {} });
     return Effect.gen(function* () {
       const service = yield* SourceUpdateService.SourceUpdateService;
       const error = yield* Effect.flip(service.status);
@@ -116,7 +196,7 @@ describe("SourceUpdateService", () => {
   });
 
   it.effect("reports HEAD and how far each remote moved, null for a missing remote", () => {
-    const { layer, calls } = makeService();
+    const { layer } = makeService();
     return Effect.gen(function* () {
       const service = yield* SourceUpdateService.SourceUpdateService;
       const status = yield* service.status;
@@ -124,9 +204,32 @@ describe("SourceUpdateService", () => {
       assert.equal(status.behindOrigin, 3);
       assert.isNull(status.upstreamAhead);
       assert.isFalse(status.updateRunning);
+      assert.isNull(status.lastRunId);
       assert.isNull(status.lastResult);
+      assert.isNull(status.updateUnavailableReason);
+      assert.isNull(status.pullUpstreamUnavailableReason);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("answers status without waiting on the remote fetch, and runs one at a time", () => {
+    const fetchGate = Deferred.makeUnsafe<void>();
+    const { layer, calls, fetchStarted } = makeService({ fetchGate });
+    return Effect.gen(function* () {
+      const service = yield* SourceUpdateService.SourceUpdateService;
       yield* service.status;
-      assert.equal(calls.filter((call) => call.includes("fetch")).length, 2);
+      yield* Deferred.await(fetchStarted);
+      yield* service.status;
+      assert.equal(fetchCalls(calls), 1);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("does not fetch while an update runs", () => {
+    const { layer, calls } = makeService({ unitActive: true });
+    return Effect.gen(function* () {
+      const service = yield* SourceUpdateService.SourceUpdateService;
+      const status = yield* service.status;
+      assert.isTrue(status.updateRunning);
+      assert.equal(fetchCalls(calls), 0);
     }).pipe(Effect.provide(layer));
   });
 
@@ -142,13 +245,74 @@ describe("SourceUpdateService", () => {
       const service = yield* SourceUpdateService.SourceUpdateService;
       const error = yield* Effect.flip(service.update({}));
       assert.equal(error.reason, "turns-running");
-      assert.isFalse(calls.some((call) => call[0] === "systemd-run"));
+      assert.isFalse(calls.some((call) => call[0] === "systemd-run" && call.includes("--unit")));
 
-      yield* service.update({ force: true });
-      const started = calls.find((call) => call[0] === "systemd-run");
+      const { runId } = yield* service.update({ force: true });
+      const started = calls.find((call) => call[0] === "systemd-run" && call.includes("--unit"));
       assert.isDefined(started);
       assert.include(started, "t3code-source-update");
+      assert.include(started, `--setenv=T3CODE_SOURCE_UPDATE_RUN_ID=${runId}`);
+      assert.include(started, "RuntimeMaxSec=1800");
+      assert.isTrue(
+        started?.some((arg) => arg.startsWith("--setenv=T3CODE_SOURCE_UPDATE_SERVICE=")),
+      );
       assert.equal(started?.at(-1), `${CHECKOUT}/scripts/self-update.sh`);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("runs a configured update command with its arguments", () => {
+    const { layer, calls } = makeService({
+      env: {
+        T3CODE_SOURCE_CHECKOUT: CHECKOUT,
+        T3CODE_SOURCE_UPDATE_COMMAND: `"/opt/my tools/update.sh" --fast`,
+      },
+    });
+    return Effect.gen(function* () {
+      const service = yield* SourceUpdateService.SourceUpdateService;
+      yield* service.update({});
+      const started = calls.find((call) => call[0] === "systemd-run" && call.includes("--unit"));
+      assert.deepEqual(started?.slice(-2), ["/opt/my tools/update.sh", "--fast"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("offers no Update without systemd and refuses to start one", () => {
+    const { layer, calls } = makeService({ systemd: false });
+    return Effect.gen(function* () {
+      const service = yield* SourceUpdateService.SourceUpdateService;
+      const status = yield* service.status;
+      assert.isNotNull(status.updateUnavailableReason);
+      const error = yield* Effect.flip(service.update({}));
+      assert.equal(error.reason, "unavailable");
+      assert.isFalse(calls.some((call) => call.includes("--unit")));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("cancels a running update by stopping its unit", () => {
+    const { layer, calls } = makeService({ unitActive: true });
+    return Effect.gen(function* () {
+      const service = yield* SourceUpdateService.SourceUpdateService;
+      yield* service.cancel;
+      assert.isTrue(
+        calls.some((call) => call.join(" ") === "systemctl --user stop t3code-source-update"),
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("reports the run in the log and its outcome", () => {
+    const { layer } = makeService();
+    return Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(config.logsDir, { recursive: true });
+      yield* fs.writeFileString(
+        `${config.logsDir}/source-update.log`,
+        "[source-update] started run-7\n[source-update] failed run-7 2026-01-02T00:00:00Z Broke\n",
+      );
+      const service = yield* SourceUpdateService.SourceUpdateService;
+      const status = yield* service.status;
+      assert.equal(status.lastRunId, "run-7");
+      assert.equal(status.lastResult?.outcome, "failed");
+      assert.equal(status.lastResult?.message, "Broke");
     }).pipe(Effect.provide(layer));
   });
 
@@ -163,6 +327,23 @@ describe("SourceUpdateService", () => {
       assert.equal(launches[0]?.projectId, projectId);
       assert.equal(launches[0]?.modelSelection.instanceId, "claudeAgent");
       assert.equal(launches[0]?.initialMessage?.text, SourceUpdateService.PULL_UPSTREAM_PROMPT);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("refuses Pull upstream without a working Claude provider", () => {
+    const { layer, launches } = makeService({
+      providers: [{ ...claude, installed: false }],
+    });
+    return Effect.gen(function* () {
+      const service = yield* SourceUpdateService.SourceUpdateService;
+      const status = yield* service.status;
+      assert.equal(
+        status.pullUpstreamUnavailableReason,
+        "Claude Code is not installed on this server.",
+      );
+      const error = yield* Effect.flip(service.pullUpstream);
+      assert.equal(error.reason, "unavailable");
+      assert.equal(launches.length, 0);
     }).pipe(Effect.provide(layer));
   });
 });

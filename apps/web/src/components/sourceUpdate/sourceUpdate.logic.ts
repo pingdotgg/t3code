@@ -8,37 +8,75 @@ export type SourceUpdatePhase =
       readonly behindOrigin: number;
       readonly upstreamAhead: number;
     }
-  | { readonly kind: "running" }
-  | { readonly kind: "succeeded"; readonly sha: string }
-  | { readonly kind: "failed"; readonly message: string };
+  /** `cancellable` once the server confirms the update is running. */
+  | { readonly kind: "running"; readonly cancellable: boolean }
+  | {
+      readonly kind: "succeeded";
+      readonly runId: string;
+      readonly sha: string;
+      readonly message: string;
+    }
+  | { readonly kind: "failed"; readonly runId: string; readonly message: string };
+
+type SettledPhase = Extract<SourceUpdatePhase, { kind: "succeeded" | "failed" }>;
 
 const IDLE: SourceUpdatePhase = { kind: "idle" };
 
 /**
- * An update this client started stays on screen until its outcome is dismissed. The outcome
- * is the first result that differs from the one the server reported when the update began,
- * so it does not depend on either machine's clock.
+ * The server stops a run after 30 minutes (RuntimeMaxSec), restart wait included. A run that has
+ * not reported back by then will not: the server it would report to did not come back.
  */
-export function resolveSourceUpdatePhase(
-  status: ServerSourceUpdateStatus | null,
-  run: SourceUpdateRun | null,
-): SourceUpdatePhase {
-  if (run !== null) {
-    const result = status?.lastResult ?? null;
-    if (status === null || status.updateRunning) return { kind: "running" };
-    // The unit truncates the log when it starts, so an empty log after it ends means it died.
-    if (result === null) {
-      return { kind: "failed", message: "The update stopped without reporting a result." };
-    }
-    if (result.finishedAt === run.previousResultFinishedAt) return { kind: "running" };
-    return result.outcome === "succeeded"
-      ? { kind: "succeeded", sha: status.head.sha }
-      : { kind: "failed", message: result.message };
+export const SOURCE_UPDATE_GIVE_UP_MS = 32 * 60_000;
+
+/** How the run the server last logged ended, or null while none has. */
+function settledRun(status: ServerSourceUpdateStatus | null): SettledPhase | null {
+  if (status === null || status.updateRunning || status.lastRunId === null) return null;
+  const result = status.lastResult;
+  // The script logs an outcome on every exit it survives; none means it was killed outright.
+  if (result === null) {
+    return {
+      kind: "failed",
+      runId: status.lastRunId,
+      message: "The update stopped without reporting a result.",
+    };
   }
+  return result.outcome === "succeeded"
+    ? { kind: "succeeded", runId: result.runId, sha: status.head.sha, message: result.message }
+    : { kind: "failed", runId: result.runId, message: result.message };
+}
+
+/**
+ * The server's last run shows until this client dismisses it. A run this client started reads
+ * as running until the server reports that run id, so a status fetched before the start never
+ * passes for its outcome.
+ */
+export function resolveSourceUpdatePhase(input: {
+  readonly status: ServerSourceUpdateStatus | null;
+  readonly run: SourceUpdateRun | null;
+  readonly dismissedRunId: string | null;
+  readonly nowMs: number;
+}): SourceUpdatePhase {
+  const { status, run } = input;
+  const settled = settledRun(status);
+  // Past the server's own limit even a status that still says running is stale.
+  if (
+    run !== null &&
+    settled?.runId !== run.runId &&
+    input.nowMs - run.startedAtMs >= SOURCE_UPDATE_GIVE_UP_MS
+  ) {
+    return {
+      kind: "failed",
+      runId: run.runId,
+      message: "The update never reported back; the server may not have restarted. Check its log.",
+    };
+  }
+  if (status?.updateRunning) return { kind: "running", cancellable: true };
+  if (run !== null && settled?.runId !== run.runId) return { kind: "running", cancellable: false };
+  if (settled !== null && settled.runId !== input.dismissedRunId) return settled;
   if (status === null) return IDLE;
-  if (status.updateRunning) return { kind: "running" };
-  const behindOrigin = status.behindOrigin ?? 0;
-  const upstreamAhead = status.upstreamAhead ?? 0;
+  const behindOrigin = status.updateUnavailableReason === null ? (status.behindOrigin ?? 0) : 0;
+  const upstreamAhead =
+    status.pullUpstreamUnavailableReason === null ? (status.upstreamAhead ?? 0) : 0;
   return behindOrigin > 0 || upstreamAhead > 0
     ? { kind: "available", behindOrigin, upstreamAhead }
     : IDLE;
@@ -65,13 +103,19 @@ export function sourceUpdatePillLabel(phase: SourceUpdatePhase): string | null {
   }
 }
 
-export function canRunSourceUpdate(phase: SourceUpdatePhase): boolean {
+export function canRunSourceUpdate(
+  status: ServerSourceUpdateStatus | null,
+  phase: SourceUpdatePhase,
+): boolean {
+  if (status === null || status.updateUnavailableReason !== null) return false;
   return (phase.kind === "available" && phase.behindOrigin > 0) || phase.kind === "failed";
 }
 
-export function isSourceUpdateSettled(
-  phase: SourceUpdatePhase,
-): phase is Extract<SourceUpdatePhase, { kind: "succeeded" | "failed" }> {
+export function canCancelSourceUpdate(phase: SourceUpdatePhase): boolean {
+  return phase.kind === "running" && phase.cancellable;
+}
+
+export function isSourceUpdateSettled(phase: SourceUpdatePhase): phase is SettledPhase {
   return phase.kind === "succeeded" || phase.kind === "failed";
 }
 
@@ -79,7 +123,11 @@ export function canPullUpstream(
   status: ServerSourceUpdateStatus | null,
   phase: SourceUpdatePhase,
 ): boolean {
-  return phase.kind !== "running" && (status?.upstreamAhead ?? 0) > 0;
+  return (
+    phase.kind !== "running" &&
+    status?.pullUpstreamUnavailableReason === null &&
+    (status.upstreamAhead ?? 0) > 0
+  );
 }
 
 export function pickSourceUpdateEnvironment<Id extends string>(input: {

@@ -413,6 +413,7 @@ export class ServerPrepareTriageError extends Schema.TaggedError<ServerPrepareTr
 }
 
 export const ServerSourceUpdateResult = Schema.Struct({
+  runId: Schema.String,
   outcome: Schema.Literals(["succeeded", "failed"]),
   finishedAt: IsoDateTime,
   message: Schema.String,
@@ -429,7 +430,14 @@ export const ServerSourceUpdateStatus = Schema.Struct({
   /** When the remotes were last fetched successfully. */
   fetchedAt: Schema.NullOr(IsoDateTime),
   updateRunning: Schema.Boolean,
+  /** The run the update log belongs to, written as soon as the update starts. */
+  lastRunId: Schema.NullOr(Schema.String),
+  /** The outcome of `lastRunId`, once it finished. */
   lastResult: Schema.NullOr(ServerSourceUpdateResult),
+  /** Why Update cannot run on this server; null when it can. */
+  updateUnavailableReason: Schema.NullOr(Schema.String),
+  /** Why Pull upstream cannot run on this server; null when it can. */
+  pullUpstreamUnavailableReason: Schema.NullOr(Schema.String),
 });
 export type ServerSourceUpdateStatus = typeof ServerSourceUpdateStatus.Type;
 
@@ -438,6 +446,9 @@ export const ServerRunSourceUpdateInput = Schema.Struct({
   force: Schema.optional(Schema.Boolean),
 });
 export type ServerRunSourceUpdateInput = typeof ServerRunSourceUpdateInput.Type;
+
+export const ServerRunSourceUpdateResult = Schema.Struct({ runId: Schema.String });
+export type ServerRunSourceUpdateResult = typeof ServerRunSourceUpdateResult.Type;
 
 export const ServerPullUpstreamResult = Schema.Struct({
   projectId: ProjectId,

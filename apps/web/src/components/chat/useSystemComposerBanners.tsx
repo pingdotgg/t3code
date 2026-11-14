@@ -30,7 +30,11 @@ import {
   useSourceUpdateActions,
   useSourceUpdateState,
 } from "../sourceUpdate/useSourceUpdate";
-import { isSourceUpdateSettled } from "../sourceUpdate/sourceUpdate.logic";
+import {
+  canCancelSourceUpdate,
+  canRunSourceUpdate,
+  isSourceUpdateSettled,
+} from "../sourceUpdate/sourceUpdate.logic";
 import { useAutoBalanceUpdateBanner } from "./useAutoBalanceUpdateBanner";
 import { ComposerServerUpdateIcon } from "./ComposerServerUpdateStatus";
 import {
@@ -283,7 +287,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       sourceUpdateEnvironmentId !== null &&
       (sourcePhase.kind === "running" || isSourceUpdateSettled(sourcePhase))
     ) {
-      const dismiss = () => dismissSourceUpdateOutcome(sourceUpdateEnvironmentId);
+      const dismiss = () => dismissSourceUpdateOutcome(sourceUpdateEnvironmentId, sourcePhase);
       items.push({
         id: `source-update:${sourceUpdateEnvironmentId}`,
         variant:
@@ -310,17 +314,23 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         description:
           sourcePhase.kind === "running"
             ? "Pulling, building, and restarting. It reconnects on its own."
-            : sourcePhase.kind === "failed"
-              ? sourcePhase.message
-              : undefined,
+            : sourcePhase.message || undefined,
         actions:
-          sourcePhase.kind === "failed" ? (
+          sourcePhase.kind === "failed" && canRunSourceUpdate(sourceUpdate.status, sourcePhase) ? (
             <Button
               size="xs"
               variant="ghost"
               onClick={() => void sourceUpdateActions.update(sourceUpdateEnvironmentId)}
             >
               Retry
+            </Button>
+          ) : canCancelSourceUpdate(sourcePhase) ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => void sourceUpdateActions.cancel(sourceUpdateEnvironmentId)}
+            >
+              Cancel
             </Button>
           ) : undefined,
         ...(sourcePhase.kind === "running"

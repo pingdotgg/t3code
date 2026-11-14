@@ -321,6 +321,7 @@ import {
   ServerPrepareTriageError,
   ServerPullUpstreamResult,
   ServerRunSourceUpdateInput,
+  ServerRunSourceUpdateResult,
   ServerSourceUpdateError,
   ServerSourceUpdateStatus,
   ServerPrepareTriageInput,
@@ -553,6 +554,7 @@ export const WS_METHODS = {
   serverPrepareTriage: "server.prepareTriage",
   serverGetSourceUpdateStatus: "server.getSourceUpdateStatus",
   serverRunSourceUpdate: "server.runSourceUpdate",
+  serverCancelSourceUpdate: "server.cancelSourceUpdate",
   serverPullUpstream: "server.pullUpstream",
   serverSignalProcess: "server.signalProcess",
   serverReportClientActivity: "server.reportClientActivity",
@@ -1030,6 +1032,12 @@ const WsServerGetSourceUpdateStatusRpc = Rpc.make(WS_METHODS.serverGetSourceUpda
 
 const WsServerRunSourceUpdateRpc = Rpc.make(WS_METHODS.serverRunSourceUpdate, {
   payload: ServerRunSourceUpdateInput,
+  success: ServerRunSourceUpdateResult,
+  error: Schema.Union([ServerSourceUpdateError, EnvironmentAuthorizationError]),
+});
+
+const WsServerCancelSourceUpdateRpc = Rpc.make(WS_METHODS.serverCancelSourceUpdate, {
+  payload: Schema.Struct({}),
   success: Schema.Void,
   error: Schema.Union([ServerSourceUpdateError, EnvironmentAuthorizationError]),
 });
@@ -2194,6 +2202,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerPrepareTriageRpc,
   WsServerGetSourceUpdateStatusRpc,
   WsServerRunSourceUpdateRpc,
+  WsServerCancelSourceUpdateRpc,
   WsServerPullUpstreamRpc,
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,

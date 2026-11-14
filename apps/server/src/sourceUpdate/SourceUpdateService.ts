@@ -5,13 +5,17 @@ import {
   ProjectId,
   ProviderDriverKind,
   ServerSourceUpdateError,
+  type ServerProvider,
   type ServerPullUpstreamResult,
   type ServerRunSourceUpdateInput,
+  type ServerRunSourceUpdateResult,
   type ServerSourceUpdateResult,
   type ServerSourceUpdateStatus,
   defaultInstanceIdForDriver,
 } from "@t3tools/contracts";
+import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -28,16 +32,21 @@ import * as ServerConfig from "../config.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ACTIVE_RUN_STATUSES } from "../orchestration-v2/ThreadManagementService.ts";
 import {
   SOURCE_CHECKOUT_ENV,
+  SOURCE_UPDATE_SERVICE_ENV,
   sourceCheckoutConfig,
   sourceUpdateCommandConfig,
+  sourceUpdateServiceConfig,
 } from "./sourceCheckout.ts";
 
 const UPDATE_UNIT = "t3code-source-update";
 const FETCH_INTERVAL = Duration.minutes(5);
+// Bounds a run, restart wait included; clients give up on a run that outlives it.
+const SOURCE_UPDATE_MAX_RUNTIME = Duration.minutes(30);
 const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 
 // No tty: a credential prompt would hang until the timeout, so git must fail instead.
@@ -45,28 +54,58 @@ const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", LAN
 
 export const PULL_UPSTREAM_PROMPT = `Merge upstream into this checkout. It is the source the T3 Code server you are running in is built from.
 
-1. \`git fetch origin upstream\` and make sure the working tree is clean and on \`main\`, up to date with \`origin/main\`.
+1. \`git fetch --multiple origin upstream\` and make sure the working tree is clean and on \`main\`, up to date with \`origin/main\`.
 2. \`git merge upstream/main\`. Resolve every conflict so both sides' intent survives; read the upstream commits when a resolution is not obvious, and ask me when it is a real product decision.
 3. Run \`vp i\` and \`vp run check:changed\`, and fix what fails.
 4. Push to \`origin main\`. Never push to \`upstream\` or open pull requests against it.
 
 Do not build or restart the server; I run Update from the app once this is pushed.`;
 
-const RESULT_LINE = /^\[source-update\] (succeeded|failed) (\S+)(?: (.*))?$/;
+const STARTED_LINE = /^\[source-update\] started (\S+)$/;
+const RESULT_LINE = /^\[source-update\] (succeeded|failed) (\S+) (\S+)(?: (.*))?$/;
 
-/** The last outcome line `scripts/self-update.sh` wrote to the log. */
-export const parseLastSourceUpdateResult = (log: string): ServerSourceUpdateResult | null => {
-  const lines = log.split("\n");
-  for (let index = lines.length - 1; index >= 0; index--) {
-    const match = RESULT_LINE.exec(lines[index]!.trim());
-    if (match === null) continue;
-    const finishedAt = DateTime.make(match[2]!);
+/** The run `scripts/self-update.sh` last logged, and its outcome once it wrote one. */
+export const parseSourceUpdateLog = (
+  log: string,
+): { readonly lastRunId: string | null; readonly lastResult: ServerSourceUpdateResult | null } => {
+  let lastRunId: string | null = null;
+  let lastResult: ServerSourceUpdateResult | null = null;
+  for (const line of log.split("\n")) {
+    const trimmed = line.trim();
+    const started = STARTED_LINE.exec(trimmed);
+    if (started !== null) {
+      lastRunId = started[1]!;
+      lastResult = null;
+      continue;
+    }
+    const match = RESULT_LINE.exec(trimmed);
+    if (match === null || match[2] !== lastRunId) continue;
+    const finishedAt = DateTime.make(match[3]!);
     if (Option.isNone(finishedAt)) continue;
-    return {
+    lastResult = {
+      runId: match[2],
       outcome: match[1] as ServerSourceUpdateResult["outcome"],
       finishedAt: DateTime.formatIso(finishedAt.value),
-      message: match[3]?.trim() ?? "",
+      message: match[4]?.trim() ?? "",
     };
+  }
+  return { lastRunId, lastResult };
+};
+
+/** Whether `/proc/self/cgroup` puts this process inside the systemd unit `service`. */
+export const runsInSystemdUnit = (cgroup: string, service: string): boolean =>
+  service.length > 0 &&
+  cgroup.split("\n").some((line) => line.split("/").includes(`${service}.service`));
+
+/** Why Pull upstream cannot start a Claude thread here, or null when it can. */
+const claudeUnavailableReason = (provider: ServerProvider | undefined): string | null => {
+  if (provider === undefined) return "Claude is not set up on this server.";
+  if (!provider.enabled || provider.status === "disabled") {
+    return "Claude is disabled on this server.";
+  }
+  if (!provider.installed) return "Claude Code is not installed on this server.";
+  if (provider.status === "error") {
+    return provider.message ?? "Claude is not working on this server.";
   }
   return null;
 };
@@ -90,7 +129,8 @@ export class SourceUpdateService extends Context.Service<
     readonly status: Effect.Effect<ServerSourceUpdateStatus, ServerSourceUpdateError>;
     readonly update: (
       input: ServerRunSourceUpdateInput,
-    ) => Effect.Effect<void, ServerSourceUpdateError>;
+    ) => Effect.Effect<ServerRunSourceUpdateResult, ServerSourceUpdateError>;
+    readonly cancel: Effect.Effect<void, ServerSourceUpdateError>;
     readonly pullUpstream: Effect.Effect<ServerPullUpstreamResult, ServerSourceUpdateError>;
   }
 >()("t3/sourceUpdate/SourceUpdateService") {}
@@ -106,6 +146,7 @@ const failed = (detail: string) => (cause: unknown) =>
 const make = Effect.gen(function* () {
   const checkoutOption = yield* sourceCheckoutConfig;
   const updateCommandOption = yield* sourceUpdateCommandConfig;
+  const serviceName = yield* sourceUpdateServiceConfig;
   const config = yield* ServerConfig.ServerConfig;
   const runner = yield* ProcessRunner.ProcessRunner;
   const fs = yield* FileSystem.FileSystem;
@@ -115,6 +156,8 @@ const make = Effect.gen(function* () {
   const threadLaunch = yield* ThreadLaunch.ThreadLaunchService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const random = yield* SecureRandom.SecureRandom;
+  const providers = yield* ProviderRegistry.ProviderRegistry;
+  const scope = yield* Effect.scope;
 
   if (Option.isNone(checkoutOption)) {
     return SourceUpdateService.of({
@@ -122,45 +165,92 @@ const make = Effect.gen(function* () {
       update: Effect.fn("SourceUpdateService.update")(function* (_input) {
         return yield* unavailable;
       }),
+      cancel: Effect.fail(unavailable),
       pullUpstream: Effect.fail(unavailable),
     });
   }
-  const checkout = checkoutOption.value;
-  const updateCommand = Option.getOrElse(updateCommandOption, () =>
-    path.join(checkout, "scripts", "self-update.sh"),
-  );
+  // Projects match on the resolved path, so a trailing slash or a symlink must not differ.
+  const checkout = yield* fs
+    .realPath(checkoutOption.value)
+    .pipe(Effect.orElseSucceed(() => checkoutOption.value));
+  const [updateProgram = path.join(checkout, "scripts", "self-update.sh"), ...updateArgs] =
+    Option.match(updateCommandOption, { onNone: () => [], onSome: tokenizeCliArgs });
   const logPath = path.join(config.logsDir, "source-update.log");
+  // A dev stack opts in without running inside the unit; it must never restart that unit.
+  const restartService = yield* fs.readFileString("/proc/self/cgroup").pipe(
+    Effect.map((cgroup) => (runsInSystemdUnit(cgroup, serviceName) ? serviceName : "")),
+    Effect.orElseSucceed(() => ""),
+  );
+  const probeHost =
+    config.host === undefined || ["", "0.0.0.0", "::", "[::]"].includes(config.host)
+      ? "127.0.0.1"
+      : config.host;
 
   const git = (args: ReadonlyArray<string>, timeout: Duration.Input = "30 seconds") =>
     runner.run({ command: "git", args: ["-C", checkout, ...args], env: GIT_ENV, timeout });
 
+  const systemdUnavailableReason = yield* Effect.cached(
+    Effect.gen(function* () {
+      const probes = yield* Effect.all(
+        [
+          runner.run({ command: "systemd-run", args: ["--version"] }),
+          runner.run({ command: "systemctl", args: ["--user", "show", "--property=Version"] }),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.option);
+      return Option.exists(probes, ([run, ctl]) => run.code === 0 && ctl.code === 0)
+        ? null
+        : "Update needs systemd-run and a systemd user manager (systemctl --user) on this server.";
+    }),
+  );
+
   const fetchedAt = yield* Ref.make<string | null>(null);
-  // Every client polls status; the remotes are fetched at most once per interval for all of them.
-  const fetchRemotes = yield* Effect.gen(function* () {
-    const results = yield* Effect.forEach(
-      ["origin", "upstream"],
-      (remote) =>
-        git(["fetch", "--quiet", remote, "main"], "1 minute").pipe(
-          Effect.map((output) => output.code === 0),
-          Effect.orElseSucceed(() => false),
-        ),
-      { concurrency: "unbounded" },
-    );
-    if (results.some(Boolean)) {
-      yield* Ref.set(fetchedAt, DateTime.formatIso(yield* DateTime.now));
+  const fetchState = yield* Ref.make({ inFlight: false, startedAtMs: null as number | null });
+  // Sequential: two fetches in one repository contend for its ref locks.
+  const fetchRemotes = Effect.gen(function* () {
+    let fetched = false;
+    for (const remote of ["origin", "upstream"]) {
+      const output = yield* git(["fetch", "--quiet", remote, "main"], "1 minute").pipe(
+        Effect.option,
+      );
+      fetched ||= Option.exists(output, (result) => result.code === 0);
     }
-  }).pipe(Effect.cachedWithTTL(FETCH_INTERVAL));
+    if (fetched) yield* Ref.set(fetchedAt, DateTime.formatIso(yield* DateTime.now));
+  });
+  // Every client polls status; the remotes are fetched in the background at most once per interval.
+  const fetchRemotesInBackground = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const start = yield* Ref.modify(fetchState, (state) =>
+      state.inFlight ||
+      (state.startedAtMs !== null && now - state.startedAtMs < Duration.toMillis(FETCH_INTERVAL))
+        ? [false, state]
+        : [true, { inFlight: true, startedAtMs: now }],
+    );
+    if (!start) return;
+    yield* fetchRemotes.pipe(
+      Effect.ensuring(Ref.update(fetchState, (state) => ({ ...state, inFlight: false }))),
+      Effect.forkIn(scope),
+    );
+  });
 
   const updateRunning = runner
     .run({ command: "systemctl", args: ["--user", "is-active", UPDATE_UNIT] })
     .pipe(
-      Effect.map((output) => ["active", "activating", "reloading"].includes(output.stdout.trim())),
+      Effect.map((output) =>
+        ["active", "activating", "reloading", "deactivating"].includes(output.stdout.trim()),
+      ),
       Effect.orElseSucceed(() => false),
     );
 
-  const lastResult = fs.readFileString(logPath).pipe(
-    Effect.map(parseLastSourceUpdateResult),
-    Effect.orElseSucceed(() => null),
+  const lastRun = fs.readFileString(logPath).pipe(
+    Effect.map(parseSourceUpdateLog),
+    Effect.orElseSucceed(() => ({ lastRunId: null, lastResult: null })),
+  );
+
+  const claudeProvider = providers.getProviders.pipe(
+    Effect.map((list) =>
+      list.find((provider) => provider.instanceId === defaultInstanceIdForDriver(CLAUDE_DRIVER)),
+    ),
   );
 
   const status: SourceUpdateService["Service"]["status"] = Effect.gen(function* () {
@@ -176,21 +266,31 @@ const make = Effect.gen(function* () {
         Effect.map(parseCommitCount),
         Effect.orElseSucceed(() => null),
       );
-    const counts = Effect.andThen(
-      fetchRemotes,
-      Effect.all([count("origin/main"), count("upstream/main")], { concurrency: "unbounded" }),
-    );
-    const [headOutput, [behindOrigin, upstreamAhead], running, result] = yield* Effect.all(
-      [head, counts, updateRunning, lastResult],
-      { concurrency: "unbounded" },
-    );
+    const running = yield* updateRunning;
+    // The update fetches origin itself.
+    if (!running) yield* fetchRemotesInBackground;
+    const [headOutput, behindOrigin, upstreamAhead, run, updateUnavailable, claude] =
+      yield* Effect.all(
+        [
+          head,
+          count("origin/main"),
+          count("upstream/main"),
+          lastRun,
+          systemdUnavailableReason,
+          claudeProvider,
+        ],
+        { concurrency: "unbounded" },
+      );
     return {
       head: parseHeadCommit(headOutput.stdout),
       behindOrigin,
       upstreamAhead,
       fetchedAt: yield* Ref.get(fetchedAt),
       updateRunning: running,
-      lastResult: result,
+      lastRunId: run.lastRunId,
+      lastResult: run.lastResult,
+      updateUnavailableReason: updateUnavailable,
+      pullUpstreamUnavailableReason: claudeUnavailableReason(claude),
     };
   }).pipe(Effect.withSpan("SourceUpdateService.status"));
 
@@ -206,6 +306,10 @@ const make = Effect.gen(function* () {
 
   const update: SourceUpdateService["Service"]["update"] = Effect.fn("SourceUpdateService.update")(
     function* (input) {
+      const reason = yield* systemdUnavailableReason;
+      if (reason !== null) {
+        return yield* new ServerSourceUpdateError({ reason: "unavailable", detail: reason });
+      }
       if (input.force !== true && (yield* hasActiveRun)) {
         return yield* new ServerSourceUpdateError({
           reason: "turns-running",
@@ -221,6 +325,7 @@ const make = Effect.gen(function* () {
       yield* fs
         .makeDirectory(config.logsDir, { recursive: true })
         .pipe(Effect.mapError(failed(`Could not create ${config.logsDir}.`)));
+      const runId = yield* random.uuidV4();
       // A transient unit outside the server's cgroup, so the service restart does not kill it.
       const output = yield* runner
         .run({
@@ -233,10 +338,17 @@ const make = Effect.gen(function* () {
             "--quiet",
             `--working-directory=${checkout}`,
             `--setenv=${SOURCE_CHECKOUT_ENV}=${checkout}`,
+            `--setenv=${SOURCE_UPDATE_SERVICE_ENV}=${restartService}`,
+            `--setenv=T3CODE_SOURCE_UPDATE_RUN_ID=${runId}`,
+            `--setenv=T3CODE_SOURCE_UPDATE_HOST=${probeHost}`,
+            `--setenv=T3CODE_SOURCE_UPDATE_PORT=${String(config.port)}`,
+            "-p",
+            `RuntimeMaxSec=${String(Duration.toSeconds(SOURCE_UPDATE_MAX_RUNTIME))}`,
             // stderr inherits this descriptor; a second one on the file would overwrite it.
             "-p",
             `StandardOutput=truncate:${logPath}`,
-            updateCommand,
+            updateProgram,
+            ...updateArgs,
           ],
         })
         .pipe(Effect.mapError(failed("Could not start the update.")));
@@ -247,10 +359,29 @@ const make = Effect.gen(function* () {
           detail: `Could not start the update: ${output.stderr.trim() || `systemd-run exited with ${String(output.code)}`}`,
         });
       }
+      return { runId };
     },
   );
 
+  // The script logs the stop as a failure; systemd stops it the same way when RuntimeMaxSec ends.
+  const cancel: SourceUpdateService["Service"]["cancel"] = Effect.gen(function* () {
+    if (!(yield* updateRunning)) return;
+    const output = yield* runner
+      .run({ command: "systemctl", args: ["--user", "stop", UPDATE_UNIT], timeout: "2 minutes" })
+      .pipe(Effect.mapError(failed("Could not cancel the update.")));
+    if (output.code !== 0) {
+      return yield* new ServerSourceUpdateError({
+        reason: "failed",
+        detail: `Could not cancel the update: ${output.stderr.trim() || `systemctl exited with ${String(output.code)}`}`,
+      });
+    }
+  }).pipe(Effect.withSpan("SourceUpdateService.cancel"));
+
   const pullUpstream: SourceUpdateService["Service"]["pullUpstream"] = Effect.gen(function* () {
+    const claudeReason = claudeUnavailableReason(yield* claudeProvider);
+    if (claudeReason !== null) {
+      return yield* new ServerSourceUpdateError({ reason: "unavailable", detail: claudeReason });
+    }
     const { project } = yield* projects
       .bootstrap({
         commandId: CommandId.make(yield* random.uuidV4()),
@@ -283,7 +414,7 @@ const make = Effect.gen(function* () {
     return { projectId: project.id, threadId: launched.threadId };
   }).pipe(Effect.withSpan("SourceUpdateService.pullUpstream"));
 
-  return SourceUpdateService.of({ status, update, pullUpstream });
+  return SourceUpdateService.of({ status, update, cancel, pullUpstream });
 });
 
 export const layer = Layer.effect(SourceUpdateService, make);

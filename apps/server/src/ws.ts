@@ -2696,6 +2696,7 @@ export const layerWsRpc = (
         [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
         [WS_METHODS.serverGetSourceUpdateStatus]: (_input) => sourceUpdate.status,
         [WS_METHODS.serverRunSourceUpdate]: (input) => sourceUpdate.update(input),
+        [WS_METHODS.serverCancelSourceUpdate]: (_input) => sourceUpdate.cancel,
         [WS_METHODS.serverPullUpstream]: (_input) => sourceUpdate.pullUpstream,
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
