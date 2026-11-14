@@ -722,7 +722,7 @@ describe("PreviewManager", () => {
   );
 
   effectIt.effect(
-    "hosts an agent tab in a never-shown window until a panel webview takes it over",
+    "hosts an agent tab in a never-shown window until a panel webview replaces it",
     () =>
       withManager((manager) =>
         Effect.gen(function* () {
@@ -767,7 +767,6 @@ describe("PreviewManager", () => {
           });
           expect(state.webContentsId).toBe(55);
           expect(loadURL).toHaveBeenCalledWith("https://example.com/agent");
-          // Back on screen, the renderer moves the tab into a panel webview.
           fromId.mockReturnValue(
             makeTestPreviewWebContents(async () => ({
               toJPEG: () => Buffer.from(""),

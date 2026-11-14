@@ -67,7 +67,7 @@ import {
 import { reconcilePreviewServerSessions, resetPreviewStateForTests } from "~/previewStateStore";
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 import { ElectronBrowserHost } from "./ElectronBrowserHost";
-import { useRendersServerTabNatively } from "./previewRuntime";
+import { rendersServerTabNatively } from "./previewRuntime";
 
 const threadRef = scopeThreadRef(
   EnvironmentId.make("host-webview-order"),
@@ -218,20 +218,15 @@ describe("ElectronBrowserHost", () => {
           url: `https://example.com/${tabId}`,
         });
         expect(screen.container.querySelectorAll("webview")).toHaveLength(0);
-        // Back on screen, a tab nobody views keeps its live page; the viewed one moves into the panel.
-        await act(() => window.dispatchEvent(new Event("focus")));
+        // Moving hosts would reload the agent's page, so it stays streamed once T3 is back.
+        window.desktopBridge = {
+          getWindowShown: () => true,
+          getWindowZoomFactor: () => 1,
+        } as never;
+        expect(
+          rendersServerTabNatively(threadRef.environmentId, threadRef.environmentId, agentTab),
+        ).toBe(false);
         expect(screen.container.querySelectorAll("webview")).toHaveLength(0);
-        function Viewer() {
-          useRendersServerTabNatively(threadRef.environmentId, agentTab);
-          return null;
-        }
-        await using _viewer = await render(
-          <AppAtomRegistryProvider>
-            <Viewer />
-          </AppAtomRegistryProvider>,
-        );
-        await act(() => window.dispatchEvent(new Event("focus")));
-        expect(screen.container.querySelectorAll("webview")).toHaveLength(1);
       }
     },
   );

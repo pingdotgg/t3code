@@ -2086,7 +2086,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     return yield* withTabLifecycleLock(
       tabId,
       registerWebviewUnlocked(tabId, webContentsId, expectedGeneration).pipe(
-        // The renderer moved a background tab into the panel once T3 was on screen again.
+        // A reloaded renderer may host a background tab in a panel webview instead.
         Effect.tap(() => Effect.sync(() => closeBackgroundWindow(tabId))),
       ),
     );
