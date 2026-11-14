@@ -598,6 +598,13 @@ const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => undefined),
           );
 
+  /** A run there that ended without starting and was not promoted into another run. */
+  const endedUnstarted = (run: OrchestratorMcpThreadRun | undefined) =>
+    run !== undefined &&
+    run.startedAt === null &&
+    run.promotedToRunId === undefined &&
+    isTerminal(run.status);
+
   /**
    * Stops the task's own work there: a queued run alone, since other tasks may share the thread,
    * nothing for one that ended unstarted without promotion, else its thread. `key` names
@@ -610,37 +617,30 @@ const make = Effect.gen(function* () {
     reason?: string,
   ) {
     const run = yield* runThere(scope, remote);
-    if (
-      run !== undefined &&
-      run.startedAt === null &&
-      run.promotedToRunId === undefined &&
-      isTerminal(run.status)
-    )
-      return;
+    if (endedUnstarted(run)) return;
     if (remote.runId !== undefined && (run === undefined || run.status === "queued")) {
+      const queuedRunId = remote.runId;
       const cancelled = yield* forwarding
-        .cancelQueuedRun(scope, remote.environmentId, {
-          threadId: remote.threadId,
-          queuedRunId: remote.runId,
-        })
+        .cancelQueuedRun(scope, remote.environmentId, { threadId: remote.threadId, queuedRunId })
         .pipe(
           Effect.as(true),
           Effect.catch((error) =>
             Effect.gen(function* () {
               const current = yield* runThere(scope, remote);
-              if (
-                current !== undefined &&
-                current.startedAt === null &&
-                current.promotedToRunId === undefined &&
-                isTerminal(current.status)
-              ) {
-                return true;
+              if (current !== undefined && current.status !== "queued") {
+                return endedUnstarted(current);
               }
-              // A lost reply or refusal does not prove that this queued run started.
-              if (current === undefined || current.status === "queued") {
-                return yield* error;
-              }
-              return false;
+              // Newer runs can hide it from recent history; its exact run there says whether it
+              // still waits, ran on, or ended. Unproven, a lost reply or refusal is not a start.
+              const exact = yield* forwarding
+                .waitForThread(scope, remote.environmentId, {
+                  threadId: remote.threadId,
+                  runId: queuedRunId,
+                  timeoutMs: 1,
+                })
+                .pipe(Effect.orElseSucceed(() => undefined));
+              if (exact === undefined || exact.status === "queued") return yield* error;
+              return isTerminal(exact.status);
             }),
           ),
         );
