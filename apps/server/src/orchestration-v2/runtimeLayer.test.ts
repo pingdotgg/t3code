@@ -1312,7 +1312,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       }
       assert.equal(rollbackThread.mock.calls.length, 0);
 
-      const rewind = (name: string) =>
+      const rewind = <E, R>(
+        name: string,
+        whileRollbackPending: Effect.Effect<unknown, E, R> = Effect.void,
+      ) =>
         Effect.gen(function* () {
           const commandId = CommandId.make(name);
           yield* orchestrator.dispatch({
@@ -1323,13 +1326,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             scopeId: baseline.scopeId,
             restoreFiles: false,
           });
+          yield* whileRollbackPending;
           yield* worker.drain();
           assert.deepEqual(
             (yield* outbox.listByCommandId(commandId)).map((effect) => effect.status),
             ["succeeded"],
           );
           const projection = yield* orchestrator.getThreadProjection(threadId);
-          assert.ok(projection.runs.every((run) => run.status === "rolled_back"));
+          assert.deepEqual(
+            projection.runs
+              .filter((run) => run.status !== "rolled_back")
+              .map((run) => [run.userMessageId, run.status]),
+            [],
+            "a background wake from rolled-back work must not leave a run after the rewind",
+          );
           assert.isNull(projection.providerThreads[0]!.lastRunOrdinal);
           assert.equal(
             projection.providerThreads[0]!.nativeThreadRef?.nativeId,
@@ -1338,7 +1348,36 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           assert.isNull(projection.thread.rollbackFailure);
         });
 
-      yield* rewind("non-git-rewind-first");
+      // A Codex background command from the discarded turns finishes while the rollback runs.
+      yield* rewind(
+        "non-git-rewind-first",
+        orchestrator
+          .dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("provider-continuation:non-git-background-wake"),
+            createdBy: "agent",
+            creationSource: "server",
+            threadId,
+            messageId: MessageId.make("non-git-background-wake"),
+            text: "Background command `sleep 5` exited with code 0.",
+            notification: {
+              source: { kind: "background_task" },
+              outcome: "completed",
+              summary: "Background command completed",
+            },
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+          })
+          .pipe(
+            Effect.andThen(
+              outbox.cancelUnsettled({
+                threadId,
+                effectTypes: ["provider-turn.start"],
+                reason: "provider start is outside this fixture",
+              }),
+            ),
+          ),
+      );
       assert.equal(rollbackThread.mock.calls[0]![0].target.type, "thread_start");
       assert.deepEqual(
         rollbackThread.mock.calls[0]![0].providerThreadTurns.map((turn) => turn.id),
