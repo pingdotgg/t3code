@@ -23,6 +23,8 @@ const deps = (input: {
   readonly liveAfter?: string;
   /** Appears in the currency re-read only. */
   readonly threadAfter?: string;
+  /** Finishes a turn after its copy (its sequence advances on later reads). */
+  readonly sequenceAfterCopy?: string;
   readonly liveThread?: string;
   readonly sequences?: Readonly<Record<string, number>>;
   readonly attachmentFiles?: Readonly<Record<string, ReadonlyArray<string>>>;
@@ -92,8 +94,17 @@ const deps = (input: {
               });
         };
       })(),
-      threadSequence: ({ threadId }) =>
-        Effect.succeed({ snapshotSequence: input.sequences?.[threadId] ?? 1 }),
+      threadSequence: (() => {
+        const reads = new Map<string, number>();
+        return ({ threadId }: { readonly threadId: string }) => {
+          const count = (reads.get(threadId) ?? 0) + 1;
+          reads.set(threadId, count);
+          const base = input.sequences?.[threadId] ?? 1;
+          return Effect.succeed({
+            snapshotSequence: input.sequenceAfterCopy === threadId && count > 1 ? base + 1 : base,
+          });
+        };
+      })(),
       threadHistory: ({ threadId }) => {
         fetched.push(threadId);
         return threadId === input.failThread
@@ -263,6 +274,27 @@ describe("fleet drain", () => {
 
       expect(outcome.state).toBe("failed");
       expect(outcome.threads.acked).toBe(1);
+    }),
+  );
+
+  it.effect("refuses an ack when a copied thread finishes a turn during the drain", () =>
+    Effect.gen(function* () {
+      const retry = deps({
+        threads: ["thread:a"],
+        sequenceAfterCopy: "thread:a",
+        seeded: [
+          {
+            drainId: "drain:environment:worker:1",
+            threadId: "thread:a",
+            snapshotSequence: 1,
+            attachments: true,
+          },
+        ],
+      });
+      const outcome = yield* drain(retry, { drainId: "drain:environment:worker:2" });
+
+      expect(outcome.state).toBe("failed");
+      expect(outcome.warnings?.join(" ")).toContain("changed during the drain");
     }),
   );
 

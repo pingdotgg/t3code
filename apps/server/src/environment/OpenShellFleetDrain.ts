@@ -164,6 +164,8 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
     const threads = zero();
     const worktrees = zero();
     const warnings: string[] = [];
+    /** Sequence each copied thread was read at, re-checked before the ack. */
+    const copiedSequences = new Map<string, number | null>();
     let deadlineHit = false;
     let shellFailed = false;
     const shell = yield* deps.source.shell(input.environmentId).pipe(
@@ -236,7 +238,10 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
                 threadId: thread.threadId,
               })
               .pipe(Effect.orElseSucceed(() => false));
-            if (promoted) return true;
+            if (promoted) {
+              copiedSequences.set(thread.threadId, prior.snapshotSequence);
+              return true;
+            }
           }
         }
         const history = yield* deps.source.threadHistory({
@@ -267,6 +272,7 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
             : { attachments }),
         });
         // Read it back: an ack means the bytes are here, not that a write was attempted.
+        copiedSequences.set(thread.threadId, history.snapshotSequence);
         const back = yield* deps.sink.read({
           environmentId: input.environmentId,
           drainId: input.drainId,
@@ -332,17 +338,29 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
     }
     // Work that started after the enumeration was never copied. The manager's
     // `draining` row does not reach the worker, so the ack is re-earned here:
-    // a live thread or a changed thread set keeps the sandbox.
+    // a live thread, a changed thread set, or a thread that finished a turn
+    // after it was copied keeps the sandbox.
     const after = yield* deps.source
       .shell(input.environmentId)
       .pipe(Effect.orElseSucceed(() => null));
-    const moved =
+    let moved =
       after === null ||
       after.threads.some((thread) => thread.live) ||
       after.threads.length !== shell.threads.length ||
       after.threads.some(
         (thread) => !shell.threads.some((before) => before.threadId === thread.threadId),
       );
+    if (!moved) {
+      for (const [threadId, sequence] of copiedSequences) {
+        if (moved) break;
+        const current = yield* deps.source
+          .threadSequence({ environmentId: input.environmentId, threadId })
+          .pipe(Effect.orElseSucceed(() => null));
+        // A thread deleted meanwhile has nothing new to lose; a sequence change
+        // means a turn or a message landed after this copy.
+        if (current !== null && current.snapshotSequence !== sequence) moved = true;
+      }
+    }
     if (moved)
       warnings.push(
         "The worker changed during the drain; its state was copied, nothing was acknowledged.",
