@@ -3805,10 +3805,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             session_id: WAKE_NATIVE_SESSION,
           }),
         );
-        if (outcome === "release-before") {
-          yield* Deferred.succeed(release, undefined);
-          yield* Fiber.join(pending);
-        }
+        if (outcome === "release-before") yield* Deferred.succeed(release, undefined);
         yield* harness.offerAndWait(
           claudeSdkFrame({
             type: "system",
@@ -3818,6 +3815,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             session_id: WAKE_NATIVE_SESSION,
           }),
         );
+        // Ready while compacting, the steer is held until the boundary.
+        if (outcome === "release-before") yield* Fiber.join(pending);
         if (outcome === "cancel-after") {
           yield* Fiber.interrupt(pending);
           assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(pending)));
@@ -5433,6 +5432,130 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  // regression: #25796 a steer offered while Claude compacts aborts the
+  // compaction, which then starts over.
+  it.effect.each(["compact_result", "compact_boundary", "turn end"] as const)(
+    "holds steers sent during compaction until it ends: %s",
+    (ending) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attemptId = RunAttemptId.make("attempt-steer-compacting");
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId,
+          text: "Summarize the long log.",
+          attachments: [],
+        });
+        yield* harness.runtime.startTurn(input);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...makeAssistantTextFrame({
+              uuid: "00000000-0000-4000-8000-000000025796",
+              text: "Reading.",
+            }),
+            user_message_uuids: [harness.promptUuid(0)],
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: "compacting",
+            uuid: "00000000-0000-4000-8000-000000025797",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        const steer = (id: string) =>
+          harness.runtime.steerTurn({
+            threadId: harness.threadId,
+            runId: input.runId,
+            providerThread: harness.providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${attemptId}`,
+            }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make(id),
+              text: `Steer ${id}`,
+              attachments: [],
+            },
+          });
+        const steerStatus = (id: string) =>
+          harness.events
+            .flatMap((event) =>
+              event.type === "steer.updated" && event.messageId === id ? [event.status] : [],
+            )
+            .at(-1);
+        // One after the other, as the effect outbox runs a thread's steers.
+        const steers = yield* Effect.forkScoped(
+          Effect.exit(steer("held-first").pipe(Effect.andThen(steer("held-second")))),
+        );
+        yield* harness.until(() => steerStatus("held-first") !== undefined);
+        assert.lengthOf(harness.offeredMessages, 1);
+        assert.isUndefined(steers.pollUnsafe());
+
+        yield* harness.offerAndWait(
+          ending === "compact_result"
+            ? claudeSdkFrame({
+                type: "system",
+                subtype: "status",
+                status: null,
+                compact_result: "success",
+                uuid: "00000000-0000-4000-8000-000000025798",
+                session_id: WAKE_NATIVE_SESSION,
+              })
+            : ending === "compact_boundary"
+              ? claudeSdkFrame({
+                  type: "system",
+                  subtype: "compact_boundary",
+                  compact_metadata: { trigger: "auto", pre_tokens: 1500, post_tokens: 400 },
+                  uuid: "00000000-0000-4000-8000-000000025798",
+                  session_id: WAKE_NATIVE_SESSION,
+                })
+              : claudeSdkFrame({
+                  ...makeResultFrame({
+                    uuid: "00000000-0000-4000-8000-000000025798",
+                    result: "Summarized.",
+                  }),
+                  user_message_uuid: harness.promptUuid(0),
+                }),
+        );
+        const exit = yield* Fiber.join(steers);
+        const steered = harness.offeredMessages
+          .slice(1)
+          .map((message) => `${message.priority}:${JSON.stringify(message.message.content)}`);
+        if (ending === "turn end") {
+          // Failing, not succeeding unsent, is what makes the orchestrator send it as a follow-up.
+          assert.match(
+            Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "sent",
+            /ended before the steer was sent/,
+          );
+          assert.deepEqual(steered, []);
+          yield* harness.until(() => steerStatus("held-first") === "completed");
+          return;
+        }
+        assert.isTrue(Exit.isSuccess(exit));
+        assert.lengthOf(steered, 2);
+        assert.match(steered[0] ?? "", /^now:.*Steer held-first/);
+        assert.match(steered[1] ?? "", /^now:.*Steer held-second/);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
   );
 
   // Claude can answer a steer while its offer is still being logged.

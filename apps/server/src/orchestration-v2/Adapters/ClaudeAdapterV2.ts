@@ -4784,6 +4784,8 @@ interface ActiveClaudeTurnContext {
   readonly toolCalls: Map<string, ActiveClaudeToolCall>;
   // A successful status can precede the boundary that supplies its token counts.
   compaction: Extract<OrchestrationV2TurnItem, { type: "compaction" }> | null;
+  // Set while a compaction runs. A steer offered then aborts it and Claude starts it over.
+  compactionEnded: Deferred.Deferred<void> | null;
   readonly ignoredTaskIds: Set<string>;
   readonly announcedUsageLimits: Set<string>;
   authenticationFailureMessage: string | undefined;
@@ -8692,6 +8694,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             status,
           });
 
+        const endCompactionHold = (context: ActiveClaudeTurnContext) =>
+          Effect.suspend(() => {
+            const ended = context.compactionEnded;
+            context.compactionEnded = null;
+            return ended === null ? Effect.void : Deferred.succeed(ended, undefined);
+          });
+
         const markSteersAccepted = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
           message: SDKMessage,
@@ -8725,6 +8734,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly result?: SDKResultMessage;
         }) {
           input.context.steersClosed = true;
+          yield* endCompactionHold(input.context);
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           if (input.status === "completed") {
             yield* assistantDeltas.flushTurn(input.context.nativeTurnId);
@@ -10368,6 +10378,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               context.compactionFailure = failed ? { message: message.compact_error } : null;
             }
             if (context.compaction?.status === "running") {
+              yield* endCompactionHold(context);
               const now = yield* DateTime.now;
               context.compaction = {
                 ...context.compaction,
@@ -10441,6 +10452,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               // removes. Pending reservations must survive its boundary too.
               if (budget !== undefined) budget.compacting = { ...budget.committed };
               context.compaction = compaction;
+              context.compactionEnded ??= yield* Deferred.make<void>();
               yield* emitProviderEvent({
                 type: "turn_item.updated",
                 driver: CLAUDE_PROVIDER,
@@ -10448,6 +10460,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               });
               return;
             }
+            yield* endCompactionHold(context);
             const budget = pdfBudgets.get(context.nativeThreadId);
             if (budget !== undefined) {
               // Aggregate persisted usage cannot identify attachments in a
@@ -12619,6 +12632,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               compactionFailure: null,
               steeredSegmentUsage: [],
               steersClosed: false,
+              compactionEnded: null,
               steeredLedgerUsage: { inputTokens: 0, outputTokens: 0 },
               rootModels: new Set(),
               subagentsByTaskId: new Map(),
@@ -13096,22 +13110,36 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (liveSteerSelection !== undefined) {
               yield* applySelectionLive(existing, liveSteerSelection);
             }
-            // The turn can end while the moves or the selection change are answered.
-            // A steer offered then would start a new turn the orchestrator never
-            // asked for, so the steer fails and the orchestrator starts the follow-up turn.
+            const messageId = turnInput.message.messageId;
+            // Held here, not acknowledged: the steer succeeds only once Claude has it.
+            const held = currentTurn.compactionEnded !== null;
+            if (held) {
+              yield* emitSteerStatus(currentTurn, messageId, "pending");
+              yield* Effect.gen(function* () {
+                while (currentTurn.compactionEnded !== null) {
+                  yield* Deferred.await(currentTurn.compactionEnded);
+                }
+              }).pipe(
+                Effect.onInterrupt(() => emitSteerStatus(currentTurn, messageId, "completed")),
+              );
+            }
+            // The turn can end while the moves or the selection change are answered, or
+            // while the steer is held. A steer offered then would start a new turn the
+            // orchestrator never asked for, so the steer fails and the orchestrator
+            // starts the follow-up turn.
             if (
               (yield* Ref.get(activeTurn))?.providerTurnId !== turnInput.providerTurnId ||
               (yield* Ref.get(queryContext)) !== existing ||
               // No yield between this check and the set below.
               currentTurn.steersClosed
             ) {
+              if (held) yield* emitSteerStatus(currentTurn, messageId, "completed");
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                 driver: CLAUDE_PROVIDER,
                 detail: `Claude provider turn ${turnInput.providerTurnId} ended before the steer was sent.`,
               });
             }
             // Register before offering: Claude can start the steer and end the turn before offer returns.
-            const messageId = turnInput.message.messageId;
             currentTurn.steerUuids.add(steerUuid);
             currentTurn.pendingSteers.set(steerUuid, {
               messageId,
