@@ -29,6 +29,19 @@ apps/server/src/provider/Drivers/CodexDriver.ts
 apps/server/src/provider/Drivers/CodexHomeLayout.ts
 packages/effect-codex-app-server
 
+[crates/conn-provider-acp]
+packages/effect-acp
+packages/provider-acp
+packages/provider-grok
+packages/provider-kiro
+packages/provider-fx
+packages/provider-acp-registry
+apps/server/src/provider/acp
+apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts
+apps/server/scripts/acp-replay-agent.ts
+packages/provider-core/src/server/runtimeInstructions.ts
+packages/shared/src/toolActivity.ts
+
 [crates/conn-provider-support]
 packages/provider-core/src/server/ProviderAdapter.ts
 packages/provider-core/src/server/orchestrationInstructions.ts

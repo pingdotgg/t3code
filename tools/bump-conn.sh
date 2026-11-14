@@ -75,6 +75,8 @@ generated=(
   crates/conn-mcp/src/running-task-next.txt
   crates/conn-provider-codex/src/instructions.rs
   crates/conn-provider-codex/testdata/instructions.json
+  crates/conn-provider-acp/src/instructions.rs
+  crates/conn-provider-acp/testdata/instructions.json
   crates/conn-provider-claude/src/model_catalog.json
   crates/conn-server/keybindings.defaults.json
   crates/conn-server/keybindings.resolved.json
@@ -90,6 +92,7 @@ reference_events=(
   crates/conn-provider-codex/testdata/cli
   crates/conn-provider-codex/testdata/ts
   crates/conn-provider-claude/testdata/ts
+  crates/conn-provider-acp/testdata/grok
 )
 for rel in "${generated[@]}" "${reference_events[@]}"; do
   if [ -e "$rel" ]; then
@@ -137,6 +140,7 @@ step "mcp tool list" mcp_digests
 step "gen-keybindings" node crates/conn-server/tools/gen-keybindings.mjs
 step "gen-upstream" node tools/gen-upstream.mjs
 step "codex instructions" node crates/conn-provider-codex/tools/gen-instructions.mjs
+step "acp instructions" node crates/conn-provider-acp/tools/gen-instructions.mjs
 # The Claude model catalog comes from the T3 server's bundled catalog (about 30 s, vitest).
 step "claude catalog" crates/conn-provider-claude/tools/gen-catalog/run.sh
 # The keybinding files are formatted by hand; gen-keybindings --check compares values. Keep
@@ -174,6 +178,7 @@ step "opaque fallbacks" opaque_fallbacks
 capture_reference_events() {
   node crates/conn-provider-codex/tools/capture-ts-events.mjs &&
     crates/conn-provider-claude/tools/capture-ts/run.sh &&
+    node crates/conn-provider-acp/tools/capture-ts-events.mjs grok &&
     node tools/reference-events.mjs "$scratch/before" "${reference_events[@]}" |
     tee "$scratch/reference-events"
 }

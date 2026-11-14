@@ -199,6 +199,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "conn-provider-acp"
+version = "0.1.0"
+dependencies = [
+ "conn-contract",
+ "conn-provider",
+ "conn-provider-support",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "conn-provider-claude"
 version = "0.1.0"
 dependencies = [
