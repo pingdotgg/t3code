@@ -34,6 +34,25 @@ describe("ResetCreditCoordinator", () => {
     }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
   );
 
+  it.effect("keeps an unanswered key for its own credit when another is redeemed", () =>
+    Effect.gen(function* () {
+      const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+      const keys = yield* Ref.make<ReadonlyArray<string>>([]);
+      const consume = (answer: "timed out" | "reset") => (key: string) =>
+        Ref.update(keys, (seen) => [...seen, key]).pipe(
+          Effect.andThen(answer === "reset" ? Effect.succeed(answer) : Effect.fail(answer)),
+        );
+
+      yield* redeem("acct", consume("timed out"), undefined, "weekly").pipe(Effect.result);
+      yield* redeem("acct", consume("reset"), undefined, "fable");
+      yield* redeem("acct", consume("reset"), undefined, "weekly");
+
+      const seen = yield* Ref.get(keys);
+      assert.notStrictEqual(seen[1], seen[0]);
+      assert.strictEqual(seen[2], seen[0]);
+    }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
+  );
+
   it.effect("starts a fresh attempt after a settled failure", () =>
     Effect.gen(function* () {
       const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;

@@ -346,7 +346,7 @@ describe("CLIProxyAPI built-in management API", () => {
         accounts: [{ ...accounts[0]!, provider: "claude" }],
         // The usage endpoint answers 429 to requests without a Claude Code user agent.
         upstream: (request) => ({
-          status: request.header?.["User-Agent"]?.startsWith("claude-code/") ? 200 : 429,
+          status: request.header?.["User-Agent"]?.startsWith("claude-cli/") ? 200 : 429,
           body: {
             five_hour: { utilization: 10, resets_at: null },
             seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
@@ -370,6 +370,47 @@ describe("CLIProxyAPI built-in management API", () => {
         ["seven_day", 50],
         ["seven_day_fable", 80],
       ]);
+    }),
+  );
+
+  it.effect("reads Claude reset grants through the hub", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        // Claude only reports grants for cedar_ember=1 from a current Claude CLI user agent.
+        upstream: (request) => {
+          const url = new URL(request.url!);
+          const eligible =
+            url.searchParams.get("cedar_ember") === "1" &&
+            /^claude-cli\/\S+ \(external, cli\)$/.test(request.header?.["User-Agent"] ?? "");
+          return {
+            status: 200,
+            body: {
+              five_hour: { utilization: 10, resets_at: null },
+              cedar_ember: eligible
+                ? {
+                    eligible: true,
+                    next_grant_id: "grant_a",
+                    grants: [
+                      {
+                        id: "grant_a",
+                        resets_left: 1,
+                        usable_now: true,
+                        ends_at: "2099-01-01T00:00:00Z",
+                        clears: ["five_hour", "seven_day"],
+                      },
+                    ],
+                  }
+                : null,
+            },
+          };
+        },
+      });
+      const result = yield* (yield* test.api).readAccounts(config);
+      expect(result[0]?.usageLimits.resetCredits).toMatchObject({
+        availableCount: 1,
+        nextCreditId: "grant_a",
+      });
     }),
   );
 
@@ -688,6 +729,51 @@ describe("CLIProxyAPI built-in management API", () => {
       expect(test.requests.filter((request) => request.path.endsWith("/reset-quota"))).toHaveLength(
         1,
       );
+    }),
+  );
+
+  it.effect("claims a Claude grant in the account's organization, keeping an unanswered id", () =>
+    Effect.gen(function* () {
+      let claims = 0;
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: (request) =>
+          request.url?.endsWith("/api/oauth/profile")
+            ? { status: 200, body: { organization: { uuid: "org a" } } }
+            : ++claims === 1
+              ? { status: 503, body: {} }
+              : { status: 200, body: { result: "reset" } },
+      });
+      const api = yield* test.api;
+      expect((yield* api.consume(config, "first.json", "grant_a").pipe(Effect.result))._tag).toBe(
+        "Failure",
+      );
+      // Another grant claimed while grant_a is unanswered must not take grant_a's request id.
+      expect(yield* api.consume(config, "first.json", "grant_b")).toEqual({ outcome: "reset" });
+      expect(yield* api.consume(config, "first.json", "grant_a")).toEqual({ outcome: "reset" });
+      const claimed = () =>
+        test.requests.flatMap(({ body }) =>
+          body?.method === "POST" ? [{ url: body.url, data: body.data }] : [],
+        );
+      const sent = claimed();
+      expect(sent).toHaveLength(3);
+      expect(sent[0]).toEqual(sent[2]);
+      expect(sent[1]?.data).toContain('"grant_id":"grant_b"');
+      expect(sent[1]?.data).not.toBe(sent[0]?.data?.replace("grant_a", "grant_b"));
+      expect(sent[0]?.url).toBe(
+        "https://api.anthropic.com/api/organizations/org%20a/reset_rate_limits",
+      );
+      expect(sent[0]?.data).toMatch(
+        /^\{"program":"cedar_ember","grant_id":"grant_a","request_id":"[0-9a-f-]{36}"\}$/,
+      );
+      expect(
+        test.requests
+          .filter((request) => request.path.endsWith("/reset-quota"))
+          .map((request) => request.body?.auth_index),
+      ).toEqual(["a", "a"]);
+      const refused = yield* api.consume(config, "first.json", "Not A Grant").pipe(Effect.flip);
+      expect(refused.detail).toBe("Claude returned a malformed reset credit.");
+      expect(claimed()).toHaveLength(3);
     }),
   );
 
