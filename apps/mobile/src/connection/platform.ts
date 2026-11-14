@@ -88,20 +88,21 @@ const networkPathChanges = Stream.callback<"network-changed">((queue) =>
   Effect.acquireRelease(
     Effect.sync(() => {
       let active = true;
-      let previous: Network.NetworkStateType | undefined;
+      let previous: string | undefined;
+      // Android reports a VPN by its underlying transport, so a VPN toggle changes only isVpn.
+      const pathOf = (state: Network.NetworkState) =>
+        state.isConnected === true ? `${state.type}:${state.isVpn === true}` : undefined;
       const record = (state: Network.NetworkState) => {
-        const type = state.isConnected === true ? state.type : undefined;
-        if (previous !== undefined && type !== undefined && type !== previous) {
+        const path = pathOf(state);
+        if (previous !== undefined && path !== undefined && path !== previous) {
           Queue.offerUnsafe(queue, "network-changed");
         }
-        previous = type ?? previous;
+        previous = path ?? previous;
       };
-      // Seed the current type: the listener reports only changes and would miss the first move.
+      // Seed the current path: the listener reports only changes and would miss the first move.
       void Network.getNetworkStateAsync()
         .then((state) => {
-          if (active && previous === undefined && state.isConnected === true) {
-            previous = state.type;
-          }
+          if (active && previous === undefined) previous = pathOf(state);
         })
         .catch(() => undefined);
       const subscription = Network.addNetworkStateListener(record);
