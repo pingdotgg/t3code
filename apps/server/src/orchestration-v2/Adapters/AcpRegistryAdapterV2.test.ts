@@ -1768,6 +1768,95 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  // Copilot holds session/prompt while an attached async shell runs (github/copilot-cli#5293);
+  // its documented foreground-done signal is the opt-in assistant.idle session event.
+  it.effect("settles Copilot's reply on assistant.idle while an async shell holds the prompt", () =>
+    Effect.gen(function* () {
+      const sessionId = "copilot-session";
+      const sessionEvent = (type: string) => ({
+        type: "emit_inbound",
+        frame: {
+          kind: "notification",
+          method: "github.com/copilot/sessionEvent",
+          params: { sessionId, type, data: {} },
+        },
+      });
+      const update = (sessionUpdate: Record<string, unknown>) =>
+        claudeFrames.update(sessionId, sessionUpdate);
+      const session = yield* openClaudeReplaySession(
+        [
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "initialize", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: {
+                protocolVersion: 1,
+                agentInfo: { name: "Copilot", version: "1.0.110" },
+                agentCapabilities: { loadSession: true },
+                authMethods: [],
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/new", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: { kind: "response", method: "session/new", result: { sessionId } },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          // A previous prompt's idle can land before this prompt's turn starts.
+          sessionEvent("assistant.idle"),
+          update({ sessionUpdate: "session_info_update", title: "after stale idle" }),
+          sessionEvent("assistant.turn_start"),
+          update({
+            sessionUpdate: "tool_call",
+            toolCallId: "shell-1",
+            title: "sleep 120",
+            kind: "execute",
+            status: "completed",
+            rawInput: { command: "sleep 120", mode: "async", detach: false },
+          }),
+          update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } }),
+          sessionEvent("assistant.idle"),
+          update({ sessionUpdate: "session_info_update", title: "after foreground idle" }),
+          // The shell never exits, so the first session/prompt is never answered.
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          sessionEvent("assistant.turn_start"),
+          update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "two" } }),
+          sessionEvent("assistant.idle"),
+          update({ sessionUpdate: "session_info_update", title: "after second idle" }),
+        ],
+        undefined,
+        false,
+        "github-copilot-cli",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const stale = yield* session.throughMarker("after stale idle");
+      assert.isFalse(stale.some((event) => event.type === "turn.terminal"));
+      const foreground = yield* session.throughMarker("after foreground idle");
+      const terminal = foreground.find((event) => event.type === "turn.terminal");
+      assert.isDefined(terminal, "the run settles once Copilot's foreground work is idle");
+      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "completed");
+      yield* session.runtime.startTurn(session.turnInput(2));
+      const second = yield* session.throughMarker("after second idle");
+      const secondTerminal = second.find((event) => event.type === "turn.terminal");
+      assert.equal(secondTerminal?.type === "turn.terminal" ? secondTerminal.runOrdinal : null, 2);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.each([
     { kind: "approval", stopReason: "end_turn", status: "completed" },
     { kind: "question", stopReason: "error", status: "failed" },
@@ -2596,6 +2685,42 @@ describe("AcpRegistryAdapterV2", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("writes a child's coalesced text before a restart resets it", () =>
+    Effect.gen(function* () {
+      const { update, childState, idle, prompt } = claudeFrames;
+      const reply = (text: string) =>
+        update("child-1", {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "reply",
+          content: { type: "text", text },
+        });
+      const session = yield* openClaudeReplaySession([
+        ...claudeFrames.open,
+        ...prompt(1),
+        ...claudeChild.slice(0, -1),
+        reply("Review "),
+        reply("done."),
+        // A working grandchild keeps the idle child from publishing (and flushing) its status.
+        childState("child-1", "grandchild", "running"),
+        childState(CLAUDE_ROOT_SESSION, "child-1", "idle"),
+        childState(CLAUDE_ROOT_SESSION, "child-1", "running"),
+        idle("end_turn"),
+        claudeFrames.closeRequest,
+        claudeFrames.closed,
+      ]);
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const events = yield* session.until((event) => event.type === "turn.terminal");
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "message.updated" &&
+            event.message.role === "assistant" &&
+            event.message.text === "Review done.",
+        ),
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("fails active Claude work and releases its children when the process exits", () =>
     Effect.gen(function* () {
       const session = yield* openClaudeReplaySession([
@@ -2664,6 +2789,65 @@ describe("AcpRegistryAdapterV2", () => {
         ),
       );
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    { stopReason: "refusal", childUpdate: "state_update" },
+    { stopReason: "max_tokens", childUpdate: "subagent_update" },
+  ])(
+    "fails Claude's turn and child and closes its running tool when they stop with $stopReason via $childUpdate",
+    ({ stopReason, childUpdate }) =>
+      Effect.gen(function* () {
+        const { update, idle, prompt } = claudeFrames;
+        const session = yield* openClaudeReplaySession([
+          ...claudeFrames.open,
+          ...prompt(1),
+          ...claudeChild,
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "root-tool",
+            name: "Bash",
+            title: "Read package",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { command: "cat package.json" },
+          }),
+          update("child-1", { sessionUpdate: "state_update", state: "running" }),
+          childUpdate === "state_update"
+            ? update("child-1", { sessionUpdate: "state_update", state: "idle", stopReason })
+            : update(CLAUDE_ROOT_SESSION, {
+                sessionUpdate: "subagent_update",
+                sessionId: "child-1",
+                state: { state: "idle", stopReason },
+              }),
+          idle(stopReason),
+        ]);
+        yield* session.runtime.startTurn(session.turnInput(1));
+        const events = yield* session.until((event) => event.type === "turn.terminal");
+        const terminal = events.at(-1)!;
+        if (terminal.type !== "turn.terminal") throw new Error("Missing root terminal");
+        assert.equal(terminal.status, "failed");
+        assert.equal(terminal.failure?.code, stopReason);
+        const child = events.findLast((event) => event.type === "subagent.updated");
+        if (child?.type !== "subagent.updated") throw new Error("Missing child update");
+        assert.equal(child.subagent.status, "failed");
+        assert.isNotNull(child.subagent.result, "the child shows why it stopped");
+        assert.isFalse(
+          events.some(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.threadId === child.subagent.childThreadId &&
+              event.message.role === "assistant",
+          ),
+          "the child's conversation has no reply it didn't send",
+        );
+        const tool = events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
+        );
+        if (tool?.type !== "turn_item.updated") throw new Error("Missing tool update");
+        assert.equal(tool.turnItem.status, "failed");
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("keeps Claude activity after a refused Stop and closes it on retry", () =>
