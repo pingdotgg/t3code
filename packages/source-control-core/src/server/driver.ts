@@ -79,9 +79,19 @@ export type SourceControlDriverServices =
   | FileSystem.FileSystem
   | Digest.Digest;
 
+/** A host refused a request for quota. `retryAt` is when it said to try again, if it said. */
+export interface SourceControlRateLimitRefusal {
+  readonly retryAt?: number;
+}
+
 export interface SourceControlDriver {
   readonly kind: SourceControlProviderKind;
   readonly definition: SourceControlDefinition;
+  /**
+   * Recognizes this host's own rate-limit refusal, which reaches callers wrapped in a generic
+   * provider error, so they can tell an expected pause from a failure without knowing its types.
+   */
+  readonly rateLimitRefusal?: (error: unknown) => SourceControlRateLimitRefusal | undefined;
   /**
    * Run once per server, in a scope that lasts as long as the server. State a host shares across
    * everything that talks to it, such as GitHub's quota reserve and rate-limit pause, lives in

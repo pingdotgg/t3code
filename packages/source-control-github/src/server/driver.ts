@@ -6,6 +6,7 @@ import {
 } from "@t3tools/source-control-core/server/driver";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 
 import { definition } from "../shared/definition.ts";
@@ -15,6 +16,7 @@ import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 import * as GitHubMediaFetch from "./gitHubMediaFetch.ts";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubHttpClient from "./GitHubHttpClient.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
@@ -115,8 +117,16 @@ const makeInstance = Effect.gen(function* () {
   );
 });
 
+const isRateLimit = Schema.is(GitHubRequestPolicy.GitHubApiRateLimitError);
+
 export const driver = defineSourceControlDriver({
   kind: definition.kind,
   definition,
   make: makeInstance,
+  rateLimitRefusal: (error) =>
+    isRateLimit(error)
+      ? error.retryAt === undefined
+        ? {}
+        : { retryAt: error.retryAt }
+      : undefined,
 });

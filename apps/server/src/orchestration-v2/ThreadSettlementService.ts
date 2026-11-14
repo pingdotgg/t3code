@@ -38,6 +38,7 @@ import { sourceControlDefinitions } from "../sourceControl/sourceControlDefiniti
 import { makeNoPullRequestRechecks } from "./noPullRequestRechecks.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { logThreadPullRequestFailure } from "./threadPullRequestFailure.ts";
 
 export interface SettlementPullRequest {
   readonly state: "open" | "closed" | "merged";
@@ -593,9 +594,8 @@ export const make = Effect.gen(function* () {
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterruptsOnly(cause),
             (cause) =>
-              Effect.logWarning("automatic thread settlement skipped", {
+              logThreadPullRequestFailure("automatic thread settlement skipped", cause, {
                 threadIds: group.map((thread) => thread.id),
-                cause: Cause.pretty(cause),
               }),
           ),
         ),

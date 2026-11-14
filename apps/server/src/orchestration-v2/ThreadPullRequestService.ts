@@ -32,6 +32,7 @@ import { forkParked } from "../serverActivation.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { makeNoPullRequestRechecks } from "./noPullRequestRechecks.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { logThreadPullRequestFailure } from "./threadPullRequestFailure.ts";
 
 class ThreadPullRequestServiceV2 extends Context.Service<
   ThreadPullRequestServiceV2,
@@ -312,9 +313,8 @@ export const make = Effect.gen(function* () {
               Effect.catchCauseIf(
                 (cause) => !Cause.hasInterruptsOnly(cause),
                 (cause) =>
-                  Effect.logWarning("thread pull request discovery failed", {
+                  logThreadPullRequestFailure("thread pull request discovery failed", cause, {
                     threadId: thread.id,
-                    cause: Cause.pretty(cause),
                   }).pipe(
                     Effect.tap(() => Effect.sync(() => failBackfill([thread]))),
                     Effect.as(null),
@@ -391,9 +391,8 @@ export const make = Effect.gen(function* () {
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterruptsOnly(cause),
             (cause) =>
-              Effect.logWarning("thread branch pull request lookup failed", {
+              logThreadPullRequestFailure("thread branch pull request lookup failed", cause, {
                 threadIds: group.map((thread) => thread.id),
-                cause: Cause.pretty(cause),
               }).pipe(Effect.tap(() => Effect.sync(() => failBackfill(group)))),
           ),
         ),
