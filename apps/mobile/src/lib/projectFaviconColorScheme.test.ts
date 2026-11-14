@@ -114,6 +114,8 @@ describe("resolveProjectFaviconColorScheme", () => {
     const icon = `<svg xmlns="http://www.w3.org/2000/svg"><style>:root{color:red$'}</style></svg>`;
 
     expect(resolveProjectFaviconColorScheme(svgDataUrl(icon), "dark")).toBe(svgDataUrl(icon));
+    const padded = `<svg xmlns="http://www.w3.org/2000/svg"><style>:root{color:x${" \t".repeat(3000)}!bad}</style></svg>`;
+    expect(resolveProjectFaviconColorScheme(svgDataUrl(padded), "dark")).toBe(svgDataUrl(padded));
   });
 
   it("ignores style elements inside XML comments", () => {

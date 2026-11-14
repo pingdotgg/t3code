@@ -9,7 +9,7 @@ const CSS_COMMENT_RE = /\/\*[\s\S]*?\*\//g;
 const COLOR_SCHEME_MEDIA_RE = /@media\s*\(\s*prefers-color-scheme\s*:\s*(light|dark)\s*\)\s*\{/gi;
 const AT_RULE_BLOCK_RE = /@[^{};]*\{/g;
 const RULE_RE = /([^{}]*)\{([^{}]*)\}/g;
-const COLOR_DECLARATION_RE = /(?:^|;)\s*color\s*:\s*([^;]*?)\s*(!\s*important)?\s*(?=;|$)/gi;
+const IMPORTANT_RE = /!\s*important$/i;
 const PLAIN_COLOR_RE = /^(?:#[\da-f]{3,8}|[a-z]+|(?:rgba?|hsla?)\([\d\s.,%/]+\))$/i;
 const COMMENT_OR_SVG_TAG_RE = /<!--[\s\S]*?-->|<svg\b[^>]*>/gi;
 const COLOR_ATTRIBUTE_RE = /\s+color\s*=\s*(?:"[^"]*"|'[^']*')/i;
@@ -102,7 +102,14 @@ function lastRootColor(css: string) {
         ? 0
         : -1;
     if (specificity === -1) continue;
-    for (const [, value = "", important] of declarations.matchAll(COLOR_DECLARATION_RE)) {
+    for (const declaration of declarations.split(";")) {
+      const separator = declaration.indexOf(":");
+      if (separator === -1 || declaration.slice(0, separator).trim().toLowerCase() !== "color") {
+        continue;
+      }
+      let value = declaration.slice(separator + 1).trim();
+      const important = IMPORTANT_RE.test(value);
+      if (important) value = value.slice(0, value.lastIndexOf("!")).trim();
       const nextPriority = specificity + (important ? 2 : 0);
       if (nextPriority < priority) continue;
       color = PLAIN_COLOR_RE.test(value) ? value : undefined;
