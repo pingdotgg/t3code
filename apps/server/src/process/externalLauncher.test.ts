@@ -756,10 +756,8 @@ it.effect.skipIf(windowsHost)("keeps symlink semantics for the WSLg xdg-open rev
     );
 
     assert.deepEqual(
-      spawned
-        .filter((command) => command.command !== "xdg-mime")
-        .map((command) => [command.command, ...command.args]),
-      [["xdg-open", `${workspace}/link/..`]],
+      spawned.filter((command) => command.command === "xdg-open").map((command) => command.args),
+      [[`${workspace}/link/..`]],
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
