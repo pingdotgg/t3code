@@ -4249,8 +4249,8 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect.each(["Name", "   "])(
-    "keeps input placeholder text answerable with title '%s'",
+  it.effect.each(["Which features?\n1. Auth\n2. Search", "   "])(
+    "asks an input dialog's title as a free-text question, not its placeholder, with title '%s'",
     (title) =>
       Effect.gen(function* () {
         const fake = yield* makeFakePi;
@@ -4265,7 +4265,7 @@ describe("PiAdapterV2", () => {
           id: "ui-input-placeholder",
           method: "input",
           title,
-          placeholder: "Your name",
+          placeholder: "1,3; custom answer",
         });
         const event = yield* takeEvent(
           (event) =>
@@ -4275,8 +4275,14 @@ describe("PiAdapterV2", () => {
           return assert.fail("expected a user input request");
         }
         const question = decodeUserInputQuestions(event.turnItem.questions)[0]!;
-        assert.equal(question.header, title.trim() ? title : "Question");
-        assert.equal(question.question, "Your name");
+        assert.deepEqual(question.options, []);
+        if (title.trim()) assert.equal(question.question, title);
+        yield* runtime.respondToRuntimeRequest({
+          requestId: event.turnItem.requestId,
+          answers: { "ui-input-placeholder": "1,3" },
+        });
+        const response = yield* fake.takeRequest("extension_ui_response");
+        assert.equal(response["value"], "1,3");
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
