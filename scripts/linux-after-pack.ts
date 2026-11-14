@@ -3,11 +3,18 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 
+import { scanGlibcNeeds } from "./linux-glibc.ts";
+
 const prepareServerCompileCache: (context: AfterPackContext) => Promise<void> =
   NodeModule.createRequire(import.meta.url)("./prepare-server-compile-cache.cjs");
 
 interface AfterPackContext {
   readonly appOutDir: string;
+  readonly electronPlatformName: string;
+  readonly targets: ReadonlyArray<{
+    readonly name: string;
+    readonly options?: { depends?: string | string[] } | null;
+  }>;
 }
 
 // Electron's Linux zips can ship world-writable files (44.10.0 has 0777 binaries), and
@@ -15,6 +22,15 @@ interface AfterPackContext {
 export default async function afterPack(context: AfterPackContext): Promise<void> {
   await prepareServerCompileCache(context);
   await removeSharedWriteAccess(context.appOutDir);
+  const { minimum } = await scanGlibcNeeds(context.appOutDir);
+  for (const target of context.targets) {
+    if (target.name !== "deb") continue;
+    if (!target.options || !Array.isArray(target.options.depends)) {
+      throw new Error("Linux deb target must configure its dependencies before afterPack");
+    }
+    // FPM snapshots config when targets are created; update the target's resolved options.
+    target.options.depends = [...target.options.depends, `libc6 (>= ${minimum})`];
+  }
 }
 
 // Walks by hand: recursive readdir follows directory symlinks out of the app folder.
