@@ -8410,6 +8410,143 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("does not resume a thread whose idle compaction hit a usage limit", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:idle-compact-limit");
+      const runId = RunId.make("run:idle-compact-limit");
+      const nodeId = NodeId.make("node:idle-compact-limit");
+      const messageId = MessageId.make("message:idle-compact-limit");
+      const resetAt = DateTime.formatIso(DateTime.add(now, { hours: 1 }));
+      yield* store.apply({
+        id: EventId.make("event:idle-compact-limit:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:idle-compact-limit"),
+          title: "Idle thread",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:idle-compact-limit:message"),
+        type: "message.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "agent",
+          creationSource: "server",
+          idleCompaction: "beforeCacheExpires",
+          id: messageId,
+          threadId,
+          runId,
+          nodeId: null,
+          role: "user",
+          text: "/compact",
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      const run = {
+        id: runId,
+        threadId,
+        ordinal: 1,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId: null,
+        userMessageId: messageId,
+        rootNodeId: nodeId,
+        activeAttemptId: null,
+        status: "running" as const,
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      yield* store.apply({
+        id: EventId.make("event:idle-compact-limit:run"),
+        type: "run.created",
+        threadId,
+        runId,
+        nodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: run,
+      });
+      yield* store.apply({
+        id: EventId.make("event:idle-compact-limit:error"),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("idle-compact-limit:error"),
+          threadId,
+          runId,
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "failed",
+          title: "Usage limit reached",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "error",
+          failure: {
+            class: "usage_limit",
+            message: "Error during compaction: You've hit your 5-hour limit",
+            resetAt,
+            code: null,
+            retryable: null,
+          },
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:idle-compact-limit:run-failed"),
+        type: "run.updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...run, status: "failed", completedAt: now },
+      });
+
+      const nowMs = DateTime.toEpochMillis(now);
+      const options = { now, autoResume: true, snooze: false };
+      const candidate = (yield* store.getLimitRecoveryCandidates(options)).find(
+        (row) => row.id === threadId,
+      );
+      assert.isNull(
+        candidate === undefined ? null : limitRecoveryCommand(candidate, true, nowMs, false),
+        "a failed idle compaction is not armed for a continuation",
+      );
+    }),
+  );
+
   it.effect("does not freshly arm limit recovery for a subagent of a put-away parent", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
