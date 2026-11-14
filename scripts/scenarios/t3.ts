@@ -15,7 +15,10 @@ import { run } from "./shell.ts";
 
 export interface T3State {
   /** Creates a git repository holding `files` and adds it as a project. Returns its path. */
-  readonly project: (title: string, files?: ProjectFiles) => Promise<string>;
+  readonly project: (
+    title: string,
+    files?: Readonly<Record<string, string | Uint8Array>>,
+  ) => Promise<string>;
   /**
    * Starts a thread in a project and plays one replayed turn per message before returning.
    * `model` is a dev replay recording: showcase, todo-list, approval, question, multi-turn.
@@ -27,9 +30,6 @@ export interface T3State {
     readonly model?: string;
   }) => Promise<T3Thread>;
 }
-
-/** Workspace files by relative path: text, or bytes for binary files such as documents. */
-type ProjectFiles = Readonly<Record<string, string | Uint8Array>>;
 
 export interface T3Thread {
   readonly threadId: string;
@@ -70,7 +70,10 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
   });
   const projects: Array<string> = [];
 
-  const project = Effect.fn("scenario.project")(function* (title: string, files: ProjectFiles) {
+  const project = Effect.fn("scenario.project")(function* (
+    title: string,
+    files: Readonly<Record<string, string | Uint8Array>>,
+  ) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     // Its own folder per test: the server and this home outlive one test.
@@ -81,11 +84,10 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
     });
     const workspace = path.join(parent, title);
     for (const [file, content] of Object.entries({ "README.md": "", ...files })) {
-      const target = path.join(workspace, file);
-      yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+      yield* fs.makeDirectory(path.dirname(path.join(workspace, file)), { recursive: true });
       yield* typeof content === "string"
-        ? fs.writeFileString(target, content)
-        : fs.writeFile(target, content);
+        ? fs.writeFileString(path.join(workspace, file), content)
+        : fs.writeFile(path.join(workspace, file), content);
     }
     const git = (args: ReadonlyArray<string>) => run("git", args, { cwd: workspace });
     const author = ["-c", "user.name=Scenario", "-c", "user.email=scenario@example.invalid"];
