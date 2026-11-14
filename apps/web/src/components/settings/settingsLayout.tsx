@@ -11,7 +11,13 @@ import {
 } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { createContext, type ComponentPropsWithoutRef, type ReactNode, useContext } from "react";
+import {
+  createContext,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+  useContext,
+  useId,
+} from "react";
 
 import {
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
@@ -314,6 +320,7 @@ export function SettingsRow({
   managedPaths = EMPTY_MANAGED_PATHS,
   mixed: mixedOverride,
   managed,
+  disabledReason,
   children,
   className,
   ...rowProps
@@ -331,9 +338,11 @@ export function SettingsRow({
   mixed?: boolean;
   /** Why an administrator's policy turns this row's control off, from the contract's denial helpers. */
   managed?: string | undefined;
+  disabledReason?: string | undefined;
   children?: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
+  const titleId = useId();
   const primarySettingsAvailable = usePrimarySettingsAvailable();
   const context = useOptionalSettingsScope();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -410,7 +419,11 @@ export function SettingsRow({
         render={
           <span
             tabIndex={0}
-            className="flex w-full items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring @min-[32rem]/settings-row:w-auto"
+            role="group"
+            aria-disabled="true"
+            aria-labelledby={titleId}
+            aria-description={message}
+            className="flex w-full cursor-not-allowed items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring @min-[32rem]/settings-row:w-auto"
           />
         }
       >
@@ -431,22 +444,24 @@ export function SettingsRow({
         ? inertControl(`Managed by ${managedBy}.`)
         : unavailable && control
           ? inertControl(
-              !canWriteSettings
-                ? `This connection lacks permission to change settings on ${
+              !(context ? context.connectedEnvironments.length > 0 : primarySettingsAvailable)
+                ? context
+                  ? "Reconnect the selected environment to change this setting."
+                  : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE
+                : `This connection lacks permission to change settings on ${
                     context
                       ? context.connectedEnvironments
                           .filter((target) => !writableIds.has(target.environmentId))
                           .map((target) => target.label)
                           .join(", ") || "the selected environment"
                       : (primaryEnvironment?.label ?? "the primary environment")
-                  }.`
-                : context
-                  ? "Reconnect the selected environment to change this setting."
-                  : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
+                  }.`,
             )
           : environmentWide && control
             ? inertControl("Environment-wide setting. Select an environment to change it.")
-            : control;
+            : disabledReason !== undefined && control
+              ? inertControl(disabledReason)
+              : control;
   const customized =
     context !== null &&
     settingKeys.some((key) =>
@@ -503,7 +518,9 @@ export function SettingsRow({
       <div className="flex flex-col gap-3 @min-[32rem]/settings-row:grid @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_auto] @min-[32rem]/settings-row:items-center @min-[32rem]/settings-row:gap-8">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
-            <h3 className="text-sm font-medium text-foreground">{title}</h3>
+            <h3 id={titleId} className="text-sm font-medium text-foreground">
+              {title}
+            </h3>
             {renderedInheritance ? (
               <span
                 className={cn(
