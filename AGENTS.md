@@ -17,9 +17,10 @@ Engine, method table), the wire, and the checks. Each crate has its own `README.
 1. **Own implementation.** Reproduce behaviour at three boundaries: the client contract,
    `/mcp`, and the provider protocols. Read the TypeScript server to learn what a caller
    expects, then design in Rust. Never translate the Effect code.
-2. **Memory first.** One tokio thread, no worker pools, blocking work on `spawn_blocking`.
-   No cache, buffer, map or queue that grows without bound. Measure before and after a change
-   that holds state.
+2. **Memory first.** One tokio thread, no worker pools. Blocking work runs on
+   `spawn_blocking`, never on the runtime thread; `std::fs`, `std::process`, SQLite, `flock`
+   and `fsync` count. No cache, buffer, map or queue that grows without bound. Measure before
+   and after a change that holds state.
 3. **Providers: only the official way, and exactly as the T3 server does.** See
    [Providers](#providers). A difference from the T3 server in how we start or talk to an
    agent is a defect, not a design choice.
@@ -148,7 +149,9 @@ Where this project differs from the skills:
 - `crates/conn-contract/src/generated.rs` is generated. Never edit or review it by hand;
   change the generator.
 
-`lints/beautiful-rust/` holds the skills' clippy set. It is not applied to the workspace yet.
+`lints/beautiful-rust/` holds the skills' clippy set. The workspace turns on part of it in
+`Cargo.toml` and `clippy.toml`; `CRATES.md` ("Lint set") says which, why, and what follows in
+which stage.
 
 ## Writing
 

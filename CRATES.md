@@ -19,9 +19,9 @@ crates.io and the source repositories on that date. Cost figures were measured, 
   The tables below are the review as written: where they say a crate comes free with
   `rmcp`, or count `rmcp` in the adopt set, that no longer holds.
 - **Adopt in the tracks that need them.** `pty-process` for the
-  terminal, `ignore` + `nucleo-matcher` (+ `regex`) for file walking and fuzzy search,
-  `tower-http` (`fs`) and axum `multipart` for static files and uploads. `notify` too, but
-  only while a client watches.
+  terminal, `ignore` + `nucleo-matcher` (+ `regex`) for file walking and fuzzy search.
+  `notify` too, but only while a client watches. Static files and uploads stay ours for now
+  (see the inventory row).
 - **Keep ours.** The Effect RPC wire codec, the contract generator, the Claude protocol
   mapper, auth, time formatting, JSON (`serde_json`), HTTP/WebSocket (axum 0.8), SQLite
   (`rusqlite`), the async runtime, and git through the `git` CLI.
@@ -102,7 +102,7 @@ Line counts are from `rust/base`, tests included where they sit in the same file
 | Errors | `Result<_, String>` in engine, store and session; `thiserror` 2.0.21 already in the tree (via tungstenite) | **adopt** `thiserror` for the crate interfaces | 0 (already linked) | Typed causes, `source()` | Grows with each track; start with `conn-engine` |
 | Allocator | system (musl mallocng on Linux) | **watch** | `mimalloc` +640 KB idle, `jemalloc` +560 KB idle (macOS) | none at one thread | Measure on Linux musl under load before changing |
 | Tests | `cargo test`, tokio `test-util`, hand registry (`tests/registry`, 2,702 lines), Node replay tools | **adopt later** `insta` (dev only) for event-stream snapshots; `cargo-nextest` in CI | 0 in the binary | Snapshot review instead of hand JSON asserts in `replay_tests.rs`/`engine_tests.rs` | When a test file next changes a lot |
-| `/mcp` server | ours: `conn-mcp` `transport.rs`, `sessions.rs` (about 300 lines) | **keep ours** (was: adopt `rmcp` 3.10) | `rmcp` measured +0.94 MB binary and +0.12 MB per open session | The T3 server answers one protocol revision (2025-06-18) without SSE; ours matches it | Decided by the measurement in `crates/conn-mcp/README.md`; commit `35cfdba72b` keeps the `rmcp` wiring |
+| `/mcp` server | ours: `conn-mcp` transport (about 300 lines) | **keep ours** | `rmcp` +0.94 MB binary, +29 crates, about 0.12 MB per open session (`crates/conn-mcp/README.md`) | The T3 server answers one protocol revision (2025-06-18) without SSE; ours matches it | Revisit when the T3 server moves to an MCP revision we do not serve; commit `35cfdba72b` keeps the SDK wiring |
 | PTY | stub | **adopt** `pty-process` 0.5.4 `async` | +20 KB | `openpty`, `setsid`, controlling terminal, resize: the `unsafe` we may not write | The terminal track. `AsyncFd`, no reader thread |
 | Git | stub | **keep ours: `git` CLI** | `gix` +1.70 MB/+96 deps; `git2` +659 KB, C build, +3.8 MB RSS | — | The TS server uses the CLI too (`apps/server/src/vcs/GitVcsDriver.ts`), so behaviour matches. `gix` status/diff is still incomplete (`crate-status.md`) |
 | File walking with ignore rules | stub | **adopt** `ignore` 0.4 (serial `WalkBuilder::build`, never `build_parallel`) | in the search set | gitignore, `.git/info/exclude`, global excludes | Files track |
@@ -111,7 +111,7 @@ Line counts are from `rust/base`, tests included where they sit in the same file
 | File watching | stub | **adopt later** `notify` 8.x, started only while a client subscribes, bridged into tokio with a channel | +928 KB footprint, +4.6 MB RSS idle on one recursive tree | FSEvents, inotify, rename handling | Only if a feature needs pushes. The TS server watches a few single files (keybindings, themes) and polls git otherwise. 9.0 is in RC |
 | Codex `app-server` types | stub | **generate**: our own generator over Codex's checked-in JSON Schema | — | — | See [Codex](#codex-app-server-protocol) |
 | Claude stream-JSON types | ours: `protocol.rs` (588), `mapper.rs` (1,813) | **keep ours** | — | No official Rust SDK. Community crates (`claude-agent-sdk-rs`, `cc-sdk`) have one maintainer each and own the process model we need to control | — |
-| Static files, uploads | stub (`routes/assets.rs`) | **adopt** `tower-http` 0.6 (`fs`, later `limit`) + axum `multipart` | +228 KB, +11 deps | Range requests, ETag, MIME, path traversal guards, multipart parsing | Files or assets track. `tower-http` 0.7 exists; take it with axum's own bump |
+| Static files, uploads | ours: `conn-files::assets` (Range, ETag, multipart; tested) | **keep ours for now** | `tower-http` `fs` +228 KB | `ServeDir` opens by path, so it cannot pin the device and inode that the signed claim names | Re-measure axum `multipart` against our parser when `assets.rs` next changes. `tower-http` itself was not tested against inode pinning |
 
 ### Codex app-server protocol
 
@@ -149,8 +149,11 @@ Line counts are from `rust/base`, tests included where they sit in the same file
    the API changes are small. Do it on the engine track's branch, which owns `store.rs`.
 4. `uuid` in place of `uuid_v4`, and `lexopt` in place of the hand parser (an hour each).
 5. `pty-process` (terminal track), `ignore` + `nucleo-matcher` + `regex`
-   (files track), `tower-http` + `multipart` (assets), each as its track lands.
-6. Merge the three ISO-8601 formatters into one module in `conn-contract`.
+   (files track), each as its track lands. `tower-http` + `multipart` for assets: re-decide
+   (see the inventory row).
+6. Merge the six ISO-8601 formatters, four hex encoders and two HMAC copies into
+   `crates/conn-support` (std only, no async, no state). `conn-contract` keeps only contract
+   types.
 7. Later, with numbers from Linux: `insta`, `notify` on demand, and an allocator only if a
    musl load test shows mallocng costs.
 
@@ -194,77 +197,60 @@ fights the runtime (`nucleo`, `portable-pty`, `fff-search`).
 
 ## Lint set (BeautifulRust)
 
-`lints/beautiful-rust/lints.toml` (as `[workspace.lints]`, next to our
-`unsafe_code = "forbid"`) and `clippy.toml` applied to a scratch copy of `rust/base`.
-`cargo clippy --workspace --all-targets --all-features`, warnings deduplicated by lint and
-location.
+The target is the full set in `lints/beautiful-rust/` (`lints.toml`, `clippy.toml`). We reach
+it in stages. Each stage turns its lints on in the workspace `Cargo.toml` only when the
+workspace is clean under `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+which `tools/check.sh` and CI run. The toolchain is pinned in `rust-toolchain.toml`, so a new
+clippy cannot add findings unseen; the pin moves in its own change.
 
-**`generated.rs` alone gives 11,468 warnings.** The generator should put one inner
-`#![allow(..., reason = "generated by gen-contract.mjs")]` at the top of the file. The skill
-allows `#[allow]` in generated code. Everything else gives **806 warnings**:
+Counts below are from clippy 0.1.99 (Rust 1.99.1) on 2026-11-14, deduplicated by lint and
+place, with tests and examples.
 
-| Count | Lint | Count | Lint |
-| --- | --- | --- | --- |
-| 423 | `missing_docs` [lib] | 11 | `print_stdout` [lib] |
-| 73 | `unwrap_used` (31 in `src/`, 40 in examples) | 10 | `unreachable_pub` |
-| 39 | `as_conversions` (13 in `store.rs`) | 9 | `print_stderr` [lib] |
-| 28 | `exhaustive_enums` [lib] | 9 | `map_unwrap_or` |
-| 28 | `clone_on_ref_ptr` | 8 | `doc_markdown` |
-| 17 | `missing_debug_implementations` | 7 each | `too_many_lines`, `semicolon_if_nothing_returned`, `ignored_unit_patterns` |
-| 13 | `cast_possible_truncation` | 6 each | `missing_panics_doc` [lib], `allow_attributes`, `allow_attributes_without_reason`, `duration_suboptimal_units` |
-| 13 | `fn_params_excessive_bools` | 5 | `redundant_closure_for_method_calls` |
-| 12 | `cast_sign_loss` | 4 | `redundant_clone` |
-| 12 | `needless_pass_by_value` | 25 | 15 other pedantic lints, 1 to 3 each |
-| 11 | `missing_errors_doc` [lib] | | |
-| 11 | `cast_possible_wrap` | | |
+**Stage 1, on.** `clippy.toml` is BeautifulRust's file unchanged (`max-fn-params-bools = 0`,
+`unwrap`, `expect` and printing allowed in tests). `Cargo.toml` turns on
+`missing_debug_implementations`, `unreachable_pub`, `rust_2018_idioms`, `unwrap_used`
+(`expect_used` allowed), `panic_in_result_fn`, `allow_attributes`,
+`allow_attributes_without_reason`, `dbg_macro`, `todo`, `wildcard_imports`, `string_add`,
+`missing_assert_message`, `redundant_clone`, `rc_buffer`, and `large_futures`, which is not in
+BeautifulRust's file: one future that holds an 8 KiB buffer made 218 others too large.
+`unsafe_code` is `forbid`. Stage 1 cleared 546 hits.
 
-By crate: `conn-provider-claude` 317, `conn-server` 146, `conn-engine` 104, `conn-provider` 99,
-`conn-wire` 50, `conn-contract` 33, examples 53, tests 4.
+- Generated files take one inner `#![allow(…, reason = "generated by …")]`, written by their
+  generator. The skill allows `#[allow]` in generated code.
+- Everywhere else a suppression is `#[expect(lint, reason = "…")]` on the narrowest item.
+  Examples and test helper files take a file-level `#![expect(clippy::unwrap_used, …)]`.
+- A type that holds a secret has a hand-written `Debug` that prints the secret as
+  `<redacted>`.
 
-**Enforce:** the file as written, with these changes for an application:
+**Stage 2, next.**
 
-- **Allow:** `missing_docs`, `missing_errors_doc`, `missing_panics_doc`. The skill says
-  these fit libraries. Our crates have one consumer, us. Keep docs on the three interfaces
-  (`conn-provider`, `conn-engine`'s trait, `table.rs`) by review; they are already written.
-- **Allow:** `exhaustive_enums`. Our public enums mirror a closed external contract (wire
-  frames, CLI messages), and `#[non_exhaustive]` would only force wildcard arms inside the
-  workspace.
-- **Allow:** `too_many_lines`. The mapper's state machine reads better as one `match`. Watch
-  it in review instead.
-- **Keep `print_stdout` and `print_stderr`** even though they are marked [lib]. A server
-  should log through `tracing` (switch 2). The startup lines in `serve.rs` (address,
-  pairing URL) are the CLI's real output and get one `#[expect(..., reason)]`.
-- **Keep `unwrap_used` with `expect_used` allowed.** `panic = "abort"` makes every reachable
-  unwrap a server crash. Examples take a file-level `#![expect(clippy::unwrap_used, reason
-  = "example")]`.
-- **Keep `max-fn-params-bools = 0`.** The 13 hits (mapper helpers such as
-  `provider_turn(.., false)`, table registration) are exactly the call sites the skill means.
-  A private helper with nearby callers may take an `#[expect]` with a reason.
+| Lint | Hits | Notes |
+| --- | --- | --- |
+| `fn_params_excessive_bools`, `struct_excessive_bools` | 63, 1 | At BeautifulRust's `max-fn-params-bools = 0`, already set in `clippy.toml`. Most are private helpers with one flag; each becomes an enum or two functions, or takes an `#[expect]` with a reason when its callers sit a few lines away |
+| `clone_on_ref_ptr` | 112 | `Arc::clone(&x)`; scriptable from clippy's suggestions |
+| `print_stdout`, `print_stderr` | 25, 71 | Together with the `tracing` switch. The CLI's own output (`serve.rs` start lines, `auth` commands) keeps printing with an `#[expect]` |
+| `clippy::all`, `clippy::pedantic` | 420 more, in 41 lints | At priority −1, with BeautifulRust's four allows: `module_name_repetitions`, `must_use_candidate`, `module_inception`, `enum_glob_use`. The largest: `needless_pass_by_value` 69, `too_many_lines` 58, `map_unwrap_or` 35, `redundant_closure_for_method_calls` 33, `cast_possible_wrap` 53 |
 
-**Work for a clean run:**
+**Stage 3.** `as_conversions` (183), `cast_possible_truncation` (58) and `cast_sign_loss`
+(29): about 270 places. The 2026-11-13 check found none that loses or flips a value on input
+that can occur in a release build: float-to-int casts saturate, client numbers are clamped
+first, and the `i64`/`u64` casts on SQLite sequences flip only on a corrupt database. Each
+becomes `From`/`TryFrom` or a checked call.
 
-- About 300 warnings remain after the allows. Most are mechanical: `Debug` derives,
-  `Arc::clone(&x)`, `TryFrom` for casts, pedantic idiom fixes. About one agent-day.
-- The 18 `from_json(..).unwrap()` calls in the mapper are the exception. Fixing them
-  properly means typed construction, a separate change of a few hundred lines.
-- Apply the lints after the eight tracks merge, or at least land the `[workspace.lints]`
-  block at warn level first and turn on `-D warnings` in CI after the clean-up. Turning it on
-  mid-track makes every branch conflict.
+**Off for good: the `[lib]` lints.** `missing_docs`, `missing_errors_doc`,
+`missing_panics_doc` and `exhaustive_enums`. BeautifulRust marks them for libraries; this is
+an application whose crates have one consumer, us (`AGENTS.md`, "Where this project differs
+from the skills"). Our public enums mirror closed external contracts, so `#[non_exhaustive]`
+would only force wildcard arms inside the workspace. Docs on the three interfaces
+(`conn-provider`, `conn-engine`'s trait, `table.rs`) stay a review matter.
 
-**Where today's code is furthest from `rust-best-practices`:**
+**Not in BeautifulRust's file, left off.** `indexing_slicing` (about 1,600 hits, about 90% on
+a `serde_json::Value`, which does not panic) and `string_slice` (81 hits; the ones checked are
+guarded). Rule 5 in `AGENTS.md` still forbids indexing and slicing on input paths; review
+holds it.
 
-1. **Panics on input paths (§5).** The mapper's `from_json(..).unwrap()` turns contract or
-   CLI drift into an abort. `serve.rs` panics on a bad flag. `runner.rs` takes
-   `lock().unwrap()` ten times, where the skill wants `expect("lock poisoned")`. §1
-   ("make invalid states unrepresentable") also says to build typed values, not `json!`
-   decoded at run time.
-2. **`String` as the error type (§5).** `StoreResult<T> = Result<T, String>`,
-   `SqliteEngine::open -> Result<Self, String>`, the control channel's
-   `Result<Value, String>`. There is no `source()` and no context, and callers cannot
-   match on a cause.
-3. **Printing instead of logging (§6), and bool parameters (§4).** 20 `println!`/`eprintln!`
-   sites carry runtime events, such as dropped CLI lines and skipped message kinds, with no
-   level or fields. And 13 functions take `bool` flags that read as `false` at the call site.
+`unsafe_op_in_unsafe_fn`, `undocumented_unsafe_blocks` and `multiple_unsafe_ops_per_block`
+are moot: `unsafe_code` is `forbid`.
 
 ## A separate repository
 
@@ -275,7 +261,7 @@ monorepo. A separate repo changes that context, so this needs Nick's call.
 
 | Need | Tool | Notes |
 | --- | --- | --- |
-| CI checks | GitHub Actions: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo nextest run --workspace` on `ubuntu-latest` and `macos-latest` (arm64) | `dtolnay/rust-toolchain` with a `rust-toolchain.toml` pinned to 1.95; `Swatinem/rust-cache`; `taiki-e/install-action` for nextest and cargo-deny |
+| CI checks | GitHub Actions: `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo nextest run --workspace` on `ubuntu-latest` and `macos-latest` (arm64) | `dtolnay/rust-toolchain` with a `rust-toolchain.toml` (now pinned to 1.99.1); `Swatinem/rust-cache`; `taiki-e/install-action` for nextest and cargo-deny |
 | Supply chain | **`cargo-deny`** (`EmbarkStudios/cargo-deny-action`): advisories, licences, bans, sources, duplicates | It covers what `cargo-audit` does, plus licences and duplicates. The licence allowlist needs MIT, Apache-2.0, `Apache-2.0 WITH LLVM-exception` (rustix), MPL-2.0 (nucleo-matcher), CC0-1.0 (notify), Unlicense, BSD-3-Clause, Unicode-3.0, Zlib. Run it on every PR and nightly, so new advisories surface without a code change |
 | Unused deps | `cargo-machete` in the nightly bot | Stable and offline; text-based, so expect a rare false positive |
 | Size and memory gate | A CI step that builds the musl release binary and fails if it grows more than 3% over a baseline file; `cargo-bloat` to find the cause | Size is the cheap proxy. The memory figures in the README stay a manual Linux run |
