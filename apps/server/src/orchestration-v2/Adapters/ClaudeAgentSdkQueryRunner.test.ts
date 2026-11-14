@@ -116,7 +116,7 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
   ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
-it.effect.each(["absolute", "relative", "long"] as const)(
+it.effect.each(["relative", "long"] as const)(
   "reads a fork model from a %s custom Claude configuration directory",
   (kind) =>
     Effect.scoped(

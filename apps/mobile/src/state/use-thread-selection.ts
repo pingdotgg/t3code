@@ -57,7 +57,7 @@ function latestUserMessageAt(
   return null;
 }
 
-export function threadDetailToShell(
+function threadDetailToShell(
   environmentId: EnvironmentId,
   projection: OrchestrationV2ThreadProjection,
 ): EnvironmentThreadShell {
