@@ -312,7 +312,7 @@ export const make = Effect.gen(function* () {
                   cwd: input.cwd,
                   repository: input.repository,
                   pullRequest,
-                  maxAge: AzureDevOpsPullRequestCli.LISTED_ACTIVITY_MAX_AGE,
+                  maxAge: AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
                 })
                 .pipe(
                   Effect.map((activity) => ({

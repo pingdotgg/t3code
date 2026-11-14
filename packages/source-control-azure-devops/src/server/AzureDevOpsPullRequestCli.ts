@@ -127,10 +127,12 @@ const CHANGE_ENTRIES_PER_PAGE = 2000;
 /** Count raw entries, including folders and malformed rows. */
 const MAX_CHANGE_ENTRIES = 10_000;
 
-/** How old a thread read may be before a pull request's date is read again. */
-export const ACTIVITY_MAX_AGE = Duration.minutes(1);
-/** Listed rows tolerate older comment times; a push, vote or state change still rereads. */
-export const LISTED_ACTIVITY_MAX_AGE = Duration.minutes(5);
+/**
+ * How old a thread read may be before a pull request's date is read again. No longer than the
+ * server's listing cache: a comment moves no row field, so a longer age would hide it from a
+ * listing read again from the host.
+ */
+export const ACTIVITY_MAX_AGE = Duration.seconds(30);
 /** Records still fresh for some reader are kept past this; see `trimActivity`. */
 export const ACTIVITY_CACHE_CAPACITY = 1024;
 /** Each read is a Python startup; every reader shares this budget. */
@@ -500,7 +502,7 @@ export const make = Effect.gen(function* () {
     record.reading !== null
       ? Infinity
       : record.readAt !== null && record.readGeneration === record.generation
-        ? record.readAt + Duration.toMillis(LISTED_ACTIVITY_MAX_AGE)
+        ? record.readAt + Duration.toMillis(ACTIVITY_MAX_AGE)
         : -Infinity;
 
   /** A read that ended may have unprotected a kept record. */

@@ -380,7 +380,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
           cli.activityAt({
             cwd: "/queue",
             pullRequest: { number, location, state: "open", revision: "r", updatedAt: null },
-            maxAge: AzureDevOpsPullRequestCli.LISTED_ACTIVITY_MAX_AGE,
+            maxAge: AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
           });
 
         const list = yield* Effect.forkChild(
@@ -528,7 +528,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       expect(rows(forgotten)).toEqual(rows(dated));
       expect(yield* forgotten.settleUpdatedAt!).toBe(false);
       expect(threadReads).toHaveLength(12);
-      yield* TestClock.adjust("301 seconds");
+      yield* TestClock.adjust("31 seconds");
       const stale = yield* list;
       expect(rows(stale)).toEqual(rows(dated));
       expect(yield* stale.settleUpdatedAt!).toBe(false);
