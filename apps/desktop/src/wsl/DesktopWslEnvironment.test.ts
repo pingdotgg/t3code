@@ -28,6 +28,7 @@ import {
   parseResolvedPath,
   parseWslRuntimeRoot,
   windowsToWslPathImpl,
+  wslToWindowsPath,
 } from "./DesktopWslEnvironment.ts";
 
 // The install script only fails the way this file cares about when a real shell
@@ -553,6 +554,80 @@ describe("makeIsAvailable", () => {
       assert.isFalse(
         yield* isAvailable(new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" })),
       );
+    }),
+  );
+});
+
+describe("wslToWindowsPath", () => {
+  const makeProcess = (
+    stdout: Stream.Stream<Uint8Array> = Stream.empty,
+    exitCode: Effect.Effect<ChildProcessSpawner.ExitCode> = Effect.succeed(
+      ChildProcessSpawner.ExitCode(0),
+    ),
+  ) =>
+    ChildProcessSpawner.makeHandle({
+      pid: ChildProcessSpawner.ProcessId(123),
+      stdout,
+      stderr: Stream.empty,
+      all: stdout,
+      exitCode,
+      isRunning: Effect.succeed(false),
+      kill: () => Effect.void,
+      stdin: Sink.drain,
+      getInputFd: () => Sink.drain,
+      getOutputFd: () => Stream.empty,
+      unref: Effect.succeed(Effect.void),
+    });
+
+  it.effect.each([
+    ["/mnt/c/Users/test/assets", "C:\\Users\\test\\assets\n", "C:\\Users\\test\\assets"],
+    [
+      "/windows/c/Users/test user's assets ",
+      "C:\\Users\\test user's assets \r\n",
+      "C:\\Users\\test user's assets ",
+    ],
+  ] as const)(
+    "uses the selected distro's mount resolution for %s",
+    ([linuxPath, output, expected]) =>
+      Effect.gen(function* () {
+        let spawned: ChildProcess.Command | undefined;
+        const spawner = ChildProcessSpawner.make((command) => {
+          spawned = command;
+          return Effect.succeed(makeProcess(Stream.encodeText(Stream.make(output))));
+        });
+        const converted = yield* wslToWindowsPath("Test Distro", linuxPath).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        assert.equal(converted, expected);
+        assert.isDefined(spawned);
+        assert.equal(spawned._tag, "StandardCommand");
+        if (spawned._tag !== "StandardCommand") return;
+        assert.equal(spawned.command, "wsl.exe");
+        assert.deepEqual(spawned.args, ["-d", "Test Distro", "--exec", "wslpath", "-w", linuxPath]);
+      }),
+  );
+
+  it.effect.each([
+    { output: "", exitCode: 1 },
+    { output: "\n", exitCode: 0 },
+  ])("refuses an unsuccessful or empty conversion (%s)", ({ output, exitCode }) =>
+    Effect.gen(function* () {
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          makeProcess(
+            Stream.encodeText(Stream.make(output)),
+            Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+          ),
+        ),
+      );
+      const error = yield* wslToWindowsPath("Test Distro", "/mnt/c/assets").pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.flip,
+      );
+      assert.equal(error._tag, "DesktopWslPathConversionError");
+      assert.equal(error.stage, "conversion");
+      assert.equal(error.distro, "Test Distro");
+      assert.equal(error.linuxPath, "/mnt/c/assets");
     }),
   );
 });

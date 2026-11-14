@@ -1,6 +1,8 @@
 import {
   SERVER_EXIT_CODE_MANAGED_POLICY,
   SERVER_EXIT_CODE_STATE_DIR_OWNED,
+  DESKTOP_BROWSER_SOCKET_PATH,
+  DESKTOP_BROWSER_SOCKET_SECRET_HEADER,
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
   DesktopTelemetryControlMessage,
@@ -11,6 +13,7 @@ import {
   DATABASE_MIGRATIONS_STARTED_MESSAGE,
 } from "@t3tools/shared/databaseMigrationLog";
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeWS from "@effect/platform-node/NodeWS";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -318,6 +321,85 @@ describe("DesktopBackendManager", () => {
         '{"version":1,"type":"desktopTelemetryHello","electronPid":123}\n',
       );
     }),
+  );
+
+  it.live(
+    "authenticates the browser socket and carries events and commands without inherited fds",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const commandHandled = yield* Deferred.make<string>();
+          const eventReceived = yield* Deferred.make<{
+            readonly path: string | undefined;
+            readonly secret: string | string[] | undefined;
+            readonly event: string;
+          }>();
+          const childExit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+          const server = yield* Effect.acquireRelease(
+            Effect.sync(() => new NodeWS.WebSocketServer({ host: "127.0.0.1", port: 0 })),
+            (server) =>
+              Effect.promise(
+                () =>
+                  new Promise<void>((resolve) => {
+                    for (const client of server.clients) client.terminate();
+                    server.close(() => resolve());
+                  }),
+              ),
+          );
+          if (!server.address()) {
+            yield* Effect.promise(
+              () => new Promise<void>((resolve) => server.once("listening", resolve)),
+            );
+          }
+          const address = server.address();
+          if (typeof address !== "object" || address === null)
+            throw new Error("Missing socket port");
+          const secret = "browser-bootstrap-secret";
+          const event = '{"type":"attached","threadId":"thread","tabId":"tab"}\n';
+          const command = '{"type":"release","threadId":"thread","tabId":"tab"}';
+          server.on("connection", (socket, request) => {
+            socket.once("message", (data) => {
+              Deferred.doneUnsafe(
+                eventReceived,
+                Effect.succeed({
+                  path: request.url,
+                  secret: request.headers[DESKTOP_BROWSER_SOCKET_SECRET_HEADER],
+                  event: data.toString(),
+                }),
+              );
+              socket.send(`${command}\n`);
+            });
+          });
+          const layerSpawner = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.succeed(makeProcess({ exitCode: Deferred.await(childExit) })),
+            ),
+          );
+          const running = yield* DesktopBackendManager.runBackendProcess({
+            ...baseConfig,
+            bootstrapDelivery: "stdin",
+            bootstrap: { ...baseConfig.bootstrap, desktopBrowserSocketSecret: secret },
+            httpBaseUrl: new URL(`http://127.0.0.1:${address.port}`),
+            desktopTelemetryStream: Stream.empty,
+            desktopBrowserStream: Stream.make(new TextEncoder().encode(event)),
+            onDesktopBrowserCommand: (line) =>
+              Deferred.succeed(commandHandled, line).pipe(Effect.asVoid),
+          }).pipe(
+            Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)),
+            Effect.scoped,
+            Effect.forkScoped,
+          );
+          assert.deepEqual(yield* Deferred.await(eventReceived), {
+            path: DESKTOP_BROWSER_SOCKET_PATH,
+            secret,
+            event,
+          });
+          assert.equal(yield* Deferred.await(commandHandled), command);
+          yield* Deferred.succeed(childExit, ChildProcessSpawner.ExitCode(0));
+          assert.equal((yield* Fiber.join(running)).code.pipe(Option.getOrUndefined), 0);
+        }),
+      ),
   );
 
   it.effect("reports a SIGKILL exit without an exit code", () =>
