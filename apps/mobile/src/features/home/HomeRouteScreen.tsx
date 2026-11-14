@@ -28,7 +28,11 @@ import {
   useAtomValueWhileVisible,
   useHomeRouteVisible,
 } from "./home-route-visibility";
-import { buildHomeProjectScopes, resolveHomeProjectFilterScope } from "./homeThreadList";
+import {
+  buildHomeProjectScopes,
+  resolveHomeProjectFilterScope,
+  sortHomeProjectScopes,
+} from "./homeThreadList";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
@@ -138,11 +142,18 @@ export function HomeRouteScreen() {
   );
   const projectFilterOptions = useMemo(
     () =>
-      pickableProjectGroups(projectScopes).map((scope) => ({
+      pickableProjectGroups(
+        sortHomeProjectScopes({
+          scopes: projectScopes,
+          threads,
+          pendingTasks: [],
+          projectSortOrder: "updated_at",
+        }),
+      ).map((scope) => ({
         key: scope.key,
         label: scope.title,
       })),
-    [projectScopes],
+    [projectScopes, threads],
   );
   const selectedProjectKey =
     resolveHomeProjectFilterScope(projectScopes, projects, listOptions)?.key ?? null;
