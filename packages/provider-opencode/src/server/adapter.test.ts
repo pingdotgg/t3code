@@ -701,6 +701,15 @@ describe("OpenCodeAdapterV2", () => {
         offers.map((offer) => [offer.threadId, offer.delivery]),
         [[harness.threadId, "adapter_buffered"]],
       );
+      if (endedFirst) {
+        // A second task finishes before T3 starts the first run; its turn must not be lost in it.
+        yield* push(message("msg_task_2", { role: "user", time: { created: 5 } }));
+        yield* push(status("busy"));
+        const second = { role: "assistant", parentID: "msg_task_2" };
+        yield* push(message("msg_reply_2", { ...second, time: { created: 6, completed: 7 } }));
+        yield* push(text("msg_reply_2", { text: "WAKE_2_OK", time: { start: 6, end: 7 } }));
+        yield* push(status("idle"));
+      }
 
       const wakeRun = yield* runEvents;
       yield* harness.startTurn(
@@ -746,6 +755,7 @@ describe("OpenCodeAdapterV2", () => {
         [RunId.make("run-opencode-wake-2")],
         "an approval OpenCode asks for before the run starts is shown in it",
       );
+      assert.equal(offers.length, endedFirst ? 2 : 1, "each turn OpenCode starts gets an offer");
       assert.equal(prompts.length, 1, "OpenCode already runs this turn; prompting would repeat it");
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );

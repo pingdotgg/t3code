@@ -934,6 +934,14 @@ function turnEventSessionId(event: OpenCodeEvent): string | undefined {
   }
 }
 
+function isBusyStatus(event: OpenCodeEvent): boolean {
+  return event.type === "session.status" && event.properties.status.type !== "idle";
+}
+
+function isUserMessage(event: OpenCodeEvent | undefined): boolean {
+  return event?.type === "message.updated" && event.properties.info.role === "user";
+}
+
 function isOpenCodeNotFound(cause: unknown): boolean {
   const seen = new Set<unknown>();
   const queue: Array<unknown> = [cause];
@@ -2818,6 +2826,36 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           }
         });
 
+        const offerWake = Effect.fnUntraced(function* (
+          state: OpenCodeThreadState,
+          wake: OpenCodeWake,
+        ) {
+          const threadId = state.providerThread.appThreadId;
+          if (threadId === null) return;
+          wake.started = true;
+          const release = Effect.sync(() => {
+            if (state.wake === wake && !wake.replaying) state.wake = null;
+          });
+          yield* continuationRequests.offer({
+            threadId,
+            providerThreadId: state.providerThread.id,
+            driver: OPENCODE_PROVIDER,
+            detail: null,
+            delivery: "adapter_buffered",
+            dispatchIfCurrent: (dispatch) =>
+              Effect.suspend(() =>
+                state.wake === wake && nativeStreamFailure === null
+                  ? dispatch.pipe(
+                      Effect.asSome,
+                      Effect.tapError(() => release),
+                    )
+                  : Effect.succeedNone,
+              ),
+            clearIfCurrent: () => release,
+            onRunEndedWithoutStarting: () => release,
+          });
+        });
+
         // A prompt OpenCode takes while no T3 turn runs starts a turn of its own. Its events are
         // kept for the run T3 starts for it; the offer waits for busy, which a prompt that asks
         // for no reply never reaches.
@@ -2851,37 +2889,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           const wake = state.wake;
           if (wake === null) return false;
           wake.events.push(event);
-          const threadId = state.providerThread.appThreadId;
-          if (
-            wake.started ||
-            threadId === null ||
-            event.type !== "session.status" ||
-            event.properties.status.type === "idle"
-          ) {
-            return false;
-          }
-          wake.started = true;
-          const release = Effect.sync(() => {
-            if (state.wake === wake && !wake.replaying) state.wake = null;
-          });
-          yield* continuationRequests.offer({
-            threadId,
-            providerThreadId: state.providerThread.id,
-            driver: OPENCODE_PROVIDER,
-            detail: null,
-            delivery: "adapter_buffered",
-            dispatchIfCurrent: (dispatch) =>
-              Effect.suspend(() =>
-                state.wake === wake && nativeStreamFailure === null
-                  ? dispatch.pipe(
-                      Effect.asSome,
-                      Effect.tapError(() => release),
-                    )
-                  : Effect.succeedNone,
-              ),
-            clearIfCurrent: () => release,
-            onRunEndedWithoutStarting: () => release,
-          });
+          if (!wake.started && isBusyStatus(event)) yield* offerWake(state, wake);
           return false;
         });
 
@@ -3480,35 +3488,45 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               const wake = continuation ? state.wake : null;
               // Another turn takes what OpenCode does from here on, so its own run has nothing left.
               if (!continuation) state.wake = null;
+              // From here, events that arrive queue behind the kept ones, to keep their order.
+              if (wake !== null) wake.replaying = true;
+              const releaseWake = Effect.sync(() => {
+                if (wake !== null && state.wake === wake) state.wake = null;
+              });
               state.appThread = turnInput.appThread;
               state.activeTurn = turn;
               state.providerTurns.set(String(providerTurnId), providerTurn);
-              yield* emitProviderTurn(state, turn, "running", null);
-              yield* updateProviderThread(state, {
-                status: "active",
-                firstRunOrdinal: state.providerThread.firstRunOrdinal ?? turnInput.runOrdinal,
-                lastRunOrdinal: turnInput.runOrdinal,
-              });
-              yield* updateProviderSession("running", null);
+              yield* Effect.gen(function* () {
+                yield* emitProviderTurn(state, turn, "running", null);
+                yield* updateProviderThread(state, {
+                  status: "active",
+                  firstRunOrdinal: state.providerThread.firstRunOrdinal ?? turnInput.runOrdinal,
+                  lastRunOrdinal: turnInput.runOrdinal,
+                });
+                yield* updateProviderSession("running", null);
+              }).pipe(Effect.onError(() => releaseWake));
               if (continuation) {
                 if (wake !== null) {
-                  // Events that arrive while these replay queue behind them, to keep their order.
-                  wake.replaying = true;
                   yield* Effect.gen(function* () {
                     while (true) {
                       const event = wake.events.shift();
-                      if (event === undefined) {
-                        state.wake = null;
+                      if (event === undefined) return;
+                      yield* dispatchEvent(event);
+                      if (state.activeTurn !== turn && isUserMessage(wake.events[0])) {
+                        // OpenCode began another turn of its own before this run did; it gets a run
+                        // of its own.
+                        const next: OpenCodeWake = {
+                          events: wake.events.splice(0),
+                          started: false,
+                          replaying: false,
+                        };
+                        state.wake = next;
+                        if (next.events.some(isBusyStatus)) yield* offerWake(state, next);
                         return;
                       }
-                      yield* dispatchEvent(event);
                     }
                   }).pipe(
-                    Effect.ensuring(
-                      Effect.sync(() => {
-                        if (state.wake === wake) state.wake = null;
-                      }),
-                    ),
+                    Effect.ensuring(releaseWake),
                     Effect.tapError((cause) =>
                       finalizeTurn(state, turn, "failed", {
                         failure: makeProviderFailure({ cause, class: "provider_error" }),
