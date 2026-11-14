@@ -638,10 +638,10 @@ it.effect("restarts the hub with an Android SDK installed after it started", () 
     });
     yield* fs.writeFileString(`${installDir}/node_modules/expo-device-hub/dist/server/cli.mjs`, "");
     yield* fs.writeFileString(`${installDir}/.install-complete`, DEVICE_HUB_VERSION);
-    const hubEnvironments: Array<Record<string, string | undefined> | undefined> = [];
+    const hubEnvironments: Array<Record<string, unknown> | undefined> = [];
     const host = yield* LocalDeviceHost.make().pipe(
       Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
-      Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "/usr/bin" }),
+      Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: `${baseDir}/bin` }),
       Effect.provideService(HostProcess.IsExecutable, false),
       Effect.provideService(HostProcess.Platform, "darwin"),
       Effect.provideService(
@@ -682,8 +682,8 @@ it.effect("restarts the hub with an Android SDK installed after it started", () 
     yield* fs.writeFileString(`${sdk}/platform-tools/adb`, "");
     yield* host.ensureReady(() => Effect.void);
     expect(hubEnvironments.map((env) => [env?.ANDROID_HOME, env?.PATH])).toEqual([
-      [undefined, "/usr/bin"],
-      [sdk, `${sdk}/platform-tools:${sdk}/emulator:/usr/bin`],
+      [undefined, `${baseDir}/bin`],
+      [sdk, `${sdk}/platform-tools:${sdk}/emulator:${baseDir}/bin`],
     ]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
