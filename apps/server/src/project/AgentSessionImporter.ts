@@ -6,7 +6,6 @@ import {
   isRuntimeModeAbove,
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
-  AgentSessionImportSource,
   AgentSessionScanError,
   AgentSessionSource,
   EventId,
@@ -46,12 +45,6 @@ import * as ProjectService from "./ProjectService.ts";
 const IMPORT_EVENT_PREFIX = "agent-session-import:v2";
 const CLAUDE_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const decodeImportedTranscriptPayload = Schema.decodeUnknownOption(
-  Schema.Struct({
-    cwd: Schema.optional(Schema.String),
-    importedTranscripts: Schema.optional(Schema.Array(AgentSessionImportSource)),
-  }),
-);
 
 class AgentSessionUnresumableSessionError extends Schema.TaggedError<AgentSessionUnresumableSessionError>()(
   "AgentSessionUnresumableSessionError",
@@ -250,7 +243,7 @@ const make = Effect.gen(function* () {
         ),
       );
     const completedSources = runtimeRows.flatMap((runtime) => {
-      const payload = decodeImportedTranscriptPayload(runtime.runtimePayload);
+      const payload = AgentSessionScanner.decodeImportedTranscriptPayload(runtime.runtimePayload);
       if (
         Option.isNone(payload) ||
         payload.value.cwd === undefined ||
@@ -316,11 +309,13 @@ const make = Effect.gen(function* () {
                 thread.source === "claudeAgent"
                   ? { threadId, resume: thread.providerSessionId }
                   : { threadId: nativeThreadId },
-              runtimePayload: { cwd: project.workspaceRoot },
+              runtimePayload: { cwd: outcome.worktree?.path ?? project.workspaceRoot },
             },
             { onConflict: "ignore" },
           );
-          const existing = yield* Effect.option(orchestrator.getThreadRecords(threadId, []));
+          const existing = yield* Effect.option(
+            orchestrator.getThreadRecords(threadId, ["messages"]),
+          );
           if (Option.isSome(existing)) {
             if (existing.value.thread.projectId !== input.projectId) {
               return yield* new AgentSessionThreadProjectConflictError({
@@ -331,6 +326,19 @@ const make = Effect.gen(function* () {
             }
             if (existing.value.thread.historyOrigin !== "v1_import") {
               return yield* new AgentSessionThreadModifiedError({ threadId });
+            }
+            // A transcript can change after the import, so record it only when the
+            // thread already holds exactly its messages.
+            const stored = existing.value.messages;
+            if (
+              stored.length !== thread.messages.length ||
+              stored.some(
+                (message, index) =>
+                  message.role !== thread.messages[index]?.role ||
+                  message.text !== thread.messages[index]?.text,
+              )
+            ) {
+              return false;
             }
             yield* persistRuntime;
             yield* runtimes.recordImportedTranscript({ threadId, source });
@@ -355,8 +363,8 @@ const make = Effect.gen(function* () {
             modelSelection: { instanceId: thread.providerInstanceId, model },
             runtimeMode,
             interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-            branch: null,
-            worktreePath: null,
+            branch: outcome.worktree?.branch ?? null,
+            worktreePath: outcome.worktree?.path ?? null,
             linkedPullRequest: null,
             branchPullRequest: null,
             activeProviderThreadId: providerThreadId,
