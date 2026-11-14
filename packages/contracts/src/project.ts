@@ -628,6 +628,8 @@ export type ThreadMoveStage = typeof ThreadMoveStage.Type;
 export class ThreadMoveError extends Schema.TaggedError<ThreadMoveError>()("ThreadMoveError", {
   /** Absent when the server could not start the move. */
   stage: Schema.optional(ThreadMoveStage),
+  /** The file or folder that the failed step read. */
+  path: Schema.optional(Schema.String),
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {}

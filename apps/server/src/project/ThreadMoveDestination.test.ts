@@ -230,6 +230,7 @@ const movesTo = (projectId: string, tag = "project") => ({
 });
 const failure = (target: string) => ({
   _tag: "ThreadMoveError",
+  path: target,
   message: expect.stringContaining(target),
 });
 

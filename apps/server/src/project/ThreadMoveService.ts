@@ -266,7 +266,7 @@ export const make = Effect.gen(function* () {
     const commit = Effect.gen(function* () {
       const members: Array<ThreadMoveMember> = [];
       for (const member of decision.members) {
-        const unreadable = fail("plan", `Could not read "${member.title}".`);
+        const unreadable = fail("plan", "Could not read a thread that moves along.");
         const projection = yield* threads
           .getThreadRecords(
             member.id,
