@@ -1,3 +1,4 @@
+import { useClientSettings } from "../../hooks/useSettings";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { WorkLogDetails, WorkLogRow } from "./WorkLog";
 import {
@@ -208,6 +209,7 @@ export function ViewedImagesTimelineRow({
 }
 
 function WorkEntryLogRow(props: WorkEntryRowProps) {
+  const ignoredCommandPrefixes = useClientSettings((settings) => settings.ignoredCommandPrefixes);
   const { workEntry, workspaceRoot, displayLabel } = props;
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
@@ -333,7 +335,8 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? workEntry.toolLifecycleStatus === "inProgress"
         ? "Thinking"
         : "Thought"
-      : questionHeading || (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot));
+      : questionHeading ||
+        (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot, ignoredCommandPrefixes));
   const answerPreview =
     workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)
       ? getQuestionAnswerPreview(workEntry.questionAnswer)

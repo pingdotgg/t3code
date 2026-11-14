@@ -4,6 +4,7 @@ import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { IgnoredCommandPrefixesSettings } from "./components/IgnoredCommandPrefixesSettings";
 import { SettingsScreen } from "./components/SettingsScreen";
 import {
   mobileProjectGroupingModePatch,
@@ -69,6 +70,7 @@ export function SettingsProjectGroupingRouteScreen() {
         </SettingsSection>
         <WorkingSectionSettings />
         <NewThreadSettingsSection />
+        <IgnoredCommandPrefixesSettings />
       </ScrollView>
     </SettingsScreen>
   );

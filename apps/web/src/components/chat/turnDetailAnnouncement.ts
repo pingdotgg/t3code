@@ -65,12 +65,18 @@ function completedBeforeSuperseded(entry: MessageEntry) {
   );
 }
 
-function stepLabel(work: WorkLogEntry, workspaceRoot: string | undefined): string | null {
+function stepLabel(
+  work: WorkLogEntry,
+  workspaceRoot: string | undefined,
+  ignoredCommandPrefixes: ReadonlyArray<string>,
+): string | null {
   // Reasoning text is never read out.
   if (work.itemType === "reasoning") return "Thinking";
   const status = work.toolLifecycleStatus;
   if (status === "failed" || status === "declined" || status === "stopped") return null;
-  const label = liveWorkEntryLabel(work, workspaceRoot, true).replace(/\s+/g, " ").trim();
+  const label = liveWorkEntryLabel(work, workspaceRoot, true, ignoredCommandPrefixes)
+    .replace(/\s+/g, " ")
+    .trim();
   if (label === "") return null;
   const spoken = withVerb(work, label);
   const cut = cutText(spoken, ACTIVITY_MAX_LENGTH);
@@ -86,6 +92,7 @@ export function turnDetail(
   entries: ReadonlyArray<TimelineEntry>,
   workspaceRoot: string | undefined,
   knownTailId: string | null,
+  ignoredCommandPrefixes: ReadonlyArray<string> = [],
 ): TurnDetail {
   const messages: TurnMessage[] = [];
   // Runs and attempts the agent kept working in after the entry being looked at.
@@ -114,7 +121,7 @@ export function turnDetail(
       markContinued(entry, work.runId ?? null);
       // A request is spoken as the thread's status; once answered, the step it was for goes on.
       if (work.itemType === "approval_request" || work.itemType === "user_input_request") continue;
-      if (activity === undefined) activity = stepLabel(work, workspaceRoot);
+      if (activity === undefined) activity = stepLabel(work, workspaceRoot, ignoredCommandPrefixes);
       continue;
     }
     if (entry.kind === "message" && entry.message.role !== "assistant") continue;

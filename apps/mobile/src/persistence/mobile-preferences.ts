@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
   EnvironmentId,
+  IgnoredCommandPrefixes,
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
@@ -87,8 +88,10 @@ const ThreadProject = Schema.Struct({
   projectId: Schema.NonEmptyString,
 });
 const isThreadProject = Schema.is(ThreadProject);
+const decodeIgnoredCommandPrefixes = Schema.decodeUnknownOption(IgnoredCommandPrefixes);
 
 export interface Preferences {
+  readonly ignoredCommandPrefixes?: ReadonlyArray<string>;
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
   readonly pullRequestHideTestFiles?: boolean;
@@ -178,6 +181,7 @@ const isPullRequestMergeMethod = Schema.is(PullRequestMergeMethod);
 
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
+    ignoredCommandPrefixes?: ReadonlyArray<string>;
     navigationTabOrder?: readonly string[];
     hiddenNavigationTabs?: readonly string[];
     pullRequestHideTestFiles?: boolean;
@@ -216,6 +220,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     pullRequestListFilters?: PullRequestListPreferences;
     workspaceSelections?: WorkspaceSelections;
   } = {};
+
+  const ignoredPrefixes = decodeIgnoredCommandPrefixes(parsed.ignoredCommandPrefixes);
+  if (Option.isSome(ignoredPrefixes)) preferences.ignoredCommandPrefixes = ignoredPrefixes.value;
 
   if (Array.isArray(parsed.hiddenNavigationTabs)) {
     preferences.hiddenNavigationTabs = parsed.hiddenNavigationTabs.filter(

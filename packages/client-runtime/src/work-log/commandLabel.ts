@@ -1,6 +1,13 @@
 type CommandWrapper = "env" | "sudo";
 type CommandProgramContext = "exec" | "shell";
 
+type CommandLabelContext = {
+  readonly ignoredPrefixes: ReadonlyArray<ReadonlyArray<string>>;
+  displayCommand: string | null;
+  unresolvedPrefix: boolean;
+  removedPrefix: boolean;
+};
+
 const MAX_COMMAND_SEGMENTS = 64;
 
 const SHELL_PROGRAMS = new Set(["sh", "bash", "zsh", "dash", "ash", "ksh", "fish"]);
@@ -217,7 +224,7 @@ const COMMAND_WRAPPER_FLAGS: Record<CommandWrapper, ReadonlySet<string>> = {
   sudo: new Set(["-A", "--askpass", "-b", "--background", "-E", "-H", "-i", "-n", "-S"]),
 };
 
-function tokenizeShellCommand(command: string): string[] | null {
+function tokenizeShellCommand(command: string, tokenOffsets?: number[]): string[] | null {
   const input = command.trim();
   const tokens: string[] = [];
   let current = "";
@@ -230,6 +237,7 @@ function tokenizeShellCommand(command: string): string[] | null {
 
   for (let index = 0; index < input.length; index += 1) {
     const character = input[index]!;
+    if (tokenOffsets && !tokenStarted && !/\s/u.test(character)) tokenOffsets.push(index);
     if (escaping) {
       current += character;
       escaping = false;
@@ -773,6 +781,7 @@ function powerShellAssignmentProgramName(
   depth: number,
   remainingCommand: string | null,
   segmentsRemaining: number,
+  labelContext?: CommandLabelContext,
 ): PowerShellAssignment {
   const assignment = command.match(
     /^\s*\$(?:(env|global|local|script):)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*([\s\S]*)$/iu,
@@ -783,7 +792,13 @@ function powerShellAssignmentProgramName(
     return {
       matched: true,
       program: remainingCommand
-        ? commandProgramNameInternal(remainingCommand, depth, "shell", segmentsRemaining - 1)
+        ? commandProgramNameInternal(
+            remainingCommand,
+            depth,
+            "shell",
+            segmentsRemaining - 1,
+            labelContext,
+          )
         : null,
     };
   }
@@ -795,18 +810,37 @@ function powerShellAssignmentProgramName(
     return { matched: true, program: null };
   }
   const calledProgram = powerShellCallOperatorProgramName(value);
-  if (calledProgram !== undefined) return { matched: true, program: calledProgram };
+  if (calledProgram !== undefined) {
+    return {
+      matched: true,
+      program: labelContext?.ignoredPrefixes.length
+        ? commandProgramNameInternal(value, depth + 1, "shell", segmentsRemaining, labelContext)
+        : calledProgram,
+    };
+  }
 
   const directCommand = value.match(/^(?:@?\(\s*)?([A-Za-z][A-Za-z0-9_.-]*)\b/u)?.[1];
   if (directCommand && !NON_DESCRIPTIVE_SHELL_PROGRAMS.has(directCommand.toLowerCase())) {
-    const parsedCommand = commandProgramNameInternal(value, depth + 1, "shell", segmentsRemaining);
+    const parsedCommand = commandProgramNameInternal(
+      value,
+      depth + 1,
+      "shell",
+      segmentsRemaining,
+      labelContext,
+    );
     return { matched: true, program: parsedCommand ?? directCommand };
   }
 
   return {
     matched: true,
     program: remainingCommand
-      ? commandProgramNameInternal(remainingCommand, depth, "shell", segmentsRemaining - 1)
+      ? commandProgramNameInternal(
+          remainingCommand,
+          depth,
+          "shell",
+          segmentsRemaining - 1,
+          labelContext,
+        )
       : null,
   };
 }
@@ -824,12 +858,13 @@ function windowsShellPayloadProgramName(
   remainingCommand: string | null,
   separator: string | null,
   segmentsRemaining: number,
+  labelContext?: CommandLabelContext,
 ): WindowsShellPayload {
   const parsePayload = (payload: string | undefined): string | null => {
     if (!payload) return null;
     const command =
       remainingCommand && separator ? `${payload} ${separator} ${remainingCommand}` : payload;
-    return commandProgramNameInternal(command, depth + 1, "shell", segmentsRemaining);
+    return commandProgramNameInternal(command, depth + 1, "shell", segmentsRemaining, labelContext);
   };
 
   if (shell === "cmd" || shell === "cmd.exe") {
@@ -990,6 +1025,7 @@ function wrappedShellCommandProgramName(
   depth: number,
   remainingCommand: string | null,
   segmentsRemaining: number,
+  labelContext?: CommandLabelContext,
 ): string | null {
   let index = start;
 
@@ -1044,6 +1080,7 @@ function wrappedShellCommandProgramName(
     depth + 1,
     wrapper === "exec" ? "exec" : "shell",
     segmentsRemaining,
+    labelContext,
   );
   if (wrappedProgram !== null) return wrappedProgram;
 
@@ -1055,7 +1092,13 @@ function wrappedShellCommandProgramName(
     !TERMINAL_SHELL_PROGRAMS.has(target) &&
     remainingCommand
   ) {
-    return commandProgramNameInternal(remainingCommand, depth, "shell", segmentsRemaining - 1);
+    return commandProgramNameInternal(
+      remainingCommand,
+      depth,
+      "shell",
+      segmentsRemaining - 1,
+      labelContext,
+    );
   }
   return null;
 }
@@ -1065,6 +1108,8 @@ function parseCommandProgramName(
   depth: number,
   context: CommandProgramContext,
   segmentsRemaining: number,
+  labelContext?: CommandLabelContext,
+  allowDisplayRewrite = false,
 ): string | null {
   if (depth >= 8 || segmentsRemaining <= 0) return null;
   const commandWithoutComments = commandWithoutLeadingShellComments(command);
@@ -1088,6 +1133,7 @@ function parseCommandProgramName(
           depth,
           "shell",
           segmentsRemaining - 1,
+          labelContext,
         )
       : null;
   }
@@ -1096,13 +1142,22 @@ function parseCommandProgramName(
     depth,
     commandSplit.remainingCommand,
     segmentsRemaining,
+    labelContext,
   );
   if (powerShellAssignment.matched) return powerShellAssignment.program;
   const windowsPath = commandSplit.firstCommand.match(
     /^\s*((?:\.{1,2}|%[A-Za-z_][A-Za-z0-9_]*%|\$env:[A-Za-z_][A-Za-z0-9_]*)\\\S+)/iu,
   )?.[1];
-  if (windowsPath) return staticProgramName(windowsPath);
-  const tokens = tokenizeShellCommand(withoutShellLineContinuations(commandSplit.firstCommand));
+  if (
+    windowsPath &&
+    !labelContext?.ignoredPrefixes.some(
+      (prefix) => prefix[0] === windowsPath || prefix[0] === staticProgramName(windowsPath),
+    )
+  )
+    return staticProgramName(windowsPath);
+  const firstCommand = withoutShellLineContinuations(commandSplit.firstCommand).trim();
+  const tokenOffsets: number[] | undefined = labelContext?.ignoredPrefixes.length ? [] : undefined;
+  const tokens = tokenizeShellCommand(firstCommand, tokenOffsets);
   if (tokens === null) return null;
   const firstCharacter = commandSplit.firstCommand.trimStart()[0];
   if (
@@ -1117,6 +1172,7 @@ function parseCommandProgramName(
           depth,
           context,
           segmentsRemaining - 1,
+          labelContext,
         )
       : null;
   }
@@ -1127,7 +1183,7 @@ function parseCommandProgramName(
   let sawRedirection = false;
 
   while (index < tokens.length) {
-    const token = tokens[index];
+    const token: string | undefined = tokens[index];
     if (!token) return null;
     const indexAfterRedirection = indexAfterShellRedirection(tokens, index);
     if (indexAfterRedirection !== null) {
@@ -1148,6 +1204,7 @@ function parseCommandProgramName(
             depth,
             executionContext,
             segmentsRemaining - 1,
+            labelContext,
           )
         : null;
     }
@@ -1161,11 +1218,58 @@ function parseCommandProgramName(
             depth,
             executionContext,
             segmentsRemaining - 1,
+            labelContext,
           )
         : null;
     }
-    const tokenProgram = token.split(/[\\/]/).at(-1);
+    const tokenProgram =
+      index === 0 && windowsPath ? staticProgramName(windowsPath) : token.split(/[\\/]/).at(-1);
     const isUnqualifiedToken = token === tokenProgram;
+    const ignoredPrefix: ReadonlyArray<string> | undefined = labelContext?.ignoredPrefixes.find(
+      (prefix) =>
+        prefix.every((part, offset) =>
+          offset === 0 ? part === token || part === tokenProgram : part === tokens[index + offset],
+        ),
+    );
+    if (ignoredPrefix && labelContext) {
+      const targetIndex = index + ignoredPrefix.length;
+      const target = tokens[targetIndex];
+      const targetOffset = tokenOffsets?.[targetIndex];
+      if (
+        target &&
+        !target.startsWith("-") &&
+        indexAfterShellRedirection(tokens, targetIndex) === null &&
+        targetOffset !== undefined
+      ) {
+        const remainder = firstCommand.slice(targetOffset);
+        const source = command.trim();
+        const sourceFirstCommand = commandSplit.firstCommand.trim();
+        const sourceOffset =
+          source.startsWith(sourceFirstCommand) && sourceFirstCommand.endsWith(remainder)
+            ? sourceFirstCommand.length - remainder.length
+            : null;
+        const displayCommand =
+          sourceOffset !== null
+            ? source.slice(sourceOffset)
+            : commandSplit.remainingCommand
+              ? `${remainder} ${commandSplit.separator} ${commandSplit.remainingCommand}`
+              : remainder;
+        const rewriteDisplay = allowDisplayRewrite && sourceOffset !== null;
+        const program = commandProgramNameInternal(
+          displayCommand,
+          depth + 1,
+          "exec",
+          segmentsRemaining,
+          labelContext,
+          rewriteDisplay,
+        );
+        if (program !== null && !labelContext.unresolvedPrefix) {
+          if (rewriteDisplay) labelContext.displayCommand ??= displayCommand;
+          labelContext.removedPrefix = true;
+          return program;
+        }
+      }
+    }
     if (tokenProgram === "env" || tokenProgram === "sudo") {
       wrapper = tokenProgram;
       executionContext = "exec";
@@ -1181,7 +1285,13 @@ function parseCommandProgramName(
       if (wrapper === "env" && (token === "-S" || token === "--split-string")) {
         const splitCommand = tokens[index + 1];
         return splitCommand
-          ? commandProgramNameInternal(splitCommand, depth + 1, executionContext, segmentsRemaining)
+          ? commandProgramNameInternal(
+              splitCommand,
+              depth + 1,
+              executionContext,
+              segmentsRemaining,
+              labelContext,
+            )
           : null;
       }
       if (wrapper === "env" && token.startsWith("--split-string=")) {
@@ -1190,6 +1300,7 @@ function parseCommandProgramName(
           depth + 1,
           executionContext,
           segmentsRemaining,
+          labelContext,
         );
       }
       if (COMMAND_WRAPPER_OPTIONS_WITH_VALUE[wrapper].has(token)) {
@@ -1230,7 +1341,7 @@ function parseCommandProgramName(
       if (scriptIndex !== null) {
         const script = tokens[scriptIndex];
         return script
-          ? commandProgramNameInternal(script, depth + 1, "shell", segmentsRemaining)
+          ? commandProgramNameInternal(script, depth + 1, "shell", segmentsRemaining, labelContext)
           : null;
       }
     }
@@ -1244,6 +1355,7 @@ function parseCommandProgramName(
         commandSplit.remainingCommand,
         commandSplit.separator,
         segmentsRemaining,
+        labelContext,
       );
       if (payload.matched) return payload.program;
     }
@@ -1270,6 +1382,7 @@ function parseCommandProgramName(
           depth + 1,
           "exec",
           segmentsRemaining,
+          labelContext,
         );
         if (wrappedProgram !== null) return wrappedProgram;
       }
@@ -1282,6 +1395,7 @@ function parseCommandProgramName(
         depth,
         commandSplit.remainingCommand,
         segmentsRemaining,
+        labelContext,
       );
     }
     if (
@@ -1299,6 +1413,7 @@ function parseCommandProgramName(
         depth,
         "shell",
         segmentsRemaining - 1,
+        labelContext,
       );
     }
     if (
@@ -1313,6 +1428,7 @@ function parseCommandProgramName(
         depth,
         "shell",
         segmentsRemaining - 1,
+        labelContext,
       );
     }
     if (
@@ -1325,6 +1441,7 @@ function parseCommandProgramName(
     ) {
       return null;
     }
+    if (ignoredPrefix && labelContext) labelContext.unresolvedPrefix = true;
     return tokenProgram || null;
   }
 
@@ -1334,6 +1451,7 @@ function parseCommandProgramName(
       depth,
       executionContext,
       segmentsRemaining - 1,
+      labelContext,
     );
   }
   return null;
@@ -1344,18 +1462,73 @@ function commandProgramNameInternal(
   depth: number,
   context: CommandProgramContext,
   segmentsRemaining = MAX_COMMAND_SEGMENTS,
+  labelContext?: CommandLabelContext,
+  allowDisplayRewrite = false,
 ): string | null {
   if (segmentsRemaining <= 0) return null;
   const calledProgram = powerShellCallOperatorProgramName(command);
-  if (calledProgram !== undefined) return calledProgram;
+  if (calledProgram !== undefined) {
+    if (calledProgram && labelContext?.ignoredPrefixes.length) {
+      labelContext.removedPrefix = false;
+      const program = parseCommandProgramName(
+        command.trimStart().slice(1).trimStart(),
+        depth + 1,
+        "exec",
+        segmentsRemaining,
+        labelContext,
+        allowDisplayRewrite,
+      );
+      // Reparsing loses PowerShell quoting, so only a removed prefix may replace the literal name.
+      if (program !== null && labelContext.removedPrefix) return program;
+    }
+    return calledProgram;
+  }
   return (
-    parseCommandProgramName(command, depth, context, segmentsRemaining) ??
-    (context === "shell" ? literalCommandAliasProgramName(command) : null)
+    parseCommandProgramName(
+      command,
+      depth,
+      context,
+      segmentsRemaining,
+      labelContext,
+      allowDisplayRewrite,
+    ) ?? (context === "shell" ? literalCommandAliasProgramName(command) : null)
   );
 }
 
-export function commandProgramName(command: string, depth = 0): string | null {
-  return commandProgramNameInternal(command, depth, "shell", MAX_COMMAND_SEGMENTS);
+export function commandProgramName(
+  command: string,
+  ignoredCommandPrefixes: ReadonlyArray<string> = [],
+): string | null {
+  return commandProgramNameInternal(
+    command,
+    0,
+    "shell",
+    MAX_COMMAND_SEGMENTS,
+    ignoredCommandPrefixes.length > 0 ? commandLabelContext(ignoredCommandPrefixes) : undefined,
+  );
+}
+
+export function parseIgnoredCommandPrefixes(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(/\r?\n/u)
+        .map((prefix) => prefix.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function commandLabelContext(prefixes: ReadonlyArray<string>): CommandLabelContext {
+  return {
+    ignoredPrefixes: prefixes
+      .map((prefix) => tokenizeShellCommand(prefix))
+      .filter((tokens): tokens is string[] => tokens !== null && tokens.length > 0)
+      .sort((left, right) => right.length - left.length),
+    displayCommand: null,
+    unresolvedPrefix: false,
+    removedPrefix: false,
+  };
 }
 
 // Escape bytes and other control characters render as invisible gaps; display
@@ -1363,8 +1536,16 @@ export function commandProgramName(command: string, depth = 0): string | null {
 // and carriage return lay out as whitespace, so CRLF scripts stay unmarked.
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu;
 
-export function commandDisplayText(command: string): string {
-  return withVisibleControlCharacters(withoutShellWrapper(command));
+export function commandDisplayText(
+  command: string,
+  ignoredCommandPrefixes: ReadonlyArray<string> = [],
+): string {
+  const display = withoutShellWrapper(command);
+  if (ignoredCommandPrefixes.length === 0) return withVisibleControlCharacters(display);
+  const context = commandLabelContext(ignoredCommandPrefixes);
+  // Nested shell payloads and reconstructed tokens cannot replace the whole preview.
+  commandProgramNameInternal(display, 0, "shell", MAX_COMMAND_SEGMENTS, context, true);
+  return withVisibleControlCharacters(context.displayCommand ?? display);
 }
 
 export function withVisibleControlCharacters(text: string): string {
