@@ -1036,9 +1036,13 @@ function PullRequestCodeTab({
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
     onPostRender: codeViewReveal.flush,
-    // Find may repeat requests before render; only unfold, never toggle.
-    onRevealSearchMatch: (item: CodeViewItem<ReviewAnnotationGroup>) =>
-      setFoldChoices((current) => withFileDiffFold(current, item.id, false)),
+    onItemCollapsedChange: (
+      _item: CodeViewItem<ReviewAnnotationGroup>,
+      nextItem: CodeViewItem<ReviewAnnotationGroup>,
+    ) =>
+      setFoldChoices((current) =>
+        withFileDiffFold(current, nextItem.id, nextItem.collapsed === true),
+      ),
   };
 
   const runThreadCommand = async (
