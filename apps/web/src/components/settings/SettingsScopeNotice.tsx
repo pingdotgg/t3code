@@ -1,13 +1,14 @@
 import { resolveEnvironmentMachineKind, type EnvironmentId } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon, LayersIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { ChevronRightIcon, LayersIcon, SearchIcon } from "lucide-react";
+import { useState, type ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ITEM_ROW_CLASSNAME } from "./itemRows";
 import { SettingsGroup } from "./SettingsGroup";
@@ -53,6 +54,14 @@ export function SettingsScopeNotice({
         className="size-4 shrink-0 text-muted-foreground"
       />
     ) : null;
+  const [projectQuery, setProjectQuery] = useState("");
+  const normalizedProjectQuery = projectQuery.trim().toLowerCase();
+  const matchesProjectQuery = (group: SidebarProjectSnapshot) =>
+    normalizedProjectQuery.length === 0 ||
+    group.displayName.toLowerCase().includes(normalizedProjectQuery) ||
+    group.workspaceRoot.toLowerCase().includes(normalizedProjectQuery);
+  const hasNoProjectMatches =
+    target === "project" && normalizedProjectQuery.length > 0 && !groups.some(matchesProjectQuery);
   const choiceGroups =
     target === "checkout"
       ? groups.filter((group) => !search.project || group.projectKey === search.project)
@@ -81,7 +90,7 @@ export function SettingsScopeNotice({
           };
         })
       : target === "project"
-        ? groups.map((group) => ({
+        ? groups.filter(matchesProjectQuery).map((group) => ({
             label: group.displayName,
             secondary: [
               ...(group.archived ? ["Archived"] : []),
@@ -165,15 +174,46 @@ export function SettingsScopeNotice({
       <p role="status" className="px-3 text-sm text-muted-foreground sm:px-4">
         {children}
       </p>
+      {target === "project" ? (
+        <div className="w-full sm:w-64">
+          <InputGroup>
+            <InputGroupAddon>
+              <SearchIcon aria-hidden className="size-3.5" />
+            </InputGroupAddon>
+            <InputGroupInput
+              type="search"
+              value={projectQuery}
+              onChange={(event) => setProjectQuery(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape" || projectQuery.length === 0) return;
+                event.preventDefault();
+                event.stopPropagation();
+                setProjectQuery("");
+              }}
+              placeholder="Filter projects"
+              aria-label="Filter projects"
+              size="sm"
+            />
+          </InputGroup>
+        </div>
+      ) : null}
       <div className="space-y-4">
-        {choiceGroups.map((group) =>
-          group?.displayName ? (
-            <SettingsSection key={group.projectKey} title={group.displayName}>
-              {renderChoices(group)}
-            </SettingsSection>
-          ) : (
-            <SettingsGroup key={group?.projectKey ?? target}>{renderChoices(group)}</SettingsGroup>
-          ),
+        {hasNoProjectMatches ? (
+          <p className="px-3 py-6 text-center text-sm text-muted-foreground sm:px-4">
+            No projects match “{projectQuery.trim()}”
+          </p>
+        ) : (
+          choiceGroups.map((group) =>
+            group?.displayName ? (
+              <SettingsSection key={group.projectKey} title={group.displayName}>
+                {renderChoices(group)}
+              </SettingsSection>
+            ) : (
+              <SettingsGroup key={group?.projectKey ?? target}>
+                {renderChoices(group)}
+              </SettingsGroup>
+            ),
+          )
         )}
       </div>
     </div>

@@ -9,7 +9,11 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveSettingsScope } from "./settingsScope";
-import { retainSettingsScope, validateSettingsRouteSearch } from "./settingsScopeNavigation";
+import {
+  retainSettingsScope,
+  settingsSectionSearch,
+  validateSettingsRouteSearch,
+} from "./settingsScopeNavigation";
 
 import { validateScheduledTasksSearch } from "./scheduledTasksSettings.logic";
 
@@ -104,6 +108,21 @@ describe("settings scope navigation", () => {
     expect(router.state.location.hash).toBe("source-control-writing-style");
     await router.navigate({ to: "/settings/projects", hash: "project-defaults" });
     expect(router.state.location.search).toEqual(checkoutSearch);
+  });
+
+  it("returns to the project list when Projects is chosen again from the nav", async () => {
+    const router = createSettingsRouter();
+    await router.navigate({ to: "/settings/general", search: checkoutSearch });
+    const navigateToSection = (to: "/settings/general" | "/settings/projects") => {
+      const search = settingsSectionSearch(to, router.state.location.pathname);
+      return router.navigate({ to, ...(search && { search }), hash: "", replace: true });
+    };
+    await navigateToSection("/settings/projects");
+    expect(router.state.location.search).toEqual(checkoutSearch);
+    await navigateToSection("/settings/projects");
+    expect(router.state.location.search).toEqual({ machine: checkoutSearch.machine });
+    await navigateToSection("/settings/general");
+    expect(router.state.location.search).toEqual({ machine: checkoutSearch.machine });
   });
 
   it.each(["/settings/projects", "/settings/scheduled-tasks"] as const)(

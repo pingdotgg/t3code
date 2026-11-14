@@ -17,6 +17,16 @@ const SCOPE_KEYS = [
 ] as const satisfies readonly (keyof SettingsScopeSearch)[];
 const TARGET_INPUT_KEYS = [...SCOPE_KEYS, "environmentId"];
 
+/** Retain middleware keeps the selected project, so re-clicking Projects must drop it explicitly. */
+export function settingsSectionSearch(to: string, pathname: string) {
+  if (to !== "/settings/projects" || pathname !== to) return undefined;
+  return (previous: SettingsScopeSearch): SettingsScopeSearch => ({
+    project: undefined,
+    checkout: undefined,
+    machine: previous.machine,
+  });
+}
+
 export const retainSettingsScope: SearchMiddleware<SettingsScopeSearch> = ({ search, next }) => {
   const result = next(search);
   if (TARGET_INPUT_KEYS.some((key) => Object.hasOwn(result, key))) return result;
