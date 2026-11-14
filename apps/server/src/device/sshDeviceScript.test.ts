@@ -103,6 +103,21 @@ it.effect("uses the SDK the probe accepted for later SSH commands", () =>
   }),
 );
 
+it.effect("prefers a complete implicit SDK over an earlier partial one", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    let sdk = "";
+    const result = yield* probeAndroid(async (home) => {
+      await executable(NodePath.join(home, "Library/Android/sdk/platform-tools/adb"));
+      sdk = NodePath.join(home, "Android/Sdk");
+      await completeSdk(sdk);
+      return {};
+    }, 'command -v emulator && echo "$ANDROID_SDK_ROOT"');
+    expect(result.android).toEqual({ platform: "android", available: true });
+    expect(result.after).toBe(`${NodePath.join(sdk, "emulator/emulator")}\n${sdk}`);
+  }),
+);
+
 it.effect("finds Android Studio Java for a non-interactive SSH session", () =>
   Effect.gen(function* () {
     if ((yield* HostProcess.Platform) === "win32") return;
