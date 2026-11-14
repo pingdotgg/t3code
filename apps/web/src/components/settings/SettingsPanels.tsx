@@ -63,6 +63,7 @@ import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeConte
 import { scopedIdleCompaction } from "./scopedSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { ThreadTitleInstructionsSettings } from "./ThreadTitleInstructionsSettings";
+import { ThreadTitleModelSettings } from "./ThreadTitleModelSettings";
 import { SnoozePresetsRow } from "./SnoozePresetsSettings";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { managedTelemetryOffMessage, usePrimaryManagedPolicy } from "../../state/managedPolicy";
@@ -2085,10 +2086,12 @@ export function ThreadsSettingsPanel() {
         />
         <AdvancedSettings
           targetIds={[
+            searchableSetting("thread-title-model").id,
             searchableSetting("thread-title-instructions").id,
             searchableSetting("response-streaming").id,
           ]}
         >
+          {!isProjectScope ? <ThreadTitleModelSettings /> : null}
           <ThreadTitleInstructionsSettings />
           <SettingsRow
             serverScoped

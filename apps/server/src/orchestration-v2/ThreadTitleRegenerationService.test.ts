@@ -562,6 +562,40 @@ describe("ThreadTitleRegenerationService", () => {
     }),
   );
 
+  it.effect("titles with the thread's own model, without the handoff header", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness();
+      yield* Effect.gen(function* () {
+        const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:own:create",
+          thread: "thread:title:own",
+        });
+        yield* recordRun({
+          threadId,
+          runId: RunId.make("run:title:own:1"),
+          ordinal: 1,
+          user: [
+            "Context handoff (full_thread_summary):",
+            "From thread parent, runs 1-3.",
+            "",
+            "User message:",
+            "Migrate sessions to Postgres",
+          ].join("\n"),
+          assistant: "Done.",
+        });
+        const requestId = yield* armRegeneration({ command: "command:title:own:1", threadId });
+
+        yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
+
+        const call = harness.generateThreadTitle.mock.calls[0]?.[0];
+        assert.deepEqual(call?.modelSelection, modelSelection);
+        assert.include(call?.message, "USER:\nMigrate sessions to Postgres");
+        assert.notInclude(call?.message, "Context handoff");
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect("records an unchanged outcome when the model keeps the current title", () =>
     Effect.gen(function* () {
       const harness = makeHarness({

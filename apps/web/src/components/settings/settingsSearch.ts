@@ -861,6 +861,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
+    id: "thread-title-model",
+    title: "Title model",
+    to: "/settings/threads",
+    scope: "environment",
+    searchTerms: ["generated thread titles provider model override same thread session"],
+  },
+  {
     id: "thread-title-instructions",
     title: "Thread title instructions",
     to: "/settings/threads",
