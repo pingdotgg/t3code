@@ -338,6 +338,7 @@ export function AssistantCitationSource({
   itemKey,
   request,
   listRef,
+  quotable,
   children,
 }: {
   messageId: MessageId;
@@ -345,6 +346,7 @@ export function AssistantCitationSource({
   itemKey: string;
   request: AssistantCitationTarget | null;
   listRef: RefObject<LegendListRef | null>;
+  quotable: boolean;
   children: ReactNode;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -362,6 +364,7 @@ export function AssistantCitationSource({
       data-assistant-citation-source={messageId}
       data-assistant-citation-environment={threadRef?.environmentId}
       data-assistant-citation-thread={threadRef?.threadId}
+      data-assistant-citation-quotable={quotable}
     >
       {children}
     </div>
