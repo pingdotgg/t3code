@@ -1554,7 +1554,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
   environment: ResolvedProviderInstanceEnvironment = [],
 ) {
   const executablePaths: Array<string | undefined> = [];
-  const taskToolEnvironment: Array<string | undefined> = [];
+  const queryEnvironments: Array<NodeJS.ProcessEnv | undefined> = [];
   const adapter = yield* ClaudeAdapterV2.createClaudeAdapterV2(
     {
       instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
@@ -1575,7 +1575,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
       open: (input) =>
         Effect.sync(() => {
           executablePaths.push(input.options.pathToClaudeCodeExecutable);
-          taskToolEnvironment.push(input.options.env?.CLAUDE_CODE_ENABLE_TODO_TOOLS);
+          queryEnvironments.push(input.options.env);
           return {
             messages: Stream.never,
             offer: () => Effect.void,
@@ -1620,7 +1620,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
       attachments: [],
     }),
   );
-  return { executablePaths, taskToolEnvironment };
+  return { executablePaths, queryEnvironments };
 });
 
 describe("ClaudeAdapterV2 executable path", () => {
@@ -1643,6 +1643,39 @@ describe("ClaudeAdapterV2 executable path", () => {
           IdAllocator.layer,
           McpProviderSessions.layer,
           ProviderInstallationGate.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+});
+
+describe("ClaudeAdapterV2 turn environment", () => {
+  it.effect("connects MCP servers before the first request unless the environment opts out", () =>
+    Effect.gen(function* () {
+      const nonblocking = (environment: ResolvedProviderInstanceEnvironment) =>
+        captureSdkExecutablePaths("/usr/local/bin/claude", environment).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Environment, { PATH: "/usr/bin" }),
+          Effect.map(({ queryEnvironments }) => queryEnvironments[0]?.MCP_CONNECTION_NONBLOCKING),
+          Effect.scoped,
+        );
+
+      assert.deepEqual(
+        [
+          yield* nonblocking([]),
+          yield* nonblocking([
+            { name: "MCP_CONNECTION_NONBLOCKING", value: "true", sensitive: false },
+          ]),
+        ],
+        ["false", "true"],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
           NodeServices.layer,
           NodeCrypto.layer,
         ),

@@ -13889,7 +13889,12 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       environment,
       hostEnvironment,
     );
-    const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
+    const claudeEnvironment = yield* makeClaudeEnvironment(config, {
+      // Non-blocking connect sends whichever MCP tools are ready, so the first request's tool
+      // list varies per thread and a late server rewrites the whole prompt cache mid-turn.
+      MCP_CONNECTION_NONBLOCKING: "false",
+      ...baseEnvironment,
+    });
     const path = yield* Path.Path;
     const random = yield* SecureRandom.SecureRandom;
     const binaryPath = yield* resolveClaudeSdkExecutablePath(
