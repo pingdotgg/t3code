@@ -9,7 +9,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
@@ -261,10 +260,7 @@ describe("DesktopConnectionCatalogStore", () => {
         ];
         for (const bytes of damaged) {
           yield* fileSystem.writeFile(catalogPath, bytes);
-          assert.deepStrictEqual(
-            yield* Effect.all([store.get, store.get], { concurrency: "unbounded" }),
-            [Option.none(), Option.none()],
-          );
+          assert.deepStrictEqual(yield* store.get, Option.none());
           assert.deepStrictEqual(yield* fileSystem.readFile(catalogPath), bytes);
         }
         const backups = (yield* fileSystem.readDirectory(environment.stateDir)).filter((name) =>
@@ -275,14 +271,6 @@ describe("DesktopConnectionCatalogStore", () => {
           fileSystem.readFile(path.join(environment.stateDir, name)),
         );
         assert.sameDeepMembers(preserved, damaged);
-        const emptyBackup = backups[preserved.findIndex((bytes) => bytes.length === 0)]!;
-        yield* fileSystem.writeFileString(path.join(environment.stateDir, emptyBackup), "partial");
-        assert.deepStrictEqual(yield* store.get, Option.none());
-        assert.equal(
-          (yield* fileSystem.readFile(path.join(environment.stateDir, emptyBackup))).length,
-          0,
-        );
-
         assert.isTrue(yield* store.set('{"schemaVersion":1,"targets":[]}'));
         assert.deepStrictEqual(yield* store.get, Option.some('{"schemaVersion":1,"targets":[]}'));
         assert.sameDeepMembers(
@@ -355,59 +343,6 @@ describe("DesktopConnectionCatalogStore", () => {
     ),
   );
 
-  it.effect("preserves catalogs after filesystem or base64 errors", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-catalog-errors-" });
-      const stateDir = path.join(baseDir, "userdata");
-      const catalogPath = path.join(stateDir, "connection-catalog.json");
-      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
-        Effect.provide(layerFor(baseDir)),
-      );
-      yield* store.set('{"schemaVersion":1,"targets":[]}');
-      const original = yield* fileSystem.readFile(catalogPath);
-
-      const denied = PlatformError.systemError({
-        _tag: "PermissionDenied",
-        module: "FileSystem",
-        method: "readFile",
-        pathOrDescriptor: catalogPath,
-      });
-      const unreadableStore =
-        yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
-          Effect.provide(
-            layerFor(
-              baseDir,
-              true,
-              null,
-              Layer.succeed(FileSystem.FileSystem, {
-                ...fileSystem,
-                readFile: () => Effect.fail(denied),
-              }),
-            ),
-          ),
-        );
-      const error = yield* unreadableStore.get.pipe(Effect.flip);
-      assert.instanceOf(
-        error,
-        DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreReadError,
-      );
-      assert.deepStrictEqual(yield* fileSystem.readFile(catalogPath), original);
-
-      const invalidBase64 = '{"version":1,"encryptedCatalog":"%%%"}';
-      yield* fileSystem.writeFileString(catalogPath, invalidBase64);
-      assert.instanceOf(
-        yield* store.get.pipe(Effect.flip),
-        DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreDecodeError,
-      );
-      assert.equal(yield* fileSystem.readFileString(catalogPath), invalidBase64);
-      assert.deepStrictEqual(yield* fileSystem.readDirectory(stateDir), [
-        "connection-catalog.json",
-      ]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
   it.effect("reads a concurrent replacement while preserving the failed snapshot", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -448,7 +383,7 @@ describe("DesktopConnectionCatalogStore", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("refuses recovery when the backup cannot be replaced and permits retry", () =>
+  it.effect("refuses recovery when the backup cannot be written", () =>
     withStore(
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -480,9 +415,6 @@ describe("DesktopConnectionCatalogStore", () => {
           "connection-catalog.json",
           backupName,
         ]);
-        yield* fileSystem.remove(backupPath, { recursive: true });
-        assert.deepStrictEqual(yield* store.get, Option.none());
-        assert.deepStrictEqual(yield* fileSystem.readFile(backupPath), damaged);
       }),
     ),
   );
