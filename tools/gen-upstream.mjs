@@ -24,6 +24,9 @@
 //   this server knows, and the keys of a `projectSettingsOverrides` entry. settings.rs redacts
 //   and restores exactly these secrets.
 //
+// - crates/conn-server/src/text_generation/generated.rs: the thread title prompts of
+//   `buildThreadTitlePrompt` (packages/provider-core), as text parts around their values.
+//
 // Prints notes for what it cannot generate: scope checks that sit inside a handler
 // (`requiredScopeFor*` functions), which the hand code must follow.
 import * as NodeChildProcess from "node:child_process";
@@ -395,6 +398,56 @@ const limitsRs = rustfmt(
   ].join("\n"),
 );
 
+// ---- Thread title prompts --------------------------------------------------------------
+//
+// `buildThreadTitlePrompt` (packages/provider-core/src/server/textGenerationPrompts.ts), run
+// with placeholders: the four prompts (first title or regenerate, with or without a project
+// name) as text parts around the project name, the previous title and the message. The Rust
+// side (crates/conn-server/src/text_generation/prompts.rs) fills them in; the suffix and the
+// limits are code there, and `textgen-diff.mjs` compares whole prompts with this function.
+
+const prompts = await importSource("packages/provider-core/src/server/textGenerationPrompts.ts");
+const PLACEHOLDERS = { '"@@P@@"': "Project", '"@@T@@"': "Previous", "@@M@@": "Message" };
+function promptParts(input) {
+  const { prompt } = prompts.buildThreadTitlePrompt({ message: "@@M@@", ...input });
+  const parts = [];
+  let rest = prompt;
+  const pattern = /"@@P@@"|"@@T@@"|@@M@@/;
+  for (let match = pattern.exec(rest); match !== null; match = pattern.exec(rest)) {
+    if (match.index > 0) parts.push(`Part::Text(${str(rest.slice(0, match.index))})`);
+    parts.push(`Part::${PLACEHOLDERS[match[0]]}`);
+    rest = rest.slice(match.index + match[0].length);
+  }
+  if (rest.length > 0) parts.push(`Part::Text(${str(rest)})`);
+  if (prompt.includes("@@") && parts.filter((p) => !p.startsWith("Part::Text")).length === 0)
+    throw new Error("title prompt placeholders not found");
+  return `&[\n${parts.map((p) => `    ${p},`).join("\n")}\n]`;
+}
+const titlePromptsRs = rustfmt(
+  [
+    ...HEADER,
+    "//! The thread title prompts of `buildThreadTitlePrompt`, as parts around the values.",
+    "",
+    "/// One part of a prompt: fixed text, or a value the caller fills in.",
+    "#[derive(Clone, Copy, Debug, PartialEq, Eq)]",
+    "pub(super) enum Part {",
+    "    Text(&'static str),",
+    "    /// `JSON.stringify` of the trimmed project name.",
+    "    Project,",
+    "    /// `JSON.stringify` of the previous title.",
+    "    Previous,",
+    "    /// The (limited) message or thread contents.",
+    "    Message,",
+    "}",
+    "",
+    `pub(super) const INITIAL_WITH_PROJECT: &[Part] = ${promptParts({ projectTitle: "@@P@@" })};`,
+    `pub(super) const INITIAL_WITHOUT_PROJECT: &[Part] = ${promptParts({})};`,
+    `pub(super) const REGENERATE_WITH_PROJECT: &[Part] = ${promptParts({ projectTitle: "@@P@@", previousTitle: "@@T@@" })};`,
+    `pub(super) const REGENERATE_WITHOUT_PROJECT: &[Part] = ${promptParts({ previousTitle: "@@T@@" })};`,
+    "",
+  ].join("\n"),
+);
+
 // ---- Write or check ----------------------------------------------------------------------
 
 const outputs = {
@@ -403,6 +456,7 @@ const outputs = {
   "crates/conn-contract/src/upstream.rs": upstreamRs,
   "crates/conn-server/src/settings/generated.rs": secretsRs,
   "crates/conn-server/src/limits/generated.rs": limitsRs,
+  "crates/conn-server/src/text_generation/generated.rs": titlePromptsRs,
 };
 
 let stale = false;

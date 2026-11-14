@@ -1935,9 +1935,9 @@ impl crate::TitleGenerator for ScriptedTitles {
     ) -> crate::BoxFuture<'_, Result<String, String>> {
         Box::pin(async move {
             match request.kind {
-                crate::TitleKind::Initial { message } => Ok(format!("\"About {message}\"")),
-                crate::TitleKind::Regenerate { transcript, .. } => {
-                    Err(format!("model busy\nsaw {} messages", transcript.len()))
+                crate::TitleKind::Initial { message } => Ok(format!("\"About {}\"", message.text)),
+                crate::TitleKind::Regenerate { messages, .. } => {
+                    Err(format!("model busy\nsaw {} messages", messages.len()))
                 }
             }
         })

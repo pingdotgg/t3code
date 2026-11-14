@@ -165,6 +165,12 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     config.host = Some(host.clone());
     config.turn_observer = Some(host.clone());
     config.checkpoints = true;
+    let text_generators = Arc::new(crate::text_generation::TextGenerators::for_environment(
+        environment.clone(),
+    ));
+    config.title_generator = Some(Arc::new(crate::text_generation::title::Titles::new(
+        text_generators.clone(),
+    )));
     let engine: Arc<dyn Engine> = Arc::new(or_exit(
         SqliteEngine::open(config),
         "cannot open the engine",
@@ -192,6 +198,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
         files,
         vcs,
         terminals: Some(terminals.clone()),
+        text_generators: Some(text_generators),
         ..Deps::default()
     };
     deps.mcp = crate::routes::mcp::service(&deps);

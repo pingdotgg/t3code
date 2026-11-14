@@ -62,6 +62,8 @@ pub use engine::{
 #[derive(Clone, Debug, PartialEq)]
 pub struct TitleRequest {
     pub thread_id: String,
+    /// The thread's project, whose settings may choose another model.
+    pub project_id: Option<String>,
     /// The folder the thread works in, for a generator that reads linked files.
     pub cwd: Option<String>,
     /// The project's title, which a good thread title does not repeat.
@@ -69,15 +71,23 @@ pub struct TitleRequest {
     pub kind: TitleKind,
 }
 
+/// One finished message: its role, text and attachments (`ChatAttachment` objects).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TitleMessage {
+    pub role: String,
+    pub text: String,
+    pub attachments: Vec<serde_json::Value>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum TitleKind {
-    /// The first user message, at most 8,000 characters.
-    Initial { message: String },
-    /// The current title and the thread's user and assistant texts, newest last, at most
-    /// 8,000 characters in all.
+    /// The thread's first user message.
+    Initial { message: TitleMessage },
+    /// The current title and the thread's finished user and assistant messages, oldest
+    /// first. The generator chooses what fits (`formatThreadTitleContext`).
     Regenerate {
         previous_title: String,
-        transcript: Vec<(String, String)>,
+        messages: Vec<TitleMessage>,
     },
 }
 
