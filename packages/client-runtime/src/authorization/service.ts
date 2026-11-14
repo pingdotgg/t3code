@@ -1,4 +1,5 @@
 import {
+  connectDeviceVerificationCode,
   type ClientConnectionMethod,
   EnvironmentId,
   type ExecutionEnvironmentDescriptor,
@@ -119,6 +120,19 @@ function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemp
   return error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"
     ? error
     : mapRemoteDpopEnvironmentError(error);
+}
+
+function approvalPendingError(hostLabel: string, thumbprint: string, traceId: string) {
+  const verificationCode = connectDeviceVerificationCode(thumbprint);
+  return new ConnectionTransientError({
+    reason: "approval-pending",
+    detail: `Approve this device on ${hostLabel}. It shows code ${verificationCode}.`,
+    verificationCode,
+    traceId,
+    hop: "server",
+    via: "relay",
+    failureCause: "approval_pending",
+  });
 }
 
 const fetchDescriptor = Effect.fn("clientRuntime.connection.remote.fetchDescriptor")(function* (
@@ -367,7 +381,11 @@ export const make = Effect.gen(function* () {
         dpopProof: bootstrapProof,
         clientMetadata: presentation.metadata,
       }).pipe(
-        Effect.mapError(mapRemoteDpopEnvironmentError),
+        Effect.mapError((error) =>
+          error._tag === "EnvironmentConnectApprovalPendingError"
+            ? approvalPendingError(descriptor.label, thumbprint, error.traceId)
+            : mapRemoteDpopEnvironmentError(error),
+        ),
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.withSpan("environment.authorization.accessToken.exchange"),
       );
