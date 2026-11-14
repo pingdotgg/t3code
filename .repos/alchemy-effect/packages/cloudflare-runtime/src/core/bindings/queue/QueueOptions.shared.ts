@@ -52,5 +52,4 @@ export const BINDING_QUEUE_BROKER = "BROKER";
 export const BINDING_QUEUE_NAME = "QUEUE_NAME";
 
 /** Name of the service binding the broker uses to forward to a dead-letter queue. */
-export const BINDING_QUEUE_DLQ = (queueName: string): string =>
-  `DLQ:${queueName}`;
+export const BINDING_QUEUE_DLQ = (queueName: string): string => `DLQ:${queueName}`;

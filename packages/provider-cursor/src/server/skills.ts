@@ -1,9 +1,4 @@
-/**
- * Cursor discovers Agent Skills recursively from user and project roots but
- * its ACP command catalog only appears after opening a real session. Scanning
- * the same roots avoids starting an agent and its MCP servers just to populate
- * a composer menu.
- */
+// Scan skills without opening an ACP session and starting its MCP servers.
 
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import * as ByteSize from "effect/ByteSize";
@@ -19,9 +14,11 @@ const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 const SKILL_MENTION_PATTERN =
   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 const HAS_SKILL_MENTION_PATTERN = new RegExp(SKILL_MENTION_PATTERN.source, "u");
+const SLASH_SKILL_PATTERN = /(?:^|\s)\/([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 const MAX_SKILL_DEPTH = 10;
 const MAX_SKILL_BYTES = ByteSize.bytes(1_000_000);
 const MAX_SKILL_SCAN_ENTRIES = 10_000;
+const MAX_SKILL_SCAN_STATS = 100_000;
 const MAX_SKILL_SCAN_BYTES = ByteSize.bytes(8_000_000);
 
 interface CursorSkillFrontmatter {
@@ -34,6 +31,7 @@ interface CursorSkillFrontmatter {
 
 interface CursorSkillScanBudget {
   remainingEntries: number;
+  remainingStats: number;
   remainingBytes: bigint;
   exhausted: boolean;
   incomplete: boolean;
@@ -127,7 +125,6 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
   readonly directory: string;
   readonly scope: "user" | "project" | "system";
   readonly budget: CursorSkillScanBudget;
-  /** Real paths of the roots already walked in this scan. */
   readonly scannedRoots: Set<string>;
 }): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -136,8 +133,7 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
   if (input.budget.exhausted) return skills;
   const rootDirectory = yield* orUndefined(fileSystem.realPath(input.directory), input.budget);
   if (!rootDirectory) return skills;
-  // A root linked to another one, such as `~/.agents/skills` pointing at `~/.claude/skills`,
-  // is the same tree: walking it again would charge the scan budget twice for nothing new.
+  // Symlinked roots may share a tree; do not charge its scan budget twice.
   if (input.scannedRoots.has(rootDirectory)) return skills;
   input.scannedRoots.add(rootDirectory);
   const visitedDirectories = new Set<string>();
@@ -155,13 +151,16 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
       return;
     }
     visitedDirectories.add(resolvedDirectory);
-    // A symlink whose target lives outside the root is a skill package
-    // boundary: read its own SKILL.md so linked skill libraries show up, but
-    // never walk the target tree.
+    // Outside-root symlinks expose only their own SKILL.md; never traverse the target tree.
     const insideRoot =
       resolvedDirectory === rootDirectory ||
       resolvedDirectory.startsWith(`${rootDirectory}${path.sep}`);
 
+    if (input.budget.remainingStats === 0) {
+      input.budget.exhausted = true;
+      return;
+    }
+    input.budget.remainingStats -= 1;
     const skillPath = path.join(directory, "SKILL.md");
     const skillInfo = yield* orUndefined(fileSystem.stat(skillPath), input.budget);
     if (skillInfo?.type === "File") {
@@ -198,17 +197,25 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
       return;
     }
     for (const entry of [...entries].sort()) {
+      // Installed dependencies can exhaust the shared budget and hide unrelated skills.
+      if (entry === "node_modules") continue;
+      // Files spend no directory budget, so a separate cap keeps a huge file tree bounded.
+      if (input.budget.remainingStats === 0) {
+        input.budget.exhausted = true;
+        return;
+      }
+      input.budget.remainingStats -= 1;
+      const child = path.join(directory, entry);
+      const info = yield* orUndefined(fileSystem.stat(child), input.budget);
+      // Only directories can hold skills, so only they spend the budget: a skill
+      // shipping many ordinary files must not hide its siblings.
+      if (info?.type !== "Directory") continue;
+      if (depth >= MAX_SKILL_DEPTH) continue;
       if (input.budget.remainingEntries === 0) {
         input.budget.exhausted = true;
         return;
       }
       input.budget.remainingEntries -= 1;
-      // Installed dependencies can exhaust the shared budget and hide unrelated skills.
-      if (entry === "node_modules") continue;
-      const child = path.join(directory, entry);
-      const info = yield* orUndefined(fileSystem.stat(child), input.budget);
-      if (info?.type !== "Directory") continue;
-      if (depth >= MAX_SKILL_DEPTH) continue;
       yield* visit(child, depth + 1);
     }
   });
@@ -242,6 +249,7 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   const skillsByName = new Map<string, ServerProviderSkill>();
   const budget: CursorSkillScanBudget = {
     remainingEntries: MAX_SKILL_SCAN_ENTRIES,
+    remainingStats: MAX_SKILL_SCAN_STATS,
     remainingBytes: MAX_SKILL_SCAN_BYTES,
     exhausted: false,
     incomplete: false,
@@ -297,4 +305,22 @@ export function rewriteCursorSkillMentions(
   return prompt.replace(SKILL_MENTION_PATTERN, (match, prefix: string, name: string) =>
     skillNames.has(name) ? `${prefix}/${name}` : match,
   );
+}
+
+/** Names invoked as `/name`, the form Cursor uses and `rewriteCursorSkillMentions` produces. */
+export function cursorSlashSkillNames(prompt: string): ReadonlySet<string> {
+  return new Set(Array.from(prompt.matchAll(SLASH_SKILL_PATTERN), (match) => match[1] ?? ""));
+}
+
+/** Cursor hides `disable-model-invocation` skills from the model, so the prompt carries them. */
+export function appendCursorInvokedSkills(
+  prompt: string,
+  skills: ReadonlyArray<{ readonly name: string; readonly contents: string }>,
+): string {
+  if (skills.length === 0) return prompt;
+  const blocks = skills.map(
+    (skill) =>
+      `<skill name="${skill.name}">\n${skill.contents.replace(FRONTMATTER_PATTERN, "").trim()}\n</skill>`,
+  );
+  return `${prompt}\n\nThe user invoked these skills. Follow their instructions:\n\n${blocks.join("\n\n")}`;
 }

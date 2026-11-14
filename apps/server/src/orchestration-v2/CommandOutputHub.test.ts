@@ -50,7 +50,6 @@ const modelSelection = {
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const ITEM_ID = TurnItemId.make("turn-item:command");
 
-/** What a client holds after applying frames, using the same shared normalizer. */
 function applyFrame(
   state: TerminalOutputState,
   frame: OrchestrationV2CommandOutputFrame,
@@ -150,7 +149,6 @@ const writeCommandItem = (
     });
   });
 
-/** Collect frames into a queue so the test takes them one receipt at a time. */
 const subscribeFrames = (threadId: ThreadId) =>
   Effect.gen(function* () {
     const hub = yield* CommandOutputHub.CommandOutputHub;
@@ -165,8 +163,9 @@ const subscribeFrames = (threadId: ThreadId) =>
 
 const takeFrame = (frames: Queue.Queue<OrchestrationV2CommandOutputFrame | "ended">) =>
   Queue.take(frames).pipe(
-    Effect.flatMap((frame) =>
-      frame === "ended" ? Effect.die("command output stream ended early") : Effect.succeed(frame),
+    Effect.filterOrElse(
+      (frame) => !(frame === "ended"),
+      (_frame) => Effect.die("command output stream ended early"),
     ),
   );
 
@@ -176,57 +175,52 @@ layer("CommandOutputHub", (it) => {
   it.effect(
     "a late subscriber gets the running tail, then live appends, then the final output",
     () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const hub = yield* CommandOutputHub.CommandOutputHub;
-          const threadId = yield* seedThread;
-          yield* writeCommandItem(threadId, { status: "running" });
-          // Output that arrived before anyone looked, ending mid-escape and mid-redraw.
-          yield* hub.append({
-            threadId,
-            itemId: ITEM_ID,
-            chunk: "\u001b[32mbuilding\u001b[0m\n10%",
-          });
-          yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "\r55%\u001b[3" });
+      Effect.gen(function* () {
+        const hub = yield* CommandOutputHub.CommandOutputHub;
+        const threadId = yield* seedThread;
+        yield* writeCommandItem(threadId, { status: "running" });
+        yield* hub.append({
+          threadId,
+          itemId: ITEM_ID,
+          chunk: "\u001b[32mbuilding\u001b[0m\n10%",
+        });
+        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "\r55%\u001b[3" });
 
-          const frames = yield* subscribeFrames(threadId);
-          const first = yield* takeFrame(frames);
-          assert.equal(first.kind, "replace");
-          assert.isTrue(first.running);
-          let client = applyFrame(EMPTY_TERMINAL_OUTPUT, first);
-          assert.equal(client.text, "\u001b[0;32mbuilding\u001b[0m\n55%");
+        const frames = yield* subscribeFrames(threadId);
+        const first = yield* takeFrame(frames);
+        assert.equal(first.kind, "replace");
+        assert.isTrue(first.running);
+        let client = applyFrame(EMPTY_TERMINAL_OUTPUT, first);
+        assert.equal(client.text, "\u001b[0;32mbuilding\u001b[0m\n55%");
 
-          // Chunks that land between frames arrive together in one append.
-          yield* TestClock.adjust("1 second");
-          yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "1m" });
-          yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "\r100%\u001b[0m\ndone\n" });
-          const append = yield* takeFrame(frames);
-          assert.equal(append.kind, "append");
-          client = applyFrame(client, append);
-          assert.equal(
-            client.text,
-            normalizeTerminalOutput(
-              "\u001b[32mbuilding\u001b[0m\n10%\r55%\u001b[31m\r100%\u001b[0m\ndone\n",
-            ).text,
-          );
+        yield* TestClock.adjust("1 second");
+        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "1m" });
+        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "\r100%\u001b[0m\ndone\n" });
+        const append = yield* takeFrame(frames);
+        assert.equal(append.kind, "append");
+        client = applyFrame(client, append);
+        assert.equal(
+          client.text,
+          normalizeTerminalOutput(
+            "\u001b[32mbuilding\u001b[0m\n10%\r55%\u001b[31m\r100%\u001b[0m\ndone\n",
+          ).text,
+        );
 
-          // The persisted item settles the row; its output is what the client keeps.
-          yield* TestClock.adjust("1 second");
-          yield* writeCommandItem(threadId, {
-            status: "completed",
-            exitCode: 0,
-            output: "building\n100%\ndone\n",
-          });
-          const final = yield* takeFrame(frames);
-          assert.deepEqual(final, {
-            kind: "replace",
-            text: "building\n100%\ndone\n",
-            truncated: false,
-            running: false,
-          });
-          assert.equal(yield* Queue.take(frames), "ended");
-        }),
-      ),
+        yield* TestClock.adjust("1 second");
+        yield* writeCommandItem(threadId, {
+          status: "completed",
+          exitCode: 0,
+          output: "building\n100%\ndone\n",
+        });
+        const final = yield* takeFrame(frames);
+        assert.deepEqual(final, {
+          kind: "replace",
+          text: "building\n100%\ndone\n",
+          truncated: false,
+          running: false,
+        });
+        assert.equal(yield* Queue.take(frames), "ended");
+      }),
   );
 
   it.effect("a row that is not a known command fails instead of waiting forever", () =>
@@ -242,130 +236,116 @@ layer("CommandOutputHub", (it) => {
   );
 
   it.effect("a viewer whose command was evicted for newer ones is resynced, not appended to", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const hub = yield* CommandOutputHub.CommandOutputHub;
-        const threadId = yield* seedThread;
-        yield* writeCommandItem(threadId, { status: "running" });
-        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "abc" });
-        const frames = yield* subscribeFrames(threadId);
-        let client = applyFrame(EMPTY_TERMINAL_OUTPUT, yield* takeFrame(frames));
-        assert.equal(client.text, "abc");
-        // 64 newer commands push this one's tail out of the hub.
-        for (let index = 0; index < 64; index += 1) {
-          yield* hub.append({
-            threadId,
-            itemId: TurnItemId.make(`turn-item:other-${index}`),
-            chunk: "x",
-          });
-        }
-        yield* TestClock.adjust("1 second");
-        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "\rX" });
-        const next = yield* takeFrame(frames);
-        assert.equal(next.kind, "replace");
-        client = applyFrame(client, next);
-        assert.equal(client.text, "X");
-      }),
-    ),
+    Effect.gen(function* () {
+      const hub = yield* CommandOutputHub.CommandOutputHub;
+      const threadId = yield* seedThread;
+      yield* writeCommandItem(threadId, { status: "running" });
+      yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "abc" });
+      const frames = yield* subscribeFrames(threadId);
+      let client = applyFrame(EMPTY_TERMINAL_OUTPUT, yield* takeFrame(frames));
+      assert.equal(client.text, "abc");
+      for (let index = 0; index < 64; index += 1) {
+        yield* hub.append({
+          threadId,
+          itemId: TurnItemId.make(`turn-item:other-${index}`),
+          chunk: "x",
+        });
+      }
+      yield* TestClock.adjust("1 second");
+      yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "\rX" });
+      const next = yield* takeFrame(frames);
+      assert.equal(next.kind, "replace");
+      client = applyFrame(client, next);
+      assert.equal(client.text, "X");
+    }),
   );
 
   it.effect("a finished command sends only its bounded final output", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const threadId = yield* seedThread;
-        const huge = Array.from({ length: 400_000 }, (_, index) => `line ${index}`).join("\n");
-        yield* writeCommandItem(threadId, { status: "failed", exitCode: 1, output: huge });
-        const frames = yield* subscribeFrames(threadId);
-        const final = yield* takeFrame(frames);
-        assert.equal(final.kind, "replace");
-        assert.isFalse(final.running);
-        assert.isTrue(final.truncated);
-        assert.isAtMost(final.text.length, TERMINAL_OUTPUT_TAIL_CHARS);
-        assert.isTrue(final.text.endsWith("line 399999"));
-        assert.equal(yield* Queue.take(frames), "ended");
-      }),
-    ),
+    Effect.gen(function* () {
+      const threadId = yield* seedThread;
+      const huge = Array.from({ length: 400_000 }, (_, index) => `line ${index}`).join("\n");
+      yield* writeCommandItem(threadId, { status: "failed", exitCode: 1, output: huge });
+      const frames = yield* subscribeFrames(threadId);
+      const final = yield* takeFrame(frames);
+      assert.equal(final.kind, "replace");
+      assert.isFalse(final.running);
+      assert.isTrue(final.truncated);
+      assert.isAtMost(final.text.length, TERMINAL_OUTPUT_TAIL_CHARS);
+      assert.isTrue(final.text.endsWith("line 399999"));
+      assert.equal(yield* Queue.take(frames), "ended");
+    }),
   );
 
   it.effect("a finished command whose output is one huge line still shows its tail", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const threadId = yield* seedThread;
-        const line = "x".repeat(TERMINAL_OUTPUT_TAIL_CHARS * 8);
-        yield* writeCommandItem(threadId, {
-          status: "completed",
-          exitCode: 0,
-          output: `${line}\n`,
-        });
-        const frames = yield* subscribeFrames(threadId);
-        const final = yield* takeFrame(frames);
-        assert.equal(final.kind, "replace");
-        assert.isTrue(final.truncated);
-        assert.isTrue(final.text.includes("xxxx"));
-        assert.isAtMost(final.text.length, TERMINAL_OUTPUT_TAIL_CHARS);
-      }),
-    ),
+    Effect.gen(function* () {
+      const threadId = yield* seedThread;
+      const line = "x".repeat(TERMINAL_OUTPUT_TAIL_CHARS * 8);
+      yield* writeCommandItem(threadId, {
+        status: "completed",
+        exitCode: 0,
+        output: `${line}\n`,
+      });
+      const frames = yield* subscribeFrames(threadId);
+      const final = yield* takeFrame(frames);
+      assert.equal(final.kind, "replace");
+      assert.isTrue(final.truncated);
+      assert.isTrue(final.text.includes("xxxx"));
+      assert.isAtMost(final.text.length, TERMINAL_OUTPUT_TAIL_CHARS);
+    }),
   );
 
   it.effect("an old Claude row's raw Bash result shows as its stdout and stderr", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const threadId = yield* seedThread;
-        yield* writeCommandItem(threadId, {
-          status: "completed",
-          exitCode: 0,
-          output: '{"stdout":"built","stderr":"1 warning","interrupted":false}',
-        });
-        const frames = yield* subscribeFrames(threadId);
-        const final = yield* takeFrame(frames);
-        assert.equal(final.text, "built\n1 warning");
-      }),
-    ),
+    Effect.gen(function* () {
+      const threadId = yield* seedThread;
+      yield* writeCommandItem(threadId, {
+        status: "completed",
+        exitCode: 0,
+        output: '{"stdout":"built","stderr":"1 warning","interrupted":false}',
+      });
+      const frames = yield* subscribeFrames(threadId);
+      const final = yield* takeFrame(frames);
+      assert.equal(final.text, "built\n1 warning");
+    }),
   );
 
   it.effect("providers that only report output in item snapshots still stream", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const threadId = yield* seedThread;
-        yield* writeCommandItem(threadId, { status: "running", output: "step 1\n" });
-        const frames = yield* subscribeFrames(threadId);
-        assert.equal((yield* takeFrame(frames)).text, "step 1\n");
-        yield* TestClock.adjust("1 second");
-        yield* writeCommandItem(threadId, { status: "running", output: "step 1\nstep 2\n" });
-        const update = yield* takeFrame(frames);
-        assert.deepEqual(update, {
-          kind: "replace",
-          text: "step 1\nstep 2\n",
-          truncated: false,
-          running: true,
-        });
-      }),
-    ),
+    Effect.gen(function* () {
+      const threadId = yield* seedThread;
+      yield* writeCommandItem(threadId, { status: "running", output: "step 1\n" });
+      const frames = yield* subscribeFrames(threadId);
+      assert.equal((yield* takeFrame(frames)).text, "step 1\n");
+      yield* TestClock.adjust("1 second");
+      yield* writeCommandItem(threadId, { status: "running", output: "step 1\nstep 2\n" });
+      const update = yield* takeFrame(frames);
+      assert.deepEqual(update, {
+        kind: "replace",
+        text: "step 1\nstep 2\n",
+        truncated: false,
+        running: true,
+      });
+    }),
   );
 
   it.effect("an interrupted command ends the stream with the output it printed", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const hub = yield* CommandOutputHub.CommandOutputHub;
-        const threadId = yield* seedThread;
-        yield* writeCommandItem(threadId, { status: "running" });
-        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "waiting for server\n" });
-        const frames = yield* subscribeFrames(threadId);
-        yield* takeFrame(frames);
-        yield* TestClock.adjust("1 second");
-        // Some providers stop a command without reporting its output. The session
-        // manager releases the live tail before the settled item is persisted.
-        yield* hub.finish({ threadId, itemId: ITEM_ID });
-        yield* writeCommandItem(threadId, { status: "interrupted" });
-        const final = yield* takeFrame(frames);
-        assert.deepEqual(final, {
-          kind: "replace",
-          text: "waiting for server\n",
-          truncated: false,
-          running: false,
-        });
-        assert.equal(yield* Queue.take(frames), "ended");
-      }),
-    ),
+    Effect.gen(function* () {
+      const hub = yield* CommandOutputHub.CommandOutputHub;
+      const threadId = yield* seedThread;
+      yield* writeCommandItem(threadId, { status: "running" });
+      yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "waiting for server\n" });
+      const frames = yield* subscribeFrames(threadId);
+      yield* takeFrame(frames);
+      yield* TestClock.adjust("1 second");
+      // Some providers omit stopped-command output; the live tail is released before the settled item persists.
+      yield* hub.finish({ threadId, itemId: ITEM_ID });
+      yield* writeCommandItem(threadId, { status: "interrupted" });
+      const final = yield* takeFrame(frames);
+      assert.deepEqual(final, {
+        kind: "replace",
+        text: "waiting for server\n",
+        truncated: false,
+        running: false,
+      });
+      assert.equal(yield* Queue.take(frames), "ended");
+    }),
   );
 });

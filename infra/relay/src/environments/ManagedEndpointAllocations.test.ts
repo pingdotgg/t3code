@@ -74,4 +74,31 @@ describe("ManagedEndpointAllocations", () => {
       ]);
     }).pipe(Effect.provide(layerWithDb(fakeDb)));
   });
+
+  it.effect("teardown claims leave updatedAt to provisioning writes", () => {
+    // The tunnel limit compares link and allocation updatedAt; a claim that bumps it makes a
+    // failed revoke cleanup look like a reprovision and keeps holding the user's slot.
+    const writes: Array<Record<string, unknown>> = [];
+    const fakeDb = {
+      update: () => ({
+        set: (values: Record<string, unknown>) => {
+          writes.push(values);
+          return {
+            where: () => ({ returning: () => Effect.succeed([{ generation: 2 }]) }),
+          };
+        },
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+      const key = { userId: "user-1", environmentId: "environment-1", generation: 1 };
+      yield* allocations.claimDeprovision(key);
+      yield* allocations.claimRelease({ ...key, tunnelId: "tunnel-1" });
+      yield* allocations.claimRelease({ ...key, tunnelId: "tunnel-1", markReleased: true });
+
+      expect(writes.map((values) => "updatedAt" in values)).toEqual([false, false, true]);
+      expect(writes[2]?.["updatedAt"]).toBe(writes[2]?.["tunnelReleasedAt"]);
+    }).pipe(Effect.provide(layerWithDb(fakeDb)));
+  });
 });

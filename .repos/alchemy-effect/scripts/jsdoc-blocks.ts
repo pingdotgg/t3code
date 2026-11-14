@@ -31,16 +31,12 @@ export interface DocLine {
  * Splits the `/** ... *\/` comment at `commentStart` into cleaned lines with
  * source offsets. Cleaning matches the generator's historical behavior.
  */
-export function docCommentLines(
-  fileText: string,
-  commentStart: number,
-): DocLine[] {
+export function docCommentLines(fileText: string, commentStart: number): DocLine[] {
   if (!fileText.startsWith("/*", commentStart)) {
     throw new Error(`No doc comment at offset ${commentStart}`);
   }
   const close = fileText.indexOf("*/", commentStart + 2);
-  if (close === -1)
-    throw new Error(`Unterminated doc comment at ${commentStart}`);
+  if (close === -1) throw new Error(`Unterminated doc comment at ${commentStart}`);
   const raw = fileText.slice(commentStart, close + 2);
   const open = /^\/\*\*?/.exec(raw)![0].length;
   const body = raw.slice(open, raw.length - 2);
@@ -128,13 +124,7 @@ export function docBlocks(lines: DocLine[]): DocBlock[] {
 
     const prose = PROSE_HEADING.exec(text);
     if (prose) {
-      if (!sawTag)
-        single(
-          "proseHeading",
-          i,
-          prose[1].length,
-          prose[1].length + prose[2].length,
-        );
+      if (!sawTag) single("proseHeading", i, prose[1].length, prose[1].length + prose[2].length);
       else close();
       return;
     }
@@ -143,12 +133,7 @@ export function docBlocks(lines: DocLine[]): DocBlock[] {
       sawTag = true;
       inExample = false;
       inSectionDesc = true;
-      single(
-        "sectionTitle",
-        i,
-        section[1].length,
-        section[1].length + section[2].length,
-      );
+      single("sectionTitle", i, section[1].length, section[1].length + section[2].length);
       return;
     }
     const example = EXAMPLE.exec(text);
@@ -156,12 +141,7 @@ export function docBlocks(lines: DocLine[]): DocBlock[] {
       sawTag = true;
       inSectionDesc = false;
       inExample = true;
-      single(
-        "exampleTitle",
-        i,
-        example[1].length,
-        example[1].length + example[2].length,
-      );
+      single("exampleTitle", i, example[1].length, example[1].length + example[2].length);
       return;
     }
     const tag = TAG.exec(text);
@@ -352,9 +332,7 @@ const emptyAfter = (anchorLine: number, last: number): DocRegion => ({
 export function docTargets(lines: DocLine[]) {
   const regions = docRegions(lines);
   const inRegion = (line: number) =>
-    regions.some(
-      (r) => r.editable && line >= r.firstLine && line <= r.lastLine,
-    );
+    regions.some((r) => r.editable && line >= r.firstLine && line <= r.lastLine);
   const inline = docBlocks(lines).filter((b) => !inRegion(b.firstLine));
   return { regions, inline };
 }
@@ -377,12 +355,8 @@ export function replaceRegion(
   markdown: string,
 ): string {
   const reference =
-    lines[
-      region.lastLine >= region.firstLine ? region.firstLine : region.anchorLine
-    ]!;
-  const prefix = fileText
-    .slice(reference.lineStart, reference.start)
-    .replace(/\*\s*$/, "* ");
+    lines[region.lastLine >= region.firstLine ? region.firstLine : region.anchorLine]!;
+  const prefix = fileText.slice(reference.lineStart, reference.start).replace(/\*\s*$/, "* ");
   const bare = prefix.trimEnd();
 
   let inCode = false;
@@ -399,8 +373,7 @@ export function replaceRegion(
     .map((line) => {
       if (FENCE.test(line)) insideFence = !insideFence;
       // Outside code, a leading `@` would start a JSDoc tag.
-      const safe =
-        !insideFence && /^\s*@/.test(line) ? line.replace("@", "\\@") : line;
+      const safe = !insideFence && /^\s*@/.test(line) ? line.replace("@", "\\@") : line;
       return safe.trim() === "" ? bare : `${prefix}${safe}`;
     });
   if (body.join("\n").includes("*/")) {
@@ -443,9 +416,7 @@ export const parseJsdocCopyId = (id: string) => {
   const m = /^jsdoc:(.+)@(\d+)#(r?)(\d+)$/.exec(id);
   if (!m) return undefined;
   const base = { file: m[1]!, commentStart: Number(m[2]) };
-  return m[3]
-    ? { ...base, region: Number(m[4]) }
-    : { ...base, block: Number(m[4]) };
+  return m[3] ? { ...base, region: Number(m[4]) } : { ...base, block: Number(m[4]) };
 };
 
 const REGION_CLOSE = "</div><!--/copy-->";
@@ -455,8 +426,7 @@ const COPY_MARKUP_RE = new RegExp(
 );
 
 /** Removes copy markers and region wrappers from generated markdown. */
-export const stripCopyMarkers = (text: string) =>
-  text.replace(COPY_MARKUP_RE, "");
+export const stripCopyMarkers = (text: string) => text.replace(COPY_MARKUP_RE, "");
 
 /**
  * Returns the comment's cleaned line texts with copy markup added: region
@@ -493,11 +463,7 @@ export function markDocLines(
       add(after, region.lastLine, ["", REGION_CLOSE]);
     }
   });
-  return texts.flatMap((text, i) => [
-    ...(before.get(i) ?? []),
-    text,
-    ...(after.get(i) ?? []),
-  ]);
+  return texts.flatMap((text, i) => [...(before.get(i) ?? []), text, ...(after.get(i) ?? [])]);
 }
 
 // ── {@link} tags ──────────────────────────────────────────────────────────

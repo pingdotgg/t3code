@@ -1,3 +1,4 @@
+import * as Channel from "effect/Channel";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -18,6 +19,7 @@ const MAX_RETAINED_TERMINALS = 32;
 const MAX_RETAINED_OUTPUT_BYTES = 16 * 1024 * 1024;
 const DEFAULT_OUTPUT_BYTE_LIMIT = 4 * 1024 * 1024;
 const MAX_OUTPUT_BYTE_LIMIT = 8 * 1024 * 1024;
+const OUTPUT_DRAIN_GRACE = "1 second";
 
 const terminalRequestError = (message: string, cause?: unknown) =>
   EffectAcpErrors.AcpRequestError.internalError(
@@ -60,8 +62,7 @@ function appendOutput(state: OutputBufferState, chunk: Uint8Array): void {
 function readOutput(state: OutputBufferState): string {
   let combined: Uint8Array = NodeBuffer.Buffer.concat(state.chunks, state.bytes);
   if (state.truncated) {
-    // Drop leading UTF-8 continuation bytes so truncation lands on a
-    // character boundary, as the spec requires.
+    // The spec requires truncation at a UTF-8 character boundary.
     let start = 0;
     while (start < combined.byteLength && (combined[start]! & 0b1100_0000) === 0b1000_0000) {
       start += 1;
@@ -278,6 +279,9 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
 
           const pump = (stream: typeof child.stdout) =>
             stream.pipe(
+              // Keep each pipe's UTF-8 decoder independent and preserve literal BOMs.
+              Stream.pipeThroughChannel(Channel.decodeText("utf-8", { ignoreBOM: true })),
+              Stream.encodeText,
               Stream.runForEach((chunk) =>
                 Effect.sync(() => {
                   appendOutput(record.buffer, chunk);
@@ -298,6 +302,8 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
                 Effect.all([Fiber.join(stdoutPump), Fiber.join(stderrPump)], {
                   discard: true,
                 }).pipe(
+                  // A background child can inherit the pipes and hold them open indefinitely.
+                  Effect.timeoutOption(OUTPUT_DRAIN_GRACE),
                   Effect.andThen(
                     Effect.sync(() => {
                       record.exitStatus = status;
