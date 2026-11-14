@@ -11715,6 +11715,16 @@ describe("subagent lifecycle cascade", () => {
   it.effect("archives, restores and deletes subagents recursively, but not forks or projects", () =>
     Effect.gen(function* () {
       const f = yield* fixture;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      // "foreign" moved to another project after the walk found it.
+      const children = orchestrator.getSubagentChildThreads;
+      const foreign = store.getThread(ThreadId.make("foreign")).pipe(Effect.orDie);
+      using _stale = vi
+        .spyOn(orchestrator, "getSubagentChildThreads")
+        .mockImplementation((id) =>
+          id === parent ? Effect.zipWith(children(id), foreign, (c, t) => [...c, t]) : children(id),
+        );
       const all = [native, app, grandchild, "fork", "fork-child", "foreign"];
       for (const operation of ["archive", "unarchive", "delete"] as const) {
         // A deleted intermediate must not hide surviving descendants from deletion.

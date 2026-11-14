@@ -15268,20 +15268,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Decided under the child's lock, so a newer independent choice on it always wins.
     const cascade = yield* EffectOutbox.SubagentCascade;
     if (
-      cascade?.source !== undefined &&
-      (command.type === "thread.archive" || command.type === "thread.unarchive")
+      cascade !== undefined &&
+      (command.type === "thread.archive" ||
+        command.type === "thread.unarchive" ||
+        command.type === "thread.delete")
     ) {
       const { source, path } = cascade;
       const read = mapDispatchError(command);
       const thread = yield* projectionStore.getThread(command.threadId).pipe(read);
-      const latest = yield* commandReceipts.getLatestLifecycle(command.threadId).pipe(read);
-      const applies =
-        thread.deletedAt === null &&
-        (command.type === "thread.archive"
-          ? thread.archivedAt === null && !supersedesCascade(latest, source, command.commandId)
-          : thread.archivedAt !== null &&
-            (yield* archivedByCascade(commandReceipts, latest, source.threadId, path).pipe(read)));
-      if (!applies) return { sequence: source.resultSequence, storedEvents: [] };
+      const parentThreadId = thread.lineage.parentThreadId;
+      const parent =
+        parentThreadId === null
+          ? null
+          : yield* projectionStore.getThread(parentThreadId).pipe(read);
+      // A child moved to another project since the walk found it is no longer this subtree's.
+      let applies = parent?.projectId === thread.projectId;
+      if (applies && source !== undefined && command.type !== "thread.delete") {
+        const latest = yield* commandReceipts.getLatestLifecycle(command.threadId).pipe(read);
+        applies =
+          thread.deletedAt === null &&
+          (command.type === "thread.archive"
+            ? thread.archivedAt === null && !supersedesCascade(latest, source, command.commandId)
+            : thread.archivedAt !== null &&
+              (yield* archivedByCascade(commandReceipts, latest, source.threadId, path).pipe(
+                read,
+              )));
+      }
+      if (!applies) return { sequence: source?.resultSequence ?? 0, storedEvents: [] };
     }
 
     const plan = yield* dispatchOnce(command, sideChatIds).pipe(
