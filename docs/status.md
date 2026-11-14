@@ -228,9 +228,9 @@ The fixture replay passes 50 of 159 variants: Grok 9 of 15 (was 1), Claude 24 of
 - **Provider status, closer to T3:** the config stream de-dupes and debounces
   `providerStatuses` 200 ms; the periodic probe skips a disabled instance, and a failed check
   over a ready entry is kept and rechecked after 30 s. `Provider::refresh_status_on_interval`
-  is a new default trait method (additive). Not built: the demand gate (T3 probes on the
-  interval only while a client's activity lease asks for it; it needs T3's `BackgroundPolicy`
-  and client leases, which this server lacks).
+  is a new default trait method (additive). The demand gate (T3 probes on the interval only
+  while a client's activity lease asks for it) came with the Claude probe work and applies
+  to Grok too.
 - **The ACP registry installs nothing (Nick, 2026-11-14), a lasting gap:** no index download
   and no binary, npm or uv install will be built. Only `uninstallAcpRegistryManagedBinary`,
   `acceptAcpRegistryUrlAuth` and the user's own `local` agents may come; the other nine
@@ -1027,7 +1027,7 @@ The check is the one to trust; several review findings did not hold.
 - `t3/32cd278b` (text generators, titles, `runNow`, the redacting `Debug`): all 31 checks pass
   on macOS (2026-11-14). No new dependency; the release binary grew by 93,648 bytes
   (16,558,944 to 16,652,592, macOS arm64).
-- `main`: verified. All 35 checks pass on macOS (2026-11-14, with the ACP provider, scheduled
+- `main`: verified. All 36 checks pass on macOS (2026-11-14, with the ACP provider, scheduled
   tasks and annotations). The last Linux pass (all tests, 20 runs on the gnu target and 5 on
   musl, 2026-11-14) is older than those merges.
 - Fixed on 2026-11-14: the T3 adapter closes the Claude query after an interrupt, and the next

@@ -119,10 +119,9 @@ debounced 200 ms, as T3's `ws.ts`). The periodic probe follows T3's managed prov
   a second guard.
 - **Not ported, on purpose:** `readGrokAccount` (it reads Grok's credentials file and calls
   xAI's billing API; this server never reads credentials) and the version advisory (it asks a
-  package registry for the latest version). **Not built:** the demand gate on the periodic probe (T3
-  probes on the interval only while a client's activity lease asks for provider status; that
-  needs T3's `BackgroundPolicy` and its client leases, which this server does not have:
-  `server.reportClientActivity` is a no-op here).
+  package registry for the latest version). The demand gate on the periodic probe (T3 probes
+  on the interval only while a client's activity lease asks for provider status) is served
+  by the server for every provider (`crates/conn-server/src/methods/provider.rs`).
   `XAI_API_KEY` is checked for presence only; its value is never stored or sent anywhere.
 
 ## Supported (Grok)
