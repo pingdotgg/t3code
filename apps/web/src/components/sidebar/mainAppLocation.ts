@@ -36,7 +36,8 @@ export function startMainAppLocationTracking(router: AnyRouter): () => void {
     appModalReturnThreadTarget = resolveThreadRouteTarget(
       router.state.matches.at(-1)?.params ?? {},
     );
-    if (!isSidebarUtilityPage(pathname)) mainAppHref = href;
+    // The task board toggles back to the page that opened it.
+    if (!isSidebarUtilityPage(pathname) && pathname !== "/board") mainAppHref = href;
   };
   record();
   return router.subscribe("onResolved", record);
