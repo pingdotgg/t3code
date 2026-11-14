@@ -639,11 +639,30 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
-          case "provider-session.relocate-storage":
+          case "provider-session.relocate-storage": {
+            const { providerThreadId, oldFolder, newFolder } = effect.request;
             return ClaudeSessionRelocation.relocateClaudeSessionStorage(
               effect.threadId,
               effect.request,
-            ).pipe(Effect.provideContext(relocationContext), Effect.mapError(executionError));
+              !willRetry,
+            ).pipe(
+              Effect.provideContext(relocationContext),
+              // The thread's turns go on: Claude resumes the session by id from the folder it
+              // is still stored in, and the provider thread keeps that folder on record.
+              Effect.tapError((cause) =>
+                willRetry
+                  ? Effect.void
+                  : Effect.logError("orchestration-v2.claude-relocation.gave-up", {
+                      threadId: effect.threadId,
+                      providerThreadId,
+                      oldFolder,
+                      newFolder,
+                      cause,
+                    }),
+              ),
+              Effect.mapError(executionError),
+            );
+          }
           case "scheduled-tasks.move":
             return resourceCleanup
               .moveScheduledTasks(effect.request)

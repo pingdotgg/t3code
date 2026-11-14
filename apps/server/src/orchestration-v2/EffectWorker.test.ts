@@ -8,6 +8,7 @@ import {
   CommandId,
   NodeId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
@@ -25,6 +26,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -533,6 +535,74 @@ it.effect("moves scheduled tasks after a failed store write while the task keeps
         assert.equal(yield* listedUnder, recovers ? to : from);
         yield* firesToThread;
       }
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("holds a thread's next turn until its Claude storage move settles, failed or not", () =>
+  Effect.gen(function* () {
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const logged: Array<unknown> = [];
+    const layer = EffectWorker.layerWithOptions({ workerId: "relocation", maxAttempts: 2 }).pipe(
+      Layer.provide(layerExecutorFor({ events })),
+      Layer.provideMerge(EffectOutbox.layer),
+      Layer.provideMerge(
+        Logger.layer([Logger.make(({ message }) => void logged.push(message))], {
+          mergeWithExisting: false,
+        }),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const statusOf = (effectId: string) =>
+        outbox.get(effectId).pipe(Effect.map((effect) => Option.getOrUndefined(effect)?.status));
+      // No such provider instance is configured, so every attempt fails before it reads the disk.
+      yield* outbox.enqueue([
+        {
+          id: "effect:relocation",
+          commandId: CommandId.make("command:relocation"),
+          threadId,
+          request: {
+            type: "provider-session.relocate-storage",
+            driver: ProviderDriverKind.make("claudeAgent"),
+            providerInstanceId: ProviderInstanceId.make("claude-unconfigured"),
+            providerThreadId,
+            nativeSessionId: "session-relocation",
+            oldFolder: "/relocation/a",
+            newFolder: "/relocation/b",
+          },
+        },
+        {
+          id: "effect:next-turn",
+          commandId: CommandId.make("command:next-turn"),
+          threadId,
+          request: { type: "provider-turn.start", runId },
+        },
+      ]);
+      const gaveUp = () =>
+        logged.filter(
+          (message) =>
+            Array.isArray(message) &&
+            message[0] === "orchestration-v2.claude-relocation.gave-up" &&
+            message[1]?.threadId === threadId,
+        );
+
+      assert.isTrue(yield* worker.runOnce());
+      assert.equal(yield* statusOf("effect:relocation"), "pending");
+      // The move waits to run again, and the turn waits behind it.
+      assert.isFalse(yield* worker.runOnce());
+      assert.lengthOf(gaveUp(), 0);
+      yield* TestClock.adjust("100 millis");
+      assert.isTrue(yield* worker.runOnce());
+      assert.equal(yield* statusOf("effect:relocation"), "failed");
+      assert.lengthOf(gaveUp(), 1);
+      assert.deepEqual(yield* Ref.get(events), []);
+
+      assert.isTrue(yield* worker.runOnce());
+      assert.deepEqual(yield* Ref.get(events), ["start"]);
+      assert.equal(yield* statusOf("effect:next-turn"), "succeeded");
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

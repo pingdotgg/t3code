@@ -85,16 +85,20 @@ const setup = Effect.fnUntraced(function* () {
   yield* fs.makeDirectory(oldSubs, { recursive: true });
   yield* fs.writeFileString(oldFile, transcript);
   yield* fs.writeFileString(path.join(oldSubs, "agent-1.jsonl"), agentLine);
-  const run = (fileSystem: FileSystem.FileSystem, committed = true) =>
-    ClaudeSessionRelocation.relocateClaudeSessionStorage(threadId, {
-      type: "provider-session.relocate-storage",
-      driver,
-      providerInstanceId: instanceId,
-      providerThreadId: providerThread.id,
-      nativeSessionId: sessionId,
-      oldFolder,
-      newFolder,
-    }).pipe(
+  const run = (fileSystem: FileSystem.FileSystem, committed = true, lastAttempt = false) =>
+    ClaudeSessionRelocation.relocateClaudeSessionStorage(
+      threadId,
+      {
+        type: "provider-session.relocate-storage",
+        driver,
+        providerInstanceId: instanceId,
+        providerThreadId: providerThread.id,
+        nativeSessionId: sessionId,
+        oldFolder,
+        newFolder,
+      },
+      lastAttempt,
+    ).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(HostProcess.Environment, {}),
       Effect.provideService(HostProcess.Platform, "darwin"),
@@ -258,5 +262,36 @@ it.effect.each([
       yield* expectLayout("new", "new", tail);
       yield* outcome;
       yield* expectLayout("new", "new", tail, 2);
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+// The worker does not repeat its last attempt, so the record must already match the disk.
+it.effect.each(["transcript", "subagents", "record"] as const)(
+  "records the folder the transcript is in when the last attempt is denied at the %s",
+  (at) =>
+    Effect.gen(function* () {
+      const { fs, oldFile, oldSubs, record, run, expectLayout } = yield* setup();
+      const faultedRename =
+        at === "transcript" ? oldFile : at === "subagents" ? oldSubs : undefined;
+      const denied = FileSystem.FileSystem.of({
+        ...fs,
+        rename: (from, to) =>
+          from === faultedRename ? Effect.fail(errno("EACCES", from)) : fs.rename(from, to),
+        writeFileString: (file, data, options) =>
+          at === "record"
+            ? Effect.fail(errno("EACCES", file, "open"))
+            : fs.writeFileString(file, data, options),
+      });
+      const moved = at !== "transcript";
+
+      const outcome = yield* Effect.exit(run(denied, true, true));
+
+      assert.equal(outcome._tag, moved ? "Success" : "Failure");
+      yield* expectLayout(
+        moved ? "new" : "old",
+        at === "record" ? "new" : "old",
+        at === "subagents" ? record : "",
+        moved ? 1 : 0,
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
 );

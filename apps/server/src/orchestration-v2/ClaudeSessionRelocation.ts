@@ -60,6 +60,7 @@ const relocateClaudeTranscript = Effect.fn("ClaudeSessionRelocation.relocateTran
     readonly sessionId: string;
     readonly oldFolder: string;
     readonly newFolder: string;
+    readonly lastAttempt: boolean;
   }) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -153,6 +154,10 @@ const relocateClaudeTranscript = Effect.fn("ClaudeSessionRelocation.relocateTran
     if (!sourcePresent && Option.getOrUndefined(owner)?.sessionId !== input.sessionId) {
       return yield* new ClaudeSessionRelocationError({ reason: "foreign-session", path: newFile });
     }
+    // The transcript is in the new folder from here on. An attempt that is not repeated goes on
+    // past a failed step below, so the caller records the folder the transcript is in.
+    const unlessLastAttempt = <E>(step: Effect.Effect<void, E>) =>
+      input.lastAttempt ? Effect.ignore(step) : step;
     if (oldDir !== newDir) {
       yield* renameWithFallbacks(
         path.join(oldDir, input.sessionId),
@@ -162,6 +167,7 @@ const relocateClaudeTranscript = Effect.fn("ClaudeSessionRelocation.relocateTran
         Effect.tapError((cause) =>
           Effect.logWarning("orchestration-v2.claude-relocation.subagent-folder-failed", { cause }),
         ),
+        unlessLastAttempt,
       );
     }
     // Like Claude, end a torn last line before appending; a whole last line that is the record
@@ -178,6 +184,7 @@ const relocateClaudeTranscript = Effect.fn("ClaudeSessionRelocation.relocateTran
           Effect.tapError((cause) =>
             Effect.logWarning("orchestration-v2.claude-relocation.record-failed", { cause }),
           ),
+          unlessLastAttempt,
         );
     }
   },
@@ -191,6 +198,8 @@ export const relocateClaudeSessionStorage = Effect.fn(
     EffectOutbox.OrchestrationEffectRequestV2,
     { readonly type: "provider-session.relocate-storage" }
   >,
+  /** True when the caller does not run a failed relocation again. */
+  lastAttempt = false,
 ) {
   if (request.driver !== "claudeAgent") return;
   const path = yield* Path.Path;
@@ -209,7 +218,8 @@ export const relocateClaudeSessionStorage = Effect.fn(
     sessionId: request.nativeSessionId,
     oldFolder: request.oldFolder,
     newFolder: request.newFolder,
-  });
+    lastAttempt,
+  }).pipe(Effect.annotateLogs({ threadId }));
   const { providerThreads } =
     yield* (yield* ThreadManagementService.ThreadManagementService).getThreadRecords(threadId, [
       "providerThreads",
