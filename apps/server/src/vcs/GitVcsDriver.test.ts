@@ -861,6 +861,63 @@ it.effect.each([1_700_000_000, 1_700_000_000.9999])(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("a branch switch landing after the snapshot belongs to the next checkpoint", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-switch-race-" });
+    const git = (args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "checkpoint-test", cwd, args });
+    yield* git(["init"]);
+    yield* git(["config", "user.name", "Test"]);
+    yield* git(["config", "user.email", "test@test.com"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "f.txt"), "A\n");
+    yield* git(["add", "."]);
+    yield* git(["commit", "-m", "a"]);
+    yield* git(["checkout", "-b", "b"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "f.txt"), "B\n");
+    yield* git(["commit", "-am", "b"]);
+    yield* git(["checkout", "-"]);
+    const [first, second, third] = ["1", "2", "3"].map((turn) =>
+      CheckpointRef.make(`refs/t3/checkpoints/switch-race/${turn}`),
+    ) as [CheckpointRef, CheckpointRef, CheckpointRef];
+    const racedDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: Effect.fn(function* (input: VcsProcess.VcsProcessInput) {
+          const result = yield* liveProcess.run(input);
+          if (input.args.includes("write-tree")) yield* git(["checkout", "b"]).pipe(Effect.orDie);
+          return result;
+        }),
+      }),
+    );
+    const changedSince = (fromCheckpointRef: CheckpointRef, toCheckpointRef: CheckpointRef) =>
+      Effect.gen(function* () {
+        const refs = { cwd, fromCheckpointRef, toCheckpointRef };
+        return {
+          patch: yield* driver.checkpoints.diffCheckpoints({ ...refs, ignoreWhitespace: false }),
+          authored: yield* driver.checkpoints.listAuthoredPaths(refs),
+        };
+      });
+
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: first });
+    yield* racedDriver.checkpoints.captureCheckpoint({
+      cwd,
+      checkpointRef: second,
+      previousCheckpointRef: first,
+    });
+    yield* driver.checkpoints.captureCheckpoint({
+      cwd,
+      checkpointRef: third,
+      previousCheckpointRef: second,
+    });
+
+    assert.deepEqual(yield* changedSince(first, second), { patch: "", authored: null });
+    assert.deepEqual(yield* changedSince(second, third), { patch: "", authored: null });
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect("checkpoint capture preserves racy edits made after resetting the index", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -1051,6 +1108,7 @@ it.effect.each(["committed", "unborn"] as const)(
 
       assert.deepStrictEqual(commands, [
         "rev-parse",
+        ...(head === "committed" ? ["log"] : []),
         "config",
         ...(head === "committed" ? ["read-tree", "ls-files"] : []),
         "add",
@@ -1269,6 +1327,87 @@ it.effect("restores a checkpoint before the first commit without staging its fil
         args: ["diff", "--cached", "--name-only"],
       });
       assert.strictEqual(staged.stdout.trim(), nested ? "outside.txt" : "");
+    }
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("restores edits to skip-worktree files whose checkpoint content matches HEAD", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-skip-worktree-restore-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    const skippedPath = path.join(cwd, "skipped.txt");
+    yield* fileSystem.writeFileString(skippedPath, "original\n");
+    yield* git(["add", "skipped.txt"]);
+    yield* git(["commit", "-m", "add skipped file"]);
+    yield* git(["update-index", "--skip-worktree", "skipped.txt"]);
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    yield* fileSystem.writeFileString(skippedPath, "later\n");
+
+    assert.isTrue(
+      yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false }),
+    );
+
+    assert.strictEqual(yield* fileSystem.readFileString(skippedPath), "original\n");
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("sparse restore rewrites manual skip-worktree files and keeps exclusions absent", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    // One byte per chunk, so the index listing splits inside every record.
+    const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          const onStdoutChunk = input.onStdoutChunk;
+          return liveProcess.run(
+            onStdoutChunk === undefined
+              ? input
+              : {
+                  ...input,
+                  onStdoutChunk: (chunk) => {
+                    for (let index = 0; index < chunk.length; index++)
+                      onStdoutChunk(chunk.subarray(index, index + 1));
+                  },
+                },
+          );
+        },
+      }),
+    );
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sparse-restore-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    for (const name of ["in/normal", "in/skipped", "in/s space", "out/deep/absent", "out/stray"]) {
+      yield* fs.makeDirectory(path.dirname(path.join(cwd, name)), { recursive: true });
+      yield* fs.writeFileString(path.join(cwd, name), "original\n");
+    }
+    yield* git(["add", "."]);
+    yield* git(["commit", "-m", "sparse fixture"]);
+    yield* git(["sparse-checkout", "set", "--cone", "--sparse-index", "in"]);
+    // Keeps Git from clearing the bit on files that are present.
+    yield* git(["config", "sparse.expectFilesOutsideOfPatterns", "true"]);
+    yield* git(["update-index", "--skip-worktree", "in/skipped", "in/s space"]);
+    const captureCwd = path.join(cwd, "in");
+    yield* driver.checkpoints.captureCheckpoint({ cwd: captureCwd, checkpointRef });
+    yield* fs.writeFileString(path.join(cwd, "in/skipped"), "later\n");
+    yield* fs.writeFileString(path.join(cwd, "in/s space"), "later\n");
+    yield* fs.writeFileString(path.join(cwd, "in/normal"), "later\n");
+
+    for (const restoreCwd of [captureCwd, cwd]) {
+      assert.isTrue(
+        yield* driver.checkpoints.restoreCheckpoint({
+          cwd: restoreCwd,
+          checkpointRef,
+          fallbackToHead: false,
+        }),
+      );
+      assert.strictEqual(yield* fs.readFileString(path.join(cwd, "in/skipped")), "original\n");
+      assert.strictEqual(yield* fs.readFileString(path.join(cwd, "in/s space")), "original\n");
+      assert.strictEqual(yield* fs.readFileString(path.join(cwd, "in/normal")), "original\n");
+      assert.isFalse(yield* fs.exists(path.join(cwd, "out")));
     }
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );

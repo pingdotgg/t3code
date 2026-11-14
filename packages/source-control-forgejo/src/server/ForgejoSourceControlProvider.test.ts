@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -969,6 +970,160 @@ it.effect("loads Forgejo pull request references from files and commits views", 
   ),
 );
 
+// Gitea ignores `head=` on the pull request list, so each page holds every branch's pull requests.
+// The second lookup still asks for the front of the list: a pull request may have been opened.
+it.effect("reads a Gitea pull request list at most once for branches that have none", () => {
+  const listPages: Array<string> = [];
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoSourceControlProvider.make;
+    for (const headSelector of ["first-without-pr", "second-without-pr"]) {
+      const found = yield* provider.listChangeRequests({
+        cwd: "/repo",
+        headSelector,
+        state: "all",
+      });
+      assert.deepStrictEqual(found, []);
+    }
+    assert.isAtMost(listPages.length, 5);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+        TestSourceControlHost.layer({ process: {} }),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          resolveRepository: () =>
+            Effect.succeed({
+              login: "work",
+              repository: "maria/project",
+              baseUrl: "https://forgejo.test",
+            }),
+          api: (input) => {
+            if (!input.path.startsWith("repos/maria/project/pulls?"))
+              return Effect.fail(
+                new ForgejoCli.ForgejoCliError({
+                  command: "tea",
+                  cwd: input.cwd,
+                  httpStatus: 404,
+                  detail: "Forgejo API request failed (HTTP 404): Not Found",
+                }),
+              );
+            listPages.push(input.path);
+            const repo = { full_name: "maria/project", owner: { login: "maria" } };
+            const page = Number(new URLSearchParams(input.path.split("?")[1]).get("page"));
+            const items =
+              page > 3
+                ? []
+                : Array.from({ length: 50 }, (_, index) => {
+                    const number = 200 - (page - 1) * 50 - index;
+                    return {
+                      number,
+                      title: `PR ${number}`,
+                      html_url: `https://forgejo.test/maria/project/pulls/${number}`,
+                      state: "open",
+                      merged: false,
+                      updated_at: `2026-10-12T00:0${Math.floor(number / 60)}:${String(number % 60).padStart(2, "0")}Z`,
+                      base: { ref: "main", label: "main", sha: "base", repo },
+                      head: {
+                        ref: `feature-${number}`,
+                        label: `feature-${number}`,
+                        sha: "h",
+                        repo,
+                      },
+                    };
+                  });
+            return encodeJsonEffect(items).pipe(Effect.orDie, Effect.map(processOutput));
+          },
+        }),
+      ),
+    ),
+  );
+});
+
+it.effect("reads only the changed front of a Gitea pull request list it has read before", () => {
+  const repo = { full_name: "maria/project", owner: { login: "maria" } };
+  const fork = { full_name: "alice/renamed", owner: { login: "alice" } };
+  const pull = (number: number, updatedSecond: number, head: string, state = "open") => ({
+    number,
+    title: `PR ${number}`,
+    html_url: `https://forgejo.test/maria/project/pulls/${number}`,
+    state,
+    merged: false,
+    updated_at: `2026-10-12T00:0${Math.floor(updatedSecond / 60)}:${String(updatedSecond % 60).padStart(2, "0")}Z`,
+    base: { ref: number === 5 ? "release" : "main", label: "main", sha: "base", repo },
+    head: { ref: head, label: head, sha: "h", repo: number === 5 ? fork : repo },
+  });
+  // Newest update first, as `sort=recentupdate` returns them. PR 5 sits on the last page.
+  let pulls = Array.from({ length: 120 }, (_, index) =>
+    pull(120 - index, 120 - index, 120 - index === 5 ? "feature" : `other-${120 - index}`),
+  );
+  // List pages read; a match is also read once by number before it is returned.
+  let requests = 0;
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoSourceControlProvider.make;
+    const find = (headSelector: string) =>
+      provider
+        .listChangeRequests({ cwd: "/repo", headSelector, state: "all" })
+        .pipe(Effect.map((found) => found.map((pr) => [pr.number, pr.state])));
+
+    assert.deepStrictEqual(yield* find("alice:feature"), [[5, "open"]]);
+    assert.strictEqual(requests, 4);
+
+    pulls = [pull(121, 202, "later"), pull(5, 201, "feature", "closed"), ...pulls].filter(
+      (entry, index, all) => all.findIndex((other) => other.number === entry.number) === index,
+    );
+    assert.deepStrictEqual(yield* find("later"), [[121, "open"]]);
+    assert.deepStrictEqual(yield* find("alice:feature"), [[5, "closed"]]);
+    assert.strictEqual(requests, 6);
+
+    // Deleting a pull request moves nothing in the list.
+    pulls = pulls.filter((entry) => entry.number !== 121);
+    assert.deepStrictEqual(yield* find("later"), []);
+    assert.strictEqual(requests, 7);
+
+    pulls = pulls.filter((entry) => entry.number !== 120);
+    yield* TestClock.adjust("1 hour");
+    assert.deepStrictEqual(yield* find("other-120"), []);
+    assert.strictEqual(requests, 11);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+        TestSourceControlHost.layer({ process: {} }),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          resolveRepository: () =>
+            Effect.succeed({
+              login: "work",
+              repository: "maria/project",
+              baseUrl: "https://forgejo.test",
+            }),
+          api: (input) => {
+            const single = /\/pulls\/(\d+)$/.exec(input.path)?.[1];
+            if (single !== undefined) {
+              const found = pulls.find((entry) => entry.number === Number(single));
+              return found
+                ? encodeJsonEffect(found).pipe(Effect.orDie, Effect.map(processOutput))
+                : Effect.fail(
+                    new ForgejoCli.ForgejoCliError({
+                      command: "tea",
+                      cwd: input.cwd,
+                      httpStatus: 404,
+                      detail: "Forgejo API request failed (HTTP 404): Not Found",
+                    }),
+                  );
+            }
+            requests++;
+            const page = Number(new URLSearchParams(input.path.split("?")[1]).get("page"));
+            return encodeJsonEffect(pulls.slice((page - 1) * 50, page * 50)).pipe(
+              Effect.orDie,
+              Effect.map(processOutput),
+            );
+          },
+        }),
+      ),
+    ),
+  );
+});
+
 it.effect("finds a merged Forgejo pull request whose head branch was deleted", () =>
   Effect.gen(function* () {
     const provider = yield* ForgejoSourceControlProvider.make;
@@ -1431,6 +1586,67 @@ it.effect("rejects HTTP failures even when tea exits successfully", () =>
                 : processOutput('{"message":"not found"}', { stderr: "HTTP/1.1 404 Not Found\n" }),
             );
           },
+        },
+      }),
+    ),
+  ),
+);
+
+it.effect("keeps Gitea's failure reason when tea reports an HTTP error", () =>
+  Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    const result = yield* cli
+      .api({
+        cwd: "/repo",
+        repository: "http://forgejo.local:3000/maria/project",
+        path: "repos/maria/project/pulls/1/merge",
+        method: "POST",
+        body: { Do: "merge", delete_branch_after_merge: true },
+      })
+      .pipe(Effect.result);
+    assert.strictEqual(result._tag, "Failure");
+    if (result._tag === "Failure") {
+      assert.include(result.failure.detail, "405");
+      assert.include(result.failure.detail, "The head branch is behind the base branch");
+    }
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(false),
+      }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make(() => {
+        throw new Error("tea must handle its own HTTP request");
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: {
+          run: (input) =>
+            Effect.succeed(
+              input.args[0] === "login"
+                ? processOutput(
+                    encodeJson([
+                      {
+                        name: "work",
+                        url: "http://forgejo.local:3000",
+                        ssh_host: "forgejo.local",
+                        user: "maria",
+                        default: "true",
+                      },
+                    ]),
+                  )
+                : processOutput(
+                    '{"message":"The head branch is behind the base branch","url":"http://forgejo.local:3000/api/swagger"}',
+                    {
+                      stderr:
+                        "HTTP/1.1 405 Method Not Allowed\nContent-Type: application/json;charset=utf-8\n",
+                    },
+                  ),
+            ),
         },
       }),
     ),

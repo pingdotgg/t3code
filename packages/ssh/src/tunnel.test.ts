@@ -137,7 +137,7 @@ serve(40);
 // The launch's POSIX bootstrap without the account login shell around it, so the
 // test machine's login profile cannot move HOME.
 const launchStateKey = (command: ChildProcess.Command) =>
-  /exec sh -s -- (\S+)"/u.exec(commandArgs(command).join(" "))?.[1];
+  /exec sh -s -- ([^"]+)"/u.exec(commandArgs(command).join(" "))?.[1];
 
 // Runs the remote half of an SSH launch as a local shell
 // whose HOME is the given directory. Every launch after the first starts once
@@ -681,22 +681,31 @@ describe("ssh tunnel scripts", () => {
     }),
   );
 
-  it.effect("connects through a tunnel whose responses take longer than a second", () =>
+  it.effect("connects and reuses a tunnel whose responses take over a second", () =>
     Effect.gen(function* () {
       // Over a ~1s RTT link each request through the forward takes a few round trips.
       const RESPONSE_MS = 2_500;
       const tunnelSpawned = yield* Deferred.make<void>();
+      const reconnectProbed = yield* Deferred.make<void>();
+      const forwardReplaced = yield* Deferred.make<void>();
+      let forwards = 0;
+      let connected = false;
       const spawner = ChildProcessSpawner.make((command) =>
         commandArgs(command).includes("-N")
-          ? Deferred.succeed(tunnelSpawned, undefined).pipe(
+          ? Effect.sync(() => ++forwards).pipe(
+              Effect.flatMap((count) =>
+                Deferred.succeed(count === 1 ? tunnelSpawned : forwardReplaced, undefined),
+              ),
               Effect.as(makeRunningProcess(() => undefined)),
             )
           : Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n')),
       );
       const httpClient = HttpClient.make((request) =>
-        Effect.sleep(Duration.millis(RESPONSE_MS)).pipe(
-          Effect.as(HttpClientResponse.fromWeb(request, new Response("", { status: 200 }))),
-        ),
+        Effect.gen(function* () {
+          if (connected) yield* Deferred.succeed(reconnectProbed, undefined);
+          yield* Effect.sleep(Duration.millis(RESPONSE_MS));
+          return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+        }),
       );
       const layer = Layer.mergeAll(
         NodeServices.layer,
@@ -726,6 +735,17 @@ describe("ssh tunnel scripts", () => {
           Result.isSuccess(result),
           Result.isFailure(result) ? result.failure.message : undefined,
         );
+        if (Result.isFailure(result)) return;
+
+        connected = true;
+        const reconnect = yield* Effect.forkChild(manager.ensureEnvironment(result.success.target));
+        yield* Deferred.await(reconnectProbed);
+        yield* TestClock.adjust(Duration.seconds(60));
+        const outcome = yield* Effect.raceFirst(
+          Fiber.join(reconnect).pipe(Effect.map((environment) => environment.httpBaseUrl)),
+          Deferred.await(forwardReplaced).pipe(Effect.as("replaced the forward")),
+        );
+        assert.equal(outcome, result.success.httpBaseUrl);
       }).pipe(Effect.provide(layer), Effect.scoped);
     }),
   );
@@ -1137,7 +1157,7 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
         const remoteArgs =
           stateKey === undefined
             ? command.args.slice(command.args.indexOf("--") + 2)
-            : ["sh", "-s", "--", stateKey];
+            : ["sh", "-s", "--", ...stateKey.split(" ")];
         return realSpawner.spawn(
           ChildProcess.make("setsid", ["-w", ...remoteArgs], {
             ...command.options,
@@ -1213,6 +1233,88 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
         `the launcher kept ${kind} as its running server`,
       );
       assert.isTrue(yield* isRunning(pid));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live("an update replaces the managed server after its connection is renamed", () =>
+    Effect.gen(function* () {
+      const { fs, home, fakeServer, sshAsLocalShell, stateDir } =
+        yield* prepare("an unrelated process");
+      const updatedServer = `${home}/fake-t3-next.cjs`;
+      yield* fs.writeFileString(updatedServer, FAKE_SERVER);
+      const renamed = { ...target, alias: "devbox-renamed" };
+      const launch = (
+        launchTarget: typeof renamed,
+        nodeScriptPath: string,
+        launcherId: string | null = "a".repeat(32),
+      ) =>
+        SshTunnel.launchOrReuseRemoteServer(
+          launchTarget,
+          undefined,
+          { nodeScriptPath },
+          launcherId,
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell));
+      const runtimePid = fs
+        .readFileString(`${home}/.t3/userdata/server-runtime.json`)
+        .pipe(Effect.map((runtime) => Number(JSON.parse(runtime).pid)));
+      const launchedPids: Array<number> = [];
+      yield* Effect.addFinalizer(() =>
+        Effect.forEach(launchedPids, (pid) =>
+          Effect.sync(() => {
+            try {
+              process.kill(pid, "SIGKILL");
+            } catch {}
+          }),
+        ),
+      );
+
+      assert.equal((yield* launch(target, fakeServer)).remoteServerKind, "managed");
+      const originalPid = yield* runtimePid;
+      launchedPids.push(originalPid);
+
+      // Another desktop on another version shares the server; it must not take it over.
+      const otherDesktop = yield* launch(
+        { ...target, alias: "devbox-other" },
+        updatedServer,
+        "b".repeat(32),
+      );
+      assert.equal(otherDesktop.remoteServerKind, "external");
+      assert.isTrue(yield* isRunning(originalPid), "another desktop replaced the server");
+
+      const afterRename = yield* launch(renamed, fakeServer);
+      assert.equal(yield* runtimePid, originalPid, "renaming alone restarted the server");
+      assert.equal(
+        yield* fs.readFileString(`${stateDir}/managed`),
+        "external\n",
+        "the old alias still owns the server, so its disconnect would stop it",
+      );
+      const afterUpdate = yield* launch(renamed, updatedServer);
+      launchedPids.push(yield* runtimePid);
+      assert.deepEqual(
+        [afterRename.remoteServerKind, afterUpdate.remoteServerKind],
+        ["managed", "managed"],
+      );
+      assert.isFalse(
+        yield* isRunning(originalPid),
+        "the update left the server launched under the old alias running",
+      );
+
+      // A rename and an update in one reconnect still replace the server.
+      const updatedPid = yield* runtimePid;
+      const renamedAndUpdated = yield* launch({ ...target, alias: "devbox-again" }, fakeServer);
+      launchedPids.push(yield* runtimePid);
+      assert.equal(renamedAndUpdated.remoteServerKind, "managed");
+      assert.isFalse(yield* isRunning(updatedPid), "a rename with an update kept the old server");
+
+      // A server that a launch without an ID started under a reused key is not this desktop's.
+      const again = { ...target, alias: "devbox-again" };
+      process.kill(yield* runtimePid, "SIGKILL");
+      assert.equal((yield* launch(again, fakeServer, null)).remoteServerKind, "managed");
+      const unownedPid = yield* runtimePid;
+      launchedPids.push(unownedPid);
+      const final = yield* launch({ ...target, alias: "devbox-final" }, updatedServer);
+      assert.equal(final.remoteServerKind, "external");
+      assert.isTrue(yield* isRunning(unownedPid), "a stale launcher ID claimed another's server");
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
