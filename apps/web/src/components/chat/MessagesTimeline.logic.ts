@@ -1,7 +1,10 @@
 import * as DateTime from "effect/DateTime";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
-import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
+import {
+  isLiveSubagentTurnItem,
+  waitingOnSubagentsLabel,
+} from "@t3tools/client-runtime/state/subagentRuntime";
 import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
 import { claudeResumeCompactionAge } from "@t3tools/shared/claudeCompaction";
@@ -82,7 +85,9 @@ export function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "proposed-plan") {
     return entry.proposedPlan.runId;
   }
-  if (entry.kind === "html-render" || entry.kind === "mcp-app") return entry.runId;
+  if (entry.kind === "html-render" || entry.kind === "mcp-app" || entry.kind === "sent-message") {
+    return entry.runId;
+  }
   return entry.kind === "work" ? (entry.entry.runId ?? null) : null;
 }
 
@@ -530,6 +535,8 @@ type MessagesTimelineRowContent =
       kind: "thinking";
       id: string;
       createdAt: string | null;
+      /** Replaces "Thinking" while the run has done nothing since launching children that still run. */
+      label?: string;
       groupId?: string;
       expanded?: boolean;
     }
@@ -633,6 +640,12 @@ type MessagesTimelineRowContent =
       id: string;
       createdAt: string;
       htmlRender: HtmlRenderReference;
+    }
+  | {
+      kind: "sent-message";
+      id: string;
+      createdAt: string;
+      text: string;
     }
   | {
       kind: "mcp-app";
@@ -817,6 +830,7 @@ function deriveSupersededAttemptFolds(
       (entry.kind === "event" && entry.projectedItem.item.type === "handoff") ||
       entry.kind === "html-render" ||
       entry.kind === "mcp-app" ||
+      entry.kind === "sent-message" ||
       timelineEntryIsPersistentResourceCard(entry) ||
       liveSubagentEntryIds.has(entry.id) ||
       (entry.kind === "work" && entry.entry.itemType === "system_notice")
@@ -1440,6 +1454,19 @@ export function liveAnswerPreview(entries: ReadonlyArray<TimelineEntry>): string
     if (line !== "") return line;
   }
   return null;
+}
+
+/** Reads entries before tool visibility filters them, so hidden newer parent work still counts. */
+function runningSubagentsAtRunTail(entries: ReadonlyArray<TimelineEntry>, runId: RunId): number {
+  let running = 0;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (entry.kind !== "event") break;
+    const { item } = entry.projectedItem;
+    if (item.type !== "subagent" || item.runId !== runId) break;
+    if (isLiveSubagentTurnItem(item)) running += 1;
+  }
+  return running;
 }
 
 function timelineRowEntries(
@@ -2126,6 +2153,16 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (timelineEntry.kind === "sent-message") {
+      nextRows.push({
+        kind: "sent-message",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        text: timelineEntry.text,
+      });
+      continue;
+    }
+
     if (timelineEntry.kind === "mcp-app") {
       nextRows.push({
         kind: "mcp-app",
@@ -2297,10 +2334,15 @@ export function deriveMessagesTimelineRows(input: {
       }
       nextRows.push(...viewedImagesRows(groupId, failedGroupAnchor.createdAt, groupedEntries));
     } else {
+      const waitingOn =
+        unsettledRunId === null
+          ? 0
+          : runningSubagentsAtRunTail(input.timelineEntries, unsettledRunId);
       nextRows.push({
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
         createdAt: input.activeTurnStartedAt ?? null,
+        ...(waitingOn > 0 ? { label: waitingOnSubagentsLabel(waitingOn) } : {}),
       });
     }
   }
@@ -2660,7 +2702,12 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       );
     case "thinking": {
       const bt = b as typeof a;
-      return a.createdAt === bt.createdAt && a.groupId === bt.groupId && a.expanded === bt.expanded;
+      return (
+        a.createdAt === bt.createdAt &&
+        a.groupId === bt.groupId &&
+        a.expanded === bt.expanded &&
+        a.label === bt.label
+      );
     }
     case "worktree-setup":
       return a.snapshot === (b as typeof a).snapshot;
@@ -2718,6 +2765,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       // Tool updates rebuild entries; preserve frames for unchanged pages.
       const bh = b as typeof a;
       return a.createdAt === bh.createdAt && htmlRenderReferencesEqual(a.htmlRender, bh.htmlRender);
+    }
+
+    case "sent-message": {
+      const bs = b as typeof a;
+      return a.createdAt === bs.createdAt && a.text === bs.text;
     }
 
     case "mcp-app": {

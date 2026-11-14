@@ -359,6 +359,7 @@ interface ActivePiTurn {
   readonly streamItems: Map<string, PiStreamItemState>;
   readonly toolArgs: Map<string, unknown>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
+  readonly commandOutputBytes: Map<string, number>;
   interrupted: boolean;
   nativeAborted: boolean;
   sawAgentActivity: boolean;
@@ -1193,6 +1194,33 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           { discard: true },
         );
 
+      // Pi resends the whole output tail on every update; stored snapshots grow quadratically.
+      const emitCommandOutputDelta = (turn: ActivePiTurn, toolCallId: string, result: unknown) =>
+        Effect.suspend(() => {
+          const text = contentText(recordField(result, "content"));
+          const tail = Buffer.from(text, "utf8");
+          const totalBytes =
+            recordNumber(recordField(recordField(result, "details"), "truncation"), "totalBytes") ??
+            tail.length;
+          const previousBytes = turn.commandOutputBytes.get(toolCallId) ?? 0;
+          turn.commandOutputBytes.set(toolCallId, totalBytes);
+          if (totalBytes <= previousBytes) return Effect.void;
+          let start = Math.max(0, tail.length - (totalBytes - previousBytes));
+          while (start < tail.length && (tail[start]! & 0xc0) === 0x80) start++;
+          const chunk = tail.subarray(start).toString("utf8");
+          if (chunk.length === 0) return Effect.void;
+          return emit({
+            type: "command_output.delta",
+            driver: PI_PROVIDER,
+            threadId: turn.turnInput.threadId,
+            itemId: idAllocator.derive.turnItemFromProviderItem({
+              driver: PI_PROVIDER,
+              nativeItemId: toolCallId,
+            }),
+            chunk,
+          });
+        });
+
       const emitToolItem = Effect.fnUntraced(function* (
         turn: ActivePiTurn,
         event: PiRpcRecord,
@@ -1203,6 +1231,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         // Pi tags every phase of a call made through ctx.executeTool, such as from a codemode script.
         const parentToolCallId = recordString(event, "parentToolCallId");
         if (toolCallId === undefined) return;
+        if (phase === "update" && (toolName === "bash" || toolName === "powershell")) {
+          yield* emitCommandOutputDelta(turn, toolCallId, event["partialResult"]);
+          return;
+        }
         if (phase === "start") {
           turn.toolArgs.set(toolCallId, event["args"]);
         }
@@ -1439,6 +1471,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         turn: ActivePiTurn,
         nativeItemId: string,
         message: string,
+        level?: "info" | "warning" | "error",
       ) {
         const emittedAt = yield* DateTime.now;
         yield* emitItemNode(turn, nativeItemId, "system", "completed", emittedAt, emittedAt);
@@ -1452,6 +1485,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             title: message,
             type: "system_notice",
             message,
+            ...(level === undefined ? {} : { level }),
           },
         });
       });
@@ -1497,10 +1531,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           const turn = state?.activeTurn ?? null;
           const message = recordString(event, "message") ?? "";
           if (turn === null || message.length === 0) return;
+          const notifyType = recordString(event, "notifyType");
           yield* emitSystemNotice(
             turn,
             `notify:${turn.providerTurn.id}:${turn.nextItemOrdinal}`,
             message,
+            notifyType === "warning" || notifyType === "error" ? notifyType : "info",
           );
           return;
         }
@@ -2906,6 +2942,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               streamItems: new Map(),
               toolArgs: new Map(),
               toolStartedAt: new Map(),
+              commandOutputBytes: new Map(),
               interrupted: false,
               nativeAborted: false,
               sawAgentActivity: false,
