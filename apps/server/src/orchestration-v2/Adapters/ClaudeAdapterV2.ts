@@ -12914,7 +12914,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     return next;
                   });
                 }
-                if (lastResultExpired && !emptyTurnBeforeNextTurn && !newerRootStillOpen) {
+                if (lastResultExpired && newerRootStillOpen) {
+                  // The expired result belongs to an earlier wake, not the
+                  // still-running root. Keep its usage without settling that root,
+                  // even if an empty task result was buffered after the 429.
+                  if (lastResult?.type === "result") {
+                    context.steeredSegmentUsage.push(lastResult.usage);
+                    context.steeredLedgerUsage = addClaudeLedgerUsage(
+                      context.steeredLedgerUsage,
+                      resultLedgerUsage.get(lastResult),
+                    );
+                  }
+                  if (leavesLaterWake) yield* offerBufferedWake(nativeThreadId);
+                  return;
+                }
+                if (lastResultExpired && !emptyTurnBeforeNextTurn) {
                   // The selected wake ended before the limit reset. It is no longer a
                   // rejection of this continuation, so do not fail it or show stale errors.
                   const completedAt = yield* DateTime.now;
