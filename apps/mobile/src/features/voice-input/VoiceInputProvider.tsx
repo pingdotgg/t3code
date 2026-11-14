@@ -13,7 +13,10 @@ import {
   preferredMicrophoneInput,
   rememberMicrophones,
 } from "../../lib/microphonePriority";
-import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
+import {
+  getLocalVoiceTranscriber,
+  getVoiceTranscriberForLocale,
+} from "../../native/voiceTranscription";
 import { createVoiceRecorder } from "../../native/voiceRecorder";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
@@ -124,7 +127,13 @@ const voiceInputAtom = Atom.make((get) => {
       const route = registry.get(voiceRouteAtom);
       if (route) return route.transcriber;
       const transcriber = registry.get(localVoiceTranscriberAtom);
-      return transcriber === "checking" ? null : transcriber;
+      if (transcriber === "checking" || transcriber === null) return null;
+      const preferences = registry.get(mobilePreferencesAtom);
+      if (AsyncResult.isInitial(preferences)) return null;
+      const locale = AsyncResult.isSuccess(preferences)
+        ? preferences.value.dictationLocale
+        : undefined;
+      return (locale ? getVoiceTranscriberForLocale(locale) : null) ?? transcriber;
     },
     requestPermission: permission.requestPermission,
     configureRecording: async () => {

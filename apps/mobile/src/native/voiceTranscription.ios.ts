@@ -51,6 +51,11 @@ export async function getLocalVoiceTranscriber(): Promise<VoiceTranscriber | nul
   return { prepare: (options) => prepareVoiceTranscription(locales, options) };
 }
 
+/** A chosen language stays fixed: one the device can't transcribe fails instead of falling back. */
+export function getVoiceTranscriberForLocale(locale: string): VoiceTranscriber | null {
+  return { prepare: (options) => prepareVoiceTranscription([locale], options) };
+}
+
 async function prepareVoiceTranscription(
   locales: readonly string[],
   { signal }: VoiceTranscriptionOptions,
@@ -101,7 +106,7 @@ async function prepareLocales(locales: readonly string[], signal: AbortSignal): 
   let unsupported: VoiceTranscriptionError | undefined;
   for (const locale of locales) {
     try {
-      return await prepareLocale(locale, signal);
+      return await prepareLocale(locale, locales, signal);
     } catch (error) {
       if (!isVoiceTranscriptionError(error) || error.code !== "unsupported-locale") throw error;
       unsupported = error;
@@ -110,7 +115,11 @@ async function prepareLocales(locales: readonly string[], signal: AbortSignal): 
   throw unsupported!;
 }
 
-async function prepareLocale(locale: string, signal: AbortSignal): Promise<string> {
+async function prepareLocale(
+  locale: string,
+  locales: readonly string[],
+  signal: AbortSignal,
+): Promise<string> {
   try {
     const supportedLocale = await AppleTranscription.prepare(locale);
     throwIfVoiceTranscriptionAborted(signal);
@@ -120,7 +129,10 @@ async function prepareLocale(locale: string, signal: AbortSignal): Promise<strin
     if (getNativeErrorCode(error) === "AppleTranscriptionUnsupportedLocale") {
       throw new VoiceTranscriptionError({
         code: "unsupported-locale",
-        message: "Voice transcription does not support any of your languages.",
+        message:
+          locales.length === 1
+            ? "Voice transcription does not support this language."
+            : "Voice transcription does not support any of your languages.",
         cause: error,
       });
     }

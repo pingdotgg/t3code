@@ -72,6 +72,11 @@ export async function getLocalVoiceTranscriber(): Promise<VoiceTranscriber | nul
   };
 }
 
+// Google's on-device recognizer prepares the device language itself.
+export function getVoiceTranscriberForLocale(_locale: string): VoiceTranscriber | null {
+  return null;
+}
+
 async function runOperation<T>(
   module: GoogleTranscriptionModule,
   signal: AbortSignal,
