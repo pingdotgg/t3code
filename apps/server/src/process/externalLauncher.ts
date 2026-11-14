@@ -33,6 +33,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { makeStaleWhileRevalidate } from "../environment/staleWhileRevalidate.ts";
+import { resolveEditorLaunch } from "./externalLauncherParts.ts";
 export {
   ExternalLauncherError,
   ExternalLauncherBrowserSpawnError,
@@ -43,7 +44,7 @@ export {
   ExternalLauncherUnsupportedTargetError,
 } from "@t3tools/contracts";
 export type { LaunchEditorInput };
-interface EditorLaunch {
+export interface EditorLaunch {
   readonly editor: EditorId;
   readonly target: string;
   readonly command: string;
@@ -119,8 +120,8 @@ const CommandLookupEnvConfig = Config.all({
   "ProgramFiles(x86)": Config.String("ProgramFiles(x86)").pipe(Config.option),
 }).pipe(Config.map(compactEnv));
 
-const readBrowserLaunchEnv = BrowserLaunchEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
-const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
+export const readBrowserLaunchEnv = BrowserLaunchEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
+export const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
 
 function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAndPosition> {
   const match = TARGET_WITH_POSITION_PATTERN.exec(target);
@@ -135,7 +136,7 @@ function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAnd
   });
 }
 
-function resolveCommandEditorArgs(
+export function resolveCommandEditorArgs(
   editor: (typeof EDITORS)[number],
   target: string,
 ): ReadonlyArray<string> {
@@ -300,7 +301,7 @@ const isUsableFileManagerCommand = Effect.fn("externalLauncher.isUsableFileManag
 );
 
 // WSL may lack Explorer on PATH or a distro name while WSLg still offers a Linux file manager.
-const resolveUsableFileManagerCommand = Effect.fn(
+export const resolveUsableFileManagerCommand = Effect.fn(
   "externalLauncher.resolveUsableFileManagerCommand",
 )(function* (
   platform: NodeJS.Platform,
@@ -357,7 +358,7 @@ const fileManagerRevealKindForPlatform = Effect.fn(
   return hasGraphicalLinuxSession(env) ? "files" : undefined;
 });
 
-function resolveWslFileManagerPath(target: string, distroName: string): string {
+export function resolveWslFileManagerPath(target: string, distroName: string): string {
   const relativePath = target.replace(/^\/+/, "").replaceAll("/", "\\");
   return `\\\\wsl.localhost\\${distroName}${relativePath.length > 0 ? `\\${relativePath}` : ""}`;
 }
@@ -456,71 +457,6 @@ export class ExternalLauncher extends Context.Service<
   }
 >()("t3/process/externalLauncher") {}
 
-const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
-  input: LaunchEditorInput,
-): Effect.fn.Return<
-  EditorLaunch,
-  ExternalLauncherError,
-  FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
-> {
-  const platform = yield* HostProcess.Platform;
-  const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
-  yield* Effect.annotateCurrentSpan({
-    "externalLauncher.editor": input.editor,
-    "externalLauncher.cwd": input.cwd,
-    "externalLauncher.platform": platform,
-  });
-  const editorDef = EDITORS.find((editor) => editor.id === input.editor);
-  if (!editorDef) {
-    return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
-  }
-
-  if (editorDef.commands) {
-    const { command, baseArgs } = Option.getOrElse(
-      yield* resolveEditorCommand(editorDef, env),
-      () => ({
-        command: editorDef.commands[0],
-        baseArgs: "baseArgs" in editorDef ? editorDef.baseArgs : [],
-      }),
-    );
-    return {
-      editor: editorDef.id,
-      target: input.cwd,
-      command,
-      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd)],
-    };
-  }
-
-  if (editorDef.id !== "file-manager") {
-    return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
-  }
-
-  const command = yield* resolveUsableFileManagerCommand(platform, env);
-  if (command === undefined) {
-    return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
-  }
-
-  if (input.reveal === true) {
-    return yield* resolveFileManagerRevealLaunch(input.cwd, platform, env, command);
-  }
-
-  return {
-    editor: editorDef.id,
-    target: input.cwd,
-    command,
-    args:
-      command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
-        ? [resolveWslFileManagerPath(input.cwd, env.WSL_DISTRO_NAME)]
-        : platform === "win32"
-          ? // Explorer interprets / as a switch and silently opens a fallback folder.
-            [normalizeWindowsFileManagerPath(input.cwd)]
-          : [input.cwd],
-  };
-});
-
-// A replacement manager registers a default Directory shell verb; stock Windows
-// uses "none". Explorer needs its /select argument passed verbatim through
-// PowerShell because Node's argument quoting changes how Explorer parses it.
 function buildFileManagerRevealPowerShellSource(target: string, parent: string): string {
   const literal = escapePowerShellStringLiteral(target);
   return `$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,"' + ${literal} + '"') }`;
@@ -539,11 +475,11 @@ function powerShellFileManagerLaunch(
   };
 }
 
-function normalizeWindowsFileManagerPath(target: string): string {
+export function normalizeWindowsFileManagerPath(target: string): string {
   return target.replaceAll("/", "\\");
 }
 
-const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch")(function* (
+export const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch")(function* (
   target: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,

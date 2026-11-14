@@ -67,6 +67,7 @@ import * as PeerLinks from "./PeerLinks.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
+import { makeLaptop } from "./RemoteDelegation-fixtures.testkitParts.ts";
 export const delegateToBox = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
   laptopEnv
     .call("delegate_task", {
@@ -685,99 +686,6 @@ export const adapter = {
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 
 
-export const makeLaptop = (
-  database: Context.Context<SqlClient.SqlClient>,
-  offers: SubscriptionRef.SubscriptionRef<
-    ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
-  >,
-  /** The laptop's links from before a restart, which keep their sessions there. */
-  kept?: Context.Context<Layer.Success<ReturnType<typeof layerLinkingEnvironment>>>,
-) =>
-  Effect.gen(function* () {
-    const linking = kept ?? (yield* layerLinkingEnvironment(laptop).pipe(Layer.build));
-    const layerDatabase = Layer.succeedContext(database);
-    const layerOrchestrator = Layer.mergeAll(
-      layerDatabase,
-      ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
-      ProviderReplayHarness.layerWithRegistry(
-        { name: "remote-delegation-laptop" },
-        ProviderAdapterRegistry.layerFromAdapters([adapter]),
-        { databaseLayer: layerDatabase, runEffectWorker: false },
-      ),
-    ).pipe(
-      Layer.provide(
-        Layer.succeed(ProviderContinuationRequests.ProviderContinuationRequests, {
-          offer: (request) => SubscriptionRef.update(offers, (seen) => [...seen, request]),
-          take: Effect.never,
-        }),
-      ),
-    );
-    const layerThreads = ThreadManagement.layer.pipe(
-      Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
-      Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
-    );
-    const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
-      Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-      Layer.provideMerge(
-        RemoteDelegation.layer.pipe(
-          Layer.provideMerge(PeerForwarding.layer),
-          Layer.provide(
-            Layer.mock(ProjectService.ProjectService)({
-              // A cold enrichment cache: the project itself reports no identity yet.
-              getById: () =>
-                Effect.succeedSome({
-                  workspaceRoot: "/home/me/app",
-                  repositoryIdentity: null,
-                } as never),
-            }),
-          ),
-          Layer.provide(
-            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
-              resolve: (cwd) =>
-                Effect.succeed(
-                  cwd === "/home/me/app"
-                    ? ({ canonicalKey: "github.com/acme/app" } as RepositoryIdentity)
-                    : null,
-                ),
-            }),
-          ),
-        ),
-      ),
-      Layer.provide(Layer.succeedContext(linking)),
-      Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
-      Layer.provide(NodeCrypto.layer),
-      Layer.provideMerge(layerThreads),
-      Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
-      Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
-      Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-      Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
-      Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
-      Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
-      Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
-      Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
-      Layer.fresh,
-    );
-    const here = yield* Layer.build(layerHere);
-    const server = Context.get(here, McpServer.McpServer);
-    return {
-      links: Context.get(linking, PeerLinks.PeerLinks),
-      settings: Context.get(linking, ServerSettings.ServerSettingsService),
-      orchestrator: Context.get(here, Orchestrator.OrchestratorV2),
-      remote: Context.get(here, RemoteDelegation.RemoteDelegation),
-      threads: Context.get(here, ThreadManagement.ThreadManagementService),
-      projections: Context.get(here, ProjectionStore.ProjectionStoreV2),
-      sink: Context.get(here, EventSink.EventSinkV2),
-      call: (name: string, args: Record<string, unknown>, scope = parentScope) =>
-        server
-          .callTool({ name, arguments: args })
-          .pipe(
-            Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-            Effect.provideService(McpSchema.McpServerClient, mcpClient),
-          ),
-    };
-  });
-
-
 export const parentThreadId = ThreadId.make("thread:laptop-parent");
 
 export const parentRunId = RunId.make("run:laptop-parent");
@@ -835,3 +743,4 @@ export const stoppedThere = (
           : undefined,
       ),
     );
+export * from "./RemoteDelegation-fixtures.testkitParts.ts";

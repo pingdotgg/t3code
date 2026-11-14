@@ -38,6 +38,7 @@ import {
   signPayload,
   timingSafeEqualBase64Url,
 } from "./utils.ts";
+import { toClientMetadata } from "./SessionStoreParts.ts";
 
 export interface IssuedSession {
   readonly sessionId: AuthSessionId;
@@ -77,7 +78,7 @@ export type SessionCredentialChange =
       readonly sessionId: AuthSessionId;
     };
 
-class MalformedSessionTokenError extends Schema.TaggedError<MalformedSessionTokenError>()(
+export class MalformedSessionTokenError extends Schema.TaggedError<MalformedSessionTokenError>()(
   "MalformedSessionTokenError",
   {},
 ) {
@@ -86,7 +87,7 @@ class MalformedSessionTokenError extends Schema.TaggedError<MalformedSessionToke
   }
 }
 
-class InvalidSessionTokenSignatureError extends Schema.TaggedError<InvalidSessionTokenSignatureError>()(
+export class InvalidSessionTokenSignatureError extends Schema.TaggedError<InvalidSessionTokenSignatureError>()(
   "InvalidSessionTokenSignatureError",
   {},
 ) {
@@ -95,7 +96,7 @@ class InvalidSessionTokenSignatureError extends Schema.TaggedError<InvalidSessio
   }
 }
 
-class InvalidSessionTokenPayloadError extends Schema.TaggedError<InvalidSessionTokenPayloadError>()(
+export class InvalidSessionTokenPayloadError extends Schema.TaggedError<InvalidSessionTokenPayloadError>()(
   "InvalidSessionTokenPayloadError",
   {
     cause: Schema.Defect(),
@@ -106,7 +107,7 @@ class InvalidSessionTokenPayloadError extends Schema.TaggedError<InvalidSessionT
   }
 }
 
-class SessionTokenExpiredError extends Schema.TaggedError<SessionTokenExpiredError>()(
+export class SessionTokenExpiredError extends Schema.TaggedError<SessionTokenExpiredError>()(
   "SessionTokenExpiredError",
   {
     sessionId: AuthSessionId,
@@ -119,7 +120,7 @@ class SessionTokenExpiredError extends Schema.TaggedError<SessionTokenExpiredErr
   }
 }
 
-class UnknownSessionTokenError extends Schema.TaggedError<UnknownSessionTokenError>()(
+export class UnknownSessionTokenError extends Schema.TaggedError<UnknownSessionTokenError>()(
   "UnknownSessionTokenError",
   {
     sessionId: AuthSessionId,
@@ -130,7 +131,7 @@ class UnknownSessionTokenError extends Schema.TaggedError<UnknownSessionTokenErr
   }
 }
 
-class SessionTokenRevokedError extends Schema.TaggedError<SessionTokenRevokedError>()(
+export class SessionTokenRevokedError extends Schema.TaggedError<SessionTokenRevokedError>()(
   "SessionTokenRevokedError",
   {
     sessionId: AuthSessionId,
@@ -142,7 +143,7 @@ class SessionTokenRevokedError extends Schema.TaggedError<SessionTokenRevokedErr
   }
 }
 
-class InvalidSessionExpirationClaimError extends Schema.TaggedError<InvalidSessionExpirationClaimError>()(
+export class InvalidSessionExpirationClaimError extends Schema.TaggedError<InvalidSessionExpirationClaimError>()(
   "InvalidSessionExpirationClaimError",
   {
     sessionId: AuthSessionId,
@@ -154,7 +155,7 @@ class InvalidSessionExpirationClaimError extends Schema.TaggedError<InvalidSessi
   }
 }
 
-class MalformedWebSocketTokenError extends Schema.TaggedError<MalformedWebSocketTokenError>()(
+export class MalformedWebSocketTokenError extends Schema.TaggedError<MalformedWebSocketTokenError>()(
   "MalformedWebSocketTokenError",
   {},
 ) {
@@ -163,7 +164,7 @@ class MalformedWebSocketTokenError extends Schema.TaggedError<MalformedWebSocket
   }
 }
 
-class InvalidWebSocketTokenSignatureError extends Schema.TaggedError<InvalidWebSocketTokenSignatureError>()(
+export class InvalidWebSocketTokenSignatureError extends Schema.TaggedError<InvalidWebSocketTokenSignatureError>()(
   "InvalidWebSocketTokenSignatureError",
   {},
 ) {
@@ -172,7 +173,7 @@ class InvalidWebSocketTokenSignatureError extends Schema.TaggedError<InvalidWebS
   }
 }
 
-class InvalidWebSocketTokenPayloadError extends Schema.TaggedError<InvalidWebSocketTokenPayloadError>()(
+export class InvalidWebSocketTokenPayloadError extends Schema.TaggedError<InvalidWebSocketTokenPayloadError>()(
   "InvalidWebSocketTokenPayloadError",
   {
     cause: Schema.Defect(),
@@ -183,7 +184,7 @@ class InvalidWebSocketTokenPayloadError extends Schema.TaggedError<InvalidWebSoc
   }
 }
 
-class WebSocketTokenExpiredError extends Schema.TaggedError<WebSocketTokenExpiredError>()(
+export class WebSocketTokenExpiredError extends Schema.TaggedError<WebSocketTokenExpiredError>()(
   "WebSocketTokenExpiredError",
   {
     sessionId: AuthSessionId,
@@ -196,7 +197,7 @@ class WebSocketTokenExpiredError extends Schema.TaggedError<WebSocketTokenExpire
   }
 }
 
-class UnknownWebSocketSessionError extends Schema.TaggedError<UnknownWebSocketSessionError>()(
+export class UnknownWebSocketSessionError extends Schema.TaggedError<UnknownWebSocketSessionError>()(
   "UnknownWebSocketSessionError",
   {
     sessionId: AuthSessionId,
@@ -207,7 +208,7 @@ class UnknownWebSocketSessionError extends Schema.TaggedError<UnknownWebSocketSe
   }
 }
 
-class WebSocketSessionExpiredError extends Schema.TaggedError<WebSocketSessionExpiredError>()(
+export class WebSocketSessionExpiredError extends Schema.TaggedError<WebSocketSessionExpiredError>()(
   "WebSocketSessionExpiredError",
   {
     sessionId: AuthSessionId,
@@ -220,7 +221,7 @@ class WebSocketSessionExpiredError extends Schema.TaggedError<WebSocketSessionEx
   }
 }
 
-class WebSocketSessionRevokedError extends Schema.TaggedError<WebSocketSessionRevokedError>()(
+export class WebSocketSessionRevokedError extends Schema.TaggedError<WebSocketSessionRevokedError>()(
   "WebSocketSessionRevokedError",
   {
     sessionId: AuthSessionId,
@@ -232,7 +233,7 @@ class WebSocketSessionRevokedError extends Schema.TaggedError<WebSocketSessionRe
   }
 }
 
-const SessionCredentialInvalidError = Schema.Union([
+export const SessionCredentialInvalidError = Schema.Union([
   MalformedSessionTokenError,
   InvalidSessionTokenSignatureError,
   InvalidSessionTokenPayloadError,
@@ -248,6 +249,7 @@ const SessionCredentialInvalidError = Schema.Union([
   WebSocketSessionExpiredError,
   WebSocketSessionRevokedError,
 ]);
+
 type SessionCredentialInvalidError = typeof SessionCredentialInvalidError.Type;
 export const isSessionCredentialInvalidError = Schema.is(SessionCredentialInvalidError);
 
@@ -462,24 +464,6 @@ const decodeWebSocketClaims = Schema.decodeUnknownEffect(Schema.fromJsonString(W
 function createDefaultClientMetadata(): AuthClientMetadata {
   return {
     deviceType: "unknown",
-  };
-}
-
-function toClientMetadata(record: {
-  readonly label: string | null;
-  readonly ipAddress: string | null;
-  readonly userAgent: string | null;
-  readonly deviceType: AuthClientMetadata["deviceType"];
-  readonly os: string | null;
-  readonly browser: string | null;
-}): AuthClientMetadata {
-  return {
-    ...(record.label ? { label: record.label } : {}),
-    ...(record.ipAddress ? { ipAddress: record.ipAddress } : {}),
-    ...(record.userAgent ? { userAgent: record.userAgent } : {}),
-    deviceType: record.deviceType,
-    ...(record.os ? { os: record.os } : {}),
-    ...(record.browser ? { browser: record.browser } : {}),
   };
 }
 

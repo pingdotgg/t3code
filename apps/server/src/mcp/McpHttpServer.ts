@@ -79,6 +79,10 @@ import {
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 import { requestUrl } from "../requestUrl.ts";
+import { withToolAnalytics } from "./McpHttpServerParts.ts";
+import { boundSnapshotMetadata } from "./McpHttpServerParts2.ts";
+import { registerPreviewSnapshot } from "./McpHttpServerParts3.ts";
+import { registerImageTool } from "./McpHttpServerParts4.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
   requestUrl(request).pipe(
@@ -250,22 +254,22 @@ const layerMcpAuthMiddleware = HttpRouter.middleware<{
 
 /** Claude Code spills oversized results to files, losing locators; bound both text and its preferred structuredContent. */
 export const MAX_SNAPSHOT_TEXT_BYTES = 20_000;
-const MAX_SNAPSHOT_VISIBLE_TEXT_CHARS = 8_000;
-const MAX_SNAPSHOT_ELEMENT_NAME_CHARS = 200;
-const MAX_SNAPSHOT_LOG_ENTRIES = 40;
-const MAX_SNAPSHOT_LOG_TEXT_CHARS = 500;
-const MAX_SNAPSHOT_IDENTIFIER_CHARS = 2_048;
+export const MAX_SNAPSHOT_VISIBLE_TEXT_CHARS = 8_000;
+export const MAX_SNAPSHOT_ELEMENT_NAME_CHARS = 200;
+export const MAX_SNAPSHOT_LOG_ENTRIES = 40;
+export const MAX_SNAPSHOT_LOG_TEXT_CHARS = 500;
+export const MAX_SNAPSHOT_IDENTIFIER_CHARS = 2_048;
 
-const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-const utf8Length = (text: string) => Buffer.byteLength(text, "utf8");
-const cutText = (text: string, max: number) => {
+export const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+export const utf8Length = (text: string) => Buffer.byteLength(text, "utf8");
+export const cutText = (text: string, max: number) => {
   if (text.length <= max) return text;
   // Half an emoji serializes to a lone surrogate escape, which provider JSON parsers reject.
   const last = text.charCodeAt(max - 1);
   return `${text.slice(0, last >= 0xd800 && last <= 0xdbff ? max - 1 : max)}…`;
 };
 
-const cutEntryStrings = <A>(entry: A): A =>
+export const cutEntryStrings = <A>(entry: A): A =>
   typeof entry === "object" && entry !== null
     ? (Object.fromEntries(
         Object.entries(entry).map(([key, value]) => [
@@ -275,12 +279,12 @@ const cutEntryStrings = <A>(entry: A): A =>
       ) as A)
     : entry;
 
-const hasLongString = (entry: unknown, max: number) =>
+export const hasLongString = (entry: unknown, max: number) =>
   typeof entry === "object" &&
   entry !== null &&
   Object.values(entry).some((value) => typeof value === "string" && value.length > max);
 
-type SnapshotMetadata = {
+export type SnapshotMetadata = {
   readonly url: string;
   readonly title: string;
   readonly visibleText: string;
@@ -292,123 +296,6 @@ type SnapshotMetadata = {
   readonly networkEntries: ReadonlyArray<unknown>;
   readonly actionTimeline: ReadonlyArray<unknown>;
   readonly [key: string]: unknown;
-};
-
-const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
-  const omitted: Array<string> = [];
-  const { accessibilityTree, ...withoutTree } = metadata;
-  const ariaTree = typeof accessibilityTree === "string" ? accessibilityTree : undefined;
-  if (accessibilityTree !== undefined && ariaTree === undefined) {
-    omitted.push("accessibilityTree (use interactiveElements locators or preview_evaluate)");
-  }
-  const tail = <A>(entries: ReadonlyArray<A>, label: string) => {
-    if (entries.length > MAX_SNAPSHOT_LOG_ENTRIES) {
-      omitted.push(`${entries.length - MAX_SNAPSHOT_LOG_ENTRIES} older ${label}`);
-    }
-    const kept = entries.slice(-MAX_SNAPSHOT_LOG_ENTRIES);
-    if (kept.some((entry) => hasLongString(entry, MAX_SNAPSHOT_LOG_TEXT_CHARS))) {
-      omitted.push(`${label} text after ${MAX_SNAPSHOT_LOG_TEXT_CHARS} characters`);
-    }
-    return kept.map(cutEntryStrings);
-  };
-  if (
-    metadata.url.length > MAX_SNAPSHOT_IDENTIFIER_CHARS ||
-    metadata.title.length > MAX_SNAPSHOT_IDENTIFIER_CHARS
-  ) {
-    omitted.push(`url or title after ${MAX_SNAPSHOT_IDENTIFIER_CHARS} characters`);
-  }
-  if (
-    metadata.interactiveElements.some(
-      (element) => element.name.length > MAX_SNAPSHOT_ELEMENT_NAME_CHARS,
-    )
-  ) {
-    omitted.push(`element names longer than ${MAX_SNAPSHOT_ELEMENT_NAME_CHARS} characters`);
-  }
-  const bounded = {
-    ...withoutTree,
-    url: cutText(metadata.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
-    title: cutText(metadata.title, MAX_SNAPSHOT_IDENTIFIER_CHARS),
-    interactiveElements: metadata.interactiveElements.map((element) => ({
-      ...element,
-      name: cutText(element.name, MAX_SNAPSHOT_ELEMENT_NAME_CHARS),
-    })),
-    consoleEntries: tail(metadata.consoleEntries, "console entries"),
-    networkEntries: tail(metadata.networkEntries, "network entries"),
-    actionTimeline: tail(metadata.actionTimeline, "action timeline entries"),
-  };
-
-  // Per-field character caps can still exceed the total byte ceiling.
-  const shedOrder = [
-    "actionTimeline",
-    "networkEntries",
-    "consoleEntries",
-    "interactiveElements",
-  ] as const;
-  const lists: Record<(typeof shedOrder)[number], ReadonlyArray<unknown>> = {
-    interactiveElements: bounded.interactiveElements,
-    consoleEntries: bounded.consoleEntries,
-    networkEntries: bounded.networkEntries,
-    actionTimeline: bounded.actionTimeline,
-  };
-  const dropped: Record<(typeof shedOrder)[number], number> = {
-    interactiveElements: 0,
-    consoleEntries: 0,
-    networkEntries: 0,
-    actionTimeline: 0,
-  };
-  let visibleTextChars = Math.min(metadata.visibleText.length, MAX_SNAPSHOT_VISIBLE_TEXT_CHARS);
-  let ariaTreeChars = Math.min(ariaTree?.length ?? 0, 20_000);
-  const value = () => ({
-    ...bounded,
-    ...(ariaTree === undefined ? {} : { accessibilityTree: cutText(ariaTree, ariaTreeChars) }),
-    visibleText: cutText(metadata.visibleText, visibleTextChars),
-    ...lists,
-  });
-  let text = encodeJsonText(value());
-  while (utf8Length(text) > MAX_SNAPSHOT_TEXT_BYTES) {
-    // Elements carry the locators, so they go last; logs shed newest-last.
-    const key =
-      shedOrder.find(
-        (candidate) => candidate !== "interactiveElements" && lists[candidate].length > 0,
-      ) ??
-      (visibleTextChars > 0
-        ? "visibleText"
-        : lists.interactiveElements.length > 0
-          ? "interactiveElements"
-          : ariaTreeChars > 0
-            ? "accessibilityTree"
-            : undefined);
-    if (key === undefined) break;
-    if (key === "visibleText") {
-      visibleTextChars = Math.floor(visibleTextChars / 2);
-    } else if (key === "accessibilityTree") {
-      ariaTreeChars = Math.floor(ariaTreeChars / 2);
-    } else {
-      const keep = Math.floor(lists[key].length / 2);
-      dropped[key] += lists[key].length - keep;
-      lists[key] =
-        keep === 0
-          ? []
-          : key === "interactiveElements"
-            ? lists[key].slice(0, keep)
-            : lists[key].slice(-keep);
-    }
-    text = encodeJsonText(value());
-  }
-  if (visibleTextChars < metadata.visibleText.length) {
-    omitted.push(
-      `visibleText after ${visibleTextChars} characters (use preview_evaluate for more)`,
-    );
-  }
-  if (ariaTree !== undefined && ariaTreeChars < ariaTree.length) {
-    omitted.push(`accessibilityTree after ${ariaTreeChars} characters`);
-  }
-  for (const key of shedOrder) {
-    if (dropped[key] > 0) {
-      omitted.push(`${dropped[key]} of ${bounded[key].length} ${key}`);
-    }
-  }
-  return { value: value(), text, omitted };
 };
 
 class PreviewScreenshotSaveError extends Schema.TaggedError<PreviewScreenshotSaveError>()(
@@ -436,7 +323,7 @@ const screenshotSiteSlug = (rawUrl: string): string => {
   }
 };
 
-const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
+export const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
   pageUrl: string,
   data: Uint8Array,
 ) {
@@ -456,7 +343,7 @@ const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
 });
 
 /** Decode with the advertised JSON codec, which permits null for optional fields that the raw schema rejects. */
-const decodeAsAdvertised = <Tools extends Record<string, Tool.Any>>(
+export const decodeAsAdvertised = <Tools extends Record<string, Tool.Any>>(
   toolkit: Toolkit.Toolkit<Tools>,
 ): Toolkit.Toolkit<Tools> =>
   Toolkit.make(
@@ -467,7 +354,7 @@ const decodeAsAdvertised = <Tools extends Record<string, Tool.Any>>(
 
 const isPreviewAutomationError = Schema.is(PreviewAutomationError);
 
-const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
+export const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
   cause: Cause.Cause<E>,
 ) {
   if (Cause.hasInterrupts(cause) || cause.reasons.some(Cause.isDieReason)) {
@@ -504,123 +391,7 @@ const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
   }).pipe(Effect.as(result));
 });
 
-const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot")(function* () {
-  const server = yield* McpServer.McpServer;
-  const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
-  const threads = yield* ThreadManagementService.ThreadManagementService;
-  const saveServices = yield* Effect.context<
-    ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path | SecureRandom.SecureRandom
-  >();
-  const built = yield* decodeAsAdvertised(PreviewSnapshotToolkit);
-  const tool = PreviewSnapshotTool;
-  yield* server.addTool({
-    tool: new McpSchema.Tool({
-      name: tool.name,
-      description: Tool.getDescription(tool),
-      inputSchema: advertisedJsonSchema(tool),
-      annotations: {
-        ...Context.getOption(tool.annotations, Tool.Title).pipe(
-          Option.map((title) => ({ title })),
-          Option.getOrUndefined,
-        ),
-        readOnlyHint: Context.get(tool.annotations, Tool.Readonly),
-        destructiveHint: Context.get(tool.annotations, Tool.Destructive),
-        idempotentHint: Context.get(tool.annotations, Tool.Idempotent),
-        openWorldHint: Context.get(tool.annotations, Tool.OpenWorld),
-      },
-    }),
-    annotations: tool.annotations,
-    handle: (payload) =>
-      Effect.withFiber((fiber) => {
-        const invocation = Context.getUnsafe(
-          fiber.context,
-          McpInvocationContext.McpInvocationContext,
-        );
-        return built.handle("preview_snapshot", payload).pipe(
-          Stream.unwrap,
-          Stream.run(Sink.last()),
-          Effect.flatMap(Effect.fromOption),
-          Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, broker),
-          Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
-          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-          Effect.flatMap(({ encodedResult }) =>
-            Effect.gen(function* () {
-              const snapshot = encodedResult as SnapshotMetadata & {
-                readonly url: string;
-                readonly screenshot: {
-                  readonly mimeType: "image/png";
-                  readonly data: string;
-                  readonly width: number;
-                  readonly height: number;
-                };
-              };
-              const { screenshot, ...page } = snapshot;
-              const png = new Uint8Array(Buffer.from(screenshot.data, "base64"));
-              const screenshotPath =
-                payload?.save === true ? yield* saveScreenshot(snapshot.url, png) : undefined;
-              // Providers replay images on later requests, and some reject them; include images only when requested.
-              const includeImage = payload?.includeImage === true;
-              if (screenshotPath !== undefined && !includeImage) {
-                const saved = {
-                  url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
-                  screenshotPath,
-                };
-                return new McpSchema.CallToolResult({
-                  isError: false,
-                  structuredContent: saved,
-                  content: [{ type: "text", text: encodeJsonText(saved) }],
-                });
-              }
-              const metadata = {
-                ...page,
-                screenshot: {
-                  mimeType: screenshot.mimeType,
-                  width: screenshot.width,
-                  height: screenshot.height,
-                },
-                ...(screenshotPath === undefined ? {} : { screenshotPath }),
-              };
-              const bounded = boundSnapshotMetadata(metadata);
-              return new McpSchema.CallToolResult({
-                isError: false,
-                structuredContent:
-                  bounded.omitted.length === 0
-                    ? bounded.value
-                    : { ...bounded.value, omitted: bounded.omitted },
-                content: [
-                  {
-                    type: "text",
-                    text: encodeJsonText({
-                      url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
-                    }),
-                  },
-                  { type: "text", text: bounded.text },
-                  ...(bounded.omitted.length === 0
-                    ? []
-                    : [
-                        {
-                          type: "text" as const,
-                          text: `Snapshot text was bounded. Omitted: ${bounded.omitted.join("; ")}.`,
-                        },
-                      ]),
-                  ...(includeImage
-                    ? [{ type: "image" as const, data: png, mimeType: screenshot.mimeType }]
-                    : []),
-                ],
-              });
-            }),
-          ),
-          Effect.provide(saveServices),
-          Effect.matchCauseEffect({
-            onFailure: previewSnapshotFailure,
-            onSuccess: Effect.succeed,
-          }),
-        );
-      }),
-  });
-});
-
-interface ImageToolResult {
+export interface ImageToolResult {
   readonly screenshot: {
     readonly mimeType: "image/png";
     readonly data: string;
@@ -631,7 +402,7 @@ interface ImageToolResult {
 }
 
 /** Expose only undescribed failures' tags; remote messages may contain renderer or device output. */
-const imageToolFailure =
+export const imageToolFailure =
   <E>(toolName: string, operation: string, failureText: string | ((error: E) => string)) =>
   (cause: Cause.Cause<E>) => {
     if (Cause.hasInterrupts(cause) || cause.reasons.some(Cause.isDieReason)) {
@@ -679,89 +450,6 @@ const imageToolFailure =
  * `McpServer.toolkit` serializes every result as JSON text, which is the wrong
  * shape for a screenshot: the model needs image content.
  */
-const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function* <
-  T extends Tool.Any,
-  E,
-  R,
->(
-  tool: T,
-  handle: (payload: Tool.Parameters<T>) => Effect.Effect<{ readonly encodedResult: unknown }, E, R>,
-  provide: (
-    effect: Effect.Effect<{ readonly encodedResult: unknown }, E, R>,
-  ) => Effect.Effect<
-    { readonly encodedResult: unknown },
-    E,
-    McpInvocationContext.McpInvocationContext
-  >,
-  operation: string,
-  failureText: string | ((error: E) => string),
-) {
-  const server = yield* McpServer.McpServer;
-  yield* server.addTool({
-    tool: new McpSchema.Tool({
-      name: tool.name,
-      description: Tool.getDescription(tool),
-      inputSchema: advertisedJsonSchema(tool),
-      annotations: {
-        ...Context.getOption(tool.annotations, Tool.Title).pipe(
-          Option.map((title) => ({ title })),
-          Option.getOrUndefined,
-        ),
-        readOnlyHint: Context.get(tool.annotations, Tool.Readonly),
-        destructiveHint: Context.get(tool.annotations, Tool.Destructive),
-        idempotentHint: Context.get(tool.annotations, Tool.Idempotent),
-        openWorldHint: Context.get(tool.annotations, Tool.OpenWorld),
-      },
-    }),
-    annotations: tool.annotations,
-    handle: (payload) =>
-      Effect.withFiber((fiber) => {
-        const invocation = Context.getUnsafe(
-          fiber.context,
-          McpInvocationContext.McpInvocationContext,
-        );
-        return provide(handle(payload as Tool.Parameters<T>)).pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-          Effect.matchCauseEffect({
-            onFailure: imageToolFailure(tool.name, operation, failureText),
-            onSuccess: ({ encodedResult }) => {
-              const { screenshot, ...rest } = encodedResult as ImageToolResult;
-              const includeImage =
-                (payload as { readonly includeImage?: boolean } | undefined)?.includeImage !==
-                false;
-              const metadata = {
-                ...rest,
-                screenshot: {
-                  mimeType: screenshot.mimeType,
-                  width: screenshot.width,
-                  height: screenshot.height,
-                },
-              };
-              return Effect.succeed(
-                new McpSchema.CallToolResult({
-                  isError: false,
-                  structuredContent: metadata,
-                  content: [
-                    { type: "text", text: JSON.stringify(metadata) },
-                    ...(includeImage
-                      ? [
-                          {
-                            type: "image" as const,
-                            data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
-                            mimeType: screenshot.mimeType,
-                          },
-                        ]
-                      : []),
-                  ],
-                }),
-              );
-            },
-          }),
-        );
-      }),
-  });
-});
-
 const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreenshot")(function* () {
   const devices = yield* DeviceService.DeviceService;
   const threads = yield* ThreadManagementService.ThreadManagementService;
@@ -820,7 +508,7 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
  * Tools that hand work to another thread's agent: they create it, message it,
  * steer it, or move context into it. Their events name the receiving agent too.
  */
-const HANDOFF_TOOLS: ReadonlySet<string> = new Set([
+export const HANDOFF_TOOLS: ReadonlySet<string> = new Set([
   "delegate_task",
   "create_threads",
   "t3_thread_launch",
@@ -837,11 +525,11 @@ const INPUT_TARGET_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
 };
 
 /** Tool actions that hand work over and name the receiving thread in their result. */
-const RESULT_TARGET_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
+export const RESULT_TARGET_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
   t3_thread_transfer: new Set(["fork", "merge_back"]),
 };
 
-const hasAction = (
+export const hasAction = (
   actions: Readonly<Record<string, ReadonlySet<string>>>,
   tool: string,
   args: unknown,
@@ -849,7 +537,7 @@ const hasAction = (
   actions[tool]?.has(String((args as { readonly action?: unknown } | null | undefined)?.action)) ===
   true;
 
-const isInputTargetHandoff = (tool: string, args: unknown) =>
+export const isInputTargetHandoff = (tool: string, args: unknown) =>
   hasAction(INPUT_TARGET_ACTIONS, tool, args);
 
 const resultThreadKeys = ["childThreadId", "targetThreadId", "boundThreadId", "threadId"] as const;
@@ -867,7 +555,7 @@ const resultThreadIds = (content: unknown): ReadonlyArray<string> => {
  * Thread ids that received a handoff. The input's `threadId` is used only after
  * the call succeeded, so it is one the handler already resolved and authorized.
  */
-const handoffTargetIds = (
+export const handoffTargetIds = (
   tool: string,
   args: unknown,
   result: McpSchema.CallToolResult | undefined,
@@ -879,150 +567,6 @@ const handoffTargetIds = (
 };
 
 /** Tool analytics must never include IDs, prompts or free text. */
-const withToolAnalytics =
-  /* Request instrumentation already owns the span; keep this helper in that context. */
-  Effect.fnUntraced(function* <A, E, R>(registration: Effect.Effect<A, E, R>) {
-    const server = yield* McpServer.McpServer;
-    const analytics = yield* Effect.serviceOption(AnalyticsService.AnalyticsService);
-    if (Option.isNone(analytics)) return yield* registration;
-    const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
-    const threads = yield* Effect.serviceOption(ThreadManagementService.ThreadManagementService);
-    const shellOf = (threadId: string) =>
-      Option.isNone(threads)
-        ? Effect.succeed(null)
-        : threads.value
-            .getThreadShell(ThreadId.make(threadId))
-            .pipe(Effect.orElseSucceed(() => null));
-    // Delegation depth: parents walked from the caller, capped.
-    const depthOf =
-      /* Request instrumentation already owns the span; keep this helper in that context. */
-      Effect.fnUntraced(function* (thread: AgentThread) {
-        let depth = 0;
-        let parentId =
-          thread.lineage.relationshipToParent === "subagent" ? thread.lineage.parentThreadId : null;
-        while (parentId !== null && depth < MAX_REPORTED_DEPTH) {
-          depth += 1;
-          const parent = yield* shellOf(parentId);
-          parentId =
-            parent?.lineage.relationshipToParent === "subagent"
-              ? parent.lineage.parentThreadId
-              : null;
-        }
-        return depth;
-      });
-    // Whether the caller's active run was started by a scheduled task.
-    const scheduledRunOf = (threadId: string, runId: RunId | null) =>
-      Option.isNone(threads) || runId === null
-        ? Effect.succeed(false)
-        : threads.value
-            .getThreadRecords(ThreadId.make(threadId), ["runs", "messages"], {
-              runIds: [runId],
-              messageRoles: ["user"],
-            })
-            .pipe(
-              Effect.map((records) => {
-                const run = records.runs.find((candidate) => candidate.id === runId);
-                return records.messages.some(
-                  (message) =>
-                    message.id === run?.userMessageId && message.scheduledTaskId !== undefined,
-                );
-              }),
-              Effect.orElseSucceed(() => false),
-            );
-    const record =
-      /* Request instrumentation already owns the span; keep this helper in that context. */
-      Effect.fnUntraced(
-        function* (
-          tool: string,
-          args: unknown,
-          result: McpSchema.CallToolResult | undefined,
-          durationMs: number,
-        ) {
-          const handoff =
-            HANDOFF_TOOLS.has(tool) ||
-            isInputTargetHandoff(tool, args) ||
-            hasAction(RESULT_TARGET_ACTIONS, tool, args);
-          const outcome = toolOutcome(result);
-          // Agents call status, read, and preview tools in tight loops, so an
-          // event per successful call floods analytics. Only failures count there.
-          if (!handoff && outcome.outcome === "ok") return;
-          // Client credentials (no calling thread) report an unknown caller.
-          const invocation = Option.getOrUndefined(
-            yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
-          )?.thread;
-          const providers = Option.isSome(registry) ? yield* registry.value.getProviders : [];
-          // Only handoff tools pay for thread lookups; the rest report the
-          // caller's provider from the credential.
-          const caller =
-            handoff && invocation !== undefined
-              ? ((yield* shellOf(invocation.threadId)) ?? undefined)
-              : undefined;
-          const targetIds = handoff
-            ? [...new Set(handoffTargetIds(tool, args, result))].filter(
-                (threadId) => threadId !== invocation?.threadId,
-              )
-            : [];
-          const targets = yield* Effect.forEach(targetIds, shellOf);
-          for (const properties of agentToolProperties({
-            tool,
-            providers,
-            caller,
-            ...(invocation === undefined
-              ? {}
-              : { callerProviderInstanceId: invocation.providerInstanceId }),
-            ...(caller === undefined || invocation === undefined
-              ? {}
-              : {
-                  callerDepth: yield* depthOf(caller),
-                  callerScheduledRun: yield* scheduledRunOf(
-                    invocation.threadId,
-                    caller.activeRunId,
-                  ),
-                }),
-            targets: targets.filter((thread) => thread !== null),
-            outcome,
-            ...(handoff
-              ? { settings: handoffSettings(tool, args, result?.structuredContent) }
-              : {}),
-            durationMs,
-          })) {
-            yield* analytics.value.record("mcp.tool.invoked", properties);
-          }
-        },
-        (effect, _tool, _args, _result, _durationMs) => effect.pipe(Effect.ignoreCause),
-      );
-    const recordingServer = McpServer.McpServer.of({
-      ...server,
-      addTool: Effect.fn("McpServer.addTool")(function (options) {
-        return server.addTool({
-          ...options,
-          handle:
-            /* Request instrumentation already owns the span; keep this helper in that context. */
-            Effect.fnUntraced(function* (payload) {
-              const startedAt = yield* Clock.currentTimeMillis;
-              return yield* options.handle(payload).pipe(
-                Effect.onExit((exit) => {
-                  const result = exit._tag === "Success" ? exit.value : undefined;
-                  // A call that asks for input is retried with it, and that call is the one counted.
-                  if (result instanceof McpSchema.InputRequired) return Effect.void;
-                  // Handoff tools look up threads to record; the response must not wait on them.
-                  return Clock.currentTimeMillis.pipe(
-                    Effect.flatMap((endedAt) =>
-                      record(options.tool.name, payload, result, endedAt - startedAt),
-                    ),
-                    Effect.forkDetach,
-                    Effect.asVoid,
-                  );
-                }),
-              );
-            }),
-        });
-      }),
-    });
-    return yield* registration.pipe(Effect.provideService(McpServer.McpServer, recordingServer));
-  });
-
-/** `McpServer.registerToolkit` advertises the full codec schema; agents get the compact one. */
 const withAdvertisedSchemas = Effect.fn("McpHttpServer.withAdvertisedSchemas")(function* <
   Tools extends Record<string, Tool.Any>,
   A,

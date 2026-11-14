@@ -70,33 +70,33 @@ export class PortDiscovery extends Context.Service<
 export const AGENT_THREAD_ENV = "T3CODE_THREAD_ID";
 
 /** `0` turns off listener discovery; configured preview URLs are still probed. */
-const PORT_DISCOVERY_ENV = "T3CODE_PORT_DISCOVERY";
+export const PORT_DISCOVERY_ENV = "T3CODE_PORT_DISCOVERY";
 
-const POLL_INTERVAL = Duration.seconds(3);
-const LSOF_TIMEOUT_MS = 5_000;
-const PROC_FD_WALK_LIMIT = 50_000;
-const SOCKET_OWNER_ATTEMPTS = 3;
-const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
-const WEB_PROBE_TIMEOUT = Duration.seconds(1);
-const WEB_PROBE_CACHE_TTL_MS = Duration.toMillis(Duration.seconds(15));
+export const POLL_INTERVAL = Duration.seconds(3);
+export const LSOF_TIMEOUT_MS = 5_000;
+export const PROC_FD_WALK_LIMIT = 50_000;
+export const SOCKET_OWNER_ATTEMPTS = 3;
+export const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
+export const WEB_PROBE_TIMEOUT = Duration.seconds(1);
+export const WEB_PROBE_CACHE_TTL_MS = Duration.toMillis(Duration.seconds(15));
 /** Bounds how long a cached Windows image name can outlive its process if Windows reuses the PID. */
-const WINDOWS_PROCESS_NAME_TTL_MS = Duration.toMillis(Duration.seconds(60));
-const WINDOWS_PROCESS_NAME_CONCURRENCY = 4;
-const WEB_PROBE_CONCURRENCY = 16;
-const NAVIGATION_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
-const PS_TIMEOUT_MS = 5_000;
-const PS_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
-const STOP_GRACE_MS = 3_000;
-const STOP_POLL_INTERVAL = Duration.millis(250);
+export const WINDOWS_PROCESS_NAME_TTL_MS = Duration.toMillis(Duration.seconds(60));
+export const WINDOWS_PROCESS_NAME_CONCURRENCY = 4;
+export const WEB_PROBE_CONCURRENCY = 16;
+export const NAVIGATION_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+export const PS_TIMEOUT_MS = 5_000;
+export const PS_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+export const STOP_GRACE_MS = 3_000;
+export const STOP_POLL_INTERVAL = Duration.millis(250);
 
-type Listener = (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>;
+export type Listener = (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>;
 
-interface ListenerSubscription {
+export interface ListenerSubscription {
   readonly configuredUrls: ReadonlyArray<string>;
   readonly lastSnapshot: ReadonlyArray<DiscoveredLocalServer>;
 }
 
-interface ScannerState {
+export interface ScannerState {
   readonly listeners: ReadonlyMap<Listener, ListenerSubscription>;
   readonly terminalProcesses: ReadonlyMap<
     string,
@@ -113,11 +113,11 @@ interface TerminalProcessOwner {
   readonly terminalId: string;
 }
 
-type ServerOwner = Pick<DiscoveredLocalServer, "terminal" | "agent">;
+export type ServerOwner = Pick<DiscoveredLocalServer, "terminal" | "agent">;
 
-const UNOWNED: ServerOwner = { terminal: null, agent: null };
+export const UNOWNED: ServerOwner = { terminal: null, agent: null };
 
-const isOwned = (server: DiscoveredLocalServer): boolean =>
+export const isOwned = (server: DiscoveredLocalServer): boolean =>
   server.terminal !== null || (server.agent ?? null) !== null;
 
 interface ProcessTableRow {
@@ -126,24 +126,24 @@ interface ProcessTableRow {
   readonly pgid: number;
 }
 
-interface WebProbeCacheEntry {
+export interface WebProbeCacheEntry {
   readonly pid: number | null;
   readonly isWeb: boolean;
   readonly expiresAtMillis: number;
 }
 
-interface WebProbeGroup {
+export interface WebProbeGroup {
   readonly server: DiscoveredLocalServer;
   readonly url: string;
   readonly configuredKey: string;
 }
 
-interface WebProbeSnapshot {
+export interface WebProbeSnapshot {
   readonly discovered: ReadonlyArray<DiscoveredLocalServer>;
   readonly configured: ReadonlyMap<string, DiscoveredLocalServer>;
 }
 
-const terminalOwnerKey = (owner: {
+export const terminalOwnerKey = (owner: {
   readonly threadId: string;
   readonly terminalId: string;
 }): string => `${owner.threadId}\u0000${owner.terminalId}`;
@@ -159,19 +159,19 @@ const parseConfiguredUrl = (raw: string): URL | null => {
   }
 };
 
-const localServerKey = (host: string, port: number): string =>
+export const localServerKey = (host: string, port: number): string =>
   `${isLoopbackHost(host) ? "loopback" : host.toLowerCase()}:${port}`;
 
-const urlPort = (url: URL): number =>
+export const urlPort = (url: URL): number =>
   url.port.length > 0 ? Number.parseInt(url.port, 10) : url.protocol === "http:" ? 80 : 443;
 
-const webProbeCacheKey = (raw: string): string => {
+export const webProbeCacheKey = (raw: string): string => {
   const url = new URL(raw);
   url.hash = "";
   return url.href;
 };
 
-const normalizeConfiguredUrls = (urls: ReadonlyArray<string>): ReadonlyArray<string> => [
+export const normalizeConfiguredUrls = (urls: ReadonlyArray<string>): ReadonlyArray<string> => [
   ...new Set(
     urls
       .slice(0, CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS)
@@ -186,7 +186,7 @@ const normalizeConfiguredUrls = (urls: ReadonlyArray<string>): ReadonlyArray<str
   ),
 ];
 
-const projectWebProbeSnapshot = (
+export const projectWebProbeSnapshot = (
   snapshot: WebProbeSnapshot,
   configuredUrls: ReadonlyArray<string>,
 ): ReadonlyArray<DiscoveredLocalServer> => {
@@ -211,7 +211,7 @@ const projectWebProbeSnapshot = (
   return [...visibleByServer.values()].toSorted((left, right) => left.port - right.port);
 };
 
-const parseLsofOutput = (
+export const parseLsofOutput = (
   raw: string,
   owners: ReadonlyMap<number, ServerOwner> = new Map(),
 ): ReadonlyArray<DiscoveredLocalServer> => {
@@ -271,10 +271,10 @@ const parsePortFromLsofName = (name: string): number | null => {
   return port;
 };
 
-const exitedWithError = (result: ProcessRunner.ProcessRunOutput): boolean =>
+export const exitedWithError = (result: ProcessRunner.ProcessRunOutput): boolean =>
   result.code !== null && result.code !== 0;
 
-const parseTasklistProcessName = (raw: string, pid: number): string | null => {
+export const parseTasklistProcessName = (raw: string, pid: number): string | null => {
   for (const line of raw.split(/\r?\n/g)) {
     const match = /^"([^"]*)","(\d+)"/.exec(line.trim());
     if (match && Number(match[2]) === pid) return match[1]!.replace(/\.exe$/i, "") || null;
@@ -282,7 +282,7 @@ const parseTasklistProcessName = (raw: string, pid: number): string | null => {
   return null;
 };
 
-const discoveredWindowsListeners = (
+export const discoveredWindowsListeners = (
   listeners: ReadonlyArray<WindowsTcpListeners.WindowsTcpListener>,
   owners: ReadonlyMap<number, ServerOwner>,
 ): ReadonlyArray<DiscoveredLocalServer> => {
@@ -318,7 +318,7 @@ const procLocalAddress = (hex: string): boolean => {
   return hex.startsWith(`${"0".repeat(16)}FFFF0000`) && procLocalAddress(hex.slice(24));
 };
 
-const parseProcNetTcp = (
+export const parseProcNetTcp = (
   raw: string,
 ): ReadonlyArray<{ readonly port: number; readonly inode: string }> => {
   const listeners: Array<{ port: number; inode: string }> = [];
@@ -336,7 +336,7 @@ const parseProcNetTcp = (
 };
 
 /** Processes holding a loopback or wildcard listener in `lsof -F pcn` output. */
-const lsofProcessIds = (raw: string): ReadonlyArray<number> => {
+export const lsofProcessIds = (raw: string): ReadonlyArray<number> => {
   const pids = new Set<number>();
   let pid: number | null = null;
   for (const line of raw.split("\n")) {
@@ -357,7 +357,7 @@ const lsofProcessIds = (raw: string): ReadonlyArray<number> => {
 const AGENT_THREAD_ASSIGNMENT = new RegExp(`(?:^|\\s)${AGENT_THREAD_ENV}=(\\S+)`);
 
 /** Reads `/proc/<pid>/environ`, whose entries are NUL-separated. */
-const parseProcEnvironThread = (raw: string): ThreadId | null => {
+export const parseProcEnvironThread = (raw: string): ThreadId | null => {
   const prefix = `${AGENT_THREAD_ENV}=`;
   const value = raw
     .split("\0")
@@ -371,7 +371,7 @@ const parseProcEnvironThread = (raw: string): ThreadId | null => {
  * Reads macOS `ps -E -o pid=,command=`, which appends each process's launch environment to its
  * argv with spaces, so an argument that spells the assignment out also matches.
  */
-const parsePsEnvironmentThreads = (raw: string): ReadonlyMap<number, ThreadId | null> => {
+export const parsePsEnvironmentThreads = (raw: string): ReadonlyMap<number, ThreadId | null> => {
   const threads = new Map<number, ThreadId | null>();
   for (const line of raw.split("\n")) {
     const match = /^\s*(\d+)\s(.*)$/.exec(line);
@@ -382,7 +382,7 @@ const parsePsEnvironmentThreads = (raw: string): ReadonlyMap<number, ThreadId | 
   return threads;
 };
 
-const parseProcessTable = (raw: string): ReadonlyMap<number, ProcessTableRow> => {
+export const parseProcessTable = (raw: string): ReadonlyMap<number, ProcessTableRow> => {
   const rows = new Map<number, ProcessTableRow>();
   for (const line of raw.split("\n")) {
     const [pid, ppid, pgid] = line.trim().split(/\s+/).map(Number);
@@ -419,7 +419,7 @@ export const stoppableProcessGroup = (
   return group;
 };
 
-const serversEqual = (
+export const serversEqual = (
   left: ReadonlyArray<DiscoveredLocalServer>,
   right: ReadonlyArray<DiscoveredLocalServer>,
 ): boolean => {
@@ -444,10 +444,10 @@ const serversEqual = (
   return true;
 };
 
-const isNoSuchProcess = (cause: unknown): boolean =>
+export const isNoSuchProcess = (cause: unknown): boolean =>
   typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ESRCH";
 
-const isCommandNotFound = (error: ProcessRunner.ProcessSpawnError): boolean =>
+export const isCommandNotFound = (error: ProcessRunner.ProcessSpawnError): boolean =>
   PlatformError.isPlatformError(error.cause) && error.cause.reason._tag === "NotFound";
 
 /** @public */

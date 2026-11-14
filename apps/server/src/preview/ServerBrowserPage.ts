@@ -22,10 +22,12 @@ import { constVoid } from "effect/Function";
 import type { CDPSession, ConsoleMessage, Frame, Locator, Page } from "playwright-core";
 import * as NodeCrypto from "node:crypto";
 import { BrowserControlInterrupted } from "./SessionControl.ts";
+import { openReaders } from "./ServerBrowserPageParts2.ts";
+import { capture } from "./ServerBrowserPageParts3.ts";
 
 const MAX_EVALUATION_BYTES = 64_000;
-const MAX_VISIBLE_TEXT_LENGTH = 20_000;
-const MAX_SCREENSHOT_WIDTH = 1280;
+export const MAX_VISIBLE_TEXT_LENGTH = 20_000;
+export const MAX_SCREENSHOT_WIDTH = 1280;
 const WAIT_POLL_MS = 100;
 export const DIAGNOSTIC_BUFFER_LIMIT = 200;
 
@@ -90,7 +92,7 @@ export const invalidateRefs = (page: Page) => {
   }
 };
 
-const refsFor = (page: Page) => {
+export const refsFor = (page: Page) => {
   let state = pageRefs.get(page);
   if (!state) {
     state = { generation: nextRefGeneration(), refs: new Map<string, string>() };
@@ -147,7 +149,7 @@ const targetPoint = async (
   return { x: (viewport?.width ?? 0) / 2, y: (viewport?.height ?? 0) / 2 };
 };
 
-const SNAPSHOT_SCRIPT = `(() => {
+export const SNAPSHOT_SCRIPT = `(() => {
   return {
     url: location.href,
     title: document.title,
@@ -157,7 +159,7 @@ const SNAPSHOT_SCRIPT = `(() => {
   };
 })()`;
 
-const MASKED_VALUE = "••••••••";
+export const MASKED_VALUE = "••••••••";
 
 /**
  * A `data:` URL carries its content, which can be a whole file, and URLs and diagnostics
@@ -196,7 +198,7 @@ export const consoleText = (message: ConsoleMessage) =>
     : message.text().replace(/(?<![a-z\d])data:[^,;]*[,;][\s\S]*/i, withoutDataPayload);
 
 // Split on LF alone: a value keeps any U+2028 that a multiline regex would treat as a line end.
-const withoutTreeDataPayloads = (tree: string) =>
+export const withoutTreeDataPayloads = (tree: string) =>
   tree
     .split("\n")
     .map((line) => {
@@ -210,7 +212,7 @@ const SNAPSHOT_TIMEOUT_MS = 10_000;
 const FRAME_ANSWER_MS = 1_000;
 
 // Include password and CSS-masked text in open shadow roots, normalized like accessible text.
-const DOTTED_SCRIPT = `(() => {
+export const DOTTED_SCRIPT = `(() => {
   const values = [];
   const visit = (root) => {
     for (const element of root.querySelectorAll("*")) {
@@ -228,13 +230,13 @@ const DOTTED_SCRIPT = `(() => {
   return [...new Set(values.filter((value) => value.trim()))];
 })()`;
 
-const pageChanged = () =>
+export const pageChanged = () =>
   new ServerBrowserOperationError(
     "PreviewAutomationExecutionError",
     "The page changed while capturing its snapshot. Take another snapshot.",
   );
 
-const tooBusy = () =>
+export const tooBusy = () =>
   new ServerBrowserOperationError(
     "PreviewAutomationTimeoutError",
     "The page was too busy to capture a snapshot in time. Wait for it to settle and take another snapshot.",
@@ -243,10 +245,10 @@ const tooBusy = () =>
 const VALUE_TOO_LONG = "A password field holds a value too long to hide, so no snapshot was taken.";
 
 /** Reuse one CDP session per out-of-process frame across snapshots. */
-const frameSessions = new WeakMap<Frame, Promise<CDPSession>>();
+export const frameSessions = new WeakMap<Frame, Promise<CDPSession>>();
 
 /** Returns undefined on failure or frame timeout. */
-const answered = <A>(promise: Promise<A>) => {
+export const answered = <A>(promise: Promise<A>) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<undefined>((resolve) => {
     timer = setTimeout(() => resolve(undefined), FRAME_ANSWER_MS);
@@ -255,107 +257,7 @@ const answered = <A>(promise: Promise<A>) => {
 };
 
 /** Isolated worlds prevent spoofing; desktop out-of-process frames use page worlds. Missing own-frame reads or changed frames fail; other missing reads return undefined. */
-const openReaders = async (page: Page, cdp: CDPSession) => {
-  const frames = page.frames();
-  const owners = new Map<Frame, CDPSession | null | undefined>(
-    await Promise.all(
-      frames.map(async (frame) => {
-        if (frame === page.mainFrame()) return [frame, cdp] as const;
-        const session = frameSessions.get(frame) ?? page.context().newCDPSession(frame);
-        frameSessions.set(frame, session);
-        try {
-          return [frame, await session] as const;
-        } catch (cause) {
-          frameSessions.delete(frame);
-          // CdpRelay supports only the page; other refusals fall back to the parent session, failing if the frame is absent.
-          const desktop = String(cause).includes("Only this preview tab's page can be attached");
-          return [frame, desktop ? null : undefined] as const;
-        }
-      }),
-    ),
-  );
-  const ownerOf = (frame: Frame): CDPSession | null => {
-    const owner = owners.get(frame);
-    if (owner !== undefined) return owner;
-    const parent = frame.parentFrame();
-    return parent ? ownerOf(parent) : null;
-  };
-  const sessionReader = (frame: Frame, session: CDPSession) => {
-    const owned = frames.filter((each) => ownerOf(each) === session);
-    const open = async () => {
-      const { frameTree } = await session.send("Page.getFrameTree");
-      const ids = (node: typeof frameTree): Array<string> => [
-        node.frame.id,
-        ...(node.childFrames ?? []).flatMap(ids),
-      ];
-      // A frame Playwright knows but this session doesn't would go unread.
-      if (ids(frameTree).length !== owned.length) throw pageChanged();
-      return Promise.all(
-        ids(frameTree).map(async (frameId) => {
-          const world = await session.send("Page.createIsolatedWorld", {
-            frameId,
-            worldName: "t3-preview",
-          });
-          return world.executionContextId;
-        }),
-      );
-    };
-    let contexts: ReturnType<typeof open> | undefined;
-    const read = async () => {
-      const values = (contexts ??= open()).then((ids) =>
-        Promise.all(
-          ids.map(async (contextId) => {
-            const { result, exceptionDetails } = await session.send("Runtime.evaluate", {
-              contextId,
-              expression: DOTTED_SCRIPT,
-              returnByValue: true,
-            });
-            if (exceptionDetails) throw pageChanged();
-            return result.value as Array<string>;
-          }),
-        ),
-      );
-      try {
-        return (await values).flat();
-      } catch (cause) {
-        // The frame may have moved to another process; the next snapshot opens a new session.
-        if (session !== cdp) {
-          frameSessions.delete(frame);
-          void session.detach().catch(constVoid);
-        }
-        throw cause;
-      }
-    };
-    return { frames: owned, read };
-  };
-  const readers = [
-    sessionReader(page.mainFrame(), cdp),
-    ...frames.flatMap((frame) => {
-      const owner = owners.get(frame);
-      if (owner) return owner === cdp ? [] : [sessionReader(frame, owner)];
-      const own = () => frame.evaluate(DOTTED_SCRIPT) as Promise<Array<string>>;
-      return ownerOf(frame) === null ? [{ frames: [frame], read: own }] : [];
-    }),
-  ];
-  return {
-    readers,
-    read: async (before?: ReadonlyArray<unknown>) => {
-      const now = page.frames();
-      if (now.length !== frames.length || now.some((frame, i) => frame !== frames[i])) {
-        throw pageChanged();
-      }
-      return Promise.all(
-        readers.map((reader, i) => {
-          if (i === 0) return reader.read().catch(() => Promise.reject(pageChanged()));
-          return before && !before[i] ? undefined : answered(reader.read());
-        }),
-      );
-    },
-  };
-};
-
-/** Short values need word boundaries to avoid masking unrelated text. */
-const dottedPattern = (values: ReadonlyArray<string>) => {
+export const dottedPattern = (values: ReadonlyArray<string>) => {
   const sources = values
     .flatMap((value) => {
       const json = JSON.stringify(value).slice(1, -1);
@@ -391,7 +293,7 @@ const TREE_LINE =
   /^(\s*- '?[^\s"':]+)( "(?:[^"\\]|\\.)*"| \/(?:.*?\/)?)?((?: \[(?:active|checked(?:=mixed)?|disabled|expanded|level=\d+|pressed(?:=mixed)?|selected|ref=(?:f\d+)?e\d+|cursor=pointer|box=-?\d+,-?\d+,\d+,\d+)\])*'?)(:.*)?$/;
 
 /** Preserve roles and attributes so refs work; unquoted /.../ names can make matches cross boundaries. */
-const maskTree = (tree: string, dotted: RegExp) =>
+export const maskTree = (tree: string, dotted: RegExp) =>
   tree
     .split("\n")
     .map((line) => {
@@ -407,7 +309,7 @@ const maskTree = (tree: string, dotted: RegExp) =>
     .join("\n");
 
 /** Chromium sizes the capture, so the reported size is read from the PNG header. */
-const pngSize = (base64: string) => {
+export const pngSize = (base64: string) => {
   const header = Buffer.from(base64.slice(0, 32), "base64");
   return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
 };
@@ -474,7 +376,7 @@ const SHRINK_PNG = `async function (png, width, height) {
   return canvas.toDataURL("image/png").slice("data:image/png;base64,".length);
 }`;
 
-const shrinkPng = async (cdp: CDPSession, png: string, scale: number) => {
+export const shrinkPng = async (cdp: CDPSession, png: string, scale: number) => {
   const size = pngSize(png);
   const { frameTree } = await cdp.send("Page.getFrameTree");
   const { executionContextId } = await cdp.send("Page.createIsolatedWorld", {
@@ -496,7 +398,7 @@ const shrinkPng = async (cdp: CDPSession, png: string, scale: number) => {
   return result.value as string;
 };
 
-type SnapshotInput = {
+export type SnapshotInput = {
   readonly page: Page;
   readonly cdp: CDPSession;
   /** Headless pages render at the scale the server set; a desktop page at its display's. */
@@ -507,7 +409,7 @@ type SnapshotInput = {
 };
 
 /** The scale a page renders at and its viewport in device-independent pixels. */
-const renderingOf = async (input: SnapshotInput) => {
+export const renderingOf = async (input: SnapshotInput) => {
   if (input.renderScale !== "display") {
     const viewport = input.page.viewportSize() ?? { width: 1280, height: 800 };
     return { renderScale: input.renderScale, viewport };
@@ -523,84 +425,6 @@ const renderingOf = async (input: SnapshotInput) => {
   };
 };
 
-const capture = async (
-  input: SnapshotInput,
-  deadline: number,
-): Promise<PreviewAutomationSnapshot> => {
-  const { renderScale, viewport } = await renderingOf(input);
-  // A late metrics reply must not begin a capture after viewers have resumed.
-  if (Date.now() >= deadline) throw tooBusy();
-  const scale = Math.min(1, MAX_SCREENSHOT_WIDTH / (viewport.width * renderScale));
-  const state = refsFor(input.page);
-  invalidateRefs(input.page);
-  const generation = state.generation;
-  const { readers, read } = await openReaders(input.page, input.cdp);
-  const before = await read();
-  // Bracket the tree with value reads to detect changes; await tree completion before retrying failed captures.
-  const pageAndScreenshot = Promise.all([
-    input.page.evaluate(SNAPSHOT_SCRIPT) as Promise<
-      Pick<
-        PreviewAutomationSnapshot,
-        "url" | "title" | "loading" | "visibleText" | "interactiveElements"
-      >
-    >,
-    captureViewport(input.cdp, { format: "png" }).then((png) =>
-      scale < 1 ? shrinkPng(input.cdp, png, scale) : png,
-    ),
-  ]);
-  void pageAndScreenshot.catch(constVoid);
-  // Leaves time for the second read; a frame that never loads holds the tree until then.
-  const tree = await input.page.ariaSnapshot({
-    mode: "ai",
-    boxes: true,
-    timeout: Math.max(1, deadline - Date.now() - 2_000),
-  });
-  const after = await read(before);
-  // A value that changed meanwhile may be in the tree under neither reading.
-  if (after.some((values, i) => values && JSON.stringify(values) !== JSON.stringify(before[i])))
-    throw pageChanged();
-  const dotted = dottedPattern(after.flatMap((values) => values ?? []));
-  // Unread frames can expose values only if their content appears in the tree.
-  const unread = readers.flatMap((reader, i) => (after[i] ? [] : reader.frames));
-  const filled = /^\s*- iframe (?:\[active\] )?\[ref=(\S+?)\].*:$/gm;
-  for (const [, ref] of unread.length ? tree.matchAll(filled) : []) {
-    const iframe = await input.page.locator(`aria-ref=${ref}`).elementHandle({ timeout: 2_000 });
-    if (!iframe) throw pageChanged();
-    const frame = await iframe.contentFrame();
-    void iframe.dispose().catch(constVoid);
-    if (frame && unread.includes(frame)) throw tooBusy();
-  }
-  const [page, data] = await pageAndScreenshot;
-  if (state.generation !== generation) throw pageChanged();
-  const mask = (text: string) => (dotted ? text.replace(dotted, MASKED_VALUE) : text);
-  // Redacted before the cut, so a payload crossing it can't leave its start showing, and before
-  // masking, which could hide the `data:` scheme behind a password value's dots.
-  const redacted = withoutTreeDataPayloads(tree);
-  const accessibilityTree = (dotted ? maskTree(redacted, dotted) : redacted)
-    .slice(0, MAX_VISIBLE_TEXT_LENGTH)
-    .replace(/\[ref=((?:f\d+)?e\d+)\]/g, (_match, nativeRef: string) => {
-      const ref = `t3-${generation}-${nativeRef}`;
-      state.refs.set(ref, nativeRef);
-      return `[ref=${ref}]`;
-    });
-  return {
-    ...page,
-    url: withoutDataPayload(page.url),
-    // Mask text before truncating so a value crossing the cut cannot leak its prefix.
-    visibleText: mask(page.visibleText).slice(0, MAX_VISIBLE_TEXT_LENGTH),
-    accessibilityTree,
-    consoleEntries: [...input.consoleEntries],
-    networkEntries: [...input.networkEntries],
-    actionTimeline: [...input.actionTimeline],
-    screenshot: {
-      mimeType: "image/png",
-      data,
-      ...pngSize(data),
-    },
-  };
-};
-
-/** Snapshots begun per page; observers' snapshots aren't queued, so two can overlap. */
 const snapshotTurns = new WeakMap<Page, number>();
 
 export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationSnapshot> => {
@@ -953,156 +777,4 @@ export const parseNetError = (errorText: string) => {
   const description = /ERR_[A-Z\d_]+/.exec(errorText)?.[0] ?? errorText;
   return { description, code: NET_ERROR_CODES[description] ?? -2 };
 };
-
-export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => `(() => {
-  const canvas = document.createElement("canvas");
-  const context = canvas.getContext("2d");
-  const chunks = [];
-  let recorder = null;
-  let started = null;
-  let stopped = null;
-  let sizeBytes = 0;
-  let tooLarge = false;
-  let frame = null;
-  let cursor = null;
-  let ring = null;
-  const AGENT_CURSOR_PATH = new Path2D("M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z");
-  let ringTimer = null;
-  let scale = 1;
-  let offsetX = 0;
-  let offsetY = 0;
-  const paint = () => {
-    if (!frame) return;
-    const fit = Math.min(canvas.width / frame.width, canvas.height / frame.height);
-    const width = frame.width * fit;
-    const height = frame.height * fit;
-    offsetX = (canvas.width - width) / 2;
-    offsetY = (canvas.height - height) / 2;
-    if (width < canvas.width || height < canvas.height) {
-      context.fillStyle = "#000";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-    }
-    context.drawImage(frame, offsetX, offsetY, width, height);
-    scale = (width / frame.width) * frame.cssScale;
-    if (ring) {
-      const age = (performance.now() - ring.at) / 400;
-      if (age < 1) {
-        context.beginPath();
-        context.arc(offsetX + ring.x * scale, offsetY + ring.y * scale, (8 + 18 * age) * scale, 0, Math.PI * 2);
-        context.strokeStyle = "rgba(59,130,246," + (0.9 * (1 - age)) + ")";
-        context.lineWidth = 3 * scale;
-        context.stroke();
-      }
-    }
-    if (cursor) {
-      // The agent cursor (lucide MousePointer2, as in the live panel), never the human arrow.
-      const s = 20 / 24 * scale;
-      context.save();
-      context.translate(offsetX + cursor.x * scale - 2 * scale, offsetY + cursor.y * scale - 2 * scale);
-      context.scale(s, s);
-      context.lineWidth = 2;
-      context.lineJoin = "round";
-      context.lineCap = "round";
-      context.fillStyle = "#fff";
-      context.strokeStyle = "#2563eb";
-      context.shadowColor = "rgba(0,0,0,0.25)";
-      context.shadowBlur = 2;
-      context.fill(AGENT_CURSOR_PATH);
-      context.shadowColor = "transparent";
-      context.stroke(AGENT_CURSOR_PATH);
-      context.restore();
-    }
-  };
-  window.__t3Recorder = {
-    async frame(base64, cssWidth) {
-      if (tooLarge) return false;
-      const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
-      const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
-      if (tooLarge) { bitmap.close(); return false; }
-      if (!recorder) {
-        canvas.width = bitmap.width;
-        canvas.height = bitmap.height;
-        const mimeType = ["video/mp4;codecs=avc1.640033", "video/webm;codecs=vp9", "video/webm"].find((type) => MediaRecorder.isTypeSupported(type));
-        const bitsPerSecond = Math.min(50e6, Math.max(2.5e6, bitmap.width * bitmap.height * ${frameRate} * 0.05));
-        recorder = new MediaRecorder(canvas.captureStream(${frameRate}), { mimeType, videoBitsPerSecond: bitsPerSecond });
-        started = new Promise((resolve, reject) => {
-          recorder.onstart = resolve;
-          recorder.onerror = (event) => reject(event.error);
-        });
-        stopped = new Promise((resolve) => { recorder.onstop = resolve; });
-        recorder.ondataavailable = (event) => {
-          if (tooLarge || event.data.size === 0) return;
-          sizeBytes += event.data.size;
-          if (sizeBytes > ${PROVIDER_SEND_TURN_MAX_FILE_BYTES}) {
-            tooLarge = true;
-            chunks.length = 0;
-            clearInterval(ringTimer);
-            frame?.close();
-            frame = null;
-            if (recorder.state !== "inactive") recorder.stop();
-            for (const track of recorder.stream.getTracks()) track.stop();
-            return;
-          }
-          chunks.push(event.data);
-        };
-        recorder.start(1000);
-      }
-      // Frame px per page CSS px, before fitting into the canvas.
-      bitmap.cssScale = bitmap.width / cssWidth;
-      frame?.close();
-      frame = bitmap;
-      paint();
-      await started;
-      return true;
-    },
-    cursor(x, y, click) {
-      if (tooLarge) return;
-      cursor = { x, y };
-      if (click) {
-        ring = { x, y, at: performance.now() };
-        clearInterval(ringTimer);
-        ringTimer = setInterval(() => {
-          paint();
-          if (performance.now() - ring.at > 400) { ring = null; clearInterval(ringTimer); paint(); }
-        }, 33);
-      }
-      paint();
-    },
-    async stop() {
-      if (!recorder) return { mimeType: null, count: 0, bytes: 0 };
-      if (recorder.state !== "inactive") {
-        // Consume the cached frame, then wait for the final paint to reach the
-        // capture stream. Animation ticks alone can stop before it is delivered.
-        const video = document.createElement("video");
-        video.muted = true;
-        video.srcObject = recorder.stream;
-        const nextFrame = () => Promise.race([
-          new Promise(resolve => video.requestVideoFrameCallback(resolve)),
-          stopped,
-        ]);
-        const initial = nextFrame();
-        void video.play().catch(() => {});
-        await initial;
-        if (recorder.state !== "inactive") {
-          const delivered = nextFrame();
-          recorder.stream.getVideoTracks()[0].requestFrame();
-          paint();
-          await delivered;
-        }
-        video.pause();
-        video.srcObject = null;
-        if (recorder.state !== "inactive") recorder.stop();
-      }
-      await stopped;
-      return { mimeType: recorder.mimeType, count: chunks.length, bytes: sizeBytes };
-    },
-    async chunk(index) {
-      const bytes = new Uint8Array(await chunks[index].arrayBuffer());
-      let binary = "";
-      for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-        binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-      }
-      return btoa(binary);
-    },
-  };
-})()`;
+export * from "./ServerBrowserPageParts.ts";

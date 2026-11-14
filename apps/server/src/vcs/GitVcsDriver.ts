@@ -44,24 +44,12 @@ import {
 } from "./GitVcsDriverCore.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
-
-export interface ExecuteGitInput {
-  readonly operation: string;
-  readonly cwd: string;
-  readonly args: ReadonlyArray<string>;
-  readonly stdin?: string;
-  readonly env?: NodeJS.ProcessEnv;
-  readonly allowNonZeroExit?: boolean;
-  readonly timeoutMs?: number | null;
-  readonly forceKillAfterMs?: number;
-  readonly maxOutputBytes?: number;
-  readonly appendTruncationMarker?: boolean;
-  /** With appendTruncationMarker, line callbacks continue beyond the buffer cap for progress-only consumers. */
-  readonly keepLineCallbacksAfterTruncation?: boolean;
-  readonly progress?: ExecuteGitProgress;
-  /** Writes .git/config, which every worktree shares and Git locks without waiting. */
-  readonly writesSharedConfig?: boolean;
-}
+import { gitCommand } from "./GitVcsDriverParts.ts";
+import { parseGitRemoteVerboseOutput } from "./GitVcsDriverParts2.ts";
+import { chunkPathsForGitCheckIgnore } from "./GitVcsDriverParts3.ts";
+import type { CreateWorktreeProgress } from "./GitVcsDriverParts4.ts";
+import type { ExecuteGitInput } from "./GitVcsDriverParts5.ts";
+import type { GitStatusDetails } from "./GitVcsDriverParts6.ts";
 
 export interface ExecuteGitResult {
   readonly exitCode: ChildProcessSpawner.ExitCode;
@@ -69,22 +57,6 @@ export interface ExecuteGitResult {
   readonly stderr: string;
   readonly stdoutTruncated: boolean;
   readonly stderrTruncated: boolean;
-}
-
-export interface GitStatusDetails {
-  isRepo: boolean;
-  sourceControlProvider?: VcsStatusResult["sourceControlProvider"];
-  hasOriginRemote: boolean;
-  isDefaultBranch: boolean;
-  branch: string | null;
-  upstreamRef: string | null;
-  hasWorkingTreeChanges: boolean;
-  workingTree: VcsStatusResult["workingTree"];
-  branchChanges?: VcsStatusResult["branchChanges"];
-  hasUpstream: boolean;
-  aheadCount: number;
-  behindCount: number;
-  aheadOfDefaultCount: number;
 }
 
 export interface GitLocalStatusOptions {
@@ -117,25 +89,6 @@ export interface ExecuteGitProgress {
     hookName: string;
     exitCode: number | null;
     durationMs: number | null;
-  }) => Effect.Effect<void, never>;
-}
-
-export interface CreateWorktreeProgress {
-  /** Git refuses existing paths; claimed paths belong to this call and can be removed on cancel. */
-  readonly onWorktreeClaimed?: (path: string) => Effect.Effect<void, never>;
-  readonly onCheckoutProgress?: (input: {
-    percent: number;
-    completed: number;
-    total: number;
-  }) => Effect.Effect<void, never>;
-  readonly onSubmodulesStarted?: () => Effect.Effect<void, never>;
-  readonly onSubmodulesDisabled?: (input: {
-    source: "settings" | "t3.json";
-  }) => Effect.Effect<void, never>;
-  readonly onSubmoduleLine?: (line: string) => Effect.Effect<void, never>;
-  readonly onSubmodulesFinished?: (input: {
-    ok: boolean;
-    detail: string | null;
   }) => Effect.Effect<void, never>;
 }
 
@@ -447,7 +400,7 @@ const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const FLAGGED_INDEX_ENTRIES_MAX_BYTES = 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
-const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
+export const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -463,105 +416,6 @@ const nowFreshness = Effect.fn("GitVcsDriver.nowFreshness")(function* () {
     expiresAt: Option.none(),
   };
 });
-
-function chunkPathsForGitCheckIgnore(relativePaths: ReadonlyArray<string>): string[][] {
-  const chunks: string[][] = [];
-  let chunk: string[] = [];
-  let chunkBytes = 0;
-
-  for (const relativePath of relativePaths) {
-    const relativePathBytes = Buffer.byteLength(relativePath) + 1;
-    if (chunk.length > 0 && chunkBytes + relativePathBytes > GIT_CHECK_IGNORE_MAX_STDIN_BYTES) {
-      chunks.push(chunk);
-      chunk = [];
-      chunkBytes = 0;
-    }
-
-    chunk.push(relativePath);
-    chunkBytes += relativePathBytes;
-
-    if (chunkBytes >= GIT_CHECK_IGNORE_MAX_STDIN_BYTES) {
-      chunks.push(chunk);
-      chunk = [];
-      chunkBytes = 0;
-    }
-  }
-
-  if (chunk.length > 0) {
-    chunks.push(chunk);
-  }
-
-  return chunks;
-}
-
-function parseGitRemoteVerboseOutput(
-  output: string,
-): Map<string, { url?: string; pushUrl?: string }> {
-  const remotes = new Map<string, { url?: string; pushUrl?: string }>();
-  for (const line of output.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) {
-      continue;
-    }
-
-    // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
-    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(trimmed);
-    if (!match) {
-      continue;
-    }
-
-    const name = match[1];
-    const url = match[2];
-    const direction = match[3];
-    if (!name || !url || !direction) {
-      continue;
-    }
-    const remote = remotes.get(name) ?? {};
-    if (direction === "fetch") {
-      remote.url = url;
-    } else {
-      remote.pushUrl = url;
-    }
-    remotes.set(name, remote);
-  }
-  return remotes;
-}
-
-const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
-  (
-    process: VcsProcess.VcsProcess["Service"],
-    operation: string,
-    cwd: string,
-    args: ReadonlyArray<string>,
-    options?: {
-      readonly stdin?: string;
-      readonly env?: NodeJS.ProcessEnv;
-      readonly allowNonZeroExit?: boolean;
-      readonly timeoutMs?: number;
-      readonly maxOutputBytes?: number;
-      readonly outputMode?: VcsProcess.VcsProcessInput["outputMode"];
-      readonly appendTruncationMarker?: boolean;
-    },
-  ) =>
-    process.run({
-      operation,
-      command: "git",
-      args: ["-C", cwd, ...args],
-      cwd,
-      spawnCwd: globalThis.process.cwd(),
-      ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
-      ...(options?.env !== undefined ? { env: options.env } : {}),
-      ...(options?.allowNonZeroExit !== undefined
-        ? { allowNonZeroExit: options.allowNonZeroExit }
-        : {}),
-      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-      ...(options?.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
-      ...(options?.outputMode !== undefined ? { outputMode: options.outputMode } : {}),
-      ...(options?.appendTruncationMarker !== undefined
-        ? { appendTruncationMarker: options.appendTruncationMarker }
-        : {}),
-    }),
-);
 
 export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1555,3 +1409,6 @@ export const make = Effect.gen(function* () {
 
 export const layerVcs = Layer.effect(VcsDriver.VcsDriver, makeVcsDriver);
 export const layer = Layer.effect(GitVcsDriver, make);
+export * from "./GitVcsDriverParts4.ts";
+export * from "./GitVcsDriverParts5.ts";
+export * from "./GitVcsDriverParts6.ts";

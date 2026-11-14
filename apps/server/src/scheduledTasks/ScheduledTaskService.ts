@@ -72,6 +72,14 @@ import {
 } from "./webhookDedupe.ts";
 import { describeFailedWebhookFilter, findFailedWebhookFilter } from "./webhookFilter.ts";
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
+import { decodeRow } from "./ScheduledTaskServiceParts.ts";
+import { listDueTasks } from "./ScheduledTaskServiceParts2.ts";
+import { nextRunAt } from "./ScheduledTaskServiceParts3.ts";
+import { nextRunAfterRun } from "./ScheduledTaskServiceParts4.ts";
+import type { ScheduledTaskRow } from "./ScheduledTaskServiceParts5.ts";
+import type { WebhookDeliveryRow } from "./ScheduledTaskServiceParts6.ts";
+import type { WebhookTriggerResult } from "./ScheduledTaskServiceParts7.ts";
+import type { WebhookDeliveryOutcome } from "./ScheduledTaskServiceParts8.ts";
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
@@ -95,7 +103,7 @@ const LEGACY_DELIVERY_OUTCOMES: ReadonlySet<string> = new Set([
   "expired",
 ]);
 
-interface WebhookOrigin {
+export interface WebhookOrigin {
   readonly relayHookBaseUrl: string | null;
 }
 
@@ -137,49 +145,18 @@ export interface WebhookTriggerRequest extends WebhookRequest {
   readonly receivedAt?: string;
 }
 
-export type WebhookDeliveryOutcome =
-  | "accepted"
-  | "duplicate"
-  | "coalesced"
-  | "prompt_too_long"
-  | "queue_full"
-  | "rate_limited"
-  | "disabled"
-  | "rejected_signature"
-  | "expired"
-  | "filtered"
-  | "not_found"
-  | "blocked_by_policy"
-  | "error";
-
-export type WebhookTriggerResult =
-  | {
-      readonly _tag: "accepted";
-      readonly deliveryId: ScheduledTaskWebhookDeliveryId;
-      readonly outcome: "accepted" | "duplicate" | "coalesced" | "prompt_too_long" | "filtered";
-    }
-  | { readonly _tag: "not_found" }
-  | { readonly _tag: "rejected_signature" }
-  | { readonly _tag: "disabled" }
-  | { readonly _tag: "blocked_by_policy" }
-  | {
-      readonly _tag: "rate_limited";
-      readonly outcome: "rate_limited" | "queue_full";
-    }
-  | { readonly _tag: "expired" };
-
 const webhookFilters = (filters: ReadonlyArray<ScheduledTaskWebhookFilter> | undefined) =>
   filters?.length ? { filters } : {};
 
-const decodeTask = Schema.decodeUnknownEffect(ScheduledTask);
-const decodeTaskId = Schema.decodeUnknownOption(ScheduledTaskId);
-const decodeScheduleJson = Schema.decodeUnknownEffect(
+export const decodeTask = Schema.decodeUnknownEffect(ScheduledTask);
+export const decodeTaskId = Schema.decodeUnknownOption(ScheduledTaskId);
+export const decodeScheduleJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.schedule),
 );
-const decodeWorkspaceStrategyJson = Schema.decodeUnknownEffect(
+export const decodeWorkspaceStrategyJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.workspaceStrategy),
 );
-const decodeModelSelectionJson = Schema.decodeUnknownEffect(
+export const decodeModelSelectionJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.modelSelection),
 );
 const HeadersJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
@@ -188,49 +165,6 @@ const decodeHeadersJson = Schema.decodeUnknownOption(HeadersJson);
 const decodeMissingFieldsJson = Schema.decodeUnknownOption(MissingFieldsJson);
 const encodeHeadersJson = Schema.encodeSync(HeadersJson);
 const encodeMissingFieldsJson = Schema.encodeSync(MissingFieldsJson);
-
-interface ScheduledTaskRow {
-  readonly task_id: string;
-  readonly title: string;
-  readonly prompt: string;
-  readonly enabled: number;
-  readonly schedule_json: string;
-  readonly project_id: string;
-  readonly thread_id: string | null;
-  readonly workspace_strategy_json: string;
-  readonly model_selection_json: string;
-  readonly runtime_mode: string;
-  readonly interaction_mode: string;
-  readonly created_by: string;
-  readonly creation_source: string;
-  readonly created_at: string;
-  readonly updated_at: string;
-  readonly next_run_at: string | null;
-  readonly last_run_at: string | null;
-  readonly last_run_status: string;
-  readonly last_run_error: string | null;
-  readonly run_count: number;
-  readonly webhook_token: string | null;
-  readonly webhook_secret: string | null;
-}
-
-interface WebhookDeliveryRow {
-  readonly delivery_id: string;
-  readonly task_id: string;
-  readonly received_at: string;
-  readonly method: string;
-  readonly query: string;
-  readonly headers_json: string;
-  readonly body: string;
-  readonly body_bytes: number;
-  readonly body_truncated: number;
-  readonly outcome: string;
-  readonly signature_verified: number;
-  readonly missing_fields_json: string;
-  readonly rendered_prompt: string | null;
-  readonly pending_window: number;
-  readonly error: string | null;
-}
 
 export class ScheduledTaskService extends Context.Service<
   ScheduledTaskService,
@@ -276,7 +210,7 @@ export class ScheduledTaskService extends Context.Service<
   }
 >()("t3/scheduledTasks/ScheduledTaskService") {}
 
-function taskError(message: string, input?: { taskId?: ScheduledTaskId; cause?: unknown }) {
+export function taskError(message: string, input?: { taskId?: ScheduledTaskId; cause?: unknown }) {
   return new ScheduledTaskError({
     message,
     ...(input?.taskId === undefined ? {} : { taskId: input.taskId }),
@@ -284,45 +218,12 @@ function taskError(message: string, input?: { taskId?: ScheduledTaskId; cause?: 
   });
 }
 
-function iso(value: DateTime.DateTime): string {
+export function iso(value: DateTime.DateTime): string {
   return DateTime.formatIso(DateTime.toUtc(value));
 }
 
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 
-function nextRunAt(
-  task: Pick<ScheduledTask, "enabled" | "schedule">,
-  from: DateTime.DateTime,
-): string | null {
-  if (!task.enabled) return null;
-  // Decoded intervals can overflow DateTime; unrepresentable occurrences have no next run.
-  try {
-    const next = nextScheduledRunAt(task.schedule, from);
-    return next !== null && Number.isFinite(DateTime.toEpochMillis(next)) ? iso(next) : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Next run after an interrupted run. A one-time task counts from the run's start
- * (`lastRunAt`), so a manual run that began before its time does not use it up.
- */
-function nextRunAfterRun(
-  task: Pick<ScheduledTask, "enabled" | "schedule" | "lastRunAt">,
-  now: DateTime.DateTime,
-): string | null {
-  const startedAt =
-    task.schedule.type === "once" && task.lastRunAt !== null
-      ? DateTime.make(task.lastRunAt)
-      : Option.none();
-  return nextRunAt(
-    task,
-    Option.getOrElse(startedAt, () => now),
-  );
-}
-
-/** An enabled one-time task with a past time would never run, so saving it is an error. */
 function requireFutureOnce(
   task: Pick<ScheduledTask, "enabled" | "schedule">,
   now: DateTime.DateTime,
@@ -342,7 +243,7 @@ function webhookPath(taskId: string, token: string): string {
   return `${WEBHOOK_ROUTE_PREFIX}/${encodeURIComponent(taskId)}/${token}`;
 }
 
-function webhookEndpoint(
+export function webhookEndpoint(
   row: Pick<ScheduledTaskRow, "task_id" | "webhook_token" | "webhook_secret">,
   origin: WebhookOrigin | null,
 ): ScheduledTask["webhook"] {
@@ -356,81 +257,6 @@ function webhookEndpoint(
 }
 
 // Runs per task row; list and lookup operations already own the span.
-const decodeRow = Effect.fnUntraced(
-  function* (row: ScheduledTaskRow, origin: WebhookOrigin | null = null) {
-    const schedule = yield* decodeScheduleJson(row.schedule_json);
-    const webhook = schedule.type === "webhook" ? webhookEndpoint(row, origin) : undefined;
-    const workspaceStrategy = yield* decodeWorkspaceStrategyJson(row.workspace_strategy_json);
-    const modelSelection = yield* decodeModelSelectionJson(row.model_selection_json);
-    return yield* decodeTask({
-      id: row.task_id,
-      title: row.title,
-      prompt: row.prompt,
-      enabled: row.enabled === 1,
-      schedule,
-      projectId: row.project_id,
-      threadId: row.thread_id,
-      workspaceStrategy,
-      modelSelection,
-      runtimeMode: row.runtime_mode,
-      interactionMode: row.interaction_mode,
-      createdBy: row.created_by,
-      creationSource: row.creation_source,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      nextRunAt: row.next_run_at,
-      lastRunAt: row.last_run_at,
-      lastRunStatus: row.last_run_status,
-      lastRunError: row.last_run_error,
-      runCount: row.run_count,
-      ...(webhook === undefined ? {} : { webhook }),
-    });
-  },
-  (effect, row, _origin?) =>
-    effect.pipe(
-      Effect.mapError((cause) => {
-        const taskId = decodeTaskId(row.task_id);
-        return taskError("Could not decode schedule task row.", {
-          ...(Option.isSome(taskId) ? { taskId: taskId.value } : {}),
-          cause,
-        });
-      }),
-    ),
-);
-
-export const listDueTasks = Effect.fn("ScheduledTaskService.listDueTasks")(function* (
-  now: DateTime.DateTime,
-) {
-  const sql = yield* SqlClient.SqlClient;
-  const rows = yield* sql<ScheduledTaskRow>`
-    SELECT * FROM scheduled_tasks
-    WHERE enabled = 1 AND next_run_at IS NOT NULL
-      AND next_run_at <= ${iso(now)} AND last_run_status <> 'running'
-    ORDER BY next_run_at ASC, task_id ASC
-  `.pipe(NodeSqliteClient.readOnly);
-  const tasks: ScheduledTask[] = [];
-  for (const row of rows) {
-    const decoded = yield* Effect.result(decodeRow(row));
-    if (Result.isSuccess(decoded)) {
-      const task = decoded.success;
-      // next_run_at is freeform; skip unparseable values before they defect the poll.
-      if (task.nextRunAt === null || Option.isSome(DateTime.make(task.nextRunAt))) {
-        tasks.push(task);
-      } else {
-        yield* Effect.logWarning("Skipping schedule task row with invalid next_run_at", {
-          taskId: row.task_id,
-        });
-      }
-    } else {
-      yield* Effect.logWarning("Skipping undecodable schedule task row", {
-        taskId: row.task_id,
-        cause: decoded.failure,
-      });
-    }
-  }
-  return tasks;
-});
-
 export const layer = Layer.effect(
   ScheduledTaskService,
   Effect.gen(function* () {
@@ -2422,3 +2248,7 @@ export const layer = Layer.effect(
     });
   }),
 );
+export * from "./ScheduledTaskServiceParts2.ts";
+export * from "./ScheduledTaskServiceParts5.ts";
+export * from "./ScheduledTaskServiceParts7.ts";
+export * from "./ScheduledTaskServiceParts8.ts";

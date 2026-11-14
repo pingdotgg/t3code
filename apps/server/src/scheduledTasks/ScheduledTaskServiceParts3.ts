@@ -1,0 +1,96 @@
+import {
+  CommandId,
+  MessageId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  type ProjectId,
+  ScheduledTask,
+  ScheduledTaskError,
+  ScheduledTaskId,
+  ThreadId,
+  ScheduledTaskWebhookDeliveryId,
+  type ScheduledTaskDeleteInput,
+  type ScheduledTaskDeleteResult,
+  type ScheduledTaskGetWebhookDeliveryInput,
+  type ScheduledTaskGetWebhookDeliveryResult,
+  type ScheduledTaskListWebhookDeliveriesInput,
+  type ScheduledTaskListWebhookDeliveriesResult,
+  type ScheduledTaskRotateWebhookTokenInput,
+  type ScheduledTaskWebhookDeliveryOutcome,
+  type ScheduledTaskWebhookFilter,
+  type ScheduledTaskListResult,
+  type ScheduledTaskMutationResult,
+  type ScheduledTaskRunNowInput,
+  type ScheduledTaskRunNowResult,
+  type ScheduledTaskSetEnabledInput,
+  type ScheduledTaskUpsertInput,
+  managedPolicyDeniedMessage,
+  managedRuntimeModeDenial,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Data from "effect/Data";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Exit from "effect/Exit";
+import * as Duration from "effect/Duration";
+import * as Metric from "effect/Metric";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
+
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as Metrics from "../observability/Metrics.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as DueHint from "../scheduling/DueHint.ts";
+import * as Scheduler from "../scheduling/Scheduler.ts";
+import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
+import {
+  redactHeaders,
+  redactQuery,
+  renderWebhookPrompt,
+  type WebhookRequest,
+} from "./webhookTemplate.ts";
+import {
+  acceptWebhookDedupe,
+  acceptImmediateWebhookDedupe,
+  releaseWebhookReplay,
+  decodePendingTask,
+  encodePendingTask,
+  decodePendingRequest,
+  dedupeError,
+} from "./webhookDedupe.ts";
+import { describeFailedWebhookFilter, findFailedWebhookFilter } from "./webhookFilter.ts";
+import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
+import { decodeRow } from "./ScheduledTaskServiceParts.ts";
+import { listDueTasks } from "./ScheduledTaskServiceParts2.ts";
+import { iso } from "./ScheduledTaskService.ts";
+
+export function nextRunAt(
+  task: Pick<ScheduledTask, "enabled" | "schedule">,
+  from: DateTime.DateTime,
+): string | null {
+  if (!task.enabled) return null;
+  // Decoded intervals can overflow DateTime; unrepresentable occurrences have no next run.
+  try {
+    const next = nextScheduledRunAt(task.schedule, from);
+    return next !== null && Number.isFinite(DateTime.toEpochMillis(next)) ? iso(next) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Next run after an interrupted run. A one-time task counts from the run's start
+ * (`lastRunAt`), so a manual run that began before its time does not use it up.
+ */
