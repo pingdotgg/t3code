@@ -1132,3 +1132,42 @@ async fn a_rollback_admitted_while_a_run_waits_for_its_capture_rolls_it_back() {
         "its checkpoint too"
     );
 }
+
+/// Admission asks the provider instance for its capabilities, as T3 does, not the stored
+/// session row (review finding 4.3): a provider that cannot roll back is refused with T3's
+/// reason, and nothing is sent to it.
+#[tokio::test(flavor = "current_thread")]
+async fn rollback_asks_the_provider_instance_whether_it_can_roll_back() {
+    let db = TempDb::new("rb-caps");
+    let repo = Repo::new("rb-caps");
+    let (engine, provider) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent").without_rollback(),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let refused = engine
+        .dispatch(from_json(rollback("rb-1", &checkpoint_at(&p, 1), None)).unwrap())
+        .await;
+    assert_eq!(
+        refused_message(refused),
+        "claudeAgent cannot satisfy rollback for command rb-1: providerInstanceId conversation rollback is unavailable"
+    );
+    assert!(provider.rollbacks.lock().unwrap().is_empty());
+    let p = projection(&engine, "t1").await;
+    assert!(
+        p["thread"]["rollbackRequestId"].is_null(),
+        "{}",
+        p["thread"]
+    );
+}
+
+fn refused_message<T, E: serde::Serialize>(result: Result<T, EngineError<E>>) -> String {
+    let Err(EngineError::Rejected(error)) = result else {
+        panic!("refused")
+    };
+    to_json(&error)["message"].as_str().unwrap().to_owned()
+}

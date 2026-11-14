@@ -152,35 +152,48 @@ pub(crate) fn checkpoint_rollback(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let Some(provider_thread) = provider_thread else {
         return rejected("No active provider thread exists for rollback.");
     };
-    let Some(session_id) = provider_thread["providerSessionId"].as_str() else {
+    if provider_thread["providerSessionId"].as_str().is_none() {
         return rejected(format!(
             "Provider thread {} has no provider session.",
             provider_thread["id"].as_str().unwrap_or_default()
         ));
-    };
+    }
     let instance = thread["modelSelection"]["instanceId"]
         .as_str()
         .unwrap_or_default()
         .to_owned();
-    if let Some(session) = tx.entity(&thread_id, "providerSessions", session_id)? {
-        let caps = &session["capabilities"];
-        let unsupported = |capability: &str, detail: &str| {
-            format!("{instance} cannot satisfy {capability} for command {command_id}: {detail}")
-        };
-        if caps["threads"]["canRollbackThread"] != true
-            || caps["checkpointing"]["providerCanRollbackConversation"] != true
-        {
-            return rejected(unsupported(
-                "rollback",
-                "providerInstanceId conversation rollback is unavailable",
-            ));
-        }
-        if caps["checkpointing"]["providerRollbackReturnsSnapshot"] != true {
-            return rejected(unsupported(
-                "rollback_snapshot",
-                "rollback must return a providerInstanceId thread snapshot",
-            ));
-        }
+    // `providerAdapters.get(instance).getCapabilities()`, asked before the store write
+    // (`Inner::rollback_capabilities`), then `CommandPolicy.ensureRollback`.
+    let asked = &command["providerCapabilities"];
+    if asked["instanceId"].as_str() != Some(instance.as_str()) {
+        return rejected(format!(
+            "The thread's provider instance changed while rollback {command_id} was checked. Try again."
+        ));
+    }
+    let Some(caps) = asked.get("capabilities") else {
+        return rejected(
+            asked["error"]
+                .as_str()
+                .unwrap_or("The provider's capabilities are unavailable.")
+                .to_owned(),
+        );
+    };
+    let unsupported = |capability: &str, detail: &str| {
+        format!("{instance} cannot satisfy {capability} for command {command_id}: {detail}")
+    };
+    if caps["threads"]["canRollbackThread"] != true
+        || caps["checkpointing"]["providerCanRollbackConversation"] != true
+    {
+        return rejected(unsupported(
+            "rollback",
+            "providerInstanceId conversation rollback is unavailable",
+        ));
+    }
+    if caps["checkpointing"]["providerRollbackReturnsSnapshot"] != true {
+        return rejected(unsupported(
+            "rollback_snapshot",
+            "rollback must return a providerInstanceId thread snapshot",
+        ));
     }
     let Some(checkpoint) = tx.entity(&thread_id, "checkpoints", checkpoint_id)? else {
         return rejected(format!("Checkpoint {checkpoint_id} was not found."));

@@ -66,6 +66,8 @@ pub struct FakeProvider {
     steering: bool,
     close_delay: std::time::Duration,
     selection_plan: Option<conn_provider::SelectionTransitionPlan>,
+    /// What `capabilities` answers: the sessions' capabilities unless a test changes them.
+    capabilities: Value,
 }
 
 impl std::fmt::Debug for FakeProvider {
@@ -97,7 +99,15 @@ impl FakeProvider {
             steering: true,
             close_delay: std::time::Duration::ZERO,
             selection_plan: None,
+            capabilities: conn_provider::testing::session_capabilities(),
         }
+    }
+
+    /// A provider whose `capabilities` say it cannot roll a conversation back; its sessions'
+    /// rows still say it can.
+    pub fn without_rollback(mut self) -> Self {
+        self.capabilities["threads"]["canRollbackThread"] = json!(false);
+        self
     }
 
     /// A provider whose `plan_selection_transition` answers `plan`.
@@ -184,7 +194,11 @@ impl Provider for FakeProvider {
             .unwrap_or(conn_provider::SelectionTransitionPlan::ApplyOnNextTurn)
     }
     fn capabilities(&self) -> BoxFuture<'_, ProviderResult<ProviderCapabilities>> {
-        Box::pin(async { Ok(from_json(json!({})).expect("placeholder")) })
+        Box::pin(async {
+            from_json(self.capabilities.clone()).map_err(|e| ProviderError::Protocol {
+                detail: e.to_string(),
+            })
+        })
     }
     fn open_session(
         &self,

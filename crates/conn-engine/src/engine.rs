@@ -452,6 +452,7 @@ impl Inner {
     ) -> Result<(u64, bool), DispatchError> {
         let (command, claimed) = self.claim_attachments(command).await?;
         let command = self.plan_selection(command).await?;
+        let command = self.rollback_capabilities(command).await?;
         let result = self.dispatch_claimed(command).await;
         if let (Err(_), Some(claimed), Some(host)) = (&result, claimed, &self.host) {
             host.release_attachments(claimed).await;
@@ -523,6 +524,56 @@ impl Inner {
             conn_provider::SelectionTransitionPlan::Reject { reason } => {
                 json!({"type": "reject", "reason": reason})
             }
+        };
+        Ok(command)
+    }
+
+    /// `checkpoint.rollback` asks the thread's provider instance for its capabilities, as T3's
+    /// admission does (`providerAdapters.get(..).getCapabilities()`); the handler checks them
+    /// (`providerCapabilities`: the instance and its capabilities, or why there are none).
+    async fn rollback_capabilities(&self, mut command: Value) -> Result<Value, DispatchError> {
+        if command["type"] != "checkpoint.rollback" {
+            return Ok(command);
+        }
+        let tid = command["threadId"].as_str().unwrap_or_default().to_owned();
+        let instance = self
+            .db(move |store| -> Result<Option<String>, String> {
+                let tx = store.tx()?;
+                let thread = tx.thread(&tid)?;
+                tx.rollback();
+                Ok(thread.map(|t| {
+                    t["modelSelection"]["instanceId"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned()
+                }))
+            })
+            .await
+            .map_err(DispatchError::Internal)?;
+        // No thread: the handler refuses the command.
+        let Some(instance) = instance else {
+            return Ok(command);
+        };
+        // As a turn start finds it: only a thread that names no instance may use the one
+        // configured provider.
+        let provider = self
+            .providers
+            .iter()
+            .find(|p| p.instance_id().as_str() == instance)
+            .or_else(|| {
+                (instance.is_empty() && self.providers.len() == 1)
+                    .then(|| self.providers.first())
+                    .flatten()
+            });
+        command["providerCapabilities"] = match provider {
+            Some(provider) => match provider.capabilities().await {
+                Ok(capabilities) => {
+                    json!({"instanceId": instance, "capabilities": to_json(&capabilities)})
+                }
+                Err(e) => json!({"instanceId": instance, "error": e.to_string()}),
+            },
+            None => json!({"instanceId": instance,
+                "error": format!("No provider instance `{instance}` is configured on this server.")}),
         };
         Ok(command)
     }
