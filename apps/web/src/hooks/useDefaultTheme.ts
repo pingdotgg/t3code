@@ -5,6 +5,7 @@ import { getThemeDefinition, singleAppearanceOf, subscribeToCustomThemes } from 
 import { setAppearanceMode, setTheme } from "./useTheme";
 
 const APPLIED_DEFAULT_THEME_STORAGE_PREFIX = "t3code:default-theme-applied:v2:";
+const APPLIED_DEFAULT_APPEARANCE_STORAGE_PREFIX = "t3code:default-appearance-applied:v1:";
 
 /** Include set time so reasserting the same theme still applies. */
 export function defaultThemeGeneration(theme: string, setAt: string): string {
@@ -28,6 +29,16 @@ export function defaultThemeToApply(input: {
   return generation;
 }
 
+/** A single-appearance theme sets its own mode unless a mode was set with it or after it. */
+export function themeSetsOwnMode(input: {
+  readonly defaultThemeSetAt: string;
+  readonly defaultAppearance: string;
+  readonly defaultAppearanceSetAt: string;
+}): boolean {
+  // ISO timestamps from one server compare correctly as strings.
+  return input.defaultAppearance === "" || input.defaultAppearanceSetAt < input.defaultThemeSetAt;
+}
+
 function readAppliedGeneration(storageKey: string): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -47,7 +58,8 @@ function adoptDefaultTheme(): void {
   if (typeof window === "undefined") return;
   const environmentId = appAtomRegistry.get(themeEnvironmentIdAtom);
   if (environmentId === null) return;
-  const { defaultTheme, defaultThemeSetAt } = appAtomRegistry.get(themeServerSettingsAtom);
+  const settings = appAtomRegistry.get(themeServerSettingsAtom);
+  const { defaultTheme, defaultThemeSetAt } = settings;
   const definition = getThemeDefinition(defaultTheme);
   const storageKey = `${APPLIED_DEFAULT_THEME_STORAGE_PREFIX}${environmentId}`;
   const generation = defaultThemeToApply({
@@ -63,8 +75,31 @@ function adoptDefaultTheme(): void {
   if (!setTheme(defaultTheme)) return;
   const half = singleAppearanceOf(definition);
   // Only record adoption after both writes succeed, so an appearance failure remains retryable.
-  if (half !== null && !setAppearanceMode(half)) return;
+  if (half !== null && themeSetsOwnMode(settings) && !setAppearanceMode(half)) return;
   writeAppliedGeneration(storageKey, generation);
+}
+
+/** Like the theme, the environment's mode applies once per set, then local choices win. */
+function adoptDefaultAppearance(): void {
+  if (typeof window === "undefined") return;
+  const environmentId = appAtomRegistry.get(themeEnvironmentIdAtom);
+  const { defaultAppearance, defaultAppearanceSetAt } =
+    appAtomRegistry.get(themeServerSettingsAtom);
+  const storageKey = `${APPLIED_DEFAULT_APPEARANCE_STORAGE_PREFIX}${environmentId}`;
+  const generation = defaultThemeToApply({
+    environmentId,
+    defaultTheme: defaultAppearance,
+    defaultThemeSetAt: defaultAppearanceSetAt,
+    appliedGeneration: readAppliedGeneration(storageKey),
+    resolves: true,
+  });
+  if (generation === null || defaultAppearance === "") return;
+  if (setAppearanceMode(defaultAppearance)) writeAppliedGeneration(storageKey, generation);
+}
+
+function adoptDefaults(): void {
+  adoptDefaultTheme();
+  adoptDefaultAppearance();
 }
 
 /**
@@ -75,11 +110,11 @@ function adoptDefaultTheme(): void {
  */
 export function startDefaultThemeAdoption(): () => void {
   const unsubscribes = [
-    appAtomRegistry.subscribe(themeEnvironmentIdAtom, adoptDefaultTheme),
-    appAtomRegistry.subscribe(themeServerSettingsAtom, adoptDefaultTheme),
-    subscribeToCustomThemes(adoptDefaultTheme),
+    appAtomRegistry.subscribe(themeEnvironmentIdAtom, adoptDefaults),
+    appAtomRegistry.subscribe(themeServerSettingsAtom, adoptDefaults),
+    subscribeToCustomThemes(adoptDefaults),
   ];
-  adoptDefaultTheme();
+  adoptDefaults();
   return () => {
     for (const unsubscribe of unsubscribes) unsubscribe();
   };
