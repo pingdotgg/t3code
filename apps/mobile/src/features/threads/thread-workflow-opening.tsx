@@ -65,6 +65,7 @@ function memberRowSubagent(
     childThreadId: member.childThreadId as ThreadId | null,
     model: member.model,
     modelSelection: workflowMemberModelSelection(member, opening.providerInstanceId!),
+    origin: "provider_native" as const,
     driver: opening.driver!,
     providerInstanceId: opening.providerInstanceId!,
     title: member.title,

@@ -764,7 +764,7 @@ describe("orchestrator MCP toolkit", () => {
               (/FROM orchestration_v2_projection_runs\b/.test(query) &&
                 !query.includes("AND run_id IN")) ||
               (/FROM orchestration_v2_projection_subagents\b/.test(query) &&
-                !query.includes("AND subagent_id IN")),
+                !/AND (?:subagent\.)?subagent_id IN\b/.test(query)),
           ),
         ).toEqual([]);
         const afterRead = yield* orchestrator.getThreadProjection(parentThreadId);

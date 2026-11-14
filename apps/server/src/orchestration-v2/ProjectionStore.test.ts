@@ -2228,7 +2228,7 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
         nativeTaskRef: null,
         prompt: "Do the work",
         title: name,
-        model: null,
+        model: name === "delivered" ? modelSelection.model : null,
         ...(delivery === null
           ? {}
           : { completionDelivery: { state: delivery, observedByRunId: null } }),
@@ -2357,6 +2357,33 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
     subagentNames(yield* store.getThreadRecords(threadId, ["subagents"])),
     subagents.map(([name]) => name).toSorted(),
   );
+  const childSelection = {
+    ...modelSelection,
+    options: [{ id: "thinking", value: "high" }],
+  };
+  const parent = (yield* store.getThreadProjection(threadId)).thread;
+  yield* store.apply({
+    id: EventId.make("event:settled-subagents:child-created"),
+    type: "thread.created",
+    threadId: childThreadIds.delivered!,
+    occurredAt: now,
+    payload: { ...parent, id: childThreadIds.delivered!, modelSelection: childSelection },
+  });
+  for (const records of [
+    yield* store.getThreadRecords(threadId, ["subagents"], {
+      subagentIds: [NodeId.make("node:settled-subagents:delivered")],
+    }),
+    yield* store.getThreadRecords(threadId, ["subagents"]),
+    (yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 76 })).projection,
+  ]) {
+    assert.deepEqual(
+      records.subagents.find((agent) => agent.title === "delivered")?.modelSelection,
+      childSelection,
+    );
+    assert.isUndefined(
+      records.subagents.find((agent) => agent.title === "no-delivery")?.modelSelection,
+    );
+  }
   // A command about one settled task keeps it, and reads only its node and turn item.
   const deliveredId = NodeId.make("node:settled-subagents:delivered");
   const forTask = yield* store.getThreadRecords(threadId, ["subagents", "nodes", "turnItems"], {
@@ -2382,6 +2409,45 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
     [...(yield* store.listAppOwnedChildThreadIds(threadId))],
     [childThreadIds.delivered, childThreadIds["no-delivery"]],
   );
+  const delivered = forTask.subagents.find((agent) => agent.id === deliveredId)!;
+  const reportedSelection = { ...modelSelection, options: [{ id: "thinking", value: "low" }] };
+  for (const [origin, instanceId, model] of [
+    ["provider_native", providerInstanceId, modelSelection.model],
+    ["app_owned", providerInstanceId, modelSelection.model],
+    ["app_owned", ProviderInstanceId.make("other-instance"), modelSelection.model],
+    ["app_owned", providerInstanceId, "older-model"],
+  ] as const) {
+    yield* store.apply({
+      id: EventId.make(`event:settled-subagents:guard:${origin}:${instanceId}:${model}`),
+      type: "subagent.updated",
+      threadId,
+      nodeId: deliveredId,
+      driver,
+      providerInstanceId: instanceId,
+      occurredAt: now,
+      payload: {
+        ...delivered,
+        origin,
+        providerInstanceId: instanceId,
+        model,
+        modelSelection: { ...reportedSelection, instanceId, model },
+      },
+    });
+    for (const records of [
+      yield* store.getThreadRecords(threadId, ["subagents"], { subagentIds: [deliveredId] }),
+      yield* store.getThreadRecords(threadId, ["subagents"]),
+      (yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 76 })).projection,
+    ]) {
+      assert.deepEqual(
+        records.subagents.find((agent) => agent.id === deliveredId)?.modelSelection,
+        {
+          ...reportedSelection,
+          instanceId,
+          model,
+        },
+      );
+    }
+  }
 });
 
 const backgroundThreadUpdatesKeepTimestamp = Effect.gen(function* () {

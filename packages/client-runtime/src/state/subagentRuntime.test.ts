@@ -13,6 +13,7 @@ import {
   isWorkflowScriptMessage,
   projectedSubagentsToRuntime,
   resolveWorkflowOpening,
+  subagentModelSelection,
   workflowMemberModelSelection,
 } from "./subagentRuntime.ts";
 import { resolveSubagentMetadata } from "./subagentDisplay.ts";
@@ -110,6 +111,44 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
       provider,
     });
     expect(formatSubagentEffort({ modelSlug, modelSelection, provider })).toBe("xhigh");
+  });
+
+  it("keeps a task's recorded selection, falling back to its delegated child's", () => {
+    const instanceId = ProviderInstanceId.make("pi");
+    const model = "opencode-go/deepseek-v4.1-flash";
+    const saved = { instanceId, model, options: [{ id: "thinking", value: "high" }] };
+    const reported = { instanceId, model, options: [{ id: "thinking", value: "max" }] };
+    const delegated = {
+      origin: "app_owned",
+      model,
+      providerInstanceId: instanceId,
+      modelSelection: reported,
+    } as const;
+    const movedChild = {
+      modelSelection: { ...saved, instanceId: ProviderInstanceId.make("pi-work") },
+    };
+
+    expect(subagentModelSelection(delegated, { modelSelection: saved })).toBe(reported);
+    expect(
+      subagentModelSelection(
+        { ...delegated, modelSelection: undefined, model: null },
+        { modelSelection: saved },
+      ),
+    ).toBe(saved);
+    expect(subagentModelSelection(delegated, undefined)).toBe(reported);
+    expect(subagentModelSelection(delegated, movedChild)).toBe(reported);
+    expect(
+      subagentModelSelection(delegated, { modelSelection: { ...saved, model: "new-model" } }),
+    ).toBe(reported);
+    expect(
+      subagentModelSelection({ ...delegated, modelSelection: undefined }, undefined),
+    ).toBeUndefined();
+    expect(
+      subagentModelSelection(
+        { ...delegated, origin: "provider_native" },
+        { modelSelection: saved },
+      ),
+    ).toBe(reported);
   });
 
   it("names a workflow by the model it runs on when the provider reports none", () => {
