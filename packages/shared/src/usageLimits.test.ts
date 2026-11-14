@@ -805,6 +805,33 @@ describe("pools", () => {
     },
   );
 
+  it("keeps hubs that share an origin apart within one environment", () => {
+    const seat = {
+      id: "claude-team-seat.json",
+      driver: claude,
+      usageLimits: { checkedAt, windows: [window] },
+    };
+    const hubAt = (id: string) => ({
+      ...source,
+      id: UsageLimitSourceId.make(id),
+      origin: "https://proxy.example",
+      accounts: [seat],
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: { providers: [], usageLimitSources: [hubAt("hub-a"), hubAt("hub-b")] },
+        },
+      ],
+    ]);
+    expect(collectLimitAccounts(input).map((account) => account.key)).toEqual([
+      "env-a:hub-a:claude-team-seat.json",
+      "env-a:hub-b:claude-team-seat.json",
+    ]);
+  });
+
   it("labels a default-named instance merged with a hub account by e-mail, keeping a chosen name", () => {
     const native = provider({
       driver: claude,
