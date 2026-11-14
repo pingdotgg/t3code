@@ -31,6 +31,8 @@ export function ComposerInlineControl(props: {
   readonly emphasized?: boolean;
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
   readonly renderIcon?: (size: number) => ReactNode;
+  /** Extra space after a rendered icon whose decoration hangs past its box. */
+  readonly iconTrailingGap?: number;
   readonly label: string;
   readonly labelEllipsizeMode?: ComponentProps<typeof Text>["ellipsizeMode"];
   readonly suffix?: ReactNode;
@@ -71,7 +73,7 @@ export function ComposerInlineControl(props: {
         {props.renderIcon ? (
           <View
             className="size-4 shrink-0 items-center justify-center"
-            style={{ width: iconSize, height: iconSize }}
+            style={{ width: iconSize, height: iconSize, marginRight: props.iconTrailingGap }}
           >
             {props.renderIcon(iconSize)}
           </View>
