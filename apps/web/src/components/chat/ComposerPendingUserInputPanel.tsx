@@ -1,7 +1,6 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
 import { markdownProseDirection, textDirection } from "~/textDirection";
-import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
-import { BackgroundThreadContext } from "./backgroundThread";
+import { memo, useEffect, useImperativeHandle, useRef, useState, type RefObject } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { type PendingUserInput } from "../../session-logic";
 import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
@@ -10,9 +9,15 @@ import { CheckboxMark } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Kbd } from "../ui/kbd";
 import { cn } from "~/lib/utils";
-import { isInSideChatPane } from "~/lib/sideChatPane";
 import { ComposerBanner } from "./ComposerBanner";
+import type { PendingQuestionKeyTarget } from "./composerFocusRedirect";
 import ChatMarkdown from "../ChatMarkdown";
+
+/** Returns true when the open question claimed the key. */
+export type PendingQuestionKeyHandler = (
+  event: Pick<KeyboardEvent, "key" | "repeat">,
+  target: PendingQuestionKeyTarget,
+) => boolean;
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
@@ -22,8 +27,16 @@ interface PendingUserInputPanelProps {
   respondingRequestIds: RuntimeRequestId[];
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
+  /** Holds this panel's keyboard handler while a question is shown. */
+  keyHandlerRef: RefObject<PendingQuestionKeyHandler | null>;
   onToggleOption: (questionId: string, optionValue: string) => void;
+  /** Types an option number into the answer, where it picks the option. */
+  onOptionKey: (questionId: string, key: string) => void;
+  /** Takes back the last option number; false when there is none. */
+  onRemoveOptionKey: (questionId: string) => boolean;
   onAdvance: () => void;
+  /** Confirms the active question, as the composer's Next button does. */
+  onConfirm: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
 }
 
@@ -35,8 +48,12 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   respondingRequestIds,
   answers,
   questionIndex,
+  keyHandlerRef,
   onToggleOption,
+  onOptionKey,
+  onRemoveOptionKey,
   onAdvance,
+  onConfirm,
   onDismiss,
 }: PendingUserInputPanelProps) {
   if (pendingUserInputs.length === 0) return null;
@@ -53,8 +70,12 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       isResponding={respondingRequestIds.includes(activePrompt.requestId)}
       answers={answers}
       questionIndex={questionIndex}
+      keyHandlerRef={keyHandlerRef}
       onToggleOption={onToggleOption}
+      onOptionKey={onOptionKey}
+      onRemoveOptionKey={onRemoveOptionKey}
       onAdvance={onAdvance}
+      onConfirm={onConfirm}
       onDismiss={onDismiss}
     />
   );
@@ -68,8 +89,12 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   isResponding,
   answers,
   questionIndex,
+  keyHandlerRef,
   onToggleOption,
+  onOptionKey,
+  onRemoveOptionKey,
   onAdvance,
+  onConfirm,
   onDismiss,
 }: {
   prompt: PendingUserInput;
@@ -79,8 +104,12 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   isResponding: boolean;
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
+  keyHandlerRef: RefObject<PendingQuestionKeyHandler | null>;
   onToggleOption: (questionId: string, optionValue: string) => void;
+  onOptionKey: (questionId: string, key: string) => void;
+  onRemoveOptionKey: (questionId: string) => boolean;
   onAdvance: () => void;
+  onConfirm: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
 }) {
   // Message-mode requests remain answerable after their provider turn ends.
@@ -144,39 +173,43 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     }, 200);
   };
 
-  const selectOptionFromShortcut = useEffectEvent(handleOptionSelection);
-  const backgroundThread = use(BackgroundThreadContext);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for digit shortcuts while a question is answerable
-  useEffect(() => {
-    if (!activeQuestion || responseDisabled || isCollapsed || backgroundThread) return;
-    const handler = (event: globalThis.KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      const target = event.target;
-      if (isInSideChatPane(target)) return;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        return;
-      }
+  // The chat's shortcuts offer keys here before type-to-focus (a side chat's only from
+  // inside its composer). 1-9 in an empty answer pick options, Backspace takes one back,
+  // and Enter confirms like Next; only a click on a single choice advances by itself.
+  useImperativeHandle(keyHandlerRef, () => (event, target) => {
+    if (!activeQuestion || responseDisabled) return false;
+    if (event.key === "Enter") {
+      // The answer field and other controls keep their own Enter. A focused
+      // single-select option keeps its click, which picks and advances.
       if (
-        target instanceof HTMLElement &&
-        target.closest(
-          'select, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [aria-modal="true"], [role="menu"], [role="combobox"], [data-slot$="popup"]',
-        )
+        isCollapsed ||
+        (target !== "page" && !(target === "option" && activeQuestion.multiSelect))
       ) {
-        return;
+        return false;
       }
-      const digit = Number.parseInt(event.key, 10);
-      if (Number.isNaN(digit) || digit < 1 || digit > 9) return;
-      const optionIndex = digit - 1;
-      if (optionIndex >= activeQuestion.options.length) return;
-      const option = activeQuestion.options[optionIndex];
-      if (!option) return;
-      event.preventDefault();
-      selectOptionFromShortcut(activeQuestion.id, option.value ?? option.label);
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, backgroundThread, isCollapsed, responseDisabled]);
+      if (!event.repeat) onConfirm();
+      return true;
+    }
+    if (event.key === "Backspace") {
+      return target !== "control" && onRemoveOptionKey(activeQuestion.id);
+    }
+    if (
+      progress.customAnswer.length > 0 ||
+      activeQuestion.initialAnswer !== undefined ||
+      !/^[1-9]$/.test(event.key) ||
+      !activeQuestion.options[Number(event.key) - 1]
+    ) {
+      return false;
+    }
+    if (!event.repeat) {
+      // The key overrides a click still waiting to advance, so its pick waits for Enter.
+      if (autoAdvanceTimerRef.current !== null) window.clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+      setCollapsedQuestionId(null);
+      onOptionKey(activeQuestion.id, event.key);
+    }
+    return true;
+  });
 
   if (!activeQuestion) {
     return null;
@@ -319,6 +352,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     <button
                       type="button"
                       aria-pressed={isSelected}
+                      data-pending-user-input-option
                       disabled={disabled || isResponding}
                       onClick={() => {
                         handleOptionSelection(activeQuestion.id, optionValue);

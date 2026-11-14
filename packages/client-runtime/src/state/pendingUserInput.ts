@@ -10,6 +10,8 @@ export interface PendingUserInputQuestion {
 export interface PendingUserInputDraftAnswer {
   readonly selectedOptionValues?: ReadonlyArray<string>;
   readonly customAnswer?: string;
+  /** Number keys pressed to pick options, apart from typed text. Web only. */
+  readonly optionKeys?: string;
   readonly attachmentCount?: number;
   readonly attachmentsBlocked?: boolean;
 }

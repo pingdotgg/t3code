@@ -4,11 +4,17 @@ import { formatInlineContextReference } from "./lib/composerContextReferences";
 import { threadContextReference } from "./lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 
+import { resolvePendingUserInputAnswer } from "@t3tools/client-runtime/state/pending-user-input";
+
 import {
+  addPendingUserInputOptionKey,
   answerContextRecords,
+  applyPendingUserInputOptionKeys,
   carryDisplacedCustomAnswerIntoPrompt,
   derivePendingUserInputProgress,
   projectPendingUserInputAnswer,
+  removePendingUserInputOptionKey,
+  setPendingUserInputAnswerText,
   threadContextsReferencedByAnswer,
   withdrawDisplacedCustomAnswerFromPrompt,
 } from "./pendingUserInput";
@@ -219,5 +225,93 @@ describe("withdrawDisplacedCustomAnswerFromPrompt", () => {
       "my first answer",
     );
     expect(withdrawDisplacedCustomAnswerFromPrompt("draft", "  ")).toBe("draft");
+  });
+});
+
+describe("option keys typed into the answer field", () => {
+  const steps = {
+    id: "steps",
+    header: "Release go",
+    question: "Which steps may I take?",
+    options: [
+      { label: "Push", description: "Push the merge commit" },
+      { label: "Merge", description: "Merge once green" },
+      { label: "Open PR", description: "Docs only" },
+    ],
+    multiSelect: true,
+  };
+  const channel = {
+    id: "channel",
+    header: "Channel",
+    question: "Which channel first?",
+    options: [
+      { label: "Beta", description: "Testers" },
+      { label: "Stable", description: "Everyone" },
+    ],
+    multiSelect: false,
+  };
+  type Draft = Parameters<typeof setPendingUserInputAnswerText>[1];
+  type Question = typeof steps | typeof channel;
+  const shown = (question: Question, draft: Draft) =>
+    applyPendingUserInputOptionKeys(question, draft);
+  // Number keys while the field shows no text, then each typed character at its end.
+  const press = (keys: string, draft?: Draft) =>
+    [...keys].reduce<Draft>((current, key) => addPendingUserInputOptionKey(current, key), draft);
+  const type = (question: Question, text: string, draft?: Draft) =>
+    [...text].reduce<Draft>(
+      (current, character) =>
+        setPendingUserInputAnswerText(
+          question,
+          current,
+          (shown(question, current)?.customAnswer ?? "") + character,
+        ),
+      draft,
+    );
+
+  it("picks options while only number keys are pressed, then turns them into text", () => {
+    const picking = press("132");
+    expect(shown(steps, picking)).toMatchObject({
+      customAnswer: "",
+      selectedOptionValues: ["Push", "Open PR", "Merge"],
+    });
+    expect(resolvePendingUserInputAnswer(steps, shown(steps, picking))).toEqual([
+      "Push",
+      "Open PR",
+      "Merge",
+    ]);
+
+    const typed = type(steps, " is the project id", picking);
+    expect(shown(steps, typed)).toEqual({ customAnswer: "132 is the project id" });
+    expect(resolvePendingUserInputAnswer(steps, shown(steps, typed))).toBe("132 is the project id");
+  });
+
+  it("keeps pasted or typed digits as text", () => {
+    const pasted = setPendingUserInputAnswerText(steps, undefined, "12");
+    expect(shown(steps, pasted)).toEqual({ customAnswer: "12" });
+    expect(resolvePendingUserInputAnswer(steps, shown(steps, pasted))).toBe("12");
+  });
+
+  it("picks the last key on a single choice and keeps it as text once more follows", () => {
+    expect(shown(channel, press("2"))).toMatchObject({ selectedOptionValues: ["Stable"] });
+    expect(shown(channel, type(channel, ", after the infra review", press("2")))).toEqual({
+      customAnswer: "2, after the infra review",
+    });
+
+    const choiceOnly = { ...channel, allowCustomAnswer: false };
+    // A choice-only question has no text to fall back to, so other keys change nothing.
+    expect(shown(choiceOnly, type(choiceOnly, ",", press("2")))).toMatchObject({
+      selectedOptionValues: ["Stable"],
+    });
+  });
+
+  it("toggles on top of earlier picks, and Backspace takes the last key back", () => {
+    const typed = press("12", { selectedOptionValues: ["Push"] });
+    expect(shown(steps, typed)?.selectedOptionValues).toEqual(["Merge"]);
+
+    const undone = removePendingUserInputOptionKey(steps, typed) ?? undefined;
+    expect(shown(steps, undone)?.selectedOptionValues).toEqual([]);
+    const cleared = removePendingUserInputOptionKey(steps, undone) ?? undefined;
+    expect(shown(steps, cleared)?.selectedOptionValues).toEqual(["Push"]);
+    expect(removePendingUserInputOptionKey(steps, type(steps, " more", press("1")))).toBeNull();
   });
 });

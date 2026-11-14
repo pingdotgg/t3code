@@ -1,0 +1,5 @@
+{"type":"transcript_start","provider":"acpRegistry","protocol":"acp.ndjson-jsonrpc","version":"1","scenario":"dev_replay_multi_choice_question","metadata":{"generatedBy":"hand-written for the dev replay agent"}}
+{"type":"expect_outbound","frame":{"kind":"request","method":"session/prompt","params":"<any>"}}
+{"type":"emit_inbound","frame":{"kind":"request","method":"elicitation/create","params":{"sessionId":"dev-replay-session","mode":"form","message":"Choose the release steps.","requestedSchema":{"type":"object","title":"Release go","properties":{"steps":{"type":"array","title":"Release go","description":"PR #12 is the 0.3.0 release. Which outward steps may I take now?","items":{"type":"string","enum":["Push to PR #12","Merge #12 when green","Open ADR-0013 PR"]}}},"required":["steps"]}}}}
+{"type":"emit_inbound","frame":{"kind":"notification","method":"session/update","params":{"sessionId":"dev-replay-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Multiple choice fixture complete."}}}}}
+{"type":"emit_inbound","frame":{"kind":"response","method":"session/prompt","result":{"stopReason":"end_turn"}}}
