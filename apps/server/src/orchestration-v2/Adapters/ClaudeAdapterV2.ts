@@ -1036,6 +1036,7 @@ export interface ClaudeAgentSdkLoggedQueryOptions {
   readonly hasCanUseTool?: true;
   readonly hasEnvironment?: true;
   readonly hasMcpServers?: true;
+  readonly hasHooks?: true;
 }
 
 export type ClaudeAgentSdkProtocolLogEvent =
@@ -1182,6 +1183,7 @@ export function loggedClaudeQueryOptions(
     ...(options.canUseTool === undefined ? {} : { hasCanUseTool: true }),
     ...(options.env === undefined ? {} : { hasEnvironment: true }),
     ...(options.mcpServers === undefined ? {} : { hasMcpServers: true }),
+    ...(options.hooks === undefined ? {} : { hasHooks: true }),
   };
 }
 
@@ -2010,6 +2012,7 @@ export function makeClaudeQueryOptions(input: {
   readonly disallowedTools?: ReadonlyArray<string>;
   readonly permissionMode?: PermissionMode;
   readonly canUseTool?: CanUseTool;
+  readonly hooks?: ClaudeQueryOptions["hooks"];
   readonly onUserDialog?: ClaudeQueryOptions["onUserDialog"];
   readonly onElicitation?: ClaudeQueryOptions["onElicitation"];
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
@@ -2163,9 +2166,16 @@ export function makeClaudeQueryOptions(input: {
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
-    ...(deviceInstructions
-      ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }
-      : {}),
+    ...(input.hooks === undefined && !deviceInstructions
+      ? {}
+      : {
+          hooks: {
+            ...input.hooks,
+            ...(deviceInstructions
+              ? { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] }
+              : {}),
+          },
+        }),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [
@@ -5685,6 +5695,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const pendingBackgroundTasksByNativeThread = yield* Ref.make(
           new Map<string, Map<string, OrchestrationV2PendingBackgroundTask>>(),
         );
+        // Session crons (CronCreate, ScheduleWakeup, /loop) live only in the CLI process and
+        // are reported solely by the Stop hook, each time as a full snapshot.
+        const pendingSessionCronCountByNativeThread = yield* Ref.make(new Map<string, number>());
         // Survives roster REPLACE levels, which rebuild every entry without the agent's mark.
         const awaitedBackgroundTasksByNativeThread = yield* Ref.make(
           new Map<string, Set<string>>(),
@@ -6478,6 +6491,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* endClaudeMonitorTasks((_taskId, task) => task.nativeThreadId === nativeThreadId);
           });
 
+        // Session crons pin the session with no cap, so never keep a count the latest turn did not
+        // report: a failed turn (usage limit, overload) ends through StopFailure, which has none.
+        const clearSessionCronCountForNativeThread = (nativeThreadId: string) =>
+          Ref.update(pendingSessionCronCountByNativeThread, (current) => {
+            if (!current.has(nativeThreadId)) return current;
+            const updated = new Map(current);
+            updated.delete(nativeThreadId);
+            return updated;
+          });
+
         const forgetAbsorbedWake = (nativeThreadId: string) =>
           Ref.update(absorbedWakes, (current) => {
             if (!current.has(nativeThreadId)) return current;
@@ -6569,6 +6592,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const preservedOpaqueTombstones = [...priorOpaqueTombstones].filter((taskId) =>
             bufferedTaskNotificationIds.has(taskId),
           );
+          yield* clearSessionCronCountForNativeThread(nativeThreadId);
           scheduledWakeupsByNativeThread.delete(nativeThreadId);
           possibleEarlyWakeNativeThreads.delete(nativeThreadId);
           yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
@@ -9201,6 +9225,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           closedQuery: ClaudeLiveQueryContext,
           cause?: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
         ) {
+          yield* clearSessionCronCountForNativeThread(closedQuery.nativeThreadId);
           const current = yield* Ref.get(activeTurn);
           // A replacement query can reuse the native thread id; only this query's turn is ours.
           const context = closedQuery.lastTurn;
@@ -12291,6 +12316,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions,
                 }),
             canUseTool,
+            hooks: {
+              Stop: [
+                {
+                  hooks: [
+                    (hookInput) =>
+                      runPromise(
+                        Effect.gen(function* () {
+                          if (hookInput.hook_event_name === "Stop") {
+                            const cronCount = hookInput.session_crons?.length ?? 0;
+                            yield* Ref.update(pendingSessionCronCountByNativeThread, (current) =>
+                              new Map(current).set(nativeThreadId, cronCount),
+                            );
+                          }
+                          return { continue: true };
+                        }),
+                      ),
+                  ],
+                },
+              ],
+            },
             onUserDialog,
             onElicitation,
             supportedDialogKinds: ["resume_return"],
@@ -12495,6 +12540,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 reason: "previous_turn_active",
               });
             }
+            // Only this turn's Stop hook may report crons; a failed turn ends without one.
+            yield* clearSessionCronCountForNativeThread(nativeThreadId);
             yield* Ref.update(lastTurnRouteByNativeThread, (current) => {
               const updated = new Map(current);
               updated.set(nativeThreadId, {
@@ -13294,6 +13341,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return false;
           }),
+          // A session cron fires only in the live process, so releasing it would drop the job.
+          hasScheduledWork: Ref.get(pendingSessionCronCountByNativeThread).pipe(
+            Effect.map((counts) => [...counts.values()].some((count) => count > 0)),
+          ),
           // Untraced: the run's event stream calls this once per provider event.
           hasPendingBackgroundWorkForThread: Effect.fnUntraced(function* (providerThread, options) {
             const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
