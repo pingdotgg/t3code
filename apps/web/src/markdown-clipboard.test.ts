@@ -6,6 +6,11 @@ import {
   serializeTableElementToMarkdown,
 } from "./markdown-clipboard";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { unified } from "unified";
+import remarkParse from "remark-parse";
+import type { Root } from "mdast";
+import { CHAT_MARKDOWN_REMARK_PLUGINS } from "@t3tools/shared/markdownPipeline";
+
 import {
   collectAssistantCitations,
   serializeAssistantCitation,
@@ -196,6 +201,35 @@ describe("serializeRenderedMarkdownFragment", () => {
     const container = new FakeElement("DIV").append(code);
 
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("first line\nsecond line");
+  });
+
+  it.each([
+    ["ordinary", "`value`"],
+    ["backtick edge", "`` `value` ``"],
+    ["all spaces", "`   `"],
+    ["leading space", "` value`"],
+    ["trailing space", "`value `"],
+    ["space edges", "`  value  `"],
+    ["space and backtick edges", "``  `value`  ``"],
+  ])("preserves parsed inline-code data across copy: %s", (_, source) => {
+    const processor = unified().use(remarkParse).use(CHAT_MARKDOWN_REMARK_PLUGINS);
+    const parseChat = (text: string) => processor.runSync(processor.parse(text), text) as Root;
+    const original = parseChat(source).children[0];
+    if (original?.type !== "paragraph") throw new Error("Expected paragraph");
+    const inline = original.children[0];
+    if (inline?.type !== "inlineCode") throw new Error("Expected inline code");
+    const container = new FakeElement("DIV").append(
+      new FakeElement("P").append(
+        new FakeText("Use "),
+        new FakeElement("CODE").append(new FakeText(inline.value)),
+        new FakeText(" here."),
+      ),
+    );
+    const copied = serializeRenderedMarkdownFragment(asNode(container));
+    const paragraph = parseChat(copied).children[0];
+    if (paragraph?.type !== "paragraph") throw new Error("Expected copied paragraph");
+    const code = paragraph.children.find((child) => child.type === "inlineCode");
+    expect(code?.value).toBe(inline.value);
   });
 
   it("copies alert and insight callouts as their Markdown instead of the rendered label", () => {
