@@ -91,6 +91,9 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
         message: "No OpenCode Console workspace is signed in.",
       });
     const { go, budgets, workspace } = body.data;
+    // A Zen-only workspace has neither a Go subscription nor spend limits.
+    if (!go && budgets.length === 0)
+      return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     const consoleProviders = budgets.some(
       (budget) => budget.coverage === "all" && budget.per === "set",
     )
