@@ -44,6 +44,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderCredentialStore from "../ProviderCredentialStore.ts";
 import * as ProviderHostLive from "../ProviderHostLive.ts";
+import * as PortScanner from "../../preview/PortScanner.ts";
 
 const layerDeps = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-codex-driver-maintenance-",
@@ -51,6 +52,7 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(McpProviderSessions.layer),
+  Layer.provideMerge(PortScanner.layerTest),
   Layer.provideMerge(
     Layer.mock(CodexAdapterV2.CodexAppServerClientFactory)({
       open: () => Effect.die("Maintenance resolution must not open a Codex session"),

@@ -60,6 +60,11 @@ export class PortDiscovery extends Context.Service<
     readonly stopServer: (
       input: PreviewStopLocalServerInput,
     ) => Effect.Effect<void, PreviewStopLocalServerError>;
+    /**
+     * Consumes one recent `stopServer` of a server this thread's agent started, so the agent's
+     * command ending from it is not reported back as a crash.
+     */
+    readonly takeUserStop: (threadId: ThreadId) => Effect.Effect<boolean>;
   }
 >()("t3/preview/PortScanner/PortDiscovery") {}
 
@@ -88,6 +93,7 @@ const PS_TIMEOUT_MS = 5_000;
 const PS_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const STOP_GRACE_MS = 3_000;
 const STOP_POLL_INTERVAL = Duration.millis(250);
+const USER_STOP_TTL_MS = STOP_GRACE_MS + 10_000;
 
 type Listener = (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>;
 
@@ -476,6 +482,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // environment, so a pid is read once while it listens. Cleared while no client retains the
   // scanner, since unscanned pids can be reused.
   const agentThreadsRef = yield* Ref.make<ReadonlyMap<number, ThreadId | null>>(new Map());
+  // Expiry times of user stops not yet matched to the agent command they ended, per thread.
+  const userStopsRef = yield* Ref.make<ReadonlyMap<ThreadId, ReadonlyArray<number>>>(new Map());
   let runningAgents = 0;
   // An agent that exited, or a cache cleared with a marked listener, owes one listener read: the
   // servers it left may still run. So does startup, for agents that ran before a restart.
@@ -1055,10 +1063,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       return next;
     });
     agentScanPending = true;
-    const listed = (yield* scanOnce()).some(
+    const listed = (yield* scanOnce()).find(
       (server) => server.pid === input.pid && server.port === input.port && isOwned(server),
     );
-    if (!listed) return yield* new PreviewStopLocalServerError({ reason: "not-found" });
+    if (listed === undefined)
+      return yield* new PreviewStopLocalServerError({ reason: "not-found" });
     const table = yield* readProcessTable;
     // It exited after the scan, so there is nothing left to stop.
     if (!table.has(input.pid)) return;
@@ -1076,6 +1085,21 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             : Effect.fail(new PreviewStopLocalServerError({ reason: "signal-failed", cause }));
         }
       });
+    const agentThreadId = listed.agent?.threadId;
+    if (agentThreadId !== undefined) {
+      const now = yield* Clock.currentTimeMillis;
+      yield* Ref.update(userStopsRef, (stops) => {
+        const next = new Map<ThreadId, ReadonlyArray<number>>();
+        for (const [threadId, expiries] of stops) {
+          const live = expiries.filter((expiresAt) => expiresAt > now);
+          if (live.length > 0) next.set(threadId, live);
+        }
+        return next.set(agentThreadId, [
+          ...(next.get(agentThreadId) ?? []),
+          now + USER_STOP_TTL_MS,
+        ]);
+      });
+    }
     if (!(yield* signalGroup("SIGTERM"))) return;
     // While one of the group's original members is still in it, the group has not been reused,
     // so SIGKILL goes only to the job that ignored SIGTERM.
@@ -1096,6 +1120,17 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     // Subscribers see the server leave now rather than on the next poll.
     signalUntilStopped(input).pipe(Effect.andThen(pollIfRetained));
 
+  const takeUserStop: PortDiscovery["Service"]["takeUserStop"] = (threadId) =>
+    Effect.flatMap(Clock.currentTimeMillis, (now) =>
+      Ref.modify(userStopsRef, (stops) => {
+        const live = (stops.get(threadId) ?? []).filter((expiresAt) => expiresAt > now);
+        const next = new Map(stops);
+        if (live.length <= 1) next.delete(threadId);
+        else next.set(threadId, live.slice(1));
+        return [live.length > 0, next] as const;
+      }),
+    );
+
   return PortDiscovery.of({
     scan: scanOnce,
     subscribe,
@@ -1104,10 +1139,14 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     unregisterTerminal,
     trackAgent,
     stopServer,
+    takeUserStop,
   });
 }).pipe(Effect.withSpan("PortDiscovery.make"));
 
 export const layer = Layer.effect(PortDiscovery, make);
 
 /** A scanner that tracks nothing, for tests that build provider runners without a host. */
-export const layerTest = Layer.mock(PortDiscovery)({ trackAgent: () => () => undefined });
+export const layerTest = Layer.mock(PortDiscovery)({
+  trackAgent: () => () => undefined,
+  takeUserStop: () => Effect.succeed(false),
+});

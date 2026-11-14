@@ -6,6 +6,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
   PREVIEW_URL_MAX_LENGTH,
+  ThreadId,
   type DiscoveredLocalServer,
 } from "@t3tools/contracts";
 import * as ProcessGroup from "@t3tools/provider-core/server/processGroup";
@@ -1017,11 +1018,16 @@ effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 
       const unlisted = yield* Effect.flip(scanner.stopServer({ pid: process.pid, port: job.port }));
       expect(unlisted.reason).toBe("not-found");
+      const threadId = ThreadId.make("thread-live");
+      expect(yield* scanner.takeUserStop(threadId)).toBe(false);
 
       yield* scanner.stopServer({ pid: job.pid, port: job.port });
       // The shell waits on its job, so it exits once the job has.
       yield* Effect.promise(() => job.exited);
       expect(isRunning(job.pid)).toBe(false);
+      // The agent's command ends from this stop once, not every later command.
+      expect(yield* scanner.takeUserStop(threadId)).toBe(true);
+      expect(yield* scanner.takeUserStop(threadId)).toBe(false);
     }).pipe(
       Effect.scoped,
       Effect.provide(

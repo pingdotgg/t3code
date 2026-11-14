@@ -1372,6 +1372,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
     models?: CodexAdapterV2.CodexAdapterV2Options["models"],
+    takeUserStop?: CodexAdapterV2.CodexAdapterV2Options["takeUserStop"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1435,6 +1436,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         clientFactory,
         ...(onUsageLimits ? { onUsageLimits } : {}),
         ...(models ? { models } : {}),
+        ...(takeUserStop ? { takeUserStop } : {}),
         digest: yield* Digest.Digest,
         fileSystem,
         idAllocator,
@@ -5241,50 +5243,68 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ],
   });
 
-  it.effect("marks a root command it wakes the agent for once the command finishes", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeCodexReplayHarness({
-        ...backgroundExecTranscript,
-        entries: backgroundExecTranscript.entries.map((entry) =>
-          entry.type === "emit_inbound" && entry.label === "item/completed/command-late"
-            ? { ...entry, afterMs: 0 }
-            : entry,
-        ),
-      });
-      yield* harness.runtime.startTurn(
-        makeCodexTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("attempt-command-completion-wake"),
-          text: BG_PROMPT,
-        }),
-      );
-      const commands = () =>
-        harness.events.flatMap((event) =>
-          event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
-            ? [[event.turnItem.status, event.turnItem.completionWake]]
-            : [],
+  it.effect.each([false, true])(
+    "wakes the agent once a root command finishes unless the user stopped it (%s)",
+    (userStopped) =>
+      Effect.gen(function* () {
+        const userStops: Array<ThreadId> = [];
+        const harness = yield* makeCodexReplayHarness(
+          {
+            ...backgroundExecTranscript,
+            entries: backgroundExecTranscript.entries.map((entry) =>
+              entry.type === "emit_inbound" && entry.label === "item/completed/command-late"
+                ? { ...entry, afterMs: 0 }
+                : entry,
+            ),
+          },
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          (threadId) =>
+            Effect.sync(() => {
+              userStops.push(threadId);
+              return userStopped;
+            }),
         );
-      yield* harness.until(
-        () => harness.continuationRequests.length === 1 && commands().length === 2,
-      );
-      // Restart recovery reads this to keep the wake the restart cut.
-      assert.deepEqual(commands(), [
-        ["running", "always"],
-        ["completed", "always"],
-      ]);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-command-completion-wake"),
+            text: BG_PROMPT,
+          }),
+        );
+        const commands = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+              ? [[event.turnItem.status, event.turnItem.completionWake]]
+              : [],
+          );
+        yield* harness.until(() => userStops.length === 1 && commands().length === 2);
+        assert.deepEqual(userStops, [harness.threadId]);
+        assert.lengthOf(harness.continuationRequests, userStopped ? 0 : 1);
+        // Restart recovery reads this to keep the wake the restart cut.
+        assert.deepEqual(commands(), [
+          ["running", "always"],
+          ["completed", "always"],
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
-    ),
   );
 
   it.effect("wakes with well-formed text when the cuts split an emoji", () =>

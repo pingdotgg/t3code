@@ -1766,6 +1766,7 @@ export type CodexAdapterV2DriverEnv =
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | Path.Path
+  | PortScanner.PortDiscovery
   | ServerConfig;
 
 export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapterV2")(function* (
@@ -1782,6 +1783,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   const hostEnvironment = yield* HostProcess.Environment;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const serverConfig = yield* ServerConfig;
+  const portDiscovery = yield* PortScanner.PortDiscovery;
   const homeLayout = yield* resolveCodexHomeLayout(config);
 
   yield* materializeCodexShadowHome(homeLayout).pipe(
@@ -1813,6 +1815,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
     idAllocator,
     serverConfig,
     continuationRequests,
+    takeUserStop: portDiscovery.takeUserStop,
     ...hooks,
   });
 });
@@ -1839,6 +1842,8 @@ export interface CodexAdapterV2Options {
       request: ProviderContinuationRequests.ProviderContinuationRequest,
     ) => Effect.Effect<void>;
   };
+  /** True when the user just stopped a server this thread's agent started, outside Codex. */
+  readonly takeUserStop?: (threadId: ThreadId) => Effect.Effect<boolean>;
 }
 
 export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
@@ -1849,6 +1854,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     threadId === null ? Effect.undefined : mcpSessions.read(threadId);
   const { clientFactory, digest, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
+  const takeUserStop = adapterOptions.takeUserStop ?? (() => Effect.succeed(false));
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -5432,7 +5438,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 if (
                   context.subagent === null &&
                   continuationRequests !== undefined &&
-                  !(yield* Ref.get(interruptingNativeTurns)).has(payload.turnId)
+                  !(yield* Ref.get(interruptingNativeTurns)).has(payload.turnId) &&
+                  // The user stopped it from the Servers list; waking the agent invites a restart.
+                  !(yield* takeUserStop(context.projectionThreadId))
                 ) {
                   const alreadyOffered = yield* Ref.modify(
                     offeredContinuationItemsByTurn,
