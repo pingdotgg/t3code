@@ -337,6 +337,6 @@ several selected threads together. Choose **Wake thread** to bring a thread back
 
 A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work or a scheduled task runs in it, including
-with **Run now**. It comes back early for an approval,
-a new question, a failed run, or a message or answer you send. You can snooze an existing
+with **Run now**. It comes back early for an approval, a new question, a failed run,
+or a message or answer you send. You can snooze an existing
 question and answer when the thread wakes; the question stays unanswered.
