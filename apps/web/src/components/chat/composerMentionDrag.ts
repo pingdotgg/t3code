@@ -46,7 +46,7 @@ export interface ComposerMentionDropHost {
   onInsertRejected(): void;
 }
 
-interface ComposerMentionDragHandlers {
+export interface ComposerMentionDragHandlers {
   onDragEnter(event: ComposerMentionDragEvent): void;
   onDragOver(event: ComposerMentionDragEvent): void;
   onDrop(event: ComposerMentionDragEvent): void;

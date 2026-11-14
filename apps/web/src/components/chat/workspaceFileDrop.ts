@@ -1,4 +1,4 @@
-interface WorkspaceFileDragEvent {
+export interface WorkspaceFileDragEvent {
   readonly dataTransfer: {
     readonly types: ReadonlyArray<string>;
     readonly files: Iterable<File>;
