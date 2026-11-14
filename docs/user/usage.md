@@ -20,6 +20,8 @@ record are missing from the totals.
 Text generation (thread titles, commit messages, PR text, branch names and review guides) is not in
 the totals for Codex or Claude Code 2.0.63 and newer, because those runs save no session history.
 
+The server keeps scanned usage history for 92 days by default. Claude Code deletes its own transcripts after 30 days by default, so for older Claude usage this history is the only record left. To keep it longer, set `usageHistoryRetentionDays` in the environment's `<T3 home>/userdata/settings.json` to a positive number of days such as `365`, or to `"unlimited"`. Usage views currently show up to 90 days; a longer retention keeps the history on the server for later without changing what the app displays. Lowering the value prunes older history on the next refresh, and raising it again does not bring pruned history back unless the provider still has it. If `settings.json` cannot be read, history is kept as if retention were unlimited until the file is valid again. Longer retention uses more disk space and memory.
+
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
 databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
 server to read a different data directory; comma-separated paths read multiple directories.

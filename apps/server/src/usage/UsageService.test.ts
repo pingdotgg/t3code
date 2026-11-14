@@ -25,6 +25,7 @@ import {
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -46,6 +47,7 @@ import * as CodexUsageHistory from "./CodexUsageHistory.ts";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
@@ -288,12 +290,14 @@ function makeFakeCursor() {
     events: [] as { readonly timestampMs: number; readonly outputTokens: number }[],
     error: null as string | null,
     gate: undefined as Deferred.Deferred<void> | undefined,
+    started: undefined as Deferred.Deferred<void> | undefined,
     calls: [] as { readonly sinceMs: number; readonly untilMs: number }[],
     credentials: [] as unknown[],
   };
   const read = (credential: unknown, sinceMs: number, untilMs: number) =>
     Effect.gen(function* () {
       state.calls.push({ sinceMs, untilMs });
+      if (state.started !== undefined) yield* Deferred.succeed(state.started, undefined);
       state.credentials.push(credential);
       if (state.gate !== undefined) yield* Deferred.await(state.gate);
       const { accountKey, error } = state;
@@ -1726,45 +1730,120 @@ describe("UsageService", () => {
     }),
   );
 
-  it.effect("restores the Cursor account cache after a restart", () =>
+  it.effect.each([
+    { label: "default", retention: undefined, cutoff: CURSOR_NOW - 92 * 24 * HOUR_MS },
+    { label: "365 days", retention: 365, cutoff: CURSOR_NOW - 365 * 24 * HOUR_MS },
+    { label: "unlimited", retention: "unlimited" as const, cutoff: 0 },
+    { label: "36500 days", retention: 36500, cutoff: 0 },
+  ])(
+    "propagates the $label cutoff and restores the Cursor account cache after a restart",
+    ({ retention, cutoff }) =>
+      Effect.gen(function* () {
+        const { settings, home } = yield* setup;
+        yield* TestClock.setTime(CURSOR_NOW);
+        const before = makeFakeCursor();
+        before.state.events = [
+          { timestampMs: CURSOR_NOW - 30 * HOUR_MS, outputTokens: 5 },
+          { timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 7 },
+        ];
+        yield* Effect.gen(function* () {
+          const first = yield* makeWithCursor(before.read);
+          const original = yield* first.readSummary({ ...WINDOW, awaitRefresh: true });
+          assert.deepStrictEqual(before.state.calls, [{ sinceMs: cutoff, untilMs: CURSOR_NOW }]);
+          yield* first.awaitPersisted;
+
+          const after = makeFakeCursor();
+          after.state.events = before.state.events;
+          const restarted = yield* makeWithCursor(after.read);
+          const restored = yield* restarted.readSummary(WINDOW);
+          assert.isUndefined(cursorSource(restored)?.refreshing);
+          assert.deepStrictEqual(restored.buckets, original.buckets);
+          assert.deepStrictEqual(cursorSource(restored), cursorSource(original));
+          assert.strictEqual(after.state.calls.length, 0);
+
+          yield* TestClock.adjust(Duration.minutes(2));
+          const refreshed = yield* restarted.readSummary({ ...WINDOW, awaitRefresh: true });
+          assert.deepStrictEqual(refreshed.buckets, original.buckets);
+          assert.deepStrictEqual(after.state.calls, [
+            { sinceMs: CURSOR_NOW - HOUR_MS, untilMs: CURSOR_NOW + 2 * 60 * 1000 },
+          ]);
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: "usage-service-cursor-restart",
+              environment: { CURSOR_API_KEY: "test-key" },
+              home,
+              settings: {
+                ...settings,
+                ...(retention === undefined ? {} : { usageHistoryRetentionDays: retention }),
+              },
+            }),
+          ),
+        );
+      }),
+  );
+
+  it.effect("widens Cursor history after awaiting a shared narrower refresh", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
       yield* TestClock.setTime(CURSOR_NOW);
-      const before = makeFakeCursor();
-      before.state.events = [
-        { timestampMs: CURSOR_NOW - 30 * HOUR_MS, outputTokens: 5 },
+      const cursor = makeFakeCursor();
+      cursor.state.gate = yield* Deferred.make<void>();
+      cursor.state.started = yield* Deferred.make<void>();
+      cursor.state.events = [
+        { timestampMs: CURSOR_NOW - 120 * 24 * HOUR_MS, outputTokens: 5 },
         { timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 7 },
       ];
-      yield* Effect.gen(function* () {
-        const first = yield* makeWithCursor(before.read);
-        const original = yield* first.readSummary({ ...WINDOW, awaitRefresh: true });
-        yield* first.awaitPersisted;
-
-        const after = makeFakeCursor();
-        after.state.events = before.state.events;
-        const restarted = yield* makeWithCursor(after.read);
-        const restored = yield* restarted.readSummary(WINDOW);
-        assert.isUndefined(cursorSource(restored)?.refreshing);
-        assert.deepStrictEqual(restored.buckets, original.buckets);
-        assert.deepStrictEqual(cursorSource(restored), cursorSource(original));
-        assert.strictEqual(after.state.calls.length, 0);
-
-        yield* TestClock.adjust(Duration.minutes(2));
-        const refreshed = yield* restarted.readSummary({ ...WINDOW, awaitRefresh: true });
-        assert.deepStrictEqual(refreshed.buckets, original.buckets);
-        assert.deepStrictEqual(after.state.calls, [
-          { sinceMs: CURSOR_NOW - HOUR_MS, untilMs: CURSOR_NOW + 2 * 60 * 1000 },
-        ]);
-      }).pipe(
-        Effect.provide(
-          layerService({
-            prefix: "usage-service-cursor-restart",
-            home,
-            settings,
-            environment: { CURSOR_API_KEY: "test-key" },
-          }),
+      const context = yield* Layer.build(
+        layerCursorUsageAccounts(
+          Layer.succeed(CursorAccountReader.CursorAccountReader, { read: cursor.read }),
+        ).pipe(
+          Layer.provide(
+            layerService({
+              prefix: "usage-service-cursor-shared-refresh",
+              home,
+              settings,
+              platform: "darwin",
+            }),
+          ),
         ),
       );
+      const accounts = Context.get(context, CursorUsageAccounts.CursorUsageAccounts);
+      const input = {
+        instances: [
+          {
+            instanceId: ProviderInstanceId.make("cursor"),
+            environment: { CURSOR_API_KEY: "test-key" },
+          },
+        ],
+        windowStartMs: 0,
+        retentionCutoffMs: CURSOR_NOW - 92 * 24 * HOUR_MS,
+        awaitRefresh: false,
+      };
+      const narrow = yield* accounts.scan(input);
+      assert.isTrue(narrow[0]?.refreshing);
+      yield* Deferred.await(cursor.state.started);
+      const wider = yield* accounts
+        .scan({ ...input, retentionCutoffMs: 0, awaitRefresh: true })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      assert.strictEqual(cursor.state.calls.length, 1);
+      yield* Deferred.succeed(cursor.state.gate, undefined);
+      const sources = yield* Fiber.join(wider);
+      assert.deepStrictEqual(cursor.state.calls, [
+        { sinceMs: input.retentionCutoffMs, untilMs: CURSOR_NOW },
+        { sinceMs: 0, untilMs: CURSOR_NOW },
+      ]);
+      assert.strictEqual(sources[0]?.status, "ok");
+      assert.deepStrictEqual(
+        sources[0]?.files?.flatMap((file) =>
+          file.records.map(({ timestampMs, totals }) => ({
+            timestampMs,
+            outputTokens: totals.outputTokens,
+          })),
+        ),
+        cursor.state.events,
+      );
+      yield* accounts.awaitPersisted;
     }),
   );
 
@@ -3365,6 +3444,180 @@ describe("UsageService", () => {
               "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
             },
           }),
+        ),
+      );
+    }),
+  );
+
+  it.effect.each([
+    { label: "the default 92 days", retention: undefined, expected: 1 },
+    { label: "365 days", retention: 365, expected: 7 },
+    { label: "unlimited", retention: "unlimited" as const, expected: 15 },
+  ])(
+    "retains deleted transcripts according to $label across restart and settings changes",
+    ({ retention, expected }) =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        const now = Date.parse("2026-08-02T12:00:00Z");
+        yield* TestClock.setTime(now);
+        const window = { ...WINDOW, sinceDay: UsageDay.make("2024-01-01") };
+        const files = [92, 93, 180, 730].map((days, index) => ({
+          path: `${transcript}-${index}.jsonl`,
+          timestamp: now - days * 86400000,
+          content: claudeLine(index, 2 ** index).replace(
+            "2026-08-01T10:00:00Z",
+            DateTime.formatIso(DateTime.makeUnsafe(now - days * 86400000)),
+          ),
+        }));
+        yield* Effect.promise(async () => {
+          for (const file of files) {
+            await NodeFSP.writeFile(file.path, file.content);
+            await NodeFSP.utimes(file.path, file.timestamp / 1000, file.timestamp / 1000);
+          }
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          const first = yield* service.readSummary(window);
+          assert.strictEqual(totalOutputTokens(first), 15);
+          yield* service.awaitPersisted;
+          yield* Effect.promise(() => Promise.all(files.map((file) => NodeFSP.rm(file.path))));
+          const restarted = yield* UsageService.make;
+          const saved = yield* restarted.readSummary(window);
+          assert.strictEqual(totalOutputTokens(saved), expected);
+          assert.deepStrictEqual(saved.sources[0]?.fingerprint, first.sources[0]?.fingerprint);
+          const narrow = yield* restarted.readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(narrow), 0);
+          assert.strictEqual(narrow.sources[0]?.distinctSessions, 0);
+
+          const config = yield* ServerSettings.ServerSettingsService;
+          yield* config.updateSettings({ usageHistoryRetentionDays: 1 });
+          assert.strictEqual(totalOutputTokens(yield* restarted.readSummary(window)), 0);
+          yield* restarted.awaitPersisted;
+          yield* config.updateSettings({ usageHistoryRetentionDays: "unlimited" });
+          const afterPruning = yield* UsageService.make;
+          assert.strictEqual(totalOutputTokens(yield* afterPruning.readSummary(window)), 0);
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: "usage-service-retention",
+              home,
+              settings: {
+                ...settings,
+                ...(retention === undefined ? {} : { usageHistoryRetentionDays: retention }),
+              },
+            }),
+          ),
+        );
+      }),
+  );
+
+  it.effect("keeps retained history when an obsolete scan finishes after retention widens", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* TestClock.setTime(CURSOR_NOW);
+      const timestamp = CURSOR_NOW - 180 * 24 * HOUR_MS;
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(
+          transcript,
+          claudeLine(1, 11).replace(
+            "2026-08-01T10:00:00Z",
+            DateTime.formatIso(DateTime.makeUnsafe(timestamp)),
+          ),
+        );
+        await NodeFSP.utimes(transcript, timestamp / 1000, timestamp / 1000);
+      });
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const updateReadStarted = yield* Deferred.make<void>();
+      const releaseUpdateRead = yield* Deferred.make<void>();
+      const guardReadStarted = yield* Deferred.make<void>();
+      const releaseGuardRead = yield* Deferred.make<void>();
+      const snapshotStarted = yield* Deferred.make<void>();
+      const secrets = new Map<string, Uint8Array>();
+      let gating = false;
+      let updateReleased = false;
+      let reads = 0;
+      const secretLayer = Layer.mock(ServerSecretStore.ServerSecretStore)({
+        get: (name) =>
+          Effect.gen(function* () {
+            if (gating) {
+              const index = ++reads;
+              if (index === 1) {
+                yield* Deferred.succeed(updateReadStarted, undefined);
+                yield* Deferred.await(releaseUpdateRead);
+              }
+              if (index === 2 && !updateReleased) {
+                yield* Deferred.succeed(guardReadStarted, undefined);
+                yield* Deferred.await(releaseGuardRead);
+              }
+            }
+            const value = secrets.get(name);
+            return value === undefined ? Option.none() : Option.some(value);
+          }),
+        set: (name, value) => Effect.sync(() => void secrets.set(name, value)),
+        remove: (name) => Effect.sync(() => void secrets.delete(name)),
+      });
+      let scans = 0;
+      yield* Effect.gen(function* () {
+        const config = yield* ServerSettings.ServerSettingsService;
+        yield* config.updateSettings({
+          ...settings,
+          providerInstances: {
+            ...settings.providerInstances,
+            [ProviderInstanceId.make("secretFixture")]: {
+              driver: ProviderDriverKind.make("antigravity"),
+              environment: [{ name: "API_TOKEN", value: "fixture-token", sensitive: true }],
+            },
+          },
+        });
+        const service = yield* UsageService.make.pipe(
+          Effect.provideService(ServerSettings.ServerSettingsService, {
+            ...config,
+            withSettingsSnapshot: (use) =>
+              Effect.andThen(
+                Deferred.succeed(snapshotStarted, undefined),
+                config.withSettingsSnapshot(use),
+              ),
+          }),
+          Effect.provideService(CursorUsageAccounts.CursorUsageAccounts, {
+            scan: () =>
+              Effect.gen(function* () {
+                if (++scans === 1) {
+                  yield* Deferred.succeed(started, undefined);
+                  yield* Deferred.await(release);
+                }
+                return [];
+              }),
+            awaitPersisted: Effect.void,
+          }),
+        );
+        const window = { ...WINDOW, sinceDay: UsageDay.make("2024-01-01") };
+        const oldScan = yield* service.readSummary(window).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        gating = true;
+        const updating = yield* config
+          .updateSettings({ usageHistoryRetentionDays: "unlimited" })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(updateReadStarted);
+        yield* Deferred.succeed(release, undefined);
+        yield* Effect.raceFirst(Deferred.await(guardReadStarted), Deferred.await(snapshotStarted));
+        updateReleased = true;
+        yield* Deferred.succeed(releaseUpdateRead, undefined);
+        yield* Fiber.join(updating);
+        assert.strictEqual(totalOutputTokens(yield* service.readSummary(window)), 11);
+        yield* service.awaitPersisted;
+        yield* Effect.promise(() => NodeFSP.rm(transcript));
+        yield* Deferred.succeed(releaseGuardRead, undefined);
+        yield* Fiber.join(oldScan);
+        yield* service.awaitPersisted;
+        const restarted = yield* UsageService.make;
+        assert.strictEqual(totalOutputTokens(yield* restarted.readSummary(window)), 11);
+      }).pipe(
+        Effect.provide(
+          ServerSettings.layer.pipe(
+            Layer.provide(Layer.merge(secretLayer, ManagedPolicy.layerTest())),
+            Layer.provideMerge(layerService({ prefix: "usage-retention-race", home, settings })),
+          ),
         ),
       );
     }),
