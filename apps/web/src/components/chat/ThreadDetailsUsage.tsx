@@ -1,9 +1,12 @@
 import type {
+  EnvironmentId,
   ProviderInstanceId,
   ServerProvider,
   ServerProviderUsageWindow,
+  ThreadId,
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
+import { formatPercent, formatUsd } from "@t3tools/shared/usageFormat";
 import {
   collectProviderUsageLimits,
   formatDuration,
@@ -12,15 +15,17 @@ import {
   paceOf,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import { formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
+import { useThreadUsage } from "../../state/usage";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { costTypeSegments } from "../usage/usageBreakdown";
 import { formatContextWindowCompactionMessage } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
@@ -82,8 +87,31 @@ export function ThreadDetailsUsage({
   );
 }
 
-/** The thread's context window. The bar fills as context is used; the tick marks auto-compaction. */
-export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowSnapshot }) {
+/** The thread's own figures. They share one grid, so their labels and values line up. */
+export function ThreadDetailsStats({
+  contextWindow,
+  cost,
+}: {
+  readonly contextWindow: ContextWindowSnapshot | null;
+  /** The thread to price. Null hides the cost row. */
+  readonly cost: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId } | null;
+}) {
+  return (
+    <ThreadDetailsSection
+      headingId="thread-details-stats-heading"
+      title="Context and cost"
+      showHeading={false}
+    >
+      <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
+        {contextWindow ? <ContextRow usage={contextWindow} /> : null}
+        {cost ? <CostRow {...cost} /> : null}
+      </div>
+    </ThreadDetailsSection>
+  );
+}
+
+/** The bar fills as context is used; the tick marks auto-compaction. */
+function ContextRow({ usage }: { readonly usage: ContextWindowSnapshot }) {
   const maxTokens = usage.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
   const used =
     maxTokens !== null && usage.usedPercentage !== null
@@ -96,46 +124,113 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
       : null;
   const usedTokens = formatContextWindowTokens(usage.usedTokens);
   return (
-    <ThreadDetailsSection
-      headingId="thread-details-context-heading"
-      title="Context window"
-      showHeading={false}
-    >
-      <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
-        <UsageRow
-          label="Context"
-          fill={used}
-          tone={used === null ? null : used >= 90 ? "error" : used >= 80 ? "warning" : null}
-          tick={tick}
-          muted
-          value={
-            maxTokens !== null
-              ? `${usedTokens} / ${formatContextWindowTokens(maxTokens)}`
-              : usedTokens
-          }
-          ariaValue={used !== null ? `${used}% used` : `${usedTokens} tokens used`}
-          tooltip={
-            <>
-              <span className="text-foreground">
-                {used !== null ? `Context: ${used}% used` : `Context: ${usedTokens} tokens used`}
-              </span>
-              {maxTokens !== null ? (
-                <span className="text-muted-foreground">
-                  {usage.usedTokens.toLocaleString("en-US")} of {maxTokens.toLocaleString("en-US")}{" "}
-                  tokens
-                </span>
-              ) : null}
-              {threshold !== null && threshold > 0 ? (
-                <span className="text-muted-foreground">
-                  {formatContextWindowCompactionMessage(threshold)}
-                </span>
-              ) : null}
-            </>
-          }
-        />
-      </div>
-    </ThreadDetailsSection>
+    <UsageRow
+      label="Context"
+      fill={used}
+      tone={used === null ? null : used >= 90 ? "error" : used >= 80 ? "warning" : null}
+      tick={tick}
+      muted
+      value={
+        maxTokens !== null ? `${usedTokens} / ${formatContextWindowTokens(maxTokens)}` : usedTokens
+      }
+      ariaValue={used !== null ? `${used}% used` : `${usedTokens} tokens used`}
+      tooltip={
+        <>
+          <span className="text-foreground">
+            {used !== null ? `Context: ${used}% used` : `Context: ${usedTokens} tokens used`}
+          </span>
+          {maxTokens !== null ? (
+            <span className="text-muted-foreground">
+              {usage.usedTokens.toLocaleString("en-US")} of {maxTokens.toLocaleString("en-US")}{" "}
+              tokens
+            </span>
+          ) : null}
+          {threshold !== null && threshold > 0 ? (
+            <span className="text-muted-foreground">
+              {formatContextWindowCompactionMessage(threshold)}
+            </span>
+          ) : null}
+        </>
+      }
+    />
   );
+}
+
+/**
+ * What the thread's model usage would cost at API prices, as the Usage tab prices it. A figure,
+ * not a meter, so it has no bar. Renders nothing until the server reports usage for the thread.
+ */
+function CostRow({
+  environmentId,
+  threadId,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  const usage = useThreadUsage({ environmentId, threadId });
+  // No records means the provider's usage is not read here, which is not a cost of zero.
+  if (usage === null || usage.records === 0) return null;
+  const { unpricedShare } = usage.costQuality;
+  if (unpricedShare >= 1) {
+    return (
+      <UsageRow
+        label="Cost"
+        fill={null}
+        tone={null}
+        value="Unpriced"
+        tooltip={
+          <>
+            <span className="text-foreground">Cost: no known price for this model</span>
+            <span className="text-muted-foreground">
+              {formatContextWindowTokens(usage.totalTokens)} tokens
+            </span>
+          </>
+        }
+      />
+    );
+  }
+  const value = formatCost(usage.costUsd);
+  // A part that rounds to no cents says nothing next to the total.
+  const parts = costTypeSegments(usage.categoryCost).filter((part) => part.value >= 0.005);
+  return (
+    <UsageRow
+      label="Cost"
+      fill={null}
+      tone={null}
+      dimValue={false}
+      value={value}
+      tooltip={
+        <>
+          <span className="text-foreground">Cost: {value} · API estimate</span>
+          {parts.length > 0 ? (
+            <span className="my-1 grid grid-cols-[1fr_auto] gap-x-6 gap-y-0.5">
+              {parts.map((part) => (
+                <Fragment key={part.label}>
+                  <span className="text-muted-foreground">{part.label}</span>
+                  <span className="text-end text-foreground tabular-nums">
+                    {formatUsd(part.value)}
+                  </span>
+                </Fragment>
+              ))}
+            </span>
+          ) : null}
+          <span className="text-muted-foreground">
+            {formatContextWindowTokens(usage.totalTokens)} tokens
+          </span>
+          {unpricedShare > 0 ? (
+            <span className="text-muted-foreground">
+              Excludes {formatPercent(unpricedShare)} unpriced records
+            </span>
+          ) : null}
+        </>
+      }
+    />
+  );
+}
+
+/** A cost that rounds to no cents still cost something. */
+function formatCost(usd: number): string {
+  return usd > 0 && usd < 0.005 ? "<$0.01" : formatUsd(usd);
 }
 
 function LimitRow({
@@ -184,6 +279,7 @@ function UsageRow({
   ariaValue = value,
   tooltip,
   muted = false,
+  dimValue,
 }: {
   readonly label: string;
   /** Bar fill from 0 to 100. Null hides the bar. */
@@ -195,6 +291,8 @@ function UsageRow({
   readonly ariaValue?: string;
   readonly tooltip: ReactNode;
   readonly muted?: boolean;
+  /** A row without a bar dims its value, as a notice. False keeps it a figure. */
+  readonly dimValue?: boolean;
 }) {
   return (
     <Tooltip>
@@ -243,7 +341,7 @@ function UsageRow({
               ? "text-error-foreground"
               : tone === "warning"
                 ? "text-warning-foreground"
-                : fill === null
+                : (dimValue ?? fill === null)
                   ? "text-muted-foreground"
                   : "text-foreground/80",
           )}

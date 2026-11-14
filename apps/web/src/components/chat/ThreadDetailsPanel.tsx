@@ -27,7 +27,7 @@ import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadServersPanel } from "./ThreadServersPanel";
 import {
-  ThreadDetailsContext,
+  ThreadDetailsStats,
   ThreadDetailsUsage,
   type ThreadDetailsUsageInput,
 } from "./ThreadDetailsUsage";
@@ -176,6 +176,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             offersGit &&
             props.activeProjectName !== undefined &&
             (visible.gitActions || (visible.changes && props.isGitRepo)),
+          context: visible.context ? props.usage.contextWindow : null,
+          cost: visible.cost && !props.draftId,
         };
         return (
           <>
@@ -286,8 +288,15 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
 
               {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
 
-              {visible.context && props.usage.contextWindow ? (
-                <ThreadDetailsContext usage={props.usage.contextWindow} />
+              {show.context || show.cost ? (
+                <ThreadDetailsStats
+                  contextWindow={show.context}
+                  cost={
+                    show.cost
+                      ? { environmentId: props.environmentId, threadId: props.threadId }
+                      : null
+                  }
+                />
               ) : null}
 
               {/* Shown only when no section above has content, so an emptied card can be refilled. */}

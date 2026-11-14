@@ -3,13 +3,21 @@ import {
   AuthDiagnosticsReadScope,
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
+  type ScopedThreadRef,
   type UsageBucket,
   type UsageSummary,
   type UsageProviderKind,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import { refreshUsage, usageSummaryInput } from "@t3tools/client-runtime/state/usage";
+import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
+import {
+  makeTurnEndRefresh,
+  refreshUsage,
+  threadUsageSummaryInput,
+  usageSummaryInput,
+} from "@t3tools/client-runtime/state/usage";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
+import * as DateTime from "effect/DateTime";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 
@@ -17,7 +25,8 @@ import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/sh
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
-import { environmentSession, readEnvironmentScope } from "./session";
+import { environmentSession, readEnvironmentScope, sessionHasScope } from "./session";
+import { environmentThreadDetails } from "./threads";
 
 export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
@@ -243,4 +252,65 @@ export function useUsage(
     isPartial: answeredCount > 0 && stillReporting > 0,
     refresh,
   };
+}
+
+const threadUsageAtom = Atom.family((key: string) => {
+  const ref = parseThreadKey(key);
+  const { environmentId, threadId } = ref;
+  const shouldRefresh = makeTurnEndRefresh();
+  // Stays on screen while a changed query, such as a new day's, is still being read.
+  let answered: MergedUsage | null = null;
+  return Atom.make((get): MergedUsage | null => {
+    if (
+      !sessionHasScope(
+        get(environmentSession.sessionStateAtom(environmentId)),
+        AuthDiagnosticsReadScope,
+      )
+    ) {
+      return null;
+    }
+    const projection = get(environmentThreadDetails.quietThreadAtom(ref))?.projection;
+    const input =
+      projection === undefined
+        ? null
+        : threadUsageSummaryInput({
+            threadId,
+            createdAt: projection.thread.createdAt,
+            capabilities: get(environmentPresentations.presentationAtom(environmentId))
+              ?.serverConfig?.environment.capabilities,
+          });
+    if (projection === undefined || input === null) return null;
+    const query = serverEnvironment.usageSummary({
+      environmentId,
+      input: usageSummaryInput(input, get(serverEnvironment.usageModelFilterAtom(environmentId))),
+    });
+    const result = get(query);
+    const lastTurnEndMs = projection.providerTurns.reduce(
+      (latest, turn) =>
+        turn.completedAt === null
+          ? latest
+          : Math.max(latest, DateTime.toEpochMillis(turn.completedAt)),
+      0,
+    );
+    if (shouldRefresh(lastTurnEndMs, result.waiting)) get.refresh(query);
+    // A failed read has no figure; the one before it would pass for current.
+    if (AsyncResult.isFailure(result) && !AsyncResult.isInterrupted(result)) {
+      answered = null;
+      return null;
+    }
+    const summary = AsyncResult.getOrElse(result, () => null);
+    if (summary === null) return answered;
+    const merged = mergeUsage([{ environmentId, label: "", summary }], USAGE_CONTRACT_VERSION);
+    // A summary from another contract version merges to nothing, which is not a zero cost.
+    answered = merged.contractMismatches.length === 0 ? merged : null;
+    return answered;
+  }).pipe(Atom.withLabel(`web-usage:thread:${key}`));
+});
+
+/**
+ * One thread's usage so far, priced like the Usage tab. Null until the server answers, and on a
+ * server that cannot narrow usage to a thread.
+ */
+export function useThreadUsage(ref: ScopedThreadRef): MergedUsage | null {
+  return useAtomValue(threadUsageAtom(threadKey(ref)));
 }

@@ -131,6 +131,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   modelCatalogRefresh: Schema.optionalKey(Schema.Boolean),
   usagePriceOverrides: Schema.optionalKey(Schema.Boolean),
   usageModelAliases: Schema.optionalKey(Schema.Boolean),
+  /** Usage summaries honor `threadId`; older servers ignore it and return every thread's usage. */
+  usageThreadFilter: Schema.optionalKey(Schema.Boolean),
   threadPinning: Schema.optionalKey(Schema.Boolean),
   threadPinReorder: Schema.optionalKey(Schema.Boolean),
   threadActiveReorder: Schema.optionalKey(Schema.Boolean),

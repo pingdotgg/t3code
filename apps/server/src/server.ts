@@ -309,6 +309,7 @@ const layerUsage = UsageService.layer.pipe(
       CursorUsageAccounts.layer.pipe(Layer.provide(CursorAccountReader.layer)),
     ).pipe(Layer.provide(ProviderHostLive.layer.pipe(Layer.provide(ServerSecretStore.layer)))),
   ),
+  Layer.provide(ProjectionStoreV2.layer),
   Layer.provide(layerServerSettings),
 );
 
