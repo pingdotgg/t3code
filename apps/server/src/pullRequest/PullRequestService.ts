@@ -1058,7 +1058,7 @@ export const make = Effect.gen(function* () {
               // An SSH checkout names no web port, so it serves its hostname's links when no
               // checkout names the requested one.
               (own !== undefined &&
-              own.repository.toLowerCase() === repository.toLowerCase() &&
+              own.repositoryKey === null &&
               isSshRemoteUrl(own.project.repositoryIdentity?.locator.remoteUrl ?? "") &&
               URL.canParse(`https://${host}`) &&
               new URL(`https://${host}`).hostname === own.host
@@ -1104,7 +1104,7 @@ export const make = Effect.gen(function* () {
                     ...route,
                     repository,
                     remote: sourceControlDefinitions.repositoryKeyFromRemote(
-                      `https://${host}/${repository}`,
+                      `https://${route.host}/${repository}`,
                     ),
                   },
             );

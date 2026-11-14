@@ -2178,8 +2178,10 @@ it.effect("routes matching HTTP authorities and rejects a different web port", (
       const fromSsh = { ...ref, projectId: "ssh" as ProjectId };
       yield* service.preview(fromSsh);
       assert.strictEqual(reads.at(-1), "code.example:4000");
-      yield* service.preview({ ...fromSsh, host: "code.example:5000" });
-      assert.strictEqual(reads.at(-1), "code.example");
+      for (const repository of ["team/repo", "team/sibling"]) {
+        yield* service.preview({ ...fromSsh, host: "code.example:5000", repository });
+        assert.strictEqual(reads.at(-1), "code.example");
+      }
     }
   }),
 );
