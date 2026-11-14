@@ -798,7 +798,7 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
 
 // One thread holds every way a run can still matter after a compaction. A run is requested at
 // its ordinal in minutes and ends 30 seconds later, unless the table says otherwise.
-it.effect("a compacted thread reads every run, and run records only for its recent runs", () =>
+it.effect("a compacted thread reads every run, but records and prompts only for recent ones", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = yield* addRolledBackRecoveryCandidate("compacted");
@@ -844,9 +844,10 @@ it.effect("a compacted thread reads every run, and run records only for its rece
           driver,
         },
       });
-    for (const [ordinal, status, endedAt] of [
+    for (const [ordinal, status, endedAt, fresh] of [
       [2, "queued", null],
-      [3, "completed"],
+      // A fresh-context run starts its own conversation, so its prompt is read for the schedule check.
+      [3, "completed", undefined, true],
       // A held queue ran this old run after the compactions.
       [4, "completed", at(11.5)],
       [5, "completed"],
@@ -890,6 +891,7 @@ it.effect("a compacted thread reads every run, and run records only for its rece
           completedAt: ended,
           checkpointId: null,
           contextHandoffId: null,
+          ...(fresh === true ? { freshContext: true } : {}),
         },
       });
       yield* store.apply({
@@ -1025,19 +1027,44 @@ it.effect("a compacted thread reads every run, and run records only for its rece
           })),
         );
     const all = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-    // Every run and every turn item is read, so a model switch is still measured from the last
-    // prompt. Run 1, the helper's, holds only a command item.
-    const expected = (recent: ReadonlyArray<number>) => ({
+    // Every run is read. Turn items are the failed errors of every run, and the prompts of the
+    // recent runs, of the fresh-context run 3 and of the run a model switch is measured from.
+    // Run 1, the helper's, holds only a command item.
+    const expected = (
+      recent: ReadonlyArray<number>,
+      prompts: ReadonlyArray<number> = [...recent, 3],
+    ) => ({
       runs: 15,
       attempts: recent,
       nodes: recent,
       providerTurns: recent,
       messages: recent,
-      turnItems: [1, ...all],
+      turnItems: [...new Set([5, ...prompts])].toSorted((a, b) => a - b),
     });
 
-    // Nothing is compacted yet, so the whole history is current.
-    assert.deepEqual(yield* read(), expected(all));
+    // Run 5 failed, and nothing is compacted yet, so the whole history is current.
+    yield* store.apply({
+      id: EventId.make("event:compacted:error-5"),
+      type: "turn-item.updated",
+      threadId,
+      runId: runId(5),
+      nodeId: rootNodeId(5),
+      driver,
+      occurredAt: at(5),
+      payload: {
+        ...item(5, 52, "failed"),
+        id: TurnItemId.make("item:compacted:error-5"),
+        type: "error",
+        failure: {
+          class: "usage_limit",
+          message: "Plan limit reached.",
+          resetAt: "2099-01-01T00:00:00.000Z",
+          code: "usageLimitExceeded",
+          retryable: null,
+        },
+      },
+    });
+    assert.deepEqual(yield* read(), { ...expected(all), turnItems: [1, ...all] });
 
     // The window starts at the compaction's run. Queued run 2 and held run 4 are older but had
     // not ended by then.
@@ -1207,11 +1234,12 @@ it.effect("a compacted thread reads every run, and run records only for its rece
     assert.deepEqual(unsettled.providerThreads, ["compacted", "old-pending", "recent-pending"]);
     assert.lengthOf(unsettled.rootNodes, all.length);
     assert.lengthOf(unsettled.runs, 15);
-    // Together: every run, every turn item and the provider thread the runs use stay, and the
-    // windowed records are read for the recent and named runs, less each settled task's node.
+    // Together: every run and the provider thread the runs use stay, and the windowed records are
+    // read for the recent and named runs, less each settled task's node.
     const recentRuns = ["11", "12", "13", "14", "15", "2", "3", "4", "6"];
     assert.deepEqual(both, {
       ...unsettled,
+      turnItems: windowed.turnItems,
       attempts: recentRuns,
       rootNodes: recentRuns,
       taskNodes: ["recent-pending"],
@@ -1227,6 +1255,47 @@ it.effect("a compacted thread reads every run, and run records only for its rece
         ]),
       ),
       both,
+    );
+
+    // A prompt that clients do not show cannot anchor a model switch. With the recent ones, and
+    // run 4's, folded into async answers, the switch is measured from run 10, so its prompt is
+    // read, with run 9's from the same batch.
+    const storedRuns = (yield* store.getThreadRecords(threadId, ["runs"])).runs;
+    for (const ordinal of [4, 11, 12, 14, 15]) {
+      yield* store.apply({
+        id: EventId.make(`event:compacted:async-run-${ordinal}`),
+        type: "run.updated",
+        threadId,
+        occurredAt: at(ordinal),
+        payload: {
+          ...storedRuns.find((run) => run.id === runId(ordinal))!,
+          userMessageId: MessageId.make(`async-answer:${ordinal}`),
+        },
+      });
+      yield* store.apply({
+        id: EventId.make(`event:compacted:async-${ordinal}`),
+        type: "turn-item.updated",
+        threadId,
+        runId: runId(ordinal),
+        nodeId: rootNodeId(ordinal),
+        driver,
+        occurredAt: at(ordinal),
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          ...item(ordinal, ordinal * 10, "completed"),
+          id: TurnItemId.make(`item:compacted:prompt-${ordinal}`),
+          type: "user_message",
+          messageId: MessageId.make(`async-answer:${ordinal}`),
+          inputIntent: "turn_start",
+          text: `Answer ${ordinal}`,
+          attachments: [],
+        },
+      });
+    }
+    assert.deepEqual(
+      (yield* read()).turnItems,
+      expected([2, 4, 11, 12, 13, 14, 15], [2, 3, 4, 9, 10, 11, 12, 13, 14, 15]).turnItems,
     );
   }).pipe(Effect.provide(layerTest)),
 );

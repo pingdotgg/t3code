@@ -1316,7 +1316,7 @@ function isScheduledFreshRun(
   run: Pick<OrchestrationV2Run, "freshContext" | "userMessageId">,
   turnItems: OrchestrationV2ThreadProjection["turnItems"],
 ): boolean {
-  // Turn items, unlike messages, are not narrowed to the runs since the latest compaction.
+  // A compacted thread's command read loads these prompts for every fresh-context run.
   return (
     run.freshContext === true &&
     turnItems.some(
@@ -6585,9 +6585,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
-    // A compacted thread reads every run and turn item, but attempts, nodes, messages and provider
-    // turns only for its recent runs and the runs this command names. An idle compaction reads
-    // in full: its busy check below looks for a delegated result's message under any old run.
+    // A compacted thread reads every run, but attempts, nodes, messages, provider turns and prompts
+    // only for its recent runs and the runs this command names. An idle compaction reads in full:
+    // its busy check below looks for a delegated result's message under any old run.
     let projection = yield* getProjectionWithPendingEvents(
       command.threadId,
       events,
@@ -6859,7 +6859,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     const userMessages = projection.messages.filter((message) => message.role === "user");
     // The recent runs of a compacted thread can hold only a `/compact` while an older prompt
-    // exists. Every prompt's turn item is loaded; without one, every user message is checked.
+    // exists, so when every loaded prompt is one, every user message is checked.
     const onlyMaintenanceHistory = [
       ...userMessages,
       ...projection.turnItems.flatMap((item) => (item.type === "user_message" ? [item] : [])),
