@@ -1415,9 +1415,9 @@ describe("OpenCodeAdapterV2", () => {
         return yield* Effect.die("OpenCode runtime must expose hasPendingBackgroundWork.");
       }
       yield* harness.startTurn();
-      const terminal = yield* harness.runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
         Effect.forkScoped,
       );
       const taskPart = (status: "running" | "completed") => ({
@@ -1470,7 +1470,14 @@ describe("OpenCodeAdapterV2", () => {
       yield* push(status(child, "busy"));
       yield* push(taskPart("completed"));
       yield* push(status(root, "idle"));
-      assert.equal(Option.getOrUndefined(yield* Fiber.join(terminal))?.status, "completed");
+      const events = yield* Fiber.join(received);
+      const terminal = events.findLast((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, "completed");
+      assert.equal(
+        events.findLast((event) => event.type === "subagent.updated")?.subagent.status,
+        "running",
+        "a background child that is still busy must not be reported completed",
+      );
       assert.isTrue(yield* hasPendingBackgroundWork, "the running child must pin idle release");
 
       yield* push(status(child, "idle"));
