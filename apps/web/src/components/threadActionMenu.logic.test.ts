@@ -65,6 +65,17 @@ describe("buildThreadActionMenuItems", () => {
     },
   );
 
+  it.each([false, true])(
+    "offers no pin for a subagent or side chat but keeps unpin (pinned: %s)",
+    (isPinned) => {
+      const ids = buildThreadActionMenuItems({ ...baseState, isPinned, isUnlisted: true }).map(
+        (item) => item.id,
+      );
+      expect(ids).not.toContain("pin");
+      expect(ids.includes("unpin")).toBe(isPinned);
+    },
+  );
+
   it("disables archive and turning into a project while the thread is running", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,

@@ -18,6 +18,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   type EnvironmentId,
+  isListedThreadLineage,
   type ScopedThreadRef,
   type ThreadId,
   ProviderInteractionMode,
@@ -680,6 +681,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       }
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
       if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
+      if (!activeThreadPinned && !isListedThreadLineage(activeThreadShell.lineage)) return;
       void (
         activeThreadPinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)
       ).then(
