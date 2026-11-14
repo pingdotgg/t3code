@@ -431,7 +431,7 @@ function notebookText(value: unknown, limit = 256_000): string {
   if (result.length > limit) throw new Error("A notebook cell is too large to preview.");
   return result;
 }
-// IPython traceback frames carry ANSI SGR colors, which a plain <pre> cannot render, and may omit a final newline.
+// IPython traceback frames carry ANSI SGR colors a <pre> cannot render and may omit a final newline.
 function tracebackLines(value: unknown): unknown {
   if (!Array.isArray(value)) return value;
   const frames = value

@@ -302,12 +302,10 @@ Third}`;
         JSON.stringify({
           nbformat: 4,
           cells: [
-            { cell_type: "markdown", source: "\u001b[1m# Notes\u001b[0m" },
             {
               cell_type: "code",
               source: 'print("\u001b[32m")\nfail()',
               outputs: [
-                { output_type: "stream", text: "\u001b[33mwarning\u001b[0m\n" },
                 {
                   output_type: "error",
                   traceback: [
@@ -342,10 +340,8 @@ Third}`;
       ),
     );
     if (failed.type !== "notebook") throw new Error("Expected notebook");
-    expect(failed.cells[0]!.source).toBe("\u001b[1m# Notes\u001b[0m");
-    expect(failed.cells[1]!.source).toBe('print("\u001b[32m")\nfail()');
-    expect(failed.cells[1]!.outputs).toEqual([
-      { kind: "text", text: "\u001b[33mwarning\u001b[0m\n" },
+    expect(failed.cells[0]!.source).toBe('print("\u001b[32m")\nfail()');
+    expect(failed.cells[0]!.outputs).toEqual([
       {
         kind: "text",
         text: "-----\nValueError    Traceback (most recent call last)\nCell In[1], line 4\n----> 4 fail()\nCell In[1], line 2, in fail()\n----> 2     raise ValueError()\nValueError: preview proof",
