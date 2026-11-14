@@ -183,6 +183,8 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
         android: {
           minWidth: 250,
           minHeight: 180,
+          minResizeWidth: 180,
+          minResizeHeight: 130,
           targetCellWidth: 4,
           targetCellHeight: 3,
           resizeMode: "both",
