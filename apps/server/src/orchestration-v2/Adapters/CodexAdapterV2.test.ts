@@ -5298,6 +5298,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         command: serverCommand,
         processId: "4343",
         exitCode: status === "completed" ? 143 : null,
+        // Started five seconds after the other command.
+        durationMs: status === "completed" ? 20_000 : null,
       });
       const lateCompletion = (label: string, item: Record<string, unknown>) => ({
         type: "emit_inbound" as const,
@@ -5351,10 +5353,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         undefined,
         undefined,
         undefined,
-        (_threadId, command) =>
+        (_threadId, commandStartedAtMs) =>
           Effect.sync(() => {
-            const matched =
-              stopPending && PortScanner.commandRanProcess(command, "python3 -m http.server 18765");
+            const matched = stopPending && commandStartedAtMs === 1782622445500;
             if (matched) stopPending = false;
             return matched;
           }),

@@ -61,10 +61,13 @@ export class PortDiscovery extends Context.Service<
       input: PreviewStopLocalServerInput,
     ) => Effect.Effect<void, PreviewStopLocalServerError>;
     /**
-     * Consumes a recent `stopServer` of a server this thread's agent started with `command`, so
-     * that command ending is not reported back to the agent as a crash.
+     * Consumes a recent `stopServer` of a server this thread's agent started with the command that
+     * started at `commandStartedAtMs`, so that command ending is not reported back as a crash.
      */
-    readonly takeUserStop: (threadId: ThreadId, command: string) => Effect.Effect<boolean>;
+    readonly takeUserStop: (
+      threadId: ThreadId,
+      commandStartedAtMs: number,
+    ) => Effect.Effect<boolean>;
   }
 >()("t3/preview/PortScanner/PortDiscovery") {}
 
@@ -94,6 +97,8 @@ const PS_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const STOP_GRACE_MS = 3_000;
 const STOP_POLL_INTERVAL = Duration.millis(250);
 const USER_STOP_TTL_MS = STOP_GRACE_MS + 10_000;
+// `ps` reports elapsed time in whole seconds.
+const USER_STOP_START_TOLERANCE_MS = 2_000;
 
 type Listener = (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>;
 
@@ -399,33 +404,14 @@ const parseProcessTable = (raw: string): ReadonlyMap<number, ProcessTableRow> =>
   return rows;
 };
 
-const commandWords = (command: string): ReadonlyArray<string> =>
-  command
-    .replace(/['"]/g, "")
-    .split(/\s+/)
-    .filter((word) => word.length > 0);
-
-/**
- * True when a process's argv appears word for word in an agent's command, as it does for the
- * shell an agent tool runs (`/bin/bash -lc 'npm run dev'`) and for the job that shell execs.
- */
-export const commandRanProcess = (command: string, processArgs: string): boolean => {
-  const words = commandWords(command);
-  const args = commandWords(processArgs);
-  if (args.length === 0) return false;
-  for (let start = 0; start + args.length <= words.length; start += 1) {
-    if (args.every((arg, index) => words[start + index] === arg)) return true;
-  }
-  return false;
-};
-
-const parseProcessArgs = (raw: string): ReadonlyMap<number, string> => {
-  const args = new Map<number, string>();
-  for (const line of raw.split("\n")) {
-    const match = /^\s*(\d+)\s+(.*)$/.exec(line);
-    if (match) args.set(Number(match[1]), match[2]!);
-  }
-  return args;
+/** Milliseconds from `ps -o etime=` (`[[dd-]hh:]mm:ss`), or null when it is not one. */
+export const parseElapsedMs = (raw: string): number | null => {
+  const match = /^\s*(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)\s*$/.exec(raw);
+  if (!match) return null;
+  const [, days = "0", hours = "0", minutes, seconds] = match;
+  return (
+    (((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds)) * 1000
+  );
 };
 
 /**
@@ -511,12 +497,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // environment, so a pid is read once while it listens. Cleared while no client retains the
   // scanner, since unscanned pids can be reused.
   const agentThreadsRef = yield* Ref.make<ReadonlyMap<number, ThreadId | null>>(new Map());
-  // User stops not yet matched to the agent command they ended, per thread, with the argv of the
-  // stopped server and its group leader.
+  // User stops not yet matched to the agent command they ended, per thread. An agent tool's
+  // command runs in a group of its own, so the stopped group's leader started with that command.
   const userStopsRef = yield* Ref.make<
     ReadonlyMap<
       ThreadId,
-      ReadonlyArray<{ readonly expiresAt: number; readonly args: ReadonlyArray<string> }>
+      ReadonlyArray<{ readonly expiresAt: number; readonly startedAtMs: number }>
     >
   >(new Map());
   let runningAgents = 0;
@@ -1121,18 +1107,21 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         }
       });
     const agentThreadId = listed.agent?.threadId;
-    if (agentThreadId !== undefined) {
-      const args = yield* processRunner
-        .run({
-          command: "ps",
-          args: ["-ww", "-o", "pid=,args=", "-p", `${input.pid},${group}`],
-          timeout: Duration.millis(PS_TIMEOUT_MS),
-          maxOutputBytes: PS_MAX_OUTPUT_BYTES,
-        })
-        .pipe(
-          Effect.map((result) => [...parseProcessArgs(result.stdout).values()]),
-          Effect.orElseSucceed((): ReadonlyArray<string> => []),
-        );
+    const leaderElapsedMs =
+      agentThreadId === undefined || !table.has(group)
+        ? null
+        : yield* processRunner
+            .run({
+              command: "ps",
+              args: ["-o", "etime=", "-p", `${group}`],
+              timeout: Duration.millis(PS_TIMEOUT_MS),
+              maxOutputBytes: PS_MAX_OUTPUT_BYTES,
+            })
+            .pipe(
+              Effect.map((result) => parseElapsedMs(result.stdout)),
+              Effect.orElseSucceed(() => null),
+            );
+    if (agentThreadId !== undefined && leaderElapsedMs !== null) {
       const now = yield* Clock.currentTimeMillis;
       yield* Ref.update(userStopsRef, (stops) => {
         const next = new Map(
@@ -1143,7 +1132,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         );
         return next.set(agentThreadId, [
           ...(next.get(agentThreadId) ?? []),
-          { expiresAt: now + USER_STOP_TTL_MS, args },
+          { expiresAt: now + USER_STOP_TTL_MS, startedAtMs: now - leaderElapsedMs },
         ]);
       });
     }
@@ -1167,12 +1156,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     // Subscribers see the server leave now rather than on the next poll.
     signalUntilStopped(input).pipe(Effect.andThen(pollIfRetained));
 
-  const takeUserStop: PortDiscovery["Service"]["takeUserStop"] = (threadId, command) =>
+  const takeUserStop: PortDiscovery["Service"]["takeUserStop"] = (threadId, commandStartedAtMs) =>
     Effect.flatMap(Clock.currentTimeMillis, (now) =>
       Ref.modify(userStopsRef, (stops) => {
         const live = (stops.get(threadId) ?? []).filter((stop) => stop.expiresAt > now);
-        const match = live.findIndex((stop) =>
-          stop.args.some((args) => commandRanProcess(command, args)),
+        const match = live.findIndex(
+          (stop) => Math.abs(stop.startedAtMs - commandStartedAtMs) <= USER_STOP_START_TOLERANCE_MS,
         );
         const rest = match === -1 ? live : live.filter((_, index) => index !== match);
         const next = new Map(stops);

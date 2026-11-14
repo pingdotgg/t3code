@@ -1842,8 +1842,11 @@ export interface CodexAdapterV2Options {
       request: ProviderContinuationRequests.ProviderContinuationRequest,
     ) => Effect.Effect<void>;
   };
-  /** True when the user just stopped a server this command started, outside Codex. */
-  readonly takeUserStop?: (threadId: ThreadId, command: string) => Effect.Effect<boolean>;
+  /** True when the user just stopped a server the command started at that time ran, outside Codex. */
+  readonly takeUserStop?: (
+    threadId: ThreadId,
+    commandStartedAtMs: number,
+  ) => Effect.Effect<boolean>;
 }
 
 export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
@@ -5440,7 +5443,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   continuationRequests !== undefined &&
                   !(yield* Ref.get(interruptingNativeTurns)).has(payload.turnId) &&
                   // The user stopped it from the Servers list; waking the agent invites a restart.
-                  !(yield* takeUserStop(context.projectionThreadId, payload.item.command))
+                  (payload.item.durationMs == null ||
+                    !(yield* takeUserStop(
+                      context.projectionThreadId,
+                      payload.completedAtMs - payload.item.durationMs,
+                    )))
                 ) {
                   const alreadyOffered = yield* Ref.modify(
                     offeredContinuationItemsByTurn,

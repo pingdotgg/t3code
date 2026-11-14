@@ -12,6 +12,7 @@ import {
 import * as ProcessGroup from "@t3tools/provider-core/server/processGroup";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -941,20 +942,15 @@ effectIt.effect("stops only a job's own process group", () =>
 );
 
 effectIt.effect.each([
-  // The tool shell itself, when the script is not a single command.
-  ["/bin/bash -lc 'cd web && npm run dev'", "/bin/bash -lc cd web && npm run dev", true],
-  // The job the tool shell execs.
-  ["/bin/bash -lc 'python3 -m http.server 18765'", "python3 -m http.server 18765", true],
-  ["/bin/bash -lc 'python3 -m http.server 18765 > log 2>&1'", "python3 -m http.server 18765", true],
-  ["/bin/bash -lc 'python3 -m http.server 18766'", "python3 -m http.server 18765", false],
-  ["/bin/bash -lc 'npm test'", "python3 -m http.server 18765", false],
-  ["/bin/bash -lc 'npm test'", "", false],
-] as const)(
-  "matches a stopped process %s to the agent command that ran it",
-  ([command, args, matches]) =>
-    Effect.sync(() => {
-      expect(PortScanner.commandRanProcess(command, args)).toBe(matches);
-    }),
+  ["05:07", 307_000],
+  ["  1:02:03\n", 3_723_000],
+  ["2-00:00:01", 172_801_000],
+  ["", null],
+  ["-", null],
+] as const)("reads ps elapsed time %s", ([raw, elapsedMs]) =>
+  Effect.sync(() => {
+    expect(PortScanner.parseElapsedMs(raw)).toBe(elapsedMs);
+  }),
 );
 
 const AGENT_SERVER_SCRIPT = `
@@ -1021,6 +1017,7 @@ effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       yield* Effect.acquireRelease(Effect.sync(scanner.trackAgent), (release) =>
         Effect.sync(release),
       );
+      const jobStartedAtMs = yield* Clock.currentTimeMillis;
       const job = yield* agentServer();
 
       expect(yield* scanner.scan()).toEqual(
@@ -1036,26 +1033,16 @@ effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       const unlisted = yield* Effect.flip(scanner.stopServer({ pid: process.pid, port: job.port }));
       expect(unlisted.reason).toBe("not-found");
       const threadId = ThreadId.make("thread-live");
-      const jobArgs = NodeChildProcess.execFileSync("ps", [
-        "-ww",
-        "-o",
-        "args=",
-        "-p",
-        `${job.pid}`,
-      ])
-        .toString()
-        .trim();
-      const jobCommand = `/bin/bash -lc '${jobArgs}'`;
-      expect(yield* scanner.takeUserStop(threadId, jobCommand)).toBe(false);
+      expect(yield* scanner.takeUserStop(threadId, jobStartedAtMs)).toBe(false);
 
       yield* scanner.stopServer({ pid: job.pid, port: job.port });
       // The shell waits on its job, so it exits once the job has.
       yield* Effect.promise(() => job.exited);
       expect(isRunning(job.pid)).toBe(false);
-      // Only the command that ran the stopped server, and only once.
-      expect(yield* scanner.takeUserStop(threadId, "/bin/bash -lc 'npm test'")).toBe(false);
-      expect(yield* scanner.takeUserStop(threadId, jobCommand)).toBe(true);
-      expect(yield* scanner.takeUserStop(threadId, jobCommand)).toBe(false);
+      // Only the command that started the stopped job, and only once.
+      expect(yield* scanner.takeUserStop(threadId, jobStartedAtMs - 60_000)).toBe(false);
+      expect(yield* scanner.takeUserStop(threadId, jobStartedAtMs)).toBe(true);
+      expect(yield* scanner.takeUserStop(threadId, jobStartedAtMs)).toBe(false);
     }).pipe(
       Effect.scoped,
       Effect.provide(
