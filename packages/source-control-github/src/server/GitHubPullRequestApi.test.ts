@@ -3590,13 +3590,25 @@ layer("GitHubPullRequestApi.layer", (it) => {
                                 name: "build",
                                 status: "COMPLETED",
                                 conclusion: "SUCCESS",
-                                checkSuite: { workflowRun: { workflow: { name: "linux" } } },
+                                checkSuite: {
+                                  workflowRun: {
+                                    event: "push",
+                                    runNumber: 1,
+                                    workflow: { id: "W_linux", name: "linux" },
+                                  },
+                                },
                               }),
                               checkRun({
                                 name: "build",
                                 status: "COMPLETED",
                                 conclusion: "FAILURE",
-                                checkSuite: { workflowRun: { workflow: { name: "windows" } } },
+                                checkSuite: {
+                                  workflowRun: {
+                                    event: "push",
+                                    runNumber: 1,
+                                    workflow: { id: "W_windows", name: "windows" },
+                                  },
+                                },
                               }),
                             ],
                             pageInfo: { hasNextPage: false, endCursor: null },

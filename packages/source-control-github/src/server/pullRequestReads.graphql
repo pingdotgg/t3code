@@ -42,7 +42,10 @@ fragment CheckContext on StatusCheckRollupContext {
     isRequired(pullRequestNumber: $number) @include(if: $required)
     checkSuite {
       workflowRun {
+        event
+        runNumber
         workflow {
+          id
           name
         }
       }
