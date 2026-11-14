@@ -539,6 +539,10 @@
       "types": "./src/pullRequestEditing.ts",
       "default": "./src/pullRequestEditing.ts"
     },
+    "./pull-request-selection": {
+      "types": "./src/pullRequestSelection.ts",
+      "default": "./src/pullRequestSelection.ts"
+    },
     "./pull-request-reactions": {
       "types": "./src/pullRequestReactions.ts",
       "default": "./src/pullRequestReactions.ts"

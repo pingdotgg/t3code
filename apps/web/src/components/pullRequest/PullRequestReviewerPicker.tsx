@@ -1,8 +1,9 @@
 import { useAtomCommand } from "~/state/use-atom-command";
-import type {
-  EnvironmentId,
-  PullRequestRef,
-  PullRequestReviewerCandidate,
+import {
+  PULL_REQUEST_REVIEWER_CHANGE_LIMIT,
+  type EnvironmentId,
+  type PullRequestRef,
+  type PullRequestReviewerCandidate,
 } from "@t3tools/contracts";
 import {
   hostReviewerQuery,
@@ -33,6 +34,9 @@ const TRUNCATED_LABELS: Record<ReviewerTruncation, (error: string | null) => str
     "More people match than the host returned. Keep typing to narrow it down.",
 };
 
+const candidateKey = (candidate: PullRequestReviewerCandidate) =>
+  `${candidate.kind}:${candidate.id}`;
+
 export function PullRequestReviewerPicker({
   environmentId,
   reference,
@@ -46,7 +50,6 @@ export function PullRequestReviewerPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [pending, setPending] = useState<string | null>(null);
 
   const candidatesQuery = useEnvironmentQuery(
     open ? pullRequestEnvironment.reviewerCandidates({ environmentId, input: reference }) : null,
@@ -71,41 +74,52 @@ export function PullRequestReviewerPicker({
     ...searchInput,
     search: searchResult,
   });
+  const shownKeys = new Set(candidates.map(candidateKey));
+  // The draft spans every loaded row, so a single-reviewer swap clears one the query hides.
+  const pool = [
+    ...candidates,
+    ...(candidatesQuery.data?.candidates ?? []).filter(
+      (candidate) => !shownKeys.has(candidateKey(candidate)),
+    ),
+  ];
 
-  const toggle = async (candidate: PullRequestReviewerCandidate) => {
-    if (pending !== null) return;
-    setPending(candidate.id);
-    const result = await requestReviewers({
-      environmentId,
-      input: {
-        ...reference,
-        reviewers: [{ id: candidate.id, kind: candidate.kind }],
-        requested: !candidate.isRequested,
-      },
-    });
-    setPending(null);
-    if (result._tag === "Failure") {
+  const send = async (
+    reviewers: ReadonlyArray<PullRequestReviewerCandidate>,
+    requested: boolean,
+  ): Promise<boolean> => {
+    if (reviewers.length === 0) return true;
+    for (let start = 0; start < reviewers.length; start += PULL_REQUEST_REVIEWER_CHANGE_LIMIT) {
+      const result = await requestReviewers({
+        environmentId,
+        input: {
+          ...reference,
+          reviewers: reviewers
+            .slice(start, start + PULL_REQUEST_REVIEWER_CHANGE_LIMIT)
+            .map((reviewer) => ({ id: reviewer.id, kind: reviewer.kind })),
+          requested,
+        },
+      });
+      if (result._tag !== "Failure") continue;
+      const logins = reviewers
+        .slice(start)
+        .map((reviewer) => reviewer.login)
+        .join(", ");
       toastManager.add({
         type: "error",
-        title: candidate.isRequested
-          ? `Could not take back the review request to ${candidate.login}`
-          : `Could not ask ${candidate.login} for a review`,
+        title: requested
+          ? `Could not ask ${logins} for a review`
+          : `Could not take back the review request to ${logins}`,
         description: readableFailure(
           squashAtomCommandFailure(result),
           "The host refused it. Check that you have write access on this repository, and that they still have access to it.",
         ),
       });
-      return;
+      return false;
     }
     // The command reads the loaded list again only for somebody it lacked, and a search result
     // is keyed by what was typed, so the one on screen is read here or it keeps the old request.
     if (hostQuery !== null) searchResult.refresh();
-    toastManager.add({
-      type: "success",
-      title: candidate.isRequested
-        ? `Review request to ${candidate.login} taken back`
-        : `Review requested from ${candidate.login}`,
-    });
+    return true;
   };
 
   return (
@@ -127,25 +141,28 @@ export function PullRequestReviewerPicker({
             ? searchError
             : null
       }
-      candidates={candidates}
+      candidates={pool}
+      matches={(candidate) => shownKeys.has(candidateKey(candidate))}
+      isSelected={(candidate) => candidate.isRequested}
+      single={candidatesQuery.data?.multiple === false}
       emptyLabel="Nobody else has access to this repository."
       noMatchLabel="Nobody with access matches that."
       errorLabel="The people with access could not be read."
       truncated={truncation !== null}
       truncatedLabel={truncation === null ? "" : TRUNCATED_LABELS[truncation](searchError)}
-      candidateKey={(candidate) => `${candidate.kind}:${candidate.id}`}
-      disabled={pending !== null}
-      onSelect={(candidate) => void toggle(candidate)}
+      candidateKey={candidateKey}
+      onCommit={async ({ add, remove }) => {
+        // Removals go first: a host that keeps one reviewer ignores an add while one is set.
+        if (await send(remove, false)) await send(add, true);
+      }}
     >
-      {(candidate) => (
+      {(candidate, selected) => (
         <>
           <PullRequestActorLabel actor={candidate} className="flex-1" />
           {candidate.kind === "team" ? (
             <span className="shrink-0 text-muted-foreground">team</span>
           ) : null}
-          {candidate.isRequested ? (
-            <CheckIcon aria-label="Already asked" className="size-3.5 shrink-0" />
-          ) : null}
+          {selected ? <CheckIcon aria-label="Asked" className="size-3.5 shrink-0" /> : null}
         </>
       )}
     </PullRequestCandidatePicker>

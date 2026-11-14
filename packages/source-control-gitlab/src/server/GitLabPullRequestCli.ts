@@ -48,6 +48,7 @@ import {
   decodeMaintainerEditsPermissionJson,
   decodeLabelNameJson,
   decodeLabelPermissionJson,
+  decodeReviewerLimitJson,
   decodeMergeMessagesJson,
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
@@ -73,6 +74,7 @@ import {
   gitLabAwardName,
   MAINTAINER_EDITS_PERMISSION_GRAPHQL_QUERY,
   LABEL_PERMISSION_GRAPHQL_QUERY,
+  REVIEWER_LIMIT_GRAPHQL_QUERY,
   MERGE_MESSAGES_GRAPHQL_QUERY,
   MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
   MERGE_REQUEST_STATS_GRAPHQL_QUERY,
@@ -2598,12 +2600,28 @@ export const make = Effect.gen(function* () {
     listReviewerCandidates: Effect.fn("GitLabPullRequestCli.listReviewerCandidates")(
       function (input) {
         return Effect.all(
-          [mergeRequestDetail(input), projectUsers({ ...input, search: input.query })],
-          {
-            concurrency: 2,
-          },
+          [
+            mergeRequestDetail(input),
+            projectUsers({ ...input, search: input.query }),
+            // A search only adds rows; the picker reads the limit from the unsearched list.
+            input.query?.trim()
+              ? Effect.undefined
+              : // GitLab before 16.8 rejects the field; keep the default of many reviewers.
+                orWhenUnanswered(
+                  graphqlRead({
+                    cwd: input.cwd,
+                    host: input.host,
+                    operation: "getReviewerLimit",
+                    query: REVIEWER_LIMIT_GRAPHQL_QUERY,
+                    variables: { fullPath: input.repository, iid: String(input.number) },
+                    decode: decodeReviewerLimitJson,
+                  }),
+                  true,
+                ),
+          ],
+          { concurrency: 3 },
         ).pipe(
-          Effect.map(([mergeRequest, users]) => {
+          Effect.map(([mergeRequest, users, multiple]) => {
             const author = mergeRequest.author?.login;
             const requested = (input.query?.trim() ? [] : mergeRequest.reviewerUsers).map(
               ({ id, ...actor }) => ({
@@ -2634,6 +2652,7 @@ export const make = Effect.gen(function* () {
                   ),
               ],
               truncated: users.rawCount >= MAX_PAGE_SIZE,
+              ...(multiple === undefined ? {} : { multiple }),
             };
           }),
         );

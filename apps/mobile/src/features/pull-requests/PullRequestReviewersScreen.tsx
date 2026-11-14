@@ -12,7 +12,10 @@ import {
   reviewerCandidateView,
   type ReviewerTruncation,
 } from "@t3tools/client-runtime/pull-request-reviewers";
-import type { PullRequestReviewerCandidate } from "@t3tools/contracts";
+import {
+  PULL_REQUEST_REVIEWER_CHANGE_LIMIT,
+  type PullRequestReviewerCandidate,
+} from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
@@ -20,6 +23,7 @@ import { useContentTopInset, useSearchToolbarInset } from "../../components/ui/u
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Button } from "../../components/ui/Button";
+import * as Dialog from "../../components/ui/Dialog";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
@@ -27,6 +31,7 @@ import { useDebouncedValue } from "../../state/queries";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { PullRequestAvatar } from "./PullRequestPresentation";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
+import { useSelectionDraft } from "./useSelectionDraft";
 
 const TRUNCATED_LABELS: Record<ReviewerTruncation, (error: string | null) => string> = {
   unsearchable: () =>
@@ -68,6 +73,35 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
+  const send = async (
+    reviewers: ReadonlyArray<PullRequestReviewerCandidate>,
+    requested: boolean,
+  ): Promise<boolean> => {
+    for (let start = 0; start < reviewers.length; start += PULL_REQUEST_REVIEWER_CHANGE_LIMIT) {
+      const response = await request({
+        ...target,
+        input: {
+          ...target.input,
+          reviewers: reviewers
+            .slice(start, start + PULL_REQUEST_REVIEWER_CHANGE_LIMIT)
+            .map((reviewer) => ({ id: reviewer.id, kind: reviewer.kind })),
+          requested,
+        },
+      });
+      if (!AsyncResult.isFailure(response)) continue;
+      const cause = squashAtomCommandFailure(response);
+      const logins = reviewers
+        .slice(start)
+        .map((reviewer) => reviewer.login)
+        .join(", ");
+      Dialog.alert(
+        requested ? `Couldn't ask ${logins} for a review` : `Couldn't remove ${logins}`,
+        cause instanceof Error ? cause.message : "The provider refused the change. Try again.",
+      );
+      return false;
+    }
+    return true;
+  };
   const debouncedQuery = useDebouncedValue(query.trim(), 250);
   const searchInput = {
     loaded: result.data,
@@ -92,6 +126,26 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
     (a, b) => Number(b.isRequested) - Number(a.isRequested) || a.login.localeCompare(b.login),
   );
   const queryError = result.error ?? view.searchError;
+  const candidateKey = (candidate: PullRequestReviewerCandidate) =>
+    `${candidate.kind}:${candidate.id}`;
+  const shownKeys = new Set(candidates.map(candidateKey));
+  const draft = useSelectionDraft({
+    allowed,
+    // Every loaded row, so a single-reviewer swap clears one the query hides.
+    candidates: [
+      ...candidates,
+      ...(result.data?.candidates ?? []).filter(
+        (candidate) => !shownKeys.has(candidateKey(candidate)),
+      ),
+    ],
+    candidateKey,
+    isSelected: (candidate) => candidate.isRequested,
+    single: result.data?.multiple === false,
+    // Removals go first: a host that keeps one reviewer ignores an add while one is set.
+    commit: async ({ add, remove }) => {
+      if (await send(remove, false)) await send(add, true);
+    },
+  });
   // A new search shows its best matches from the top.
   const search = (next: string) => {
     setQuery(next);
@@ -155,7 +209,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
           ref={listRef}
           data={candidates}
           keyExtractor={(candidate) => `${candidate.kind}:${candidate.id}`}
-          extraData={{ allowed, pending }}
+          extraData={{ allowed, draft }}
           estimatedItemSize={64}
           recycleItems
           renderScrollComponent={NativeScrollView}
@@ -167,7 +221,10 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
           ListHeaderComponent={
             <View className="gap-3 px-4 py-4">
               <Text className="text-xs text-foreground-muted">
-                Tap someone to request a review. Tap a requested reviewer to remove the request.
+                {result.data?.multiple === false
+                  ? `Tap someone to make them the reviewer. This ${singular} takes one reviewer.`
+                  : "Tap people to request their review, or tap a requested reviewer to remove them."}{" "}
+                Changes are sent when you close this sheet.
               </Text>
               {!allowed ? (
                 <Text className="text-xs text-foreground-muted">
@@ -182,14 +239,14 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
             </View>
           }
           renderItem={({ item }) => {
-            const id = `${item.kind}:${item.id}`;
+            const selected = draft.isSelected(item);
             return (
               <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`${item.isRequested ? "Remove review request from" : "Request review from"} ${item.login}${item.kind === "team" ? " team" : ""}`}
-                accessibilityState={{ disabled: !allowed || pending !== null }}
-                disabled={!allowed || pending !== null}
-                onPress={() => void update(item)}
+                accessibilityRole="checkbox"
+                accessibilityLabel={`${item.login}${item.kind === "team" ? " team" : ""}`}
+                accessibilityState={{ disabled: !allowed, checked: selected }}
+                disabled={!allowed}
+                onPress={() => draft.toggle(item)}
                 className="min-h-16 flex-row items-center gap-3 border-b border-border-subtle px-4 py-3 active:opacity-70"
               >
                 <PullRequestAvatar actor={item} size={32} />
@@ -202,9 +259,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                     {item.kind === "team" ? " · Team" : ""}
                   </Text>
                 </View>
-                {pending === id ? (
-                  <AppActivityIndicator />
-                ) : item.isRequested ? (
+                {selected ? (
                   <View className="flex-row items-center gap-1.5">
                     <Text className="text-xs text-foreground-muted">Requested</Text>
                     <SymbolView name="checkmark" size={14} tintColorClassName="accent-icon" />

@@ -1927,6 +1927,32 @@ export function decodeLabelPermissionJson(raw: string): Result.Result<boolean, D
     : Result.fail(decoded.failure);
 }
 
+/** GitLab Free keeps one reviewer and silently drops the rest of a `reviewer_ids` write. */
+export const REVIEWER_LIMIT_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
+  project(fullPath: $fullPath) {
+    mergeRequest(iid: $iid) { allowsMultipleReviewers }
+  }
+}`;
+
+const decodeReviewerLimit = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Struct({
+      project: Schema.NullOr(
+        Schema.Struct({
+          mergeRequest: Schema.NullOr(Schema.Struct({ allowsMultipleReviewers: Schema.Boolean })),
+        }),
+      ),
+    }),
+  }),
+);
+
+export function decodeReviewerLimitJson(raw: string): Result.Result<boolean, DecodeFailure> {
+  const decoded = decodeReviewerLimit(raw);
+  return Result.isSuccess(decoded)
+    ? Result.succeed(decoded.success.data.project?.mergeRequest?.allowsMultipleReviewers !== false)
+    : Result.fail(decoded.failure);
+}
+
 /**
  * GitLab lets whoever can push to a fork's branch allow maintainer pushes, but once allowed the
  * target's maintainers can push too, so only the author may change it, as on GitHub. GitLab

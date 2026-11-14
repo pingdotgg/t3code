@@ -3,13 +3,17 @@ import { LegendList } from "@legendapp/list/react-native";
 import { useAtomValue } from "@effect/atom-react";
 import type { StaticScreenProps } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { PullRequestLabelCandidate } from "@t3tools/contracts";
+import {
+  PULL_REQUEST_LABEL_CHANGE_LIMIT,
+  type PullRequestLabelCandidate,
+} from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Platform, View } from "react-native";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
+import * as Dialog from "../../components/ui/Dialog";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { SelectionRow } from "../../components/ui/SelectionRow";
 import { composerPullRequests } from "../../state/pull-requests";
@@ -19,6 +23,7 @@ import { PullRequestLabelDot } from "./PullRequestLabelDot";
 import { pullRequestLabelColor } from "./pullRequestList";
 import { PullRequestSearchSheet } from "./PullRequestSearchSheet";
 import { usePullRequestConnected } from "./usePullRequestConnected";
+import { useSelectionDraft } from "./useSelectionDraft";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 
 export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequestParams>) {
@@ -47,30 +52,49 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
   const result = useEnvironmentQuery(composerPullRequests.labelCandidates(target));
   const setLabels = useAtomCommand(composerPullRequests.setLabels, { reportFailure: false });
   const [query, setQuery] = useState("");
-  const [pending, setPending] = useState<{ readonly name: string; readonly applied: boolean }>();
-  const [error, setError] = useState<string | null>(null);
-  const inFlight = useRef(false);
   const needle = query.trim().toLowerCase();
+  const send = async (
+    labels: ReadonlyArray<PullRequestLabelCandidate>,
+    applied: boolean,
+    // Removals that wait on this add and are dropped when it fails.
+    skipped: ReadonlyArray<PullRequestLabelCandidate> = [],
+  ) => {
+    if (labels.length === 0) return true;
+    const names = labels.map((label) => label.name);
+    for (let start = 0; start < names.length; start += PULL_REQUEST_LABEL_CHANGE_LIMIT) {
+      const response = await setLabels({
+        ...target,
+        input: {
+          ...target.input,
+          labels: names.slice(start, start + PULL_REQUEST_LABEL_CHANGE_LIMIT),
+          applied,
+        },
+      });
+      if (!AsyncResult.isFailure(response)) continue;
+      const cause = squashAtomCommandFailure(response);
+      Dialog.alert(
+        `Couldn't ${applied ? "add" : "remove"} ${names.slice(start).join(", ")}${skipped.length > 0 ? ` or remove ${skipped.map((label) => label.name).join(", ")}` : ""}`,
+        cause instanceof Error ? cause.message : "The provider refused the change. Try again.",
+      );
+      return false;
+    }
+    return true;
+  };
+  const draft = useSelectionDraft({
+    allowed,
+    candidates: result.data?.candidates ?? [],
+    candidateKey: (candidate) => candidate.name,
+    isSelected: (candidate) => candidate.isApplied,
+    single: false,
+    commit: async ({ add, remove }) => {
+      // Adds first, so the row never shows empty between the two writes, or after a failed add.
+      if (await send(add, true, remove)) await send(remove, false);
+    },
+  });
   // Host order, not applied-first: re-sorting on toggle would move the row out from under a tap.
   const candidates = (result.data?.candidates ?? []).filter((candidate) =>
     `${candidate.name} ${candidate.description ?? ""}`.toLowerCase().includes(needle),
   );
-  const toggle = async (candidate: PullRequestLabelCandidate) => {
-    if (!allowed || inFlight.current) return;
-    inFlight.current = true;
-    setPending({ name: candidate.name, applied: !candidate.isApplied });
-    setError(null);
-    const response = await setLabels({
-      ...target,
-      input: { ...target.input, labels: [candidate.name], applied: !candidate.isApplied },
-    });
-    inFlight.current = false;
-    setPending(undefined);
-    if (AsyncResult.isFailure(response)) {
-      const cause = squashAtomCommandFailure(response);
-      setError(cause instanceof Error ? cause.message : "Couldn't update this label. Try again.");
-    }
-  };
   return (
     <PullRequestSearchSheet
       title="Labels"
@@ -85,7 +109,7 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
           renderScrollComponent={NativeScrollView}
           data={candidates}
           keyExtractor={(candidate) => candidate.name}
-          extraData={{ pending, allowed, count: candidates.length }}
+          extraData={{ draft, allowed, count: candidates.length }}
           estimatedItemSize={72}
           recycleItems
           className="flex-1"
@@ -96,16 +120,9 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom }}
           ListHeaderComponent={
-            readOnlyReason || error ? (
-              <View className="gap-2 pb-3">
-                {readOnlyReason ? (
-                  <Text className="text-xs text-foreground-muted">{readOnlyReason}</Text>
-                ) : null}
-                {error ? (
-                  <Text selectable className="text-sm text-danger-foreground">
-                    {error}
-                  </Text>
-                ) : null}
+            readOnlyReason ? (
+              <View className="pb-3">
+                <Text className="text-xs text-foreground-muted">{readOnlyReason}</Text>
               </View>
             ) : undefined
           }
@@ -114,13 +131,12 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
               title={item.name}
               {...(item.description ? { subtitle: item.description } : {})}
               role="checkbox"
-              // The change shows as soon as it is tapped; a failure puts the host's answer back.
-              selected={pending?.name === item.name ? pending.applied : item.isApplied}
+              selected={draft.isSelected(item)}
               disabled={!allowed}
               isFirst={index === 0}
               isLast={index === candidates.length - 1}
               leading={<PullRequestLabelDot color={pullRequestLabelColor(item.color)} />}
-              onPress={() => void toggle(item)}
+              onPress={() => draft.toggle(item)}
             />
           )}
           ListEmptyComponent={
