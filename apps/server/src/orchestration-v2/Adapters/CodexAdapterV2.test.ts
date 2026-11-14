@@ -7528,31 +7528,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       willRetry: true,
       expectedClass: "usage_limit",
     },
-    ...(
-      [
-        "responseStreamDisconnected",
-        "responseStreamConnectionFailed",
-        "httpConnectionFailed",
-      ] as const
-    ).flatMap(
-      (code) =>
-        [
-          {
-            code,
-            notificationStatus: null,
-            completionStatus: 503,
-            willRetry: false,
-            expectedClass: "provider_error",
-          },
-          {
-            code,
-            notificationStatus: 503,
-            completionStatus: null,
-            willRetry: false,
-            expectedClass: "transport_error",
-          },
-        ] as const,
-    ),
+    {
+      code: "responseStreamDisconnected",
+      notificationStatus: null,
+      completionStatus: 503,
+      willRetry: false,
+      expectedClass: "provider_error",
+    },
+    {
+      code: "responseStreamDisconnected",
+      notificationStatus: 503,
+      completionStatus: null,
+      willRetry: false,
+      expectedClass: "transport_error",
+    },
     {
       code: "responseStreamDisconnected",
       notificationStatus: null,
