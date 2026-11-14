@@ -7,17 +7,32 @@ const STORAGE_KEY = "test:file-explorer-default";
 
 describe("FileExplorerPane", () => {
   it.each([
-    { view: "Changes", defaultWidth: 256, defaultWidthFraction: 0.4, minWidth: 160, expected: 168 },
-    { view: "PR Code", defaultWidth: 320, defaultWidthFraction: 0.4, minWidth: 192, expected: 192 },
+    {
+      view: "Changes",
+      defaultWidth: 256,
+      defaultWidthFraction: 0.4,
+      minWidth: 160,
+      expected: 168,
+      max: 260,
+    },
+    {
+      view: "PR Code",
+      defaultWidth: 320,
+      defaultWidthFraction: 0.4,
+      minWidth: 192,
+      expected: 192,
+      max: 260,
+    },
     {
       view: "Files",
       defaultWidth: 256,
       minWidth: 160,
       expected: 256,
+      max: 260,
     },
   ])(
-    "preserves the $view initial width in a 420px row",
-    async ({ expected, view: _, ...sizing }) => {
+    "preserves the $view initial width and can widen to $max in a 420px row",
+    async ({ expected, max, view: _, ...sizing }) => {
       const previous = localStorage.getItem(STORAGE_KEY);
       localStorage.removeItem(STORAGE_KEY);
       try {
@@ -33,6 +48,9 @@ describe("FileExplorerPane", () => {
         await expect
           .element(screen.getByRole("separator"))
           .toHaveAttribute("aria-valuenow", String(expected));
+        await expect
+          .element(screen.getByRole("separator"))
+          .toHaveAttribute("aria-valuemax", String(max));
         expect(screen.container.querySelector("aside")!.getBoundingClientRect().width).toBe(
           expected,
         );
