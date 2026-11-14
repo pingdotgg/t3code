@@ -254,6 +254,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "profiles-mcp-servers",
+    title: "Profile MCP servers",
+    to: "/settings/profiles",
+    scope: "environment-defaults",
+    environmentOnly: true,
+    searchTerms: [
+      "mcp servers model context protocol url http headers command stdio npx env allow commands tools",
+    ],
+  },
+  {
     id: "profiles-prompts",
     title: "Profile prompts",
     to: "/settings/profiles",

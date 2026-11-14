@@ -1,4 +1,5 @@
 import type { ResolvedProviderSettings } from "@t3tools/contracts";
+import type { ProfileMcpServerLaunch } from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as Schema from "effect/Schema";
 
 // These drive T3's plan/dialog, task tracking, and deferred MCP tool flows.
@@ -95,7 +96,25 @@ const codexProtectedKeys = [
 const overlaps = (key: string, protectedKey: string) =>
   key === protectedKey || key.startsWith(`${protectedKey}.`) || protectedKey.startsWith(`${key}.`);
 
-export function codexProfileConfig(resolved: ResolvedProviderSettings | undefined) {
+// Command servers go in mcp-servers.json, behind each machine's Allow MCP commands switch.
+const MCP_EXECUTION_KEYS = new Set(["command", "args", "env"]);
+const definesMcpCommand = (key: string, entry: Schema.Json): boolean => {
+  const parts = key.split(".");
+  if (parts[0] !== "mcp_servers") return false;
+  if (parts.length > 2) return MCP_EXECUTION_KEYS.has(parts[2]!);
+  return (
+    parts.length === 2 &&
+    typeof entry === "object" &&
+    entry !== null &&
+    !Array.isArray(entry) &&
+    Object.keys(entry).some((name) => MCP_EXECUTION_KEYS.has(name))
+  );
+};
+
+export function codexProfileConfig(
+  resolved: ResolvedProviderSettings | undefined,
+  mcpServers: Readonly<Record<string, ProfileMcpServerLaunch>> = {},
+) {
   const value = resolved?._tag === "codex" ? resolved.settings : {};
   const config: Record<string, Schema.Json> = {};
   const refused: string[] = [];
@@ -109,11 +128,25 @@ export function codexProfileConfig(resolved: ResolvedProviderSettings | undefine
     if (
       !/^[a-zA-Z0-9_.-]+$/.test(key) ||
       codexProtectedKeys.some((owned) => overlaps(key, owned)) ||
-      key.startsWith("mcp_servers.t3-code")
+      key.startsWith("mcp_servers.t3-code") ||
+      definesMcpCommand(key, entry)
     )
       refused.push(key);
     else config[key] = entry;
   }
+  // Whole tables, so a same-named server from Codex's own config is replaced, not merged into.
+  for (const [name, server] of Object.entries(mcpServers))
+    config[`mcp_servers.${name}`] =
+      server.type === "http"
+        ? {
+            url: server.url,
+            ...(Object.keys(server.headers).length === 0 ? {} : { http_headers: server.headers }),
+          }
+        : {
+            command: server.command,
+            args: server.args,
+            ...(Object.keys(server.env).length === 0 ? {} : { env: server.env }),
+          };
   return {
     config,
     refused,

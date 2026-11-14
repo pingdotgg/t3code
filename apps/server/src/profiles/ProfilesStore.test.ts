@@ -24,8 +24,12 @@ it.effect(
           expectedRevision: initial.sync.revision,
           profiles: { profiles: { coding: { prompts: ["coding"], skills: [] } } },
           prompts: { upsert: [{ name: "coding", content: "original" }] },
+          mcpServers: { mcpServers: { docs: { type: "http", url: "https://docs.example/mcp" } } },
         });
         assert.equal(first.sync.revision, initial.sync.revision + 1);
+        assert.deepEqual(first.mcpServers, {
+          mcpServers: { docs: { type: "http", url: "https://docs.example/mcp" } },
+        });
         const outcomes = yield* Effect.all(
           [
             store
@@ -194,9 +198,11 @@ it.effect(
         );
         assert.equal(yield* fs.readFileString(`${root}/profiles/prompts/coding.md`), "original");
         yield* fs.writeFileString(`${root}/profiles/profiles.json`, "broken json");
+        yield* fs.writeFileString(`${root}/profiles/mcp-servers.json`, "broken json");
         const broken = yield* store.read();
         assert.isNull(broken.profiles);
         assert.isDefined(broken.error);
+        assert.isUndefined(broken.mcpServers);
         for (let i = 0; i < 9; i++)
           yield* fs.writeFileString(`${root}/profiles/large-${i}`, "x".repeat(1024 * 1024));
         assert.equal(

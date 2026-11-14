@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { SecretProviderId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -26,6 +27,7 @@ it.effect(
               prompts: ["first", "second"],
               skills: ["review"],
               providerSettings: { codex: "lean", pi: "lean" },
+              mcpServers: ["docs"],
             },
           },
         }),
@@ -43,7 +45,22 @@ it.effect(
           pi: { lean: { skills: false } },
         }),
       );
+      const docs = {
+        type: "http" as const,
+        url: "https://docs.example/mcp",
+        headers: {
+          Authorization: {
+            provider: SecretProviderId.make("personal"),
+            reference: "op://Vault/Docs/token",
+          },
+        },
+      };
+      yield* fs.writeFileString(
+        `${root}/mcp-servers.json`,
+        JSON.stringify({ mcpServers: { docs, unused: { command: "npx", args: ["unused"] } } }),
+      );
       const loaded = yield* service.load(root);
+      assert.deepEqual(loaded.mcpServers, { coder: { docs } });
       assert.deepEqual(loaded.providerSettings.coder, [
         { _tag: "codex", id: "lean", settings: { features: { memory_tool: false } } },
         { _tag: "pi", id: "lean", settings: { skills: false } },
@@ -80,6 +97,8 @@ it.effect(
           broken: { prompts: [], skills: [], providerSettings: { codex: "missing" } },
           warning: "missing",
         },
+        { broken: { prompts: [], skills: [], mcpServers: ["missing"] }, warning: "mcpServers" },
+        { broken: { prompts: [], skills: [], mcpServers: ["t3-code"] }, warning: "mcpServers" },
         { broken: null, warning: "profiles.json" },
       ]) {
         if (skillContent)

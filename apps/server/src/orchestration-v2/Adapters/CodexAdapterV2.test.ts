@@ -308,6 +308,10 @@ describe("CodexAdapterV2 native protocol logging", () => {
             id: "evt-1",
             http_headers: { Authorization: "Bearer secret-codex-token" },
             usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
+            config: {
+              "mcp_servers.docs": { http_headers: { "X-Docs": "secret-docs-header" } },
+              "mcp_servers.local": { command: "npx", env: { GITHUB_PAT: "secret-pat" } },
+            },
           },
         },
       });
@@ -334,6 +338,10 @@ describe("CodexAdapterV2 native protocol logging", () => {
               id: "evt-1",
               http_headers: { Authorization: "[REDACTED]" },
               usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
+              config: {
+                "mcp_servers.docs": { http_headers: { "X-Docs": "[REDACTED]" } },
+                "mcp_servers.local": { command: "npx", env: { GITHUB_PAT: "[REDACTED]" } },
+              },
             },
           },
         },

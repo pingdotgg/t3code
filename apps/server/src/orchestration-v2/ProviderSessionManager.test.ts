@@ -4668,7 +4668,18 @@ it.effect("loads profiles only when opening a session and rereads them after clo
             prompts: ["coding"],
             skills: [],
             providerSettings: { codex: "lean", pi: "lean" },
+            mcpServers: ["docs"],
           },
+          runner: { prompts: [], skills: [], mcpServers: ["local"] },
+        },
+      }),
+    );
+    yield* fs.writeFileString(
+      `${root}/profiles/mcp-servers.json`,
+      JSON.stringify({
+        mcpServers: {
+          docs: { type: "http", url: "https://docs.example/mcp", headers: { A: "b" } },
+          local: { command: "npx", args: ["local-mcp"] },
         },
       }),
     );
@@ -4681,6 +4692,7 @@ it.effect("loads profiles only when opening a session and rereads them after clo
       }),
     );
     const resolved: unknown[] = [];
+    const mcpServers: unknown[] = [];
     const state = yield* Ref.make(emptyState);
     const opened: Array<string | undefined> = [];
     yield* Effect.gen(function* () {
@@ -4708,6 +4720,9 @@ it.effect("loads profiles only when opening a session and rereads them after clo
       assert.deepEqual(resolved, [
         { _tag: "codex", id: "lean", settings: { features: { memory_tool: false } } },
       ]);
+      assert.deepEqual(mcpServers, [
+        { docs: { type: "http", url: "https://docs.example/mcp", headers: { A: "b" } } },
+      ]);
       yield* fs.writeFileString(
         `${root}/profiles/prompts/coding.md`,
         "Updated profile instruction",
@@ -4727,6 +4742,11 @@ it.effect("loads profiles only when opening a session and rereads them after clo
         .pipe(Effect.flip);
       assert.equal(missing._tag, "ProviderSessionOpenError");
       assert.include(missing.message, "no longer exists");
+      // This machine has not allowed MCP commands.
+      const command = yield* manager
+        .open({ ...input, modelSelection: { ...modelSelection, profileId: "runner" } })
+        .pipe(Effect.flip);
+      assert.include(command.message, "Allow MCP commands");
       yield* fs.remove(`${root}/profiles/prompts/coding.md`);
       const result = yield* manager.open(input).pipe(Effect.flip);
       assert.include(result.message, "coding.md");
@@ -4741,6 +4761,7 @@ it.effect("loads profiles only when opening a session and rereads them after clo
             Effect.sync(() => {
               opened.push(input.profileInstructions);
               resolved.push(input.providerSettings);
+              mcpServers.push(input.profileMcpServers);
             }),
         }).pipe(Layer.provide(ServerConfig.layerTest(root, root))),
       ),

@@ -1352,6 +1352,8 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   profilesSync: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Synced profiles can name MCP commands; each machine opts in before they run on it.
+  profilesMcpCommands: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   providerModelPreferences: Schema.NullOr(ProviderModelPreferences).pipe(
@@ -1777,6 +1779,7 @@ export const ServerSettingsPatch = Schema.Struct({
   profilesFolder: Schema.optionalKey(TrimmedString),
   defaultProfile: Schema.optionalKey(Schema.NullOr(TrimmedString)),
   profilesSync: Schema.optionalKey(Schema.Boolean),
+  profilesMcpCommands: Schema.optionalKey(Schema.Boolean),
   setModelFavorites: Schema.optionalKey(
     Schema.Array(Schema.Struct({ ...ModelFavorite.fields, favorite: Schema.Boolean })),
   ),
@@ -1976,7 +1979,8 @@ export function requiredScopesForServerSettingsPatch(
       key === "usageLimitSources" ||
       key === "textGenerators" ||
       key === "secretProviders" ||
-      key === "agentSecretVaults"
+      key === "agentSecretVaults" ||
+      key === "profilesMcpCommands"
     ) {
       changesProviders = true;
     } else {

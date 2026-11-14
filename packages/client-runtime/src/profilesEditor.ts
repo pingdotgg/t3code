@@ -1,6 +1,7 @@
 import type { ProfilesSyncStatus } from "./state/profilesSync.ts";
 import type {
   ClaudeProviderSettings,
+  McpServersFile,
   Profile,
   ProfileProviderSettingsDriver,
   ProfilesFile,
@@ -25,6 +26,55 @@ export function profileNameError(name: string, taken: ReadonlyArray<string>): st
   }
   if (taken.includes(name)) return "That name is taken.";
   return null;
+}
+
+export function mcpServerNameError(name: string, taken: ReadonlyArray<string>): string | null {
+  if (/^t3[-_]?code/i.test(name)) return "Names starting with t3-code are T3's own.";
+  return profileNameError(name, taken);
+}
+
+/** Matches the server schema, so the editor can say what is missing before saving. */
+export function mcpServerError(server: {
+  readonly url?: string;
+  readonly command?: string;
+}): string | null {
+  if (server.command !== undefined)
+    return server.command.trim() === "" ? "Enter a command, such as npx." : null;
+  return /^https?:\/\/\S+$/.test(server.url ?? "")
+    ? null
+    : "Enter a full URL, such as https://example.com/mcp.";
+}
+
+export const EMPTY_MCP_SERVERS: McpServersFile = { mcpServers: {} };
+
+export function profilesUsingMcpServer(file: ProfilesFile | null, name: string): string[] {
+  return Object.entries(file?.profiles ?? {}).flatMap(([id, profile]) =>
+    profile.mcpServers?.includes(name) ? [id] : [],
+  );
+}
+
+/** Drops the empty argument lines a text box leaves while typing. */
+export function cleanMcpServers(file: McpServersFile): McpServersFile {
+  return {
+    mcpServers: Object.fromEntries(
+      Object.entries(file.mcpServers).map(([name, server]) => {
+        if (!("command" in server) || server.args === undefined) return [name, server];
+        // An empty line inside the list can be a deliberate empty argument.
+        const args = [...server.args];
+        while (args.at(-1) === "") args.pop();
+        return [name, withKey(server, "args", args.length === 0 ? undefined : args)];
+      }),
+    ),
+  };
+}
+
+/** Takes a deleted MCP server out of every profile that selected it. */
+export function removeMcpServerRefs(file: ProfilesFile, name: string): ProfilesFile {
+  return mapProfiles(file, (profile) =>
+    profile.mcpServers?.includes(name)
+      ? withKey(profile, "mcpServers", toggleInOptionalList(profile.mcpServers, name, false))
+      : profile,
+  );
 }
 
 export function uniqueName(base: string, taken: ReadonlyArray<string>): string {

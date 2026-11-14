@@ -7,8 +7,10 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import { parse as parseYaml } from "yaml";
 import {
+  McpServersFile,
   Profile,
   ProfileId,
+  type ProfileMcpServer,
   ProfilesFile,
   ProviderSettingsFile,
   type ResolvedProviderSettings,
@@ -65,6 +67,8 @@ export class Profiles extends Context.Service<
       readonly catalog: ProfileCatalog;
       readonly instructions: Readonly<Record<string, string>>;
       readonly providerSettings: Readonly<Record<string, readonly ResolvedProviderSettings[]>>;
+      /** Each profile's selected servers from `mcp-servers.json`, secrets still as references. */
+      readonly mcpServers: Readonly<Record<string, Readonly<Record<string, ProfileMcpServer>>>>;
     }>;
   }
 >()("t3/profiles/Profiles") {}
@@ -84,7 +88,12 @@ const make = Effect.gen(function* () {
     const file = path.join(root, "profiles.json");
     return yield* Effect.gen(function* () {
       if (!(yield* fs.exists(file)))
-        return { catalog: { folder: root, profiles: {} }, instructions: {}, providerSettings: {} };
+        return {
+          catalog: { folder: root, profiles: {} },
+          instructions: {},
+          providerSettings: {},
+          mcpServers: {},
+        };
       const config = yield* decodeProfiles(yield* read(file)).pipe(
         Effect.mapError(
           (cause) => new ProfileLoadError({ path: file, operation: "decode", cause }),
@@ -104,7 +113,19 @@ const make = Effect.gen(function* () {
         ),
         Effect.result,
       );
+      const mcpFile = path.join(root, "mcp-servers.json");
+      const mcp = yield* fs.exists(mcpFile).pipe(
+        Effect.flatMap((exists) =>
+          exists
+            ? read(mcpFile).pipe(
+                Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(McpServersFile))),
+              )
+            : Effect.succeed<McpServersFile>({ mcpServers: {} }),
+        ),
+        Effect.result,
+      );
       const providerSettings: Record<string, readonly ResolvedProviderSettings[]> = {};
+      const mcpServers: Record<string, Record<string, ProfileMcpServer>> = {};
       const instructions: Record<string, string> = {};
       const catalogProfiles: Record<string, ProfileCatalog["profiles"][string]> = {};
       for (const [id, raw] of Object.entries(config.profiles)) {
@@ -146,6 +167,23 @@ const make = Effect.gen(function* () {
               settings: entries[name]!,
             } as ResolvedProviderSettings);
           }
+          const servers: Record<string, ProfileMcpServer> = {};
+          for (const name of profile.mcpServers ?? []) {
+            if (mcp._tag === "Failure")
+              return yield* new ProfileLoadError({
+                path: mcpFile,
+                operation: "decode",
+                cause: mcp.failure,
+              });
+            if (!Object.hasOwn(mcp.success.mcpServers, name))
+              return yield* new ProfileLoadError({
+                path: mcpFile,
+                operation: "decode",
+                field: `mcpServers.${name}`,
+                cause: undefined,
+              });
+            servers[name] = mcp.success.mcpServers[name]!;
+          }
           const parts: string[] = [];
           for (const prompt of profile.prompts)
             parts.push(yield* read(path.join(root, "prompts", `${prompt}.md`)));
@@ -180,7 +218,7 @@ const make = Effect.gen(function* () {
             parts.push(
               `Read a skill's SKILL.md before using it. Resolve relative paths against its directory.\n<available_skills>\n${skills.join("\n")}\n</available_skills>`,
             );
-          return { profile, instructions: parts.join("\n\n"), resolved };
+          return { profile, instructions: parts.join("\n\n"), resolved, servers };
         }).pipe(
           Effect.catchTags({
             ProfileLoadError: (error) =>
@@ -188,17 +226,21 @@ const make = Effect.gen(function* () {
                 profile: { ...profile, warning: error.message },
                 instructions: undefined,
                 resolved: undefined,
+                servers: undefined,
               }),
           }),
         );
         catalogProfiles[id] = loaded.profile;
         if (loaded.instructions !== undefined) instructions[id] = loaded.instructions;
         if (loaded.resolved !== undefined) providerSettings[id] = loaded.resolved;
+        if (loaded.servers !== undefined && Object.keys(loaded.servers).length > 0)
+          mcpServers[id] = loaded.servers;
       }
       return {
         catalog: { folder: root, ...config, profiles: catalogProfiles },
         instructions,
         providerSettings,
+        mcpServers,
       };
     }).pipe(
       Effect.catch((cause) =>
@@ -212,6 +254,7 @@ const make = Effect.gen(function* () {
           },
           instructions: {},
           providerSettings: {},
+          mcpServers: {},
         }),
       ),
     );

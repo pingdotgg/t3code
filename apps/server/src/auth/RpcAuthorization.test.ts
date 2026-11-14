@@ -5,6 +5,7 @@ import {
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
+  ProfilesError,
   ProviderDriverKind,
   ProviderInstanceId,
   SecretProviderId,
@@ -312,6 +313,11 @@ describe("settings mutation authorization", () => {
           patch: { agentSecretVaults: { alpha: { token: "ops_dummy" } } },
         }).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+      expect(
+        yield* client[WS_METHODS.serverUpdateSettings]({
+          patch: { profilesMcpCommands: true },
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
       expect(handled).toBe(false);
     }).pipe(Effect.scoped),
   );
@@ -550,5 +556,46 @@ it.effect("rejects profile writes and provider commands before handlers without 
       "EnvironmentAuthorizationError",
     );
     expect(handled).toBe(0);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("lets settings writers save profiles but not their MCP servers", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, "profiles.editor.write"> =>
+          tag !== WS_METHODS.profilesEditorWrite,
+      ),
+    );
+    let handled = 0;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayer({
+            [WS_METHODS.profilesEditorWrite]: () =>
+              Effect.sync(() => {
+                handled++;
+              }).pipe(
+                Effect.andThen(
+                  Effect.fail(new ProfilesError({ reason: "io", message: "handled" })),
+                ),
+              ),
+          }),
+          RpcAuthorization.layer([AuthOrchestrationReadScope, AuthSettingsWriteScope]),
+        ),
+      ),
+    );
+    expect(
+      (yield* client[WS_METHODS.profilesEditorWrite]({ expectedRevision: 0 }).pipe(Effect.flip))
+        ._tag,
+    ).toBe("ProfilesError");
+    expect(handled).toBe(1);
+    expect(
+      yield* client[WS_METHODS.profilesEditorWrite]({
+        expectedRevision: 0,
+        mcpServers: { mcpServers: {} },
+      }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+    expect(handled).toBe(1);
   }).pipe(Effect.scoped),
 );
