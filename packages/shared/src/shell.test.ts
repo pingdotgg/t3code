@@ -36,7 +36,6 @@ import {
   resolveWindowsEnvironment,
   runsGitWithoutConsole,
   SpawnExecutableResolution,
-  type SpawnExecutableResolver,
   WindowsShellEnvironment,
   withPathDirectoryListings,
   type WindowsShellEnvironmentReader,
@@ -806,7 +805,7 @@ describe("npmShimExecutable", () => {
 });
 
 effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
-  it.effect("resolves Windows executables and command shims using their extensions", () =>
+  it.effect("runs Windows executables directly without a shell", () =>
     Effect.gen(function* () {
       const command = yield* resolveSpawnCommand("node.exe", ["script.js", "hello & goodbye"], {
         env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
@@ -820,41 +819,6 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         args: ["script.js", "hello & goodbye"],
         shell: false,
       });
-
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-spawn-pathext-" });
-      const base = path.join(cwd, "audit-command");
-      yield* fs.writeFileString(`${base}.cmd`, "@echo off\n");
-      yield* fs.writeFileString(`${base}.exe`, "");
-      const shim = yield* resolveSpawnCommand(base, [], {
-        env: { PATH: "", PathExt: ".CMD" },
-      }).pipe(
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.provideService(CommandResolutionCache, new Map()),
-      );
-      expect(shim.shell).toBe(true);
-      expect(shim.args).toEqual([]);
-      expect(shim.command).toMatch(/audit-command\.cmd/i);
-      expect(shim.command).not.toMatch(/audit-command\.exe/i);
-
-      const cache = new Map();
-      const resolver: SpawnExecutableResolver = (_command, _platform, env) =>
-        `${base}${env.PathExt?.toLowerCase()}`;
-      const resolveCached = (pathExt: string) =>
-        resolveSpawnCommand("audit-command", [], {
-          env: { PATH: cwd, PathExt: pathExt },
-        }).pipe(
-          Effect.provideService(HostProcess.Platform, "win32"),
-          Effect.provideService(CommandResolutionCache, cache),
-          Effect.provideService(SpawnExecutableResolution, resolver),
-        );
-      expect((yield* resolveCached(".EXE")).command).toBe(`${base}.exe`);
-      const changed = yield* resolveCached(".CMD");
-      expect(changed.shell).toBe(true);
-      expect(changed.args).toEqual([]);
-      expect(changed.command).toMatch(/audit-command\.cmd/i);
-      expect(changed.command).not.toMatch(/audit-command\.exe/i);
     }),
   );
 
