@@ -1,0 +1,627 @@
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, it } from "@effect/vitest";
+import {
+  AuthSessionId,
+  EnvironmentId,
+  ProjectId,
+  ThreadId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  WS_METHODS,
+  WsServerRefreshProvidersRpc,
+  WsSubscribeServerConfigRpc,
+  type OrchestrationV2StoredEvent,
+  type OrchestrationV2ThreadShell,
+  type OrchestrationProjectShell,
+  type ServerConfig,
+  type ServerConfigStreamEvent,
+  type ServerProvider,
+} from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Cause from "effect/Cause";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import { Headers } from "effect/http";
+import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
+
+import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as ServerBrowser from "./preview/ServerBrowser.ts";
+import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
+import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
+import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
+import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
+import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
+import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
+import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
+import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
+import * as CodexInstallation from "./provider/CodexInstallation.ts";
+import * as DeviceService from "./device/DeviceService.ts";
+import * as DocumentText from "./provider/DocumentText.ts";
+import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as EnvironmentTheme from "./environmentTheme.ts";
+import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+import * as HostResources from "./resourceTelemetry/HostResources.ts";
+import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
+import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
+import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
+import * as ModelManifest from "./provider/ModelManifest.ts";
+import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
+import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
+import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
+import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
+import * as PeerLinks from "./peer/PeerLinks.ts";
+import * as PortScanner from "./preview/PortScanner.ts";
+import * as PreviewManager from "./preview/Manager.ts";
+import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
+import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
+import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
+import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
+import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
+import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
+import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
+import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
+import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
+import * as RelayClient from "@t3tools/shared/relayClient";
+import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
+import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
+import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import * as ReviewService from "./review/ReviewService.ts";
+import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as SecretRequests from "./secrets/SecretRequests.ts";
+import * as GuestShareService from "./guest/GuestShareService.ts";
+import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
+import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
+import * as NpmRelease from "./cloud/npmRelease.ts";
+import * as SessionStore from "./auth/SessionStore.ts";
+import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
+import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
+import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
+import * as StorageCleanup from "./storageCleanup.ts";
+import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
+import * as TerminalManager from "./terminal/Manager.ts";
+import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
+import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
+import * as UsageService from "./usage/UsageService.ts";
+import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
+import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
+import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
+import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
+import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import * as TriageService from "./triage/TriageService.ts";
+import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as ServerConfigModule from "./config.ts";
+import * as Keybindings from "./keybindings.ts";
+import * as ServerSettings from "./serverSettings.ts";
+import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
+
+import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
+import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
+import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
+import * as SqlitePersistence from "./persistence/Sqlite.ts";
+import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
+import * as ProjectService from "./project/ProjectService.ts";
+import {
+  layerWsRpc,
+  resolveOpenDiscoveryForConfig,
+  subscribeOrchestrationV2Shell,
+  subscribeOrchestrationV2Thread,
+  WS_RPC_SERVER_OPTIONS,
+  withLateConfigDiscovery,
+} from "./ws.ts";
+
+
+
+
+
+
+
+
+
+
+// Build the production RPC layer; unrelated capabilities fail if this test calls them.
+
+
+
+// Pruned history cannot be replayed: a cursor below the boundary must resync from a snapshot.
+
+// A prune pass can delete replayed rows after the boundary check; the read must not be trusted.
+
+// A thread idle since before the boundary missed nothing; resuming must not resend its body.
+import { snapshotConfig, settingsUpdated, ReplayTestLayer, layerUnusedConfigRpcServices, layerConfigSources } from "./ws-fixtures.testkit.ts";
+it.effect.each([
+  "pending",
+  "cached",
+  "direct-pending",
+  "direct-cached",
+  "direct-failed",
+  "direct-interrupted",
+] as const)(
+  "%s endpoint discovery preserves initial config and updates through discovery and ACK",
+  (discovery) =>
+    Effect.gen(function* () {
+      const keybindings = yield* Keybindings.Keybindings;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const keybindingsSubscribed = yield* Deferred.make<void>();
+      const settingsSubscribed = yield* Deferred.make<void>();
+      const keybindingsChanges = keybindings.subscribeChanges.pipe(
+        Effect.tap(() => Deferred.succeed(keybindingsSubscribed, undefined)),
+      );
+      const settingsChanges = settings.subscribeChanges.pipe(
+        Effect.tap(() => Deferred.succeed(settingsSubscribed, undefined)),
+      );
+      const initialKeybindings = (yield* keybindings.getSnapshot).keybindings;
+      const discoveryStarted = yield* Deferred.make<void>();
+      const finishDiscovery = yield* Deferred.make<void>();
+      const remoteDiscoveryStarted = yield* Deferred.make<void>();
+      const finishRemoteDiscovery = yield* Deferred.make<void>();
+      const targets = [{ kind: "mdns" as const, host: "test.local" }];
+      const direct = discovery.startsWith("direct-");
+      const bound = [{ kind: "lan" as const, httpBaseUrl: "http://192.168.1.10:3773/" }];
+      const endpoints = [
+        ...bound,
+        { kind: "tailnet" as const, httpBaseUrl: "https://test.ts.net/" },
+      ];
+      const directStarted = yield* Deferred.make<void>();
+      const finishDirect = yield* Deferred.make<void>();
+      const directStopped = yield* Deferred.make<void>();
+      const responses = yield* Queue.unbounded<ServerConfigStreamEvent>();
+      const configRpcServices = Layer.mergeAll(
+        layerUnusedConfigRpcServices,
+        Layer.mock(ExternalLauncher.ExternalLauncher)({
+          resolveAvailableEditors: () =>
+            Deferred.succeed(discoveryStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(finishDiscovery)),
+              Effect.as([]),
+            ),
+          // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
+          resolveFileManagerRevealKind: () => Effect.succeed(undefined),
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+          streamChanges: Stream.never,
+        }),
+        Layer.mock(UsageLimitSources.UsageLimitSources)({ streamChanges: Stream.make([]) }),
+        Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
+          resolveTargets: () =>
+            Deferred.succeed(remoteDiscoveryStarted, undefined).pipe(
+              Effect.andThen(
+                discovery === "cached" || direct
+                  ? Effect.void
+                  : Deferred.await(finishRemoteDiscovery),
+              ),
+              Effect.as(targets),
+            ),
+        }),
+        Layer.mock(DirectEndpoints.DirectEndpoints)({
+          resolveAvailable: () => Effect.succeed(discovery === "direct-cached" ? endpoints : bound),
+          resolve: () =>
+            direct
+              ? Deferred.succeed(directStarted, undefined).pipe(
+                  Effect.andThen(
+                    discovery === "direct-cached" ? Effect.void : Deferred.await(finishDirect),
+                  ),
+                  Effect.andThen(
+                    discovery === "direct-failed"
+                      ? Effect.die("probe failed")
+                      : Effect.succeed(endpoints),
+                  ),
+                  Effect.onExit(() => Deferred.succeed(directStopped, undefined)),
+                )
+              : Effect.succeed(bound),
+        }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          scratchRoot: Effect.succeedNone,
+          namedProjectsRoot: process.cwd(),
+        }),
+        Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+        Layer.mock(ServerEnvironment.ServerEnvironment)({
+          getDescriptor: Effect.succeed({
+            environmentId: EnvironmentId.make("config-test"),
+            label: "Config test",
+            platform: { os: "linux", arch: "x64" },
+            serverVersion: "0.0.0",
+            capabilities: { repositoryIdentity: false },
+          }),
+        }),
+        Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+          getDescriptor: () =>
+            Effect.succeed({
+              policy: "loopback-browser",
+              bootstrapMethods: [],
+              sessionMethods: ["browser-session-cookie"],
+              sessionCookieName: "config-test-session",
+            }),
+        }),
+        // Signal subscription on either accessor so the test also fails, rather
+        // than hangs, against a handler that subscribes after the snapshot.
+        Layer.succeed(Keybindings.Keybindings, {
+          ...keybindings,
+          streamChanges: Stream.unwrap(keybindingsChanges),
+          subscribeChanges: keybindingsChanges,
+        }),
+        Layer.succeed(ServerSettings.ServerSettingsService, {
+          ...settings,
+          streamChanges: Stream.unwrap(settingsChanges),
+          subscribeChanges: settingsChanges,
+        }),
+      );
+      const server = yield* RpcServer.makeNoSerialization(
+        RpcGroup.make(WsSubscribeServerConfigRpc),
+        {
+          ...WS_RPC_SERVER_OPTIONS,
+          onFromServer: (response) =>
+            response._tag === "Chunk"
+              ? Effect.forEach(response.values, (event) => Queue.offer(responses, event), {
+                  discard: true,
+                })
+              : Effect.void,
+        },
+      ).pipe(
+        Effect.provide(
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("config-test"),
+              subject: "config-test",
+              method: "browser-session-cookie",
+              scopes: [],
+            },
+            {},
+            yield* ServerBrowser.ServerBrowser,
+            () => Effect.void,
+            { secretReferences: true },
+          ).pipe(Layer.provide(configRpcServices)),
+        ),
+      );
+      const requestId = RpcMessage.RequestId("config");
+      const acknowledge = server.write(0, { _tag: "Ack", requestId });
+      yield* server.write(0, {
+        _tag: "Request",
+        id: requestId,
+        tag: WS_METHODS.subscribeServerConfig,
+        payload: {},
+        headers: Headers.empty,
+      });
+      yield* Deferred.await(discoveryStarted);
+      assert.isTrue(yield* Deferred.isDone(remoteDiscoveryStarted));
+
+      const duringDiscovery = yield* settings.updateSettings({ defaultAutoPull: true });
+      yield* Deferred.succeed(finishDiscovery, undefined);
+      const snapshot = yield* Queue.take(responses);
+      assert.equal(snapshot.type, "snapshot");
+      if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
+      assert.deepEqual(
+        snapshot.config.remoteOpenTargets,
+        discovery === "cached" || direct ? targets : [],
+      );
+      assert.deepEqual(
+        snapshot.config.directEndpoints,
+        discovery === "direct-cached" ? endpoints : bound,
+      );
+      assert.isFalse(snapshot.config.settings.defaultAutoPull);
+      assert.deepEqual(snapshot.config.keybindings, initialKeybindings);
+      const duringAck = yield* keybindings.upsertKeybindingRule({
+        key: "mod+alt+y",
+        command: "terminal.toggle",
+      });
+      yield* acknowledge;
+      yield* Deferred.await(keybindingsSubscribed);
+      yield* Deferred.await(settingsSubscribed);
+
+      // Later updates expose a dropped buffered event as a value mismatch, not a timeout.
+      const latestSettings = yield* settings.updateSettings({ enableProviderUpdateChecks: false });
+      const latestKeybindings = yield* keybindings.upsertKeybindingRule({
+        key: "mod+alt+z",
+        command: "terminal.split",
+      });
+      const expectedSettings = [duringDiscovery, latestSettings].map((value) =>
+        ServerSettings.redactServerSettingsForClient(value, { secretReferences: true }),
+      );
+      const expectedKeybindings = [duringAck.keybindings, latestKeybindings.keybindings];
+      // The two sources can interleave, but each must retain its own publication order.
+      for (let i = 0; i < 4; i++) {
+        const event = yield* Queue.take(responses);
+        if (event.type === "settingsUpdated") {
+          assert.deepEqual(event.payload.settings, expectedSettings.shift());
+        } else {
+          assert.equal(event.type, "keybindingsUpdated");
+          if (event.type !== "keybindingsUpdated")
+            return yield* Effect.die("Unexpected config event");
+          assert.deepEqual(event.payload.keybindings, expectedKeybindings.shift());
+          assert.deepEqual(event.payload.issues, []);
+        }
+        yield* acknowledge;
+      }
+      assert.isEmpty(expectedSettings);
+      assert.isEmpty(expectedKeybindings);
+      if (discovery === "pending") {
+        yield* Deferred.await(remoteDiscoveryStarted);
+        yield* Deferred.succeed(finishRemoteDiscovery, undefined);
+        const resolved = yield* Queue.take(responses);
+        assert.equal(resolved.type, "snapshot");
+        if (resolved.type !== "snapshot") return yield* Effect.die("Missing remote targets");
+        assert.deepEqual(resolved.config.remoteOpenTargets, targets);
+        assert.deepEqual(
+          resolved.config.settings,
+          ServerSettings.redactServerSettingsForClient(latestSettings, { secretReferences: true }),
+        );
+        assert.deepEqual(resolved.config.keybindings, latestKeybindings.keybindings);
+        yield* acknowledge;
+      }
+      if (direct) {
+        yield* Deferred.await(directStarted);
+        if (discovery === "direct-pending") {
+          yield* Deferred.succeed(finishDirect, undefined);
+          const resolved = yield* Queue.take(responses);
+          assert.equal(resolved.type, "snapshot");
+          if (resolved.type !== "snapshot") return yield* Effect.die("Missing direct endpoints");
+          assert.deepEqual(resolved.config.directEndpoints, endpoints);
+          assert.deepEqual(
+            resolved.config.settings,
+            ServerSettings.redactServerSettingsForClient(latestSettings, {
+              secretReferences: true,
+            }),
+          );
+          assert.deepEqual(resolved.config.keybindings, latestKeybindings.keybindings);
+          yield* acknowledge;
+        } else if (discovery === "direct-failed") {
+          yield* Deferred.succeed(finishDirect, undefined);
+          yield* Deferred.await(directStopped);
+          yield* settings.updateSettings({ defaultAutoPull: false });
+          const event = yield* Queue.take(responses);
+          assert.equal(event.type, "settingsUpdated");
+          yield* acknowledge;
+        }
+      }
+      yield* server.write(0, { _tag: "Interrupt", requestId, interruptors: [] });
+      if (direct) yield* Deferred.await(directStopped);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.fresh(layerConfigSources),
+          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ),
+      ),
+      Effect.scoped,
+    ),
+);
+it.effect("on-demand clients get provider config without workspace snapshots", () =>
+  Effect.gen(function* () {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const snapshotFor = (cwd: string, checkedAt: string) => ({
+      cwd,
+      checkedAt,
+      slashCommands: [{ name: `${cwd.slice(1)}-command` }],
+      skills: [],
+    });
+    const provider: ServerProvider = {
+      instanceId,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-10-25T00:00:00.000Z",
+      models: [],
+      slashCommands: [{ name: "machine-command" }],
+      skills: [],
+      workspaceSnapshots: [
+        snapshotFor("/a", "2026-10-25T00:00:00.000Z"),
+        snapshotFor("/b", "2026-10-25T00:00:00.000Z"),
+      ],
+    };
+    const providerChanges = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
+    const pulled = yield* Queue.unbounded<void>();
+    const responses = yield* Queue.unbounded<unknown>();
+    const configRpcServices = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(ExternalLauncher.ExternalLauncher)({
+        resolveAvailableEditors: () => Effect.succeed([]),
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
+        resolveFileManagerRevealKind: () => Effect.succeed(undefined),
+      }),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed([provider]),
+        streamChanges: Stream.fromQueue(providerChanges).pipe(
+          Stream.tap(() => Queue.offer(pulled, undefined)),
+        ),
+        refreshWorkspaceSnapshot: () => Effect.succeed([provider]),
+      }),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({
+        current: Effect.succeed([]),
+        streamChanges: Stream.make([]),
+      }),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
+        resolveTargets: () => Effect.succeed([]),
+      }),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({
+        resolve: () => Effect.succeed([]),
+        resolveAvailable: () => Effect.succeed([]),
+      }),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        scratchRoot: Effect.succeedNone,
+        namedProjectsRoot: process.cwd(),
+      }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getDescriptor: Effect.succeed({
+          environmentId: EnvironmentId.make("config-test"),
+          label: "Config test",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: "0.0.0",
+          capabilities: { repositoryIdentity: false },
+        }),
+      }),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+        getDescriptor: () =>
+          Effect.succeed({
+            policy: "loopback-browser",
+            bootstrapMethods: [],
+            sessionMethods: ["browser-session-cookie"],
+            sessionCookieName: "config-test-session",
+          }),
+      }),
+    );
+    const server = yield* RpcServer.makeNoSerialization(
+      RpcGroup.make(WsSubscribeServerConfigRpc, WsServerRefreshProvidersRpc),
+      {
+        ...WS_RPC_SERVER_OPTIONS,
+        onFromServer: (response) =>
+          response._tag === "Chunk"
+            ? Effect.forEach(response.values, (value) => Queue.offer(responses, value), {
+                discard: true,
+              })
+            : response._tag === "Exit" && response.exit._tag === "Success"
+              ? Queue.offer(responses, response.exit.value)
+              : Effect.void,
+      },
+    ).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("config-test"),
+            subject: "config-test",
+            method: "browser-session-cookie",
+            scopes: [],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+        ).pipe(Layer.provide(configRpcServices)),
+      ),
+    );
+    const configRequest = RpcMessage.RequestId("config");
+    yield* server.write(0, {
+      _tag: "Request",
+      id: configRequest,
+      tag: WS_METHODS.subscribeServerConfig,
+      payload: { workspaceSnapshotsOnDemand: true },
+      headers: Headers.empty,
+    });
+    const snapshot = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
+    assert.isUndefined(snapshot.config.providers[0]?.workspaceSnapshots);
+    yield* server.write(0, { _tag: "Ack", requestId: configRequest });
+
+    // A rescan that only touches a snapshot sends nothing; the next real change does.
+    yield* Queue.offer(providerChanges, [
+      { ...provider, workspaceSnapshots: [snapshotFor("/a", "2026-10-25T00:05:00.000Z")] },
+    ]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    yield* Queue.offer(providerChanges, [{ ...provider, status: "warning" }]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    const update = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (update.type !== "providerStatuses") return yield* Effect.die("Expected provider update");
+    assert.equal(update.payload.providers[0]?.status, "warning");
+    assert.isUndefined(update.payload.providers[0]?.workspaceSnapshots);
+
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("refresh"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: { instanceId, cwd: "/b", workspaceSnapshotsOnDemand: true },
+      headers: Headers.empty,
+    });
+    const refreshed = (yield* Queue.take(responses)) as {
+      readonly providers: ReadonlyArray<ServerProvider>;
+    };
+    assert.deepEqual(
+      refreshed.providers.map((entry) => [entry.workspaceSnapshots, entry.slashCommands]),
+      [[[snapshotFor("/b", "2026-10-25T00:00:00.000Z")], []]],
+    );
+    yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
+);
+it.effect.each(["thread", "shell"] as const)(
+  "%s resume from a cursor below the pruned boundary loads a snapshot",
+  (scope) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-10-13T00:00:00.000Z";
+      const threadId = ThreadId.make("thread:pruned");
+      const insert = (version: number) => sql<{ sequence: number }>`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type,
+          occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+        ) VALUES (
+          ${`pruned:${version}`}, 'thread', ${threadId}, ${version}, 'provider-session.detached',
+          ${now}, 'server', ${JSON.stringify({ providerSessionId: "session:pruned", detachedAt: now })},
+          '{}', 2
+        ) RETURNING sequence
+      `;
+      const [first] = yield* insert(0);
+      const [second] = yield* insert(1);
+      yield* insert(2);
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_metadata (
+          projection_name, schema_version, last_sequence, updated_at
+        ) VALUES (${OrchestrationEventStore.EVENT_LOG_PRUNED_THROUGH}, 2, ${second!.sequence}, ${now})
+      `;
+      const subscription = Effect.gen(function* () {
+        const stream =
+          scope === "thread"
+            ? yield* subscribeOrchestrationV2Thread({ threadId, afterSequence: first!.sequence })
+            : yield* subscribeOrchestrationV2Shell({ afterSequence: first!.sequence });
+        return stream;
+      });
+      const exit = yield* subscription.pipe(
+        Effect.provideService(ThreadManagement.ThreadManagementService, {
+          ensureLegacyTranscript: () => Effect.void,
+          getThreadSnapshot: () => Effect.die("snapshot"),
+          listActiveShellIndex: () => Effect.die("snapshot"),
+          readShellSnapshot: () => Effect.die("snapshot"),
+          listActiveSubagentThreadIds: () => Effect.die("replay"),
+        } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+        Effect.provideService(ProjectStore.ProjectStoreV2, {
+          listShells: () => Effect.succeed([]),
+        } as unknown as ProjectStore.ProjectStoreV2["Service"]),
+        Effect.provideService(
+          ProjectService.ProjectService,
+          {} as ProjectService.ProjectService["Service"],
+        ),
+        Effect.provideService(ProjectEnrichment.ProjectEnrichmentService, {
+          subscribeChanges: PubSub.subscribe(yield* PubSub.unbounded()),
+        } as ProjectEnrichment.ProjectEnrichmentService["Service"]),
+        Effect.exit,
+      );
+      assert.deepEqual(Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit, "snapshot");
+    }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);
