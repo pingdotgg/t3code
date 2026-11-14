@@ -75,6 +75,8 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
 export interface ProviderChangeRequestWatchFingerprint {
   readonly status: string;
   readonly remarks: string;
+  /** True when `status` changes with every check and mergeability change, so pending work needs no detail read. */
+  readonly coversDetail?: boolean;
 }
 
 export interface PullRequestProviderFailure {
