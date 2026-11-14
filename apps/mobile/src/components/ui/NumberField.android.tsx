@@ -13,7 +13,6 @@ export function NumberField(props: NumberFieldProps) {
 
   return (
     <View className="shrink-0 flex-row items-center">
-      {/* Match the 32dp switch track while retaining 48dp button touch targets. */}
       <View
         pointerEvents="none"
         className="absolute inset-x-0 rounded-full bg-subtle"

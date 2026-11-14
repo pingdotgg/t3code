@@ -6,7 +6,6 @@ import { AppText } from "./AppText";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
 import { GlassSurface } from "./GlassSurface";
 
-/** Inline feedback or a dismissible notice positioned by its owning screen. */
 export function Notice(props: {
   readonly message: string;
   readonly tone?: "default" | "danger";
@@ -17,6 +16,7 @@ export function Notice(props: {
   readonly dismissLabel?: string;
 }) {
   const danger = props.tone === "danger";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- announces the message to VoiceOver through AccessibilityInfo
   useEffect(() => {
     // Live regions reach TalkBack; VoiceOver needs an explicit announcement.
     if (Platform.OS === "ios") AccessibilityInfo.announceForAccessibility(props.message);

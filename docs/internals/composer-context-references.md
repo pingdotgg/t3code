@@ -66,9 +66,10 @@ links, so a context link is never mistaken for a mention.
    records produce a marker but no entry. Unknown kinds emit their payload as JSON.
 3. Captured text is data: any `<` that would open or close `t3_context` or `context` is escaped,
    so a terminal line or PR comment cannot forge a record.
+4. Assistant citation links are expanded too (`expandAssistantCitationsForProvider`).
 
 Attachment bytes travel on the existing attachment channel; the envelope only carries metadata.
-Text without references is returned unchanged.
+Text without references or citations is returned unchanged.
 
 ## Legacy messages
 
@@ -91,8 +92,9 @@ transcript renderer moves to records.
 
 ## Editor model (web and desktop)
 
-`ComposerContextReferenceNode` (`apps/web/src/components/ComposerContextReferenceNode.tsx`) is
-the one inline Lexical node for every context kind. It stores `kind`, `contextId`, `label`, and a
+`ComposerContextReferenceExtension` in
+[`ComposerPromptEditorTiptap.tsx`](../../apps/web/src/components/ComposerPromptEditorTiptap.tsx) is
+the inline Tiptap node for every context kind. It stores `kind`, `contextId`, `label`, and a
 per-occurrence `referenceId`, and its text content is the canonical link. The prompt string carries
 payload identity and position, so rebuilding the editor restores equivalent chips; it does not
 preserve the editor-local occurrence ids. Old drafts that used the U+FFFC ordinal placeholder

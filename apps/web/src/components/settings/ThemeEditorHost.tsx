@@ -44,31 +44,15 @@ export function ThemeEditorHost() {
         );
         return false;
       }
-      toastManager.add(
-        stackedThreadToast({
-          type: "success",
-          title: `${savedTheme.label} updated`,
-          description: `Its ${mergedAppearance} palette was added.`,
-        }),
-      );
       return true;
     }
     if (!created) {
-      // The edited theme may be showing through the base preference or either
-      // half of the mix; the preference itself is untouched (a setTheme here
-      // would clear the mix), the palette just needs re-applying.
+      // Reapply the palette without setTheme, which would clear a mix containing the edited theme.
       const wasActive =
         getThemeDefinition(theme)?.id === savedTheme.id ||
         themeHalves?.light === savedTheme.id ||
         themeHalves?.dark === savedTheme.id;
       if (wasActive) refreshTheme();
-      toastManager.add(
-        stackedThreadToast({
-          type: "success",
-          title: `${savedTheme.label} saved`,
-          description: wasActive ? "Your changes are now active." : "Your changes are saved.",
-        }),
-      );
       return true;
     }
 
@@ -82,13 +66,6 @@ export function ThemeEditorHost() {
       );
       return false;
     }
-    toastManager.add(
-      stackedThreadToast({
-        type: "success",
-        title: `${savedTheme.label} created`,
-        description: "It’s now active.",
-      }),
-    );
     return true;
   };
 

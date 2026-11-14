@@ -25,8 +25,18 @@ function providerModelPickerNaturalWidth(picker: HTMLElement): number {
   const style = getComputedStyle(picker);
   const label = picker.querySelector<HTMLElement>('[data-chat-provider-model-picker-label="true"]');
   const labelIsCollapsed = label?.clientWidth === 0 && getComputedStyle(label).flexGrow === "0";
+  // A label with its own max width, such as a long model name, never grows past it.
+  const labelMaxWidth = label ? Number.parseFloat(getComputedStyle(label).maxWidth) : Number.NaN;
   const hiddenLabelWidth =
-    label && !labelIsCollapsed ? Math.max(0, label.scrollWidth - label.clientWidth) : 0;
+    label && !labelIsCollapsed
+      ? Math.max(
+          0,
+          Math.min(
+            label.scrollWidth,
+            Number.isFinite(labelMaxWidth) ? labelMaxWidth : Number.POSITIVE_INFINITY,
+          ) - label.clientWidth,
+        )
+      : 0;
   const maxWidth = Number.parseFloat(style.maxWidth);
   const naturalWidth = Math.min(
     renderedWidth + hiddenLabelWidth,
@@ -47,8 +57,7 @@ function controlBlockWidths(block: HTMLElement): { natural: number; iconOnly: nu
   for (const label of block.querySelectorAll<HTMLElement>("[data-composer-control-label]")) {
     const labelStyle = getComputedStyle(label);
     const inFlow = labelStyle.position !== "absolute";
-    // Phone widths already hide the build label with sr-only. Its clipping
-    // remains in effect even when compact styles replace its one-pixel width.
+    // Phone sr-only clipping survives compact styles overriding the label width.
     if (!inFlow && (!compact || labelStyle.clip !== "auto")) continue;
     const labelWidth = label.scrollWidth;
     const renderedWidth = inFlow ? label.getBoundingClientRect().width : 0;
@@ -65,11 +74,7 @@ function controlBlockWidths(block: HTMLElement): { natural: number; iconOnly: nu
   return { natural, iconOnly: Math.min(natural, iconOnly) };
 }
 
-/**
- * Both the composer (deciding which blocks move into overflow) and the
- * context strip (deciding whether its labels may expand) read the same
- * numbers, so neither decision depends on what the other one hid last render.
- */
+/** Measure independently of controls hidden by the previous render. */
 export function measureRestingComposerControls(
   controls: HTMLElement,
 ): RestingComposerControlsMeasurement | null {

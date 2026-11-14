@@ -1,5 +1,9 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
+import * as NodeCrypto from "node:crypto";
 import { EnvironmentId } from "@t3tools/contracts";
+import { RELAY_MINT_REQUEST_TYP, signRelayJwt } from "@t3tools/shared/relayJwt";
 import { assert, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -7,8 +11,10 @@ import * as Option from "effect/Option";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { HttpClient, HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
+import * as EnvironmentKeys from "./environmentKeys.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -19,13 +25,22 @@ import * as CloudLink from "./CloudLink.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
+  CLOUD_LINKED_USER_ID,
+  CLOUD_MINT_PUBLIC_KEY,
   HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_URL_SECRET,
 } from "./config.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const encode = (value: string) => new TextEncoder().encode(value);
+
+const cloudMintKeys = NodeCrypto.generateKeyPairSync("ed25519", {
+  privateKeyEncoding: { format: "pem", type: "pkcs8" },
+  publicKeyEncoding: { format: "pem", type: "spki" },
+});
 
 const withService = <A, E>(
   options: {
@@ -41,8 +56,12 @@ const withService = <A, E>(
   },
   body: (input: {
     readonly preferences: { readonly update: CloudLink.CloudLink["Service"]["updatePreferences"] };
+    readonly mintCredential: CloudLink.CloudLink["Service"]["mintCredential"];
     readonly stored: Map<string, Uint8Array>;
     readonly relayCalls: Array<boolean>;
+    readonly connectCredentialRequests: Array<
+      Parameters<EnvironmentAuth.EnvironmentAuth["Service"]["issueConnectCredential"]>[0]
+    >;
   }) => Effect.Effect<A, E, never>,
 ) =>
   Effect.gen(function* () {
@@ -51,8 +70,13 @@ const withService = <A, E>(
       [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, encode("credential")],
       [HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET, encode("false")],
       [PUBLISH_AGENT_ACTIVITY_SECRET, encode("false")],
+      [CLOUD_MINT_PUBLIC_KEY, encode(cloudMintKeys.publicKey)],
+      [CLOUD_LINKED_USER_ID, encode("cloud-user-1")],
     ]);
     const relayCalls: Array<boolean> = [];
+    const connectCredentialRequests: Array<
+      Parameters<EnvironmentAuth.EnvironmentAuth["Service"]["issueConnectCredential"]>[0]
+    > = [];
     const fetch: typeof globalThis.fetch = Object.assign(
       (_input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
         const payload = JSON.parse(String(init?.body)) as { holdWebhooksWhileOffline: boolean };
@@ -68,6 +92,7 @@ const withService = <A, E>(
       { preconnect: () => {} },
     );
     const layerDependencies = Layer.mergeAll(
+      ServerSettings.ServerSettingsService.layerTest(),
       Layer.mock(ServerSecretStore.ServerSecretStore)({
         get: (name) =>
           (options.failActivityRead && name === PUBLISH_AGENT_ACTIVITY_SECRET) ||
@@ -89,16 +114,24 @@ const withService = <A, E>(
                 }),
               )
             : Effect.sync(() => void stored.set(name, value)),
+        create: (name, value) => Effect.sync(() => void stored.set(name, value)),
       }),
       Layer.mock(ServerEnvironment.ServerEnvironment)({
         getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-1")),
       }),
       Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({ requestCatchUp: () => Effect.void }),
       Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({}),
+      ManagedPolicy.layerTest(),
       Layer.mock(ConnectReachability.ConnectReachability)({
-        latest: Effect.succeed(Option.none()),
+        latest: Effect.succeedNone,
       }),
-      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+        issueConnectCredential: (input) =>
+          Effect.sync(() => {
+            connectCredentialRequests.push(input);
+            return { credential: "pairing-credential", expiresAt: DateTime.makeUnsafe(120_000) };
+          }),
+      }),
       Layer.mock(CliTokenManager.CloudCliTokenManager)({}),
       Layer.mock(HttpServer.HttpServer)({
         address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),
@@ -109,12 +142,30 @@ const withService = <A, E>(
         HttpClient.make(() => Effect.die("unused")),
       ),
       NodeServices.layer,
+      NodePlatformCrypto.layer,
     );
     return yield* Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
-      return yield* body({ preferences: { update: link.updatePreferences }, stored, relayCalls });
+      return yield* body({
+        preferences: { update: link.updatePreferences },
+        mintCredential: link.mintCredential,
+        stored,
+        relayCalls,
+        connectCredentialRequests,
+      });
     }).pipe(
-      Effect.provide(CloudLink.layer.pipe(Layer.provide(layerDependencies))),
+      Effect.provide(
+        CloudLink.layer.pipe(
+          // The mocked secret store cannot create a key pair, and no test reads the signature.
+          Layer.provide(
+            Layer.mock(EnvironmentKeys.EnvironmentSigningKey)({
+              publicKey: "",
+              sign: () => Effect.succeed("environment-signed-proof"),
+            }),
+          ),
+          Layer.provide(layerDependencies),
+        ),
+      ),
       Effect.provideService(FetchHttpClient.Fetch, fetch),
     );
   });
@@ -244,3 +295,95 @@ it.effect("an update the client walks away from still finishes", () => {
     }),
   );
 });
+
+it.effect("mints a T3 Connect credential under the host's device approval setting", () =>
+  withService({}, ({ mintCredential, connectCredentialRequests }) =>
+    Effect.gen(function* () {
+      const proof = yield* signRelayJwt({
+        privateKey: cloudMintKeys.privateKey,
+        typ: RELAY_MINT_REQUEST_TYP,
+        payload: {
+          iss: "https://relay.test",
+          aud: "t3-env:environment-1",
+          sub: "cloud-user-1",
+          jti: "mint-jti-1",
+          iat: 0,
+          exp: 60,
+          environmentId: "environment-1",
+          clientProofKeyThumbprint: "client-jkt",
+          cnf: { jkt: "client-jkt" },
+          nonce: "mint-nonce-1",
+          scope: ["environment:connect"],
+        },
+      }).pipe(Effect.provide(NodePlatformCrypto.layerSignature));
+      yield* mintCredential({ proof });
+      assert.deepEqual(connectCredentialRequests, [
+        { proofKeyThumbprint: "client-jkt", requireApproval: false },
+      ]);
+    }),
+  ),
+);
+
+it.effect("unlinks on startup and refuses to link when the policy turns Connect off", () =>
+  Effect.gen(function* () {
+    const stored = new Map<string, Uint8Array>([
+      [CLOUD_LINKED_USER_ID, encode("user-1")],
+      [RELAY_URL_SECRET, encode("https://relay.test")],
+    ]);
+    const appliedConfigs: Array<unknown> = [];
+    const layerDependencies = Layer.mergeAll(
+      ServerSettings.ServerSettingsService.layerTest(),
+      Layer.mock(ServerSecretStore.ServerSecretStore)({
+        get: (name) => Effect.succeed(Option.fromNullishOr(stored.get(name))),
+        set: (name, value) => Effect.sync(() => void stored.set(name, value)),
+        remove: (name) => Effect.sync(() => void stored.delete(name)),
+      }),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({}),
+      Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({
+        withLinkStateLock: (effect) => effect,
+        applyConfig: (config) =>
+          Effect.sync(() => {
+            appliedConfigs.push(config);
+            return { status: "disabled" as const };
+          }),
+      }),
+      ManagedPolicy.layerTest({
+        schemaVersion: 1,
+        organization: "Example Corp",
+        limits: { connect: false },
+      }),
+      Layer.mock(ConnectReachability.ConnectReachability)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(CliTokenManager.CloudCliTokenManager)({}),
+      Layer.mock(HttpServer.HttpServer)({
+        address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),
+      }),
+      Layer.mock(ServerConfig.ServerConfig)({} as ServerConfig.ServerConfig["Service"]),
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("unused")),
+      ),
+      NodeServices.layer,
+      NodePlatformCrypto.layer,
+    );
+    yield* Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      assert.isFalse(stored.has(CLOUD_LINKED_USER_ID));
+      assert.deepEqual(appliedConfigs, [null]);
+
+      const applyError = yield* link.applyRelayConfig({} as never).pipe(Effect.flip);
+      const mintError = yield* link.mintCredential({} as never).pipe(Effect.flip);
+      assert.equal(applyError.message, "Example Corp's policy does not allow T3 Connect.");
+      assert.equal(mintError._tag, "ManagedPolicyRefusedError");
+    }).pipe(
+      Effect.provide(
+        CloudLink.layer.pipe(
+          // These tests never sign proofs; the mocked secret store cannot create a key pair.
+          Layer.provide(Layer.mock(EnvironmentKeys.EnvironmentSigningKey)({ publicKey: "" })),
+          Layer.provide(layerDependencies),
+        ),
+      ),
+    );
+  }),
+);
