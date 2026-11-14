@@ -157,6 +157,18 @@ export class DeviceOnOtherHostError extends Schema.TaggedError<DeviceOnOtherHost
   }
 }
 
+export class DeviceListFailedError extends Schema.TaggedError<DeviceListFailedError>()(
+  "DeviceListFailedError",
+  {
+    deviceId: DeviceId,
+    hosts: Schema.Array(Schema.Struct({ ...DeviceHostName.fields, detail: Schema.String })),
+  },
+) {
+  override get message(): string {
+    return `Device ${this.deviceId} is not in the last device list, and listing devices failed on ${this.hosts.map((host) => `${hostName(host)} (${host.detail})`).join(", ")}.`;
+  }
+}
+
 export class DeviceService extends Context.Service<
   DeviceService,
   {
@@ -222,14 +234,15 @@ export class DeviceService extends Context.Service<
     /**
      * The device an id names in the last listing. Ids are unique per host, not across hosts (an
      * Android AVD name can exist on two), so a hostId decides, and without one the id has to be
-     * on a single host.
+     * on a single host. When no device in scope has the id, the one emulator running the AVD of
+     * that name on a host stands in for it, unless listing devices failed on a host in scope.
      */
     readonly locateDevice: (input: {
       readonly hostId?: DeviceHostId | undefined;
       readonly deviceId: DeviceId;
     }) => Effect.Effect<
       Option.Option<DeviceSummary>,
-      DeviceHostAmbiguousError | DeviceOnOtherHostError
+      DeviceHostAmbiguousError | DeviceOnOtherHostError | DeviceListFailedError
     >;
     /** As `locateDevice`, among the devices a thread has open. */
     readonly locateSession: (input: {
@@ -1047,15 +1060,17 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       Effect.map(({ state }) => state.sessions.filter((session) => session.threadId === threadId)),
     );
 
+  const namedHost = (state: DeviceServiceState, id: DeviceHostId) => ({
+    id,
+    label: state.hosts.find((host) => host.id === id)?.label,
+  });
+
   const locate = <T extends { readonly hostId: DeviceHostId }>(
     state: DeviceServiceState,
     input: { readonly hostId?: DeviceHostId | undefined; readonly deviceId: DeviceId },
     matches: ReadonlyArray<T>,
   ): Effect.Effect<Option.Option<T>, DeviceHostAmbiguousError | DeviceOnOtherHostError> => {
-    const named = (id: DeviceHostId) => ({
-      id,
-      label: state.hosts.find((host) => host.id === id)?.label,
-    });
+    const named = (id: DeviceHostId) => namedHost(state, id);
     const onHost = matches.filter(
       (match) => input.hostId === undefined || match.hostId === input.hostId,
     );
@@ -1082,10 +1097,35 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     "DeviceService.locateDevice",
   )(function* (input) {
     const { state } = yield* SynchronizedRef.get(stateRef);
-    return yield* locate(
-      state,
-      input,
-      state.devices.filter((device) => device.id === input.deviceId),
+    const byId = state.devices.filter((device) => device.id === input.deviceId);
+    if (byId.some((device) => input.hostId === undefined || device.hostId === input.hostId)) {
+      return yield* locate(state, input, byId);
+    }
+    // A failed refresh keeps the previous devices, so the device may be there unlisted.
+    const failed = (
+      input.hostId === undefined ? state.hosts.map((host) => host.id) : [input.hostId]
+    ).flatMap((id) => {
+      const status = state.hostStatuses[id];
+      return status?.status === "failed" && status.detail
+        ? [{ ...namedHost(state, id), detail: status.detail }]
+        : [];
+    });
+    if (failed.length > 0) {
+      return yield* new DeviceListFailedError({ deviceId: input.deviceId, hosts: failed });
+    }
+    // A shut-down AVD is listed by its name and a running one by its adb serial.
+    const byAvdName = state.devices.filter(
+      (device) =>
+        device.platform === "android" &&
+        !device.physical &&
+        device.booted &&
+        device.name === input.deviceId,
+    );
+    const located = yield* locate(state, input, [...byId, ...byAvdName]);
+    // Several emulators running one AVD: its name picks none of them.
+    return Option.filter(
+      located,
+      (device) => byAvdName.filter((other) => other.hostId === device.hostId).length === 1,
     );
   });
 
