@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatAttachment } from "@t3tools/contracts";
-import { shouldSendNativeImage } from "./imageInputPolicy.ts";
+import { modelImageInputSupport, shouldSendNativeImage } from "./imageInputPolicy.ts";
 
 const png = {
   type: "image",
@@ -11,6 +11,21 @@ const pdf = {
   type: "file",
   mimeType: "application/pdf",
 } as ChatAttachment;
+
+describe("modelImageInputSupport", () => {
+  it.each([
+    [{ capabilities: { input: { image: false } } }, false],
+    [{ capabilities: { input: { image: true } } }, true],
+    [{ input: ["text"] }, false],
+    [{ input: ["text", "image"] }, true],
+    [{ modalities: { input: ["text"] } }, false],
+    [{ modalities: { input: ["text", "image"] } }, true],
+    [{}, undefined],
+    [undefined, undefined],
+  ] as const)("detects image modality support from provider metadata", (model, expected) => {
+    expect(modelImageInputSupport(model)).toBe(expected);
+  });
+});
 
 describe("shouldSendNativeImage", () => {
   it("blocks a valid image when the model is known to lack vision", () => {
