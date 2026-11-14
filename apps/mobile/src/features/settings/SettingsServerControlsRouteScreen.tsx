@@ -63,6 +63,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "enableAgentBrowserAccess",
     "sidebarAutoSettleOnMerge",
     "sidebarAutoSettleAfterDays",
+    "autoResumeLimitedThreads",
   ],
   "source-control": ["defaultAutoPull", "removeAgentCreditsOnMerge"],
   worktrees: [

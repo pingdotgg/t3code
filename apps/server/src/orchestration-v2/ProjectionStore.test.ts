@@ -8105,6 +8105,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         if (lastErrorClass === "usage_limit") {
           assert.deepEqual(candidate, {
             id: sqlShell.id,
+            projectId: sqlShell.projectId,
             status: sqlShell.status,
             lastErrorClass: sqlShell.lastErrorClass,
             usageLimitResetAt: sqlShell.usageLimitResetAt,

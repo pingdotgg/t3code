@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { RunId, ThreadId, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import { ProjectId, RunId, ThreadId, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -46,6 +46,7 @@ it.effect("idle sweeps skip SQL until the next wake time or a relevant event", (
             getSettings: Effect.succeed({
               autoResumeLimitedThreads: true,
               snoozeLimitedThreads: false,
+              projectSettingsOverrides: {},
             } as never),
             streamChanges: Stream.never,
           }),
@@ -77,6 +78,7 @@ const failedThread = (failedAgoMs: number, resetAgoMs: number) => {
   const failedAt = DateTime.makeUnsafe(nowMs - failedAgoMs);
   const candidate: ProjectionStore.ProjectionLimitRecoveryCandidate = {
     id: ThreadId.make("thread:limited"),
+    projectId: ProjectId.make("project:limited"),
     status: "failed",
     lastErrorClass: "usage_limit",
     usageLimitResetAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - resetAgoMs)),
