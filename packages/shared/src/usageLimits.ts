@@ -526,12 +526,51 @@ const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
   other: 3,
 };
 
+function weeklyGrokEmail(account: LimitAccount): string | null {
+  if (account.driver !== "grok") return null;
+  const email = account.email?.trim().toLowerCase();
+  if (!email) return null;
+  return account.limits.windows.some(
+    (window) => window.id === "subscription" && window.kind === "weekly",
+  )
+    ? email
+    : null;
+}
+
+function dropCursorAutoCoveredByGrok(accounts: readonly LimitAccount[]): readonly LimitAccount[] {
+  const grokEmails = new Set<string>();
+  for (const account of accounts) {
+    const email = weeklyGrokEmail(account);
+    if (email) grokEmails.add(email);
+  }
+  if (grokEmails.size === 0) return accounts;
+  const visible: LimitAccount[] = [];
+  for (const account of accounts) {
+    const email = account.email?.trim().toLowerCase();
+    if (account.driver !== "cursor" || !email || !grokEmails.has(email)) {
+      visible.push(account);
+      continue;
+    }
+    const windows = account.limits.windows.filter(
+      (window) => window.id !== "autoPercentUsed" || window.kind !== "weekly",
+    );
+    if (windows.length === account.limits.windows.length) {
+      visible.push(account);
+      continue;
+    }
+    if (windows.length === 0) continue;
+    visible.push({ ...account, limits: { ...account.limits, windows } });
+  }
+  return visible;
+}
+
 export function collectLimitPools(
   accounts: readonly LimitAccount[],
   now: number,
 ): readonly LimitPool[] {
+  const visibleAccounts = dropCursorAutoCoveredByGrok(accounts);
   const byDriver = new Map<ServerProvider["driver"], LimitAccount[]>();
-  for (const account of accounts) {
+  for (const account of visibleAccounts) {
     const list = byDriver.get(account.driver);
     if (list) list.push(account);
     else byDriver.set(account.driver, [account]);

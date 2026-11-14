@@ -1837,3 +1837,129 @@ describe("ChatGPT sharing presentation", () => {
     ).toBe(false);
   });
 });
+
+describe("merged X subscription limits", () => {
+  const checkedAt = "2026-09-03T11:00:00.000Z";
+  const card = (
+    driver: "cursor" | "grok",
+    email: string | undefined,
+    windows: LimitAccount["limits"]["windows"],
+  ): LimitAccount => ({
+    key: `${driver}:${email ?? "none"}`,
+    driver: ProviderDriverKind.make(driver),
+    displayName: null,
+    email,
+    plan: undefined,
+    accentColor: undefined,
+    environments: [],
+    sourceLabel: null,
+    redeem: null,
+    limits: { checkedAt, windows },
+  });
+  const grokWeekly = (email: string, usedPercent: number) =>
+    card("grok", email, [
+      {
+        id: "subscription",
+        kind: "weekly",
+        label: "Weekly",
+        usedPercent,
+        resetsAt: "2026-09-08T00:00:00.000Z",
+      },
+    ]);
+  const cursorMerged = (email: string, withOtherModels = true) =>
+    card(
+      "cursor",
+      email,
+      withOtherModels
+        ? [
+            { id: "autoPercentUsed", kind: "weekly", label: "Cursor Models", usedPercent: 90 },
+            { id: "apiPercentUsed", kind: "monthly", label: "Other Models", usedPercent: 12 },
+          ]
+        : [{ id: "autoPercentUsed", kind: "weekly", label: "Cursor Models", usedPercent: 90 }],
+    );
+
+  it("keeps one first-party card and Other Models for the same email", () => {
+    const accounts = [cursorMerged("  Same@Example.com  "), grokWeekly("same@example.com", 40)];
+    const cursorWindows = accounts[0]?.limits.windows;
+    const snapshot = structuredClone(accounts);
+    const pools = collectLimitPools(accounts, now);
+    expect(accounts).toEqual(snapshot);
+    expect(accounts[0]?.limits.windows).toBe(cursorWindows);
+    const cursor = pools.find((pool) => pool.driver === "cursor");
+    const grok = pools.find((pool) => pool.driver === "grok");
+    expect(cursor?.windows.map((window) => [window.id, window.usedPercent])).toEqual([
+      ["apiPercentUsed", 12],
+    ]);
+    expect(
+      grok?.windows.map((window) => [window.id, window.usedPercent, window.remainingPercent]),
+    ).toEqual([["subscription", 40, 60]]);
+  });
+
+  it("drops the Cursor section when the merged account has no other models", () => {
+    const pools = collectLimitPools(
+      [cursorMerged("same@example.com", false), grokWeekly("same@example.com", 40)],
+      now,
+    );
+    expect(pools.map((pool) => pool.driver)).toEqual(["grok"]);
+  });
+
+  it("keeps both first-party cards for different emails", () => {
+    const pools = collectLimitPools(
+      [cursorMerged("cursor@example.com"), grokWeekly("grok@example.com", 40)],
+      now,
+    );
+    expect(
+      pools.find((pool) => pool.driver === "cursor")?.windows.map((window) => window.id),
+    ).toEqual(["autoPercentUsed", "apiPercentUsed"]);
+    expect(pools.find((pool) => pool.driver === "grok")?.windows[0]?.usedPercent).toBe(40);
+  });
+
+  it("keeps a monthly Cursor card beside a weekly Grok card", () => {
+    const pools = collectLimitPools(
+      [
+        card("cursor", "same@example.com", [
+          { id: "autoPercentUsed", kind: "monthly", label: "Cursor Models", usedPercent: 90 },
+          { id: "apiPercentUsed", kind: "monthly", label: "Other Models", usedPercent: 12 },
+        ]),
+        grokWeekly("same@example.com", 40),
+      ],
+      now,
+    );
+    expect(
+      pools.find((pool) => pool.driver === "cursor")?.windows.map((window) => window.id),
+    ).toEqual(["autoPercentUsed", "apiPercentUsed"]);
+    expect(pools.find((pool) => pool.driver === "grok")?.windows[0]?.id).toBe("subscription");
+  });
+
+  it("does not join a merged Cursor card with a monthly Grok period", () => {
+    const pools = collectLimitPools(
+      [
+        cursorMerged("same@example.com"),
+        card("grok", "same@example.com", [
+          { id: "subscription", kind: "monthly", label: "Monthly", usedPercent: 40 },
+        ]),
+      ],
+      now,
+    );
+    expect(
+      pools.find((pool) => pool.driver === "cursor")?.windows.map((window) => window.id),
+    ).toEqual(["autoPercentUsed", "apiPercentUsed"]);
+    expect(pools.find((pool) => pool.driver === "grok")?.windows[0]?.kind).toBe("monthly");
+  });
+
+  it("shows a merged Cursor plan on its own when Grok is signed out", () => {
+    const [pool] = collectLimitPools([cursorMerged("same@example.com")], now);
+    expect(pool?.driver).toBe("cursor");
+    expect(pool?.windows.map((window) => [window.id, window.kind])).toEqual([
+      ["autoPercentUsed", "weekly"],
+      ["apiPercentUsed", "monthly"],
+    ]);
+  });
+
+  it("leaves a Grok-only weekly card unchanged", () => {
+    const [pool] = collectLimitPools([grokWeekly("same@example.com", 40)], now);
+    expect(pool?.windows.map((window) => [window.id, window.usedPercent])).toEqual([
+      ["subscription", 40],
+    ]);
+  });
+});

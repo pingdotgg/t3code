@@ -158,6 +158,9 @@ your Go API key as `OPENCODE_API_KEY` in the OpenCode instance's **Environment v
 refresh provider status. Cursor reports
 its monthly allowance, including separate Auto and API usage, for `CURSOR_AUTH_TOKEN` when it is set,
 otherwise for the account you signed in with in T3 or set as `CURSOR_API_KEY`.
+On a merged X Subscription, Cursor Models is that shared weekly limit. When Grok is signed in with
+the same email, Limits keeps the Grok card and hides Cursor Models. Other models stay on their own
+Cursor card. An unmerged Cursor plan still shows the monthly allowance.
 Sign-in and API keys report limits only with Cursor's default API endpoint. If you configure a custom
 Cursor endpoint, use an explicit `CURSOR_AUTH_TOKEN` for limits.
 

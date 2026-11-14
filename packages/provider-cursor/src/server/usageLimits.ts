@@ -27,10 +27,26 @@ const CursorUsageResponse = Schema.Struct({
   ),
 });
 
+const CursorPlanInfoResponse = Schema.Struct({
+  isMerged: Schema.optional(Schema.Boolean),
+});
+
+function cursorDashboardPost(url: string, token: string) {
+  return HttpClientRequest.post(url).pipe(
+    HttpClientRequest.bearerToken(token),
+    HttpClientRequest.setHeaders({
+      "connect-protocol-version": "1",
+      "x-cursor-client-type": "cli",
+    }),
+    HttpClientRequest.bodyJsonUnsafe({}),
+  );
+}
+
 /** Cursor's dashboard percentages include bonus usage; spend / limit does not. */
 export function cursorUsageResponseToLimits(
   response: typeof CursorUsageResponse.Type,
   checkedAt: string,
+  isMerged = false,
 ) {
   const reset = DateTime.make(Number(response.billingCycleEnd));
   const resetsAt =
@@ -45,11 +61,12 @@ export function cursorUsageResponseToLimits(
   const windows: ServerProviderUsageWindow[] = [];
   if (response.planUsage) {
     for (const { id, label } of CURSOR_USAGE_WINDOWS) {
+      if (isMerged && id === "totalPercentUsed") continue;
       const usedPercent = response.planUsage[id];
       if (usedPercent === undefined || !Number.isFinite(usedPercent)) continue;
       windows.push({
         id,
-        kind: "monthly",
+        kind: isMerged && id === "autoPercentUsed" ? "weekly" : "monthly",
         label,
         usedPercent: clampPercent(usedPercent),
         ...(resetsAt ? { resetsAt } : {}),
@@ -88,19 +105,24 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
     if (!token) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
-      HttpClientRequest.post(`${endpoint}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`).pipe(
-        HttpClientRequest.bearerToken(token),
-        HttpClientRequest.setHeaders({
-          "connect-protocol-version": "1",
-          "x-cursor-client-type": "cli",
-        }),
-        HttpClientRequest.bodyJsonUnsafe({}),
-      ),
+      cursorDashboardPost(`${endpoint}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`, token),
     );
     const body = yield* HttpClientResponse.schemaBodyJson(CursorUsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
-    return cursorUsageResponseToLimits(body, checkedAt);
+    const isMerged = yield* Effect.gen(function* () {
+      const plan = yield* client.execute(
+        cursorDashboardPost(`${endpoint}/aiserver.v1.DashboardService/GetPlanInfo`, token),
+      );
+      const info = yield* HttpClientResponse.schemaBodyJson(CursorPlanInfoResponse)(
+        yield* HttpClientResponse.filterStatusOk(plan),
+      );
+      return info.isMerged === true;
+    }).pipe(
+      Effect.timeout("3 seconds"),
+      Effect.orElseSucceed(() => false),
+    );
+    return cursorUsageResponseToLimits(body, checkedAt, isMerged);
   }).pipe(
     Effect.timeout("10 seconds"),
     Effect.orElseSucceed(() =>

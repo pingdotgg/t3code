@@ -184,6 +184,10 @@ describe("Cursor usage limits", () => {
           "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
           "Bearer api-key-access-token",
         ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo",
+          "Bearer api-key-access-token",
+        ],
       ]);
       expect(limits.windows[0]?.usedPercent).toBe(37);
     }),
@@ -206,6 +210,116 @@ describe("Cursor usage limits", () => {
         expect(limits.unavailable?.reason).toBe("unsupported");
         expect(limits.unavailable?.message).toContain("default Cursor endpoint");
       }
+    }),
+  );
+
+  it("reports a merged plan as a weekly Cursor Models window and omits Overall", () => {
+    const limits = cursorUsageResponseToLimits(
+      {
+        billingCycleEnd: "1789876386000",
+        planUsage: { totalPercentUsed: 100, autoPercentUsed: 80, apiPercentUsed: 15 },
+      },
+      checkedAt,
+      true,
+    );
+    expect(limits.windows).toEqual([
+      {
+        id: "autoPercentUsed",
+        kind: "weekly",
+        label: "Cursor Models",
+        usedPercent: 80,
+        resetsAt: "2026-09-20T03:53:06.000Z",
+      },
+      {
+        id: "apiPercentUsed",
+        kind: "monthly",
+        label: "Other Models",
+        usedPercent: 15,
+        resetsAt: "2026-09-20T03:53:06.000Z",
+      },
+    ]);
+    expect(
+      cursorUsageResponseToLimits(
+        { planUsage: { autoPercentUsed: 100, totalPercentUsed: 100 } },
+        checkedAt,
+        true,
+      ).windows,
+    ).toEqual([
+      { id: "autoPercentUsed", kind: "weekly", label: "Cursor Models", usedPercent: 100 },
+    ]);
+  });
+
+  it.effect("keeps monthly cards when GetPlanInfo fails", () =>
+    Effect.gen(function* () {
+      const requests: string[] = [];
+      const limits = yield* readCursorUsageLimits(
+        { apiEndpoint: "" },
+        { CURSOR_AUTH_TOKEN: "explicit-token" },
+      ).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            requests.push(request.url);
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                request.url.endsWith("/GetPlanInfo")
+                  ? new Response("no plan", { status: 500 })
+                  : Response.json({
+                      planUsage: { totalPercentUsed: 10, autoPercentUsed: 4, apiPercentUsed: 6 },
+                    }),
+              ),
+            );
+          }),
+        ),
+      );
+      expect(requests).toEqual([
+        "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+        "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo",
+      ]);
+      expect(limits.windows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "totalPercentUsed", kind: "monthly", usedPercent: 10 }),
+          expect.objectContaining({ id: "autoPercentUsed", kind: "monthly", usedPercent: 4 }),
+          expect.objectContaining({ id: "apiPercentUsed", kind: "monthly", usedPercent: 6 }),
+        ]),
+      );
+      expect(limits.windows).toHaveLength(3);
+    }),
+  );
+
+  it.effect("reads isMerged from GetPlanInfo", () =>
+    Effect.gen(function* () {
+      const limits = yield* readCursorUsageLimits(
+        { apiEndpoint: "" },
+        { CURSOR_AUTH_TOKEN: "explicit-token" },
+      ).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  request.url.endsWith("/GetPlanInfo")
+                    ? { isMerged: true }
+                    : {
+                        planUsage: {
+                          totalPercentUsed: 100,
+                          autoPercentUsed: 80,
+                          apiPercentUsed: 15,
+                        },
+                      },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(limits.windows.map((window) => [window.id, window.kind])).toEqual([
+        ["autoPercentUsed", "weekly"],
+        ["apiPercentUsed", "monthly"],
+      ]);
     }),
   );
 });
