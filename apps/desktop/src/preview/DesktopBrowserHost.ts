@@ -44,15 +44,15 @@ export interface DesktopBrowserTabDebugger {
   readonly debugger: Electron.Debugger;
   /** Runs after the server clears the tab's cookies, so state kept beside them goes too. */
   readonly cookiesCleared?: () => Promise<void>;
-  /** The scheme a page on System shows, which Playwright's clear of its override must keep. */
-  readonly systemColorScheme?: () => string;
-  /** Runs with each media emulation the relay sends, before its System rewrite. */
+  /** The scheme the tab's own setting shows, which Playwright's clear of its override must keep. */
+  readonly selectedColorScheme?: () => string;
+  /** Runs with each media emulation the relay sends, before its color-scheme rewrite. */
   readonly emulatedMediaSet?: (params: Record<string, unknown>) => void;
 }
 
-const withSystemColorScheme = (
+const withSelectedColorScheme = (
   params: Record<string, unknown>,
-  systemColorScheme: () => string,
+  selectedColorScheme: () => string,
 ): Record<string, unknown> => {
   const features = params["features"];
   if (!Array.isArray(features)) return params;
@@ -65,7 +65,7 @@ const withSystemColorScheme = (
       feature.name === "prefers-color-scheme" &&
       "value" in feature &&
       feature.value === ""
-        ? { ...feature, value: systemColorScheme() }
+        ? { ...feature, value: selectedColorScheme() }
         : feature,
     ),
   };
@@ -358,14 +358,14 @@ export const make = Effect.gen(function* () {
       webContents,
       debugger: debuggee,
       cookiesCleared,
-      systemColorScheme,
+      selectedColorScheme,
       emulatedMediaSet,
     } = tab.debuggee;
     const send = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
       const emulatesMedia = method === "Emulation.setEmulatedMedia";
       const sent =
-        emulatesMedia && systemColorScheme
-          ? withSystemColorScheme(params, systemColorScheme)
+        emulatesMedia && selectedColorScheme
+          ? withSelectedColorScheme(params, selectedColorScheme)
           : params;
       if (emulatesMedia) emulatedMediaSet?.(params);
       const result = await sendPageCommand(webContents, debuggee, method, sent, sessionId);

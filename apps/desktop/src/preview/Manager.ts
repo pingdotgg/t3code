@@ -2580,7 +2580,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           webContents: wc,
           debugger: control.debugger,
           cookiesCleared: () => runPromise(browserSession.cookiesCleared(wc.session)),
-          systemColorScheme: () => runSync(emulatedColorScheme("system")),
+          selectedColorScheme: () =>
+            runSync(
+              SynchronizedRef.get(tabsRef).pipe(
+                Effect.flatMap((tabs) =>
+                  emulatedColorScheme(tabs.get(tabId)?.colorScheme ?? "system"),
+                ),
+              ),
+            ),
           emulatedMediaSet: (params) => void relayedMedia.set(control, params),
         });
         // CDP cannot recover a failure that happened before it attached.

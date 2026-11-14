@@ -319,7 +319,7 @@ describe("DesktopBrowserHost", () => {
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
-      host.attach(key, { ...debuggee.tab, systemColorScheme: () => "dark" });
+      host.attach(key, { ...debuggee.tab, selectedColorScheme: () => "dark" });
       yield* watchReplies(host);
       const media = (colorScheme: string) => ({
         media: "",

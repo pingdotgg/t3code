@@ -2416,23 +2416,33 @@ describe("PreviewManager", () => {
         ],
       });
 
-      yield* host.handleCommandLine(
-        JSON.stringify({
-          type: "cdp",
-          ...serverTab,
-          message: JSON.stringify({
-            id: 1,
-            method: "Emulation.setEmulatedMedia",
-            params: emulated(""),
-            sessionId: "t3-preview-page",
+      const relayClear = (id: number) =>
+        host.handleCommandLine(
+          JSON.stringify({
+            type: "cdp",
+            ...serverTab,
+            message: JSON.stringify({
+              id,
+              method: "Emulation.setEmulatedMedia",
+              params: emulated(""),
+              sessionId: "t3-preview-page",
+            }),
           }),
-        }),
-      );
+        );
+
+      yield* relayClear(1);
       const relayed = JSON.stringify(emulated("dark"));
       yield* changes.until(() => media.some((params) => JSON.stringify(params) === relayed));
       theme.setSystemColorScheme("light");
       yield* changes.until(() => JSON.stringify(media.at(-1)).includes('"light"'));
       expect(media.at(-1)).toEqual(emulated("light"));
+
+      // A tab set to Dark keeps Dark through a clear, whatever the OS shows.
+      yield* manager.setColorScheme("tab_1", "dark");
+      const sent = media.length;
+      yield* relayClear(2);
+      yield* changes.until(() => media.length > sent);
+      expect(media.at(-1)).toEqual(emulated("dark"));
     }).pipe(Effect.provide(managerLayer("darwin", theme.layer)));
   });
 
