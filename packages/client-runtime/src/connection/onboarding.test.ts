@@ -442,9 +442,10 @@ describe("connection onboarding", () => {
       }),
     },
   ] as const)(
-    "leaves a platform-managed $kind environment untouched when its id is paired",
-    ({ registration }) =>
-      Effect.gen(function* () {
+    "refuses a host reporting the platform-managed $kind environment's own id, keeping the code",
+    ({ registration }) => {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      return Effect.gen(function* () {
         const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         const onboarding = yield* Onboarding.ConnectionOnboarding;
         yield* registry.reconcilePlatform([registration]);
@@ -455,11 +456,16 @@ describe("connection onboarding", () => {
           unsupportedReason: UNSUPPORTED_ERROR.message,
         });
 
-        const environmentId = yield* onboarding.registerPairing(PAIRING_INPUT);
+        const error = yield* onboarding.registerPairing(PAIRING_INPUT).pipe(Effect.flip);
 
-        expect(environmentId).toBe(PAIRED_ENVIRONMENT_ID);
+        expect(error).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
+        expect(error.message).toContain("this machine's own environment ID");
+        expect(calls.map((call) => call.url)).toEqual([
+          "https://remote.example.test/.well-known/t3/environment",
+        ]);
         expect(yield* SubscriptionRef.get(registry.entries)).toEqual(before);
-      }).pipe(Effect.provide(layerPairingOnboarding())),
+      }).pipe(Effect.provide(layerPairingOnboarding(undefined, calls)));
+    },
   );
 
   it.effect("leaves a switched-off environment unchanged when the pairing exchange fails", () =>

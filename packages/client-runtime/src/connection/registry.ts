@@ -58,6 +58,15 @@ import {
 
 const isSshConnectionProfile = Schema.is(SshConnectionProfile);
 
+/** A copied install (restore, clone) keeps this machine's environment ID; pairing it cannot work. */
+export function ownEnvironmentError() {
+  return new ConnectionBlockedError({
+    reason: "configuration",
+    detail:
+      "That address reports this machine's own environment ID, so it cannot be added. If the other machine was restored or cloned from this one, give it a fresh environment ID and pair again.",
+  });
+}
+
 function unsupportedState(
   entry: ConnectionCatalogEntry,
 ): Pick<ConnectionCatalogEntry, "unsupportedReason" | "serverUpdateRequired"> {
@@ -545,7 +554,9 @@ export const make = Effect.gen(function* () {
     route: ConnectionRoute,
   ) {
     const environmentId = route.target.environmentId;
-    if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) return;
+    if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
+      return yield* ownEnvironmentError();
+    }
     const saved = (yield* SubscriptionRef.get(entries)).get(environmentId);
     if (
       saved !== undefined &&
