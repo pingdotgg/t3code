@@ -296,44 +296,49 @@ export function toPeople(
   }));
 }
 
-// A markdown destination, a reference definition, or an HTML `src` that starts the path.
-const ATTACHMENT_LINK =
-  /(\]\(\s*<?|^ {0,3}\[[^\]\n]+\]:\s*<?|\bsrc\s*=\s*["']?)\/api\/attachments\//gimu;
+const ATTACHMENT_PATH = "/api/attachments/";
+const HTML_ATTACHMENT_SRC = /\bsrc\s*=\s*["']?(?=\/api\/attachments\/)/giu;
 
 /**
  * GitCafe links uploads by path from its own origin. Clients render a body away from that
  * origin, so the attachments are made absolute here, where they become credentialed media.
+ * Only destinations the markdown parser finds change; the same text in prose or code stays.
  */
 export function toBody(text: string | null, host: string): string {
   const body = text ?? "";
-  if (!body.includes("/api/attachments/")) return body;
-  type Range = { start: number; end: number };
-  const codeRanges: Array<Range> = [];
-  const htmlRanges: Array<Range> = [];
+  if (!body.includes(ATTACHMENT_PATH)) return body;
+  const insertAt: Array<number> = [];
   const tree = parseMarkdownWithMath(body);
   const visit = (node: typeof tree | (typeof tree.children)[number]): void => {
-    const ranges =
-      node.type === "code" || node.type === "inlineCode"
-        ? codeRanges
-        : node.type === "html"
-          ? htmlRanges
-          : null;
-    if (ranges !== null) {
-      const start = node.position?.start.offset;
-      const end = node.position?.end.offset;
-      if (start !== undefined && end !== undefined) ranges.push({ start, end });
-    } else if ("children" in node) {
-      node.children.forEach(visit);
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (start !== undefined && end !== undefined) {
+      const source = body.slice(start, end);
+      if (node.type === "html") {
+        for (const match of source.matchAll(HTML_ATTACHMENT_SRC)) {
+          insertAt.push(start + match.index + match[0].length);
+        }
+      } else if (
+        (node.type === "image" || node.type === "link" || node.type === "definition") &&
+        node.url.startsWith(ATTACHMENT_PATH)
+      ) {
+        // The destination follows the label, which may repeat the same text.
+        const labelEnd =
+          node.type === "link"
+            ? (node.children.at(-1)?.position?.end.offset ?? start) - start
+            : source.indexOf("]");
+        const at = source.indexOf(node.url, Math.max(labelEnd, 0));
+        if (at !== -1) insertAt.push(start + at);
+      }
     }
+    if ("children" in node) node.children.forEach(visit);
   };
   visit(tree);
-  const inside = (ranges: Array<Range>, offset: number) =>
-    ranges.some(({ start, end }) => offset >= start && offset < end);
-  return body.replace(ATTACHMENT_LINK, (match, prefix: string, offset: number) =>
-    inside(codeRanges, offset) || (/^src/iu.test(prefix) && !inside(htmlRanges, offset))
-      ? match
-      : `${prefix}https://${host}/api/attachments/`,
-  );
+  let result = body;
+  for (const offset of insertAt.toSorted((a, b) => b - a)) {
+    result = `${result.slice(0, offset)}https://${host}${result.slice(offset)}`;
+  }
+  return result;
 }
 
 interface RepositoryOnHost {
