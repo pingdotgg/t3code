@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -1725,6 +1726,32 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         cwd: input.cwd,
         args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", "."],
       });
+      // Restoring away the last tracked file can remove a nested workspace directory.
+      const recreateWorkspace = fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new VcsProcessExitError({
+              operation,
+              command: "git restore",
+              cwd: input.cwd,
+              exitCode: 0,
+              detail: `Could not recreate the checkpoint workspace: ${cause.message}`,
+            }),
+        ),
+      );
+      const resetIndex = Effect.gen(function* () {
+        // On Windows clean can remove './' and exit 0.
+        yield* recreateWorkspace;
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [...longPaths, "reset", "--quiet", "--", "."],
+        });
+      });
+      // From here restore stages checkpoint contents; an interrupted restore must still unstage them.
+      yield* Effect.addFinalizer((exit) =>
+        Exit.hasInterrupts(exit) ? resetIndex.pipe(Effect.ignore) : Effect.void,
+      );
       // An empty index and checkpoint have nothing for git restore's pathspec to match.
       if (tracked.stdout.length > 0) {
         const sparseConfig = yield* execute({
@@ -1812,28 +1839,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
       }
-      // Restoring away the last tracked file can remove a nested workspace directory.
-      const recreateWorkspace = fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new VcsProcessExitError({
-              operation,
-              command: "git restore",
-              cwd: input.cwd,
-              exitCode: 0,
-              detail: `Could not recreate the checkpoint workspace: ${cause.message}`,
-            }),
-        ),
-      );
-      const resetIndex = Effect.gen(function* () {
-        // On Windows clean can remove './' and exit 0.
-        yield* recreateWorkspace;
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: [...longPaths, "reset", "--quiet", "--", "."],
-        });
-      });
       yield* recreateWorkspace;
       const clean = execute({
         operation,
@@ -1894,7 +1899,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       yield* resetIndex;
 
       return true;
-    }),
+    }, Effect.scoped),
 
     diffCheckpoints: Effect.fn("GitVcsDriver.checkpoints.diffCheckpoints")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.diffCheckpoints";
