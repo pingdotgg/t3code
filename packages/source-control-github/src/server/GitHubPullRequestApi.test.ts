@@ -2013,8 +2013,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       // Twenty pull requests share the boundary instant, then five are older. GitHub's search
       // has no qualifier for a row number, so the boundary always comes back from its start.
-      const tied = rows(20, 1);
-      const older = rows(5, 21, () => ({ updatedAt: "2026-07-01T00:00:00Z" }));
+      const repository = { nameWithOwner: "acme/web" };
+      const tied = rows(20, 1, () => ({ repository }));
+      const older = rows(5, 21, () => ({ updatedAt: "2026-07-01T00:00:00Z", repository }));
       mockedExecute.mockImplementation((call) => {
         const variables = call.kind === "graphql" ? (call.variables ?? {}) : {};
         const q = String(variables["q"] ?? "");
@@ -2058,6 +2059,60 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(batch.items.map((item) => item.number)).toEqual([
         11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
       ]);
+
+      const across = yield* cli.searchPullRequests({
+        cwd: "/w",
+        host: "github.com",
+        repositories: ["acme/web"],
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+        cursor: {
+          updatedBefore: "2026-07-02T00:00:00Z",
+          delivered: 10,
+          seenAt: Array.from({ length: 10 }, (_, index) => ({
+            repository: "acme/web",
+            number: index + 1,
+          })),
+        },
+      });
+      expect(across.items.map((item) => item.number)).toEqual([
+        11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+      ]);
+
+      // Rows seen earlier that no longer match must not count as skipped, or the rest is lost.
+      const moved = { updatedBefore: "2026-07-01T00:00:00Z", delivered: 10 };
+      const listedPastMoved = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 3,
+        cursor: { ...moved, seenAt: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] },
+      });
+      const searchedPastMoved = yield* cli.searchPullRequests({
+        cwd: "/w",
+        host: "github.com",
+        repositories: ["acme/web"],
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 3,
+        cursor: {
+          ...moved,
+          seenAt: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((number) => ({
+            repository: "acme/web",
+            number,
+          })),
+        },
+      });
+      for (const page of [listedPastMoved, searchedPastMoved]) {
+        expect(page.items.map((item) => item.number)).toEqual([21, 22, 23]);
+        expect(page.truncated).toBe(true);
+      }
     }),
   );
 
