@@ -138,7 +138,7 @@ export function pullRequestRehypePlugins(
   if (changeRequest === null) return NO_PLUGINS;
   const repositoryUrl = changeRequestRepositoryUrl(changeRequest);
   if (repositoryUrl === undefined) return NO_PLUGINS;
-  const key = `${changeRequest.provider}\u0000${repositoryUrl}\u0000`;
+  const key = `${changeRequest.provider}\u0000${repositoryUrl}`;
   let plugins = rehypePlugins.get(key);
   if (plugins === undefined) {
     const autolinks = changeRequestReferenceAutolinker(changeRequest);
