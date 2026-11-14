@@ -2242,6 +2242,79 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("follows the work state of any agent that negotiates ACP v2", () =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["elsewhere"]);
+      const { update, idle, prompt } = claudeFrames;
+      const reply = (messageId: string, text: string) =>
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "agent_message_chunk",
+          messageId,
+          content: { type: "text", text },
+        });
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open,
+          ...prompt(1),
+          reply("reply-1", "Working on it."),
+          idle("end_turn"),
+          claudeMarker("foreground idle"),
+          {
+            ...update(CLAUDE_ROOT_SESSION, {
+              sessionUpdate: "user_message",
+              messageId: "elsewhere-1",
+              content: [{ type: "text", text: "Sent from another client" }],
+            }),
+            label: "elsewhere",
+          },
+          update(CLAUDE_ROOT_SESSION, { sessionUpdate: "state_update", state: "running" }),
+          reply("reply-2", "Answered elsewhere."),
+          idle("end_turn"),
+          claudeMarker("elsewhere idle"),
+        ],
+        gate,
+        true,
+        "fixture-agent",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const foreground = yield* session.until((event) => event.type === "turn.terminal");
+      const terminal = foreground.at(-1)!;
+      if (terminal.type !== "turn.terminal") throw new Error("Missing terminal");
+      assert.equal(terminal.status, "completed");
+      assert.isTrue(
+        foreground.some(
+          (event) => event.type === "message.updated" && event.message.text === "Working on it.",
+        ),
+        "an accepted prompt is not the end of the turn; idle is",
+      );
+      assert.isFalse(
+        foreground.some(
+          (event) => event.type === "message.updated" && event.message.text === "test prompt",
+        ),
+        "the agent's echo of the submitted prompt only signals acceptance",
+      );
+      yield* session.throughMarker("foreground idle");
+
+      gate.release("elsewhere");
+      yield* Queue.take(session.offered);
+      yield* session.throughMarker("elsewhere idle");
+      assert.lengthOf(session.offers, 1);
+      yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+      const continuation = yield* session.until((event) => event.type === "turn.terminal");
+      const continued = continuation.at(-1)!;
+      if (continued.type !== "turn.terminal") throw new Error("Missing continuation terminal");
+      assert.equal(continued.status, "completed");
+      assert.isTrue(
+        continuation.some(
+          (event) =>
+            event.type === "message.updated" && event.message.text === "Answered elsewhere.",
+        ),
+        "work the agent started on its own reaches the thread",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("keeps stopped child tools interrupted when a late output chunk arrives", () =>
     Effect.gen(function* () {
       const { update } = claudeFrames;

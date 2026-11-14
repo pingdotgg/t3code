@@ -245,9 +245,11 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ...(registryAgentId === "mistral-vibe"
       ? { registerExtensions: registerMistralVibeAcpExtensions }
       : {}),
+    // ACP v2 reports turn completion, and work the agent starts on its own, through
+    // `state_update`; the adapter follows it only once an agent negotiates v2.
+    followAgentWorkState: true,
     ...(isClaude
       ? {
-          followAgentWorkState: true,
           extractSubagentUpdate: extractClaudeSubagentUpdate,
           isProvisionalSubagentTool: isClaudeProvisionalSubagentTool,
           extractSubagentSessionEvent: extractClaudeSubagentSessionEvent,

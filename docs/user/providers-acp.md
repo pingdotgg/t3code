@@ -12,7 +12,9 @@ Pi, and [Antigravity](./providers-antigravity.md), don't appear in the Registry 
 T3 Code prefers the current ACP v2 preview protocol and uses its richer messages, usage, plans,
 configuration, compaction, and agent-terminal updates when the agent supports them. It also
 negotiates ACP v1 for Registry agents that have not migrated yet, so they continue to work through
-the same generic integration.
+the same generic integration. On ACP v2, T3 Code follows the agent's reported work state: a turn
+ends when the agent goes idle, and work the agent starts on its own, such as answering a message
+sent from another client, appears in the thread.
 
 Claude Agent uses the ACP v2 preview by default for Registry and local `claude-agent-acp`
 commands. If you encounter preview issues, set `CLAUDE_AGENT_ACP_EXPERIMENTAL_V2=0` in the
