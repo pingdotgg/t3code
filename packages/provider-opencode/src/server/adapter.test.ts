@@ -1489,9 +1489,13 @@ describe("OpenCodeAdapterV2", () => {
         });
       }
       yield* push(taskPart("completed"));
-      if (starts) yield* push(status(child, "busy"));
       yield* push(status(root, "idle"));
-      assert.equal(yield* hasPendingBackgroundWork, starts, "a running child pins idle release");
+      assert.isTrue(
+        yield* hasPendingBackgroundWork,
+        "a launched child pins idle release before its first busy event",
+      );
+      if (starts) yield* push(status(child, "busy"));
+      assert.isTrue(yield* hasPendingBackgroundWork, "a running child pins idle release");
 
       if (ending === "stop") {
         yield* harness.runtime.interruptTurn({

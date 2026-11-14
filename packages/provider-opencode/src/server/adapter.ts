@@ -3306,7 +3306,16 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           providerSessionId: input.providerSessionId,
           providerSession: sessionEntity,
           events: Stream.fromEffectRepeat(Queue.take(events)),
-          hasPendingBackgroundWork: Effect.sync(() => busySessionIds.size > 0),
+          hasPendingBackgroundWork: Effect.sync(
+            () =>
+              busySessionIds.size > 0 ||
+              Array.from(subagentsByNativeItemId.values()).some(
+                (context) =>
+                  context.launch !== null &&
+                  context.childSessionId !== null &&
+                  unstartedSessionIds.has(context.childSessionId),
+              ),
+          ),
           ensureThread: Effect.fn("OpencodeAdapter.ensureThread")(
             function* (threadInput) {
               if (threadInput.existingProviderThread?.nativeThreadRef != null) {
