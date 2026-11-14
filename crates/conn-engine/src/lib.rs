@@ -19,6 +19,7 @@
 use std::{future::Future, pin::Pin};
 
 mod background;
+mod background_wait;
 mod calls;
 mod checkpoint;
 mod clock;
@@ -53,6 +54,7 @@ mod time;
 mod titles;
 mod visibility;
 
+pub use background_wait::{BackgroundWait, BackgroundWaitError};
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use engine::{
     CommandOutputTap, DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, RuntimePolicyOverride,
@@ -353,6 +355,18 @@ pub trait Engine: Send + Sync {
         _thread_id: ThreadId,
     ) -> BoxFuture<'_, Result<Option<Value>, EngineError<GetThreadProjectionError>>> {
         unsupported("the thread snapshot")
+    }
+
+    /// `ThreadManagementService.awaitBackgroundTasks`: the live session of the thread's
+    /// active provider thread marks (`awaited`) or clears these background task ids. Answers
+    /// the matched and unmatched ids; see [`BackgroundWaitError`] for the refusals.
+    fn await_background_tasks(
+        &self,
+        _thread_id: ThreadId,
+        _task_ids: Vec<String>,
+        _awaited: bool,
+    ) -> BoxFuture<'_, Result<BackgroundWait, BackgroundWaitError>> {
+        Box::pin(std::future::ready(Err(BackgroundWaitError::Unavailable)))
     }
 }
 

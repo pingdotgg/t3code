@@ -7,6 +7,9 @@
 //! - `subagent`: a subagent's child thread with one message, then the turn completes.
 //! - `background`: the turn completes with background work left, then asks for a
 //!   continuation turn, which answers `continued` and ends the work.
+//! - `background-task`: the turn completes with background task `bg-1` on its provider
+//!   thread's roster, which `await_background_tasks` marks or clears. `background-task-hang`:
+//!   the same roster, and the turn waits for an interrupt.
 //! - `background-reported`: like `background-hold`, but the work shows only as
 //!   `background_work.updated` (pending), and a running background command row.
 //! - anything else: streams `echo: <text>` in three chunks and completes.
@@ -66,6 +69,8 @@ pub struct FakeProvider {
     /// Stop and rollback take this long after their work, as a slow provider.
     control_delay: std::time::Duration,
     steering: bool,
+    /// Sessions answer `await_background_tasks`; see [`Self::without_background_wait`].
+    background_wait: bool,
     close_delay: std::time::Duration,
     selection_plan: Option<conn_provider::SelectionTransitionPlan>,
     /// What `capabilities` answers: the sessions' capabilities unless a test changes them.
@@ -100,6 +105,7 @@ impl FakeProvider {
             fail_rollbacks: Arc::new(AtomicUsize::new(0)),
             control_delay: std::time::Duration::ZERO,
             steering: true,
+            background_wait: true,
             close_delay: std::time::Duration::ZERO,
             selection_plan: None,
             capabilities: conn_provider::testing::session_capabilities(),
@@ -147,6 +153,13 @@ impl FakeProvider {
         self.steering = false;
         self
     }
+
+    /// A provider whose sessions have no background roster to mark (`awaitBackgroundTasks`
+    /// absent), as Codex and ACP.
+    pub fn without_background_wait(mut self) -> Self {
+        self.background_wait = false;
+        self
+    }
 }
 
 #[derive(Clone)]
@@ -168,6 +181,10 @@ struct FakeSession {
     turn: Arc<Mutex<Option<Turn>>>,
     steering: bool,
     background: Arc<AtomicBool>,
+    background_wait: bool,
+    /// The background roster of the `background-task` script: task id and whether it is
+    /// awaited. At most one entry.
+    roster: Arc<Mutex<Vec<(String, bool)>>>,
     /// The running turn ignores Stop.
     stuck: Arc<AtomicBool>,
     mcp_servers: Arc<Mutex<Vec<McpServer>>>,
@@ -254,6 +271,8 @@ impl Provider for FakeProvider {
                     turn: Arc::new(Mutex::new(None)),
                     steering: self.steering,
                     background: Arc::new(AtomicBool::new(false)),
+                    background_wait: self.background_wait,
+                    roster: Arc::default(),
                     stuck: Arc::new(AtomicBool::new(false)),
                     mcp_servers: self.mcp_servers.clone(),
                     closed: self.closed.clone(),
@@ -331,6 +350,25 @@ async fn emit(tx: &mpsc::Sender<ProviderEvent>, events: impl IntoIterator<Item =
 }
 
 impl FakeSession {
+    /// `provider_thread.updated` with the roster on `pendingBackgroundTasks`, awaited tasks
+    /// marked, as Claude's `emitRosterUpdate`.
+    fn roster_update(&self, mut provider_thread: Value) -> ProviderEvent {
+        let tasks: Vec<Value> = crate::lock(&self.roster)
+            .iter()
+            .map(|(id, awaited)| {
+                let mut task = json!({"taskId": id, "kind": "command",
+                    "description": "sleep 600", "providerInstanceId": self.instance});
+                if *awaited {
+                    task["awaited"] = json!(true);
+                }
+                task
+            })
+            .collect();
+        provider_thread["pendingBackgroundTasks"] = json!(tasks);
+        provider_thread["updatedAt"] = json!(now_iso());
+        event(json!({"type": "provider_thread.updated", "providerThread": provider_thread}))
+    }
+
     /// The run of a `continuation.requested` message: shows `continued` and ends the work.
     fn continuation(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
@@ -575,6 +613,16 @@ impl Session for FakeSession {
                     started.push(provider_turn(&turn, "completed"));
                     started.push(terminal(&turn, TurnStatus::Completed, None));
                 }
+                "background-task" | "background-task-hang" => {
+                    self.background.store(true, Ordering::SeqCst);
+                    *crate::lock(&self.roster) = vec![("bg-1".to_owned(), false)];
+                    started.push(self.roster_update(conn_contract::to_json(&input.provider_thread)));
+                    if text == "background-task" {
+                        started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "started bg-1", false));
+                        started.push(provider_turn(&turn, "completed"));
+                        started.push(terminal(&turn, TurnStatus::Completed, None));
+                    }
+                }
                 "background-hold" => {
                     self.background.store(true, Ordering::SeqCst);
                     started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "holding", false));
@@ -776,6 +824,45 @@ impl Session for FakeSession {
 
     fn has_pending_background_work(&self) -> bool {
         self.background.load(Ordering::SeqCst)
+    }
+
+    /// Marks or clears roster tasks by id, as Claude's `awaitBackgroundTasks`: each id once,
+    /// only ids on the roster; a change reports the roster.
+    fn await_background_tasks(
+        &self,
+        input: conn_provider::AwaitBackgroundTasksInput,
+    ) -> BoxFuture<'_, ProviderResult<Vec<String>>> {
+        Box::pin(async move {
+            if !self.background_wait {
+                return Err(ProviderError::Unsupported {
+                    operation: "await_background_tasks",
+                });
+            }
+            let matched: Vec<String> = {
+                let mut roster = crate::lock(&self.roster);
+                let mut matched: Vec<String> = Vec::new();
+                for id in &input.task_ids {
+                    if matched.contains(id) {
+                        continue;
+                    }
+                    if let Some(entry) = roster.iter_mut().find(|(task, _)| task == id) {
+                        entry.1 = input.awaited;
+                        matched.push(id.clone());
+                    }
+                }
+                matched
+            };
+            crate::lock(&self.calls).push(format!(
+                "await {} {}",
+                input.task_ids.join(","),
+                input.awaited
+            ));
+            if !matched.is_empty() {
+                let update = self.roster_update(conn_contract::to_json(&input.provider_thread));
+                emit(&self.events, [update]).await;
+            }
+            Ok(matched)
+        })
     }
 
     fn rollback_thread(

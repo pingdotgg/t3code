@@ -19,6 +19,7 @@ workspace README describes the trait's first methods and the wire.
 | `SqliteEngine::stored_events`                 | The whole event log, paged (`OrchestrationV2StoredEvent` rows); never pruned |
 | `EngineConfig::runtime_policy_override`       | Laid over every turn's policy (`RuntimePolicy.layerWithOverride`); the replay sets the fixture's |
 | `EngineConfig::command_output_tap`            | Sees every live command output chunk (T3's `CommandOutputRecorder`) |
+| `Engine::await_background_tasks`, `BackgroundWait`, `BackgroundWaitError` | `awaitBackgroundTasks` (`src/background_wait.rs`): the live session of the thread's active provider thread marks or clears background task ids (15 s limit); `/mcp`'s `t3_background_wait` |
 | `EngineHost::response_streaming_mode`, `ResponseStreamingMode` | The project's `responseStreamingMode` (`paragraph` by default, or `turn`), read at each turn start |
 
 `calls.rs` lists the tags `call` and `open_stream` serve. The server registers them with their
