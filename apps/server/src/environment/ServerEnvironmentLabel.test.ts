@@ -50,3 +50,54 @@ it.effect("falls back to the hostname when hostnamectl never answers", () =>
     assert.equal(yield* Fiber.join(label), "devbox");
   }),
 );
+
+const exitsWithFailure = ProcessRunner.ProcessRunner.of({
+  run: () =>
+    Effect.succeed({
+      stdout: "",
+      stderr: "",
+      code: ChildProcessSpawner.ExitCode(1),
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      stdoutInvalidUtf8: false,
+      stderrInvalidUtf8: false,
+    }),
+});
+
+it.effect("qualifies the inherited Windows hostname only inside WSL", () =>
+  Effect.gen(function* () {
+    const cases = [
+      {
+        kernel: "6.6.87.2-microsoft-standard-WSL2",
+        machineInfo: null,
+        expected: "DESKTOP-PC WSL (Ubuntu)",
+      },
+      { kernel: "6.8.0-45-generic", machineInfo: null, expected: "DESKTOP-PC" },
+      {
+        kernel: "6.6.87.2-microsoft-standard-WSL2",
+        machineInfo: 'PRETTY_HOSTNAME="Work WSL"',
+        expected: "Work WSL",
+      },
+    ];
+    for (const { kernel, machineInfo, expected } of cases) {
+      const files: Record<string, string | null> = {
+        "/proc/sys/kernel/osrelease": `${kernel}\n`,
+        "/etc/machine-info": machineInfo,
+      };
+      const label = yield* resolveServerEnvironmentLabel({ cwdBaseName: "project" }).pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Hostname, "DESKTOP-PC"),
+        Effect.provideService(HostProcess.Environment, { WSL_DISTRO_NAME: "Ubuntu" }),
+        Effect.provideService(ProcessRunner.ProcessRunner, exitsWithFailure),
+        Effect.provide(
+          FileSystem.layerNoop({
+            exists: (path) => Effect.succeed(files[path] != null),
+            readFileString: (path) => Effect.succeed(files[path] ?? ""),
+          }),
+        ),
+      );
+      assert.equal(label, expected, kernel);
+    }
+  }),
+);
