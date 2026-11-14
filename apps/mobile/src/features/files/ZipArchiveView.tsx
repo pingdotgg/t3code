@@ -667,8 +667,6 @@ function ZipEntryView(props: {
       () => {
         if (controller.signal.aborted) return;
         setBusy(null);
-        if (kind === "attach")
-          Dialog.alert("Added to chat", `${entry.name} is attached to your message.`);
       },
       (cause: unknown) => {
         if (controller.signal.aborted) return;
