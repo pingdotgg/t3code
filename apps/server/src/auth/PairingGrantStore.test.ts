@@ -182,15 +182,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
       yield* TestClock.adjust(Duration.days(5));
       const now = 5 * 24 * 60 * 60 * 1000;
       const current = yield* bootstrapCredentials.consume(
-        currentDesktopBootstrapToken("desktop-secret", now),
+        yield* currentDesktopBootstrapToken("desktop-secret", now).pipe(
+          Effect.provide(NodeCrypto.layerMac),
+        ),
       );
       expect(current.method).toBe("desktop-bootstrap");
 
-      const stale = yield* Effect.flip(
-        bootstrapCredentials.consume(
-          currentDesktopBootstrapToken("desktop-secret", now - 2 * window),
-        ),
-      );
+      const staleToken = yield* currentDesktopBootstrapToken(
+        "desktop-secret",
+        now - 2 * window,
+      ).pipe(Effect.provide(NodeCrypto.layerMac));
+      const stale = yield* Effect.flip(bootstrapCredentials.consume(staleToken));
       expect(stale._tag).toBe("UnknownBootstrapCredentialError");
 
       const launch = yield* Effect.flip(bootstrapCredentials.consume("desktop-bootstrap-token"));
@@ -216,6 +218,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
         Stream.runForEach((change) => Queue.offer(changes, change)),
         Effect.forkScoped({ startImmediately: true }),
       );
+      // An app approval code sends no update, issued or spent; the next belongs to a plain code.
+      const approval = yield* grants.issueOneTimeToken({ mcpApproval: "auto" });
+      yield* grants.consume(approval.credential, { mcpApproval: "auto" });
       for (const input of [{}, { label: "Synthetic phone" }]) {
         const issued = yield* grants.issueOneTimeToken(input);
         const change = yield* Queue.take(changes);

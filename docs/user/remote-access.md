@@ -16,16 +16,15 @@ t3 up
 ```
 
 It asks how your other devices reach the machine: T3 Connect, the local network,
-or both. Choose T3 Connect and follow the sign-in instructions. On Linux and
-macOS, it then runs T3 Code as a [background service](./background-service.md).
+or both. Choose T3 Connect and follow the sign-in instructions. It then runs
+T3 Code as a [background service](./background-service.md).
 `t3 connect` is the same as `t3 up --connect`. Run `t3 up` again to change your
 choice, and `t3 status` to see it.
 
-The background service is not available on Windows, so there `t3 up` prints the
-`t3 serve` command to keep running in a terminal. You can also keep the desktop
-app running with its local environment enabled. Closing the desktop app's last
-window stops its local server. Saving your sign-in alone does not start a server
-or make the machine reachable.
+Instead of the background service, you can keep the desktop app running with
+its local environment enabled. Closing the desktop app's last window stops its
+local server. Saving your sign-in alone does not start a server or make the
+machine reachable.
 
 On your other device, sign in to the same T3 Connect account and choose the
 environment. On the app.t3.codes home page with no computer added yet, signing
@@ -38,6 +37,31 @@ T3 Connect renews access credentials when needed without disconnecting a healthy
 connection. Pull request diffs and provider settings keep working after the
 previous credential expires. A failed renewal affects that request; it does not
 disconnect an otherwise healthy conversation.
+
+### Approve new devices
+
+By default, any device signed in to your T3 Connect account can open a linked
+machine. To require approval instead, turn on **Require approval for new
+devices** with the T3 Connect settings in **Settings → Sharing & access** on the
+host, or when you first set up T3 Connect. Then someone who takes over your T3
+Connect account cannot reach the machine from a new device without your
+approval. Review the devices that are already approved, described below.
+
+A new device waits and shows a code such as `K7QM-2XFD`. Approve it from a
+device that is already connected, using the prompt or **Settings → Sharing &
+access**. Check that the code matches the one on the waiting device. On a
+headless host, run `t3 auth connect-device list` and then
+`t3 auth connect-device approve K7QM-2XFD`. A request expires after 10 minutes,
+and the device asks again when it retries. Deny keeps that device out until its
+request expires.
+
+Each device is approved once. Revoke it from **T3 Connect devices** in the same
+settings page, or with `t3 auth connect-device revoke <code>`. With approval on,
+it has to ask again. With approval off, it can connect again on its own, so
+revoking in the app offers to turn approval on first. Devices that connected through T3 Connect while approval was off stay
+approved and appear in that list for you to review. A device that has not
+connected since you updated T3 Code asks for approval like a new one. Older apps
+cannot show the code, so update them before you turn approval on.
 
 ### Scripts and agents
 
@@ -288,13 +312,14 @@ command to run on the host:
 sudo t3 browser setup
 ```
 
-The server shows the exact line for how you started it, such as
-`sudo npx t3 browser setup`, and keeps your `PATH` when Node is installed only
-for your user. Where `t3` is not on your `PATH`, such as with only the
+The server shows the exact line for how you started it, and keeps your `PATH`
+when you started it with `npx` and Node is installed only for your user. Where `t3` is not on your `PATH`, such as with only the
 desktop app installed, it names the full path of the app's own `t3` instead. It allows Chrome's sandbox with an AppArmor profile and installs
 any missing libraries and system fonts with apt; pages that load without text
-can mean the host has no fonts. It is safe to run again. Without `sudo`, it only
-reports what it would change.
+can mean the host has no fonts. It is safe to run again, and each run reloads
+the AppArmor profile: run it again if the browser reports a blocked sandbox on a
+host restored from an image or snapshot, where the profile can be on disk
+without being loaded. Without `sudo`, it only reports what it would change.
 
 The browser runs in Chrome's sandbox by default. Chrome cannot start that sandbox
 as root. If your T3 server runs as root, run it as a nonroot user to keep
@@ -334,14 +359,17 @@ off, its result arrives once it is back on.
 On the machine you will work from, open **Settings → Environments → Linked environments**,
 choose **Link**, and pick the other machine or enter its address. The list
 holds the machines this app knows and those on your T3 Connect account. If this
-app is connected to that machine with a session that manages access there, it
-makes the pairing code itself; otherwise paste one from that machine's
-**Settings → Sharing & access**. From a terminal, use
+app has an address for that machine and is connected to it with a session that
+manages access there, it makes the pairing code itself; otherwise paste one
+from that machine's **Settings → Sharing & access**. An address you type always
+needs a pasted code. From a terminal, use
 `t3 environment link <address> --pairing-code <code> --access <mode>`.
 
 You can also ask an agent to link a machine by name, such as "delegate this to
 my vps". It shows a card in the thread where you pick the machine the same way
-and the access, then approve.
+and the access, then approve. An address the agent gives that this app does
+not know for one of your machines also needs a pasted code. Paste one only for
+an address you trust: the code is sent there.
 
 - The access you pick is the most agents from this machine may do there. An
   agent also never gets more there than its own mode here.
@@ -369,17 +397,21 @@ pairing links and revoke client sessions. Revoking an unused link prevents new
 pairings; revoke a device's session to remove its existing access. Command-line
 management is available through `t3 auth --help`.
 
+When the app connects to more than one environment, choose one at the top of the
+page. A desktop app with **Local environment** off can manage a background
+service on the same machine this way, including its T3 Connect link.
+
 A session with an open connection stays listed after its access credential
 expires.
 
 To choose a token's permissions, pass `--scope` once for each scope you want:
 
 ```sh
-npx t3 pair --scope orchestration:read --scope relay:read
+t3 pair --scope orchestration:read --scope relay:read
 ```
 
 The selected scopes replace the default permissions. The same option works with
-`npx t3 auth pairing create` and `npx t3 auth session issue`; each command's
+`t3 auth pairing create` and `t3 auth session issue`; each command's
 `--help` lists the available scopes. Without `--scope`, pairing tokens and issued
 bearer sessions get every permission, including managing access and T3 Connect.
 A terminal or a full-access agent on the host can reach those as well, so a
@@ -459,6 +491,9 @@ desktop app, open **Settings → Environments** and switch off **Local
 environment**. T3 Code restarts without a local server: no local agents or terminals run, WSL
 backends stay off, and other devices can no longer connect to this computer. Your projects,
 history, and saved connections are kept, and you keep working through pairing, T3 Connect, or SSH.
+If a [background service](./background-service.md) on this computer uses the same T3 home, the
+app still treats it as this computer: **Open in** and file reveal for its projects run here,
+whichever connection you reach it through.
 
 Switch **Local environment** back on in the same place to restart with your previous local
 settings.

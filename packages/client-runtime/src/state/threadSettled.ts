@@ -37,7 +37,6 @@ interface QueuedThreadShell {
  * Bound the pending window so those threads can eventually settle.
  */
 export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
-const DAY_MS = 24 * 60 * 60 * 1_000;
 
 export function hasQueuedTurnStart(
   shell: QueuedThreadShell,
@@ -74,8 +73,17 @@ export interface ThreadSnoozeShell extends QueuedThreadShell {
   readonly snoozedAt?: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
+  readonly pendingUserInputAt?: string | null;
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
   readonly pendingGuestMessageCount?: number;
+}
+
+function pendingQuestionAt(shell: ThreadSnoozeShell): string | null {
+  const request = shell.source?.pendingRuntimeRequest;
+  return (
+    shell.pendingUserInputAt ??
+    (request?.kind === "user_input" ? DateTime.formatIso(request.createdAt) : null)
+  );
 }
 
 /**
@@ -84,8 +92,19 @@ export interface ThreadSnoozeShell extends QueuedThreadShell {
  * until its timer.
  */
 export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean {
-  if (shell.hasPendingApprovals || shell.hasPendingUserInput) return true;
-  if (shell.source?.pendingRuntimeRequest != null) return true;
+  const request = shell.source?.pendingRuntimeRequest;
+  if (shell.hasPendingApprovals || (request != null && request.kind !== "user_input")) return true;
+  const questionAt = pendingQuestionAt(shell);
+  // Snoozing an existing question means "ask me later". Only a new question
+  // wakes it early; missing or invalid timestamps keep the request visible.
+  if (
+    (shell.hasPendingUserInput || request?.kind === "user_input") &&
+    (shell.snoozedAt == null ||
+      questionAt == null ||
+      !(Date.parse(questionAt) <= Date.parse(shell.snoozedAt)))
+  ) {
+    return true;
+  }
   if (shell.pendingSubagentRequest != null) return true;
   if ((shell.pendingGuestMessageCount ?? 0) > 0) return true;
   const failedAt = failureEdgeAt(shell);
@@ -96,14 +115,14 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
   );
 }
 
-// V2 runtime.updatedAt includes metadata writes; prefer the failed run's completion.
+// V2 runtime.updatedAt includes metadata writes, not just failures.
 // Legacy sessions only expose the runtime timestamp.
 function failureEdgeAt(shell: ThreadSnoozeShell): string | null | undefined {
   const runtime = shell.runtime ?? shell.session ?? null;
   if (runtime?.status !== "error" && runtime?.status !== "failed") return undefined;
   const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
-  if (latestRun?.status === "failed" && latestRun.completedAt != null) {
-    return latestRun.completedAt;
+  if (latestRun?.status === "failed") {
+    return latestRun.completedAt ?? null;
   }
   return runtime.updatedAt ?? null;
 }
@@ -124,9 +143,9 @@ export function canSnooze(
   >,
   options: { readonly now: string },
 ): boolean {
-  if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
-  // The server rejects snoozing for any pending request.
-  if (shell.source?.pendingRuntimeRequest != null) return false;
+  if (shell.hasPendingApprovals) return false;
+  const request = shell.source?.pendingRuntimeRequest;
+  if (request != null && request.kind !== "user_input") return false;
   if (shell.pendingSubagentRequest != null) return false;
   // A waiting guest message would wake it at once.
   if ((shell.pendingGuestMessageCount ?? 0) > 0) return false;
@@ -157,14 +176,19 @@ export function threadWokeAt(
   // indicator the user already cleared by visiting (snoozedUntil is newer
   // than that visit's lastVisitedAt).
   if (threadRaisedHandWhileSnoozed(shell)) {
-    // An old failure must not replace the activity time of an approval or input wake.
     const failedAt = failureEdgeAt(shell);
-    if (
+    const questionAt = pendingQuestionAt(shell);
+    const freshFailure =
       failedAt != null &&
-      (shell.snoozedAt == null || Date.parse(failedAt) > Date.parse(shell.snoozedAt))
-    ) {
+      (shell.snoozedAt == null || Date.parse(failedAt) > Date.parse(shell.snoozedAt));
+    const freshQuestion =
+      questionAt != null &&
+      shell.snoozedAt != null &&
+      Date.parse(questionAt) > Date.parse(shell.snoozedAt);
+    if (freshFailure && (!freshQuestion || Date.parse(failedAt) >= Date.parse(questionAt))) {
       return failedAt;
     }
+    if (freshQuestion) return questionAt;
     const runtime = shell.runtime ?? shell.session ?? null;
     return runtime?.updatedAt ?? shell.snoozedAt ?? null;
   }
@@ -327,11 +351,12 @@ export function snoozeWakeLabel(snoozedUntil: string, options: { readonly now: s
   const wakeMs = Date.parse(snoozedUntil);
   const nowMs = Date.parse(options.now);
   if (Number.isNaN(wakeMs) || Number.isNaN(nowMs)) return "now";
-  const remainingMs = wakeMs - nowMs;
-  if (remainingMs <= 0) return "now";
-  if (remainingMs < HOUR_MS) return `${Math.max(1, Math.ceil(remainingMs / 60_000))}m`;
-  if (remainingMs < DAY_MS) return `${Math.ceil(remainingMs / HOUR_MS)}h`;
-  return `${Math.ceil(remainingMs / DAY_MS)}d`;
+  if (wakeMs <= nowMs) return "now";
+  // Count clock minutes: callers pass a minute-floored or live `now`, and durations keep seconds.
+  const minutes = Math.max(1, Math.floor(wakeMs / 60_000) - Math.floor(nowMs / 60_000));
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 24 * 60) return `${Math.ceil(minutes / 60)}h`;
+  return `${Math.ceil(minutes / (24 * 60))}d`;
 }
 
 export type CustomSnoozeInput =
@@ -385,4 +410,23 @@ export function isThreadWokeUnseen(input: {
     .map((value) => (value ? Date.parse(value) : NaN))
     .filter((ms) => !Number.isNaN(ms));
   return seenAt.every((ms) => ms < wokeAtMs);
+}
+
+/**
+ * Whether the latest run failed after the user last saw the thread. Only the run dates the
+ * failure, since the shell's updatedAt also moves on renames. A failed run without a
+ * completion time, from older data, is dated by its start.
+ */
+export function hasUnseenRunFailure(
+  thread: Pick<EnvironmentThreadShell, "latestRun"> & {
+    readonly lastVisitedAt?: string | null | undefined;
+  },
+): boolean {
+  const run = thread.latestRun;
+  if (run?.status !== "failed") return false;
+  if (!thread.lastVisitedAt) return true;
+  const failedAtMs = Date.parse(run.completedAt ?? run.startedAt ?? run.requestedAt ?? "");
+  const lastVisitedAtMs = Date.parse(thread.lastVisitedAt);
+  if (Number.isNaN(failedAtMs) || Number.isNaN(lastVisitedAtMs)) return true;
+  return failedAtMs > lastVisitedAtMs;
 }

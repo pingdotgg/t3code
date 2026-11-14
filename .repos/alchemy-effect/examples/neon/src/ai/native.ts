@@ -16,8 +16,7 @@ export default {
       return new Response("Not found", { status: 404 });
     if (
       !process.env.EXAMPLE_API_KEY ||
-      request.headers.get("authorization") !==
-        `Bearer ${process.env.EXAMPLE_API_KEY}`
+      request.headers.get("authorization") !== `Bearer ${process.env.EXAMPLE_API_KEY}`
     ) {
       return new Response("Unauthorized", { status: 401 });
     }
@@ -32,10 +31,9 @@ export default {
         status: 400,
       });
     if (process.env.AI_ALLOW_PAID !== "true")
-      return new Response(
-        "Paid inference is disabled. Set NEON_AI_ALLOW_PAID=true explicitly.",
-        { status: 503 },
-      );
+      return new Response("Paid inference is disabled. Set NEON_AI_ALLOW_PAID=true explicitly.", {
+        status: 503,
+      });
     if (!process.env.AI_MODEL)
       return new Response("Configure NEON_AI_MODEL before deployment.", {
         status: 503,

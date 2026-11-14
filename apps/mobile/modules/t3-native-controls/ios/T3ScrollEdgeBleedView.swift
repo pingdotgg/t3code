@@ -19,6 +19,7 @@ final class T3ScrollEdgeBleedView: ExpoView {
   /// React Native's clipping, saved while bleeding. React Native only rewrites it when the
   /// `overflow` style changes, so it stays off while bleeding.
   private var containerClipped: Bool?
+  private var indicatorObservations: [NSKeyValueObservation] = []
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -95,8 +96,11 @@ final class T3ScrollEdgeBleedView: ExpoView {
     // The vertical-bar API ships in the iOS 27.1 SDK (UIKit 9127.0.85); see T3LayoutMetricsView.
     #if canImport(UIKit, _version: 9127.0.85)
     if #available(iOS 27.1, *) {
+      // UIKit leaves the trait unset in a split view's inspector column, though the bar overlaps
+      // it; the flush check above still decides whether this view sits at the bar.
+      let traits = window?.rootViewController?.traitCollection ?? traitCollection
       let rtl = effectiveUserInterfaceLayoutDirection == .rightToLeft
-      switch traitCollection.verticalBarEdge {
+      switch traits.verticalBarEdge {
       case .leading: return rtl ? .right : .left
       case .trailing: return rtl ? .left : .right
       default: return nil
@@ -133,12 +137,29 @@ final class T3ScrollEdgeBleedView: ExpoView {
       containerClipped = containerClipped ?? true
       container.layer.masksToBounds = false
     }
+    applyIndicatorInset()
+    // React Native rewrites every indicator inset when its `scrollIndicatorInsets` prop changes,
+    // which the keyboard-aware list animates while a reply streams; put the inset back at once.
+    if bleeding, indicatorObservations.isEmpty {
+      let keyPaths = [\UIScrollView.verticalScrollIndicatorInsets, \.scrollIndicatorInsets]
+      indicatorObservations = keyPaths.map {
+        scrollView.observe($0) { [weak self] _, _ in
+          MainActor.assumeIsolated { self?.applyIndicatorInset() }
+        }
+      }
+    } else if !bleeding {
+      indicatorObservations = []
+    }
+    applied = bleeding
+  }
+
+  private func applyIndicatorInset() {
+    guard let scrollView else { return }
     var indicators = scrollView.verticalScrollIndicatorInsets
     if indicators.right != bleed.right {
       indicators.right = bleed.right
       scrollView.verticalScrollIndicatorInsets = indicators
     }
-    applied = bleeding
   }
 
   private func detach() {

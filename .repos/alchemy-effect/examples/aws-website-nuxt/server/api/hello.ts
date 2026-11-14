@@ -3,7 +3,6 @@
 // `process.env`.
 export default defineEventHandler(() => {
   return {
-    greeting:
-      typeof process.env.GREETING === "string" ? process.env.GREETING : null,
+    greeting: typeof process.env.GREETING === "string" ? process.env.GREETING : null,
   };
 });

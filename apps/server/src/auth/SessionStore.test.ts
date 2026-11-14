@@ -19,7 +19,8 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
-import { base64UrlDecodeUtf8, base64UrlEncode, signPayload } from "./utils.ts";
+import { base64UrlDecodeUtf8, base64UrlEncode } from "./utils.ts";
+import * as PayloadSigner from "./PayloadSigner.ts";
 
 const layerServerConfig = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
   Layer.effect(
@@ -367,13 +368,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       const [encodedPayload] = issued.token.split(".");
       const currentClaims = base64UrlDecodeUtf8(encodedPayload!);
       expect(currentClaims).toContain('"v":1');
-      const secret = yield* secrets.getOrCreateRandom("server-signing-key", 32);
+      const signer = yield* PayloadSigner.fromSecret(
+        yield* secrets.getOrCreateRandom("server-signing-key", 32),
+      );
       const resign = (claims: string) => {
         const payload = base64UrlEncode(claims);
-        return `${payload}.${signPayload(payload, secret)}`;
+        return signer.sign(payload).pipe(Effect.map((signature) => `${payload}.${signature}`));
       };
-      const legacyToken = resign(currentClaims.replace('"v":1', '"v":2'));
-      const editedToken = resign(
+      const legacyToken = yield* resign(currentClaims.replace('"v":1', '"v":2'));
+      const editedToken = yield* resign(
         currentClaims.replace(/"scopes":\[[^\]]*\]/, '"scopes":["access:write"]'),
       );
 

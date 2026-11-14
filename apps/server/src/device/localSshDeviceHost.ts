@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as Context from "effect/Context";
 import { runSshCommand } from "@t3tools/ssh/command";
 import * as Effect from "effect/Effect";
+import { HostnameLookupError } from "@t3tools/shared/HostProcess";
 
 export const LocalDeviceHostAddresses = Context.Reference<ReadonlySet<string>>(
   "LocalDeviceHostAddresses",
@@ -17,6 +18,21 @@ export const LocalDeviceHostAddresses = Context.Reference<ReadonlySet<string>>(
       ),
   },
 );
+
+/** Unwraps IPv4-mapped IPv6 (`::ffff:127.0.0.1`, `::ffff:7f00:1`) to plain IPv4. */
+const unmapIPv4 = (address: string) => {
+  if (NodeNet.isIP(address) !== 6) return address;
+  let canonical: string;
+  try {
+    canonical = new URL(`http://[${address}]`).hostname;
+  } catch {
+    return address;
+  }
+  const match = /^\[::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/.exec(canonical);
+  if (!match) return address;
+  const [high, low] = [parseInt(match[1]!, 16), parseInt(match[2]!, 16)];
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff].join(".");
+};
 
 export const isLocalSshDeviceHost = Effect.fn("isLocalSshDeviceHost")(function* (
   host: SshDeviceHostConfig,
@@ -45,7 +61,10 @@ export const isLocalSshDeviceHost = Effect.fn("isLocalSshDeviceHost")(function* 
   if (!hostname) return false;
   const addresses = NodeNet.isIP(hostname)
     ? [hostname]
-    : yield* Effect.tryPromise(() => NodeDnsPromises.lookup(hostname, { all: true })).pipe(
+    : yield* Effect.tryPromise({
+        try: () => NodeDnsPromises.lookup(hostname, { all: true }),
+        catch: (cause) => new HostnameLookupError({ hostname, cause }),
+      }).pipe(
         Effect.map((entries) => entries.map((entry) => entry.address)),
         Effect.timeout("2 seconds"),
         Effect.orElseSucceed(() => [] as string[]),
@@ -53,9 +72,11 @@ export const isLocalSshDeviceHost = Effect.fn("isLocalSshDeviceHost")(function* 
   const localAddresses = yield* LocalDeviceHostAddresses;
   return (
     addresses.length > 0 &&
-    addresses.every(
-      (address) => localAddresses.has(address) || address === "::1" || address.startsWith("127."),
-    )
+    addresses
+      .map(unmapIPv4)
+      .every(
+        (address) => localAddresses.has(address) || address === "::1" || address.startsWith("127."),
+      )
   );
 });
 

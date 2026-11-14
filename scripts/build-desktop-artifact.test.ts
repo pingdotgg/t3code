@@ -19,6 +19,7 @@ import * as Sink from "effect/Sink";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { fromYaml } from "@t3tools/shared/schemaYaml";
 
 import {
   buildDesktopBundles,
@@ -38,6 +39,7 @@ import {
   packWindowsServerAsar,
   preflightWindowsDesktopBuild,
   renderMacPasskeyEntitlements,
+  resolveMacFileExclusions,
   resolveMacWebAuthnEntitlements,
   resolveMacPasskeySigningConfiguration,
   resolveMergedStageDependencies,
@@ -46,8 +48,10 @@ import {
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
   LinuxBrowserSecretHostError,
+  LinuxPackagedAppMissingError,
   MacPackagedAppMissingError,
   stageBrowserSecret,
+  validateLinuxPackagedPayload,
   validateMacPackagedPayload,
   validateWindowsPackagedPayload,
   verifyPackagedBundleIsSelfContained,
@@ -214,8 +218,9 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   } as const;
 });
 
-const makeMacPayloadFixture = Effect.fn("test.makeMacPayloadFixture")(function* (input: {
+const makePackagedAppFixture = Effect.fn("test.makePackagedAppFixture")(function* (input: {
   readonly serverEntrySource?: string;
+  readonly resourcesPath?: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -226,7 +231,10 @@ const makeMacPayloadFixture = Effect.fn("test.makeMacPayloadFixture")(function* 
   yield* fs.writeFileString(serverEntryPath, input.serverEntrySource ?? "console.log('server');\n");
 
   const stageDistDir = path.join(tempDir, "dist");
-  const resourcesDir = path.join(stageDistDir, "mac-arm64/T3 Code.app/Contents/Resources");
+  const resourcesDir = path.join(
+    stageDistDir,
+    input.resourcesPath ?? "mac-arm64/T3 Code.app/Contents/Resources",
+  );
   yield* fs.makeDirectory(resourcesDir, { recursive: true });
   yield* Effect.promise(() =>
     createPackageWithOptions(sourceDir, path.join(resourcesDir, "app.asar"), {}),
@@ -546,6 +554,71 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("names the Electron window class in the Linux desktop entry", () =>
+    Effect.gen(function* () {
+      const linux = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.nestedPropertyVal(linux, "linux.desktop.entry.StartupWMClass", "com.t3tools.T3Code");
+    }),
+  );
+
+  it.effect("names updatable AppImages without a version and apart per channel", () =>
+    Effect.gen(function* () {
+      const appImageName = (version: string) =>
+        createBuildConfig("linux", "AppImage", version, false, false, undefined, undefined).pipe(
+          Effect.map((config) => (config.appImage as { artifactName: string }).artifactName),
+        );
+
+      const stable = yield* appImageName("0.0.37");
+      const nightly = yield* appImageName("0.0.38-nightly.20261026.3740");
+
+      assert.notInclude(stable, "${version}");
+      assert.notInclude(nightly, "${version}");
+      assert.notEqual(stable, nightly);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("declares Calendar access for hosted commands in macOS builds", () =>
+    Effect.gen(function* () {
+      for (const version of ["0.1.0", "0.1.1-nightly.20261019.1"]) {
+        for (const signed of [false, true]) {
+          const config = yield* createBuildConfig(
+            "mac",
+            "dmg",
+            version,
+            signed,
+            false,
+            undefined,
+            undefined,
+          );
+          const mac = config.mac as { extendInfo: Record<string, unknown> };
+          for (const key of [
+            "NSCalendarsUsageDescription",
+            "NSCalendarsFullAccessUsageDescription",
+            "NSCalendarsWriteOnlyAccessUsageDescription",
+          ]) {
+            assert.isString(mac.extendInfo[key], `${version}, signed=${signed}: ${key}`);
+            assert.isNotEmpty(mac.extendInfo[key]);
+          }
+        }
+      }
+    }),
+  );
+
   // pnpm writes "set this to true or false" placeholders into allowBuilds when a
   // tarball changes. pnpm ignores them, but the release build decode rejects them.
   it.effect("decodes the repo allowBuilds and every file: tarball it names exists", () =>
@@ -663,6 +736,30 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }),
     ),
   );
+
+  it("drops the other architecture's Darwin prebuilds from single-architecture Mac builds", () => {
+    const excludes = (arch: "arm64" | "x64" | "universal", file: string) =>
+      resolveMacFileExclusions(arch).some((glob) => NodePath.matchesGlob(file, glob.slice(1)));
+    const x64 = [
+      "node_modules/node-pty/prebuilds/darwin-x64/pty.node",
+      "node_modules/objc-js/prebuilds/darwin-x64/node.napi.node",
+    ];
+    const arm64 = [
+      "node_modules/node-pty/prebuilds/darwin-arm64/pty.node",
+      "node_modules/objc-js/prebuilds/darwin-arm64/node.napi.armv8.node",
+    ];
+
+    for (const file of x64) {
+      assert.isTrue(excludes("arm64", file), file);
+      assert.isFalse(excludes("x64", file), file);
+      assert.isFalse(excludes("universal", file), file);
+    }
+    for (const file of arm64) {
+      assert.isTrue(excludes("x64", file), file);
+      assert.isFalse(excludes("arm64", file), file);
+      assert.isFalse(excludes("universal", file), file);
+    }
+  });
 
   it.effect("unpacks target Windows natives while excluding the other architecture", () =>
     Effect.scoped(
@@ -1312,7 +1409,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it.effect("rejects a macOS app whose packaged server bundle cannot resolve", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fixture = yield* makeMacPayloadFixture({
+        const fixture = yield* makePackagedAppFixture({
           serverEntrySource: 'import "t3code-deliberately-missing-package";\n',
         });
         const error = yield* validateMacPackagedPayload({
@@ -1328,10 +1425,61 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it.effect("accepts a macOS app whose packaged server bundle resolves", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fixture = yield* makeMacPayloadFixture({});
+        const fixture = yield* makePackagedAppFixture({});
         yield* validateMacPackagedPayload({ stageDistDir: fixture.stageDistDir });
       }),
     ),
+  );
+
+  it.effect("never runs an untrusted macOS bundle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const marker = path.join(yield* fs.makeTempDirectoryScoped(), "ran");
+        const fixture = yield* makePackagedAppFixture({
+          serverEntrySource: `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "");\n`,
+        });
+        yield* validateMacPackagedPayload({ stageDistDir: fixture.stageDistDir });
+        assert.isFalse(yield* fs.exists(marker));
+      }),
+    ).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { T3CODE_DESKTOP_UNTRUSTED_BUNDLE: "true" } }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("packages the macOS preview's PR bundle as untrusted", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workflow = yield* fs.readFileString(
+        yield* path.fromFileUrl(
+          new URL("../.github/workflows/desktop-macos-preview-publish.yml", import.meta.url),
+        ),
+      );
+      const { jobs } = yield* Schema.decodeEffect(
+        fromYaml(
+          Schema.Struct({
+            jobs: Schema.Record(
+              Schema.String,
+              Schema.Struct({
+                uses: Schema.optional(Schema.String),
+                with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+              }),
+            ),
+          }),
+        ),
+      )(workflow);
+      const packaging = Object.values(jobs).filter(
+        (job) => job.uses === "./.github/workflows/release-desktop.yml",
+      );
+      assert.isNotEmpty(packaging);
+      for (const job of packaging) assert.strictEqual(job.with?.untrusted_bundle, true);
+    }),
   );
 
   it.effect("rejects a macOS stage without a packaged app", () =>
@@ -1357,6 +1505,29 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const error = yield* validateMacPackagedPayload({ stageDistDir }).pipe(Effect.flip);
 
         assert.instanceOf(error, BundleNotSelfContainedError);
+      }),
+    ),
+  );
+
+  it.effect("rejects a Linux app whose packaged server bundle cannot resolve", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const fixture = yield* makePackagedAppFixture({
+          resourcesPath: "linux-arm64-unpacked/resources",
+          serverEntrySource: 'import "t3code-deliberately-missing-package";\n',
+        });
+        const error = yield* validateLinuxPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+        }).pipe(Effect.flip);
+        assert.instanceOf(error, BundleNotSelfContainedError);
+        assert.include(error.output, "t3code-deliberately-missing-package");
+
+        const emptyStage = yield* fs.makeTempDirectoryScoped({ prefix: "t3-linux-payload-test-" });
+        const missing = yield* validateLinuxPackagedPayload({ stageDistDir: emptyStage }).pipe(
+          Effect.flip,
+        );
+        assert.instanceOf(missing, LinuxPackagedAppMissingError);
       }),
     ),
   );

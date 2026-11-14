@@ -4,11 +4,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { FileSystem } from "effect/FileSystem";
 import { envKeys, logLoadedKeys } from "./Log.ts";
-import {
-  resolveSecretsOption,
-  type SecretsLayer,
-  type SecretsOption,
-} from "./Provider.ts";
+import { resolveSecretsOption, type SecretsLayer, type SecretsOption } from "./Provider.ts";
 
 export interface DotEnvOptions {
   /**
@@ -25,9 +21,9 @@ export interface DotEnvOptions {
 }
 
 /** A `secrets` entry that loads dotenv files. */
-export class DotEnvProvider extends Data.TaggedClass(
-  "alchemy/SecretProvider::DotEnv",
-)<{ readonly layer: SecretsLayer }> {}
+export class DotEnvProvider extends Data.TaggedClass("alchemy/SecretProvider::DotEnv")<{
+  readonly layer: SecretsLayer;
+}> {}
 
 /**
  * Add dotenv files to Effect's ConfigProvider without touching `process.env`.
@@ -77,10 +73,7 @@ export const DotEnv = (options: SecretsOption<DotEnvOptions> = {}) =>
           );
           if (file !== undefined) loaded = ConfigProvider.orElse(file, loaded);
         }
-        yield* logLoadedKeys(
-          `dotenv (${paths.join(", ") || "no files"})`,
-          yield* envKeys(loaded),
-        );
+        yield* logLoadedKeys(`dotenv (${paths.join(", ") || "no files"})`, yield* envKeys(loaded));
         return loaded;
       }),
       { asPrimary: true },

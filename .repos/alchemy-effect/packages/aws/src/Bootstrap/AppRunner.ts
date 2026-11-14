@@ -1,0 +1,47 @@
+/**
+ * Process bootstrap for `AWS.AppRunner.Service` containers. The generated
+ * entry imports this module and the user's `main`, nothing else — see
+ * `alchemy/Runtime/Bootstrap` for why.
+ */
+import * as Credentials from "@distilled.cloud/aws/Credentials";
+import * as Region from "@distilled.cloud/aws/Region";
+import { BunServices } from "@effect/platform-bun";
+import { BunHttpServer } from "alchemy/Http";
+import {
+  entrypointLayer,
+  resolveProgram,
+  runProcess,
+  stackFromEnv,
+} from "alchemy/Runtime/Bootstrap";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+
+/** Serve the bundled program with a Bun HTTP server on the injected `PORT`. */
+export const bootstrap = (entrypoint: unknown): Promise<void> => {
+  const platform = Layer.mergeAll(
+    BunServices.layer,
+    FetchHttpClient.layer,
+    Logger.layer([Logger.consolePretty()]),
+  );
+
+  const program = resolveProgram("program").pipe(
+    Effect.provide(
+      entrypointLayer(entrypoint).pipe(
+        Layer.provideMerge(stackFromEnv),
+        // The role's credentials come from the container credentials endpoint,
+        // not `AWS_ACCESS_KEY_ID`.
+        Layer.provideMerge(Credentials.fromContainerMetadata()),
+        Layer.provideMerge(Region.fromEnv()),
+        Layer.provideMerge(BunHttpServer()),
+        Layer.provideMerge(platform),
+        Layer.provideMerge(Layer.succeed(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv())),
+      ),
+    ),
+    Effect.scoped,
+  );
+
+  return runProcess("App Runner service", program);
+};
