@@ -1839,6 +1839,154 @@ it.effect.each(["Stop", "Force stop"] as const)(
     }).pipe(Effect.provide(layerTest)),
 );
 
+// A finished delegated child whose native subagent the provider never reported ending,
+// with no open turn item, and a nested native subagent on that agent's own thread.
+it.effect(
+  "Stop settles a delegated row whose finished child still records a running native subagent",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const parentThreadId = ThreadId.make("thread:held-row");
+      yield* createWatchingThread(parentThreadId, 30);
+      yield* send(parentThreadId, "parent", "start_immediately");
+      const childThreadId = yield* delegate(parentThreadId, "held child");
+      const child = yield* orchestrator.getThreadProjection(childThreadId);
+      const childRun = child.runs[0]!;
+      const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
+      const now = yield* DateTime.now;
+      const nativeThreadId = ThreadId.make("thread:held-row-native");
+      const nestedThreadId = ThreadId.make("thread:held-row-nested");
+      yield* createWatchingThread(nativeThreadId, 31);
+      yield* createWatchingThread(nestedThreadId, 32);
+      const nativeProviderThreadId = ProviderThreadId.make("provider-thread:held-row-native");
+      const runningRoot = (threadId: ThreadId, id: NodeId) => ({
+        ...child.nodes.find((node) => node.id === childRun.rootNodeId)!,
+        id,
+        rootNodeId: id,
+        threadId,
+        runId: null,
+        parentNodeId: null,
+        status: "running" as const,
+        countsForRun: false,
+        completedAt: null,
+      });
+      const nativeRoot = runningRoot(nativeThreadId, NodeId.make("node:held-row-native-root"));
+      const nestedRoot = runningRoot(nestedThreadId, NodeId.make("node:held-row-nested-root"));
+      for (const root of [nativeRoot, nestedRoot]) {
+        yield* projections.apply({
+          id: EventId.make(`event:held-row:${root.id}`),
+          type: "node.updated",
+          threadId: root.threadId,
+          nodeId: root.id,
+          occurredAt: now,
+          payload: root,
+        });
+      }
+      yield* projections.apply({
+        id: EventId.make("event:held-row:native-turn"),
+        type: "provider-turn.updated",
+        threadId: nativeThreadId,
+        nodeId: nativeRoot.id,
+        occurredAt: now,
+        payload: {
+          id: ProviderTurnId.make("turn:held-row-native"),
+          providerThreadId: nativeProviderThreadId,
+          nodeId: nativeRoot.id,
+          runAttemptId: null,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+      const native = {
+        ...task,
+        id: NodeId.make("node:held-row-native"),
+        threadId: childThreadId,
+        runId: childRun.id,
+        parentNodeId: childRun.rootNodeId!,
+        origin: "provider_native" as const,
+        providerThreadId: nativeProviderThreadId,
+        childThreadId: nativeThreadId,
+        status: "running" as const,
+        completionDelivery: undefined,
+      };
+      yield* projections.apply({
+        id: EventId.make("event:held-row:native"),
+        type: "subagent.updated",
+        threadId: childThreadId,
+        runId: childRun.id,
+        occurredAt: now,
+        payload: native,
+      });
+      yield* projections.apply({
+        id: EventId.make("event:held-row:nested"),
+        type: "subagent.updated",
+        threadId: nativeThreadId,
+        occurredAt: now,
+        payload: {
+          ...native,
+          id: NodeId.make("node:held-row-nested"),
+          threadId: nativeThreadId,
+          runId: null,
+          parentNodeId: nativeRoot.id,
+          childThreadId: nestedThreadId,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make("event:held-row:child-completed"),
+        type: "run.updated",
+        threadId: childThreadId,
+        runId: childRun.id,
+        occurredAt: now,
+        payload: { ...childRun, status: "completed", startedAt: now, completedAt: now },
+      });
+      yield* orchestrator.recoverDelegatedTasks;
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]?.status,
+        "running",
+      );
+      const statuses = Effect.gen(function* () {
+        const nativeAfter = yield* orchestrator.getThreadProjection(nativeThreadId);
+        const nestedAfter = yield* orchestrator.getThreadProjection(nestedThreadId);
+        return {
+          row: (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]?.status,
+          native: (yield* orchestrator.getThreadProjection(childThreadId)).subagents.find(
+            (subagent) => subagent.id === native.id,
+          )?.status,
+          nativeRoot: nativeAfter.nodes.find((node) => node.id === nativeRoot.id)?.status,
+          nested: nativeAfter.subagents[0]?.status,
+          nestedRoot: nestedAfter.nodes.find((node) => node.id === nestedRoot.id)?.status,
+        };
+      });
+
+      // The row's Stop: the parent's task, then the child thread.
+      yield* orchestrator.dispatch({
+        type: "subagent.stop",
+        commandId: CommandId.make("held-row:stop-task"),
+        threadId: parentThreadId,
+        runId: task.runId!,
+        subagentId: task.id,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("held-row:stop-child"),
+        threadId: childThreadId,
+      });
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      yield* worker.drain();
+      assert.deepEqual(yield* statuses, {
+        row: "completed",
+        native: "interrupted",
+        nativeRoot: "interrupted",
+        nested: "interrupted",
+        nestedRoot: "interrupted",
+      });
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each([
   { followUp: "started its turn", startedBeforeRelease: true },
   { followUp: "was promoted", startedBeforeRelease: false },
@@ -1847,252 +1995,249 @@ it.effect.each([
 ])(
   "Force stop keeps only the session of a queued follow-up that $followUp",
   ({ startedBeforeRelease, switchesInstance = false, freshContext = false }) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const cwd = yield* checkpointWorkspace("thread-stop-force-stop-follow-up");
-        const driver = adapter.driver;
-        const otherInstanceId = ProviderInstanceId.make("codex-other");
-        const eventQueues = new Map<
-          ProviderSessionId,
-          Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>
-        >();
-        const started: Array<ProviderAdapter.ProviderAdapterV2TurnInput> = [];
-        const interrupted: Array<ProviderAdapter.ProviderAdapterV2InterruptInput> = [];
-        let opened = 0;
-        // Fresh context on a one-thread-per-session provider puts the follow-up on its own session.
-        // The session itself reports shared threads so fresh-context cleanup leaves the stopped
-        // run's session to Force stop, as pending background work would.
-        const adapterCapabilities = freshContext
-          ? {
-              ...CodexProviderCapabilitiesV2,
-              sessions: {
-                ...CodexProviderCapabilitiesV2.sessions,
-                supportsMultipleProviderThreadsPerSession: false,
-              },
-            }
-          : CodexProviderCapabilitiesV2;
-        const liveAdapter = (
-          instanceId: ProviderInstanceId,
-        ): ProviderAdapter.ProviderAdapterV2["Service"] => ({
-          ...adapter,
-          instanceId,
-          getCapabilities: () => Effect.succeed(adapterCapabilities),
-          openSession: (input) =>
-            Effect.gen(function* () {
-              opened += 1;
-              const now = yield* DateTime.now;
-              const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-              eventQueues.set(input.providerSessionId, events);
-              return {
-                instanceId,
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("thread-stop-force-stop-follow-up");
+      const driver = adapter.driver;
+      const otherInstanceId = ProviderInstanceId.make("codex-other");
+      const eventQueues = new Map<
+        ProviderSessionId,
+        Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>
+      >();
+      const started: Array<ProviderAdapter.ProviderAdapterV2TurnInput> = [];
+      const interrupted: Array<ProviderAdapter.ProviderAdapterV2InterruptInput> = [];
+      let opened = 0;
+      // Fresh context on a one-thread-per-session provider puts the follow-up on its own session.
+      // The session itself reports shared threads so fresh-context cleanup leaves the stopped
+      // run's session to Force stop, as pending background work would.
+      const adapterCapabilities = freshContext
+        ? {
+            ...CodexProviderCapabilitiesV2,
+            sessions: {
+              ...CodexProviderCapabilitiesV2.sessions,
+              supportsMultipleProviderThreadsPerSession: false,
+            },
+          }
+        : CodexProviderCapabilitiesV2;
+      const liveAdapter = (
+        instanceId: ProviderInstanceId,
+      ): ProviderAdapter.ProviderAdapterV2["Service"] => ({
+        ...adapter,
+        instanceId,
+        getCapabilities: () => Effect.succeed(adapterCapabilities),
+        openSession: (input) =>
+          Effect.gen(function* () {
+            opened += 1;
+            const now = yield* DateTime.now;
+            const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+            eventQueues.set(input.providerSessionId, events);
+            return {
+              instanceId,
+              driver,
+              providerSessionId: input.providerSessionId,
+              providerSession: {
+                id: input.providerSessionId,
                 driver,
-                providerSessionId: input.providerSessionId,
-                providerSession: {
-                  id: input.providerSessionId,
+                providerInstanceId: instanceId,
+                status: "ready",
+                cwd,
+                model: modelSelection.model,
+                capabilities: CodexProviderCapabilitiesV2,
+                createdAt: now,
+                updatedAt: now,
+                lastError: null,
+              },
+              events: Stream.fromQueue(events),
+              ensureThread: ({ threadId }) =>
+                Effect.succeed({
+                  id: ProviderThreadId.make(
+                    `provider-thread:${input.providerSessionId}:${threadId}`,
+                  ),
                   driver,
                   providerInstanceId: instanceId,
-                  status: "ready",
-                  cwd,
-                  model: modelSelection.model,
-                  capabilities: CodexProviderCapabilitiesV2,
+                  providerSessionId: input.providerSessionId,
+                  appThreadId: threadId,
+                  ownerNodeId: null,
+                  nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" },
+                  nativeConversationHeadRef: null,
+                  status: "idle",
+                  firstRunOrdinal: null,
+                  lastRunOrdinal: null,
+                  handoffIds: [],
+                  forkedFrom: null,
                   createdAt: now,
                   updatedAt: now,
-                  lastError: null,
-                },
-                events: Stream.fromQueue(events),
-                ensureThread: ({ threadId }) =>
-                  Effect.succeed({
-                    id: ProviderThreadId.make(
-                      `provider-thread:${input.providerSessionId}:${threadId}`,
-                    ),
+                }),
+              resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+              startTurn: (turn) =>
+                Effect.gen(function* () {
+                  started.push(turn);
+                  yield* Queue.offer(events, {
+                    type: "provider_turn.updated",
                     driver,
-                    providerInstanceId: instanceId,
-                    providerSessionId: input.providerSessionId,
-                    appThreadId: threadId,
-                    ownerNodeId: null,
-                    nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" },
-                    nativeConversationHeadRef: null,
-                    status: "idle",
-                    firstRunOrdinal: null,
-                    lastRunOrdinal: null,
-                    handoffIds: [],
-                    forkedFrom: null,
-                    createdAt: now,
-                    updatedAt: now,
-                  }),
-                resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
-                startTurn: (turn) =>
-                  Effect.gen(function* () {
-                    started.push(turn);
-                    yield* Queue.offer(events, {
-                      type: "provider_turn.updated",
-                      driver,
-                      providerTurn: {
-                        id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
-                        providerThreadId: turn.providerThread.id,
-                        nodeId: turn.rootNodeId,
-                        runAttemptId: turn.attemptId,
-                        nativeTurnRef: {
-                          driver,
-                          nativeId: `native:${turn.attemptId}`,
-                          strength: "strong",
-                        },
-                        ordinal: turn.providerTurnOrdinal,
-                        status: "running",
-                        startedAt: now,
-                        completedAt: null,
+                    providerTurn: {
+                      id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
+                      providerThreadId: turn.providerThread.id,
+                      nodeId: turn.rootNodeId,
+                      runAttemptId: turn.attemptId,
+                      nativeTurnRef: {
+                        driver,
+                        nativeId: `native:${turn.attemptId}`,
+                        strength: "strong",
                       },
-                    });
-                  }),
-                steerTurn: () => Effect.die("unused"),
-                interruptTurn: (interrupt) => Effect.sync(() => interrupted.push(interrupt)),
-                respondToRuntimeRequest: () => Effect.die("unused"),
-                readThreadSnapshot: () => Effect.die("unused"),
-                rollbackThread: () => Effect.die("unused"),
-                forkThread: () => Effect.die("unused"),
-              };
-            }),
-        });
-        // The settlement promotes the follow-up; optionally its turn starts before Force stop releases.
-        const layerSessionsStartingFollowUpFirst = Layer.effect(
-          ProviderSessionManager.ProviderSessionManagerV2,
-          Effect.gen(function* () {
-            const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
-            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-            return ProviderSessionManager.ProviderSessionManagerV2.of({
-              ...sessions,
-              releaseUnlessBusy: (input) =>
-                (startedBeforeRelease ? worker.drain().pipe(Effect.orDie) : Effect.void).pipe(
-                  Effect.andThen(sessions.releaseUnlessBusy(input)),
-                ),
-            });
+                      ordinal: turn.providerTurnOrdinal,
+                      status: "running",
+                      startedAt: now,
+                      completedAt: null,
+                    },
+                  });
+                }),
+              steerTurn: () => Effect.die("unused"),
+              interruptTurn: (interrupt) => Effect.sync(() => interrupted.push(interrupt)),
+              respondToRuntimeRequest: () => Effect.die("unused"),
+              readThreadSnapshot: () => Effect.die("unused"),
+              rollbackThread: () => Effect.die("unused"),
+              forkThread: () => Effect.die("unused"),
+            };
           }),
-        );
-        const layerLive = ThreadManagementService.layer.pipe(
-          Layer.provide(layerSessionsStartingFollowUpFirst),
-          Layer.provideMerge(
-            Layer.mergeAll(
-              layerDatabase,
-              ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
-              EventStore.layer.pipe(Layer.provide(layerDatabase)),
-              EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
-              ProviderReplayHarness.layerWithRegistry(
-                { name: "thread-stop-force-stop-follow-up" },
-                ProviderAdapterRegistry.layerFromAdapters([
-                  liveAdapter(instanceId),
-                  liveAdapter(otherInstanceId),
-                ]),
-                { databaseLayer: layerDatabase, runEffectWorker: false },
+      });
+      // The settlement promotes the follow-up; optionally its turn starts before Force stop releases.
+      const layerSessionsStartingFollowUpFirst = Layer.effect(
+        ProviderSessionManager.ProviderSessionManagerV2,
+        Effect.gen(function* () {
+          const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          return ProviderSessionManager.ProviderSessionManagerV2.of({
+            ...sessions,
+            releaseUnlessBusy: (input) =>
+              (startedBeforeRelease ? worker.drain().pipe(Effect.orDie) : Effect.void).pipe(
+                Effect.andThen(sessions.releaseUnlessBusy(input)),
               ),
+          });
+        }),
+      );
+      const layerLive = ThreadManagementService.layer.pipe(
+        Layer.provide(layerSessionsStartingFollowUpFirst),
+        Layer.provideMerge(
+          Layer.mergeAll(
+            layerDatabase,
+            ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+            EventStore.layer.pipe(Layer.provide(layerDatabase)),
+            EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
+            ProviderReplayHarness.layerWithRegistry(
+              { name: "thread-stop-force-stop-follow-up" },
+              ProviderAdapterRegistry.layerFromAdapters([
+                liveAdapter(instanceId),
+                liveAdapter(otherInstanceId),
+              ]),
+              { databaseLayer: layerDatabase, runEffectWorker: false },
             ),
           ),
-          Layer.provideMerge(ServerSettings.layerTest()),
-          Layer.provideMerge(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+        ),
+        Layer.provideMerge(ServerSettings.layerTest()),
+        Layer.provideMerge(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+      );
+
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        const threadId = ThreadId.make("thread:force-stop-follow-up");
+        const runningTurn = orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create:force-stop-follow-up"),
+          threadId,
+          projectId: ProjectId.make("project:thread-stop"),
+          title: "Force stop follow-up",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const firstRunning = yield* runningTurn;
+        yield* send(threadId, "first", "start_immediately");
+        yield* worker.drain();
+        yield* Fiber.join(firstRunning);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("send:force-stop-follow-up"),
+          threadId,
+          messageId: MessageId.make("message:force-stop-follow-up"),
+          text: "follow-up",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          ...(switchesInstance
+            ? { modelSelection: { ...modelSelection, instanceId: otherInstanceId } }
+            : {}),
+          ...(freshContext ? { freshContext } : {}),
+          createdBy: "user",
+          creationSource: "web",
+        });
+
+        const result = yield* threads.forceStopThread({ threadId });
+        yield* worker.drain();
+
+        assert.deepEqual(
+          started.map((turn) => turn.runOrdinal),
+          [1, 2],
+          "the queued follow-up did not start its turn",
+        );
+        assert.equal(
+          opened,
+          switchesInstance || freshContext ? 2 : 1,
+          "Force stop tore down the session the follow-up was promoted onto",
+        );
+        const [stopped, followUp] = [started[0]!, started[1]!];
+        const providerSessionId = followUp.providerThread.providerSessionId!;
+        assert.equal(
+          yield* sessions.isLive(stopped.providerThread.providerSessionId!),
+          !switchesInstance && !freshContext,
+          "Force stop kept the stopped run's session for a follow-up on another session",
+        );
+        assert.isFalse(
+          interrupted.some((interrupt) =>
+            String(interrupt.providerTurnId).includes(followUp.attemptId),
+          ),
+          "Force stop of the first run interrupted the follow-up's turn",
+        );
+        assert.isTrue(
+          yield* sessions.isLive(providerSessionId),
+          "Force stop of the first run released the session the follow-up's turn is running on",
+        );
+        assert.deepEqual(
+          result,
+          { outcome: "released", sharedWithThreadIds: [] },
+          "Force stop detached the thread the follow-up runs on as if its session were shared",
         );
 
-        yield* Effect.gen(function* () {
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
-          const threads = yield* ThreadManagementService.ThreadManagementService;
-          const threadId = ThreadId.make("thread:force-stop-follow-up");
-          const runningTurn = orchestrator.streamDomainEvents.pipe(
-            Stream.filter(
-              (event) =>
-                event.type === "provider-turn.updated" && event.payload.status === "running",
-            ),
-            Stream.take(1),
-            Stream.runDrain,
-            Effect.forkScoped,
-          );
-          yield* orchestrator.dispatch({
-            type: "thread.create",
-            commandId: CommandId.make("create:force-stop-follow-up"),
-            threadId,
-            projectId: ProjectId.make("project:thread-stop"),
-            title: "Force stop follow-up",
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: cwd,
-            createdBy: "user",
-            creationSource: "web",
-          });
-          const firstRunning = yield* runningTurn;
-          yield* send(threadId, "first", "start_immediately");
-          yield* worker.drain();
-          yield* Fiber.join(firstRunning);
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            commandId: CommandId.make("send:force-stop-follow-up"),
-            threadId,
-            messageId: MessageId.make("message:force-stop-follow-up"),
-            text: "follow-up",
-            attachments: [],
-            dispatchMode: { type: "queue_after_active" },
-            ...(switchesInstance
-              ? { modelSelection: { ...modelSelection, instanceId: otherInstanceId } }
-              : {}),
-            ...(freshContext ? { freshContext } : {}),
-            createdBy: "user",
-            creationSource: "web",
-          });
-
-          const result = yield* threads.forceStopThread({ threadId });
-          yield* worker.drain();
-
-          assert.deepEqual(
-            started.map((turn) => turn.runOrdinal),
-            [1, 2],
-            "the queued follow-up did not start its turn",
-          );
-          assert.equal(
-            opened,
-            switchesInstance || freshContext ? 2 : 1,
-            "Force stop tore down the session the follow-up was promoted onto",
-          );
-          const [stopped, followUp] = [started[0]!, started[1]!];
-          const providerSessionId = followUp.providerThread.providerSessionId!;
-          assert.equal(
-            yield* sessions.isLive(stopped.providerThread.providerSessionId!),
-            !switchesInstance && !freshContext,
-            "Force stop kept the stopped run's session for a follow-up on another session",
-          );
-          assert.isFalse(
-            interrupted.some((interrupt) =>
-              String(interrupt.providerTurnId).includes(followUp.attemptId),
-            ),
-            "Force stop of the first run interrupted the follow-up's turn",
-          );
-          assert.isTrue(
-            yield* sessions.isLive(providerSessionId),
-            "Force stop of the first run released the session the follow-up's turn is running on",
-          );
-          assert.deepEqual(
-            result,
-            { outcome: "released", sharedWithThreadIds: [] },
-            "Force stop detached the thread the follow-up runs on as if its session were shared",
-          );
-
-          // The first run's provider never confirms the stop; the follow-up's turn ends normally.
-          yield* Queue.offer(eventQueues.get(providerSessionId)!, {
-            type: "turn.terminal",
-            driver,
-            providerThreadId: followUp.providerThread.id,
-            providerTurnId: ProviderTurnId.make(`provider-turn:${followUp.attemptId}`),
-            runOrdinal: followUp.runOrdinal,
-            status: "completed",
-            failure: null,
-            threadDisposition: "reusable",
-          });
-          yield* worker.drain();
-          yield* TestClock.adjust("31 minutes");
-          assert.isFalse(
-            yield* sessions.isLive(providerSessionId),
-            "the stopped run's unconfirmed turn kept the session from going idle",
-          );
-        }).pipe(Effect.provide(layerLive));
-      }),
-    ),
+        // The first run's provider never confirms the stop; the follow-up's turn ends normally.
+        yield* Queue.offer(eventQueues.get(providerSessionId)!, {
+          type: "turn.terminal",
+          driver,
+          providerThreadId: followUp.providerThread.id,
+          providerTurnId: ProviderTurnId.make(`provider-turn:${followUp.attemptId}`),
+          runOrdinal: followUp.runOrdinal,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* worker.drain();
+        yield* TestClock.adjust("31 minutes");
+        assert.isFalse(
+          yield* sessions.isLive(providerSessionId),
+          "the stopped run's unconfirmed turn kept the session from going idle",
+        );
+      }).pipe(Effect.provide(layerLive));
+    }),
 );

@@ -755,7 +755,7 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
       })
       .pipe(Effect.withTracer(command.tracer));
     for (const [table, seeks] of [
-      ["turn_items", ["USING INDEX orchestration_v2_projection_turn_items_conversation_idx"]],
+      ["turn_items", ["turn_items_thread_type_idx (thread_id=? AND type=?)"]],
       ["nodes", ["nodes_settled_leaf_idx (thread_id=? AND <expr>=?)"]],
       ["subagents", ["USING COVERING INDEX orchestration_v2_projection_subagents_settled_idx"]],
       [
@@ -1292,9 +1292,9 @@ it.effect("record reads filter notification sources without dropping matching me
       `EXPLAIN QUERY PLAN ${ordinalLookup}`,
       [threadId, "[]"],
     )).map((row) => row.detail);
-    // User-only reads must stay on the partial index instead of scanning every turn item.
+    // User-only reads must stay on a type-bounded index instead of scanning every turn item.
     assert.isTrue(
-      plan.some((detail) => detail.includes("turn_items_user_message_idx")),
+      plan.some((detail) => /turn_items_(user_message|thread_type)_idx/.test(detail)),
       plan.join("\n"),
     );
     // With every user item loaded, the items give the order and the lookup does not run.
@@ -2807,11 +2807,25 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
     assert.deepEqual([...(yield* family(id("missing")))], []);
 
     // Includes another root's idle child on the same path, which a shell may leave out.
-    const onWorktree = yield* store.getShellSnapshot({ location: "active", worktreePath });
+    const { statements, tracer } = traceSqlStatements();
+    const onWorktree = yield* store
+      .getShellSnapshot({ location: "active", worktreePath })
+      .pipe(Effect.withTracer(tracer));
     assert.sameMembers(
       onWorktree.threads.map((thread) => thread.id),
       [id("root"), id("child"), id("other-child")],
     );
+    // A path names a few threads; scanning every thread parses every payload.
+    const sql = yield* SqlClient.SqlClient;
+    const threadQuery = statements.find((statement) =>
+      statement.includes("AS latest_run_stop_requested"),
+    );
+    assert.isDefined(threadQuery);
+    const threadPlan = (yield* sql.unsafe<{ readonly detail: string }>(
+      `EXPLAIN QUERY PLAN ${threadQuery}`,
+      [],
+    )).map((row) => row.detail);
+    assert.notInclude(threadPlan, "SCAN t", threadPlan.join("\n"));
     // A fork keeps its deleted source's root, so the deleted root still names the live tree.
     yield* store.apply({
       id: EventId.make("event:family:root-deleted"),
@@ -4319,9 +4333,16 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         workCursor = page.nextCursor;
       }
       assert.strictEqual(workIds.size, 999);
-      for (const toolName of ["t3-code.delegate_task", "mcp__t3_code__delegate_task"]) {
+      for (const [toolName, output] of [
+        ["t3-code.delegate_task", null],
+        ["mcp__t3_code__delegate_task", null],
+        ["mcp__t3-code__send_to_user", null],
+        // OpenCode Code Mode reports a nested send_to_user call as one `execute` item.
+        ["execute", JSON.stringify({ sentMessage: "Draft" })],
+      ] as const) {
         yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool',
-          payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', ${toolName})
+          payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', ${toolName},
+            '$.output', ${output})
           WHERE thread_id = ${threadId} AND ordinal = 2`;
         const window = yield* projectionStore.getThreadSnapshotWindow(threadId, {
           rowLimit: sqlPageLimit,
@@ -6629,6 +6650,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.isNotEmpty(countQueries);
       for (const countQuery of countQueries) {
         for (const detail of yield* planOf(countQuery)) {
+          // A thread's counts read only each run's status, never its row and payload.
+          if (/^SEARCH (r|run) /.test(detail)) {
+            assert.include(detail, "COVERING INDEX", detail);
+          }
           if (detail.includes("orchestration_v2_projection_turn_items")) {
             // Only held input is read from the sparse index; transcript history stays unread.
             assert.include(
@@ -10537,6 +10562,26 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ["local", targetThreadId, "command_execution"],
         ],
       );
+
+      const sourceThread = (yield* projectionStore.getThreadProjection(sourceThreadId)).thread;
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:source-deleted"),
+        type: "thread.deleted",
+        threadId: sourceThreadId,
+        occurredAt: now,
+        payload: { ...sourceThread, deletedAt: now },
+      });
+      const afterSourceDeleted = yield* projectionStore.getShellSnapshot();
+      assert.isUndefined(afterSourceDeleted.threads.find((thread) => thread.id === sourceThreadId));
+      for (const forkId of [targetThreadId, nestedThreadId]) {
+        const expected = (yield* projectionStore.getThreadProjection(forkId)).visibleTurnItems
+          .length;
+        assert.equal((yield* projectionStore.getThreadShell(forkId))?.visibleItemCount, expected);
+        assert.equal(
+          afterSourceDeleted.threads.find((thread) => thread.id === forkId)?.visibleItemCount,
+          expected,
+        );
+      }
     }),
   );
 
