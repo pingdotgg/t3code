@@ -66,7 +66,7 @@ function parseGitLabAuth(input: SourceControlAuthProbeInput) {
       /Logged in to .* account\s+([^\s(]+)/iu,
       /account:\s*([^\s(]+)/iu,
     ]);
-  const host = authenticatedHost?.host ?? parseCliHost(output);
+  const host = authenticatedHost?.host.toLowerCase() ?? parseCliHost(output);
 
   if (account) {
     return providerAuth({ status: "authenticated", account, host });
@@ -94,7 +94,7 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
   const host = input.context.provider.name.toLowerCase();
   const output = combinedAuthOutput(input.auth);
   const authenticated = parseGitLabAuthStatusHosts(output).some(
-    (entry) => entry.account !== null && entry.host === host,
+    (entry) => entry.account !== null && entry.host.toLowerCase() === host,
   );
 
   if (!authenticated) {
