@@ -282,6 +282,21 @@ describe.each([
     expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
   });
 
+  it("abandons an automatic draft when an external activation starts", async () => {
+    testState.reset(draft);
+    let activationPending = false;
+    const pendingOpen = useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { replace: true, shouldContinue: () => !activationPending },
+    );
+
+    activationPending = true;
+    testState.completeProjectFileRead(null);
+    await expect(pendingOpen).resolves.toBeNull();
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+  });
+
   it("sets the prompt before the draft shows", async () => {
     testState.reset(draft);
     const pendingOpen = useNewThreadHandler()(

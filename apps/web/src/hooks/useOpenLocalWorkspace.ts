@@ -51,6 +51,7 @@ export function useOpenLocalWorkspace() {
           platform: primaryEnvironment.serverConfig.environment.platform.os,
         };
       },
+      waitForSnapshot: async () => shellHasSnapshot,
       findProject: (environmentId, workspaceRoot) =>
         findProjectByPath(
           readProjects().filter((project) => project.environmentId === environmentId),

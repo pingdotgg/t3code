@@ -82,7 +82,9 @@ import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./m
 import {
   getCliCommandState,
   installCliCommand,
+  installWslCliCommand,
   uninstallCliCommand,
+  uninstallWslCliCommand,
   addCliCommandToPath,
 } from "./methods/cliCommand.ts";
 
@@ -169,6 +171,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(getCliCommandState);
   yield* ipc.handle(installCliCommand);
   yield* ipc.handle(uninstallCliCommand);
+  yield* ipc.handle(installWslCliCommand);
+  yield* ipc.handle(uninstallWslCliCommand);
   yield* ipc.handle(addCliCommandToPath);
   for (const previewMethod of PreviewIpc.methods) {
     // Explicit types preserve the error/service union of these heterogeneous preview methods.

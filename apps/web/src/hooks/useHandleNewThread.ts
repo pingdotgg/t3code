@@ -102,6 +102,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       replace?: boolean;
       /** Composer text for the draft, set before it shows. A draft with user text keeps it. */
       prompt?: string;
+      shouldContinue?: () => boolean;
     },
   ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
     const projects = readProjects();
@@ -162,7 +163,9 @@ export function createNewThreadHandler(router: AnyRouter) {
         candidate.environmentId === projectRef.environmentId,
     );
     const abandonedSinceRequest = () =>
-      routeChangedSinceRequest() || (project !== undefined && readProject(projectRef) === null);
+      options?.shouldContinue?.() === false ||
+      routeChangedSinceRequest() ||
+      (project !== undefined && readProject(projectRef) === null);
     const projectSettings = resolveProjectSettings(
       targetServerSettings,
       project?.id ?? null,

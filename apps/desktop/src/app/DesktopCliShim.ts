@@ -11,6 +11,7 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 const { logInfo, logWarning } = makeComponentLogger("desktop-cli-shim");
 
 export const MARKER = "Written by T3 Code: runs the desktop app's bundled t3 CLI.";
+const WSL_MARKER = "Written by T3 Code: Windows desktop WSL launcher.";
 
 const SERVER_ENTRY = "apps/server/dist/bin.mjs";
 
@@ -25,6 +26,95 @@ export type CliShimTarget =
   | { readonly kind: "appimage"; readonly appImage: string; readonly executableName: string }
   | { readonly kind: "direct"; readonly executable: string; readonly entry: string }
   | { readonly kind: "windows"; readonly executable: string; readonly entry: string };
+
+// Encoding preserves cmd quoting across WSL and PowerShell argument parsing.
+const wslPowerShellCommand = (args: string) =>
+  Buffer.from(
+    `$ProgressPreference = 'SilentlyContinue'; Set-Location -LiteralPath $env:SystemRoot; & $env:ComSpec /d /s /c '""%T3CODE_WSL_LAUNCHER%" ${args}"'; exit $LASTEXITCODE`,
+    "utf16le",
+  ).toString("base64");
+
+export const renderWslCliShim = (windowsCliPath: string) =>
+  [
+    "#!/bin/sh",
+    "# Written by T3 Code: Windows desktop WSL launcher.",
+    `cli=${shellWord(windowsCliPath)}`,
+    'if [ "${1:-}" != app ]; then echo "Usage: t3 app [project-directory] [--base-dir directory]" >&2; exit 2; fi',
+    "shift",
+    "project=; base_dir=; help=; options=1",
+    'while [ "$#" -gt 0 ]; do',
+    '  case "$1" in',
+    "    --help|-h) help=1; shift ;;",
+    '    --base-dir) [ "$#" -ge 2 ] && [ -n "$2" ] || { echo "--base-dir requires a directory" >&2; exit 2; }; base_dir=$2; shift 2 ;;',
+    '    --base-dir=*) base_dir=${1#*=}; [ -n "$base_dir" ] || { echo "--base-dir requires a directory" >&2; exit 2; }; shift ;;',
+    "    --) options=; shift; break ;;",
+    '    -*) echo "Unknown option: $1" >&2; exit 2 ;;',
+    '    *) [ -z "$project" ] || { echo "Only one project directory is supported" >&2; exit 2; }; project=$1; shift ;;',
+    "  esac",
+    "done",
+    'if [ -z "$options" ] && [ "$#" -gt 0 ]; then [ -z "$project" ] && [ "$#" -eq 1 ] || { echo "Only one project directory is supported" >&2; exit 2; }; project=$1; fi',
+    // A Linux T3 home cannot identify the Windows desktop's control socket.
+    "unset T3CODE_HOME T3CODE_WSL_WORKSPACE_ROOT T3CODE_WSL_BASE_DIR",
+    'export T3CODE_WSL_DISTRO="${WSL_DISTRO_NAME:?Run this command inside WSL}"',
+    'if [ -z "$help" ]; then',
+    '  workspace_root=$(CDPATH= cd -- "${project:-.}" && pwd) || { echo "Project directory not found: ${project:-.}" >&2; exit 1; }',
+    '  export T3CODE_WSL_WORKSPACE_ROOT="$workspace_root"',
+    '  if [ -n "$base_dir" ]; then',
+    '    case "$base_dir" in',
+    '      [A-Za-z]:*|\\\\*) base_dir_wsl=$(wslpath -u "$base_dir") || exit 1 ;;',
+    '      "~"|"~/"*) base_dir_wsl=$HOME${base_dir#"~"} ;;',
+    "      *) base_dir_wsl=$base_dir ;;",
+    "    esac",
+    '    T3CODE_WSL_BASE_DIR=$(wslpath -w "$base_dir_wsl") || exit 1',
+    "    export T3CODE_WSL_BASE_DIR",
+    "  fi",
+    "fi",
+    'cli_wsl=$(wslpath -u "$cli") || exit 1',
+    'T3CODE_WSL_LAUNCHER=$(wslpath -w "$cli_wsl") || exit 1',
+    "export T3CODE_WSL_LAUNCHER",
+    'export WSLENV="${WSLENV:+$WSLENV:}T3CODE_WSL_DISTRO/w:T3CODE_WSL_WORKSPACE_ROOT/w:T3CODE_WSL_BASE_DIR/w:T3CODE_WSL_LAUNCHER/w"',
+    `if [ -n "$help" ]; then exec powershell.exe -NoProfile -NonInteractive -EncodedCommand ${wslPowerShellCommand("app --help")}; fi`,
+    `exec powershell.exe -NoProfile -NonInteractive -EncodedCommand ${wslPowerShellCommand("app")}`,
+    "",
+  ].join("\n");
+
+export const renderWslCliInstallScript = (input: {
+  readonly action: "state" | "install" | "uninstall";
+  readonly windowsCliPath: string;
+}) => `set -eu
+bin="$HOME/.local/bin"
+target="$bin/t3"
+marker="${WSL_MARKER}"
+report_state() {
+    if [ -f "$target" ] && grep -Fq "$marker" "$target"; then
+      printf "%s\\n%s\\n" "$target" "$WSL_DISTRO_NAME"
+    else
+      printf "NONE\\n"
+    fi
+}
+case ${shellWord(input.action)} in
+  state) report_state ;;
+  install)
+    mkdir -p "$bin"
+    existing=$(command -v t3 || :)
+    if [ -n "$existing" ] && [ "$existing" != "$target" ]; then
+      echo "A different t3 command is already on PATH at $existing." >&2
+      exit 73
+    fi
+    if [ -L "$target" ] || { [ -e "$target" ] && ! grep -Fq "$marker" "$target"; }; then
+      echo "A different t3 command already exists at $target." >&2
+      exit 73
+    fi
+    cat > "$target" <<'T3CODE_WSL_SHIM'
+${renderWslCliShim(input.windowsCliPath)}T3CODE_WSL_SHIM
+    chmod 755 "$target"
+    report_state
+    ;;
+  uninstall)
+    if [ -f "$target" ] && grep -Fq "$marker" "$target"; then rm "$target"; fi
+    ;;
+esac
+`;
 
 /** Embed this install's home and executable path so `sudo`, which clears the environment, uses the same install. */
 export const renderCliShim = (input: {

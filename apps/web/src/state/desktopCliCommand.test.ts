@@ -18,6 +18,11 @@ describe("desktopCliCommandStateAtom", () => {
       supported: true,
       installedPath: null,
       onPath: false,
+      wslSupported: false,
+      wslBackendEnabled: false,
+      wslInstalledPath: null,
+      wslInstalledDistro: null,
+      wslStatusUnavailable: false,
       launcherPath: null,
     });
     using now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);

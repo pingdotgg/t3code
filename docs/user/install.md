@@ -146,6 +146,14 @@ there. Install the provider CLIs inside that distro. T3 Code installs its own
 server runtime there automatically; the first launch after an app update can
 take longer.
 
+To open a WSL project from its terminal in the Windows desktop app, install
+**t3 command in WSL** in **Settings → About**. If `t3` is not found in a new
+terminal, add `~/.local/bin` to your shell's `PATH`. Run `t3 app` from the
+project directory, or pass the directory as an argument. The desktop app and
+the matching WSL environment must be running. If installation reports another
+`t3` command on the distro's `PATH`, remove it or adjust the `PATH` before
+installing the WSL command.
+
 ### Open a project from a terminal
 
 With the desktop app already running on the same machine:

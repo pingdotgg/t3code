@@ -888,6 +888,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "wsl-cli-command",
+    title: "t3 command in WSL",
+    to: "/settings/about",
+    searchTerms: ["wsl terminal shell path install command line linux"],
+    desktopOnly: true,
+    windowsOnly: true,
+  },
+  {
     id: "mobile-app",
     title: "Mobile app",
     to: "/settings/about",
