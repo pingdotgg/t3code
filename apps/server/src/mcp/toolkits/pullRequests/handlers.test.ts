@@ -537,8 +537,8 @@ describe("pull request toolkit handlers", () => {
         ]),
       });
       const result = yield* harness.call("list_thread_pull_requests", {});
-      expect(result.pullRequests.map((entry) => entry.number)).toEqual([3, 1, 2, 10]);
-      expect(result.pullRequests[0]).toEqual({
+      expect(result.pullRequests.map((entry) => entry.number)).toEqual([1, 2, 3, 10]);
+      expect(result.pullRequests[2]).toEqual({
         host: "github.com",
         repository: "t3tools/t3code",
         number: 3,
@@ -587,8 +587,8 @@ describe("listThreadPullRequests", () => {
       ],
     });
     expect(result.pullRequests.map((entry) => [entry.number, entry.stack])).toEqual([
-      [2, { kind: "native", position: 2, size: 2 }],
       [1, { kind: "native", position: 1, size: 2 }],
+      [2, { kind: "native", position: 2, size: 2 }],
     ]);
     expect(result.chains).toEqual([{ kind: "native", numbers: [1, 2] }]);
   });
@@ -607,6 +607,58 @@ describe("listThreadPullRequests", () => {
       [3, { kind: "derived", position: 2, size: 3 }],
     ]);
     expect(result.chains).toEqual([{ kind: "derived", numbers: [1, 2, 3] }]);
+  });
+
+  it("pages a large list once through, with each page's stacks whole", () => {
+    const thread = {
+      pullRequests: [
+        makeLink(1, { headBranch: "feat-a" }),
+        ...Array.from({ length: 118 }, (_, index) => makeLink(index + 2)),
+        makeLink(120, { headBranch: "feat-z", baseBranch: "feat-a" }),
+      ],
+    };
+    const pages = [listThreadPullRequests(thread)];
+    for (let next = pages[0]!.nextCursor; next !== null; next = pages.at(-1)!.nextCursor) {
+      pages.push(listThreadPullRequests(thread, next));
+    }
+    expect(pages.map((page) => page.pullRequests.length)).toEqual([50, 50, 20]);
+    expect(pages.flatMap((page) => page.pullRequests.map((entry) => entry.number))).toEqual(
+      Array.from({ length: 120 }, (_, index) => index + 1),
+    );
+    const stack = { kind: "derived", numbers: [1, 120] };
+    expect(pages.map((page) => page.chains.length)).toEqual([50, 50, 20]);
+    expect(pages.map((page) => page.chains.filter((chain) => chain.numbers.length > 1))).toEqual([
+      [stack],
+      [],
+      [stack],
+    ]);
+
+    // Unlinking the first page must not shift the cursor past PRs not yet seen.
+    const remaining = { pullRequests: thread.pullRequests.slice(50) };
+    expect(
+      listThreadPullRequests(remaining, pages[0]!.nextCursor!).pullRequests.map(
+        (entry) => entry.number,
+      ),
+    ).toEqual(Array.from({ length: 50 }, (_, index) => index + 51));
+  });
+
+  it("filters by state before paging, counting a PR with no known state as open", () => {
+    const merged = (number: number) => {
+      const link = makeLink(number, { headBranch: `feat-${number}` });
+      return { ...link, snapshot: { ...link.snapshot!, state: "merged" as const } };
+    };
+    const thread = {
+      pullRequests: [
+        ...Array.from({ length: 50 }, (_, index) => merged(index + 1)),
+        ...Array.from({ length: 10 }, (_, index) => makeLink(index + 51)),
+      ],
+    };
+    const open = listThreadPullRequests(thread, undefined, ["open"]);
+    expect(open.pullRequests.map((entry) => entry.number)).toEqual(
+      Array.from({ length: 10 }, (_, index) => index + 51),
+    );
+    expect(open.nextCursor).toBeNull();
+    expect(listThreadPullRequests(thread, undefined, ["merged"]).nextCursor).toBeNull();
   });
 });
 
