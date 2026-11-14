@@ -821,6 +821,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         assert.deepEqual(skills, [
           {
             name: "kane-cli",
+            slashCommandName: "frontmatter-alias",
             path: path.join(configDir, "skills", "kane-cli", "SKILL.md"),
             enabled: true,
             scope: "user",
@@ -1154,6 +1155,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         skills.map((skill) => [skill.name, skill.enabled]),
         [["probe-alias", true]],
       );
+      assert.strictEqual(skills[0]?.slashCommandName, "probe-alias-frontmatter");
     }),
   );
 

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
 
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 
@@ -64,6 +65,15 @@ describe("resolveComposerMenuSelection", () => {
 });
 
 describe("mobile slash commands", () => {
+  it.each(["boat", "sandbox", "skill:sandbox"])("finds a skill by %s", (query) => {
+    expect(
+      matchesSlashSkillQuery(
+        { name: "boat", slashCommandName: "sandbox", path: "/skills/boat/SKILL.md", enabled: true },
+        query,
+      ),
+    ).toBe(true);
+  });
+
   it("keeps a provider's native /plan", () => {
     const items = buildComposerSlashCommandItems({
       query: "pl",

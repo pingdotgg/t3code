@@ -12,6 +12,7 @@ import {
 
 export function scoreProviderSkill(skill: ServerProviderSkill, query: string): number | null {
   const normalizedName = skill.name.toLowerCase();
+  const normalizedSlashCommandName = skill.slashCommandName?.toLowerCase() ?? "";
   const normalizedLabel = formatProviderSkillDisplayName(skill).toLowerCase();
   const normalizedShortDescription = skill.shortDescription?.toLowerCase() ?? "";
   const normalizedDescription = skill.description?.toLowerCase() ?? "";
@@ -20,6 +21,16 @@ export function scoreProviderSkill(skill: ServerProviderSkill, query: string): n
   const scores = [
     scoreQueryMatch({
       value: normalizedName,
+      query,
+      exactBase: 0,
+      prefixBase: 2,
+      boundaryBase: 4,
+      includesBase: 6,
+      fuzzyBase: 100,
+      boundaryMarkers: ["-", "_", "/"],
+    }),
+    scoreQueryMatch({
+      value: normalizedSlashCommandName,
       query,
       exactBase: 0,
       prefixBase: 2,

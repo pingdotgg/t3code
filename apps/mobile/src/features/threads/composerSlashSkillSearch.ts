@@ -10,7 +10,11 @@ export function matchesSlashSkillQuery(skill: ServerProviderSkill, query: string
         ? normalizedQuery.slice("skill:".length)
         : normalizedQuery;
   if (!skillQuery) return true;
-  return [skill.name, skill.displayName, skill.shortDescription, skill.description].some((value) =>
-    value?.toLowerCase().includes(skillQuery),
-  );
+  return [
+    skill.name,
+    skill.slashCommandName,
+    skill.displayName,
+    skill.shortDescription,
+    skill.description,
+  ].some((value) => value?.toLowerCase().includes(skillQuery));
 }
