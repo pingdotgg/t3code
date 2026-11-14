@@ -9,6 +9,8 @@ import {
   moveLayoutTabToNewWorkspace,
   createLayoutState,
   decodePersistedLayoutState,
+  findLayoutTab,
+  focusLayoutTab,
   ghostLoneLayoutChats,
   isBlankLayoutWorkspace,
   layoutChatSwaps,
@@ -54,8 +56,8 @@ const columnsOf = (state: LayoutState) =>
 
 /*
  * Layouts as text: workspaces of columns of panes of tabs. `A` is a kept chat of thread A, `~A`
- * its ghost, `t:A` A's terminal, `+` (or `+2`) a launcher, `PR` the pull requests page; `*` marks
- * a pane's active tab and `!` the focused one.
+ * its ghost, `t:A` A's terminal, `+` (or `+2`) a launcher, `+:A` one opened from A, `PR` the pull
+ * requests page; `*` marks a pane's active tab and `!` the focused one.
  */
 type Shape = string[][][];
 
@@ -72,7 +74,11 @@ const draftOf = (name: string): LayoutTabContent => ({
 function tabOf(label: string): LayoutTab {
   const name = label.replace(/^~/, "");
   const content: LayoutTabContent = name.startsWith("+")
-    ? { kind: "launcher", id: name, context: null }
+    ? {
+        kind: "launcher",
+        id: name,
+        context: name.startsWith("+:") ? { kind: "server", threadRef: refOf(name.slice(2)) } : null,
+      }
     : name === "PR"
       ? { kind: "pull-requests" }
       : name.startsWith("t:")
@@ -498,6 +504,58 @@ describe("closeLayoutTab", () => {
     expect(closed.workspaces.map(isBlankLayoutWorkspace).at(-1)).toBe(true);
     expect(closed.workspaces).toHaveLength(expected.length + 1);
     expect(canCloseLayoutTab(state, close)).toBe(true);
+  });
+
+  it.each<{ case: string; after: (state: LayoutState) => LayoutState; thread: string | null }>([
+    {
+      case: "a blank tab loses its thread once the thread's chat closes",
+      after: (state) => closeLayoutTab(state, "A"),
+      thread: null,
+    },
+    {
+      case: "a blank tab loses its thread once the thread's chat moves to another workspace",
+      after: (state) => moveLayoutTabToWorkspace(focusLayoutTab(state, "A"), 1),
+      thread: null,
+    },
+    {
+      case: "a blank tab keeps its thread while one of the thread's surfaces stays",
+      after: (state) =>
+        closeLayoutTab(
+          placeLayoutTabs(
+            state,
+            [tabOf("t:A")],
+            { kind: "after", tabId: "A" },
+            {
+              activate: null,
+              focus: false,
+            },
+          ),
+          "A",
+        ),
+      thread: "A",
+    },
+  ])("$case", ({ after, thread }) => {
+    const state = after(layoutOf([[["A", "C", "+:A!"]]], [[["B"]]]));
+    const blank = findLayoutTab(state, (tab) => tab.id === "+:A")?.tab.content;
+    expect(blank?.kind === "launcher" ? blank.context : undefined).toEqual(
+      thread === null ? null : { kind: "server", threadRef: refOf(thread) },
+    );
+  });
+
+  it("keeps a blank tab's thread when the draft it was opened from becomes a thread", () => {
+    const drafted = showLayoutContent(createLayoutState(), draftOf("draft"));
+    const draftTab = selectFocusedTab(drafted)!;
+    const withBlank = openLayoutTab(drafted, {
+      kind: "launcher",
+      id: "blank",
+      context: { kind: "draft", draftId: "draft" as DraftId },
+    });
+    const promoted = replaceLayoutTabContent(withBlank, draftTab.id, chatOf("D"));
+    const blank = findLayoutTab(promoted, (tab) => tab.content.kind === "launcher")?.tab.content;
+    expect(blank?.kind === "launcher" ? blank.context : undefined).toEqual({
+      kind: "server",
+      threadRef: refOf("D"),
+    });
   });
 
   it("leaves the window's last blank tab, which has no close", () => {

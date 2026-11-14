@@ -655,7 +655,9 @@ function normalizeLayout(state: LayoutState): LayoutState {
     workspaces.push(createWorkspace());
   }
   workspaces = workspaces.map((workspace) =>
-    workspace.columns.length === 0 ? withBlankTab(workspace) : workspace,
+    workspace.columns.length === 0
+      ? withBlankTab(workspace)
+      : dropLauncherThreadsOutOfView(workspace),
   );
   const focusedWorkspaceId = workspaces.some(
     (workspace) => workspace.id === state.focusedWorkspaceId,
@@ -668,6 +670,43 @@ function normalizeLayout(state: LayoutState): LayoutState {
     workspaces.length === state.workspaces.length &&
     workspaces.every((workspace, index) => workspace === state.workspaces[index]);
   return unchanged ? state : { workspaces, focusedWorkspaceId };
+}
+
+function dropLauncherThreadsOutOfView(workspace: LayoutWorkspace): LayoutWorkspace {
+  const tabs = workspace.columns.flatMap((column) => column.panes).flatMap((pane) => pane.tabs);
+  const inView = new Set(
+    tabs.flatMap((tab) =>
+      tab.content.kind === "chat"
+        ? [layoutTabContentKey(tab.content)]
+        : tab.content.kind === "surface"
+          ? [
+              layoutTabContentKey({
+                kind: "chat",
+                target: { kind: "server", threadRef: tab.content.threadRef },
+              }),
+            ]
+          : [],
+    ),
+  );
+  const outOfView = (tab: LayoutTab) =>
+    tab.content.kind === "launcher" &&
+    tab.content.context !== null &&
+    !inView.has(layoutTabContentKey({ kind: "chat", target: tab.content.context }));
+  if (!tabs.some(outOfView)) return workspace;
+  return {
+    ...workspace,
+    columns: workspace.columns.map((column) => ({
+      ...column,
+      panes: column.panes.map((pane) => ({
+        ...pane,
+        tabs: pane.tabs.map((tab) =>
+          outOfView(tab) && tab.content.kind === "launcher"
+            ? { ...tab, content: { ...tab.content, context: null } }
+            : tab,
+        ),
+      })),
+    })),
+  };
 }
 
 /**
@@ -1301,13 +1340,43 @@ export function replaceLayoutTabContent(
   content: LayoutTabContent,
   ghostOf?: ScopedThreadRef | null,
 ): LayoutState {
-  if (!findLayoutTab(state, (tab) => tab.id === tabId)) return state;
+  const replacing = findLayoutTab(state, (tab) => tab.id === tabId);
+  if (!replacing) return state;
   const key = layoutTabContentKey(content);
+  const promotedFrom =
+    replacing.tab.content.kind === "chat" &&
+    replacing.tab.content.target.kind === "draft" &&
+    content.kind === "chat"
+      ? layoutTabContentKey(replacing.tab.content)
+      : null;
+  const followed =
+    promotedFrom === null || content.kind !== "chat"
+      ? state
+      : mapPanes(state, (pane) =>
+          pane.tabs.some(
+            (tab) =>
+              tab.content.kind === "launcher" &&
+              tab.content.context !== null &&
+              layoutTabContentKey({ kind: "chat", target: tab.content.context }) === promotedFrom,
+          )
+            ? {
+                ...pane,
+                tabs: pane.tabs.map((tab) =>
+                  tab.content.kind === "launcher" &&
+                  tab.content.context !== null &&
+                  layoutTabContentKey({ kind: "chat", target: tab.content.context }) ===
+                    promotedFrom
+                    ? { ...tab, content: { ...tab.content, context: content.target } }
+                    : tab,
+                ),
+              }
+            : pane,
+        );
   const duplicate = findLayoutTab(
-    state,
+    followed,
     (tab) => tab.id !== tabId && layoutTabContentKey(tab.content) === key,
   );
-  const replaced = mapPanes(state, (pane) => {
+  const replaced = mapPanes(followed, (pane) => {
     const withoutDuplicate =
       duplicate && pane.id === duplicate.pane.id
         ? { ...pane, tabs: pane.tabs.filter((tab) => tab.id !== duplicate.tab.id) }
