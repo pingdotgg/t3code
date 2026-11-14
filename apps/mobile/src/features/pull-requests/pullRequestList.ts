@@ -1,9 +1,11 @@
 import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
   ProjectId,
   resolvePullRequestAuthorFilter,
   type EnvironmentId,
+  type PullRequestAction,
   type PullRequestDiffStat,
   type PullRequestListEntry,
   type PullRequestListInput,
@@ -213,23 +215,52 @@ export function mergeEnvironmentPullRequestPages(
 ) {
   const viewers: Record<string, string> = {};
   const localSearchHosts = new Set<string>();
+  const hostActions = new Map<string, ReadonlySet<PullRequestAction>>();
   const entries: EnvironmentPullRequestListEntry[] = [];
   const errors = [];
   for (const { environmentId, pages } of sources) {
     entries.push(...pages.entries.map((entry) => ({ ...entry, environmentId })));
     for (const [host, viewer] of Object.entries(pages.head.viewers))
       viewers[`${environmentId} ${host}`] = viewer;
-    for (const provider of pages.head.providers)
+    for (const provider of pages.head.providers) {
       if (!provider.searchesOnHost) localSearchHosts.add(`${environmentId} ${provider.host}`);
+      if (provider.actions !== undefined)
+        hostActions.set(
+          `${environmentId} ${provider.host.toLowerCase()}`,
+          new Set(provider.actions),
+        );
+    }
     errors.push(...pages.head.errors.map((error) => ({ ...error, environmentId })));
   }
   return {
     entries,
     viewers,
     localSearchHosts,
+    hostActions,
     errors,
     continued: sources.some(({ pages }) => pages.continued),
   };
+}
+
+export type PullRequestListRowAction = "ready" | "draft" | "close" | "reopen";
+
+export function pullRequestListRowActions(
+  entry: Pick<
+    EnvironmentPullRequestListEntry,
+    "environmentId" | "host" | "provider" | "state" | "isDraft"
+  >,
+  hostActions: ReadonlyMap<string, ReadonlySet<PullRequestAction>>,
+): readonly PullRequestListRowAction[] {
+  const forState: readonly PullRequestListRowAction[] =
+    entry.state === "open"
+      ? [entry.isDraft ? "ready" : "draft", "close"]
+      : entry.state === "closed"
+        ? ["reopen"]
+        : [];
+  const supported =
+    hostActions.get(`${entry.environmentId} ${entry.host.toLowerCase()}`) ??
+    sourceControlClients.find(entry.provider)?.changeRequestActionsWhenUnreported;
+  return forState.filter((action) => supported?.has(action) === true);
 }
 
 export function mergePullRequestListEntries(
