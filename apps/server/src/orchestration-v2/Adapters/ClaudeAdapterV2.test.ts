@@ -4848,6 +4848,41 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
           "true",
         );
+
+        // Claude resolves a relative CLAUDE_CONFIG_DIR against the turn's cwd, not the server's.
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-relative-home-",
+        });
+        yield* fileSystem.makeDirectory(path.join(workspace, ".claude-rel"));
+        yield* fileSystem.writeFileString(
+          path.join(workspace, ".claude-rel", "settings.json"),
+          '{"env":{"ENABLE_TOOL_SEARCH":"auto"}}',
+        );
+        const relativeHomeToolSearch = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const harness = yield* makeWakeHarnessWithOptions({
+              settings: DEFAULT_CLAUDE_SETTINGS,
+              environment: { CLAUDE_CONFIG_DIR: ".claude-rel" },
+            });
+            yield* harness.runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now: yield* DateTime.now,
+                attemptId: RunAttemptId.make("attempt-tool-search-relative-home"),
+                text: "Run git status.",
+                attachments: [],
+                runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                  ...CLAUDE_TEST_RUNTIME_POLICY,
+                  cwd: workspace,
+                }),
+              }),
+            );
+            const settings = harness.getOpenedOptions()?.settings;
+            return typeof settings === "object" ? settings.env?.ENABLE_TOOL_SEARCH : undefined;
+          }),
+        );
+        assert.equal(relativeHomeToolSearch, "true");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

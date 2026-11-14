@@ -5327,10 +5327,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   const continuationRequests = adapterOptions.continuationRequests ?? {
     offer: () => Effect.void,
   };
-  const homePath = yield* resolveClaudeHomePath(
-    adapterOptions.settings,
-    adapterOptions.environment,
-  ).pipe(Effect.provideService(Path.Path, path));
+  const claudeHomeDirectory = yield* HostProcess.HomeDirectory;
+  const homePathFor = (cwd: string | null) =>
+    resolveClaudeHomePath(
+      adapterOptions.settings,
+      adapterOptions.environment,
+      cwd ?? undefined,
+    ).pipe(
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(HostProcess.HomeDirectory, claudeHomeDirectory),
+    );
   const hostEnvironment = yield* HostProcess.Environment;
   const hostPlatform = yield* HostProcess.Platform;
   const customHome =
@@ -5348,6 +5354,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     function* (cwd: string | null) {
       // resolveSettings does not initialize remote-cache eligibility in the SDK host.
       // Keep the payload intact so the SDK also honors managedSourcesBehavior.
+      const homePath = yield* homePathFor(cwd);
       const remote = yield* readBypassSettings(path.join(homePath, "remote-settings.json"));
       const home = customHome
         ? yield* readBypassSettings(path.join(homePath, "settings.json"))
@@ -5394,10 +5401,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         catch: (cause) => queryRunnerError(cause, "resolveSettings"),
       }).pipe(Effect.orElseSucceed(() => undefined));
       const home = customHome
-        ? yield* fileSystem.readFileString(path.join(homePath, "settings.json")).pipe(
-            Effect.flatMap(decodeClaudeSubagentCacheSettings),
-            Effect.orElseSucceed(() => ({ subagentPromptCacheTtl: undefined })),
-          )
+        ? yield* fileSystem
+            .readFileString(path.join(yield* homePathFor(cwd), "settings.json"))
+            .pipe(
+              Effect.flatMap(decodeClaudeSubagentCacheSettings),
+              Effect.orElseSucceed(() => ({ subagentPromptCacheTtl: undefined })),
+            )
         : undefined;
       return resolved?.effective.subagentPromptCacheTtl ?? home?.subagentPromptCacheTtl;
     },
@@ -5429,7 +5438,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ...(localDirectory === cwd ? [] : [path.join(cwd, ".claude", "settings.local.json")]),
               path.join(cwd, ".claude", "settings.json"),
             ]),
-        path.join(homePath, "settings.json"),
+        path.join(yield* homePathFor(cwd), "settings.json"),
       ];
     },
   );
