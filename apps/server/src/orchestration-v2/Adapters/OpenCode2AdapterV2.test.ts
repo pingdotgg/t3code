@@ -328,6 +328,7 @@ const resumed = (
     readonly version?: "2.2.1" | "2.2.5" | "2.2.6";
     readonly shellRecovery?: ReadonlyArray<ProviderReplayEntry>;
     readonly lastRunOrdinal?: number;
+    readonly pendingBackgroundTasks?: OrchestrationV2ProviderThread["pendingBackgroundTasks"];
     readonly goal?: OrchestrationV2ProviderThread["goal"];
     readonly external?: boolean;
     readonly supervised?: boolean;
@@ -400,6 +401,9 @@ const resumed = (
           ? {}
           : { lastRunOrdinal: options.lastRunOrdinal }),
         ...(options?.goal === undefined ? {} : { goal: options.goal }),
+        ...(options?.pendingBackgroundTasks === undefined
+          ? {}
+          : { pendingBackgroundTasks: options.pendingBackgroundTasks }),
       },
       threadId,
       modelSelection: bigPickle,
@@ -1021,6 +1025,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         const terminal = yield* runtime.events.pipe(
           Stream.tap((e) =>
             Effect.gen(function* () {
+              if (e.type === "provider_thread.updated") {
+                for (const task of e.providerThread.pendingBackgroundTasks ?? [])
+                  assert.isUndefined(task.awaited);
+              }
               if (e.type !== "turn_item.updated") return;
               items.push(e.turnItem);
               if (e.turnItem.type === "command_execution" && e.turnItem.output === "retained\n")
@@ -1038,6 +1046,43 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         }
         yield* Fiber.join(terminal);
         assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        for (const awaited of [true, false, true]) {
+          const roster = yield* runtime.events.pipe(
+            Stream.filter(
+              (e) =>
+                e.type === "provider_thread.updated" &&
+                e.providerThread.pendingBackgroundTasks?.some(
+                  (task) => task.taskId === shellID && (task.awaited === true) === awaited,
+                ) === true,
+            ),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+          assert.deepEqual(
+            yield* runtime.awaitBackgroundTasks!({
+              providerThread: thread,
+              taskIds: [shellID, shellID, "sh_unknown"],
+              awaited,
+            }),
+            { matched: [shellID] },
+          );
+          yield* Fiber.join(roster);
+        }
+        assert.deepEqual(
+          yield* runtime.awaitBackgroundTasks!({
+            providerThread: {
+              ...thread,
+              nativeThreadRef: {
+                driver: OPENCODE_PROVIDER,
+                nativeId: "ses_foreign",
+                strength: "strong",
+              },
+            },
+            taskIds: [shellID],
+            awaited: false,
+          }),
+          { matched: [] },
+        );
         const settled = yield* runtime.events.pipe(
           Stream.tap((e) =>
             Effect.sync(() => {
@@ -1062,6 +1107,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         else gate.release("shell-exit");
         yield* Fiber.join(settled);
         assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        assert.deepEqual(
+          yield* runtime.awaitBackgroundTasks!({
+            providerThread: thread,
+            taskIds: [shellID],
+            awaited: true,
+          }),
+          { matched: [] },
+        );
         assert.deepInclude(items.filter((i) => i.type === "command_execution").at(-1), {
           type: "command_execution",
           status: stopped ? "interrupted" : stop === "failed" ? "failed" : "completed",
@@ -1080,8 +1133,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     "settled",
     "exited",
     "anchored",
+    "awaited",
   ] as const)("recovers only owned native shells using %s inventory", (discovery) =>
     Effect.gen(function* () {
+      const awaited = discovery === "awaited";
       const idAllocator = yield* IdAllocator.IdAllocatorV2.pipe(Effect.provide(IdAllocator.layer));
       const id = "sh_recovered";
       const info = {
@@ -1162,6 +1217,18 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           shellRecovery: inventory,
           external: true,
           ...(discovery === "anchored" ? { lastRunOrdinal: 7 } : {}),
+          ...(awaited
+            ? {
+                pendingBackgroundTasks: [
+                  {
+                    taskId: id,
+                    kind: "command" as const,
+                    description: info.command,
+                    awaited: true,
+                  },
+                ],
+              }
+            : {}),
           replayGate: gate,
         },
       );
@@ -1187,13 +1254,30 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       assert.deepEqual(
         thread.pendingBackgroundTasks ?? [],
-        discovery === "settled" ? [] : [{ taskId: id, kind: "command", description: info.command }],
+        discovery === "settled"
+          ? []
+          : [
+              {
+                taskId: id,
+                kind: "command",
+                description: info.command,
+                ...(awaited ? { awaited: true } : {}),
+              },
+            ],
       );
       assert.equal(
         yield* runtime.hasPendingBackgroundWorkForThread!(thread),
         discovery !== "settled",
       );
       yield* runtime.stopTask!({ providerThread: thread, taskId: "sh_other" });
+      assert.deepEqual(
+        yield* runtime.awaitBackgroundTasks!({
+          providerThread: thread,
+          taskIds: [id, "sh_other"],
+          awaited: true,
+        }),
+        { matched: discovery === "settled" ? [] : [id] },
+      );
       assert.equal(
         yield* runtime.hasPendingBackgroundWorkForThread!(thread),
         discovery !== "settled",
