@@ -32,13 +32,17 @@ const namespacePrefixes: Record<string, string> = {
   "urn:oasis:names:tc:opendocument:xmlns:container": "",
 };
 function parseXml(source: string): XmlNode {
-  // EPUB XHTML commonly declares an external DTD. Discard it without resolving it.
-  source = source.replaceAll(/<!DOCTYPE\s+[^<>[\]]*>/gi, "");
-  if (
-    source.length > 8 * 1024 * 1024 ||
-    /<!\s*(DOCTYPE|ENTITY)/i.test(source) ||
-    XMLValidator.validate(source) !== true
-  )
+  // EPUB XHTML commonly declares an external DTD: discard it without resolving it. Any other
+  // declaration is rejected, but CDATA and comments are literal text and pass through untouched.
+  let declares = false;
+  source = source.replaceAll(
+    /<!\[CDATA\[[\s\S]*?]]>|<!--[\s\S]*?-->|(<!DOCTYPE\s+[^<>[\]]*>)|(<!\s*(?:DOCTYPE|ENTITY))/gi,
+    (markup, externalDoctype?: string, declaration?: string) => {
+      if (declaration) declares = true;
+      return externalDoctype ? "" : markup;
+    },
+  );
+  if (source.length > 8 * 1024 * 1024 || declares || XMLValidator.validate(source) !== true)
     throw new Error("This document contains invalid or unsupported XML.");
   const parser = new XMLParser({
     preserveOrder: true,
