@@ -64,6 +64,11 @@ const runMainContentsCommand = Effect.fn("desktop.menu.runMainContentsCommand")(
   yield* desktopWindow.runMainContentsCommand(command);
 });
 
+const activateMainWindow = Effect.gen(function* () {
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  yield* desktopWindow.activate;
+}).pipe(Effect.withSpan("desktop.menu.activateMainWindow"));
+
 const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -191,7 +196,12 @@ export const make = Effect.gen(function* () {
         label: "File",
         submenu: [
           ...(environment.platform === "darwin"
-            ? []
+            ? [
+                {
+                  label: "Open Window",
+                  click: () => runMenuEffect("open-window", activateMainWindow),
+                },
+              ]
             : [
                 {
                   label: "Settings...",
