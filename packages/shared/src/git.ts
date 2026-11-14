@@ -140,7 +140,7 @@ export function parseGitRemoteRepository(
   const dropSuffix = options?.keepGitSuffix ? (path: string) => path : stripGitSuffix;
   const normalized = lowerCaseRemote(value, dropSuffix);
 
-  if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
+  if (/^(?:ssh|git\+ssh|ssh\+git|https?|git):\/\//i.test(normalized)) {
     try {
       // Apply suffix policy to the path: `.git` may sit before a query or fragment.
       const url = new URL(value.trim().toLowerCase());
