@@ -700,7 +700,8 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     detail="This thread has no ready turn diffs and the worktree diff is empty."
                   />
                 )
-              ) : selectedSection.isLoading && selectedSection.diff === null ? (
+              ) : error && selectedSection.diff === null ? null : selectedSection.isLoading &&
+                selectedSection.diff === null ? (
                 <ContentStatus loading detail="Loading diff…" />
               ) : parsedDiff.kind === "empty" ? (
                 <ContentStatus
