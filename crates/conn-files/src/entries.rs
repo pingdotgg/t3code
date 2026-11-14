@@ -178,6 +178,10 @@ pub fn walk_files(
         .hidden(false)
         .ignore(false)
         .require_git(false)
+        // The `ignore` crate reads `~/.gitconfig` itself for the global excludes file. Git
+        // reads no `~/.gitconfig` when `GIT_CONFIG_GLOBAL` names another file, so neither does
+        // the walk (the crate cannot read that file's `core.excludesFile`).
+        .git_global(std::env::var_os("GIT_CONFIG_GLOBAL").is_none())
         .follow_links(false)
         .filter_entry(move |entry| entry.file_name() != ".git" && !internal.contains(entry.path()))
         .build();

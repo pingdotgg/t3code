@@ -89,7 +89,7 @@ export function sealedNodeEnv(dir) {
  */
 export function sealedCargoEnv(dir) {
   const cargo = Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => /^(CARGO_|RUSTUP_|RUSTFLAGS$|RUSTC_WRAPPER$)/.test(name)),
+    Object.entries(process.env).filter(([name]) => /^(CARGO_|RUSTUP_|RUSTFLAGS$|RUSTC_WRAPPER$)/.test(name) && !/^CARGO_TARGET_\w+_RUNNER$/.test(name)),
   );
   return {
     ...sealedNodeEnv(dir),
