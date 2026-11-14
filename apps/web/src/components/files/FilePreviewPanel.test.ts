@@ -407,6 +407,29 @@ Third}`;
     },
   );
 
+  const approved = "<text:p>Approved <text:span>now</text:span></text:p>";
+  const approvedRow = `<tr>${"<td><p>Approved <span>now</span></p></td>".repeat(2)}</tr>`;
+  it.each([
+    [
+      "expands",
+      `<table:table-row>${`<table:table-cell>${approved}</table:table-cell>`.repeat(2)}</table:table-row><table:table-row table:number-rows-repeated="2"><table:table-cell table:number-columns-repeated="2">${approved}</table:table-cell></table:table-row>`,
+      approvedRow.repeat(3),
+    ],
+    [
+      "bounds",
+      '<table:table-row table:number-rows-repeated="999999999"><table:table-cell table:number-columns-repeated="999999999"><text:p>x</text:p></table:table-cell></table:table-row>',
+      `<tr>${"<td><p>x</p></td>".repeat(50)}</tr>`.repeat(500),
+    ],
+  ])("%s repeated ODT table rows and cells", async (_, rows, html) => {
+    const archive = new JSZip().file(
+      "content.xml",
+      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><table:table><table:table-column table:number-columns-repeated="2"/>${rows}</table:table></office:text></office:body></office:document-content>`,
+    );
+    const result = await openDocument(archive, "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(`<table>${html}</table>`);
+  });
+
   it.each(["odt", "odp"] as const)("reads %s text and rejects XML entities", async (kind) => {
     const archive = new JSZip().file(
       "content.xml",
