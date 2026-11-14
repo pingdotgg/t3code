@@ -7,7 +7,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { PlusIcon } from "lucide-react";
+import { FileCode2Icon, PlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { useTheme } from "../../hooks/useTheme";
@@ -272,11 +272,18 @@ workflow(
 );
 `;
 
-/** The files that define this server's workflows, to read and to change in place. */
+/**
+ * The files that define this server's workflows: the list of them, or `file` in an editor. A
+ * `file` the folder does not have yet is a new one, which exists once it is saved.
+ */
 export default function WorkflowDefinitionEditor({
   environmentId,
+  file,
+  onOpen,
 }: {
   readonly environmentId: EnvironmentId;
+  readonly file: string | null;
+  readonly onOpen: (file: string | null) => void;
 }) {
   const query = useEnvironmentQuery(
     serverEnvironment.workflowDefinition({ environmentId, input: {} }),
@@ -287,9 +294,6 @@ export default function WorkflowDefinitionEditor({
   const remove = useAtomCommand(serverEnvironment.deleteWorkflowDefinition, {
     label: "workflow definition delete",
   });
-  const [picked, setPicked] = useState<string | null>(null);
-  /** A file being written that is not on disk yet. */
-  const [fresh, setFresh] = useState<string | null>(null);
   const [naming, setNaming] = useState<string | null>(null);
   const [refusal, setRefusal] = useState<ReadonlyArray<WorkflowDefinitionProblem>>([]);
   if (query.error) {
@@ -303,25 +307,11 @@ export default function WorkflowDefinitionEditor({
     );
   }
   const { directory, single, files, problems, revision } = query.data;
-  const onDisk = files.find((file) => file.name === picked) ?? null;
-  // A new file is its own tab until it is saved, which is when the folder has it.
-  const unsaved = fresh !== null && !files.some((file) => file.name === fresh) ? fresh : null;
-  const name = unsaved ?? onDisk?.name ?? files[0]?.name ?? null;
-  const shown = files.find((file) => file.name === name) ?? null;
-  const pick = (next: string) => {
-    setPicked(next);
-    setFresh(null);
-    setRefusal([]);
-  };
   const begin = () => {
     const wanted = (naming ?? "").trim();
     if (wanted === "") return;
-    const next = /\.(ts|mts|js|mjs)$/.test(wanted) ? wanted : `${wanted}.ts`;
     setNaming(null);
-    if (files.some((file) => file.name === next)) return pick(next);
-    setPicked(next);
-    setFresh(next);
-    setRefusal([]);
+    onOpen(/\.(ts|mts|js|mjs)$/.test(wanted) ? wanted : `${wanted}.ts`);
   };
   const removeFile = async (target: string) => {
     const confirmed = await (requestConfirmDialog(
@@ -337,96 +327,117 @@ export default function WorkflowDefinitionEditor({
       return;
     }
     setRefusal(result.value.problems);
-    if (result.value.problems.length === 0) setPicked(null);
+    if (result.value.problems.length === 0) onOpen(null);
   };
+  const between =
+    problems.length + refusal.length === 0 ? null : (
+      <ProblemList
+        title={
+          refusal.length > 0
+            ? "Not deleted. Nothing changed on the server."
+            : "These files do not fit together. What ran before keeps running."
+        }
+        problems={refusal.length > 0 ? refusal : problems}
+      />
+    );
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b px-3 py-1.5">
-        {[...files.map((file) => file.name), ...(unsaved === null ? [] : [unsaved])].map((file) => {
-          const wrong = files.find((candidate) => candidate.name === file)?.problems.length ?? 0;
-          return (
-            <Button
-              key={file}
-              size="xs"
-              variant={file === name ? "secondary" : "ghost"}
-              aria-pressed={file === name}
-              onClick={() => (file === unsaved ? undefined : pick(file))}
-            >
-              <span className="font-mono">{file}</span>
-              {wrong > 0 ? (
-                <span className="text-destructive-foreground" aria-label="does not load">
-                  ●
-                </span>
-              ) : null}
-            </Button>
-          );
-        })}
-        {single || !canChange ? null : naming === null ? (
-          <Button size="xs" variant="ghost" onClick={() => setNaming("")}>
-            <PlusIcon />
-            New file
-          </Button>
-        ) : (
-          <form
-            className="flex items-center gap-1"
-            onSubmit={(event) => {
-              event.preventDefault();
-              begin();
-            }}
-          >
-            <Input
-              autoFocus
-              size="sm"
-              aria-label="File name"
-              placeholder="release.ts"
-              value={naming}
-              onChange={(event) => setNaming(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setNaming(null);
-              }}
-            />
-            <Button size="xs" type="submit" variant="outline">
-              Create
-            </Button>
-          </form>
-        )}
-      </div>
-      {problems.length + refusal.length > 0 ? (
-        <ProblemList
-          title={
-            refusal.length > 0
-              ? "Not deleted. Nothing changed on the server."
-              : "These files do not fit together. What ran before keeps running."
-          }
-          problems={refusal.length > 0 ? refusal : problems}
-        />
-      ) : null}
-      {name === null ? (
-        <WorkflowsEmpty
-          title="No workflows yet"
-          description={
-            <>
-              Every file in <code className="font-mono">{directory}</code> defines workflows. Make
-              the first one with New file, or ask an agent to write one there.
-            </>
-          }
-        />
-      ) : (
+  if (file !== null) {
+    const shown = files.find((candidate) => candidate.name === file) ?? null;
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        {between}
         <DiffWorkerPoolProvider>
           <Surface
-            key={name}
+            key={file}
             environmentId={environmentId}
-            name={name}
-            path={`${directory}/${name}`}
+            name={file}
+            path={`${directory}/${file}`}
             source={shown?.source ?? ""}
             revision={revision}
             onDisk={shown?.problems ?? []}
             {...(shown === null ? { draft: NEW_FILE } : {})}
-            onDelete={single || shown === null ? undefined : () => void removeFile(name)}
+            onDelete={single || shown === null ? undefined : () => void removeFile(file)}
           />
         </DiffWorkerPoolProvider>
-      )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {between}
+      <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
+        <div className="mx-auto w-full max-w-3xl space-y-3 p-4 sm:p-6">
+          <div className="flex items-start gap-3">
+            <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+              Every file in <code className="font-mono text-foreground">{directory}</code> defines
+              workflows. A change to one is picked up without a restart.
+            </p>
+            {single || !canChange ? null : naming === null ? (
+              <Button size="sm" variant="outline" onClick={() => setNaming("")}>
+                <PlusIcon />
+                New file
+              </Button>
+            ) : (
+              <form
+                className="flex shrink-0 items-center gap-1"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  begin();
+                }}
+              >
+                <Input
+                  autoFocus
+                  size="sm"
+                  aria-label="File name"
+                  placeholder="release.ts"
+                  value={naming}
+                  onChange={(event) => setNaming(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setNaming(null);
+                  }}
+                />
+                <Button size="sm" type="submit" variant="outline">
+                  Create
+                </Button>
+              </form>
+            )}
+          </div>
+          {files.length === 0 ? (
+            <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+              No workflows yet. Make the first file here, or ask an agent to write one in that
+              folder.
+            </p>
+          ) : (
+            <ul className="divide-y rounded-lg border">
+              {files.map((candidate) => (
+                <li key={candidate.name}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-3 px-3 py-2.5 text-start hover:bg-accent/50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                    onClick={() => onOpen(candidate.name)}
+                  >
+                    <FileCode2Icon className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-mono text-sm">{candidate.name}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {candidate.workflows.length === 0
+                          ? "Defines no workflows"
+                          : candidate.workflows.map((tag) => tag.replace(/@\d+$/, "")).join(", ")}
+                      </span>
+                    </span>
+                    {candidate.problems.length > 0 ? (
+                      <span className="shrink-0 text-xs font-medium text-destructive-foreground">
+                        Does not load
+                      </span>
+                    ) : null}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

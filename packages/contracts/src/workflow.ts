@@ -107,6 +107,8 @@ export const WorkflowDefinitionFile = Schema.Struct({
   name: Schema.String,
   /** The file as it is on disk, which is not what runs while it has problems. */
   source: Schema.String,
+  /** The workflows its last good version defines, each as `name@version`. */
+  workflows: Schema.Array(Schema.String),
   problems: Schema.Array(WorkflowDefinitionProblem),
 });
 export type WorkflowDefinitionFile = typeof WorkflowDefinitionFile.Type;

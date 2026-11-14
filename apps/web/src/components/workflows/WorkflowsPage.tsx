@@ -14,7 +14,12 @@ import {
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
-import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadcrumb";
+import {
+  WorkspaceBreadcrumb,
+  WorkspaceBreadcrumbItem,
+  WorkspaceBreadcrumbSeparator,
+  WorkspaceBreadcrumbText,
+} from "../WorkspaceBreadcrumb";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { WorkflowRunsView, WorkflowsEmpty } from "./WorkflowRunsView";
 import WorkflowThreadPane from "./WorkflowThreadPane";
@@ -28,8 +33,9 @@ export interface WorkflowsSearch {
   /** The agent thread open beside the run, and the linked environment it is in when not `env`. */
   readonly thread?: string;
   readonly threadEnv?: string;
-  /** Show the definition files instead of the runs. */
-  readonly file?: boolean;
+  /** Show the definition files instead of the runs: all of them, or `file` in the editor. */
+  readonly definitions?: boolean;
+  readonly file?: string;
 }
 
 export function WorkflowsPage() {
@@ -50,9 +56,13 @@ export function WorkflowsPage() {
     null;
   const select = (next: WorkflowsSearch) =>
     void navigate({ to: "/workflows", search: next, replace: true });
+  // A level of the page, which the browser's Back should step out of again.
+  const go = (next: WorkflowsSearch) => void navigate({ to: "/workflows", search: next });
   const env = search.env === undefined ? {} : { env: search.env };
   const run = search.run === undefined ? {} : { run: search.run };
-  const editing = search.file === true;
+  const editing = search.definitions === true || search.file !== undefined;
+  const openDefinitions = (file: string | null) =>
+    go({ ...env, definitions: true, ...(file === null ? {} : { file }) });
   const threadRef =
     environmentId === null || search.thread === undefined || editing
       ? null
@@ -76,10 +86,54 @@ export function WorkflowsPage() {
             reserveNativeControls={threadRef === null}
             className="border-b"
           >
-            <WorkspaceBreadcrumb ariaLabel="Workflows breadcrumb">
-              <WorkspaceBreadcrumbItem current>
-                <h1 className="truncate">Workflows</h1>
+            <WorkspaceBreadcrumb ariaLabel="Workflows breadcrumb" className="flex-1">
+              <WorkspaceBreadcrumbItem current={!editing}>
+                {editing ? (
+                  <button
+                    type="button"
+                    onClick={() => go({ ...env, ...run })}
+                    className="inline-flex min-w-0 max-w-full cursor-pointer items-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                  >
+                    <WorkspaceBreadcrumbText>Workflows</WorkspaceBreadcrumbText>
+                  </button>
+                ) : (
+                  <h1 className="truncate">Workflows</h1>
+                )}
               </WorkspaceBreadcrumbItem>
+              {editing ? (
+                <>
+                  <WorkspaceBreadcrumbSeparator>
+                    <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>
+                  </WorkspaceBreadcrumbSeparator>
+                  <WorkspaceBreadcrumbItem current={search.file === undefined}>
+                    {search.file === undefined ? (
+                      <h1 className="truncate">Definitions</h1>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => openDefinitions(null)}
+                        className="inline-flex min-w-0 max-w-full cursor-pointer items-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                      >
+                        <WorkspaceBreadcrumbText>Definitions</WorkspaceBreadcrumbText>
+                      </button>
+                    )}
+                  </WorkspaceBreadcrumbItem>
+                </>
+              ) : null}
+              {search.file === undefined ? null : (
+                <>
+                  <WorkspaceBreadcrumbSeparator>
+                    <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>
+                  </WorkspaceBreadcrumbSeparator>
+                  <WorkspaceBreadcrumbItem current className="min-w-10 flex-1">
+                    <h1 className="min-w-0">
+                      <WorkspaceBreadcrumbText className="font-mono">
+                        {search.file}
+                      </WorkspaceBreadcrumbText>
+                    </h1>
+                  </WorkspaceBreadcrumbItem>
+                </>
+              )}
             </WorkspaceBreadcrumb>
             {connected.length > 1 && environmentId !== null ? (
               <Select
@@ -103,15 +157,8 @@ export function WorkflowsPage() {
                 </SelectPopup>
               </Select>
             ) : null}
-            {environmentId === null ? null : (
-              <Button
-                size="sm"
-                variant={editing ? "secondary" : "outline"}
-                aria-pressed={editing}
-                onClick={() =>
-                  select(editing ? { ...env, ...run } : { ...env, ...run, file: true })
-                }
-              >
+            {environmentId === null || editing ? null : (
+              <Button size="sm" variant="outline" onClick={() => openDefinitions(null)}>
                 <FileCode2Icon />
                 Definitions
               </Button>
@@ -130,12 +177,17 @@ export function WorkflowsPage() {
                 </p>
               }
             >
-              <WorkflowDefinitionEditor key={environmentId} environmentId={environmentId} />
+              <WorkflowDefinitionEditor
+                key={environmentId}
+                environmentId={environmentId}
+                file={search.file ?? null}
+                onOpen={openDefinitions}
+              />
             </Suspense>
           ) : (
             <WorkflowRunsView
               key={environmentId}
-              onOpenDefinitions={() => select({ ...env, ...run, file: true })}
+              onOpenDefinitions={() => openDefinitions(null)}
               environmentId={environmentId}
               selectedRunId={search.run ?? null}
               openThreadId={search.thread ?? null}
