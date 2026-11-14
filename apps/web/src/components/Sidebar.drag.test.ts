@@ -24,6 +24,7 @@ const marker = (marker: SidebarListMarker): SidebarListItem => ({ kind: "marker"
 const pinnedHeader = marker("pinned-header");
 const divider = marker("pinned-divider");
 const settledHeader = marker("settled-header");
+const workingHeader = marker("working-header");
 const stationary = { x: 0, y: 0, scaleX: 1, scaleY: 1 };
 
 function layout(
@@ -120,13 +121,16 @@ describe("sidebar collision detection", () => {
   );
 
   it.each([
-    { sourceSection: "active", pins: 0 },
-    { sourceSection: "active", pins: 1 },
-    { sourceSection: "pinned", pins: 1 },
-    { sourceSection: "settled", pins: 1 },
+    { sourceSection: "active", pins: 0, pinsAt: 316 },
+    { sourceSection: "active", pins: 1, pinsAt: 316 },
+    { sourceSection: "pinned", pins: 1, pinsAt: 316 },
+    { sourceSection: "settled", pins: 1, pinsAt: 316 },
+    // Active refuses a Working row, so it pins anywhere above the Active label, not on it.
+    { sourceSection: "working", pins: 0, pinsAt: 299 },
+    { sourceSection: "working", pins: 1, pinsAt: 299 },
   ] as const)(
     "switches on crossing the divider row from $sourceSection with $pins pins",
-    ({ sourceSection, pins }) => {
+    ({ sourceSection, pins, pinsAt }) => {
       const items = [
         pinnedHeader,
         ...(pins ? [thread("p", "pinned")] : []),
@@ -134,6 +138,7 @@ describe("sidebar collision detection", () => {
         divider,
         thread("a", "active"),
         ...(sourceSection === "active" ? [thread("source", "active")] : []),
+        ...(sourceSection === "working" ? [workingHeader, thread("source", "working")] : []),
         settledHeader,
         ...(sourceSection === "settled" ? [thread("source", "settled")] : []),
       ];
@@ -181,7 +186,7 @@ describe("sidebar collision detection", () => {
               current:
                 item === divider
                   ? boundaryNode
-                  : item === settledHeader
+                  : item === settledHeader || item === workingHeader
                     ? ({ getBoundingClientRect: () => ({ top: 600 }) } as unknown as HTMLElement)
                     : null,
             },
@@ -192,16 +197,16 @@ describe("sidebar collision detection", () => {
         return over ? resolveSidebarDropTarget(items, "source", String(over.id))?.section : null;
       };
       expect(at(330)).toBe("active");
-      expect(at(317)).toBe("active");
-      expect(at(316)).toBe("pinned");
+      expect(at(pinsAt + 1)).toBe("active");
+      expect(at(pinsAt)).toBe("pinned");
       boundaryTop = 400;
       expect(at(316)).toBe("pinned");
       expect(at(399)).toBe("pinned");
       expect(at(400)).toBe("active");
       boundaryTop = 300;
       expect(at(400)).toBe("active");
-      expect(at(317)).toBe("active");
-      expect(at(316)).toBe("pinned");
+      expect(at(pinsAt + 1)).toBe("active");
+      expect(at(pinsAt)).toBe("pinned");
     },
   );
 
@@ -528,6 +533,44 @@ describe("sidebar drag projection", () => {
     expect(byTime.get("a2")?.y).toBe(-83);
     expect(byTime.get(sidebarMarkerId("working-header"))).toEqual(stationary);
     expect(byTime.get("w")).toEqual(stationary);
+  });
+
+  it("makes room for the boundary labels while a Working row is lifted", () => {
+    const items = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      divider,
+      thread("a", "active"),
+      marker("working-header"),
+      thread("w", "working"),
+      settledHeader,
+    ];
+    const result = preview(
+      { items, settledOrder: [], settledExpanded: false, boundaryLabelHeight: 24 },
+      "w",
+      "w",
+    );
+    expect(result.get("p")?.y).toBe(24);
+    expect(result.get("a")?.y).toBe(48);
+    expect(result.get("w")).toEqual(stationary);
+  });
+
+  it("closes the Working shelf in the preview only when its last thread is pinned", () => {
+    const items = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      divider,
+      thread("a", "active"),
+      marker("working-header"),
+      thread("w", "working"),
+      settledHeader,
+      thread("s", "settled"),
+    ];
+    const input = { items, settledOrder: ["s"], settledExpanded: true };
+    const last = preview({ ...input, workingThreadCount: 1 }, "w", "p");
+    const another = preview({ ...input, workingThreadCount: 2 }, "w", "p");
+    const settledY = (result: typeof last) => result.get(sidebarMarkerId("settled-header"))?.y ?? 0;
+    expect(settledY(last) - settledY(another)).toBe(-33);
   });
 
   it("updates the projection when the target or measured geometry changes", () => {
