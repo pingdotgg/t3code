@@ -4000,9 +4000,11 @@ it.live("a page's title change without navigation reaches its session", () =>
           "awaitPromise" in args[1] &&
           args[1].awaitPromise
         ) {
-          void send("Runtime.evaluate", { expression: "0" }).then(() => {
-            watched.resolve();
-          });
+          void send("Runtime.evaluate", { expression: "0" }).then(
+            () => watched.resolve(),
+            // The browser can close while the last probe is pending.
+            () => undefined,
+          );
         }
         return result;
       });
