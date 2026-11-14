@@ -1,3 +1,4 @@
+import { threadPullRequestKeyOf } from "@t3tools/client-runtime/thread-pull-requests";
 import * as Dialog from "../../components/ui/Dialog";
 import type {
   EnvironmentId,
@@ -358,7 +359,7 @@ export function useComposerCommandMenu({
 
     if (trigger.kind === "pull-request") {
       return pullRequestSearch.entries.map((entry) => ({
-        id: `pr:${entry.projectId}:${entry.repository}:${entry.number}`,
+        id: `pr:${entry.projectId}:${threadPullRequestKeyOf(entry)}`,
         type: "pull-request",
         pullRequest: {
           number: entry.number,

@@ -118,6 +118,8 @@ const GrokProviderCapabilitiesV2 = {
     ...AcpProviderCapabilitiesV2.checkpointing,
     providerCanReadConversationSnapshot: true,
   },
+  // Cancelling a Grok prompt kills its running foreground tool.
+  turns: { ...AcpProviderCapabilitiesV2.turns, supportsSteeringByInterruptRestart: false },
 } satisfies OrchestrationV2ProviderCapabilities;
 
 export interface GrokAdapterV2Options {
