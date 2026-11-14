@@ -13,6 +13,7 @@ import {
 } from "~/components/preview/thumbButtons";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
+import { useViewportSize } from "~/hooks/useViewportSize";
 import { cn, isMacPlatform } from "~/lib/utils";
 
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
@@ -21,6 +22,7 @@ import {
   browserViewportSettingKey,
   resolveBrowserViewportLayout,
   resolveFittedBrowserViewport,
+  resolveHiddenBrowserViewportSize,
 } from "./browserViewportLayout";
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
@@ -232,18 +234,14 @@ export function HostedBrowserWebview(props: {
     setAspectRatioLocked(aspectRatio !== null);
   };
   const content = presentation.content;
-  const hiddenWidth =
-    viewport._tag !== "fill"
-      ? viewport.width * layoutZoomFactor
-      : content
-        ? content.width / content.scale
-        : (lastRect?.width ?? 1280);
-  const hiddenHeight =
-    viewport._tag !== "fill"
-      ? viewport.height * layoutZoomFactor
-      : content
-        ? content.height / content.scale
-        : (lastRect?.height ?? 800);
+  const windowSize = useViewportSize();
+  const { width: hiddenWidth, height: hiddenHeight } = resolveHiddenBrowserViewportSize({
+    setting: viewport,
+    zoomFactor: layoutZoomFactor,
+    content,
+    lastRect,
+    windowSize,
+  });
   // Build from primitives on each side of the resize hook to keep both objects cached.
   const containerSize =
     active && lastRect ? lastRect : { width: hiddenWidth, height: hiddenHeight };
