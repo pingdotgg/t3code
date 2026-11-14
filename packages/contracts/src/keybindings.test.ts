@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 
-import { ResolvedKeybindingsConfig } from "./keybindings.ts";
+import { KeybindingsConfig, ResolvedKeybindingsConfig } from "./keybindings.ts";
 
 const decode = <S extends Schema.Top>(
   schema: S,
@@ -22,6 +22,17 @@ const shortcut = {
   altKey: false,
   modKey: true,
 };
+
+it.effect("accepts a custom shortcut for selecting a new worktree", () =>
+  Effect.gen(function* () {
+    const config = [
+      { command: "composer.newWorktree", key: "mod+alt+w", when: "!terminalFocus" },
+    ] as const;
+    assert.deepEqual(yield* decode(KeybindingsConfig, config), config);
+    const resolved = [{ command: "composer.newWorktree", shortcut }] as const;
+    assert.deepEqual(yield* decode(ResolvedKeybindingsConfig, resolved), resolved);
+  }),
+);
 
 it.effect("drops resolved rules with commands this build does not know", () =>
   Effect.gen(function* () {

@@ -831,6 +831,21 @@ export function recallCheckoutIsRepo(
     : sessionCheckoutIsRepo.get(checkoutIsRepoKey(environmentId, cwd));
 }
 
+export function canSelectNewWorktree(input: {
+  readonly isGitRepo: boolean | undefined;
+  readonly envLocked: boolean;
+  readonly isMultiModel: boolean;
+  readonly isLocalDraftThread: boolean;
+  readonly canOverrideServerThreadEnvMode: boolean;
+}): boolean {
+  return (
+    input.isGitRepo === true &&
+    !input.envLocked &&
+    !input.isMultiModel &&
+    (input.isLocalDraftThread || input.canOverrideServerThreadEnvMode)
+  );
+}
+
 // Imported history lacks a session until its first prompt; resolve its instance before locking the driver.
 export function deriveLockedProvider(input: {
   thread: Thread | null | undefined;
