@@ -32,6 +32,7 @@ import {
   decodeCommentsJson,
   decodeCommitsJson,
   decodeConflictsJson,
+  decodeMergeTaskJson,
   decodeDiffstatJson,
   decodePullRequestJson,
   decodePullRequestPageJson,
@@ -127,6 +128,7 @@ const DIFF_MAX_BYTES = 8 * 1024 * 1024;
 /** Must expire before the caller's version cache so refreshes reach Bitbucket. */
 const REVISION_PATCH_TTL = Duration.seconds(5);
 const REVISION_PATCH_CAPACITY = 16;
+const MERGE_TASK_POLL_INTERVAL = Duration.seconds(2);
 const encodeRevisionKey = Schema.encodeSync(
   Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.Number])),
 );
@@ -425,6 +427,21 @@ export const make = Effect.gen(function* () {
               }),
             );
       }),
+    );
+
+  /**
+   * The task URL is the only way to learn the outcome, so read it until Bitbucket settles it.
+   * Bitbucket fails the task-status read with the merge's own error once the task fails.
+   */
+  const followMergeTask = (
+    url: string,
+  ): Effect.Effect<BitbucketPullRequest | undefined, BitbucketPullRequestApiError> =>
+    readPage({ operation: "mergeTask", url, decode: decodeMergeTaskJson }).pipe(
+      Effect.flatMap((task) =>
+        task.pending
+          ? Effect.sleep(MERGE_TASK_POLL_INTERVAL).pipe(Effect.andThen(followMergeTask(url)))
+          : Effect.succeed(task.pullRequest),
+      ),
     );
 
   /** Replies and parents can span pages; assemble threads after pagination. */
@@ -757,7 +774,13 @@ export const make = Effect.gen(function* () {
               url: `${pullRequest}/merge`,
               body: JSON.stringify({ merge_strategy: mergeStrategy(input.mergeMethod) }),
             })
-            .pipe(reply);
+            .pipe(
+              Effect.flatMap((response) =>
+                response.acceptedTask === undefined
+                  ? Effect.succeed(response).pipe(reply)
+                  : followMergeTask(response.acceptedTask),
+              ),
+            );
         }
         return bitbucket.request({ method: "POST", url: `${pullRequest}/decline` }).pipe(reply);
       });

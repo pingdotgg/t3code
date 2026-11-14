@@ -20,6 +20,7 @@ import type * as SourceControlHost from "@t3tools/source-control-core/server/Sou
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
+import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
 
 type HostGit = SourceControlHost.SourceControlHost["Service"]["git"];
 
@@ -904,6 +905,44 @@ it.effect("follows a redirect that stays on the configured Bitbucket", () =>
     ),
   ),
 );
+
+it.effect("reports a merge Bitbucket accepted as a task and then rejected", () => {
+  const pullRequest = "https://api.test.local/2.0/repositories/acme/web/pullrequests/7";
+  const task = `${pullRequest}/merge/task-status/task-1`;
+  // A queued merge can stay pending for minutes before Bitbucket rejects it.
+  const pendingReads = 100;
+  let taskReads = 0;
+  const { execute, layer } = makeLayer({
+    response: (request) => {
+      if (request.method === "POST") {
+        return new Response("", { status: 202, headers: { location: task } });
+      }
+      taskReads += 1;
+      return taskReads <= pendingReads
+        ? Response.json({ task_status: "PENDING" })
+        : Response.json({ type: "error", error: { message: "Merge conflict" } }, { status: 400 });
+    },
+  });
+
+  return Effect.gen(function* () {
+    const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+    const merge = yield* Effect.forkChild(
+      Effect.result(api.runAction({ repository: "acme/web", number: 7, action: "merge" })),
+    );
+    yield* TestClock.adjust("1 hour");
+    const outcome = yield* Fiber.join(merge);
+
+    assert.isTrue(Result.isFailure(outcome));
+    assert.deepStrictEqual(
+      execute.mock.calls.map(([request]) => `${request.method} ${request.url}`),
+      [
+        `POST ${pullRequest}/merge`,
+        ...Array.from({ length: pendingReads + 1 }, () => `GET ${task}`),
+      ],
+    );
+  }).pipe(Effect.provide(BitbucketPullRequestApi.layer.pipe(Layer.provideMerge(layer))));
+});
 
 it.effect("cuts a response short rather than reading an unbounded diff into memory", () =>
   Effect.gen(function* () {

@@ -348,7 +348,15 @@ export class BitbucketApi extends Context.Service<
       readonly url: string;
       readonly body?: string;
       readonly maxBytes?: number;
-    }) => Effect.Effect<{ readonly body: string; readonly truncated: boolean }, BitbucketApiError>;
+    }) => Effect.Effect<
+      {
+        readonly body: string;
+        readonly truncated: boolean;
+        /** The task-status `Location` of a 202 Accepted reply. */
+        readonly acceptedTask?: string;
+      },
+      BitbucketApiError
+    >;
     readonly listPullRequests: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProvider.SourceControlProviderContext;
@@ -1016,6 +1024,9 @@ export const make = Effect.gen(function* () {
                 Effect.map((collected) => ({
                   body: collected.text,
                   truncated: collected.truncated,
+                  ...(success.status === 202 && success.headers.location !== undefined
+                    ? { acceptedTask: success.headers.location }
+                    : {}),
                 })),
               ),
             orElse: (failed) => responseError("request", failed),
