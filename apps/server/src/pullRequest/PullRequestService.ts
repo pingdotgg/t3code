@@ -1084,6 +1084,16 @@ export const make = Effect.gen(function* () {
                     };
                   }
                 }
+                // A host T3 Code reads, but only through a checkout of the repository.
+                const known =
+                  publicHost ?? sourceControlDefinitions.findByRepositoryKey(referenceKey);
+                if (known !== undefined && registry.get(known.kind) !== undefined) {
+                  return yield* new PullRequestUnavailableError({
+                    reason: "checkout-missing",
+                    provider: known.kind,
+                    requirement: `Add ${host}/${repository} as a project to read its change requests.`,
+                  });
+                }
                 return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
               });
             }

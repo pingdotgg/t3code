@@ -961,6 +961,7 @@ export const PullRequestUnavailableReason = Schema.Literals([
   "cli-missing",
   "cli-unauthenticated",
   "provider-unsupported",
+  "checkout-missing",
 ]);
 export type PullRequestUnavailableReason = typeof PullRequestUnavailableReason.Type;
 
@@ -1006,6 +1007,8 @@ export class PullRequestUnavailableError extends Schema.TaggedError<PullRequestU
         return this.requirement ?? "This host has no working credentials.";
       case "provider-unsupported":
         return "Change requests cannot be browsed for this project's host yet.";
+      case "checkout-missing":
+        return this.requirement ?? "Add this repository as a project to read its change requests.";
     }
   }
 }
