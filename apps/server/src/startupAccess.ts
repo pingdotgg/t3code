@@ -71,9 +71,9 @@ export const acceptsPrivateNetworkConnection = (socket: {
   );
 
 export const loopbackUrlHostForAddress = (address: NetAddress.InetAddress): string =>
-  address._tag === "InetAddressV6" && NetAddress.isLoopback(address.address)
-    ? "[::1]"
-    : "127.0.0.1";
+  NetAddress.isUnspecified(address.address)
+    ? "127.0.0.1"
+    : NetAddress.formatUrlHostString(NetAddress.formatIp(address.address));
 
 const normalizeHost = (host: string): string =>
   host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
