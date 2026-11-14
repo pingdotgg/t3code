@@ -81,6 +81,7 @@ import React, {
   type MouseEvent as ReactMouseEvent,
   use,
   memo,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -1822,9 +1823,12 @@ const MarkdownSource = memo(function MarkdownSource({
         components: CHAT_MARKDOWN_COMPONENTS,
         urlTransform: markdownUrlTransform,
       });
-  return (
-    <ChatMarkdownTextContext value={text}>{render(text, shared && cache)}</ChatMarkdownTextContext>
-  );
+  const element = render(text);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Caching during render would make React Compiler rebuild the element when `cache` flips.
+  useEffect(() => {
+    if (shared && cache) render.remember(text, element);
+  }, [render, text, element, shared, cache]);
+  return <ChatMarkdownTextContext value={text}>{element}</ChatMarkdownTextContext>;
 });
 
 function ChatMarkdown({
