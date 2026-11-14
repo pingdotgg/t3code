@@ -4901,25 +4901,21 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("reports staged file counts on unborn HEAD without failing", () =>
+    it.effect("reports net file counts from the empty tree on unborn HEAD", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* driver.initRepo({ cwd });
-        yield* git(cwd, ["config", "user.email", "test@test.com"]);
-        yield* git(cwd, ["config", "user.name", "Test"]);
         yield* writeTextFile(cwd, "initial.ts", "// first file\n");
         yield* git(cwd, ["add", "initial.ts"]);
+        yield* writeTextFile(cwd, "initial.ts", "// edited after staging\n");
 
-        const status = yield* driver.statusDetails(cwd);
+        const status = yield* driver.statusDetailsLocal(cwd);
 
         assert.equal(status.isRepo, true);
-        assert.equal(status.workingTree.files.length, 1);
-        const file = status.workingTree.files[0];
-        if (file) {
-          assert.equal(file.path, "initial.ts");
-          assert.equal(file.insertions, 1);
-        }
+        assert.deepStrictEqual(status.workingTree.files, [
+          { path: "initial.ts", insertions: 1, deletions: 0 },
+        ]);
       }),
     );
   });
@@ -7805,6 +7801,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             yield* git(originRemote, ["--git-dir=.", "rev-parse", "refs/heads/feature/push"]),
             publishedHead,
           );
+
+          const pushOnlyRemote = yield* makeTmpDir("git-push-only-remote-");
+          yield* git(pushOnlyRemote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "set-url", "--push", "origin", pushOnlyRemote]);
+          const pushedToPushUrl = yield* driver.pushCurrentBranch(cwd, null);
+          assert.deepInclude(pushedToPushUrl, { status: "pushed", branch });
+          assert.equal(
+            yield* git(pushOnlyRemote, ["--git-dir=.", "rev-parse", "refs/heads/feature/push"]),
+            head,
+          );
         }),
     );
 
@@ -8206,29 +8212,73 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    it.effect("skips an up-to-date tracked branch the push remote already has", () =>
+    it.effect.each([
+      { pushUrls: [], status: "skipped_up_to_date" },
+      { pushUrls: ["mirror"], status: "pushed" },
+      { pushUrls: ["fork", "mirror"], status: "pushed" },
+    ] as const)(
+      "skips an up-to-date tracked branch only when every push URL has it (pushurl $pushUrls)",
+      ({ pushUrls, status }) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const upstreamRemote = yield* makeTmpDir("git-upstream-remote-");
+          const remotes = {
+            fork: yield* makeTmpDir("git-fork-remote-"),
+            mirror: yield* makeTmpDir("git-mirror-remote-"),
+          };
+          yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* git(upstreamRemote, ["init", "--bare"]);
+          yield* git(remotes.fork, ["init", "--bare"]);
+          yield* git(remotes.mirror, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "upstream", upstreamRemote]);
+          yield* git(cwd, ["remote", "add", "fork", remotes.fork]);
+          yield* git(cwd, ["checkout", "-b", "topic"]);
+          yield* git(cwd, ["push", "-u", "upstream", "topic"]);
+          yield* git(cwd, ["push", "fork", "topic"]);
+          yield* git(cwd, ["config", "remote.pushDefault", "fork"]);
+          for (const name of pushUrls) {
+            yield* git(cwd, ["remote", "set-url", "--add", "--push", "fork", remotes[name]]);
+          }
+
+          const pushed = yield* driver.pushCurrentBranch(cwd, null);
+
+          assert.deepInclude(pushed, { status, upstreamBranch: "fork/topic", pushRemote: "fork" });
+          const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+          for (const name of pushUrls) {
+            assert.equal(
+              yield* git(remotes[name], ["--git-dir=.", "rev-parse", "refs/heads/topic"]),
+              head,
+            );
+          }
+          assert.equal(
+            yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+            "upstream/topic",
+          );
+        }),
+    );
+
+    it.effect("pushes an up-to-date branch whose tracked remote has a separate push URL", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
-        const upstreamRemote = yield* makeTmpDir("git-upstream-remote-");
-        const forkRemote = yield* makeTmpDir("git-fork-remote-");
+        const fetchRemote = yield* makeTmpDir("git-fetch-remote-");
+        const pushRemote = yield* makeTmpDir("git-push-remote-");
         yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* git(upstreamRemote, ["init", "--bare"]);
-        yield* git(forkRemote, ["init", "--bare"]);
-        yield* git(cwd, ["remote", "add", "upstream", upstreamRemote]);
-        yield* git(cwd, ["remote", "add", "fork", forkRemote]);
+        yield* git(fetchRemote, ["init", "--bare"]);
+        yield* git(pushRemote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", fetchRemote]);
         yield* git(cwd, ["checkout", "-b", "topic"]);
-        yield* git(cwd, ["push", "-u", "upstream", "topic"]);
-        yield* git(cwd, ["push", "fork", "topic"]);
-        yield* git(cwd, ["config", "remote.pushDefault", "fork"]);
+        yield* git(cwd, ["push", "-u", "origin", "topic"]);
+        yield* git(cwd, ["remote", "set-url", "--push", "origin", pushRemote]);
 
         const pushed = yield* driver.pushCurrentBranch(cwd, null);
 
-        assert.deepInclude(pushed, {
-          status: "skipped_up_to_date",
-          upstreamBranch: "fork/topic",
-          pushRemote: "fork",
-        });
+        assert.deepInclude(pushed, { status: "pushed", upstreamBranch: "origin/topic" });
+        assert.equal(
+          yield* git(pushRemote, ["--git-dir=.", "rev-parse", "refs/heads/topic"]),
+          yield* git(cwd, ["rev-parse", "HEAD"]),
+        );
       }),
     );
 
