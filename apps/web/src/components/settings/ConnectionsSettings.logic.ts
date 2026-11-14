@@ -9,6 +9,7 @@ import {
 } from "~/environments/primary";
 import {
   type AdvertisedEndpoint,
+  type AuthClientMetadata,
   type AuthClientSession,
   type AuthGrantScope,
   type AuthPairingLink,
@@ -20,6 +21,8 @@ import {
   type DesktopUpdateState,
   type DesktopWslState,
   type EnvironmentId,
+  type ServerAuthPolicy,
+  type ServerDirectEndpoint,
 } from "@t3tools/contracts";
 import {
   getDesktopUpdateDownloadedVersion,
@@ -211,7 +214,7 @@ export function parseManualDesktopSshTarget(input: {
 
   const rawPort = input.port.trim();
   if (rawPort.length > 0) {
-    port = Number.parseInt(rawPort, 10);
+    port = /^\d+$/u.test(rawPort) ? Number.parseInt(rawPort, 10) : Number.NaN;
   }
 
   if (hostname.length === 0) {
@@ -369,6 +372,15 @@ export function selectPairingEndpoint(
   );
 }
 
+/** A loopback server advertises a direct endpoint only once its Tailscale Serve URL answers. */
+export function isServerNetworkAccessible(input: {
+  readonly authPolicy: ServerAuthPolicy | null;
+  readonly directEndpoints: ReadonlyArray<ServerDirectEndpoint> | undefined;
+}): boolean {
+  if (input.authPolicy === "remote-reachable") return true;
+  return input.authPolicy === "loopback-browser" && (input.directEndpoints?.length ?? 0) > 0;
+}
+
 export function isTailscaleHttpsEndpoint(endpoint: AdvertisedEndpoint): boolean {
   return endpoint.id.startsWith("tailscale-magicdns:");
 }
@@ -455,4 +467,25 @@ export function resolveAccessEnvironmentId(input: {
     (input.environments.find((environment) => environment.connected) ?? input.environments[0])
       ?.environmentId ?? null
   );
+}
+
+/** A short name for a T3 Connect device: its label, or what it runs on. */
+export function connectDeviceName({
+  client,
+}: {
+  readonly client?: AuthClientMetadata | undefined;
+}): string {
+  return client?.label ?? client?.os ?? client?.browser ?? "this device";
+}
+
+/** How a T3 Connect device describes itself. It can say anything, so the code is what to trust. */
+export function describeConnectDeviceClient({
+  client,
+}: {
+  readonly client?: AuthClientMetadata | undefined;
+}): string {
+  const bits = [client?.label, client?.os, client?.browser, client?.ipAddress].filter(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
+  return bits.length > 0 ? [...new Set(bits)].join(" · ") : "Unknown device";
 }
