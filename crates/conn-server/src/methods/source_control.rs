@@ -14,12 +14,14 @@ use std::{
 };
 
 use conn_contract::{
-    SourceControlAppAccess, SourceControlAppAccessStatus, SourceControlDiscoveryResult,
-    SourceControlSignInError, SourceControlSignInFailure, SourceControlSignInInput,
-    SourceControlStarredInput, lit,
+    SourceControlAppAccess, SourceControlAppAccessStatus, SourceControlCloneRepositoryInput,
+    SourceControlDiscoveryResult, SourceControlPublishRepositoryInput,
+    SourceControlRepositoryLookupInput, SourceControlSignInError, SourceControlSignInFailure,
+    SourceControlSignInInput, SourceControlStarredInput, lit,
 };
 use conn_source_control::{
-    hosts::{self, DiscoveryContext, Endpoints, Environment},
+    hosts::{self, DiscoveryContext, Endpoints, Environment, Hosts},
+    repository::{self, CLONE_TIMEOUT, RepositoryError, ServiceContext},
     settings::Settings,
 };
 use serde_json::Value;
@@ -79,6 +81,8 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
         }
     });
 
+    register_repositories(table, &inputs, deps);
+
     table.unary(
         "sourceControl.signInStart",
         |_, input: SourceControlSignInInput| async move {
@@ -136,6 +140,105 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
             }
         });
     }
+}
+
+/// What a repository call needs, built once per call: the hosts read the settings of the
+/// moment, and the process's working folder resolves a relative clone destination.
+#[derive(Debug)]
+struct RepositoryCall {
+    settings: Settings,
+    env: Environment,
+    endpoints: Endpoints,
+    process_cwd: PathBuf,
+}
+
+impl RepositoryCall {
+    fn new(inputs: &HostInputs) -> Self {
+        Self {
+            settings: inputs.settings(),
+            env: Environment::process(),
+            endpoints: Endpoints::default(),
+            process_cwd: std::env::current_dir().unwrap_or_else(|_| inputs.cwd.to_path_buf()),
+        }
+    }
+
+    fn hosts<'a>(&'a self, inputs: &'a HostInputs) -> Hosts<'a> {
+        Hosts {
+            ctx: DiscoveryContext {
+                cwd: &inputs.cwd,
+                home: inputs.home.as_deref(),
+                settings: &self.settings,
+                env: &self.env,
+                endpoints: &self.endpoints,
+                child_env: &[],
+            },
+        }
+    }
+
+    fn service<'a>(&'a self, inputs: &'a HostInputs) -> ServiceContext<'a> {
+        ServiceContext {
+            server_cwd: &inputs.cwd,
+            process_cwd: &self.process_cwd,
+            home: inputs.home.as_deref(),
+            child_env: &[],
+            clone_timeout: CLONE_TIMEOUT,
+        }
+    }
+}
+
+fn repository_failure(error: &RepositoryError) -> Failure {
+    Failure::fail(&error.to_contract())
+}
+
+/// `sourceControl.lookupRepository`, `cloneRepository`, `publishRepository`
+/// (`SourceControlRepositoryService.ts`). Forgejo and GitCafe have no repository operations
+/// yet: they fail as a host the T3 server has no driver for.
+fn register_repositories(table: &mut MethodTable, inputs: &HostInputs, deps: &Deps) {
+    let host = inputs.clone();
+    table.unary(
+        "sourceControl.lookupRepository",
+        move |_, input: SourceControlRepositoryLookupInput| {
+            let host = host.clone();
+            async move {
+                let call = RepositoryCall::new(&host);
+                repository::lookup(&call.hosts(&host), call.service(&host), &input)
+                    .await
+                    .map_err(|e| repository_failure(&e))
+            }
+        },
+    );
+    let host = inputs.clone();
+    table.unary(
+        "sourceControl.cloneRepository",
+        move |_, input: SourceControlCloneRepositoryInput| {
+            let host = host.clone();
+            async move {
+                let call = RepositoryCall::new(&host);
+                repository::clone(&call.hosts(&host), call.service(&host), &input)
+                    .await
+                    .map_err(|e| repository_failure(&e))
+            }
+        },
+    );
+    let host = inputs.clone();
+    let hub = deps.vcs.hub.clone();
+    table.unary(
+        "sourceControl.publishRepository",
+        move |_, input: SourceControlPublishRepositoryInput| {
+            let host = host.clone();
+            let hub = hub.clone();
+            async move {
+                let call = RepositoryCall::new(&host);
+                let result =
+                    repository::publish(&call.hosts(&host), call.service(&host), &input).await;
+                // A failed push still leaves the new remote added (`Effect.ensuring` in ws.ts).
+                let _ = hub
+                    .refresh_status(input.cwd.trim(), conn_vcs::hub::Remote::Read)
+                    .await;
+                result.map_err(|e| repository_failure(&e))
+            }
+        },
+    );
 }
 
 /// `SourceControlProviderKind` and `TrimmedNonEmptyString` decode by trimming.

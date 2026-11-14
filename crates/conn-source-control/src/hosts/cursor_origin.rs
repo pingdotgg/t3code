@@ -123,7 +123,7 @@ pub fn parse_auth(output: &ProbeOutput) -> SourceControlProviderAuth {
 
 /// The session token: `origin auth token` with `NO_COLOR=1`, run in the server's cwd. `None`
 /// for a missing CLI, a non-zero exit or a blank answer (`currentToken`).
-async fn session_token(ctx: DiscoveryContext<'_>) -> Option<Secret> {
+pub(crate) async fn session_token(ctx: DiscoveryContext<'_>) -> Option<Secret> {
     let mut command = ProbeCommand::new(
         "CursorOrigin.authToken",
         "origin",
@@ -153,7 +153,7 @@ async fn get_namespaces(base: &str, token: &Secret) -> Option<HttpResponse> {
 /// `OriginNamespaceListSchema` and `personalNamespace`: the slug of the first `user` namespace.
 /// Every entry must have a string `slug` and `type`, or the list does not decode. A blank body
 /// reads as `{}`.
-fn personal_namespace_slug(body: &str) -> Option<String> {
+pub(crate) fn personal_namespace_slug(body: &str) -> Option<String> {
     let body = if body.trim().is_empty() { "{}" } else { body };
     let value: Value = serde_json::from_str(body).ok()?;
     let namespaces = match value.as_object()?.get("namespaces") {

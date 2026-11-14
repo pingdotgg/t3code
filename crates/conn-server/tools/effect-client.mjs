@@ -321,6 +321,19 @@ const decodeEach = (client) =>
     yield* call("sourceControl.appAccess", repository);
     yield* call("sourceControl.starred", repository);
     yield* call("sourceControl.star", { ...repository, provider: "gitlab" });
+    // Repositories, with no host asked: a provider still "unknown" is refused, a Bitbucket name
+    // without a workspace fails before any request, and a clone copies the local repository.
+    yield* call("sourceControl.lookupRepository", { provider: "unknown", repository: "o/r" });
+    yield* call("sourceControl.cloneRepository", {
+      remoteUrl: repo,
+      destinationPath: NodePath.join(work, "effect-client-clone"),
+    });
+    yield* call("sourceControl.publishRepository", {
+      cwd: repo,
+      provider: "bitbucket",
+      repository: "no-workspace",
+      visibility: "private",
+    });
   });
 
 const result = await Effect.runPromiseExit(program);

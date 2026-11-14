@@ -16,6 +16,9 @@ pub mod forgejo;
 pub mod gitcafe;
 pub mod github;
 pub mod gitlab;
+pub mod repositories;
+
+pub use repositories::Hosts;
 
 /// The server's environment, as `HostProcess.Environment` gives it to a driver. Tests pass a
 /// fixed set instead of changing the process's own variables.

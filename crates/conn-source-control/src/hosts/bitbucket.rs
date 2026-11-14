@@ -140,11 +140,29 @@ fn user_url(env: &Environment) -> String {
     format!("{}/user", base.trim_end_matches('/'))
 }
 
-/// `GET /user` with the credential. `None` for any failure: no answer, a status outside 2xx, a
-/// body that is not a user.
-async fn ask_user(url: String, credential: &Credential) -> Option<Option<String>> {
-    let request = HttpRequest::new(Method::Get, url).header("accept", "application/json");
-    let request = match credential {
+/// `config.baseUrl` without trailing slashes, for `apiUrl`.
+pub(crate) fn api_base(env: &Environment) -> String {
+    env.get(BASE_URL_VARIABLE)
+        .unwrap_or_else(|| DEFAULT_API_BASE_URL.to_owned())
+        .trim_end_matches('/')
+        .to_owned()
+}
+
+/// `withAuth`: the saved credential (Settings, then the environment) as a bearer or basic
+/// `authorization` header; no header without one. `Err` is an unresolved secret's message.
+pub(crate) fn authorize(
+    ctx: DiscoveryContext<'_>,
+    request: HttpRequest,
+) -> Result<HttpRequest, String> {
+    let settings = ctx.settings.host(KIND);
+    Ok(match resolve_credential(&settings, ctx.env)? {
+        None => request,
+        Some(credential) => with_credential(request, &credential),
+    })
+}
+
+fn with_credential(request: HttpRequest, credential: &Credential) -> HttpRequest {
+    match credential {
         Credential::AccessToken(token) => {
             request.secret_header("authorization", "Bearer ", token.clone())
         }
@@ -156,7 +174,16 @@ async fn ask_user(url: String, credential: &Credential) -> Option<Option<String>
                 Secret::new(base64::encode(pair.as_bytes())),
             )
         }
-    };
+    }
+}
+
+/// `GET /user` with the credential. `None` for any failure: no answer, a status outside 2xx, a
+/// body that is not a user.
+async fn ask_user(url: String, credential: &Credential) -> Option<Option<String>> {
+    let request = with_credential(
+        HttpRequest::new(Method::Get, url).header("accept", "application/json"),
+        credential,
+    );
     let response = http::send(request).await.ok()?;
     if !(200..300).contains(&response.status) || response.truncated {
         return None;
