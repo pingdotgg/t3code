@@ -654,7 +654,15 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
       const resolved = normalizeCommandPath(context.resolvedCommandPath);
       if (!latestDirs.some((dir) => isUnder(resolved, dir))) return manual(binaryPath);
     }
-    const args = ["upgrade", miseTool];
+    // `mise upgrade <short name>` skips a tool configured by its backend name, like `npm:<pkg>`.
+    const configured = Option.getOrUndefined(
+      decodeMiseInstalls(yield* runProbe(misePath, ["ls", "--json", "--installed"], context.env)),
+    );
+    const configuredTool =
+      Object.entries(configured ?? {}).find(([, installs]) =>
+        installs.some((candidate) => candidate.install_path === install.install_path),
+      )?.[0] ?? miseTool;
+    const args = ["upgrade", configuredTool];
     const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     const capabilities = makeProviderMaintenanceCapabilities({
       ...owner,
@@ -801,6 +809,15 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   // After mise: a shim of a Nix-installed mise resolves into the store, yet its installs are writable.
   if (commandPaths.some(isNixStoreCommandPath)) {
     return manual;
+  }
+  const macPortsName = yield* resolveMacPortsOwner(context);
+  if (macPortsName !== null) {
+    return makeManualOnlyProviderMaintenanceCapabilities({
+      provider: definition.provider,
+      packageName,
+      installPath: context.realCommandPath,
+      ...(macPortsName ? { manualCommand: `sudo port upgrade ${macPortsName}` } : {}),
+    });
   }
 
   const nativeUpdate = definition.nativeUpdate;
@@ -1018,6 +1035,30 @@ const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
     .readFileString(context.realCommandPath)
     .pipe(Effect.orElseSucceed(() => ""));
   return script.startsWith("#!") && /\bmise\s+(?:x|exec)\b/.test(script);
+});
+
+/**
+ * The port that installed the executable, "" when MacPorts owns it under an unusable name,
+ * or null when it does not. MacPorts prefixes are root-owned and its Claude port disables
+ * `claude update`, so neither npm nor the native updater can upgrade these installs.
+ */
+const resolveMacPortsOwner = Effect.fn("resolveMacPortsOwner")(function* (
+  context: ProviderMaintenanceResolutionContext,
+) {
+  if (context.platform === "win32") return null;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const siblingPort = path.join(path.dirname(context.resolvedCommandPath), "port");
+  const portPath = (yield* fileSystem.exists(siblingPort).pipe(Effect.orElseSucceed(() => false)))
+    ? siblingPort
+    : yield* resolveCommandPath("port", { env: context.env });
+  if (!portPath) return null;
+  const prefix = `${normalizeCommandPath(path.dirname(path.dirname(portPath)))}/`;
+  if (!normalizeCommandPath(context.realCommandPath).startsWith(prefix)) return null;
+  const output = yield* runProbe(portPath, ["provides", context.realCommandPath], context.env);
+  const name = output ? /\bis provided by: (\S+)/.exec(output)?.[1] : undefined;
+  if (name === undefined) return null;
+  return /^[\w.+-]+$/.test(name) ? name : "";
 });
 
 // Volta bin links only identify its shim; the package image proves ownership.
