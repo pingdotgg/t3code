@@ -651,3 +651,30 @@ fn mapper_state_stays_bounded_over_many_turns() {
     }
     assert_eq!(sizes[0], sizes[1], "state after round 2 vs round 200");
 }
+
+#[test]
+fn plan_mode_without_approvals_denies_tools() {
+    // `interactionMode: plan` with `approvalPolicy: never`: T3's callback denies the tool
+    // without a prompt (ClaudeAdapterV2 canUseTool).
+    let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+    mapper.begin_turn(
+        &turn_input(1, &provider_thread("n1"), "plan", "approval-required"),
+        "plan",
+    );
+    mapper.set_policy_asks(true);
+    mapper.set_plan_without_approvals(true);
+    let outs = mapper.handle(Inbound::from_value(json!({
+        "type": "control_request", "request_id": "cli-w",
+        "request": {"subtype": "can_use_tool", "tool_name": "Write",
+                    "input": {"file_path": "/x"}, "tool_use_id": "toolu_w"},
+    })));
+    assert!(
+        !outs
+            .iter()
+            .any(|o| matches!(o, Out::Event(ProviderEvent::RuntimeRequestUpdated { .. })))
+    );
+    let Some(Out::Write(deny)) = outs.last() else {
+        panic!("a reply expected: {outs:?}")
+    };
+    assert!(deny.contains("approvals are disabled for this thread"));
+}

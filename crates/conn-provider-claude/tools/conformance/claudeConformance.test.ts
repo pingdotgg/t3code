@@ -71,6 +71,8 @@ interface Scenario {
   readonly name: string;
   readonly runtimeMode: "full-access" | "approval-required";
   readonly mcp?: boolean;
+  /** Spread over the runtime policy, as T3's RuntimePolicy.layerWithOverride does. */
+  readonly policyOverride?: { readonly approvalPolicy?: unknown; readonly sandboxPolicy?: unknown };
   readonly claudeSettings?: unknown;
   readonly steps: ReadonlyArray<Step>;
 }
@@ -169,6 +171,7 @@ const runScenario = (scenario: Scenario) =>
       runtimeMode: scenario.runtimeMode,
       interactionMode: "default",
       cwd: WORKSPACE,
+      ...scenario.policyOverride,
     });
     const providerSessionId = ProviderSessionId.make("provider-session-conformance");
     if (scenario.mcp === true) {

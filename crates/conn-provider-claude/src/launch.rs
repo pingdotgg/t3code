@@ -148,8 +148,7 @@ pub struct QueryPolicy {
     pub downgraded: bool,
 }
 
-/// The runtime policy fields T3 reads. The trait carries runtime and interaction mode only;
-/// `approval_policy` and `sandbox_policy` stay `None` until it carries them.
+/// The runtime policy fields T3 reads (`ProviderAdapterV2RuntimePolicy`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PolicyInput<'a> {
     pub runtime_mode: &'a str,

@@ -73,6 +73,8 @@ pub struct Mapper<E: Env> {
     context_windows: HashMap<String, u64>,
     /// Set by the session from its query policy; see [`Mapper::set_policy_asks`].
     policy_asks: Option<bool>,
+    /// Plan mode with `approvalPolicy: "never"`: every forwarded tool request is denied.
+    plan_without_approvals: bool,
 }
 
 impl<E: Env> std::fmt::Debug for Mapper<E> {
@@ -206,6 +208,7 @@ impl<E: Env> Mapper<E> {
             task_list: None,
             context_windows: HashMap::new(),
             policy_asks: None,
+            plan_without_approvals: false,
         }
     }
 
@@ -213,6 +216,11 @@ impl<E: Env> Mapper<E> {
     /// (only `auto` lets a forwarded request through).
     pub fn set_policy_asks(&mut self, asks: bool) {
         self.policy_asks = Some(asks);
+    }
+
+    /// Plan mode with approvals disabled (`interactionMode: plan`, `approvalPolicy: never`).
+    pub fn set_plan_without_approvals(&mut self, value: bool) {
+        self.plan_without_approvals = value;
     }
 
     /// Subagents still running, or Claude output waiting for a continuation turn.
@@ -1177,6 +1185,15 @@ impl<E: Env> Mapper<E> {
             let deny = json!({
                 "behavior": "deny",
                 "message": "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
+                "toolUseID": tool_use_id,
+            });
+            out.push(Out::Write(control_success(&cli_id, deny)));
+            return;
+        }
+        if self.plan_without_approvals {
+            let deny = json!({
+                "behavior": "deny",
+                "message": "This tool requires approval in Plan mode, but approvals are disabled for this thread.",
                 "toolUseID": tool_use_id,
             });
             out.push(Out::Write(control_success(&cli_id, deny)));

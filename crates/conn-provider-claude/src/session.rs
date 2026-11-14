@@ -528,24 +528,78 @@ fn model_selection(
     (compiled.api_model_id, compiled.effort, compiled.settings)
 }
 
-fn policy_input(policy: &RuntimePolicy) -> (String, String) {
-    let runtime = to_json(&policy.runtime_mode);
-    let interaction = to_json(&policy.interaction_mode);
-    (
-        runtime.as_str().unwrap_or("full-access").to_string(),
-        interaction.as_str().unwrap_or("default").to_string(),
-    )
+/// The runtime policy as T3's Claude adapter reads it: modes, `approvalPolicy` and the
+/// `sandboxPolicy` kind (`sandboxPolicyKindForClaudeRuntimePolicy`,
+/// `readOnlyPolicyAllowsGlobalReads`).
+#[derive(Debug)]
+struct OwnedPolicyInput {
+    runtime_mode: String,
+    interaction_mode: String,
+    /// The approval policy when it is a string; `Some("")` for any other set value (an object
+    /// such as `granular`), which T3 treats as "set, not never".
+    approval_policy: Option<String>,
+    sandbox: Option<&'static str>,
+    read_only_global_reads: bool,
+}
+
+impl OwnedPolicyInput {
+    fn new(policy: &RuntimePolicy) -> Self {
+        let runtime = to_json(&policy.runtime_mode);
+        let interaction = to_json(&policy.interaction_mode);
+        let approval_policy = policy
+            .approval_policy
+            .as_ref()
+            .map(|v| v.as_str().unwrap_or_default().to_string());
+        let sandbox_type = policy
+            .sandbox_policy
+            .as_ref()
+            .and_then(|v| v.get("type"))
+            .and_then(Value::as_str);
+        let sandbox = match sandbox_type {
+            Some("dangerFullAccess") => Some("dangerFullAccess"),
+            Some("externalSandbox") => Some("externalSandbox"),
+            Some("readOnly") => Some("readOnly"),
+            Some("workspaceWrite") => Some("workspaceWrite"),
+            _ => None,
+        };
+        let read_only_global_reads = sandbox == Some("readOnly")
+            && policy
+                .sandbox_policy
+                .as_ref()
+                .and_then(|v| v.get("access"))
+                .and_then(|a| a.get("type"))
+                .and_then(Value::as_str)
+                == Some("fullAccess");
+        Self {
+            runtime_mode: runtime.as_str().unwrap_or("full-access").to_string(),
+            interaction_mode: interaction.as_str().unwrap_or("default").to_string(),
+            approval_policy,
+            sandbox,
+            read_only_global_reads,
+        }
+    }
+
+    fn input(&self) -> PolicyInput<'_> {
+        PolicyInput {
+            runtime_mode: &self.runtime_mode,
+            interaction_mode: &self.interaction_mode,
+            approval_policy: self.approval_policy.as_deref(),
+            sandbox: self.sandbox,
+            read_only_global_reads: self.read_only_global_reads,
+        }
+    }
+
+    /// `interactionMode === "plan" && approvalPolicy === "never"`: the permission callback
+    /// denies every tool that would ask.
+    fn plan_without_approvals(&self) -> bool {
+        self.interaction_mode == "plan" && self.approval_policy.as_deref() == Some("never")
+    }
 }
 
 /// The policy without settings (no bypass check): for live mode changes.
 fn plain_policy(policy: &RuntimePolicy) -> QueryPolicy {
-    let (runtime, interaction) = policy_input(policy);
     launch::query_policy(
-        &PolicyInput {
-            runtime_mode: &runtime,
-            interaction_mode: &interaction,
-            ..PolicyInput::default()
-        },
+        &OwnedPolicyInput::new(policy).input(),
         BypassAvailability::default(),
     )
 }
@@ -723,15 +777,7 @@ impl ClaudeSession {
             return plain;
         }
         let availability = self.bypass_availability(policy.cwd.as_deref()).await;
-        let (runtime, interaction) = policy_input(policy);
-        launch::query_policy(
-            &PolicyInput {
-                runtime_mode: &runtime,
-                interaction_mode: &interaction,
-                ..PolicyInput::default()
-            },
-            availability,
-        )
+        launch::query_policy(&OwnedPolicyInput::new(policy).input(), availability)
     }
 
     /// Ensures a query for the turn's thread, with its model, effort, mode and MCP servers.
@@ -787,7 +833,8 @@ impl ClaudeSession {
                 let resume = state.resumable.contains(&native)
                     || input.provider_turn_ordinal > 1
                     || conversation_head(&thread).is_some();
-                let read_only = false;
+                let read_only =
+                    OwnedPolicyInput::new(&input.runtime_policy).sandbox == Some("readOnly");
                 let query = QueryInput {
                     thread_id: input.thread_id.as_str().into(),
                     native_thread_id: native.clone(),
@@ -849,6 +896,9 @@ impl ClaudeSession {
         state.resumable.insert(native);
         touch(&mut state, None);
         state.mapper.set_policy_asks(launch::asks_user(&policy));
+        state.mapper.set_plan_without_approvals(
+            OwnedPolicyInput::new(&input.runtime_policy).plan_without_approvals(),
+        );
         Ok(policy)
     }
 
@@ -1330,6 +1380,9 @@ impl Session for ClaudeSession {
             }
             state.mapper.set_permission_mode(&mode);
             state.mapper.set_policy_asks(launch::asks_user(&next));
+            state.mapper.set_plan_without_approvals(
+                OwnedPolicyInput::new(&policy).plan_without_approvals(),
+            );
             Ok(())
         })
     }
@@ -1597,6 +1650,52 @@ mod tests {
                 auto_disabled: false
             }
         );
+    }
+
+    fn runtime_policy(value: Value) -> RuntimePolicy {
+        from_json(value).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    #[test]
+    fn approval_and_sandbox_policy_are_read_like_t3() {
+        // READ_ONLY_NEVER_POLICY of T3's fixtures: dontAsk, read-only tools, allowed globally.
+        let read_only = runtime_policy(json!({
+            "runtimeMode": "full-access", "interactionMode": "default", "cwd": null,
+            "approvalPolicy": "never",
+            "sandboxPolicy": {"type": "readOnly", "access": {"type": "fullAccess"}},
+        }));
+        let policy = plain_policy(&read_only);
+        assert_eq!(policy.permission_mode, "dontAsk");
+        assert_eq!(
+            policy.tools,
+            launch::Tools::List(vec!["Read".into(), "Glob".into(), "Grep".into()])
+        );
+        assert!(policy.allowed_tools.is_some());
+        assert!(!policy.install_permission_callback);
+
+        // RESTRICTED_GRANULAR_POLICY: an object approval policy counts as "set, not never".
+        let granular = runtime_policy(json!({
+            "runtimeMode": "full-access", "interactionMode": "default", "cwd": null,
+            "approvalPolicy": {"granular": {"rules": true}},
+            "sandboxPolicy": {"type": "readOnly", "access": {"type": "restricted"}},
+        }));
+        let policy = plain_policy(&granular);
+        assert_eq!(policy.permission_mode, "default");
+        assert_eq!(policy.allowed_tools, None);
+        assert!(policy.install_permission_callback);
+
+        // No override: the runtime mode alone decides, as before.
+        let plain = runtime_policy(
+            json!({"runtimeMode": "full-access", "interactionMode": "default", "cwd": null}),
+        );
+        assert_eq!(plain_policy(&plain).permission_mode, "bypassPermissions");
+
+        let plan_never = runtime_policy(json!({
+            "runtimeMode": "full-access", "interactionMode": "plan", "cwd": null,
+            "approvalPolicy": "never",
+        }));
+        assert!(OwnedPolicyInput::new(&plan_never).plan_without_approvals());
+        assert!(!OwnedPolicyInput::new(&plain).plan_without_approvals());
     }
 
     #[test]

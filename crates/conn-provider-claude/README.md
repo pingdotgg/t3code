@@ -55,6 +55,14 @@ result equal, byte for byte.
 - **Bypass downgrade:** when bypass is asked, the SDK's `resolveSettings` plus the home's and
   remote settings decide; settings that forbid bypass give `auto` (or `default`), as T3.
 - **MCP servers:** `setMcpServers` after `initializationResult`, as the query runner does.
+- **Runtime policy:** `permissionModeForClaudeRuntimePolicy` and
+  `claudeRuntimeQueryPolicyForRuntimePolicy` over the runtime mode, interaction mode,
+  `approvalPolicy` and `sandboxPolicy` kind: a read-only sandbox gives the tools
+  `["Read","Glob","Grep"]` (also as `allowedTools` with `access: fullAccess`) and the read-only
+  `t3-code` tools; `approvalPolicy: never` gives `dontAsk` or bypass; plan mode with approvals
+  off denies every tool that would ask. The T3 server sets the two policies only through
+  `RuntimePolicy.layerWithOverride` (its replay harness); its engine never does, and neither
+  does ours.
 - **Live changes:** model by `setModel` (only when the CLI opened in the policy's mode) then
   `applyFlagSettings`; permission mode by `setPermissionMode`; anything else a new query.
 - **Fork:** the SDK's `forkSession` at fork time; the fork's first turn resumes it.
@@ -133,8 +141,6 @@ Normalized in the comparison:
   disk.
 - **Attachments:** PDFs stay path-only. No skill splitting of slash commands. The 28 MiB
   inline budget lives in memory and starts over after a restart.
-- **Read-only sandbox and `dontAsk`:** implemented in `launch::query_policy`, but the provider
-  trait carries no `approvalPolicy` or `sandboxPolicy`, so they never apply.
 - **Not passed:** `launchArgs` and their `--settings`/append-file text, `autoCompactWindow`,
   `ENABLE_TOOL_SEARCH`, the delegated child's prompt cache TTL, prompt suggestions, the
   device-tool text and hook (no device tools), custom models.

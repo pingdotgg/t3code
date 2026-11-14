@@ -32,6 +32,8 @@ struct Run {
     helper: conn_provider_claude::HelperCommand,
     model: String,
     mode: String,
+    /// `policyOverride`: `approvalPolicy` and `sandboxPolicy` laid over the policy.
+    policy_override: Value,
     cwd: String,
     attachments: PathBuf,
 }
@@ -42,7 +44,14 @@ impl Run {
     }
 
     fn policy(&self) -> Value {
-        json!({"runtimeMode": self.mode, "interactionMode": "default", "cwd": self.cwd})
+        let mut policy =
+            json!({"runtimeMode": self.mode, "interactionMode": "default", "cwd": self.cwd});
+        if let (Some(policy), Some(over)) =
+            (policy.as_object_mut(), self.policy_override.as_object())
+        {
+            policy.extend(over.clone());
+        }
+        policy
     }
 
     fn turn(
@@ -159,6 +168,7 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
         helper: run.helper.clone(),
         model: model.into(),
         mode: spec["runtimeMode"].as_str().unwrap_or("full-access").into(),
+        policy_override: spec["policyOverride"].clone(),
         cwd: run.cwd.clone(),
         attachments: run.attachments.clone(),
     };
@@ -304,6 +314,7 @@ fn main() {
         helper: conn_provider_claude::HelperCommand::from_path(helper),
         model: model.clone(),
         mode: String::new(),
+        policy_override: Value::Null,
         cwd: cwd.clone(),
         attachments: PathBuf::from(attachments),
     };

@@ -63,8 +63,9 @@ settings; about 140 MiB for the `claude` program alone).
 Proven:
 
 - **Claude** runs through Anthropic's official Claude Agent SDK in the SDK host
-  (`helpers/sdk-host`). In 10 scenarios the `claude` CLI gets the same argv, environment and
-  stdin as from the T3 server. 15 of the T3 server's 39 Claude transcripts pass. 11 live tests
+  (`helpers/sdk-host`). In 11 scenarios the `claude` CLI gets the same argv, environment and
+  stdin as from the T3 server. 18 of the T3 server's 39 Claude transcripts pass (all that the
+  driver runs). 11 live tests
   pass on Claude Haiku on macOS.
 - **Codex** runs on `codex app-server`, as in the T3 server. 35 scenarios show no difference,
   20 of them the T3 server's own recordings. **No live Codex turn has run.**

@@ -42,6 +42,6 @@ A stdin line that differs only in JSON key order is reported as such and fails t
 | `fork`                     | `forkSession` on disk, then the fork's first turn               |
 | `image`                    | an image attachment                                             |
 | `settings_bypass_disabled` | settings forbid bypass (downgrade to `auto`), settings entrypoint |
+| `read_only_sandbox`        | `approvalPolicy: never` and a read-only sandbox (`policyOverride`), with `t3-code`: `dontAsk`, the read-only tools and allow rules |
 
-Not covered here: steering, subagents, elicitation and dialogs, a CLI that fails to start, and
-the read-only sandbox (the provider trait carries no sandbox policy yet).
+Not covered here: steering, subagents, elicitation and dialogs, and a CLI that fails to start.

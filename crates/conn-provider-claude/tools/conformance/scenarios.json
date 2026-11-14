@@ -162,6 +162,29 @@
           "turn": "Reply with exactly: pong"
         }
       ]
+    },
+    {
+      "name": "read_only_sandbox",
+      "runtimeMode": "full-access",
+      "policyOverride": {
+        "approvalPolicy": "never",
+        "sandboxPolicy": {
+          "type": "readOnly",
+          "access": {
+            "type": "fullAccess"
+          },
+          "networkAccess": false
+        }
+      },
+      "mcp": true,
+      "scripts": [
+        "e01_turn"
+      ],
+      "steps": [
+        {
+          "turn": "Reply with exactly: pong"
+        }
+      ]
     }
   ]
 }

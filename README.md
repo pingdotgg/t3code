@@ -492,11 +492,10 @@ host for all sessions: about 44 MB of private memory on macOS arm64.
 - **Proofs, with no model call:** `crates/conn-provider-claude/tools/conformance/run.sh`
   proves that the `claude` CLI gets the same argv, environment and stdin from the Conn Server
   as from the T3 server. `crates/conn-provider-claude/tools/t3-replay/run.sh` replays the T3
-  server's own Claude transcripts against our session (15 of 39 pass; its README lists the
-  rest with reasons). Both need `CONN_MONOREPO`, and `tools/check.sh` runs both.
+  server's own Claude transcripts against our session (18 of 39 pass, all that it drives; its
+  README lists the rest with reasons). Both need `CONN_MONOREPO`, and `tools/check.sh` runs both.
 - **Live:** `cargo test -p conn-provider-claude live_ -- --ignored --test-threads=1` runs
   11 tests on Claude Haiku through the SDK host.
 
-Known gaps are in `crates/conn-provider-claude/README.md`: the read-only sandbox and `dontAsk`
-(the provider interface carries no sandbox policy yet), stopping background tasks, some
+Known gaps are in `crates/conn-provider-claude/README.md`: stopping background tasks, some
 settings, and a Linux build of the SDK host.
