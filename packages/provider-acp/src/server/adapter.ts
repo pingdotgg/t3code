@@ -1435,7 +1435,7 @@ interface AcpNativeBuildConfiguration {
 }
 
 interface ActiveAcpTurn {
-  readonly instructionDelivery?: {
+  instructionDelivery?: {
     readonly state: T3AcpInstructionState;
     readonly digest: string;
     compactionMarker: symbol | undefined;
@@ -2095,7 +2095,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* invalidateInstructions({
               nativeThreadId: sessionId,
               nativeMetadata:
-                (yield* Ref.get(nativeMetadataBySessionId)).get(sessionId) ?? known.nativeMetadata,
+                (yield* Ref.get(nativeMetadataBySessionId)).get(sessionId) ??
+                known.nativeMetadata ??
+                null,
             });
           }
         });
@@ -6553,6 +6555,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 normalized.update.status === "completed"
               ) {
                 yield* markSessionCompacted(normalized.sessionId, normalized.update.compactionId);
+                const active = yield* Ref.get(activeTurn);
+                if (active === null || active.finalized) return;
               }
               yield* handleSessionUpdate(normalized);
             },
@@ -8744,6 +8748,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               // response must not flip a settled turn.
               Effect.tap((result) =>
                 Effect.sync(() => {
+                  if (
+                    result.stopReason === "refusal" &&
+                    context.instructionDelivery !== undefined
+                  ) {
+                    delete context.instructionDelivery;
+                  }
                   if (flavor.reportsPerTurnPromptUsage === true && !context.finalized) {
                     context.promptUsage = result.usage ?? undefined;
                   }
