@@ -21,7 +21,7 @@ cargo build --release
 ```
 
 The command line follows the T3 server's (`t3 serve`, `t3 pair`, `t3 auth …`,
-`t3 project add`); [`crates/conn-server/DROP-IN.md`](crates/conn-server/DROP-IN.md) lists what
+`t3 project add`, `t3 thread list|start|send|show`); [`crates/conn-server/DROP-IN.md`](crates/conn-server/DROP-IN.md) lists what
 Orbit and Conn desktop run and what the Conn Server does with it. `conn-server --help` prints
 every command.
 
@@ -97,7 +97,9 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 | Claude conformance  | `crates/conn-provider-claude/tools/conformance/run.sh` (skipped, with one line, without `npm ci` in `helpers/sdk-host`)          | The `claude` CLI gets the same argv, environment and stdin as from the T3 server, on a stub CLI      |
 | T3 replay (Claude)  | `node crates/conn-provider-claude/tools/t3-replay/check.mjs`                                                                    | The T3 server's Claude transcripts: exactly the scenarios in `expected-failures.txt` fail            |
 | T3 fixture replay   | `node crates/conn-engine/tools/t3-fixture-replay/check.mjs`                                                                     | T3's testkit fixtures through this engine and our Claude, Codex and Grok providers pass T3's own assertions, except the variants in its `expected-failures.txt` (60 of 159 pass) |
-| Orbit flow          | `node crates/conn-server/tools/orbit-flow.mjs target/release/examples/replay_server`                                            | Orbit's container flow: start, project add, session issue, launch over `/mcp`, revoke, clean stop   |
+| Thread CLI diff     | `node crates/conn-server/tools/thread-cli-diff.mjs target/release/conn-server` | Orbit's task-turn commands (`t3 thread` start, send, list and show, `t3 auth session issue --scope … --json`, revoke, and `t3_copy_rpc.mjs`'s calls) give the same stdout, stderr and exit code as the T3 server's own `t3` CLI, on a stub `codex` with T3's transcripts |
+| Model manifest diff | `node crates/conn-server/tools/model-manifest-diff.mjs target/release/examples/model_manifest_cache` | `model-manifest.json` as this server writes it equals T3's `encodeManifestCache`, byte for byte |
+| Orbit flow          | `node crates/conn-server/tools/orbit-flow.mjs target/release/examples/replay_server`                                            | Orbit's container flow: start, project add, session issue, launch over `/mcp`, revoke, clean stop; then its task-turn path: the model check, `t3 thread` start, list, show, send, a turn that asks, and `t3_copy_rpc.mjs`'s read and interrupt   |
 
 `replay_server` is `conn-server` with the engine's scripted fake provider, so these checks call
 no model. Each server they start gets a temp state folder; `parity.mjs` gives the T3 server a
@@ -426,7 +428,7 @@ SIGTERM and SIGINT stop terminals and close every provider session before the se
 a restart with reconnect, an approved prompt, Stop during a tool call, settings and access,
 search, VCS views and the diff, files and uploads, terminals, a launch into a new worktree, and
 a turn that calls `/mcp`. `crates/conn-server/tools/orbit-flow.mjs` runs Orbit's container
-flow against a binary.
+flow and its task-turn path against a binary.
 
 **Memory on Linux**, measured 2026-11-14 (Conn pin `b12470dcad`) on the Orbit container host (x86_64, Ubuntu, kernel
 7.0). Figures are MiB from `/proc/<pid>/smaps_rollup`. The server is the musl release build of

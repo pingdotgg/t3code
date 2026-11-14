@@ -75,6 +75,10 @@ Proven:
 - Orbit's container flow (start, add a project on the running server, a Swamp session, a
   thread through `/mcp`, wait, read, revoke, SIGTERM with no child left) passes on the fake
   provider and once with a live Haiku turn, on macOS.
+- Orbit's task-turn path (`task-copy-turn.yml`, `t3_copy_rpc.mjs`): the `t3 thread` commands,
+  a repeated `--scope`, `auth session issue --json` and `model-manifest.json` give what the
+  T3 server's own `t3` gives, on macOS (`thread-cli-diff`, `model-manifest-diff`; see "Orbit's
+  task-turn path").
 - **The real web client with a live model** (2026-11-14, macOS, Claude Haiku): all 22
   scenarios of `fixtures/recorder/rust-scenarios.sh live` passed, each checked by its result
   (a reply, a file in the worktree, a diff line, a key on disk), and 16 of them also on the
@@ -136,6 +140,39 @@ Not proven:
 - Conn desktop and mobile against this server.
 - Orbit's flow in a real container.
 - Codex on CLI 0.166 or 0.167 (the recordings are from 0.156).
+
+## Orbit's task-turn path (2026-11-14)
+
+Orbit runs a task turn with the `t3` CLI inside the container. Four items were missing; all
+are built and proven against the T3 server's own CLI on macOS.
+
+- **`t3 thread list|start|send|show`** (`crates/conn-server/src/cli_thread.rs`), as
+  `apps/server/src/cli/thread.ts`: find the server through `server-runtime.json`, issue a
+  30-day MCP client session (T3's scopes, label and subject) in the shared auth store, call
+  `/mcp`, revoke the session at the end. `--wait` follows T3's `waitForRun` (15 s slices; a
+  pending request ends it with exit 2; a completed run follows its wakes). JSON keys keep the
+  contract's order (from the `/mcp` catalog). Error texts and exit codes are T3's.
+- **`auth session issue --scope …`** repeated, besides `--scopes <list>`; `--json` in T3's
+  key order. Every `auth` output now ends with the blank line T3's `Console.log` adds.
+- **`model-manifest.json`** (`crates/conn-server/src/model_manifest.rs`), as T3's
+  `ModelManifest.ts`: fetched from T3 Code's GitHub at start and then at most hourly (5 minutes
+  after a failed try), only with `enableProviderUpdateChecks`, kept when it decodes and is not
+  older than the bundled or cached one, written atomically. The URL, the times and the bundled
+  `updatedAt` are generated (`gen-upstream.mjs`). **The server now makes this one outbound
+  request, as the T3 server does.**
+- Two `/mcp` faults found on the way and fixed: `t3_thread_wait` ended on a run in `waiting`
+  (the step between a provider's end and its checkpoint), and it ignored
+  `untilDelegatedWorkSettled` and `resultRun`; `t3_thread_launch` answered a text T3 does not
+  have for an unknown instance and left a thread behind. Both now follow T3.
+
+Proven (macOS): `thread-cli-diff` runs Orbit's commands on the T3 server with its `t3` and on
+this server with ours, each with a stub `codex` and T3's recorded transcripts: 30 steps, the
+same stdout, stderr and exit code, except `branch` (null here) and `itemCount` (one less
+here), which the engine fills differently. It covers a turn that completes, fails and asks, a
+send, unknown thread, model and provider, usage errors, no server, and `t3_copy_rpc.mjs`'s
+ticket, `/ws`, `getThreadProjection`, `run.interrupt` and revoke. `model-manifest-diff`: our
+file text equals T3's `encodeManifestCache`, byte for byte. `orbit-flow` runs the path in
+Orbit's order on the fake provider. Not proven: Linux, a real container, a live model.
 
 ## Engine, part 3: buffered delivery (2026-11-14)
 
@@ -903,6 +940,11 @@ The check is the one to trust; several review findings did not hold.
 - `t3/32cd278b` (text generators, titles, `runNow`, the redacting `Debug`): all 31 checks pass
   on macOS (2026-11-14). No new dependency; the release binary grew by 93,648 bytes
   (16,558,944 to 16,652,592, macOS arm64).
+- `t3/ea388396` (Orbit's task-turn path, 2026-11-14, not merged): 37 checks with
+  `CONN_MONOREPO`; 36 passed in the full run and `acp conformance` differed once
+  (`grok_auto_blocked_command`: T3's stub log has a `stdin-closed` entry ours lacks, a timing
+  difference in code this branch does not touch). Run alone it differed once more, then
+  passed (12 of 12). macOS only.
 - `main`: verified. All 35 checks pass on macOS (2026-11-14, with the ACP provider, scheduled
   tasks and annotations). The last Linux pass (all tests, 20 runs on the gnu target and 5 on
   musl, 2026-11-14) is older than those merges.
