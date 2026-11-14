@@ -13,7 +13,9 @@ pub mod azure_devops;
 pub mod bitbucket;
 pub mod cursor_origin;
 pub mod forgejo;
+pub mod forgejo_cli;
 pub mod gitcafe;
+pub mod gitcafe_api;
 pub mod github;
 pub mod gitlab;
 pub mod repositories;
@@ -83,6 +85,8 @@ pub struct Endpoints {
     pub cursor_origin_api: Option<String>,
     /// Replaces `https://<host>` for the Forgejo API.
     pub forgejo_api: Option<String>,
+    /// Replaces `https://<host>` for the GitCafe API.
+    pub gitcafe_api: Option<String>,
 }
 
 /// What every host's discovery reads.

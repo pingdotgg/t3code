@@ -396,6 +396,17 @@ pub(crate) mod fake {
     pub(crate) async fn serve(
         answer: impl Fn(&Recorded) -> (u16, String) + Send + Sync + 'static,
     ) -> FakeServer {
+        serve_with_headers(move |r| {
+            let (status, body) = answer(r);
+            (status, Vec::new(), body)
+        })
+        .await
+    }
+
+    /// Answers each request with `(status, extra headers, body)`.
+    pub(crate) async fn serve_with_headers(
+        answer: impl Fn(&Recorded) -> (u16, Vec<(String, String)>, String) + Send + Sync + 'static,
+    ) -> FakeServer {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let base = format!("http://{}", listener.local_addr().expect("addr"));
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -447,10 +458,14 @@ pub(crate) mod fake {
                         headers,
                         body,
                     };
-                    let (status, text) = answer(&recorded);
+                    let (status, extra, text) = answer(&recorded);
                     log.lock().expect("lock").push(recorded);
+                    let extra: String = extra
+                        .iter()
+                        .map(|(name, value)| format!("{name}: {value}\r\n"))
+                        .collect();
                     let reply = format!(
-                        "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{text}",
+                        "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\n{extra}content-length: {}\r\nconnection: close\r\n\r\n{text}",
                         text.len()
                     );
                     let _ = socket.write_all(reply.as_bytes()).await;
