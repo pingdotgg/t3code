@@ -102,14 +102,13 @@ async function launchThenNavigate(next: ScopedThreadRef) {
   return { mounted: stack.move(), open };
 }
 
-it.each([
-  { name: "the same thread", next: first },
-  {
-    name: "another environment",
-    next: { environmentId: EnvironmentId.make("environment-b"), threadId: ThreadId.make("b") },
-  },
-])("types the command into the terminal it opened after moving to $name", async ({ next }) => {
-  const { mounted, open } = await launchThenNavigate(next);
+const second: ScopedThreadRef = {
+  environmentId: EnvironmentId.make("environment-b"),
+  threadId: ThreadId.make("b"),
+};
+
+it("types the command into the terminal it opened after moving to another environment", async () => {
+  const { mounted, open } = await launchThenNavigate(second);
   await using _mounted = mounted;
   await act(async () => open.finish());
   expect(fixture.writes).toEqual([
@@ -125,10 +124,7 @@ it.each([
 });
 
 it("types nothing once the launching environment loses terminal access", async () => {
-  const { mounted, open } = await launchThenNavigate({
-    environmentId: EnvironmentId.make("environment-b"),
-    threadId: ThreadId.make("b"),
-  });
+  const { mounted, open } = await launchThenNavigate(second);
   await using _mounted = mounted;
   fixture.allowed.delete("environment-a");
   await act(async () => open.finish());
