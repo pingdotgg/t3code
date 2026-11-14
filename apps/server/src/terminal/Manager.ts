@@ -112,6 +112,8 @@ const PROCESS_TABLE_QUERY_TIMEOUT = "15 seconds";
 const CLOSE_IDLE_QUERY_TIMEOUT = { posix: "1 second", win32: "1500 millis" } as const;
 // Discover children started without terminal input or output.
 const QUIET_SUBPROCESS_SNAPSHOT_EVERY_TICKS = 30;
+// Bounds how late a steady command's silent exit or new child is seen.
+const STEADY_SUBPROCESS_SNAPSHOT_EVERY_TICKS = 5;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
@@ -492,6 +494,7 @@ function terminalActivityMark(session: TerminalSessionState): number {
 interface QuietTerminalSession {
   readonly process: PtyAdapter.PtyProcess | null;
   readonly mark: number;
+  readonly processKey: string | null;
   readonly idleSnapshots: number;
 }
 
@@ -2863,15 +2866,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   // Process identity prevents a restarted shell from inheriting quiet state.
   let quietSessions = new WeakMap<TerminalSessionState, QuietTerminalSession>();
   let skippedQuietTicks = 0;
-  const isQuiet = (session: TerminalSessionState & { pid: number }) => {
+  const quietSnapshotEveryTicks = (session: TerminalSessionState & { pid: number }) => {
     const quiet = quietSessions.get(session);
-    return (
-      quiet !== undefined &&
-      quiet.idleSnapshots === 2 &&
-      quiet.process === session.process &&
-      quiet.mark === terminalActivityMark(session) &&
-      !session.hasRunningSubprocess
-    );
+    if (
+      quiet === undefined ||
+      quiet.idleSnapshots < 2 ||
+      quiet.process !== session.process ||
+      quiet.mark !== terminalActivityMark(session)
+    ) {
+      return 1;
+    }
+    return quiet.processKey === null
+      ? QUIET_SUBPROCESS_SNAPSHOT_EVERY_TICKS
+      : STEADY_SUBPROCESS_SNAPSHOT_EVERY_TICKS;
   };
 
   const pollSubprocessActivity = Effect.fn("terminal.pollSubprocessActivity")(function* () {
@@ -2891,10 +2898,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (runningSessions.length === 0) {
       return { snapshotSucceeded: true, queryElapsedMs: 0 };
     }
-    if (
-      runningSessions.every(({ session }) => isQuiet(session)) &&
-      skippedQuietTicks < QUIET_SUBPROCESS_SNAPSHOT_EVERY_TICKS - 1
-    ) {
+    const snapshotEveryTicks = Math.min(
+      ...runningSessions.map(({ session }) => quietSnapshotEveryTicks(session)),
+    );
+    if (skippedQuietTicks < snapshotEveryTicks - 1) {
       skippedQuietTicks += 1;
       return { snapshotSucceeded: true, queryElapsedMs: 0 };
     }
@@ -2986,9 +2993,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         yield* publishEvent(event.value);
       }
 
+      const processKey = next.hasRunningSubprocess
+        ? `${nextChildLabel}:${next.processIds.toSorted((a, b) => a - b).join(",")}`
+        : null;
       if (
         snapshotSucceeded &&
-        !next.hasRunningSubprocess &&
         session.status === "running" &&
         session.pid === terminalPid &&
         session.process === process &&
@@ -2997,7 +3006,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         quietSessions.set(session, {
           process,
           mark,
-          idleSnapshots: previous?.process === process && previous.mark === mark ? 2 : 1,
+          processKey,
+          idleSnapshots:
+            previous?.process === process &&
+            previous.mark === mark &&
+            previous.processKey === processKey
+              ? 2
+              : 1,
         });
       }
     });
