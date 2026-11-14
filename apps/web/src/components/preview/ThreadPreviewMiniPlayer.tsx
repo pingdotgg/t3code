@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { create } from "zustand";
 import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 
@@ -97,6 +98,9 @@ const useHeldSourceSize = create<{
   readonly key: string;
   readonly source: PreviewMiniPlayerSize;
 } | null>(() => null);
+
+const streamedSourceKey = (threadRef: ScopedThreadRef, sourceKey: string) =>
+  `${scopedThreadKey(threadRef)}\u0000${sourceKey}`;
 
 const NO_DEVICE_SCREEN_ATOM = Atom.make<DeviceScreenSize | null>(null).pipe(
   Atom.withLabel("device-stream-screen:none"),
