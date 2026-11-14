@@ -33,6 +33,27 @@ with a reason the client shows (`commands::refusal`).
 | `thread.runtime-mode.set`, `interaction-mode.set`, `model-selection.set`, `provider.switch`, `provider-session.detach`                                              | `notification.delivery.accept`, `subagent.stop`, `thread.created.record`                     |
 | `delegated_task.request`, `.wake-policy`, `.completion-delivery.acknowledge`, `.dispose`                                                                            |                                                                                              |
 
+## The refused commands: a map
+
+The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says otherwise.
+"Here" says which work item takes the command; "other" means another work item owns it.
+
+| Command | T3 source | What it does | Needs | Here |
+| --- | --- | --- | --- | --- |
+| `checkpoint.rollback` | `Orchestrator.ts` `dispatchCheckpointRollback`, `CheckpointRollbackService.ts`, `CheckpointRestoreSafety.ts` | Puts the workspace back to a checkpoint, marks later runs `rolled_back`, rolls the provider's native thread back | checkpoints, `Session::rollback_thread`, `conn-vcs` restore | yes |
+| `thread.fork` | `ThreadForkService.ts`, `Orchestrator.ts` `dispatchThreadFork` | A new thread from a run of another, with a `fork` context transfer and the provider's native fork | `Session::fork_thread`, `ContextHandoffService.ts` | yes |
+| `thread.merge_back` | `Orchestrator.ts` `dispatchThreadMergeBack`, `ContextHandoffService.ts` | Records a pending `merge_back` context transfer from a fork to its parent; the parent's next message carries the fork's delta | fork, context transfers (no checkpoint) | yes |
+| `prepared-run.release`, `.progress`, `.fail`, `.retry` | `ThreadLaunchService.ts`, `Orchestrator.ts` `dispatchPreparedRun*`, `ProjectSetupScriptRunner.ts` | A worktree launch's `preparing` run: progress, failure, retry, release to the provider; setup scripts typed into a `setup-<id>` terminal | `conn-terminal` prompt and marker watch, `conn-vcs` worktree | yes |
+| `thread.pull-request-link.sync`, `thread.pull-request.watch`, `thread.pull-request.sync` | `ThreadPullRequestService.ts`, `PullRequestWatchReactor.ts` | Pull request links and watches | the forge CLIs | other |
+| `thread.guest-share.close`, `thread.guest-message.dismiss` | `GuestShareDecider.ts` | Guest sharing | guest share | other |
+| `notification.delivery.accept` | `Orchestrator.ts` `dispatchNotificationAccepted`, `NotificationMailbox.ts` | Marks a background notification delivered to a run | a notification mailbox (not built) | later |
+| `subagent.stop` | `Orchestrator.ts` `dispatchSubagentStop` | Stops one subagent of a run | `Session::stop_task` in the providers (in the trait, not built) | later |
+| `thread.created.record` | `Orchestrator.ts` `dispatchCreatedThreadRecord` | Records a thread made in a linked environment | linked environments | later |
+
+`orchestration.getTurnDiff` and `orchestration.getFullThreadDiff` were the two unserved
+`orchestration.*` methods (`checkpointing/CheckpointDiffQuery.ts`); both are served now, so
+all 23 are.
+
 ## Behaviour worth knowing
 
 - **Busy thread.** While a run is active, a message queues (`queue_after_active`, or any start)
