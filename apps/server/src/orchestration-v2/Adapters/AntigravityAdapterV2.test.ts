@@ -17,14 +17,17 @@ import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -38,10 +41,12 @@ import { normalizeAntigravitySessionUpdate } from "../../provider/acp/Antigravit
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
 } from "./AntigravityAdapterV2.ts";
+import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 
 const flavor = makeAntigravityAcpAdapterFlavor({
   instanceId: ProviderInstanceId.make("antigravity-test"),
@@ -1075,6 +1080,338 @@ describe("AntigravityAdapterV2 subagent reads", () => {
       assert.deepEqual(read("call_denied"), failed);
       assert.deepEqual(read("call_unseen"), failed);
     }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+describe("AntigravityAdapterV2 commands running past the reply", () => {
+  const openRunningCommandSession = Effect.fn("openRunningCommandSession")(function* () {
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const path = yield* Path.Path;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const mockAgentPath = yield* path.fromFileUrl(
+      new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+    );
+    type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+    let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+    const prompts =
+      yield* Queue.unbounded<
+        Deferred.Deferred<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>
+      >();
+    const promptHeld = yield* Deferred.make<void>();
+    const finalizeScheduled = yield* Queue.unbounded<Duration.Input>();
+    const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
+      [];
+    const instanceId = ProviderInstanceId.make("antigravity-running-command-test");
+    const threadId = ThreadId.make("thread-antigravity-running-command");
+    const adapter = yield* makeAntigravityAdapterV2({
+      instanceId,
+      profileDirectory: yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped(),
+      selfInvocation: yield* resolveSelfInvocation(),
+      makeRuntime: (input) =>
+        makeAntigravityAcpRuntime({
+          ...input,
+          childProcessSpawner,
+          spawn: {
+            command: process.execPath,
+            args: [mockAgentPath],
+            cwd: input.cwd,
+            env: { T3_ACP_ANTIGRAVITY: "1" },
+          },
+        }).pipe(
+          Effect.provideService(SecureRandom.SecureRandom, crypto),
+          Effect.map((runtime): RuntimeService => ({
+            ...runtime,
+            handleSessionUpdate: (handler) =>
+              Effect.sync(() => {
+                sessionUpdate = handler;
+              }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+            prompt: (_request, options) =>
+              Effect.gen(function* () {
+                if (options?.dispatched) yield* Deferred.succeed(options.dispatched, undefined);
+                const prompt = yield* Deferred.make<
+                  EffectAcpSchema.PromptResponse,
+                  EffectAcpErrors.AcpError
+                >();
+                yield* Queue.offer(prompts, prompt);
+                return yield* Deferred.await(prompt);
+              }),
+          })),
+        ),
+      withProcess: (_stop, task) => task,
+      defaultModel: Effect.undefined,
+      continuationRequests: {
+        offer: (request) => Effect.sync(() => void continuationRequests.push(request)),
+      },
+      testHooks: {
+        afterPromptSettledWithBackgroundWork: () =>
+          Deferred.succeed(promptHeld, undefined).pipe(Effect.asVoid),
+        onDeferredFinalizeScheduled: (debounce) =>
+          Queue.offer(finalizeScheduled, debounce).pipe(Effect.asVoid),
+      },
+    });
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: process.cwd(),
+    });
+    const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+    const session = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("provider-session-antigravity-running-command"),
+      modelSelection,
+      runtimePolicy,
+    });
+    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+    yield* session.events.pipe(
+      Stream.runForEach((event) => Queue.offer(events, event)),
+      Effect.forkScoped,
+    );
+    const providerThread = yield* session.ensureThread({
+      threadId,
+      modelSelection,
+      runtimePolicy,
+    });
+    const now = yield* DateTime.now;
+    const turnInput = (ordinal: number, continuation: boolean) =>
+      makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        now,
+        ordinal,
+        modelSelection,
+        ...(continuation
+          ? { messageCreatedBy: "agent" as const, messageCreationSource: "provider" as const }
+          : {}),
+      });
+    const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+    const takeUntil = (done: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean) =>
+      Effect.gen(function* () {
+        while (true) {
+          const event = yield* Queue.take(events);
+          seen.push(event);
+          if (done(event)) return event;
+        }
+      });
+    const toolStatuses = (runId: RunId, nativeId: string) =>
+      seen.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.runId === runId &&
+        event.turnItem.nativeItemRef?.nativeId === nativeId
+          ? [event.turnItem.status]
+          : [],
+      );
+    const send = (update: EffectAcpSchema.SessionUpdate) =>
+      sessionUpdate === undefined
+        ? Effect.die("the adapter must handle session updates")
+        : sessionUpdate(normalizeAntigravitySessionUpdate({ sessionId: "mock-session-1", update }));
+    const say = (text: string) =>
+      send({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } });
+
+    const command = (toolCallId: string) =>
+      send({
+        sessionUpdate: "tool_call",
+        toolCallId,
+        kind: "execute",
+        status: "in_progress",
+        title: "Terminal",
+        rawInput: { CommandLine: "npm run build" },
+      });
+    const complete = (toolCallId: string) =>
+      send({
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status: "completed",
+      });
+    const start = (ordinal: number) =>
+      session
+        .startTurn(turnInput(ordinal, false))
+        .pipe(Effect.forkScoped, Effect.andThen(Queue.take(prompts)));
+    const terminal = takeUntil((event) => event.type === "turn.terminal");
+    return {
+      session,
+      events,
+      prompts,
+      promptHeld,
+      finalizeScheduled,
+      continuationRequests,
+      turnInput,
+      seen,
+      takeUntil,
+      toolStatuses,
+      send,
+      say,
+      command,
+      complete,
+      start,
+      terminal,
+    };
+  });
+
+  it.effect("holds running commands past end_turn and streams a tool-first wake", () =>
+    Effect.gen(function* () {
+      const h = yield* openRunningCommandSession();
+      const prompt = yield* h.start(1);
+      yield* h.command("build");
+      yield* h.say("Waiting for the build.");
+      yield* Deferred.succeed(prompt, { stopReason: "end_turn" });
+      assert.isTrue(
+        yield* Deferred.await(h.promptHeld).pipe(
+          Effect.as(true),
+          Effect.raceFirst(h.terminal.pipe(Effect.as(false))),
+        ),
+      );
+      yield* TestClock.adjust("16 minutes");
+      h.seen.push(...(yield* Queue.clear(h.events)));
+      assert.isFalse(h.seen.some((event) => event.type === "turn.terminal"));
+      yield* h.complete("build");
+      yield* TestClock.adjust(yield* Queue.take(h.finalizeScheduled));
+      yield* h.terminal;
+      assert.deepEqual(h.toolStatuses(h.turnInput(1, false).runId, "build"), [
+        "running",
+        "completed",
+      ]);
+      assert.lengthOf(h.continuationRequests, 0);
+
+      yield* h.command("tests");
+      yield* h.say("The build passed. Running tests.");
+      assert.lengthOf(h.continuationRequests, 1);
+      const continuation = h.turnInput(2, true);
+      yield* h.session.startTurn(continuation);
+      yield* h.takeUntil(
+        (event) =>
+          event.type === "message.updated" &&
+          event.message.runId === continuation.runId &&
+          event.message.text.includes("Running tests."),
+      );
+      assert.equal(yield* Queue.size(h.prompts), 0, "the wake must not send another ACP prompt");
+      yield* h.complete("tests");
+      yield* h.say("All tests passed.");
+      yield* TestClock.adjust(yield* Queue.take(h.finalizeScheduled));
+      yield* h.terminal;
+      assert.deepEqual(h.toolStatuses(continuation.runId, "tests"), ["running", "completed"]);
+      assert.isTrue(
+        h.seen.some(
+          (event) =>
+            event.type === "message.updated" &&
+            event.message.runId === continuation.runId &&
+            event.message.text.includes("All tests passed."),
+        ),
+      );
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.effect("keeps surviving commands on their run and clears them when the runtime dies", () =>
+    Effect.gen(function* () {
+      const h = yield* openRunningCommandSession();
+      const failed = yield* h.start(1);
+      yield* h.command("rejected");
+      yield* Deferred.fail(failed, EffectAcpErrors.AcpRequestError.internalError());
+      yield* h.terminal;
+      assert.isFalse(yield* h.session.hasPendingBackgroundWork!);
+      assert.deepEqual(h.toolStatuses(h.turnInput(1, false).runId, "rejected"), [
+        "running",
+        "failed",
+      ]);
+
+      const survivor = yield* h.start(2);
+      yield* h.command("survivor");
+      yield* h.command("lint");
+      yield* Deferred.succeed(survivor, { stopReason: "error" });
+      yield* h.terminal;
+      yield* h.complete("lint");
+      const refused = yield* h.start(3);
+      yield* h.send({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "lint",
+        status: "completed",
+        rawOutput: { output: "Late lint output" },
+      });
+      yield* h.command("replaced");
+      yield* Deferred.succeed(refused, { stopReason: "refusal" });
+      yield* h.terminal;
+      yield* h.send({
+        sessionUpdate: "tool_call",
+        toolCallId: "wake",
+        title: "Terminal",
+        kind: "execute",
+        status: "pending",
+      });
+      yield* h.send({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "wake",
+        status: "in_progress",
+      });
+      yield* h.say("Still building.");
+      const continuation = h.turnInput(4, true);
+      yield* h.session.startTurn(continuation);
+      yield* TestClock.adjust(yield* Queue.take(h.finalizeScheduled));
+      yield* h.terminal;
+      assert.isFalse(yield* h.session.hasPendingBackgroundWork!);
+      assert.deepEqual(h.toolStatuses(h.turnInput(2, false).runId, "survivor"), [
+        "running",
+        "interrupted",
+      ]);
+      assert.deepEqual(h.toolStatuses(h.turnInput(2, false).runId, "lint"), [
+        "running",
+        "completed",
+        "completed",
+      ]);
+      assert.deepEqual(h.toolStatuses(h.turnInput(3, false).runId, "replaced"), [
+        "running",
+        "interrupted",
+      ]);
+      assert.deepEqual(h.toolStatuses(continuation.runId, "replaced"), []);
+      assert.deepEqual(h.toolStatuses(continuation.runId, "wake").slice(-1), ["failed"]);
+      assert.isTrue(
+        h.seen.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.runId === h.turnInput(2, false).runId &&
+            event.turnItem.nativeItemRef?.nativeId === "lint" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.input === "npm run build",
+        ),
+      );
+
+      const beforeStop = yield* h.start(5);
+      yield* h.command("stop-survivor");
+      yield* Deferred.succeed(beforeStop, { stopReason: "error" });
+      yield* h.terminal;
+      const stopped = yield* h.start(6);
+      yield* h.command("stopped");
+      yield* Deferred.succeed(stopped, { stopReason: "end_turn" });
+      yield* Deferred.await(h.promptHeld);
+      const turn = yield* h.takeUntil(
+        (event) => event.type === "provider_turn.updated" && event.providerTurn.ordinal === 6,
+      );
+      if (turn.type !== "provider_turn.updated") return assert.fail("expected provider turn");
+      yield* h.session.interruptTurn({
+        providerThread: h.turnInput(6, false).providerThread,
+        providerTurnId: turn.providerTurn.id,
+        requestRuntimeRestart: true,
+      });
+      yield* h.terminal;
+      assert.isFalse(yield* h.session.hasPendingBackgroundWork!);
+      assert.deepEqual(h.toolStatuses(h.turnInput(5, false).runId, "stop-survivor"), [
+        "running",
+        "interrupted",
+      ]);
+
+      const beforeWatchdog = yield* h.start(7);
+      yield* h.command("watchdog-survivor");
+      yield* Deferred.succeed(beforeWatchdog, { stopReason: "error" });
+      yield* h.terminal;
+      yield* h.start(8);
+      yield* TestClock.adjust("15 minutes");
+      yield* h.terminal;
+      assert.isFalse(yield* h.session.hasPendingBackgroundWork!);
+      assert.deepEqual(h.toolStatuses(h.turnInput(7, false).runId, "watchdog-survivor"), [
+        "running",
+        "interrupted",
+      ]);
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
 

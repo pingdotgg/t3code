@@ -92,6 +92,7 @@ export interface AntigravityAdapterV2Options {
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
   readonly profileDirectory?: string;
+  readonly testHooks?: Parameters<typeof makeAcpAdapterV2>[0]["testHooks"];
 }
 
 /**
@@ -236,6 +237,17 @@ export function makeAntigravityAcpAdapterFlavor(
       ),
     // Loading history replays tool calls; resume avoids replay.
     subagentsIdleOnTurnCompletion: true,
+    // Keep execute tools open if the prompt returns before they finish.
+    // Their terminal updates can omit the kind, so any terminal id clears tracking.
+    extractBackgroundTaskId: (toolCall) =>
+      (toolCall.kind === "execute" && toolCall.status === "inProgress") ||
+      toolCall.status === "completed" ||
+      toolCall.status === "failed"
+        ? toolCall.toolCallId
+        : undefined,
+    backgroundTasksIncludeForegroundTools: true,
+    deferFinalizeForBackgroundWork: true,
+    enablePostSettleContinuation: true,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,
@@ -307,5 +319,6 @@ export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(fu
     ...(options.continuationRequests === undefined
       ? {}
       : { continuationRequests: options.continuationRequests }),
+    ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),
   });
 });

@@ -550,6 +550,8 @@ export interface AcpAdapterV2Flavor {
   readonly normalizeToolCall?: (toolCall: AcpToolCallState) => AcpToolCallState;
   readonly extractProposedPlanMarkdown?: (toolCall: AcpToolCallState) => string | undefined;
   readonly extractBackgroundTaskId?: (toolCall: AcpToolCallState) => string | undefined;
+  /** Tracked tools include ordinary foreground tools, so agent output around them is not ack chatter. */
+  readonly backgroundTasksIncludeForegroundTools?: boolean;
   /** Distinguishes commands from monitors when lifecycle notifications omit their kind. */
   readonly isBackgroundCommandTool?: (toolCall: AcpToolCallState) => boolean;
   readonly extractBackgroundToolMutation?: (text: string) => ReadonlyArray<{
@@ -1615,6 +1617,42 @@ function acpPostSettleWakeShouldBuffer(
   );
 }
 
+// Buffered commands cannot outlive the runtime that executes them.
+function acpEndKilledWakeTools(
+  frames: ReadonlyArray<EffectAcpSchema.SessionNotification>,
+  endedToolCallIds: ReadonlySet<string>,
+  flavor: Pick<AcpAdapterV2Flavor, "normalizeToolCall">,
+): Array<EffectAcpSchema.SessionNotification> {
+  const kept: Array<EffectAcpSchema.SessionNotification> = [];
+  const openKilledTools = new Map<string, string>();
+  const tools = new Map<string, AcpToolCallState>();
+  for (const frame of frames) {
+    const toolCalls = parseSessionUpdateEvent(frame).events.flatMap((event) =>
+      event._tag === "ToolCallUpdated" ? [event.toolCall] : [],
+    );
+    if (toolCalls.some((toolCall) => endedToolCallIds.has(toolCall.toolCallId))) continue;
+    kept.push(frame);
+    for (const incoming of toolCalls) {
+      const merged = mergeToolCallState(tools.get(incoming.toolCallId), incoming);
+      const toolCall = flavor.normalizeToolCall?.(merged) ?? merged;
+      tools.set(toolCall.toolCallId, toolCall);
+      const status = toolStatus(toolCall.status);
+      if (status !== "pending" && status !== "running") {
+        openKilledTools.delete(toolCall.toolCallId);
+        continue;
+      }
+      openKilledTools.set(toolCall.toolCallId, frame.sessionId);
+    }
+  }
+  for (const [toolCallId, sessionId] of openKilledTools) {
+    kept.push({
+      sessionId,
+      update: { sessionUpdate: "tool_call_update", toolCallId, status: "failed" },
+    });
+  }
+  return kept;
+}
+
 /**
  * An app-owned wake (a delegated child finishing) is injected by the
  * orchestrator, not typed by the user. It reports on a sibling child and says
@@ -2368,6 +2406,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const stoppedRunQuarantine = yield* Ref.make(false);
         // Native subagents can outlive interrupts; carry lineage forward to finish their original turn items.
         const carryoverSubagents = yield* Ref.make<AcpCarryoverSubagents | null>(null);
+        // Tool output may follow its terminal update; keep failed-turn owners until runtime teardown.
+        const survivingTaskTurns = yield* Ref.make<ReadonlyMap<string, ActiveAcpTurn>>(new Map());
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
@@ -3953,6 +3993,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const status = toolStatus(tool.status);
             if (status === "pending" || status === "running") return true;
           }
+          if (flavor.subagentsIdleOnTurnCompletion === true) return false;
           for (const subagent of context.subagents.values()) {
             if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) {
               return true;
@@ -4096,6 +4137,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               backgroundStatus === "pending" || backgroundStatus === "running",
             );
             if (
+              flavor.backgroundTasksIncludeForegroundTools !== true &&
               !context.promptSettled &&
               backgroundStatus !== "pending" &&
               backgroundStatus !== "running"
@@ -4970,7 +5012,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
             }
           }
-          const backgroundWorkRunning = (yield* Ref.get(runningBackgroundTaskIds)).size > 0;
+          // A woken agent's own running tool is its work, not a monitor it acknowledges.
+          const backgroundWorkRunning =
+            flavor.backgroundTasksIncludeForegroundTools !== true &&
+            (yield* Ref.get(runningBackgroundTaskIds)).size > 0;
           const handledInTurnCount = (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).size;
           const isInTurnHandledAgentChatter =
             handledInTurnCount > 0 &&
@@ -5189,9 +5234,35 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ),
             );
 
+        // A failed turn's surviving tools keep reporting; project them on the run that started them.
+        const projectSurvivingTaskTool = Effect.fnUntraced(function* (
+          notification: EffectAcpSchema.SessionNotification,
+        ) {
+          const update = notification.update;
+          if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
+            return false;
+          }
+          let owner: ActiveAcpTurn | undefined;
+          for (const [taskId, survivor] of yield* Ref.get(survivingTaskTurns)) {
+            if (
+              survivor.nativeThreadId === notification.sessionId &&
+              survivor.toolCallIdsByBackgroundTaskId.get(taskId) === update.toolCallId
+            ) {
+              owner = survivor;
+              break;
+            }
+          }
+          if (owner === undefined) return false;
+          for (const event of parseSessionUpdateEvent(notification).events) {
+            if (event._tag === "ToolCallUpdated") yield* emitTool(owner, event.toolCall);
+          }
+          return true;
+        });
+
         const handleSessionUpdate = Effect.fnUntraced(function* (
           notification: EffectAcpSchema.SessionNotification,
         ) {
+          if (yield* projectSurvivingTaskTool(notification)) return;
           const context = yield* Ref.get(activeTurn);
           const update = notification.update;
           if (
@@ -7390,6 +7461,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* Ref.set(wakeReports, noWakeReports);
                 yield* Ref.set(continuationRequested, false);
                 yield* Ref.set(runningBackgroundTaskIds, new Set());
+                yield* Ref.set(survivingTaskTurns, new Map());
                 yield* Ref.set(endedBackgroundTaskIds, new Set());
                 yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
                 yield* Ref.set(handledBackgroundTaskIdsInActiveTurn, new Set());
@@ -7878,6 +7950,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             Deferred.await(context.completed).pipe(Effect.as(false)),
           );
         });
+        const interruptSurvivingTools = Effect.fnUntraced(function* () {
+          const killedTaskIds = yield* Ref.getAndSet(runningBackgroundTaskIds, new Set());
+          const survivors = yield* Ref.getAndSet(survivingTaskTurns, new Map());
+          const endedToolCallIds = new Set<string>();
+          for (const [taskId, survivor] of survivors) {
+            if (!killedTaskIds.has(taskId)) continue;
+            const toolCallId = survivor.toolCallIdsByBackgroundTaskId.get(taskId);
+            const tool = toolCallId === undefined ? undefined : survivor.tools.get(toolCallId);
+            if (tool === undefined) continue;
+            endedToolCallIds.add(tool.toolCallId);
+            yield* emitTool(survivor, tool, "interrupted");
+          }
+          return endedToolCallIds;
+        });
         const quarantineStoppedRun = Effect.fnUntraced(function* () {
           yield* continuationPermit.withPermit(
             Effect.gen(function* () {
@@ -7886,7 +7972,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(wakeBuffer, []);
               yield* Ref.set(wakeReports, noWakeReports);
               yield* Ref.set(continuationRequested, false);
-              yield* Ref.set(runningBackgroundTaskIds, new Set());
+              yield* interruptSurvivingTools();
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
               yield* Ref.set(carryoverSubagents, null);
               yield* Ref.set(lastTurnRoute, null);
@@ -8023,6 +8109,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               (followsAgentWorkState &&
                 rootSessionId !== null &&
                 hasWorkingDescendant(rootSessionId)));
+          if (childTurnsContinue) {
+            const running = yield* Ref.get(runningBackgroundTaskIds);
+            yield* Ref.update(survivingTaskTurns, (current) => {
+              const next = new Map(current);
+              for (const taskId of context.toolCallIdsByBackgroundTaskId.keys()) {
+                if (running.has(taskId)) next.set(taskId, context);
+              }
+              return next;
+            });
+          }
+          // Foreground tools of a prompt that failed for good never report their end.
+          if (
+            settledStatus === "failed" &&
+            !childTurnsContinue &&
+            flavor.backgroundTasksIncludeForegroundTools === true
+          ) {
+            for (const [taskId, toolCallId] of context.toolCallIdsByBackgroundTaskId) {
+              yield* setBackgroundTaskRunning(taskId, false);
+              const tool = context.tools.get(toolCallId);
+              const status = tool === undefined ? undefined : toolStatus(tool.status);
+              if (tool !== undefined && (status === "pending" || status === "running")) {
+                yield* emitTool(context, tool, "failed");
+              }
+            }
+          }
           yield* emitProviderEvent(
             settledStatus === "failed"
               ? {
@@ -8159,6 +8270,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               openAgentRequests.clear();
               yield* quarantineNativeTransportAtGeneration(generation);
               yield* advanceRuntimeCallbackGeneration;
+              const endedToolCallIds = yield* interruptSurvivingTools();
+              if (flavor.backgroundTasksIncludeForegroundTools === true) {
+                yield* Ref.update(wakeBuffer, (frames) =>
+                  acpEndKilledWakeTools(frames, endedToolCallIds, flavor),
+                );
+              }
               yield* Ref.set(runtimeRestartRequired, true);
               yield* cancelPendingRuntimeRequests();
               yield* terminalizeOpenForegroundTools(context, "failed");
@@ -8358,6 +8475,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (!restartRequired) return false;
           yield* restartAcpRuntime(threadId);
           yield* Ref.set(runtimeRestartRequired, false);
+          const endedToolCallIds = yield* interruptSurvivingTools();
+          if (flavor.backgroundTasksIncludeForegroundTools === true) {
+            yield* Ref.update(wakeBuffer, (frames) =>
+              acpEndKilledWakeTools(frames, endedToolCallIds, flavor),
+            );
+          }
           yield* Ref.set(activeSessionId, null);
           yield* Ref.set(activeSessionSetup, null);
           yield* Ref.set(activeSelection, null);
