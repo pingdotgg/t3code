@@ -322,9 +322,9 @@ export function makeGrokAcpAdapterFlavor(
     runtimeHarness: "Grok",
     capabilities: GrokProviderCapabilitiesV2,
     interruptPromptOnCancel: false,
-    // Stop cancels softly with the CLI's own Ctrl-C trigger and keeps the process, as Grok's TUI
-    // does, so Resume can continue the stopped turn natively.
-    resumesStoppedTurnOnEmptyPrompt: true,
+    // User Stop restarts the process group; steering cancels softly to preserve background work.
+    restartRuntimeAfterInterrupt: true,
+    terminateRuntimeProcessGroupOnInterrupt: true,
     // Settled Grok sessions accept concurrent prompts; skip cancel to preserve background subagents.
     preserveRuntimeOnSettledInterrupt: true,
     // Grok accepts image blocks despite advertising promptCapabilities.image:false.
