@@ -234,6 +234,16 @@ it.effect("registers loopback and https clients and never redirects for an unver
       expect(registered.status).toBe(201);
       const { client_id: clientId } = (yield* json<unknown>(registered)) as { client_id: string };
 
+      const peer = yield* handler(
+        at("/oauth/mcp/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: encodeJson({ software_id: MCP_PEER_LINK_SOFTWARE_ID, redirect_uris: [REDIRECT] }),
+        }),
+      );
+      expect(peer.status).toBe(201);
+      expect(yield* json<unknown>(peer)).toMatchObject({ software_id: MCP_PEER_LINK_SOFTWARE_ID });
+
       const forged = yield* handler(
         at(
           `/oauth/mcp/authorize?${new URLSearchParams(authorizeParams(`${clientId.split(".")[0]}.forged`))}`,

@@ -557,6 +557,7 @@ export type AuthMcpClientRegistration = typeof AuthMcpClientRegistration.Type;
 export const AuthMcpRegisteredClient = Schema.Struct({
   client_id: Schema.String,
   client_name: Schema.String,
+  software_id: Schema.optionalKey(Schema.Literal(MCP_PEER_LINK_SOFTWARE_ID)),
   redirect_uris: Schema.Array(Schema.String),
   grant_types: Schema.Array(Schema.Literal("authorization_code")),
   response_types: Schema.Array(Schema.Literal("code")),
