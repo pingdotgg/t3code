@@ -71,11 +71,20 @@ Proven:
 - Orbit's container flow (start, add a project on the running server, a Swamp session, a
   thread through `/mcp`, wait, read, revoke, SIGTERM with no child left) passes on the fake
   provider and once with a live Haiku turn, on macOS.
-- The real web client paired, ran turns, approvals, stop and a restart against an early
-  version (the spike). The recorder scenarios have not run against the current `main` with a
-  live model.
-- Memory on macOS arm64: the server about 3 to 5 MB private; the SDK host about 45 MB while a
-  Claude session is open, and no Node process when none is open.
+- **The real web client with a live model** (2026-11-14, macOS, Claude Haiku): all 22
+  scenarios of `fixtures/recorder/rust-scenarios.sh live` passed, each checked by its result
+  (a reply, a file in the worktree, a diff line, a key on disk), and 16 of them also on the
+  fake provider (`rust-scenarios.sh fake`). Covered: pairing, turns, a restart with a second
+  turn, an approval, Stop during a tool call and the next turn after it, VCS, files (also in a
+  worktree), terminal, settings secrets across a toggle and reloads, search, `/mcp`, an image,
+  a subagent's child thread, steer, queue, a model switch, archive and unarchive, a project
+  added at run time, two clients on one thread. The `ts-` pairs ran against the T3 server.
+  Three defects found and fixed: a background-task wake shown as a message; no effort menu and
+  no legacy models in the picker; `/mcp` `orchestrator_capabilities` listing legacy models and
+  no options. The differences that remain are under "What is left".
+- Memory on macOS arm64, in a live session (`rust-memory`): the server 6 to 7 MB private
+  (12 to 15 MB RSS); the SDK host 52 to 56 MB private (97 to 114 MB RSS) while a Claude session
+  is open, and no Node process after the idle session closed.
 
 - **On Linux** (Beast, Ubuntu, x86_64, kernel 7.0; 2026-11-13 and 2026-11-14). The whole
   workspace test suite passed 20 times on the gnu target and 5 times on the musl target with
@@ -174,7 +183,10 @@ that list.
    routes (a full snapshot of a long thread peaks at about 13 bytes per byte of JSON);
    checkpoints and diffs per turn; rollback, fork and merge-back; a model change during a
    turn; a workspace strategy for delegated tasks; search details (no NFC normalization, the
-   old snippet rule).
+   old snippet rule). Seen with the real client: a provider turn shows as running only after
+   the CLI's first event (about 3.5 s on a cold start; the T3 server marks it at once), so the
+   client offers "Send now" on a queued message later; runs skip the `waiting` status; no
+   title generation, so a thread keeps its first message as title.
 6. **Features.** `pullRequests.*` (34), `sourceControl.*` and `git.*`; the Conn-only methods
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest
    share); 67 more `/mcp` tools (11 need nothing new: `crates/conn-mcp/README.md`, "All 87 tools"); Codex subagents and MCP elicitation; worktree setup scripts
@@ -182,11 +194,15 @@ that list.
 7. **Small leftovers.** Limits on terminal environment variables; string caps on
    `assets.createUrl`; finished `git` children stay unreaped while the server runs;
    T3's search ranking (`scoreThreadSearch`, `rankMessageMatches`) for `t3_thread_search` and
-   `orchestration.searchThreads`; the Linux systemd scope for provider processes;
+   `orchestration.searchThreads`; `@` file search ranks with nucleo, not T3's fff (`@hello`
+   finds `hello.ts`, T3 also `helper.ts`); `server.listTextGeneratorModels`, without which the
+   client's "Add text generator" wizard cannot save; the Claude model list is not filtered by
+   the CLI's version; the Linux systemd scope for provider processes;
    a cap on the blocking pool or one store thread (measure first: each store call takes its
    own blocking thread).
-8. **Proofs.** The recorder with the real web client and a live model; live Codex; the Linux
-   pass; Orbit in a scratch container on Beast; desktop and mobile in a VM.
+8. **Proofs.** Live Codex; the Linux pass; Orbit in a scratch container on Beast; desktop and
+   mobile in a VM; the recorder scenarios on Linux. The recorder with the real web client and
+   a live model is done (2026-11-14, see "What exists").
 9. **Upkeep.** Wire the bump into the nightly sync (its script is outside the Conn
    repository; `FORK.md` there says the Grok bot runs it). The first real bump
    (2026-11-14, `docs/upkeep.md` "Bumps") took about four hours. The provider gaps it left:
