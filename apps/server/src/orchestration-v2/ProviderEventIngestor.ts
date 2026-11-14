@@ -340,23 +340,14 @@ export const layer: Layer.Layer<
       },
     );
 
-    /** Providers may reveal native subagent models late; lock full-row updates against concurrent thread commands. */
-    const syncSubagentThreadModel = Effect.fn("ProviderEventIngestor.syncSubagentThreadModel")(
-      function* (input: ProviderEventIngestInput, subagent: OrchestrationV2Subagent) {
-        const { childThreadId, model } = subagent;
-        if (
-          subagent.origin !== "provider_native" ||
-          childThreadId === null ||
-          (model === null && subagent.modelSelection === undefined)
-        ) {
-          return [];
-        }
-        const reportedSelection = ({ modelSelection }: { modelSelection: ModelSelection }) =>
-          subagent.modelSelection ??
-          (model === null || model === modelSelection.model
-            ? modelSelection
-            : { instanceId: modelSelection.instanceId, model });
-        const staleThread = projections.getThread(childThreadId).pipe(
+    /** Thread commands rewrite the full row; lock this read and write against them. */
+    const syncThreadModelSelection = Effect.fn("ProviderEventIngestor.syncThreadModelSelection")(
+      function* (
+        input: ProviderEventIngestInput,
+        threadId: ThreadId,
+        reportedSelection: (thread: { modelSelection: ModelSelection }) => ModelSelection,
+      ) {
+        const staleThread = projections.getThread(threadId).pipe(
           Effect.map((thread) =>
             modelSelectionsEqual(thread.modelSelection, reportedSelection(thread)) ? null : thread,
           ),
@@ -364,7 +355,7 @@ export const layer: Layer.Layer<
         );
         if ((yield* staleThread) === null) return [];
         return yield* threadCommands.withLock(
-          childThreadId,
+          threadId,
           Effect.gen(function* () {
             const thread = yield* staleThread;
             if (thread === null) return [];
@@ -379,8 +370,51 @@ export const layer: Layer.Layer<
               },
               occurredAt: now,
             });
+            if (input.event.type === "app_thread.model_selection.updated") {
+              const source = input.event;
+              const run = yield* projections.getRun(threadId, source.runId);
+              if (
+                run === undefined ||
+                run.activeAttemptId !== source.attemptId ||
+                (run.status !== "running" && run.status !== "waiting")
+              )
+                return [];
+              const result = yield* eventSink
+                .writeIfRunCurrent({
+                  threadId,
+                  runId: source.runId,
+                  activeAttemptId: source.attemptId,
+                  expectedStatus: run.status,
+                  events: [event],
+                })
+                .pipe(retryLockTimeout);
+              return result.storedEvents;
+            }
             return yield* eventSink.write({ events: [event] }).pipe(retryLockTimeout);
           }),
+        );
+      },
+    );
+
+    /** Providers may reveal native subagent models late. */
+    const syncSubagentThreadModel = Effect.fn("ProviderEventIngestor.syncSubagentThreadModel")(
+      function* (input: ProviderEventIngestInput, subagent: OrchestrationV2Subagent) {
+        const { childThreadId, model } = subagent;
+        if (
+          subagent.origin !== "provider_native" ||
+          childThreadId === null ||
+          (model === null && subagent.modelSelection === undefined)
+        ) {
+          return [];
+        }
+        return yield* syncThreadModelSelection(
+          input,
+          childThreadId,
+          ({ modelSelection }) =>
+            subagent.modelSelection ??
+            (model === null || model === modelSelection.model
+              ? modelSelection
+              : { instanceId: modelSelection.instanceId, model }),
         );
       },
     );
@@ -495,6 +529,9 @@ export const layer: Layer.Layer<
                 }),
               ];
             }
+            case "app_thread.model_selection.updated":
+              // Written under the thread's lock after ingestion.
+              return [];
             case "provider_session.updated":
               return [
                 yield* makeDomainEvent(input, {
@@ -829,11 +866,23 @@ export const layer: Layer.Layer<
                   ),
                 ),
               ),
-              // @effect-diagnostics-next-line flatMapConditionalToFilterOrFail:off - The predicate narrows the captured event for the subagent update.
-              Effect.flatMap((storedEvents) =>
-                storedEvents.length === 0 || input.event.type !== "subagent.updated"
+              Effect.flatMap((storedEvents) => {
+                const event = input.event;
+                const sync =
+                  event.type === "app_thread.model_selection.updated"
+                    ? // Preserve selections the user changed while the run was active.
+                      syncThreadModelSelection(input, event.threadId, ({ modelSelection }) =>
+                        modelSelectionsEqual(modelSelection, event.previousModelSelection) &&
+                        modelSelection.instanceId === event.modelSelection.instanceId
+                          ? event.modelSelection
+                          : modelSelection,
+                      )
+                    : storedEvents.length > 0 && event.type === "subagent.updated"
+                      ? syncSubagentThreadModel(input, event.subagent)
+                      : null;
+                return sync === null
                   ? Effect.succeed(storedEvents)
-                  : syncSubagentThreadModel(input, input.event.subagent).pipe(
+                  : sync.pipe(
                       Effect.map((synced) => [...storedEvents, ...synced]),
                       Effect.mapError(
                         (cause) =>
@@ -843,8 +892,8 @@ export const layer: Layer.Layer<
                             cause,
                           }),
                       ),
-                    ),
-              ),
+                    );
+              }),
               Effect.tap((storedEvents) =>
                 Effect.gen(function* () {
                   if (storedEvents.length === 0 || input.event.type !== "provider_turn.updated")

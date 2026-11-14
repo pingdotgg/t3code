@@ -2438,6 +2438,130 @@ layer("ProviderEventIngestorV2", (it) => {
       ),
     ),
   );
+
+  it.effect("moves a thread to the model its provider switched the session to", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const rootEvent = yield* threadCreatedEvent(now);
+      const threadId = rootEvent.threadId;
+      if (threadId === undefined) throw new Error("Expected a thread fixture event");
+      yield* eventSink.write({ events: [rootEvent] });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const runId = RunId.make("run:fallback");
+      const attemptId = RunAttemptId.make("attempt:fallback");
+      const run = {
+        id: runId,
+        threadId,
+        ordinal: 1,
+        providerInstanceId: modelSelection.instanceId,
+        modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make("message:fallback"),
+        rootNodeId: NodeId.make("node:fallback"),
+        activeAttemptId: attemptId,
+        status: "running",
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      } satisfies OrchestrationV2Run;
+      yield* eventSink.write({
+        events: [
+          {
+            ...rootEvent,
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "run.created",
+            payload: run,
+          },
+        ],
+      });
+      const reportModel = (reported: ModelSelection) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+          event: {
+            type: "app_thread.model_selection.updated",
+            runId,
+            attemptId,
+            driver: CODEX_DRIVER,
+            threadId,
+            previousModelSelection: modelSelection,
+            modelSelection: reported,
+          },
+        });
+      const switched = { ...modelSelection, model: "gpt-fallback" };
+
+      const otherInstance = yield* reportModel({
+        ...switched,
+        instanceId: ProviderInstanceId.make("codex-work"),
+      });
+
+      assert.lengthOf(otherInstance, 0);
+      const first = yield* reportModel(switched);
+      const repeated = yield* reportModel(switched);
+
+      assert.deepEqual(
+        first.map((stored) => stored.event.type),
+        ["thread.model-selection-updated"],
+      );
+      assert.lengthOf(repeated, 0);
+      assert.deepEqual((yield* projectionStore.getThread(threadId)).modelSelection, switched);
+      for (const newer of [
+        { ...modelSelection, model: "user-selected-model" },
+        { ...modelSelection, options: [{ id: "reasoningEffort", value: "low" }] },
+      ]) {
+        yield* eventSink.write({
+          events: [
+            {
+              ...rootEvent,
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "thread.model-selection-updated",
+              payload: {
+                ...(yield* projectionStore.getThread(threadId)),
+                modelSelection: newer,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
+        assert.lengthOf(yield* reportModel(switched), 0);
+        assert.deepEqual((yield* projectionStore.getThread(threadId)).modelSelection, newer);
+      }
+      yield* eventSink.write({
+        events: [
+          {
+            ...rootEvent,
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "thread.model-selection-updated",
+            payload: { ...(yield* projectionStore.getThread(threadId)), modelSelection },
+          },
+          {
+            ...rootEvent,
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "run.updated",
+            payload: { ...run, status: "interrupted", completedAt: now },
+          },
+          {
+            ...rootEvent,
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "run.created",
+            payload: { ...run, id: RunId.make("run:newer"), ordinal: 2 },
+          },
+        ],
+      });
+      assert.lengthOf(yield* reportModel(switched), 0);
+      assert.deepEqual((yield* projectionStore.getThread(threadId)).modelSelection, modelSelection);
+    }),
+  );
 });
 
 const ingestCompletedProviderTurn = (

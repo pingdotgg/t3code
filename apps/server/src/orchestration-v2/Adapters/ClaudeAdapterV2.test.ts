@@ -7050,6 +7050,137 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("moves the thread to the model a session refusal fallback switched to", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      const original = {
+        instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+        model: "claude-opus-5-5",
+      } satisfies ModelSelection;
+      const fallback = { ...original, model: "claude-opus-4-8" };
+      const turn = (ordinal: number, modelSelection: ModelSelection) =>
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(`attempt-refusal-fallback:${ordinal}`),
+          text: `Request ${ordinal}`,
+          attachments: [],
+          providerTurnOrdinal: ordinal,
+          modelSelection,
+        });
+      const settle = Effect.gen(function* () {
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+      });
+      const refusalFallback = (scope: "session" | "local", uuid: string) =>
+        claudeSdkFrame({
+          type: "system",
+          subtype: "model_refusal_fallback",
+          trigger: "refusal",
+          direction: "retry",
+          scope,
+          original_model: original.model,
+          fallback_model: fallback.model,
+          request_id: null,
+          content: "Switched to Opus 4.8",
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+        });
+
+      yield* harness.runtime.startTurn(turn(1, original));
+      yield* Queue.offer(
+        harness.sdkMessages,
+        refusalFallback("local", "00000000-0000-4000-8000-000000000401"),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        refusalFallback("session", "00000000-0000-4000-8000-000000000402"),
+      );
+      yield* settle;
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "app_thread.model_selection.updated" ? [event] : [],
+        ),
+        [
+          {
+            type: "app_thread.model_selection.updated",
+            runId: turn(1, original).runId,
+            attemptId: turn(1, original).attemptId,
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            threadId: harness.threadId,
+            previousModelSelection: original,
+            modelSelection: fallback,
+          },
+        ],
+      );
+
+      yield* harness.runtime.startTurn(turn(2, fallback));
+      yield* settle;
+      assert.deepEqual(harness.liveSelectionChanges, []);
+      yield* harness.runtime.startTurn(turn(3, original));
+      yield* settle;
+      assert.deepEqual(harness.liveSelectionChanges[0], { model: original.model });
+      const explicitDefault = { ...original, options: [{ id: "fastMode", value: false }] };
+      yield* harness.runtime.startTurn(turn(4, explicitDefault));
+      yield* Queue.offer(
+        harness.sdkMessages,
+        refusalFallback("session", "00000000-0000-4000-8000-000000000404"),
+      );
+      yield* settle;
+      const defaultUpdate = harness.events
+        .filter((event) => event.type === "app_thread.model_selection.updated")
+        .at(-1);
+      assert.deepEqual(defaultUpdate?.previousModelSelection, explicitDefault);
+      assert.deepEqual(defaultUpdate?.modelSelection, {
+        ...fallback,
+        options: explicitDefault.options,
+      });
+      const steered = { ...original, model: "claude-sonnet-4-6" };
+      const input = turn(5, original);
+      yield* harness.runtime.startTurn(input);
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: input.runId,
+        providerThread: harness.providerThread,
+        providerTurnId: idAllocator.derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: "turn:" + input.attemptId,
+        }),
+        modelSelection: steered,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("steer-fallback"),
+          text: "Try this model",
+          attachments: [],
+        },
+      });
+      yield* Queue.offer(
+        harness.sdkMessages,
+        refusalFallback("session", "00000000-0000-4000-8000-000000000403"),
+      );
+      yield* settle;
+      const updates = harness.events.filter(
+        (event) => event.type === "app_thread.model_selection.updated",
+      );
+      assert.deepEqual(updates.at(-1)?.previousModelSelection, steered);
+      assert.deepEqual(updates.at(-1)?.modelSelection, fallback);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   // regression: #34549 a model change sent with a steer was shown but never applied to the turn.
   it.effect("applies a model change sent with a steer to the running turn", () =>
     Effect.gen(function* () {
