@@ -635,6 +635,12 @@ describe("OpenCodeAdapterV2", () => {
           },
           abort: async () => ({ data: true }),
           children: async () => ({ data: [] }),
+          get: async ({ sessionID }: { sessionID: string }) => ({
+            data: { id: sessionID, parentID: root, time: { created: 1, updated: 1 } },
+          }),
+          update: async ({ sessionID }: { sessionID: string }) => ({
+            data: { id: sessionID, time: { created: 1, updated: 2 } },
+          }),
         },
       }).pipe(
         Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
@@ -691,6 +697,44 @@ describe("OpenCodeAdapterV2", () => {
           metadata: {},
         },
       });
+      // The wake launches a subagent, which works before its run starts.
+      const child = "ses_wake_child";
+      yield* push(
+        text("msg_reply", {
+          id: "prt_task",
+          type: "tool",
+          tool: "task",
+          callID: "call_task",
+          state: {
+            status: "running",
+            input: { description: "Check", prompt: "check", subagent_type: "general" },
+            title: "Check",
+            metadata: { parentSessionId: root, sessionId: child },
+            time: { start: 3 },
+          },
+        }),
+      );
+      const childEvent = (type: string, info: object) => ({
+        type,
+        properties: { sessionID: child, ...info },
+      });
+      yield* push(
+        childEvent("message.updated", {
+          info: { id: "msg_child_prompt", sessionID: child, role: "user", time: { created: 3 } },
+        }),
+      );
+      yield* push(
+        childEvent("message.part.updated", {
+          part: {
+            id: "prt_child_text",
+            sessionID: child,
+            messageID: "msg_child_reply",
+            type: "text",
+            text: "CHILD_WAKE_OK",
+            time: { start: 3, end: 3 },
+          },
+        }),
+      );
       const finish = Effect.gen(function* () {
         yield* push(text("msg_reply", { text: "WAKE_OK", time: { start: 3, end: 4 } }));
         yield* push(message("msg_reply", { ...reply, time: { created: 3, completed: 4 } }));
@@ -754,6 +798,16 @@ describe("OpenCodeAdapterV2", () => {
         ),
         [RunId.make("run-opencode-wake-2")],
         "an approval OpenCode asks for before the run starts is shown in it",
+      );
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.threadId !== harness.threadId &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === "CHILD_WAKE_OK",
+        ),
+        "a subagent the wake launched before its run started keeps its work",
       );
       assert.equal(offers.length, endedFirst ? 2 : 1, "each turn OpenCode starts gets an offer");
       assert.equal(prompts.length, 1, "OpenCode already runs this turn; prompting would repeat it");
