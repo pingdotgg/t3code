@@ -29,9 +29,6 @@ export function WorkspaceSidebarColumn(props: {
       <StandaloneStack surface="sidebar" options={SIDEBAR_COLUMN_OPTIONS}>
         {props.children}
       </StandaloneStack>
-      {/* Keep legacy iPad navigation in its sidebar; the detail host previously covered the composer.
-
-          旧版 iPad 的导航跟随侧栏，避免此前挂在详情容器上遮挡输入框。 */}
       {deviceType === "pad" && workspace !== null ? <WorkspaceSidebarTabs /> : null}
     </View>
   );

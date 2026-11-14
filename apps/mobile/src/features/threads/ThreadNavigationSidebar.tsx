@@ -624,9 +624,6 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 contentContainerStyle={[
                   styles.threadListContent,
                   {
-                    // The iPad dock now belongs to this column; its last row must scroll above it.
-                    //
-                    // iPad 导航现归属此侧栏，末行需能滚动到导航上方，避免底部继续被遮挡。
                     paddingBottom:
                       deviceType === "pad"
                         ? workspaceDockBottomClearance({

@@ -9,8 +9,6 @@ import {
 
 vi.mock("@react-navigation/native", async () => {
   // Resolve native's own core so the test exercises its real navigation-context fallback.
-  //
-  // 使用 native 实际依赖的 core，验证真实的导航上下文回退行为。
   const { createRequire } = await import("node:module");
   const require = createRequire(import.meta.url);
   const core = createRequire(require.resolve("@react-navigation/native")).resolve(

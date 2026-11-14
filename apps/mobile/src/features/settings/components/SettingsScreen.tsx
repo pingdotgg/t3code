@@ -45,9 +45,7 @@ export function SettingsScreen(
         search={props.search}
         trailing={props.trailing}
         menus={props.menus}
-        // Hide system Back as well as the callback, so the first detail cannot reveal a second list.
-        //
-        // 首个详情页同时隐藏系统返回并禁用回滑，避免右列退回后重复显示设置目录。
+        // The column's first page also blocks system Back, which would reveal a second list.
         onBack={workspaceRoot || back.columnRoot ? undefined : back.onBack}
         onBackToList={!workspaceRoot && back.columnRoot ? back.onBack : undefined}
         guardBack={props.guardBack || back.columnRoot}

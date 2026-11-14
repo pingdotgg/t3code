@@ -655,11 +655,7 @@ function WorkspaceStackNavigator({
   );
   return (
     <NativeWorkspaceModeContext value={usesNativeWorkspaceColumns}>
-      {/* The fallback sidebar is rendered by NavigationContent's layout, outside its children.
-          Share tab state above that layout so sidebar actions and detail tabs use one owner.
-
-          兼容侧栏由 NavigationContent 的布局绘制，位于其 children 外部；
-          将标签状态提升到布局之上，使侧栏入口与详情导航共用同一份状态。 */}
+      {/* Before iOS 26 NavigationContent's layout draws the sidebar outside its children. */}
       <WorkspaceTabsProvider settingsOpen={settingsOpen}>
         <NavigationContent>
           <WorkspaceStackView

@@ -171,9 +171,7 @@ export function WorkspaceNativeTabs(props: {
           !workspaceUsesColumns(selectedTab, workspace.settingsOpen, nativeColumns))) &&
       !props.hidden &&
       !props.tabsInSidebarColumn &&
-      // The legacy split sidebar owns its own tabs; this host sits in the detail column.
-      //
-      // 兼容分栏的侧栏自行绘制导航，此容器位于右侧详情，不能重复绘制。
+      // Before iOS 26 this host sits in the detail column; the split's sidebar draws the tabs.
       !(
         !nativeColumns &&
         layout.usesSplitView &&

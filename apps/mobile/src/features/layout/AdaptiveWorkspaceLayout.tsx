@@ -271,9 +271,7 @@ function AdaptiveWorkspaceLayoutContent(
   const { width: viewportWidth, height } = nativeMetrics ?? windowDimensions;
   const pathname = props.pathname;
   const workspace = useWorkspaceTabs();
-  // Android workspace pages fill the viewport; legacy iPad pages retain their sidebar navigation.
-  //
-  // Android 工作区页面铺满窗口；旧版 iPad 保留侧栏导航，避免全屏内容与局部导航错位。
+  // Settings and Usage fill Android's workspace; the legacy iPad split keeps its sidebar for them.
   const androidSettingsOpen = useAndroidWorkspaceRoot()?.settingsOpen ?? false;
   const safeAreaInsets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -307,7 +305,7 @@ function AdaptiveWorkspaceLayoutContent(
       !workspaceUsesColumns(
         workspace.state.selectedTab,
         workspace.settingsOpen,
-        nativeWorkspace,
+        false,
         baseLayout.usesSplitView,
       ));
   // The overlay sidebar closes when a page opens from it, and stays open on a list or on the
@@ -1053,9 +1051,7 @@ function AdaptiveWorkspaceLayoutContent(
                   />
                 )}
               >
-                {/* The legacy sidebar owns its list while the root navigator owns detail pages.
-
-                    兼容侧栏承载目录，详情仍由根导航管理，切换设置时不再隐藏整列。 */}
+                {/* Without a sidebar route (iPadOS before 26) the columns draw the active tab's list. */}
                 {sidebar ??
                   (Platform.OS === "ios" && workspace?.settingsOpen ? (
                     <WorkspaceSettingsSidebar width={layout.listPaneWidth} />

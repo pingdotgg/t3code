@@ -16,9 +16,9 @@ export type WorkspaceTab = NavigationTab;
 export type WorkspaceSearchTab = WorkspaceTab | "settings";
 export type WorkspaceSearchMode = "resting" | "active" | "expanded";
 
-/** Native Usage is one page; the legacy workspace keeps its sidebar for every tab.
- *
- * 原生分栏的用量为单页，兼容工作区的每个标签均保留侧栏。
+/**
+ * Settings, Chats and pull requests pair a list with a detail column; Usage is one page. The
+ * pre-iOS 26 split keeps its sidebar, which holds the tabs, for every tab.
  */
 export function workspaceUsesColumns(
   tab: WorkspaceTab,
@@ -26,9 +26,6 @@ export function workspaceUsesColumns(
   nativeColumns = true,
   splitView = true,
 ) {
-  // Legacy iPad tabs retain their sidebar; full-page Settings and Usage stranded its navigation.
-  //
-  // 旧版 iPad 各标签保留侧栏，避免设置和用量铺满页面后导航仍滞留在左下角。
   return settingsOpen
     ? nativeColumns || splitView
     : (!nativeColumns && splitView) || tab === "threads" || tab === "pullRequests";

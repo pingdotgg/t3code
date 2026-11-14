@@ -19,9 +19,7 @@ export function WorkspaceSettingsSidebar(props: { readonly width: number }) {
   return (
     <WorkspaceSidebarColumn width={props.width}>
       <SettingsListScreen sidebar selected={state.routes[index + 1]?.name ?? null}>
-        {/* Root layouts can lack a screen navigation object; preserve the container fallback too.
-
-            根布局可能没有页面导航对象；同时恢复容器回退，避免目录操作落到独立侧栏。 */}
+        {/* The sidebar column is a separate navigator; rows must act on the workspace's. */}
         <NavigationContainerRefContext value={container}>
           <NavigationContext value={navigation}>
             <NavigationRouteContext value={route}>
