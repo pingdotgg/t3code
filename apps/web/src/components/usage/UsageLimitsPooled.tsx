@@ -1,7 +1,9 @@
+import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
+import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   CHATGPT_USAGE_URL,
-  collectLimitAccounts,
   collectExternalUsageLinks,
+  collectLimitAccounts,
   collectLimitNotices,
   collectLimitPools,
   cursorUsageWindowDetails,
@@ -15,12 +17,14 @@ import {
   remainingPercent,
   type ResetCreditChoice,
   resetCreditChoices,
+  resetCreditsForWindow,
+  sharedUsage,
+  usageShareSummary,
 } from "@t3tools/shared/usageLimits";
-import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
-import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
 import {
   createContext,
+  type CSSProperties,
   Fragment,
   type ReactNode,
   type RefObject,
@@ -30,18 +34,18 @@ import {
   useState,
 } from "react";
 
-import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { ensureLocalApi } from "../../localApi";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { OpenAI } from "../Icons";
 import { providerClients } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
-import { Button } from "../ui/button";
-import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
+import { Button } from "../ui/button";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { PaceIcon, ResetCreditDialog, barColor, usePaceMark, useResetCredit } from "./UsageLimits";
+import { barColor, PaceIcon, ResetCreditDialog, usePaceMark, useResetCredit } from "./UsageLimits";
 
 function accountInitials(email: string): string {
   const [local = "", domain = ""] = email.split("@");
@@ -147,6 +151,7 @@ function SegmentPopover({
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
   const resetsIn = formatResetsIn(window, now);
+  const shared = sharedUsage(window, account.limits.windows);
   const where =
     account.environments.length > 0
       ? account.environments.map((environment) => environment.label).join(", ")
@@ -182,6 +187,13 @@ function SegmentPopover({
       </div>
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
         <Row label="Left">{remaining}%</Row>
+        {shared ? (
+          <Row
+            label={shared.labels.map((label) => label.replace(`${window.label} · `, "")).join(", ")}
+          >
+            {shared.percent}% of usage
+          </Row>
+        ) : null}
         {window.resetsAt ? (
           <Row label="Resets">
             {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
@@ -326,6 +338,19 @@ function RedeemableSegment({
   );
 }
 
+// Reaches back under the fill's rounded end and paints only the two corners it leaves bare,
+// so the translucent layers never overlap.
+const fillCornerNotches = {
+  maskImage: [
+    "linear-gradient(to right, transparent var(--radius-md), #000 var(--radius-md))",
+    "radial-gradient(circle at 0 100%, transparent calc(var(--radius-md) - 0.5px), #000 calc(var(--radius-md) + 0.5px))",
+    "radial-gradient(circle at 0 0, transparent calc(var(--radius-md) - 0.5px), #000 calc(var(--radius-md) + 0.5px))",
+  ].join(", "),
+  maskSize: "100% 100%, var(--radius-md) var(--radius-md), var(--radius-md) var(--radius-md)",
+  maskPosition: "0 0, 0 0, 0 100%",
+  maskRepeat: "no-repeat",
+} satisfies CSSProperties;
+
 function SegmentTriggers({
   account,
   window,
@@ -349,7 +374,8 @@ function SegmentTriggers({
   const timeLeft = paceRemainingPercent(window, now);
   const [segmentRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now);
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const { count: credits, scope } = resetCreditsForWindow(account.limits.resetCredits, window.id);
+  const shared = sharedUsage(window, account.limits.windows);
   return (
     <>
       <PopoverTrigger
@@ -361,7 +387,7 @@ function SegmentTriggers({
             ref={segmentRef}
             type="button"
             style={{ gridColumn: index, gridRow: 1, ...paceMark?.gappedTrack }}
-            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
+            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${credits ? `, ${credits} ${scope ? `${scope} ` : ""}reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
             className="relative h-5 min-w-0 cursor-pointer rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border @2xl/pool:h-8"
           />
         }
@@ -369,9 +395,28 @@ function SegmentTriggers({
         <div aria-hidden className="absolute inset-0 overflow-hidden rounded-md">
           {/* Clipped inside the rounded clip so the bar's own corners keep their antialiasing. */}
           <div className="absolute inset-0" style={paceMark?.gap}>
+            {shared ? (
+              <div
+                aria-hidden
+                className="absolute inset-y-0 rounded-r-md opacity-20"
+                style={{
+                  ...(remaining > 0 ? fillCornerNotches : undefined),
+                  left: remaining > 0 ? `calc(${remaining}% - var(--radius-md))` : 0,
+                  width:
+                    remaining > 0
+                      ? `calc(${shared.percent}% + var(--radius-md))`
+                      : `${shared.percent}%`,
+                  backgroundColor: color,
+                }}
+              />
+            ) : null}
             <div
               aria-hidden
-              className="absolute inset-y-0 left-0 rounded-md opacity-35"
+              className={cn(
+                "absolute inset-y-0 left-0 rounded-md",
+                window.share ? "opacity-50" : "opacity-35",
+              )}
+              // A window drawing from a shared limit takes the tint of its part of that limit.
               style={{ width: `${remaining}%`, backgroundColor: color }}
             />
             {remaining < 100 && reset && refillPercent > 0 ? (
@@ -425,6 +470,9 @@ function SegmentTriggers({
                   <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
                     <TicketIcon className="size-3" aria-hidden />
                     {credits}
+                    {scope ? (
+                      <span className="font-normal text-muted-foreground">{scope}</span>
+                    ) : null}
                   </span>
                 </>
               ) : null}
@@ -452,7 +500,7 @@ function LegendRow({
   const { account, window } = payload;
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const { count: credits, scope } = resetCreditsForWindow(account.limits.resetCredits, window.id);
   return (
     <PopoverTrigger
       handle={popover}
@@ -483,9 +531,11 @@ function LegendRow({
             >
               <TicketIcon className="size-3" aria-hidden />
               {credits}
+              {scope ? <span className="font-normal text-muted-foreground">{scope}</span> : null}
             </span>
             <span className="sr-only">
-              {credits} reset {credits === 1 ? "credit" : "credits"} banked
+              {credits} {scope ? `${scope} ` : ""}reset {credits === 1 ? "credit" : "credits"}{" "}
+              banked
             </span>
           </>
         ) : null}
@@ -604,6 +654,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
       {windows.map((window) => {
         const details =
           pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool) : undefined;
+        const share = window.members.find((member) => member.window.share)?.window.share;
         return (
           <PoolWindowCard
             key={`${window.kind}:${window.id}`}
@@ -611,7 +662,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
             color={color}
             now={now}
             label={details?.label}
-            description={details?.description}
+            description={details?.description ?? usageShareSummary(share, windows) ?? undefined}
           />
         );
       })}

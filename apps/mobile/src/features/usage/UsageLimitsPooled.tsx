@@ -15,6 +15,8 @@ import {
   remainingPercent,
   type LimitAccount,
   type LimitPoolWindow,
+  resetCreditsForWindow,
+  usageShareSummary,
 } from "@t3tools/shared/usageLimits";
 import { Fragment, type ReactNode, useId, useState } from "react";
 import { Linking, Pressable, View } from "react-native";
@@ -235,7 +237,10 @@ function PoolWindowCard({
           );
         const { account, window } = member;
         const timeLeft = paceRemainingPercent(window, now);
-        const credits = account.limits.resetCredits?.availableCount ?? 0;
+        const { count: credits, scope } = resetCreditsForWindow(
+          account.limits.resetCredits,
+          window.id,
+        );
         const resetsIn = formatResetsIn(window, now)?.replace("resets in ", "");
         return (
           <Pressable
@@ -295,6 +300,9 @@ function PoolWindowCard({
                         <Text className="text-xs font-t3-medium tabular-nums text-foreground">
                           {credits}
                         </Text>
+                        {scope ? (
+                          <Text className="text-xs text-foreground-muted">{scope}</Text>
+                        ) : null}
                       </>
                     ) : null}
                   </View>
@@ -323,13 +331,16 @@ function PoolWindowCard({
       {pool.columns.map(({ account, window }, index) => {
         if (!window) return null;
         const segmentColor = normalizeProviderAccentColor(account.accentColor) ?? color;
-        const credits = account.limits.resetCredits?.availableCount ?? 0;
+        const { count: credits, scope } = resetCreditsForWindow(
+          account.limits.resetCredits,
+          window.id,
+        );
         const resetsIn = formatResetsIn(window, now);
         return (
           <Pressable
             key={account.key}
             accessibilityRole="button"
-            accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
+            accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} ${scope ? `${scope} ` : ""}reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
             accessibilityHint="Show account details"
             onPress={() => openAccount(account)}
             className="min-h-[44px] flex-row items-center gap-2 active:opacity-60"
@@ -373,6 +384,7 @@ function PoolWindowCard({
                   <Text className="text-xs font-t3-medium tabular-nums text-foreground">
                     {credits}
                   </Text>
+                  {scope ? <Text className="text-xs text-foreground-muted">{scope}</Text> : null}
                 </>
               ) : null}
             </View>
@@ -447,6 +459,7 @@ export function UsageLimitsSection({
               {windows.map((window) => {
                 const details =
                   pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool) : undefined;
+                const share = window.members.find((member) => member.window.share)?.window.share;
                 return (
                   <PoolWindowCard
                     key={`${window.kind}:${window.id}`}
@@ -457,7 +470,9 @@ export function UsageLimitsSection({
                       selectedEnvironmentIds === null ? null : [...selectedEnvironmentIds]
                     }
                     label={details?.label}
-                    description={details?.description}
+                    description={
+                      details?.description ?? usageShareSummary(share, windows) ?? undefined
+                    }
                     wide={wide}
                   />
                 );

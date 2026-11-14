@@ -27,7 +27,7 @@ const WINDOWS: Readonly<
 };
 
 /** Reuse probed display names for streamed bucket types so mid-turn updates target the same row. */
-const OVERAGE_INCLUDED_EVENT_TYPE = "seven_day_overage_included";
+export const OVERAGE_INCLUDED_EVENT_TYPE = "seven_day_overage_included";
 
 // The SDK does not yet type the spend budget returned by `get_usage`.
 const SpendMoney = Schema.Struct({
@@ -50,7 +50,7 @@ export const makeClaudeScopedLimitNames = Ref.make<ClaudeScopedLimitNames>({
 const SCOPED_WINDOW_PREFIX = "seven_day_";
 const scopeToken = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "_");
 
-function scopedWindowId(displayName: string): string {
+export function claudeScopedWindowId(displayName: string): string {
   return `${SCOPED_WINDOW_PREFIX}${scopeToken(displayName)}`;
 }
 
@@ -63,13 +63,20 @@ export function windowLimitsModel(
   return model !== null && scopeToken(model).includes(window.id.slice(SCOPED_WINDOW_PREFIX.length));
 }
 
+/** Maps a usage bucket named by Claude's API to the id of the window shown for it. */
+export function claudeUsageWindowId(bucket: string, overageIncluded: string | undefined): string {
+  return bucket === OVERAGE_INCLUDED_EVENT_TYPE && overageIncluded
+    ? claudeScopedWindowId(overageIncluded)
+    : bucket;
+}
+
 function scopedWindow(
   displayName: string,
   usedPercent: number,
   resetsAt: string | undefined,
 ): ServerProviderUsageWindow {
   return {
-    id: scopedWindowId(displayName),
+    id: claudeScopedWindowId(displayName),
     kind: "weekly",
     label: `Weekly · ${displayName}`,
     windowDurationMins: WEEK_MINS,

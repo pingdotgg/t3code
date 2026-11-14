@@ -25,6 +25,9 @@ import {
   paceRemainingPercent,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
+  resetCreditsForWindow,
+  sharedUsage,
+  usageShareSummary,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -217,6 +220,22 @@ describe("pace", () => {
     expect(paceOf(window, now)).toBe("under");
     expect(paceOf({ ...window, usedPercent: 62 }, now)).toBe("on");
     expect(paceOf({ ...window, usedPercent: 80 }, now)).toBe("ahead");
+  });
+});
+
+describe("shares", () => {
+  it("labels a scoped window's allowance and lightens what it used of the shared window", () => {
+    const weekly = { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 38 } as const;
+    const share = { ofWindowId: "seven_day", usedPercent: 8.4, allowancePercent: 50 };
+    const fable = { ...weekly, id: "seven_day_fable", label: "Weekly · Fable", share };
+    expect(usageShareSummary(fable.share, [weekly, fable])).toBe("Up to 50% of your weekly limit");
+    expect(usageShareSummary(fable.share, [fable])).toBeNull();
+    expect(sharedUsage(weekly, [weekly, fable])).toEqual({
+      percent: 8,
+      labels: ["Weekly · Fable"],
+    });
+    expect(sharedUsage({ ...weekly, usedPercent: 5 }, [weekly, fable])?.percent).toBe(5);
+    expect(sharedUsage(fable, [weekly, fable])).toBeNull();
   });
 });
 
@@ -1835,5 +1854,51 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("reset credits per window", () => {
+  const option = (
+    creditId: string,
+    availableCount: number,
+    clearsWindowIds?: string[],
+    scope?: string,
+  ) => ({
+    creditId,
+    label: creditId,
+    description: creditId,
+    availableCount,
+    ...(clearsWindowIds ? { clearsWindowIds } : {}),
+    ...(scope ? { scope } : {}),
+  });
+  const credits = {
+    availableCount: 4,
+    nextCreditId: "fable",
+    options: [
+      option("fable", 2, ["seven_day_fable"], "Fable"),
+      option("weekly", 1, ["seven_day"]),
+      option("full", 1, ["five_hour", "seven_day"]),
+    ],
+  };
+
+  it("counts each reset only on the windows it clears", () => {
+    expect(resetCreditsForWindow(credits, "seven_day")).toEqual({ count: 2, scope: undefined });
+    expect(resetCreditsForWindow(credits, "five_hour")).toEqual({ count: 1, scope: undefined });
+    expect(resetCreditsForWindow(credits, "seven_day_fable")).toEqual({
+      count: 2,
+      scope: "Fable",
+    });
+  });
+
+  it("counts resets without clears details against every window", () => {
+    expect(
+      resetCreditsForWindow({ availableCount: 2, nextCreditId: "grant_a" }, "seven_day"),
+    ).toEqual({ count: 2, scope: undefined });
+    expect(
+      resetCreditsForWindow(
+        { availableCount: 1, options: [option("grant_a", 1)] },
+        "seven_day_fable",
+      ),
+    ).toEqual({ count: 1, scope: undefined });
   });
 });
