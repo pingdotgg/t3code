@@ -38,6 +38,9 @@ import {
   antigravityApprovalOptions,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
+  extractAntigravityBackgroundTaskId,
+  extractAntigravityBackgroundTaskCompletion,
+  extractAntigravityBackgroundToolMutation,
   extractAntigravityUserInputQuestion,
   makeAntigravityReadRepair,
   makeAntigravityUserInputResponse,
@@ -236,6 +239,11 @@ export function makeAntigravityAcpAdapterFlavor(
       ),
     // Loading history replays tool calls; resume avoids replay.
     subagentsIdleOnTurnCompletion: true,
+    backgroundTasksIdleOnTurnCompletion: true,
+    backgroundNoticesAreTerminal: true,
+    extractBackgroundTaskId: extractAntigravityBackgroundTaskId,
+    extractBackgroundTaskCompletion: extractAntigravityBackgroundTaskCompletion,
+    extractBackgroundToolMutation: extractAntigravityBackgroundToolMutation,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,

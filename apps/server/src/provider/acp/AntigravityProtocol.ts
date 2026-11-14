@@ -507,3 +507,220 @@ export function antigravitySubagentOutput(toolCall: AcpToolCallState): string | 
   const output = toolCall.data.rawOutput;
   return typeof output === "string" && output.trim() ? boundText(output.trim()) : undefined;
 }
+
+function extractAntigravityToolOutputText(toolCall: AcpToolCallState): string | undefined {
+  const rawOutput = toolCall.data.rawOutput;
+  if (typeof rawOutput === "string") {
+    return rawOutput.trim() || undefined;
+  }
+  if (Predicate.isObject(rawOutput)) {
+    const record = rawOutput as Record<string, unknown>;
+    if (typeof record.text === "string" && record.text.trim()) return record.text.trim();
+    if (typeof record.output === "string" && record.output.trim()) return record.output.trim();
+    if (typeof record.combinedOutput === "string" && record.combinedOutput.trim())
+      return record.combinedOutput.trim();
+    if (typeof record.combined_output === "string" && record.combined_output.trim())
+      return record.combined_output.trim();
+  }
+  const content = toolCall.data.content;
+  if (Array.isArray(content)) {
+    const text = content
+      .flatMap((entry) => {
+        if (!Predicate.isObject(entry)) return [];
+        const record = entry as Record<string, unknown>;
+        if (typeof record.text === "string") return [record.text];
+        if (
+          Predicate.isObject(record.content) &&
+          typeof (record.content as Record<string, unknown>).text === "string"
+        ) {
+          return [(record.content as Record<string, unknown>).text as string];
+        }
+        return [];
+      })
+      .join("\n")
+      .trim();
+    if (text.length > 0) return text;
+  }
+  return undefined;
+}
+
+const ANTIGRAVITY_BACKGROUND_COMMAND_TITLES = new Set(["run_command", "schedule", "run command"]);
+
+export function extractAntigravityBackgroundTaskId(toolCall: AcpToolCallState): string | undefined {
+  const title = toolCall.title?.toLowerCase() ?? "";
+  const command = toolCall.command?.toLowerCase() ?? "";
+  if (title.includes("manage_task") || command.includes("manage_task")) {
+    return undefined;
+  }
+  const rawOutput = toolCall.data.rawOutput;
+  if (Predicate.isObject(rawOutput)) {
+    const record = rawOutput as Record<string, unknown>;
+    const directId =
+      (typeof record.taskId === "string" && record.taskId.trim()) ||
+      (typeof record.task_id === "string" && record.task_id.trim()) ||
+      (typeof record.TaskId === "string" && record.TaskId.trim());
+    if (directId) return directId;
+  }
+  // Only inspect output text for commands that can spawn background tasks
+  const isCommandOrSchedule =
+    ANTIGRAVITY_BACKGROUND_COMMAND_TITLES.has(title) ||
+    toolCall.kind === "execute" ||
+    (typeof toolCall.command === "string" && Boolean(toolCall.command));
+  if (!isCommandOrSchedule) return undefined;
+
+  const outputText = extractAntigravityToolOutputText(toolCall);
+  if (outputText !== undefined) {
+    const match =
+      /(?:^|\n)(?:Tool is )?running as a background task with task id:\s*([^\s\r\n]+)/i.exec(
+        outputText,
+      ) ??
+      /(?:^|\n)(?:Scheduled|Tool scheduled) task with (?:task )?id:\s*([^\s\r\n]+)/i.exec(
+        outputText,
+      ) ??
+      /(?:^|\n)(?:Tool )?background task with task id:\s*([^\s\r\n]+)/i.exec(outputText);
+    if (match?.[1]) {
+      // Strip only trailing punctuation such as quotes, commas, dots
+      return match[1].replace(/["',.]+$/, "").trim();
+    }
+  }
+  return undefined;
+}
+
+export function extractAntigravityBackgroundTaskCompletion(
+  toolCall: AcpToolCallState,
+): ReadonlyArray<{
+  readonly taskId: string;
+  readonly status: "running" | "completed" | "failed";
+  readonly appendOutput: string;
+}> {
+  const rawInput = Predicate.isObject(toolCall.data.rawInput)
+    ? (toolCall.data.rawInput as Record<string, unknown>)
+    : undefined;
+  const taskIdFromInput =
+    (typeof rawInput?.TaskId === "string" && rawInput.TaskId.trim()) ||
+    (typeof rawInput?.taskId === "string" && rawInput.taskId.trim()) ||
+    (typeof rawInput?.task_id === "string" && rawInput.task_id.trim()) ||
+    undefined;
+
+  const title = toolCall.title?.toLowerCase() ?? "";
+  const isManageTask =
+    title === "manage_task" ||
+    title.includes("manage_task") ||
+    (typeof toolCall.command === "string" &&
+      toolCall.command.toLowerCase().includes("manage_task"));
+
+  if (!isManageTask) {
+    return [];
+  }
+
+  const outputText = extractAntigravityToolOutputText(toolCall) ?? "";
+  const action = typeof rawInput?.Action === "string" ? rawInput.Action.toLowerCase() : "";
+
+  if (action === "kill" || /kill/i.test(title)) {
+    const killMatch =
+      /(?:^|\n)Task "([^"]+)"\s+(?:cancelled|killed)\b/i.exec(outputText) ??
+      /(?:^|\n)Task id "([^"]+)"\s+was canceled\b/i.exec(outputText);
+    const hasSuccessfulKillNotice = killMatch !== null;
+    const firstLine = outputText.split("\n", 1)[0] ?? "";
+    const isExplicitKillError =
+      /(?:failed|error|not found|no task)/i.test(firstLine) ||
+      /(?:^|\n)(?:error:|failed to kill)/i.test(outputText);
+    if ((toolCall.status === "completed" && !isExplicitKillError) || hasSuccessfulKillNotice) {
+      const taskId = taskIdFromInput ?? killMatch?.[1];
+      if (taskId) {
+        return [
+          {
+            taskId: taskId.replace(/["',.]+$/, "").trim(),
+            status: "completed",
+            appendOutput: outputText,
+          },
+        ];
+      }
+    }
+  } else if (action === "status" || /status/i.test(title)) {
+    const taskId =
+      taskIdFromInput ??
+      /Task:\s*([^\s\r\n]+)/i.exec(outputText)?.[1] ??
+      /Task id "([^"]+)"/i.exec(outputText)?.[1];
+    if (taskId) {
+      const cleanId = taskId.replace(/["',.]+$/, "").trim();
+      if (
+        /Status:\s*(?:COMPLETED|STOPPED)/i.test(outputText) ||
+        /command exited with code\s+0\b/i.test(outputText)
+      ) {
+        return [{ taskId: cleanId, status: "completed", appendOutput: outputText }];
+      }
+      if (
+        /Status:\s*FAILED/i.test(outputText) ||
+        /command exited with code\s+[1-9]\d*/i.test(outputText)
+      ) {
+        return [{ taskId: cleanId, status: "failed", appendOutput: outputText }];
+      }
+      if (/Status:\s*RUNNING/i.test(outputText)) {
+        return [{ taskId: cleanId, status: "running", appendOutput: outputText }];
+      }
+    }
+  }
+
+  const cancelMatch = /Task "([^"]+)"\s+(?:cancelled|killed)\b/i.exec(outputText);
+  if (cancelMatch?.[1]) {
+    return [
+      {
+        taskId: cancelMatch[1].replace(/["',.]+$/, "").trim(),
+        status: "completed",
+        appendOutput: outputText,
+      },
+    ];
+  }
+
+  return [];
+}
+
+export function extractAntigravityBackgroundToolMutation(text: string): ReadonlyArray<{
+  readonly taskId: string;
+  readonly status: "running" | "completed" | "failed";
+  readonly appendOutput: string;
+}> {
+  if (!text || typeof text !== "string") return [];
+  const results: Array<{
+    readonly taskId: string;
+    readonly status: "running" | "completed" | "failed";
+    readonly appendOutput: string;
+  }> = [];
+
+  // Antigravity injected system notification patterns start with `Task id "..."` or `Task "..."`
+  const taskFinishedMatch =
+    /(?:^|\n)Task id "([^"]+)"\s+(finished|was canceled|failed)\s+with result:/i.exec(text);
+  if (taskFinishedMatch?.[1] && taskFinishedMatch[2]) {
+    const taskId = taskFinishedMatch[1].replace(/["',.]+$/, "").trim();
+    const kind = taskFinishedMatch[2].toLowerCase();
+    let status: "completed" | "failed";
+    if (kind === "was canceled") {
+      status = "completed";
+    } else if (kind === "failed") {
+      status = "failed";
+    } else {
+      const resultPrefix = text.slice(taskFinishedMatch.index + taskFinishedMatch[0].length);
+      const outputIdx = resultPrefix.search(/(?:^|\n)Output:/i);
+      const header = outputIdx !== -1 ? resultPrefix.slice(0, outputIdx) : resultPrefix;
+      const hasFailedExitCode =
+        /(?:^|\n)(?:The command exited with code\s+([1-9]\d*)|Exit code:\s*([1-9]\d*)|Status:\s*FAILED)/i.test(
+          header,
+        );
+      status = hasFailedExitCode ? "failed" : "completed";
+    }
+    results.push({ taskId, status, appendOutput: text });
+    return results;
+  }
+  const taskCancelledMatch = /(?:^|\n)Task "([^"]+)"\s+(?:cancelled|killed)\b/i.exec(text);
+  if (taskCancelledMatch?.[1]) {
+    results.push({
+      taskId: taskCancelledMatch[1].replace(/["',.]+$/, "").trim(),
+      status: "completed",
+      appendOutput: text,
+    });
+    return results;
+  }
+
+  return results;
+}
