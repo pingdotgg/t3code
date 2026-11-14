@@ -1657,26 +1657,47 @@ effectIt.effect.each([
     }),
 );
 
-effectIt.effect.each([
-  { goalDriver: "opencode", nativeGoals: false },
-  { goalDriver: "opencode", nativeGoals: true },
-  { goalDriver: "antigravity", nativeGoals: false },
-  { goalDriver: "antigravity", nativeGoals: true },
-] as const)(
-  "$goalDriver goal prompts defer switched-provider history only with native support: $nativeGoals",
-  ({ goalDriver, nativeGoals }) =>
+effectIt.effect.each(
+  (
+    [
+      { goalDriver: "opencode", nativeGoals: false },
+      { goalDriver: "opencode", nativeGoals: true },
+      { goalDriver: "antigravity", nativeGoals: false },
+      { goalDriver: "antigravity", nativeGoals: true },
+    ] as const
+  ).flatMap((choice) => [
+    { ...choice, resuming: false },
+    { ...choice, resuming: true },
+  ]),
+)(
+  "$goalDriver goal prompts defer switched-provider history only with native support: $nativeGoals, resuming: $resuming",
+  ({ goalDriver, nativeGoals, resuming }) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
-        text: "/goal all tests pass",
+        text: resuming ? "" : "/goal all tests pass",
+        manualContinuation: resuming,
         goalDriver,
         nativeGoals,
-        sideChat: { contextRun: "failed", switchedProvider: true },
+        sideChat: { contextRun: "failed", switchedProvider: true, unsentResume: resuming },
       });
+      if (resuming) {
+        const projection = harness.projection();
+        harness.setProjection({
+          ...projection,
+          messages: projection.messages.map((message) =>
+            message.id === "original-unsent-message"
+              ? { ...message, text: "/goal all tests pass" }
+              : message,
+          ),
+        });
+      }
       harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
       yield* harness.start;
       expect(harness.startTurn.mock.calls[0]?.[0].message.text.includes("SIDE_CHAT_CONTEXT")).toBe(
         !nativeGoals,
       );
+      if (nativeGoals)
+        expect(harness.startTurn.mock.calls[0]?.[0].message.text).toBe("/goal all tests pass");
     }),
 );
 
