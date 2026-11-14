@@ -1,7 +1,12 @@
-import { OrchestratorMcpFailure, type ServerSettings } from "@t3tools/contracts";
+import {
+  OrchestratorMcpFailure,
+  type HostResourcesSnapshot,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
+import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -29,6 +34,56 @@ export function preferences(settings: ServerSettings) {
     },
   };
 }
+const MAX_DISKS = 6;
+const gib = (bytes: number) => Math.round((bytes / 1024 ** 3) * 10) / 10;
+const percent = (share: number) => Math.round(share * 100);
+
+function machineResources(snapshot: HostResourcesSnapshot) {
+  const { storage, gpu, swap, loadAverage } = snapshot;
+  return {
+    cpu: {
+      usedPercent: snapshot.cpuUtilization === null ? null : percent(snapshot.cpuUtilization),
+      cores: snapshot.cpuCount,
+      ...(snapshot.cpuModel ? { model: snapshot.cpuModel } : {}),
+      ...(loadAverage ? { load1m: Math.round(loadAverage.one * 10) / 10 } : {}),
+    },
+    memory: {
+      availableGiB: gib(snapshot.availableMemoryBytes),
+      totalGiB: gib(snapshot.totalMemoryBytes),
+    },
+    ...(swap && swap.totalBytes > 0
+      ? { swap: { usedGiB: gib(swap.usedBytes), totalGiB: gib(swap.totalBytes) } }
+      : {}),
+    // HostStorage lists T3's own volumes first.
+    ...(storage
+      ? {
+          disks: storage.volumes.slice(0, MAX_DISKS).map((volume) => ({
+            mount: volume.mountPoint,
+            freeGiB: gib(volume.availableBytes),
+            totalGiB: gib(volume.totalBytes),
+            ...(volume.roles.length > 0 ? { holds: volume.roles } : {}),
+          })),
+        }
+      : {}),
+    ...(storage?.unavailableReason ? { disksUnavailable: storage.unavailableReason } : {}),
+    ...(gpu && gpu.gpus.length > 0
+      ? {
+          gpus: gpu.gpus.map(({ name, utilization, memoryTotalBytes, memoryUsedBytes }) => ({
+            name,
+            ...(utilization === undefined ? {} : { usedPercent: percent(utilization) }),
+            ...(memoryTotalBytes === undefined
+              ? {}
+              : {
+                  memoryFreeGiB: gib(Math.max(0, memoryTotalBytes - (memoryUsedBytes ?? 0))),
+                  memoryTotalGiB: gib(memoryTotalBytes),
+                }),
+          })),
+        }
+      : {}),
+    ...(gpu?.unavailableReason ? { gpusUnavailable: gpu.unavailableReason } : {}),
+  };
+}
+
 const access = Effect.gen(function* () {
   const context = yield* readCaller();
   const environment = yield* Environment.ServerEnvironment;
@@ -45,12 +100,15 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
     Effect.gen(function* () {
       const { descriptor, settings } = yield* access;
       const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
+      // Bounded: storage answers within its 3 s deadline, with its last reading after that.
+      const machine = yield* (yield* HostResources.HostResources).readMachine;
       return {
         environmentId: descriptor.environmentId,
         label: descriptor.label,
         serverVersion: descriptor.serverVersion,
         platform: descriptor.platform,
         preferences: preferences(current),
+        machine: machineResources(machine),
       };
     }),
   ),

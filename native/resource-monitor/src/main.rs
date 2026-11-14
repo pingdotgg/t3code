@@ -1,11 +1,14 @@
+mod gpu;
+
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, BufRead, BufWriter, Write};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{
-    MINIMUM_CPU_UPDATE_INTERVAL, Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind,
+    DiskRefreshKind, Disks, MINIMUM_CPU_UPDATE_INTERVAL, MemoryRefreshKind, Pid,
+    ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind,
 };
 
 const PROTOCOL_VERSION: u32 = 3;
@@ -76,6 +79,10 @@ enum Command {
         request_id: String,
         window_ms: u64,
     },
+    HostSystem {
+        version: u32,
+        request_id: String,
+    },
     Shutdown {
         version: u32,
     },
@@ -91,6 +98,7 @@ impl Command {
             | Self::SampleNow { version, .. }
             | Self::ProcessTable { version, .. }
             | Self::ReadHistory { version, .. }
+            | Self::HostSystem { version, .. }
             | Self::Shutdown { version } => *version,
         }
     }
@@ -99,6 +107,8 @@ impl Command {
 enum Input {
     Command(Command),
     Invalid(String),
+    HostSystemReady(HostSystem),
+    Closed,
 }
 
 #[derive(Debug, Serialize)]
@@ -111,6 +121,7 @@ struct Capabilities {
     io_bytes: bool,
     process_start_time: bool,
     process_tree: bool,
+    host_system: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -158,6 +169,67 @@ struct ProcessTableEntry {
     pid: u32,
     ppid: u32,
     name: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HostDisk {
+    mount_point: String,
+    name: String,
+    file_system: String,
+    total_bytes: u64,
+    available_bytes: u64,
+    removable: bool,
+    read_only: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HostSystem {
+    disks: Vec<HostDisk>,
+    swap_total_bytes: u64,
+    swap_used_bytes: u64,
+    gpus: Vec<gpu::HostGpu>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HostSystemEvent<'a> {
+    version: u32,
+    #[serde(rename = "type")]
+    event_type: &'static str,
+    request_id: &'a str,
+    #[serde(flatten)]
+    system: &'a HostSystem,
+}
+
+// Volume and GPU queries can block (hung mounts, nvidia-smi), so they run off the sampling loop.
+fn read_host_system() -> HostSystem {
+    let disks = Disks::new_with_refreshed_list_specifics(DiskRefreshKind::nothing().with_storage());
+    let mut system = System::new();
+    system.refresh_memory_specifics(MemoryRefreshKind::nothing().with_swap());
+    let gpus = gpu::read_gpus();
+    HostSystem {
+        disks: disks
+            .list()
+            .iter()
+            .map(|disk| HostDisk {
+                mount_point: disk.mount_point().to_string_lossy().into_owned(),
+                name: disk.name().to_string_lossy().into_owned(),
+                file_system: disk.file_system().to_string_lossy().into_owned(),
+                total_bytes: disk.total_space(),
+                available_bytes: disk.available_space(),
+                removable: disk.is_removable(),
+                read_only: disk.is_read_only(),
+            })
+            .collect(),
+        swap_total_bytes: system.total_swap(),
+        swap_used_bytes: system.used_swap(),
+        gpus: gpus.gpus,
+        gpu_unavailable_reason: gpus.unavailable_reason,
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -724,9 +796,20 @@ fn clamp_sample_interval(sample_interval_ms: u64) -> Option<Duration> {
     })
 }
 
-fn spawn_input_reader() -> Receiver<Input> {
+fn spawn_input_reader() -> (SyncSender<Input>, Receiver<Input>) {
     let (sender, receiver) = mpsc::sync_channel(INPUT_QUEUE_CAPACITY);
+    let reader_sender = sender.clone();
     thread::spawn(move || {
+        let sender = reader_sender;
+        read_commands(&sender);
+        // Host system reads hold sender clones, so EOF must be signalled explicitly.
+        let _ = sender.send(Input::Closed);
+    });
+    (sender, receiver)
+}
+
+fn read_commands(sender: &SyncSender<Input>) {
+    {
         let stdin = io::stdin();
         for line in stdin.lock().lines() {
             let line = match line {
@@ -757,8 +840,7 @@ fn spawn_input_reader() -> Receiver<Input> {
                 }
             }
         }
-    });
-    receiver
+    }
 }
 
 fn sample_now_deadline(
@@ -846,11 +928,13 @@ fn main() -> io::Result<()> {
                 io_bytes: true,
                 process_start_time: true,
                 process_tree: true,
+                host_system: true,
             },
         },
     )?;
 
-    let receiver = spawn_input_reader();
+    let (sender, receiver) = spawn_input_reader();
+    let mut host_system_requests: Vec<String> = Vec::new();
     let mut collector = Collector::new();
     let mut history = HistoryRecorder::default();
     let mut config: Option<CollectorConfig> = None;
@@ -883,6 +967,20 @@ fn main() -> io::Result<()> {
         match receiver.recv_timeout(timeout) {
             Ok(Input::Invalid(message)) => {
                 write_error(&mut writer, "invalid-command", message, true)?;
+            }
+            Ok(Input::Closed) => return Ok(()),
+            Ok(Input::HostSystemReady(system)) => {
+                for request_id in host_system_requests.drain(..) {
+                    write_event(
+                        &mut writer,
+                        &HostSystemEvent {
+                            version: PROTOCOL_VERSION,
+                            event_type: "hostSystem",
+                            request_id: &request_id,
+                            system: &system,
+                        },
+                    )?;
+                }
             }
             Ok(Input::Command(command)) => {
                 if command.version() != PROTOCOL_VERSION {
@@ -996,6 +1094,16 @@ fn main() -> io::Result<()> {
                                 true,
                             )?;
                         }
+                    }
+                    Command::HostSystem { request_id, .. } => {
+                        // Concurrent requests share the read already in flight.
+                        if host_system_requests.is_empty() {
+                            let sender = sender.clone();
+                            thread::spawn(move || {
+                                let _ = sender.send(Input::HostSystemReady(read_host_system()));
+                            });
+                        }
+                        host_system_requests.push(request_id);
                     }
                     Command::Shutdown { .. } => return Ok(()),
                 }
@@ -1167,6 +1275,60 @@ mod tests {
             process_table,
             Command::ProcessTable { request_id, .. } if request_id == "processes-1"
         ));
+
+        let host_system = serde_json::from_str::<Command>(
+            r#"{"version":3,"type":"hostSystem","requestId":"host-1"}"#,
+        )
+        .expect("host system command");
+        assert!(matches!(
+            host_system,
+            Command::HostSystem { request_id, .. } if request_id == "host-1"
+        ));
+    }
+
+    #[test]
+    fn encodes_host_system_events_flat() {
+        let system = HostSystem {
+            disks: vec![HostDisk {
+                mount_point: "/".into(),
+                name: "disk".into(),
+                file_system: "ext4".into(),
+                total_bytes: 100,
+                available_bytes: 40,
+                removable: false,
+                read_only: false,
+            }],
+            swap_total_bytes: 8,
+            swap_used_bytes: 2,
+            gpus: vec![gpu::HostGpu {
+                name: "Apple M3 Max".into(),
+                utilization_percent: Some(9.0),
+                memory_total_bytes: None,
+                memory_used_bytes: Some(1_024),
+            }],
+            gpu_unavailable_reason: None,
+        };
+        let encoded = serde_json::to_value(HostSystemEvent {
+            version: PROTOCOL_VERSION,
+            event_type: "hostSystem",
+            request_id: "host-1",
+            system: &system,
+        })
+        .expect("encode host system event");
+        assert_eq!(encoded["type"], "hostSystem");
+        assert_eq!(encoded["swapUsedBytes"], 2);
+        assert_eq!(encoded["disks"][0]["mountPoint"], "/");
+        assert_eq!(encoded["disks"][0]["availableBytes"], 40);
+        assert_eq!(encoded["gpus"][0]["utilizationPercent"], 9.0);
+        assert!(encoded["gpus"][0].get("memoryTotalBytes").is_none());
+        assert!(encoded.get("gpuUnavailableReason").is_none());
+    }
+
+    #[test]
+    fn reads_host_system_without_blocking_on_missing_data() {
+        let system = read_host_system();
+        assert!(system.swap_used_bytes <= system.swap_total_bytes);
+        assert!(!system.gpus.is_empty() || system.gpu_unavailable_reason.is_some());
     }
 
     #[test]

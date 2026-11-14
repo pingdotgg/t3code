@@ -26,6 +26,7 @@ import * as Option from "effect/Option";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { SettingsRow } from "./settingsLayout";
+import { EnvironmentMachineSummary } from "./EnvironmentMachineSummary";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
@@ -306,6 +307,9 @@ export function SavedBackendListRow({
       }
       below={
         <>
+          {enabled && isConnected ? (
+            <EnvironmentMachineSummary environmentId={environmentId} />
+          ) : null}
           {diagnosis ? (
             <ConnectionDiagnosisSummary
               diagnosis={diagnosis}

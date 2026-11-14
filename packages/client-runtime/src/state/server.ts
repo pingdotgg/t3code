@@ -377,6 +377,7 @@ const cachedConfigSnapshotEvent = (config: ServerConfig): ServerConfigStreamEven
 export interface ServerConfigSubscriptionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
+  readonly diskSpace?: boolean;
   readonly usageLimitsCommand?: boolean;
   readonly providerCatalogsOnDemand?: boolean;
   readonly providerCatalogDigests?: boolean;
@@ -494,6 +495,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       const {
         environmentThemes: _themes,
         usageLimitSources: _sources,
+        diskSpace: _diskSpace,
         lastEventLoopStall: _stall,
         serverTime: _serverTime,
         ...cacheable
@@ -549,6 +551,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
     const configUpdates = subscribe(WS_METHODS.subscribeServerConfig, {
       ...(subscription.environmentThemes === true ? { environmentThemes: true } : {}),
       ...(subscription.usageLimitSources === true ? { usageLimitSources: true } : {}),
+      ...(subscription.diskSpace === true ? { diskSpace: true } : {}),
       ...(subscription.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
       ...(subscription.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
       ...(subscription.providerCatalogDigests === true ? { providerCatalogDigests: true } : {}),
@@ -844,6 +847,7 @@ export function createServerEnvironmentAtoms<R, E>(
     ) => Atom.Atom<ServerConfig | null>;
     readonly environmentThemes?: boolean;
     readonly usageLimitSources?: boolean;
+    readonly diskSpace?: boolean;
     readonly usageLimitsCommand?: boolean;
     readonly providerCatalogsOnDemand?: boolean;
     readonly providerCatalogDigests?: boolean;
@@ -872,6 +876,7 @@ export function createServerEnvironmentAtoms<R, E>(
           {
             ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
             ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
+            ...(options.diskSpace === true ? { diskSpace: true } : {}),
             ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
             ...(options.providerCatalogsOnDemand === true
               ? { providerCatalogsOnDemand: true }
@@ -1479,6 +1484,16 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 5_000,
       execute: (input: EnvironmentRpcInput<typeof WS_METHODS.serverGetHostResources>) =>
         request(WS_METHODS.serverGetHostResources, input).pipe(Effect.timeout("5 seconds")),
+    }),
+    machineResources: createEnvironmentQueryAtomFamily(runtime, {
+      label: "environment-data:server:machine-resources",
+      idleTtlMs: 0,
+      staleTimeMs: 5_000,
+      refreshIntervalMs: 5_000,
+      execute: (_input: Record<string, never>) =>
+        request(WS_METHODS.serverGetHostResources, { detail: "machine" }).pipe(
+          Effect.timeout("10 seconds"),
+        ),
     }),
     processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-resource-history",

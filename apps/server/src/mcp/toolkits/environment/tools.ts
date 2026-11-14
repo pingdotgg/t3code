@@ -12,6 +12,7 @@ import { Tool, Toolkit } from "effect/ai";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
@@ -36,12 +37,48 @@ const shared = {
     ServerEnvironment.ServerEnvironment,
     Settings.ServerSettingsService,
     ThreadCommandExecutor.ThreadCommandExecutor,
+    HostResources.HostResources,
   ],
 };
+const Percent = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 }));
+const GiB = Schema.Number;
+// Rounded and trimmed: agents compare machines with it, and each read costs them tokens.
+const MachineResources = Schema.Struct({
+  cpu: Schema.Struct({
+    usedPercent: Schema.NullOr(Percent),
+    cores: Schema.Int,
+    model: Schema.optionalKey(Schema.String),
+    load1m: Schema.optionalKey(Schema.Number),
+  }),
+  memory: Schema.Struct({ availableGiB: GiB, totalGiB: GiB }),
+  swap: Schema.optionalKey(Schema.Struct({ usedGiB: GiB, totalGiB: GiB })),
+  disks: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        mount: Schema.String,
+        freeGiB: GiB,
+        totalGiB: GiB,
+        holds: Schema.optionalKey(Schema.Array(Schema.Literals(["t3Home", "worktrees"]))),
+      }),
+    ),
+  ),
+  disksUnavailable: Schema.optionalKey(Schema.String),
+  gpus: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        usedPercent: Schema.optionalKey(Percent),
+        memoryFreeGiB: Schema.optionalKey(GiB),
+        memoryTotalGiB: Schema.optionalKey(GiB),
+      }),
+    ),
+  ),
+  gpusUnavailable: Schema.optionalKey(Schema.String),
+});
 const EnvironmentReadTool = Tool.make("t3_environment_read", {
   ...shared,
   description:
-    "Read this server's identity and preferences. Providers and models: `orchestrator_capabilities`.",
+    "Read a machine's identity, preferences, and free CPU, memory, disk and GPU now. To pick a machine, read each linked environment; no SSH `df`/`free`. Providers and models: `orchestrator_capabilities`.",
   parameters: Schema.Struct({ environmentId: OrchestratorMcpEnvironmentTarget }),
   success: Schema.Struct({
     environmentId: ExecutionEnvironmentDescriptor.fields.environmentId,
@@ -49,6 +86,8 @@ const EnvironmentReadTool = Tool.make("t3_environment_read", {
     serverVersion: Schema.String,
     platform: ExecutionEnvironmentDescriptor.fields.platform,
     preferences: Schema.Struct(PreferenceFields),
+    // Optional: a linked server that predates it still decodes.
+    machine: Schema.optionalKey(MachineResources),
   }),
 })
   .annotate(Tool.Readonly, true)

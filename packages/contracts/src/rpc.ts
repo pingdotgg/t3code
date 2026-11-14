@@ -345,6 +345,7 @@ import {
   ServerUpsertKeybindingResult,
 } from "./server.ts";
 import {
+  HostResourcesInput,
   HostResourcesSnapshot,
   ResourceTelemetryHistory,
   ResourceTelemetryHistoryInput,
@@ -970,7 +971,7 @@ const WsServerGetProcessDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetProcessDia
 });
 
 const WsServerGetHostResourcesRpc = Rpc.make(WS_METHODS.serverGetHostResources, {
-  payload: Schema.Struct({}),
+  payload: HostResourcesInput,
   success: HostResourcesSnapshot,
   error: EnvironmentAuthorizationError,
 });
@@ -1988,6 +1989,8 @@ export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerCon
     /** Opt-in protects older clients that reject unknown theme event types. */
     environmentThemes: Schema.optional(Schema.Boolean),
     usageLimitSources: Schema.optional(Schema.Boolean),
+    /** Opt-in to `diskSpaceUpdated`; the snapshot's `diskSpace` field needs none. */
+    diskSpace: Schema.optional(Schema.Boolean),
     /** Advertise client handling before the server offers /usage-limits, or older clients send it as a prompt. */
     usageLimitsCommand: Schema.optional(Schema.Boolean),
     /** Omit per-cwd provider snapshots; the client fetches its cwd through `server.refreshProviders`. */
