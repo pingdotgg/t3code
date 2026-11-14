@@ -1,5 +1,7 @@
 //! A scripted provider for tests and the client check. The user's text picks the script:
 //! - `hang`: the turn starts and waits for an interrupt.
+//! - `stuck`: the turn starts and never confirms a Stop (`InterruptTimeout`), as a Codex turn
+//!   that ignores `turn/interrupt`.
 //! - `ask`: the turn asks for a command approval, then answers once approved.
 //! - `fail`: the turn fails.
 //! - `subagent`: a subagent's child thread with one message, then the turn completes.
@@ -96,6 +98,8 @@ struct FakeSession {
     turn: Arc<Mutex<Option<Turn>>>,
     steering: bool,
     background: Arc<AtomicBool>,
+    /// The running turn ignores Stop.
+    stuck: Arc<AtomicBool>,
     mcp_servers: Arc<Mutex<Vec<McpServer>>>,
     closed: Arc<AtomicUsize>,
     applied_selections: Arc<Mutex<Vec<Value>>>,
@@ -128,6 +132,7 @@ impl Provider for FakeProvider {
                     turn: Arc::new(Mutex::new(None)),
                     steering: self.steering,
                     background: Arc::new(AtomicBool::new(false)),
+                    stuck: Arc::new(AtomicBool::new(false)),
                     mcp_servers: self.mcp_servers.clone(),
                     closed: self.closed.clone(),
                     applied_selections: self.applied_selections.clone(),
@@ -248,8 +253,9 @@ impl Session for FakeSession {
             let text = input.message.text.clone();
             let tx = self.events.clone();
             let mut started = vec![provider_turn(&turn, "running")];
+            self.stuck.store(text == "stuck", Ordering::SeqCst);
             match text.as_str() {
-                "hang" => {}
+                "hang" | "stuck" => {}
                 "ask" => started.push(event(json!({"type": "runtime_request.updated",
                     "threadId": turn.thread_id, "runtimeRequest": {
                     "id": "request:1", "nodeId": turn.root, "providerTurnId": format!("turn:{}", turn.run_id),
@@ -371,6 +377,9 @@ impl Session for FakeSession {
 
     fn interrupt_turn(&self, _input: InterruptInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
+            if self.stuck.load(Ordering::SeqCst) {
+                return Err(ProviderError::InterruptTimeout { timeout_ms: 10_000 });
+            }
             let event = {
                 let turn = crate::lock(&self.turn);
                 let turn = turn.as_ref().ok_or(ProviderError::SessionStopped)?;

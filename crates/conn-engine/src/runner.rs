@@ -774,9 +774,23 @@ impl Inner {
                     provider_turn_id,
                 })
                 .await;
-            // The provider reports the end with a terminal event.
-            if interrupted.is_ok() {
-                return;
+            match interrupted {
+                // The provider reports the end with a terminal event.
+                Ok(()) => return,
+                // The agent may still run: settling here would end a run that is not over.
+                // The Stop shows as unresponsive and the user decides with Force stop
+                // (`EffectWorker.ts`, `thread.interrupt.unresponsive`).
+                Err(conn_provider::ProviderError::InterruptTimeout { .. }) => {
+                    let (tid, rid) = (thread_id.clone(), run_id.clone());
+                    if let Err(e) = self
+                        .write(move |tx| crate::commands::mark_stop_unresponsive(tx, &tid, &rid))
+                        .await
+                    {
+                        eprintln!("conn-engine: could not mark a Stop unresponsive: {e}");
+                    }
+                    return;
+                }
+                Err(_) => {}
             }
         }
         // No provider turn to stop: end the run here, and drop a session that may still run it.
@@ -972,6 +986,21 @@ impl Inner {
         }
         self.close_session(&thread_id).await;
         if let Some(run_id) = run_id {
+            // The Stop result says Force stop ended it.
+            let (tid, run) = (thread_id.clone(), run.clone().unwrap_or_default());
+            if let Err(e) = self
+                .write(move |tx| {
+                    crate::commands::write_interrupt_result(
+                        tx,
+                        &tid,
+                        &run,
+                        Some(crate::commands::FORCE_STOP_REASON),
+                    )
+                })
+                .await
+            {
+                eprintln!("conn-engine: could not record the Force stop: {e}");
+            }
             self.end_run(&thread_id, &run_id, "interrupted", None).await;
         }
         Ok(json!({"outcome": "killed", "sharedWithThreadIds": []}))

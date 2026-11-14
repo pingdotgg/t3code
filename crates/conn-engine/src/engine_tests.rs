@@ -689,6 +689,8 @@ async fn a_message_sent_during_a_turn_queues_and_starts_after_it() {
         item_texts(&p),
         [
             "turn_start hang",
+            "run_interrupt_request ",
+            "run_interrupt_result ",
             "queued_turn third",
             "assistant_message echo: third",
             "queued_turn second, edited",
@@ -897,6 +899,8 @@ async fn a_declined_steer_waits_first_in_the_queue() {
         [
             "turn_start hang",
             "queued_turn steer me",
+            "run_interrupt_request ",
+            "run_interrupt_result ",
             "assistant_message echo: steer me",
             "queued_turn queued first",
             "assistant_message echo: queued first",
@@ -2305,6 +2309,64 @@ fn model_selection_set(command: &str, instance: &str) -> Value {
         "type": "thread.model-selection.set", "commandId": command, "threadId": "t1",
         "modelSelection": {"instanceId": instance, "model": "m"},
     })
+}
+
+/// A Stop the provider does not confirm (Codex since T3 b5b470542a) leaves the run running and
+/// marks its `run_interrupt_request` unresponsive, so clients offer Force stop
+/// (`thread.interrupt.unresponsive`). Force stop then ends it with its own Stop result.
+#[tokio::test(flavor = "current_thread")]
+async fn an_unconfirmed_stop_offers_force_stop() {
+    let db = TempDb::new("unresponsive-stop");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "stuck")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c3", "threadId": "t1"}),
+    )
+    .await;
+    let request = loop {
+        let item = next(&mut thread).await;
+        let payload = &item["event"]["payload"];
+        if payload["type"] == "run_interrupt_request" && payload["unresponsiveAt"].is_string() {
+            break payload.clone();
+        }
+    };
+    assert_eq!(request["message"], "Stopped by user");
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        run_statuses(&p),
+        [("run:t1:1".into(), "running".into())],
+        "the run stays open"
+    );
+
+    call(
+        &engine,
+        "orchestration.forceStopThread",
+        json!({"threadId": "t1"}),
+    )
+    .await
+    .unwrap();
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        run_statuses(&p),
+        [("run:t1:1".into(), "interrupted".into())]
+    );
+    let result = p["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["type"] == "run_interrupt_result")
+        .cloned()
+        .unwrap();
+    assert_eq!(result["message"], "Force stopped by user");
+    assert_eq!(result["parentItemId"], request["id"]);
 }
 
 /// A model change on the thread's instance during a provider turn goes to the running session

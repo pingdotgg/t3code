@@ -27,8 +27,6 @@ use crate::mapper::{DRIVER, Mapper, Out};
 pub const EVENT_CAPACITY: usize = 256;
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 const PLAN_FLUSH_INTERVAL: Duration = Duration::from_millis(400);
-/// How long an interrupted turn may take to report `turn/completed` (TS: 10 s).
-const INTERRUPT_WAIT: Duration = Duration::from_secs(10);
 
 pub struct CodexSession {
     id: ProviderSessionId,
@@ -64,6 +62,8 @@ struct Inner {
     instance_id: String,
     /// Where chat attachments are read from (`CodexConfig::attachments_dir`).
     attachments_dir: Option<std::path::PathBuf>,
+    /// `CodexConfig::stop_confirm_timeout`.
+    stop_confirm_timeout: Duration,
     /// The model and working folder the session opened with: TS resumes a thread for a
     /// rollback, and forks one, with the session's own selection and policy.
     open_model: Option<String>,
@@ -93,7 +93,7 @@ impl CodexSession {
         instance_id: &ProviderInstanceId,
         server: Arc<AppServer>,
         events: mpsc::Sender<ProviderEvent>,
-        attachments_dir: Option<std::path::PathBuf>,
+        config: &crate::CodexConfig,
         open: (Option<String>, Option<String>),
     ) -> Self {
         let (inbox, rx) = mpsc::channel(EVENT_CAPACITY);
@@ -101,7 +101,8 @@ impl CodexSession {
         let inner = Arc::new(Inner {
             id: id.as_str().to_owned(),
             instance_id: instance_id.as_str().to_owned(),
-            attachments_dir,
+            attachments_dir: config.attachments_dir.clone(),
+            stop_confirm_timeout: config.stop_confirm_timeout,
             open_model: open.0,
             open_cwd: open.1,
             server,
@@ -696,13 +697,23 @@ impl Session for CodexSession {
                     progressed.await;
                 }
             };
-            if tokio::time::timeout(INTERRUPT_WAIT, wait).await.is_err() {
-                let outs = inner.lock().mapper.force_interrupted(&native_turn);
-                inner.deliver(outs).await;
-            }
+            let confirmed = tokio::time::timeout(inner.stop_confirm_timeout, wait)
+                .await
+                .is_ok();
             match sent {
-                Ok(_) | Err(CallError::Stopped) => Ok(()),
-                Err(e) => Err(failed("interrupt_turn", e.to_string())),
+                Ok(_) | Err(CallError::Stopped) => {}
+                Err(e) => return Err(failed("interrupt_turn", e.to_string())),
+            }
+            // Codex may still be working: the turn stays open and marked interrupting, and
+            // whatever ends it later (Codex's `turn/completed`, a close, Force stop) settles it
+            // (T3 since b5b470542a, `deferToActiveRoots`).
+            if confirmed || inner.lock().closed {
+                Ok(())
+            } else {
+                Err(ProviderError::InterruptTimeout {
+                    timeout_ms: u64::try_from(inner.stop_confirm_timeout.as_millis())
+                        .unwrap_or(u64::MAX),
+                })
             }
         })
     }
@@ -970,6 +981,10 @@ while IFS= read -r line; do
       emit '{"method":"item/commandExecution/requestApproval","id":0,"params":{"threadId":"th1","turnId":"tu1","itemId":"c1","command":"ls"}}' ;;
     *'"method":"turn/start"'*'stop me'*)
       emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu2\",\"startedAt\":null}}}" ;;
+    *'"method":"turn/start"'*'stuck'*)
+      emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu3\",\"startedAt\":null}}}" ;;
+    *'"method":"turn/interrupt"'*'"tu3"'*)
+      emit "{\"id\":$id,\"result\":{}}" ;;
     *'"method":"turn/start"'*)
       emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu0\",\"startedAt\":null}}}"
       emit '{"method":"item/completed","params":{"threadId":"th1","turnId":"tu0","item":{"type":"agentMessage","id":"m1","text":"pong","phase":"final_answer"},"completedAtMs":5}}'
@@ -985,6 +1000,10 @@ done
 "#;
 
     fn provider() -> CodexProvider {
+        provider_with(CodexConfig::default())
+    }
+
+    fn provider_with(config: CodexConfig) -> CodexProvider {
         let dir = std::env::temp_dir().join(format!("conn-codex-fake-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("codex");
@@ -996,7 +1015,7 @@ done
             CodexConfig {
                 binary: script,
                 home_path: Some(dir),
-                ..CodexConfig::default()
+                ..config
             },
         )
     }
@@ -1201,5 +1220,72 @@ done
         assert!(provider.app_server_pid().is_none());
         let alive = conn_provider_support::process::pid_alive(pid);
         assert!(!alive, "the app-server outlived its last session");
+    }
+
+    /// T3 since b5b470542a: a Stop that Codex does not confirm in time leaves the turn open and
+    /// returns `ProviderAdapterInterruptTimeoutError`; no terminal is invented. Closing the
+    /// session (Force stop) then ends the turn as interrupted.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_unconfirmed_stop_times_out_and_keeps_the_turn_open() {
+        let provider = provider_with(CodexConfig {
+            stop_confirm_timeout: Duration::from_millis(300),
+            ..CodexConfig::default()
+        });
+        let OpenedSession {
+            session,
+            mut events,
+        } = provider
+            .open_session(OpenSessionInput {
+                thread_id: "t1".into(),
+                provider_session_id: "s1".into(),
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                resume_from_session: None,
+            })
+            .await
+            .unwrap();
+        let thread = session
+            .ensure_thread(EnsureThreadInput {
+                thread_id: "t1".into(),
+                title: None,
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                existing_provider_thread: None,
+            })
+            .await
+            .unwrap();
+        session.start_turn(turn(&thread, 1, "stuck")).await.unwrap();
+        let running = until(&mut events, "provider_turn.updated").await;
+        let provider_turn = running.last().unwrap()["providerTurn"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let stopped = session
+            .interrupt_turn(InterruptInput {
+                provider_thread: thread.clone(),
+                provider_turn_id: provider_turn.as_str().into(),
+            })
+            .await;
+        assert_eq!(
+            stopped,
+            Err(ProviderError::InterruptTimeout { timeout_ms: 300 })
+        );
+        // No terminal: the turn is still open.
+        let quiet = tokio::time::timeout(Duration::from_millis(300), async {
+            loop {
+                let event = serde_json::to_value(events.recv().await?).unwrap();
+                if event["type"] == "turn.terminal" {
+                    return Some(event);
+                }
+            }
+        })
+        .await;
+        assert!(quiet.is_err(), "no terminal after the timeout: {quiet:?}");
+
+        session.close().await;
+        let ended = until(&mut events, "turn.terminal").await;
+        assert_eq!(ended.last().unwrap()["status"], "interrupted");
     }
 }

@@ -472,6 +472,10 @@ pub enum ProviderError {
     SignInRequired,
     /// The native protocol sent something unexpected.
     Protocol { detail: String },
+    /// `ProviderAdapterInterruptTimeoutError`: the provider did not confirm a stop in time and
+    /// its turn stays open, so the agent may still run. The engine marks the Stop unresponsive
+    /// and leaves the run to the provider's own terminal or to Force stop.
+    InterruptTimeout { timeout_ms: u64 },
     /// An operation failed; `detail` is safe to show the user.
     Failed {
         operation: &'static str,
@@ -486,6 +490,10 @@ impl std::fmt::Display for ProviderError {
             Self::SessionStopped => f.write_str("no running provider session owns this thread"),
             Self::SignInRequired => f.write_str("provider requires sign-in"),
             Self::Protocol { detail } => write!(f, "provider protocol error: {detail}"),
+            Self::InterruptTimeout { timeout_ms } => write!(
+                f,
+                "the provider did not confirm stopping the turn within {timeout_ms} ms"
+            ),
             Self::Failed { operation, detail } => {
                 write!(f, "provider {operation} failed: {detail}")
             }

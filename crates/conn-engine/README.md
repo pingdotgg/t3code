@@ -54,6 +54,12 @@ with a reason the client shows (`commands::refusal`).
   build already has FTS5. Every word of three characters or more must match; shorter words
   only narrow, and a query without a long word searches no messages (two CJK characters count
   as long). Hidden threads drop out in SQL before the limit. Titles are the client's to match.
+- **Stop.** `thread.stop` and `run.interrupt` record a `run_interrupt_request` item on the
+  active run (`markStoppedRun`, message "Stopped by user" or the command's reason); a run that
+  ends interrupted gets a `run_interrupt_result` (`makeInterruptResultTurnItem`). When the
+  provider answers Stop with `InterruptTimeout`, the run stays open and the request gets
+  `unresponsiveAt` (`thread.interrupt.unresponsive`): clients offer Force stop, whose result
+  says "Force stopped by user".
 - **Model change during a turn.** A `thread.model-selection.set` on the thread's instance
   goes to the running provider turn's session (`provider-session.apply-model-selection`,
   `ProviderTurnControlService.applyModelSelection`); the provider applies what it can live.

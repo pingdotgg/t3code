@@ -27,6 +27,7 @@ const { applyShellStreamEvents, mergeShellSnapshotProjects } = await load(
 const { applyOrchestrationV2ProjectionEvent } = await load(
   "packages/client-runtime/src/state/orchestrationV2Projection.ts",
 );
+const { presentRunStop } = await load("packages/client-runtime/src/state/threadExecution.ts");
 const { boundedSnapshotProjection } = await load(
   "packages/shared/src/orchestrationV2BoundedSnapshot.ts",
 );
@@ -230,15 +231,33 @@ check("queue: a message sent during a turn runs after it", () => {
     visible(queue.projection).map(({ type, text }) => [type, text]),
     [
       ["user_message", "hang"],
+      ["run_interrupt_request", null],
+      ["run_interrupt_result", null],
       ["user_message", "after that"],
       ["assistant_message", "echo: after that"],
     ],
   );
-  const queued = queue.projection.visibleTurnItems[1].item;
+  const queued = queue.projection.visibleTurnItems.find(
+    (row) => row.item.type === "user_message" && row.item.text === "after that",
+  ).item;
   assert.equal(queued.inputIntent, "queued_turn");
 });
 
-// 8. Projects added and removed at runtime reach the shell.
+// 8. A Stop the provider never confirms offers Force stop; Force stop ends the run.
+check("stop: an unconfirmed Stop is unresponsive until Force stop", () => {
+  const before = followThread(exported.stopItems.slice(0, exported.stopUnresponsiveAt));
+  const shown = presentRunStop(before.projection);
+  assert.equal(shown?.state, "unresponsive");
+  assert.equal(shown?.background, false);
+  const after = followThread(exported.stopItems);
+  assert.deepEqual(
+    after.projection.runs.map((run) => run.status),
+    ["interrupted"],
+  );
+  assert.equal(presentRunStop(after.projection), null);
+});
+
+// 9. Projects added and removed at runtime reach the shell.
 check("projects: added and removed at runtime", () => {
   const kinds = exported.shellItems.map((item) => item.kind);
   assert.ok(kinds.includes("project.updated") && kinds.includes("project.removed"));

@@ -108,8 +108,8 @@ process before a thread call (the TS server lists models in a separate probe pro
 
 - **Steer:** `turn/steer` `{"expectedTurnId", "input", "threadId"}` → `{"turnId"}`.
 - **Interrupt:** `turn/interrupt` `{"threadId", "turnId"}` → `{}`. Codex then sends
-  `turn/completed` with status `interrupted`. TS waits up to 10 s for it, then finalizes the
-  turn as interrupted itself. Running background terminals are stopped with
+  `turn/completed` with status `interrupted`. TS waits up to 10 s for it; without it the turn
+  stays open and Stop fails with `ProviderAdapterInterruptTimeoutError` (Force stop), as here. Running background terminals are stopped with
   `thread/backgroundTerminals/terminate` `{"threadId", "processId"}`.
 - **Model change:** none in session. Each `turn/start` carries the model and effort.
 - **Runtime mode change:** none in session. Each `turn/start` carries the policies.

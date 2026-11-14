@@ -26,6 +26,9 @@ pub const AGENT_THREAD_ENV: &str = "T3CODE_THREAD_ID";
 /// the pinned `apps/server` version, the one Conn Server reports as its server version.
 pub const CLIENT_VERSION: &str = conn_contract::T3_SERVER_VERSION;
 
+/// T3's `CODEX_STOP_CONFIRM_TIMEOUT_MS`.
+pub const STOP_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// The Codex instance's settings that shape a launch (`CodexSettings` in contracts).
 #[derive(Clone, Debug)]
 pub struct CodexConfig {
@@ -40,6 +43,9 @@ pub struct CodexConfig {
     /// T3's attachment store (`<state>/attachments`): attachments are read from
     /// `<dir>/<id><ext>`. `None`: attachments are listed as unavailable.
     pub attachments_dir: Option<PathBuf>,
+    /// How long Stop waits for Codex to end the turn before it reports an interrupt timeout
+    /// (T3's `CODEX_STOP_CONFIRM_TIMEOUT_MS`, 10 s). Tests shorten it.
+    pub stop_confirm_timeout: std::time::Duration,
 }
 
 impl Default for CodexConfig {
@@ -50,6 +56,7 @@ impl Default for CodexConfig {
             launch_args: String::new(),
             instance_env: Vec::new(),
             attachments_dir: None,
+            stop_confirm_timeout: STOP_CONFIRM_TIMEOUT,
         }
     }
 }

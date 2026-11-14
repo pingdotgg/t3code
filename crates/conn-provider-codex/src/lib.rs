@@ -159,7 +159,7 @@ impl Provider for CodexProvider {
                 &self.instance_id,
                 self.server.clone(),
                 tx,
-                self.config.attachments_dir.clone(),
+                &self.config,
                 (
                     Some(launch::selection_model(&input.model_selection)),
                     input.runtime_policy.cwd.clone(),

@@ -178,8 +178,7 @@ remembering: an own server brings its own defects.
 9. **Upkeep.** Wire the bump into the nightly sync (its script is outside the Conn
    repository; `FORK.md` there says the Grok bot runs it). The first real bump
    (2026-11-14, `docs/upkeep.md` "Bumps") took about four hours. The provider gaps it left:
-   Codex Stop with "Force stop" (needs an interrupt-timeout error in the provider trait and
-   an unresponsive Stop in the engine), reaping a recorded Claude CLI after a restart, Claude
+   reaping a recorded Claude CLI after a restart, Claude
    Monitor wakes, `workState: "waiting_for_children"` in `/mcp`.
 
 ### Where the review reports are
