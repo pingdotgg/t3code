@@ -5,31 +5,33 @@ import * as Effect from "effect/Effect";
 import * as Struct from "effect/Struct";
 import * as EnvironmentTheme from "../../../environmentTheme.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
-import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { unavailable } from "../../threadAccess.ts";
 import { ThemeToolkit } from "./tools.ts";
 
-const invalid = (message: string) =>
-  new OrchestratorMcpFailure({ code: "invalid_request", message });
-
 export const layer = McpToolAccess.toLayer(ThemeToolkit, {
   t3_theme_read: McpToolAccess.reads(({ themeId }) =>
     Effect.gen(function* () {
       const themes = yield* EnvironmentTheme.EnvironmentThemeService;
-      const settings = yield* Settings.ServerSettingsService;
-      const published = yield* themes.current;
-      const { defaultTheme } = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
-      const requested = published.find((theme) => theme.id === themeId);
-      if (themeId !== undefined && requested === undefined) {
-        return yield* invalid(`No published theme is named "${themeId}".`);
-      }
+      const {
+        current,
+        themes: published,
+        theme,
+      } = yield* themes.read(themeId).pipe(
+        Effect.catchTags({
+          EnvironmentThemeRefusedError: (error) =>
+            Effect.fail(
+              new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+            ),
+          ServerSettingsError: () => Effect.fail(unavailable()),
+        }),
+      );
       return {
-        current: defaultTheme,
+        current,
         builtIn: BUILT_IN_THEME_IDS,
         published: published.map(({ id, name, css }) => ({ id, name, hasCss: Boolean(css) })),
-        ...(requested === undefined ? {} : { theme: Struct.omit(requested, ["id"]) }),
+        ...(theme === undefined ? {} : { theme: Struct.omit(theme, ["id"]) }),
         guide: THEME_GUIDE,
       };
     }),
@@ -43,7 +45,10 @@ export const layer = McpToolAccess.toLayer(ThemeToolkit, {
             ? { appearance }
             : undefined;
       if (input === undefined) {
-        return yield* invalid("Give `themeId`, `appearance`, or both. `theme` needs a `themeId`.");
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Give `themeId`, `appearance`, or both. `theme` needs a `themeId`.",
+        });
       }
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -51,13 +56,15 @@ export const layer = McpToolAccess.toLayer(ThemeToolkit, {
       const set = Effect.gen(function* () {
         // The turn may have ended, or the thread's modes changed, while this waited for the lock.
         yield* check;
-        yield* themes
-          .apply(input)
-          .pipe(
-            Effect.mapError((error) =>
-              error.reason === "not-selected" ? unavailable() : invalid(error.message),
-            ),
-          );
+        yield* themes.apply(input).pipe(
+          Effect.catchTags({
+            EnvironmentThemeRefusedError: (error) =>
+              Effect.fail(
+                new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+              ),
+            EnvironmentThemeNotSelectedError: () => Effect.fail(unavailable()),
+          }),
+        );
         return {
           ...(themeId === undefined ? {} : { themeId }),
           ...(appearance === undefined ? {} : { appearance }),

@@ -9,10 +9,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { EnvironmentThemeApplyError, EnvironmentThemeService } from "../../../environmentTheme.ts";
+import {
+  EnvironmentThemeRefusedError,
+  EnvironmentThemeService,
+} from "../../../environmentTheme.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
-import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
@@ -52,11 +54,13 @@ it.effect("applies the theme through the service and reports a refusal as an inv
         apply: (input) =>
           "themeId" in input && input.themeId === "missing"
             ? Effect.fail(
-                new EnvironmentThemeApplyError({ themeId: input.themeId, reason: "unknown-id" }),
+                new EnvironmentThemeRefusedError({
+                  themeId: input.themeId,
+                  problem: "is not a built-in or published theme.",
+                }),
               )
             : Effect.void,
       }),
-      Layer.mock(Settings.ServerSettingsService)({}),
     );
     yield* Effect.gen(function* () {
       const toolkit = yield* ThemeToolkit;

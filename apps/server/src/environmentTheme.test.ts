@@ -183,7 +183,7 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
         const refused = yield* themes
           .apply({ themeId: REFUSED_THEME_ID, theme: { ...NIGHTFALL_THEME, name: "Changed" } })
           .pipe(Effect.flip);
-        assert.strictEqual(refused.reason, "not-selected");
+        assert.strictEqual(refused._tag, "EnvironmentThemeNotSelectedError");
         assert.deepEqual(yield* themes.current, [{ id: REFUSED_THEME_ID, ...NIGHTFALL_THEME }]);
       }),
     ),
@@ -200,7 +200,7 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
         const refused = yield* themes
           .apply({ themeId: REFUSED_THEME_ID, theme: NIGHTFALL_THEME })
           .pipe(Effect.flip);
-        assert.strictEqual(refused.reason, "occupied");
+        assert.match(refused.message, /could not be backed up/);
         assert.strictEqual(
           yield* fs.readFileString(`${config.environmentThemesDir}/${REFUSED_THEME_ID}.json`),
           oversized,
@@ -267,13 +267,13 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
             },
           })
           .pipe(Effect.flip);
-        assert.strictEqual(leaky.reason, "remote-css");
+        assert.match(leaky.message, /loads files/);
         const reserved = yield* themes
           .apply({ themeId: "dark", theme: NIGHTFALL_THEME })
           .pipe(Effect.flip);
-        assert.strictEqual(reserved.reason, "invalid-id");
+        assert.match(reserved.message, /not a valid theme id/);
         const unknown = yield* themes.apply({ themeId: "missing" }).pipe(Effect.flip);
-        assert.strictEqual(unknown.reason, "unknown-id");
+        assert.match(unknown.message, /not a built-in or published theme/);
         yield* themes.apply({ themeId: "grove" });
         yield* themes.apply({ themeId: "grove", appearance: "dark" });
         yield* themes.apply({ appearance: "light" });
@@ -320,7 +320,7 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
         const refused = yield* themes
           .apply({ themeId: "zz-look", theme: large("Too much") })
           .pipe(Effect.flip);
-        assert.strictEqual(refused.reason, "not-published");
+        assert.match(refused.message, /could not be published/);
         assert.deepEqual(yield* served, { id: "zz-look", ...NIGHTFALL_THEME });
 
         // A new theme that sorts first fits, and the last large one no longer does.
@@ -328,7 +328,7 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
         const displacing = yield* themes
           .apply({ themeId: "a0-first", theme: large("Displacing") })
           .pipe(Effect.flip);
-        assert.strictEqual(displacing.reason, "not-published");
+        assert.match(displacing.message, /could not be published/);
         assert.deepEqual(
           (yield* themes.current).map((theme) => theme.id),
           before,

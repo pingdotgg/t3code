@@ -7,7 +7,6 @@ import {
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import * as EnvironmentTheme from "../../../environmentTheme.ts";
-import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -21,7 +20,6 @@ const shared = {
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
     EnvironmentTheme.EnvironmentThemeService,
-    Settings.ServerSettingsService,
     ThreadCommandExecutor.ThreadCommandExecutor,
   ],
 };
