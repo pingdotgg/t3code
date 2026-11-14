@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
+import { ThemeToolkit } from "./toolkits/theme/tools.ts";
 
 it("drops JSON noise, merges tagged unions, and keeps null where it is required", () => {
   const Every = Schema.Struct({ ms: Schema.Int });
@@ -42,4 +43,18 @@ it("drops JSON noise, merges tagged unions, and keeps null where it is required"
     },
     required: ["beforeRunId", "every"],
   });
+});
+
+it("advertises only string enums, which Gemini requires", () => {
+  const nonStringEnumValues = (schema: unknown): Array<unknown> => {
+    if (Array.isArray(schema)) return schema.flatMap(nonStringEnumValues);
+    if (typeof schema !== "object" || schema === null) return [];
+    return Object.entries(schema).flatMap(([key, value]) =>
+      key === "enum" && Array.isArray(value)
+        ? value.filter((item) => typeof item !== "string")
+        : nonStringEnumValues(value),
+    );
+  };
+
+  expect(nonStringEnumValues(advertisedJsonSchema(ThemeToolkit.tools.t3_theme_set))).toEqual([]);
 });
