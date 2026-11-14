@@ -59,3 +59,42 @@ export function agentActivityWidgetTimeline(source: AgentActivityWidgetSource, n
     { date: new Date(now + AGENT_ACTIVITY_WIDGET_STALE_AFTER_MS), props: staleProps },
   ];
 }
+
+// Android's widget also repaints from relay pushes, which arrive only on changes, so a
+// long-running agent is not out of date after 10 quiet minutes. Match the relay's running-row TTL.
+export const AGENT_ACTIVITY_ANDROID_WIDGET_STALE_AFTER_MS = 2 * 60 * 60_000;
+
+export interface AgentActivityWidgetSnapshot extends AgentActivityProps {
+  // Android has no timeline, so its layout swaps to these rows once `at` passes.
+  readonly stale?: { readonly at: number; readonly activities: AgentActivityProps["activities"] };
+}
+
+export function agentActivityWidgetSnapshot(
+  source: AgentActivityWidgetSource,
+  now: number,
+): AgentActivityWidgetSnapshot {
+  const [current, stale] = agentActivityWidgetTimeline(source, now);
+  const { activities } = current!.props;
+  const priority = (index: number) => {
+    const phase = activities[index]!.phase;
+    if (phase === "waiting_for_approval" || phase === "waiting_for_input") return 0;
+    if (phase === "failed") return 1;
+    return phase === "running" || phase === "starting" ? 2 : 3;
+  };
+  // Threads that need the user come first, then failures, then running work.
+  // The stale rows keep that order so nothing moves when they go out of date.
+  const order = activities.map((_, index) => index).sort((a, b) => priority(a) - priority(b));
+  const ordered = (rows: AgentActivityProps["activities"]) => order.map((index) => rows[index]!);
+  return {
+    ...current!.props,
+    activities: ordered(activities),
+    ...(stale
+      ? {
+          stale: {
+            at: now + AGENT_ACTIVITY_ANDROID_WIDGET_STALE_AFTER_MS,
+            activities: ordered(stale.props.activities),
+          },
+        }
+      : {}),
+  };
+}

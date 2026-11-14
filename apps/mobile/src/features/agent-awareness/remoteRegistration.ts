@@ -176,6 +176,11 @@ function canRegisterRemoteLiveActivities(): boolean {
   return Platform.OS === "ios";
 }
 
+// The home-screen widget reads the relay snapshot itself, so it needs no Live Activity.
+function canPublishAgentActivityWidget(): boolean {
+  return Platform.OS === "ios" || Platform.OS === "android";
+}
+
 function canRegisterPushNotifications(): boolean {
   return Platform.OS === "ios" || Platform.OS === "android";
 }
@@ -797,7 +802,7 @@ function ensureAppStateListener(): void {
 }
 
 function publishWidget(source: AgentActivityWidgetSource): void {
-  if (!canRegisterRemoteLiveActivities()) {
+  if (!canPublishAgentActivityWidget()) {
     return;
   }
   publishAgentActivityWidget(source).catch((error: unknown) => {
@@ -1008,7 +1013,7 @@ function scheduleActiveLiveActivityRegistrationRetry(): void {
 export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
   "remoteRegistration.refreshActiveLiveActivityRemoteRegistration",
 )(function* (): Effect.fn.Return<void, never, ManagedRelay.ManagedRelayClient> {
-  if (!canRegisterRemoteLiveActivities() || !relayTokenProvider) {
+  if (!canPublishAgentActivityWidget() || !relayTokenProvider) {
     return;
   }
 
@@ -1038,6 +1043,12 @@ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
     }
     return { snapshot };
   });
+
+  // Android has no Live Activity to reconcile; its widget is the whole refresh.
+  if (!canRegisterRemoteLiveActivities()) {
+    yield* refreshWidget;
+    return;
+  }
 
   dismissEndedLocalLiveActivities();
   let activities = yield* Effect.try({

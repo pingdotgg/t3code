@@ -1038,6 +1038,21 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       }).pipe(Effect.provide(relay));
     });
 
+    it.effect("repaints the Android widget without touching Live Activities", () =>
+      Effect.gen(function* () {
+        vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
+        const relay = fakeRelay(() => Effect.succeed({ aggregate }));
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+        widgetMocks.getInstances.mockClear();
+
+        yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(relay));
+
+        expect(publishWidgetMock).toHaveBeenLastCalledWith({ kind: "snapshot", aggregate });
+        expect(widgetMocks.getInstances).not.toHaveBeenCalled();
+        expect(widgetMocks.dismissEnded).not.toHaveBeenCalled();
+      }),
+    );
+
     it.effect("keeps the newest rows when an older overlapping read finishes last", () =>
       Effect.gen(function* () {
         const newer = { ...aggregate, activeCount: 2 };

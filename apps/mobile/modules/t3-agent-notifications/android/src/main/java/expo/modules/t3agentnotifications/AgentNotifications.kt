@@ -124,6 +124,10 @@ object AgentNotifications {
       data["device_id"] == prefs.getString("deviceId", null) &&
       data["user_id"] == prefs.getString("userId", null)
     val fresh = System.currentTimeMillis() - updatedAt in -MAX_MESSAGE_AGE_MS..MAX_MESSAGE_AGE_MS
+    // The widget needs no notification permission, so it updates even when alerts are off.
+    if (registered && fresh) {
+      runCatching { AgentActivityWidgetSync.update(context, data, updatedAt) }
+    }
     if (registered && fresh && NotificationManagerCompat.from(context).areNotificationsEnabled()) {
       channels(context)
       val scheme = prefs.getString("scheme", "t3code") ?: "t3code"
