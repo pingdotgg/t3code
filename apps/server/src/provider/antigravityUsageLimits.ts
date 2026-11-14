@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
@@ -15,6 +16,7 @@ import {
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
 
+import * as ProcessRunner from "../processRunner.ts";
 import { readWindowsGenericCredential } from "./windowsCredential.ts";
 
 export function antigravityUserAgent(platform: NodeJS.Platform, architecture: NodeJS.Architecture) {
@@ -172,7 +174,6 @@ const readAntigravityKeyringSecret = Effect.fn("readAntigravityKeyringSecret")(f
   platform: NodeJS.Platform,
   architecture: string,
 ) {
-  // Typed as `Uint8Array`, but the binding returns a plain array of bytes.
   let secret: ArrayLike<number> | undefined;
   if (platform === "win32") {
     // go-keyring writes the Windows target `service:account`, which @napi-rs/keyring cannot read.
@@ -181,25 +182,36 @@ const readAntigravityKeyringSecret = Effect.fn("readAntigravityKeyringSecret")(f
         readWindowsGenericCredential(`${KEYRING_SERVICE}:${KEYRING_ACCOUNT}`, architecture),
       catch: (cause) => new AntigravityKeyringError({ cause }),
     });
+  } else if (platform === "darwin") {
+    // The binding's Keychain reads drop errors, so a denied prompt would look like a sign-out.
+    // This is go-keyring's own read; exit 44 is errSecItemNotFound.
+    const runner = yield* ProcessRunner.make();
+    const result = yield* runner
+      .run({
+        command: "/usr/bin/security",
+        args: ["find-generic-password", "-s", KEYRING_SERVICE, "-wa", KEYRING_ACCOUNT],
+      })
+      .pipe(Effect.mapError((cause) => new AntigravityKeyringError({ cause })));
+    if (result.code === 44) return undefined;
+    if (result.code !== 0) {
+      return yield* new AntigravityKeyringError({ cause: `security exited with ${result.code}` });
+    }
+    secret = new TextEncoder().encode(result.stdout.trim());
   } else {
     // Loading the native binding lazily keeps a broken binding from blocking server startup.
     const Keyring = yield* Effect.tryPromise({
       try: () => import("@napi-rs/keyring"),
       catch: (cause) => new AntigravityKeyringError({ cause }),
     });
-    const entry = yield* Effect.try({
-      try: () => new Keyring.AsyncEntry(KEYRING_SERVICE, KEYRING_ACCOUNT),
+    // `getSecret` resolves empty when the Secret Service is locked or unreachable; this rejects.
+    const credentials = yield* Effect.tryPromise({
+      try: () => Keyring.findCredentialsAsync(KEYRING_SERVICE),
       catch: (cause) => new AntigravityKeyringError({ cause }),
     });
-    secret = yield* Effect.tryPromise({
-      try: () => entry.getSecret(),
-      catch: (cause) => new AntigravityKeyringError({ cause }),
-    }).pipe(
-      Effect.catchIf(
-        (error) => /no (matching )?entry|not found/i.test(String(error.cause)),
-        () => Effect.undefined,
-      ),
-    );
+    const password = credentials.find(
+      (credential) => credential.account === KEYRING_ACCOUNT,
+    )?.password;
+    secret = password === undefined ? undefined : new TextEncoder().encode(password);
   }
   if (!secret) return undefined;
   return yield* Effect.try({
@@ -303,10 +315,14 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   const crypto = yield* Digest.Digest;
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const tokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
   const storedTokenPath = path.join(input.profileDirectory, "antigravity-acp", STORED_TOKEN_FILE);
   const readKeyringSecret =
-    input.readKeyringSecret ?? readAntigravityKeyringSecret(platform, architecture);
+    input.readKeyringSecret ??
+    readAntigravityKeyringSecret(platform, architecture).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
   const readStoredToken = Effect.gen(function* () {
     const secret = (yield* fs.exists(storedTokenPath))
       ? yield* fs.readFileString(storedTokenPath)
