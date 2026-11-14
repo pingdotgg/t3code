@@ -252,6 +252,17 @@ it.effect("registers loopback and https clients and never redirects for an unver
       expect(unregistered.status).toBe(400);
       expect(unregistered.headers.get("location")).toBeNull();
 
+      for (const resource of [`${ORIGIN}/mcp#section`, `${ORIGIN}/mcp#`]) {
+        const wrongTarget = yield* handler(
+          at(
+            `/oauth/mcp/authorize?${new URLSearchParams({ ...authorizeParams(clientId), resource })}`,
+          ),
+        );
+        expect(wrongTarget.status).toBe(302);
+        const location = new URL(wrongTarget.headers.get("location")!, ORIGIN);
+        expect(location.searchParams.get("error"), resource).toBe("invalid_target");
+      }
+
       const query = new URLSearchParams(authorizeParams(clientId)).toString();
       const handoff = yield* handler(at(`/oauth/mcp/authorize?${query}`));
       expect(handoff.status).toBe(302);
