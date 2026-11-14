@@ -93,6 +93,17 @@ function normalizeModels(
   return models;
 }
 
+export function acpRegistrySetupClientCapabilities(terminalAuth: boolean) {
+  return {
+    auth: { terminal: terminalAuth },
+    elicitation: { url: {} },
+    fs: { readTextFile: false, writeTextFile: false },
+    terminal: false,
+    // Older agents gate terminal sign-in discovery on this legacy capability.
+    ...(terminalAuth ? { _meta: { "terminal-auth": true } } : {}),
+  };
+}
+
 export interface AcpRegistryAuthSpawnContext {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -355,12 +366,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         AcpSessionRuntime.layer({
           spawn: resolved.spawn,
           cwd: input.cwd,
-          clientCapabilities: {
-            auth: { terminal: Option.isSome(pty) },
-            elicitation: { url: {} },
-            fs: { readTextFile: false, writeTextFile: false },
-            terminal: false,
-          },
+          clientCapabilities: acpRegistrySetupClientCapabilities(Option.isSome(pty)),
           clientInfo: { name: "t3-code-provider-test", version: "0.0.0" },
           authenticateOnAuthRequired: false,
           onInitialized: (initializeResult) =>

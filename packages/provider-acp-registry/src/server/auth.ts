@@ -20,7 +20,11 @@ import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlow";
-import { normalizeAcpRegistryAuthMethods, normalizeAcpRegistryWebUrl } from "./probe.ts";
+import {
+  acpRegistrySetupClientCapabilities,
+  normalizeAcpRegistryAuthMethods,
+  normalizeAcpRegistryWebUrl,
+} from "./probe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -92,12 +96,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
             spawn,
             cwd: options.cwd,
             authenticateOnAuthRequired: false,
-            clientCapabilities: {
-              auth: { terminal: Option.isSome(pty) },
-              elicitation: { url: {} },
-              fs: { readTextFile: false, writeTextFile: false },
-              terminal: false,
-            },
+            clientCapabilities: acpRegistrySetupClientCapabilities(Option.isSome(pty)),
             clientInfo: { name: "t3-code-provider-auth", version: "0.0.0" },
           }).pipe(
             Layer.provide(
