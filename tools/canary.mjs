@@ -484,7 +484,8 @@ function verify(root, outputLog, extra) {
   }
   console.log(
     `canary: ${state.files.length} decoy files unread, the decoy home unchanged, ` +
-      `${MARKER_VARIABLES.length} marker variables in no output or written file, lint clean`,
+      `${MARKER_VARIABLES.length} marker variables in no output or written file, ` +
+      `no marker CLI run (${MARKER_CLIS.join(", ")}), no connection outside loopback, lint clean`,
   );
 }
 
