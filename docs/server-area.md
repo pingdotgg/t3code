@@ -239,6 +239,13 @@ that list.
   lists. Titles: no fork source section, no linked pull request or issue context
   (`ThreadTitleLinks.ts`), assistant citation links are not turned into plain text, no
   fallback to another model when the chosen one is unusable.
+- **Stricter than the T3 server, on purpose** (security faults T3 also has; see
+  `docs/status.md`, "Faults found in the T3 server"):
+  - *The saved key and the marker.* An unsaved config whose key is the redaction marker gets
+    the saved key only when the caller holds `providers:manage`; otherwise no key is sent
+    (`methods/text_generation.rs`). T3 fills it in for any `settings:write` caller, to any
+    host. A legitimate user loses nothing: only the generator edit form sends the marker, and
+    saving that form needs `providers:manage`.
 
 ### Other uses of text generation in the T3 server
 
