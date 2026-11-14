@@ -50,7 +50,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 25 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
+`main` is in a working state. `tools/check.sh` passes 27 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
 
 | Part | State |
 | --- | --- |
@@ -296,8 +296,12 @@ The check is the one to trust; several review findings did not hold.
 
 ## Branches
 
-- `main`: verified. All 24 checks pass on macOS, and all tests pass on Linux (20 runs on the
-  gnu target and 5 on musl, on 2026-11-14).
+- `main`: verified. All 27 checks pass on macOS (2026-11-14, with the ACP provider, scheduled
+  tasks and annotations). The last Linux pass (all tests, 20 runs on the gnu target and 5 on
+  musl, 2026-11-14) is older than those merges.
+- Open: the `interrupt` scenario of `claude conformance` failed once under load on
+  2026-11-14. The T3 adapter closes the Claude query after an interrupt; our provider does
+  not, and the check's reference depends on timing. Branch `t3/claude-interrupt-match-t3`.
 - In the Conn repository there are local branches only (`rust/*`, `spike/rust-*`,
   `split/conn-server*`), with the same history under `native/conn-server`. They were never
   pushed. They change nothing under `apps/` or `packages/`.
