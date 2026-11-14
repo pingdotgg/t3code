@@ -296,6 +296,51 @@ Third}`;
         },
       ],
     });
+    // Frames from a real IPython kernel: Context mode omits trailing newlines, Plain mode keeps them.
+    const failed = openNotebook(
+      bytes(
+        JSON.stringify({
+          nbformat: 4,
+          cells: [
+            {
+              cell_type: "code",
+              source: "fail()",
+              outputs: [
+                {
+                  output_type: "error",
+                  traceback: [
+                    "-----",
+                    "ValueError    Traceback (most recent call last)",
+                    "Cell In[1], line 4\n----> 4 fail()\n",
+                    "Cell In[1], line 2, in fail()\n----> 2     raise ValueError()\n",
+                    "ValueError: preview proof",
+                  ],
+                },
+                {
+                  output_type: "error",
+                  traceback: [
+                    "Traceback (most recent call last):\n",
+                    "  Cell In[2], line 5\n    fail()\n",
+                    "ValueError: preview proof\n",
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    if (failed.type !== "notebook") throw new Error("Expected notebook");
+    expect(failed.cells[0]!.outputs).toEqual([
+      {
+        kind: "text",
+        text: "-----\nValueError    Traceback (most recent call last)\nCell In[1], line 4\n----> 4 fail()\nCell In[1], line 2, in fail()\n----> 2     raise ValueError()\nValueError: preview proof",
+      },
+      {
+        kind: "text",
+        text: "Traceback (most recent call last):\n  Cell In[2], line 5\n    fail()\nValueError: preview proof\n",
+      },
+    ]);
     expect(() => openNotebook(bytes('{"nbformat":3,"cells":[]}'))).toThrow("version 4");
     expect(() =>
       openNotebook(
