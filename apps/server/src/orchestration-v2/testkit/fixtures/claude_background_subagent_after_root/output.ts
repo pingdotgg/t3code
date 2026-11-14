@@ -66,16 +66,20 @@ export function assertClaudeBackgroundSubagentAfterRootOutput(
     (message) => message.id === projection.runs[1]?.userMessageId,
   );
   assert.equal(wakeMessage?.text, "SUB_FINAL_REPORT");
-  assert.isFalse(
-    result.domainEvents.some(
-      (event) =>
-        event.type === "provider-thread.updated" &&
-        (event.payload.pendingBackgroundTasks?.length ?? 0) > 0,
-    ),
-  );
   if (subagent?.childThreadId == null) {
     throw new Error("The background subagent is missing its child thread.");
   }
+  // The finished subagent holds the parent until its wake starts, and nothing else does.
+  const rosters = result.domainEvents.flatMap((event) =>
+    event.type === "provider-thread.updated" ? [event.payload.pendingBackgroundTasks ?? []] : [],
+  );
+  for (const roster of rosters) {
+    for (const task of roster) {
+      assert.isTrue(task.kind === "subagent" && task.childThreadId === subagent.childThreadId);
+    }
+  }
+  assert.isTrue(rosters.some((roster) => roster.length > 0));
+  assert.lengthOf(rosters.at(-1) ?? [], 0);
   assert.deepEqual(backgroundNotifications(projection), [
     {
       summary: 'Subagent "Background subagent test" finished',
