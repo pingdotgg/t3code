@@ -21,7 +21,7 @@ describe("delimited file previews", () => {
       ["", "three"],
     ]);
   });
-  it("detects semicolon-separated CSV from the first record outside quotes", () => {
+  it("detects semicolon-separated CSV from its first records outside quotes", () => {
     expect(parseDelimitedPreview("a;b\r\n1;2,5", ",").rows).toEqual([
       ["a", "b"],
       ["1", "2,5"],
@@ -35,6 +35,11 @@ describe("delimited file previews", () => {
       ["Alice", 'say "hi"\nagain'],
     ]);
     expect(parseDelimitedPreview("a,b;c", ",").rows).toEqual([["a", "b;c"]]);
+    expect(parseDelimitedPreview("id,notes;more;extra\n1,plain\n2,ordinary", ",").rows).toEqual([
+      ["id", "notes;more;extra"],
+      ["1", "plain"],
+      ["2", "ordinary"],
+    ]);
     expect(parseDelimitedPreview('12",name\n24",a;b;c', ",").rows).toEqual([
       ['12"', "name"],
       ['24"', "a;b;c"],

@@ -76,8 +76,11 @@ export function parseDelimitedPreview(
 }
 
 export function csvPreviewDelimiter(text: string) {
+  // Semicolons win only when the next record has as many, so a header cell like "notes;more" stays comma CSV.
+  const semicolons = [0, 0];
   let commas = 0;
-  let semicolons = 0;
+  let record = 0;
+  let second = false;
   let quoted = false;
   let fieldStart = true;
   for (let index = text.charCodeAt(0) === 0xfeff ? 1 : 0; index < text.length; index++) {
@@ -87,10 +90,17 @@ export function csvPreviewDelimiter(text: string) {
       if (text[index + 1] === '"') index++;
       else quoted = false;
     } else if (char === '"' && fieldStart) quoted = true;
-    else if (char === "\n" || char === "\r") break;
-    else if (char === ",") commas++;
-    else if (char === ";") semicolons++;
+    else if (char === "\n" || char === "\r") {
+      if (record === 1) break;
+      if (char === "\r" && text[index + 1] === "\n") index++;
+      record = 1;
+      fieldStart = true;
+      continue;
+    } else if (char === ",") commas += record === 0 ? 1 : 0;
+    else if (char === ";") semicolons[record]!++;
+    second ||= record === 1;
     fieldStart = char === "," || char === ";";
   }
-  return semicolons > commas ? ";" : ",";
+  if (semicolons[0]! <= commas) return ",";
+  return second && semicolons[1] !== semicolons[0] ? "," : ";";
 }

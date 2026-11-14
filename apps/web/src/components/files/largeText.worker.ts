@@ -95,15 +95,17 @@ async function open(input: Extract<TextPreviewRequest, { type: "open" }>) {
       const parts: Uint8Array<ArrayBuffer>[] = [];
       let length = 0;
       let quoted = false;
-      let ended = false;
-      while (length <= 1024 * 1024 && !ended) {
+      let breaks = 0;
+      let previous = 0;
+      while (length <= 1024 * 1024 && breaks < 2) {
         const next = await reader.read();
         if (next.done) break;
         parts.push(next.value);
         length += next.value.length;
         for (const byte of next.value) {
           if (byte === 34) quoted = !quoted;
-          if (!quoted && (byte === 10 || byte === 13)) ended = true;
+          else if (!quoted && (byte === 13 || (byte === 10 && previous !== 13))) breaks++;
+          previous = byte;
         }
       }
       prefix = new Uint8Array(await new Blob(parts).arrayBuffer());
