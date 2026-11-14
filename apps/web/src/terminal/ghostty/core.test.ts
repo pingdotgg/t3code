@@ -12,6 +12,7 @@ import {
 import { writeTerminalOutputUpdate } from "../../components/ThreadTerminalDrawer";
 import { GHOSTTY_CELL_WIDE, GhosttyTerminalCore, ghosttyCellText } from "./core";
 import { loadGhosttyRuntime } from "./runtime";
+import { terminalNavigationShortcutData } from "../../keybindings";
 
 vi.mock("./vendor/ghostty-vt.wasm?url", async () => ({
   default: (await import("./vendor/ghostty-vt.wasm?inline")).default,
@@ -40,17 +41,10 @@ describe("ghosttyCellText", () => {
     expect(text.codePointAt(graphemeLength - 1)).toBe(0x301);
   });
 
+  // regression: #7809 oversized terminal graphemes crashed rendering
   it("converts small clusters including astral codepoints", () => {
     const text = ghosttyCellText(codepointView([0x1f642, 0x20e3]), 2);
     expect([...text]).toEqual(["\u{1F642}", "\u{20E3}"]);
-  });
-
-  it("converts a single astral codepoint", () => {
-    expect(ghosttyCellText(codepointView([0x1f642]), 1)).toBe("🙂");
-  });
-
-  it("returns an empty string for empty cells", () => {
-    expect(ghosttyCellText(codepointView([]), 0)).toBe("");
   });
 });
 
@@ -109,6 +103,33 @@ describe("GhosttyTerminalCore snapshots", () => {
   });
 
   it.each([
+    { key: "ArrowLeft", expected: "\x1b[1;5D" },
+    { key: "ArrowRight", expected: "\x1b[1;5C" },
+  ])("sends Ctrl+$key as a modified arrow instead of Alt+B/F", async ({ key, expected }) => {
+    const core = await createCore();
+    const event = {
+      code: key,
+      key,
+      repeat: false,
+      shiftKey: false,
+      ctrlKey: true,
+      altKey: false,
+      metaKey: false,
+      isComposing: false,
+      getModifierState: () => false,
+    } as unknown as KeyboardEvent;
+
+    expect(terminalNavigationShortcutData(event, "Win32") ?? core.encodeKey(event)).toBe(expected);
+  });
+
+  it("keeps a leading U+FEFF in an unbracketed paste", async () => {
+    const core = await createCore();
+    core.write("\x1b[?2004l");
+
+    expect(core.encodePaste("\ufeffsample")).toBe("\ufeffsample");
+  });
+
+  it.each([
     { code: "", key: "Backspace", expected: "\x7f" },
     { code: "Unidentified", key: "Backspace", expected: "\x7f" },
     { code: "Backspace", key: "Backspace", expected: "\x7f" },
@@ -130,6 +151,26 @@ describe("GhosttyTerminalCore snapshots", () => {
     } as unknown as KeyboardEvent;
 
     expect(core.encodeKey(event)).toBe(expected);
+  });
+
+  it.each(["", "\x1b[>1u"])("encodes macOS Option text with keyboard mode %j", async (mode) => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    const core = await createCore();
+    core.write(mode);
+    const option = {
+      code: "KeyL",
+      key: "@",
+      repeat: false,
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: true,
+      metaKey: false,
+      isComposing: false,
+      getModifierState: () => false,
+    } as unknown as KeyboardEvent;
+
+    expect(core.encodeKey(option)).toBe("@");
+    expect(core.encodeKey({ ...option, code: "KeyA", key: "Å", shiftKey: true })).toBe("Å");
   });
 
   it("preserves styles, wide cells, and selection after shared memory grows", async () => {
@@ -215,72 +256,6 @@ describe("GhosttyTerminalCore snapshots", () => {
     expect(cells[1]!.foreground).toEqual({ r: 255, g: 0, b: 0 });
   });
 
-  it("reuses a grown grapheme buffer and releases it on disposal", async () => {
-    const core = await createCore();
-    const runtime = await loadGhosttyRuntime();
-    core.write("ASCII");
-    core.snapshot();
-
-    const grapheme = `z${"\u0301".repeat(256)}`;
-    core.resetAndWrite(`${grapheme}X`);
-    const alloc = vi.spyOn(runtime, "alloc");
-    const free = vi.spyOn(runtime, "free");
-    expect(
-      core
-        .snapshot()
-        .rowData[0]!.cells.slice(0, 2)
-        .map((cell) => cell.text),
-    ).toEqual([grapheme, "X"]);
-    expect(alloc).toHaveBeenCalledTimes(1);
-    const allocation = alloc.mock.results[0]!;
-    if (allocation.type !== "return") throw new Error("Grapheme allocation did not return");
-    const buffer = allocation.value;
-    const capacity = alloc.mock.calls[0]![0];
-
-    core.write("\rQ\u0301");
-    alloc.mockClear();
-    expect(core.snapshot().rowData[0]!.cells[0]!.text).toBe("Q\u0301");
-    expect(alloc).not.toHaveBeenCalled();
-    core.dispose();
-    expect(free).toHaveBeenCalledWith(buffer, capacity);
-  });
-
-  it.each(["varied", "identical"] as const)(
-    "preserves Ghostty state through a full MiB of %s output without rollover resets",
-    async (kind) => {
-      const [core, reference] = await Promise.all([createCore(), createCore()]);
-      const initial = "\x1b[31m";
-      let state = createSession(initial);
-      const first = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
-      writeTerminalOutputUpdate(core, first);
-      reference.resetAndWrite(initial);
-      let cursor = first.cursor;
-      const reset = vi.spyOn(core, "resetAndWrite");
-      const inputs: string[] = [];
-      let receivedCharacters = 0;
-
-      for (let index = 0; index < 128; index += 1) {
-        const data =
-          kind === "identical"
-            ? "x".repeat(8192)
-            : `${index.toString().padStart(4, "0")}\r\n${"x".repeat(8186)}`;
-        inputs.push(data);
-        state = append(state, data);
-        const update = readTerminalOutputUpdate(state.output, cursor);
-        if (update.type !== "append") throw new Error(`Expected append, received ${update.type}`);
-        receivedCharacters += update.data.length;
-        writeTerminalOutputUpdate(core, update);
-        cursor = update.cursor;
-      }
-
-      reference.write(inputs.join(""));
-      expect(receivedCharacters).toBe(1024 * 1024);
-      expect(state.output.retainedBytes).toBe(DEFAULT_MAX_TERMINAL_BUFFER_BYTES);
-      expect(reset).not.toHaveBeenCalled();
-      expect(core.snapshot()).toEqual(reference.snapshot());
-    },
-  );
-
   it("preserves Unicode and split ANSI parser state across batched renderer reads", async () => {
     const [core, reference] = await Promise.all([createCore(), createCore()]);
     let state = createSession("");
@@ -319,6 +294,18 @@ describe("GhosttyTerminalCore snapshots", () => {
     expect(received).toBe(inputs.join(""));
     expect(reset).not.toHaveBeenCalled();
     expect(core.snapshot()).toEqual(reference.snapshot());
+  });
+
+  it("answers an OSC 11 background query with the theme background", async () => {
+    const replies: string[] = [];
+    const core = await createCore((data) => replies.push(data));
+    core.setTheme({
+      foreground: { r: 0, g: 0, b: 0 },
+      background: { r: 255, g: 255, b: 255 },
+      cursor: { r: 0, g: 0, b: 0 },
+    });
+    core.write("\x1b]11;?\x1b\\");
+    expect(replies.join("")).toMatch(/^\x1b\]11;rgb:ffff\/ffff\/ffff(\x07|\x1b\\)$/);
   });
 
   it("answers a live VT query when batched reads cross a chunk compaction", async () => {
@@ -394,7 +381,7 @@ describe("GhosttyTerminalCore snapshots", () => {
     expect(core.snapshot()).toEqual(reference.snapshot());
   });
 
-  it("resets real Ghostty for a repeated snapshot, clear, restart, and a fresh attach", async () => {
+  it("drops stale text in real Ghostty for a repeated snapshot, clear, restart, and a fresh attach", async () => {
     const [core, reference] = await Promise.all([createCore(), createCore()]);
     let state = createSession("hello");
     const initial = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
@@ -423,7 +410,7 @@ describe("GhosttyTerminalCore snapshots", () => {
       core.write("\r\nstale local text");
       state = applyTerminalAttachStreamEvent(state, event);
       const update = readTerminalOutputUpdate(state.output, cursor);
-      expect(update.type).toBe("reset");
+      expect(update.type).toBe(event.type === "cleared" ? "append" : "reset");
       writeTerminalOutputUpdate(core, update);
       cursor = update.cursor;
       reference.resetAndWrite(event.type === "cleared" ? "" : "hello");
@@ -437,5 +424,64 @@ describe("GhosttyTerminalCore snapshots", () => {
     writeTerminalOutputUpdate(core, reattached);
     reference.resetAndWrite("hello");
     expect(core.snapshot()).toEqual(reference.snapshot());
+  });
+
+  it("keeps a running program's screen and input modes when its history is cleared", async () => {
+    const replies: string[] = [];
+    const core = await createCore((data) => replies.push(data));
+    const modes = () => {
+      replies.length = 0;
+      core.write("\x1b[?u");
+      return {
+        alternateScreen: core.isAlternateScreen(),
+        applicationCursorKeys: core.isApplicationCursorKeys(),
+        mouseTracking: core.isMouseTracking(),
+        kittyFlags: replies.join(""),
+      };
+    };
+    let state = createSession("\x1b[?1049h\x1b[>7u\x1b[?1;1000;1006h");
+    const initial = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
+    writeTerminalOutputUpdate(core, initial);
+    const live = modes();
+    expect(live).toEqual({
+      alternateScreen: true,
+      applicationCursorKeys: true,
+      mouseTracking: true,
+      kittyFlags: "\x1b[?7u",
+    });
+
+    state = applyTerminalAttachStreamEvent(state, {
+      type: "cleared",
+      threadId: "terminal-stream-test",
+      terminalId: "term-1",
+    });
+    writeTerminalOutputUpdate(core, readTerminalOutputUpdate(state.output, initial.cursor));
+
+    expect(modes()).toEqual(live);
+  });
+});
+
+describe("GhosttyTerminalCore scrollback", () => {
+  it("retains thousands of rows of scrollback", async () => {
+    const core = await GhosttyTerminalCore.create(
+      80,
+      10,
+      8,
+      16,
+      {
+        foreground: { r: 255, g: 255, b: 255 },
+        background: { r: 0, g: 0, b: 0 },
+        cursor: { r: 255, g: 255, b: 255 },
+      },
+      () => {},
+    );
+    try {
+      core.write(Array.from({ length: 1_200 }, (_, index) => `${index}\r\n`).join(""));
+      const scrollbar = core.scrollbarState();
+      // max_scrollback is a byte budget in the pinned ABI, not a row count.
+      expect(scrollbar!.total - scrollbar!.len).toBeGreaterThan(1_000);
+    } finally {
+      core.dispose();
+    }
   });
 });

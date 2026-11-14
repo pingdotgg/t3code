@@ -1,0 +1,33 @@
+import type * as macie2 from "@distilled.cloud/aws/macie2";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `macie2:DeleteMember`.
+ *
+ * Deletes the association between an Amazon Macie administrator account and an account.
+ * Account-level operation — invoked with the caller's request as-is.
+ * Provide the implementation with
+ * `Effect.provide(AWS.Macie2.DeleteMemberHttp)`.
+ * ### Organization & Members
+ * **Example:** Delete a Member Association
+ * ```typescript
+ * // init — account-level binding, no resource argument
+ * const deleteMember = yield* AWS.Macie2.DeleteMember();
+ *
+ * // runtime
+ * yield* deleteMember({ id: accountId });
+ * ```
+ *
+ * @binding
+ */
+export interface DeleteMember extends Binding.Service<
+  DeleteMember,
+  "AWS.Macie2.DeleteMember",
+  () => Effect.Effect<
+    (
+      request: macie2.DeleteMemberRequest,
+    ) => Effect.Effect<macie2.DeleteMemberResponse, macie2.DeleteMemberError>
+  >
+> {}
+export const DeleteMember = Binding.Service<DeleteMember>("AWS.Macie2.DeleteMember");

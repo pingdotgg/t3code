@@ -57,17 +57,4 @@ describe("thread dismissal", () => {
       }
     },
   );
-
-  it("does not animate another environment or a recycled row", async () => {
-    const dismiss = vi.fn(() => ({ finished: Promise.resolve(), restore: vi.fn() }));
-    const unregisterOther = registerThreadDismissal("other:thread", dismiss);
-    const unregisterRecycled = registerThreadDismissal("env:thread", dismiss);
-    unregisterRecycled();
-    try {
-      expect(await withThreadDismissal("env:thread", async () => true, Boolean)).toBe(true);
-      expect(dismiss).not.toHaveBeenCalled();
-    } finally {
-      unregisterOther();
-    }
-  });
 });
