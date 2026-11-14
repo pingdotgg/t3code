@@ -37,6 +37,7 @@ import {
   refreshEnvironmentLimits,
 } from "./usageLimitsRefresh";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
+import { cn } from "../../lib/cn";
 
 const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
 
@@ -234,8 +235,10 @@ export function ResetCredits(props: {
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
   readonly dense?: boolean;
+  /** Never wraps: compact summaries, and a status or permission note replaces the first one. */
+  readonly singleLine?: boolean;
 }) {
-  const { environmentId, input, credits, now, dense = false } = props;
+  const { environmentId, input, credits, now, dense = false, singleLine = false } = props;
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
     reportFailure: false,
@@ -269,22 +272,39 @@ export function ResetCredits(props: {
     ]);
   };
 
+  const note = !canManageProviders ? "This connection cannot manage provider accounts." : null;
   return (
     <View className="gap-1">
-      {resetCreditChoices(credits, input, now).map((choice) => (
-        <View key={choice.key} className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
-          <Text className="text-xs tabular-nums text-foreground-tertiary">{choice.summary}</Text>
+      {resetCreditChoices(credits, input, now, singleLine).map((choice, index) => (
+        <View
+          key={choice.key}
+          className={cn(
+            "flex-row items-center gap-x-3 gap-y-1",
+            singleLine ? "flex-nowrap" : "flex-wrap",
+          )}
+        >
+          <Text
+            className={cn(
+              "text-xs tabular-nums",
+              singleLine && index === 0 && status ? "text-foreground" : "text-foreground-tertiary",
+              singleLine && "min-w-0 shrink",
+            )}
+            numberOfLines={singleLine ? 1 : undefined}
+          >
+            {singleLine && index === 0 ? (status ?? note ?? choice.summary) : choice.summary}
+          </Text>
           {choice.availableCount > 0 ? (
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ disabled: busy || !canManageProviders }}
               disabled={busy || !canManageProviders}
               onPress={() => confirm(choice)}
-              className={
+              className={cn(
                 dense
                   ? "rounded-full bg-subtle-strong px-2.5 py-1 disabled:opacity-[0.45]"
-                  : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5 disabled:opacity-[0.45]"
-              }
+                  : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5 disabled:opacity-[0.45]",
+                singleLine && "shrink-0",
+              )}
             >
               <Text
                 className={
@@ -299,12 +319,10 @@ export function ResetCredits(props: {
           ) : null}
         </View>
       ))}
-      {!canManageProviders ? (
-        <Text className="text-xs text-foreground-tertiary">
-          This connection cannot manage provider accounts.
-        </Text>
+      {note && !singleLine ? (
+        <Text className="text-xs text-foreground-tertiary">{note}</Text>
       ) : null}
-      {status ? <Text className="text-sm text-foreground">{status}</Text> : null}
+      {status && !singleLine ? <Text className="text-sm text-foreground">{status}</Text> : null}
     </View>
   );
 }

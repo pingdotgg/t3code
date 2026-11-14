@@ -1,6 +1,4 @@
-import { useState } from "react";
-
-import { useNowAfter, useNowMinuteMs } from "../../lib/clock";
+import { useNowWithWakes } from "../../lib/clock";
 import { nextSnoozeWakeAfter } from "./threadListV2";
 
 /**
@@ -12,13 +10,7 @@ import { nextSnoozeWakeAfter } from "./threadListV2";
 export function useThreadListNow(
   threads: ReadonlyArray<{ readonly snoozedUntil?: string | null }>,
 ): string {
-  const minuteMs = useNowMinuteMs();
-  // The latest time returned. The next wake is searched after it, not after
-  // the floored minute, so a second snooze expiring later in the same minute
-  // arms its own wake instead of waiting for the next minute tick.
-  const [latestMs, setLatestMs] = useState(minuteMs);
-  const afterWakeMs = useNowAfter(nextSnoozeWakeAfter(threads, Math.max(minuteMs, latestMs)));
-  const nowMs = Math.max(minuteMs, afterWakeMs, latestMs);
-  if (nowMs !== latestMs) setLatestMs(nowMs);
-  return new Date(nowMs).toISOString();
+  return new Date(
+    useNowWithWakes((afterMs) => nextSnoozeWakeAfter(threads, afterMs)),
+  ).toISOString();
 }
