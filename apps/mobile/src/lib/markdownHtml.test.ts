@@ -381,6 +381,8 @@ describe("Windows paths in native Markdown", () => {
       String.raw`![amp](C:\R&D\.t3\a&amp;b.png)`,
       String.raw`<img src="C:\R&amp;D\.t3\b.png">`,
       "> ![quoted](\n> " + image + ")",
+      String.raw`![spaced](C:\Users\Jo Doe\.t3\clip.mp4 "Clip")`,
+      "![wsl](/mnt/c/Users/Jo Doe/shot.png)",
     ].join("\n\n");
 
     const native = await parseMarkdown(
@@ -395,8 +397,10 @@ describe("Windows paths in native Markdown", () => {
     const paren = String.raw`C:\a\)b.png`;
     const amp = String.raw`C:\R&D\.t3\a&b.png`;
     const htmlAmp = String.raw`C:\R&D\.t3\b.png`;
-    expect(urls).toEqual([image, paren, link, image, amp, htmlAmp, image]);
-    expect(markdownImageSources(markdown)).toEqual([image, paren, amp, htmlAmp]);
+    const spaced = String.raw`C:\Users\Jo Doe\.t3\clip.mp4`;
+    const wsl = "/mnt/c/Users/Jo Doe/shot.png";
+    expect(urls).toEqual([image, paren, link, image, amp, htmlAmp, image, spaced, wsl]);
+    expect(markdownImageSources(markdown)).toEqual([image, paren, amp, htmlAmp, spaced, wsl]);
   });
 });
 

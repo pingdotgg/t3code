@@ -407,6 +407,137 @@ function markdownLinkDestinationScanner(markdown: string) {
   };
 }
 
+// Stands in for a space inside a filesystem destination while CommonMark parses it. One UTF-16
+// unit, so every source offset the renderers read stays where it was.
+const DESTINATION_SPACE = "\uE020";
+
+// A drive path (`C:\`) or its WSL mount (`/mnt/c/`).
+const HAS_FILESYSTEM_DESTINATION = /\]\([ \t]*(?=[A-Za-z]:[\\/]|\/mnt\/[A-Za-z]\/)/;
+const FILESYSTEM_DESTINATION_START = new RegExp(HAS_FILESYSTEM_DESTINATION.source, "g");
+// Bounds the scan from each start so a long line stays linear; real paths are far shorter.
+const MAX_FILESYSTEM_DESTINATION_LENGTH = 1024;
+const CODE_FENCE = /^ {0,3}(`{3,}|~{3,})/;
+const INLINE_CODE = /(`+)[^`]*?\1/g;
+
+const isBlank = (char: string | undefined) => char === " " || char === "\t";
+
+// Index past a title opening at `open` and the blanks after it, or -1 when it does not close.
+function titleEnd(text: string, open: number, limit: number): number {
+  const closer = text[open] === "(" ? ")" : text[open];
+  if (closer !== '"' && closer !== "'" && closer !== ")") return -1;
+  let index = open + 1;
+  while (index < limit && text[index] !== closer) index += text[index] === "\\" ? 2 : 1;
+  if (index >= limit) return -1;
+  index += 1;
+  while (isBlank(text[index])) index += 1;
+  return index;
+}
+
+// Whether CommonMark already reads a link here, as in `C:/a.png "x ) y")` or `C:/a.png (Title))`.
+function parsesAsLink(text: string, start: number, limit: number): boolean {
+  let index = start;
+  let depth = 0;
+  while (index < limit && !isBlank(text[index])) {
+    if (text[index] === "\\") index += 1;
+    else if (text[index] === "(") depth += 1;
+    else if (text[index] === ")" && depth-- === 0) return true;
+    index += 1;
+  }
+  if (depth !== 0) return false;
+  while (isBlank(text[index])) index += 1;
+  if (text[index] === ")") return true;
+  const end = titleEnd(text, index, limit);
+  return end !== -1 && text[end] === ")";
+}
+
+// End of the path in `C:\Jo Doe\a.png "Title")`, or -1 when no `)` closes it. Parentheses
+// inside the path must balance; a parenthesized title would read as part of it.
+function filesystemDestinationEnd(text: string, start: number, limit: number): number {
+  let depth = 0;
+  for (let index = start; index < limit; index += 1) {
+    const char = text[index];
+    let close = -1;
+    if (char === "(") depth += 1;
+    else if (char === ")" && depth-- === 0) close = index;
+    else if (depth === 0 && isBlank(char) && (text[index + 1] === '"' || text[index + 1] === "'")) {
+      const end = titleEnd(text, index + 1, limit);
+      if (end !== -1 && text[end] === ")") close = index + 1;
+    }
+    if (close !== -1) {
+      while (isBlank(text[close - 1])) close -= 1;
+      return close;
+    }
+  }
+  return -1;
+}
+
+type DestinationRewrite = (destination: string) => string;
+
+function rewriteInSegment(segment: string, rewrite: DestinationRewrite): string {
+  let result = "";
+  let cursor = 0;
+  for (const match of segment.matchAll(FILESYSTEM_DESTINATION_START)) {
+    const start = match.index + match[0].length;
+    const limit = Math.min(segment.length, start + MAX_FILESYSTEM_DESTINATION_LENGTH);
+    if (start < cursor || parsesAsLink(segment, start, limit)) continue;
+    const end = filesystemDestinationEnd(segment, start, limit);
+    if (end === -1) continue;
+    const destination = segment.slice(start, end);
+    if (!destination.includes(" ")) continue;
+    result += segment.slice(cursor, start) + rewrite(destination);
+    cursor = end;
+  }
+  return result + segment.slice(cursor);
+}
+
+function rewriteOutsideInlineCode(line: string, rewrite: DestinationRewrite): string {
+  let result = "";
+  let cursor = 0;
+  for (const code of line.matchAll(INLINE_CODE)) {
+    result += rewriteInSegment(line.slice(cursor, code.index), rewrite) + code[0];
+    cursor = code.index + code[0].length;
+  }
+  return result + rewriteInSegment(line.slice(cursor), rewrite);
+}
+
+/**
+ * CommonMark ends a bare destination at its first space, so `![shot](C:\Users\Jo Doe\a.png)`
+ * renders as text. Agents write Windows and WSL paths that way, so this hands each bare
+ * filesystem destination that has a space to `rewrite`. Code stays as written.
+ */
+export function rewriteSpacedFilesystemDestinations(
+  markdown: string,
+  rewrite: DestinationRewrite,
+): string {
+  if (!HAS_FILESYSTEM_DESTINATION.test(markdown)) return markdown;
+  let fence: string | null = null;
+  return markdown
+    .split("\n")
+    .map((line) => {
+      const marker = CODE_FENCE.exec(line)?.[1];
+      if (fence !== null) {
+        if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+        return line;
+      }
+      if (marker) {
+        fence = marker;
+        return line;
+      }
+      return line.includes("](") ? rewriteOutsideInlineCode(line, rewrite) : line;
+    })
+    .join("\n");
+}
+
+export function protectSpacedWindowsDestinations(markdown: string): string {
+  return rewriteSpacedFilesystemDestinations(markdown, (destination) =>
+    destination.replaceAll(" ", DESTINATION_SPACE),
+  );
+}
+
+export function restoreWindowsDestinationSpaces(value: string): string {
+  return value.includes(DESTINATION_SPACE) ? value.replaceAll(DESTINATION_SPACE, " ") : value;
+}
+
 // The composer escapes brackets in labels (`[\[id\].tsx](...)`), and `\]` does not close one.
 function unescapedLabelEnd(markdown: string, start: number): number {
   let end = markdown.indexOf("]", start);
@@ -419,8 +550,9 @@ function unescapedLabelEnd(markdown: string, start: number): number {
   return -1;
 }
 
-export function extractMarkdownLinkHrefs(markdown: string): string[] {
+export function extractMarkdownLinkHrefs(source: string): string[] {
   const hrefs: string[] = [];
+  const markdown = protectSpacedWindowsDestinations(source);
   const scanDestination = markdownLinkDestinationScanner(markdown);
   let cursor = 0;
   while (cursor < markdown.length) {
@@ -435,7 +567,7 @@ export function extractMarkdownLinkHrefs(markdown: string): string[] {
     if (!destination) continue;
     cursor = destination.end;
     const href = markdown.slice(destination.hrefStart, destination.hrefEnd).trim();
-    if (href) hrefs.push(href);
+    if (href) hrefs.push(restoreWindowsDestinationSpaces(href));
   }
   return hrefs;
 }
