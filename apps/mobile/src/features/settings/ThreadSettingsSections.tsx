@@ -13,7 +13,7 @@ import type { ComponentProps } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, PROVIDER_SESSION_IDLE_TIMEOUT_PRESETS } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useEnvironments } from "../../state/environments";
@@ -21,6 +21,7 @@ import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
+import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
@@ -101,6 +102,7 @@ export function AutoSettleSettingsRows(props: {
     patch: Partial<AutoSettleSettings> & {
       autoResumeLimitedThreads?: boolean;
       snoozeLimitedThreads?: boolean;
+      providerSessionIdleTimeoutMinutes?: number | null;
     },
   ) => props.write(patch);
 
@@ -143,6 +145,31 @@ export function AutoSettleSettingsRows(props: {
             disabled={disabledFor("snoozeLimitedThreads")}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
           />
+        </SettingsSection>
+      ) : null}
+      {!projectSelected &&
+      displayTargets.every(
+        (target) =>
+          target.environment.serverConfig.environment.capabilities.providerSessionIdleTimeout ===
+          true,
+      ) ? (
+        <SettingsSection title="Release idle agents">
+          <Text className="px-4 text-sm text-foreground-muted">
+            Free memory while idle. Conversations resume when you send a message. Active turns and
+            background work delay release.
+          </Text>
+          {PROVIDER_SESSION_IDLE_TIMEOUT_PRESETS.map((option, index) => (
+            <ListChoiceRow
+              key={option.value ?? "never"}
+              label={option.label}
+              separated={index > 0}
+              disabled={disabled}
+              selected={displayTargets.every(
+                (target) => target.settings.providerSessionIdleTimeoutMinutes === option.value,
+              )}
+              onPress={() => writeToAll({ providerSessionIdleTimeoutMinutes: option.value })}
+            />
+          ))}
         </SettingsSection>
       ) : null}
       <SettingsSection title="Auto-settle">

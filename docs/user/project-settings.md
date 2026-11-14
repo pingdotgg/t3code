@@ -283,3 +283,14 @@ On mobile, use **Settings → Source control** to change selected environment de
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.
+
+## Idle agents and memory
+
+In web or desktop **Settings → Threads → Release idle agents**, choose how long an idle
+agent stays in memory, or **Never** to keep it loaded. On mobile, use **Settings → Threads**. This is an environment setting because agents can share a process across projects.
+The default remains 30 minutes. Changes also apply to agents already waiting while idle.
+
+Release keeps the saved conversation; sending another message resumes it automatically.
+Active turns and provider-reported background work delay release. This does not compact
+conversation history or extend the provider's prompt cache. Resuming can take longer and use
+more input tokens after that cache expires. Configure Claude idle compaction separately.

@@ -8,6 +8,7 @@ import { useRef, useState } from "react";
 import {
   type DesktopUpdateChannel,
   IDLE_COMPACTION_MODES,
+  PROVIDER_SESSION_IDLE_TIMEOUT_PRESETS,
   globalIdleCompaction,
   managedUpdatesDenial,
   managedUpdatesMessage,
@@ -1726,6 +1727,17 @@ export function ThreadsSettingsPanel() {
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const environmentId = environment?.environmentId ?? null;
   const hasServerTargets = connectedEnvironments.length > 0;
+  const mixedIdleTimeout = useScopedSettingsMixed(["providerSessionIdleTimeoutMinutes"]);
+  const supportsIdleTimeout =
+    connectedEnvironments.length > 0 &&
+    connectedEnvironments.every(
+      (environment) =>
+        environment.serverConfig?.environment.capabilities.providerSessionIdleTimeout === true,
+    );
+  const idleTimeoutValue =
+    settings.providerSessionIdleTimeoutMinutes === null
+      ? "never"
+      : String(settings.providerSessionIdleTimeoutMinutes);
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
   const providersByEnvironment = useEnvironmentProviders();
   const serverProviders =
@@ -1840,6 +1852,65 @@ export function ThreadsSettingsPanel() {
 
       <ProjectDefaultsSettings category="general" />
 
+      <SettingsSection id="agent-memory" title="Agent memory">
+        <SettingsRow
+          serverScoped
+          settingKeys={["providerSessionIdleTimeoutMinutes"]}
+          {...searchableSetting("release-idle-sessions")}
+          description="Free memory used by idle agents. The conversation resumes automatically when you send another message. Active turns and background work delay release."
+          resetAction={
+            supportsIdleTimeout &&
+            settings.providerSessionIdleTimeoutMinutes !==
+              DEFAULT_UNIFIED_SETTINGS.providerSessionIdleTimeoutMinutes ? (
+              <SettingResetButton
+                label="release idle agents"
+                onClick={() =>
+                  updateSettings({
+                    providerSessionIdleTimeoutMinutes:
+                      DEFAULT_UNIFIED_SETTINGS.providerSessionIdleTimeoutMinutes,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              disabled={!supportsIdleTimeout}
+              value={mixedIdleTimeout ? null : idleTimeoutValue}
+              onValueChange={(value) => {
+                const preset = PROVIDER_SESSION_IDLE_TIMEOUT_PRESETS.find(
+                  (option) => (option.value === null ? "never" : String(option.value)) === value,
+                );
+                if (preset) updateSettings({ providerSessionIdleTimeoutMinutes: preset.value });
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Release idle agents">
+                <SelectValue>
+                  {(value: string | null) => {
+                    if (value === null) return "Mixed";
+                    const preset = PROVIDER_SESSION_IDLE_TIMEOUT_PRESETS.find(
+                      (option) =>
+                        (option.value === null ? "never" : String(option.value)) === value,
+                    );
+                    return preset?.label ?? `${value} minutes`;
+                  }}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {PROVIDER_SESSION_IDLE_TIMEOUT_PRESETS.map((option) => (
+                  <SelectItem
+                    hideIndicator
+                    key={option.value ?? "never"}
+                    value={option.value === null ? "never" : String(option.value)}
+                  >
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+      </SettingsSection>
       {!isProjectScope ? (
         <SettingsSection id="snooze" title="Snooze">
           <SnoozePresetsRow />

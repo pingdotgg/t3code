@@ -95,7 +95,21 @@ vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
 }));
 vi.mock("./components/DatabaseStorageNotice", () => ({ DatabaseStorageNotice: () => null }));
 vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));
-vi.mock("../../components/ui/ListChoiceRow", () => ({ ListChoiceRow: () => null }));
+vi.mock("../../components/ui/ListChoiceRow", () => ({
+  ListChoiceRow: ({
+    label,
+    disabled,
+    onPress,
+  }: {
+    label: string;
+    disabled?: boolean;
+    onPress: () => void;
+  }) => (
+    <button disabled={disabled} onClick={onPress}>
+      {label}
+    </button>
+  ),
+}));
 vi.mock("./components/SettingsSwitchRow", () => ({
   SettingsSwitchRow: ({
     label,
@@ -158,7 +172,11 @@ function environment(environmentId: string, label: string) {
         sidebarAutoSettleOnMerge: false,
       },
       environment: {
-        capabilities: { projectSettingsOverrides: true, threadAutoSettlement: true },
+        capabilities: {
+          projectSettingsOverrides: true,
+          threadAutoSettlement: true,
+          providerSessionIdleTimeout: true,
+        },
       },
     },
   };
@@ -221,6 +239,25 @@ describe("SettingsServerControlsRouteScreen", () => {
     expect(mocks.updateSettings).toHaveBeenCalledOnce();
     await act(async () => pending.resolve(AsyncResult.success(undefined)));
   });
+
+  it.each([false, true])(
+    "does not send idle timeout changes to an excluded target with idle capability %s",
+    async (idleCapability) => {
+      const remote = environment("remote", "Remote");
+      remote.connection.phase = "disconnected";
+      remote.serverConfig.environment.capabilities.providerSessionIdleTimeout = idleCapability;
+      mocks.targets = [environment("local", "Local"), remote];
+      act(() => root.render(<SettingsThreadsRouteScreen />));
+      const preset = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+        (button) => button.textContent === "5 minutes",
+      )!;
+      expect(preset).toBeDefined();
+      await act(async () => preset.click());
+      expect(mocks.updateSettings.mock.calls).toEqual([
+        [{ environmentId: "local", input: { patch: { providerSessionIdleTimeoutMinutes: 5 } } }],
+      ]);
+    },
+  );
 
   it("disables auto-settle when a selected environment cannot save settings", () => {
     const remote = environment("remote", "Remote");

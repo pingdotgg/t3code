@@ -149,7 +149,9 @@ function planServerSettingsWrites(
   const capable = targets.filter((target) => supportsSharedSettingsSync(target.environment));
   const others = targets.filter((target) => !supportsSharedSettingsSync(target.environment));
   const othersPatch = Object.fromEntries(
-    Object.entries(patch).filter(([key]) => !AUTO_SETTLE_SETTING_KEYS.has(key)),
+    Object.entries(patch).filter(
+      ([key]) => !AUTO_SETTLE_SETTING_KEYS.has(key) && key !== "providerSessionIdleTimeoutMinutes",
+    ),
   ) as ServerSettingsPatch;
   return [
     ...planMobileScopedSettingsPatch(capable, projectSelected, patch),

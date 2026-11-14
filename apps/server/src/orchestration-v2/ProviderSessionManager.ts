@@ -517,7 +517,48 @@ export const layerWithOptions = (
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
       }) => `${input.providerSessionId}\u0000${input.threadId}`;
-      const idleTimeoutMs = Math.max(1, options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
+      // Subscribe before reading so a settings change cannot get lost between
+      // the snapshot and the wait. Keep elapsed idle time when changing policy.
+      const waitForIdleTimeout = Effect.fnUntraced(function* () {
+        if (options.idleTimeoutMs !== undefined) {
+          return yield* Effect.sleep(Duration.millis(Math.max(1, options.idleTimeoutMs)));
+        }
+        if (Option.isNone(serverSettings)) {
+          return yield* Effect.sleep(Duration.millis(DEFAULT_IDLE_TIMEOUT_MS));
+        }
+        const settingsService = serverSettings.value;
+        return yield* Effect.scoped(
+          Effect.gen(function* () {
+            const changes = yield* settingsService.subscribeChanges;
+            const startedAt = yield* Clock.currentTimeMillis;
+            while (true) {
+              const minutes = yield* settingsService.getSettings.pipe(
+                Effect.map((settings) => settings.providerSessionIdleTimeoutMinutes),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("orchestration-v2.driver-session.idle-settings-unavailable", {
+                    cause,
+                  }).pipe(Effect.as(DEFAULT_IDLE_TIMEOUT_MS / 60_000)),
+                ),
+              );
+              const elapsed = (yield* Clock.currentTimeMillis) - startedAt;
+              const expired =
+                minutes === null
+                  ? Effect.never
+                  : Effect.sleep(Duration.millis(Math.max(0, minutes * 60_000 - elapsed)));
+              const outcome = yield* Effect.raceFirst(
+                expired.pipe(Effect.as("expired" as const)),
+                changes.pipe(
+                  Stream.runHead,
+                  Effect.flatMap((next) =>
+                    Option.isNone(next) ? Effect.never : Effect.succeed("changed" as const),
+                  ),
+                ),
+              );
+              if (outcome === "expired") return;
+            }
+          }),
+        );
+      });
       const maxIdlePinMs = Math.max(0, options.maxIdlePinMs ?? DEFAULT_MAX_IDLE_PIN_MS);
       interface PreparedMcpCredential {
         readonly mcpCredentialId: string | undefined;
@@ -1415,7 +1456,7 @@ export const layerWithOptions = (
                 pinnedForMs: now - pinnedSinceMs,
               });
               // Recheck on this fiber; scheduleIdleReleaseInternal would interrupt it and self-deadlock.
-              yield* Effect.sleep(Duration.millis(idleTimeoutMs));
+              yield* waitForIdleTimeout();
               return yield* releaseIfStillIdle(input);
             }
             yield* Effect.logWarning("orchestration-v2.driver-session.idle-release-pin-expired", {
@@ -1484,7 +1525,7 @@ export const layerWithOptions = (
 
         yield* cancelIdleFiber(entry.idleFiber);
         const generation = entry.idleGeneration + 1;
-        const idleFiber = yield* Effect.sleep(Duration.millis(idleTimeoutMs)).pipe(
+        const idleFiber = yield* waitForIdleTimeout().pipe(
           Effect.andThen(releaseIfStillIdle({ providerSessionId, generation })),
           Effect.forkIn(layerScope),
         );
@@ -1837,7 +1878,7 @@ export const layerWithOptions = (
           if (tracked === undefined) return;
           const [threadId, pending] = tracked;
           const generation = pending.generation + 1;
-          const fiber = yield* Effect.sleep(Duration.millis(idleTimeoutMs)).pipe(
+          const fiber = yield* waitForIdleTimeout().pipe(
             Effect.andThen(unloadIdleThread({ providerSessionId, threadId, generation })),
             Effect.forkIn(layerScope),
           );
@@ -1984,7 +2025,7 @@ export const layerWithOptions = (
           );
           // Wait outside the lock so the next attach is not blocked.
           if (outcome === "deferred" && input.archiveOnly !== true) {
-            yield* Effect.sleep(Duration.millis(idleTimeoutMs));
+            yield* waitForIdleTimeout();
             return yield* unloadIdleThread(input);
           }
         },
