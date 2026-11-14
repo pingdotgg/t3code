@@ -267,6 +267,12 @@ describe("composerContextRecords", () => {
     expect(restored.elements[0]?.id).toBe("el_1");
   });
 
+  it("clamps an oversized annotation comment so the record still decodes", () => {
+    const record = previewAnnotationContextRecord({ ...annotation, comment: "c".repeat(8_001) });
+    expect(record.comment.endsWith("… truncated …")).toBe(true);
+    expect(decodeMessageContext({ version: 1, records: [record] }).records).toEqual([record]);
+  });
+
   it("removes an expired terminal chip by its kind-scoped id, not the producer id", () => {
     const context = {
       id: "term-1",
