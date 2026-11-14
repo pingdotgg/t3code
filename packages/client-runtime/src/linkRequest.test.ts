@@ -249,7 +249,7 @@ describe("linkableMachines", () => {
   it("also offers the Connect address of a machine saved by direct address, last", () => {
     const here = presentation("environment-here", "Here", { saved: ["http://localhost:3773"] });
     const vps = presentation("environment-vps", "VPS", {
-      saved: ["http://192.168.1.20:3773"],
+      saved: ["https://vps.example.com"],
       reported: ["https://vps.ts.net"],
     });
     const [listed] = linkableMachines({
@@ -260,8 +260,28 @@ describe("linkableMachines", () => {
     });
     expect(listed?.urls).toEqual([
       "https://vps.ts.net",
-      "http://192.168.1.20:3773",
+      "https://vps.example.com",
       "https://environment-vps.t3.example",
+    ]);
+  });
+
+  it("offers no address the linking environment would refuse to send credentials to", () => {
+    const here = presentation("environment-here", "Here", { saved: ["https://here.example.com"] });
+    const pod = presentation("environment-pod", "Pod", { reported: ["http://10.69.0.115:3773/"] });
+    const vps = presentation("environment-vps", "VPS", {
+      saved: ["http://192.168.1.20:3773", "not an address"],
+      reported: ["http://100.101.102.103:3773/", "http://vps.tail1234.ts.net:3773/"],
+    });
+    expect(
+      linkableMachines({
+        environments: [here, pod, vps],
+        threadEnvironmentId: here.environmentId,
+        links: [],
+        connect: new Map(),
+      }).map((machine) => [machine.label, machine.urls]),
+    ).toEqual([
+      ["Pod", []],
+      ["VPS", ["http://vps.tail1234.ts.net:3773/"]],
     ]);
   });
 

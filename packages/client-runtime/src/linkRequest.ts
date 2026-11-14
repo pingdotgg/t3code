@@ -8,7 +8,7 @@ import {
   resolveEnvironmentMachineKind,
   type ServerConfig,
 } from "@t3tools/contracts";
-import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
+import { acceptsLinkCredentials, isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import * as Option from "effect/Option";
 
 import type { EnvironmentPresentation } from "./connection/presentation.ts";
@@ -85,16 +85,21 @@ export interface LinkableMachine {
   /**
    * Where the client knows it answers, most preferred first: the addresses it
    * reports, then its saved routes, then its T3 Connect address. The server
-   * keeps only those that answer as this machine. Empty for a machine reached
-   * only over SSH or loopback, which name this client's device.
+   * keeps only those that answer as this machine. Empty when it would send the
+   * link's credentials to none, as for one reached only over SSH or loopback.
    */
   readonly urls: ReadonlyArray<string>;
 }
 
-/** A loopback address names whichever machine opens it: the linking server, not this one. */
-const isLoopbackUrl = (url: string) => {
-  const hostname = parsedUrl(url)?.hostname;
-  return hostname !== undefined && isLocalLoopbackHost(hostname);
+/**
+ * Whether the linking server would send a link's credentials to `url`. A
+ * loopback address names whichever machine opens it: that server, not this one.
+ */
+const receivesLinkCredentials = (url: string) => {
+  const parsed = parsedUrl(url);
+  return (
+    parsed !== undefined && acceptsLinkCredentials(parsed) && !isLocalLoopbackHost(parsed.hostname)
+  );
 };
 
 /**
@@ -138,7 +143,7 @@ export function linkableMachines(input: {
             ...routes,
             ...(connect === undefined ? [] : [connect.httpBaseUrl]),
           ]),
-        ].filter((url) => !isLoopbackUrl(url)),
+        ].filter(receivesLinkCredentials),
       };
     });
   const savedIds = new Set<string>(saved.map((machine) => machine.environmentId));
@@ -159,7 +164,7 @@ export function linkableMachines(input: {
         connected: false,
         connectOnly: true,
         linked: linkedIds.has(environment.environmentId),
-        urls: [environment.endpoint.httpBaseUrl].filter((url) => !isLoopbackUrl(url)),
+        urls: [environment.endpoint.httpBaseUrl].filter(receivesLinkCredentials),
       };
     });
   return [...saved, ...connectOnly];
