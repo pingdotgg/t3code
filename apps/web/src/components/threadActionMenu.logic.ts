@@ -113,6 +113,18 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
   ].includes(action);
 }
 
+/** Whether a snooze menu row is the first pull request snooze after the time presets. */
+export function startsPullRequestSnoozes(
+  presets: ReadonlyArray<SnoozePreset>,
+  index: number,
+): boolean {
+  return (
+    index > 0 &&
+    presets[index]?.untilPullRequest !== undefined &&
+    presets[index - 1]?.untilPullRequest === undefined
+  );
+}
+
 export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
@@ -153,10 +165,11 @@ export function buildThreadActionMenuItems(
                 icon: "clock",
                 disabled: !state.canSnoozeNow,
                 children: [
-                  ...state.snoozePresets.map((preset) => ({
+                  ...state.snoozePresets.map((preset, index) => ({
                     id: `snooze:${preset.id}` as const,
                     label: preset.label,
                     detail: preset.whenLabel,
+                    separatorBefore: startsPullRequestSnoozes(state.snoozePresets, index),
                   })),
                   {
                     id: "snooze:custom" as const,

@@ -20,8 +20,8 @@ import {
   effectiveSnoozed,
   threadWokeAt,
   isThreadWokeUnseen,
-  snoozeWakeLabel,
 } from "@t3tools/client-runtime/state/thread-settled";
+import { threadSnoozeStatusLabel } from "./threadListV2";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
@@ -864,7 +864,7 @@ function ThreadDetailBody(
       const state = lifecycleSnoozed ? "snoozed" : settled ? "settled" : "woke";
       const label =
         lifecycleSnoozed && snoozedUntil !== null
-          ? `Snoozed, wakes in ${snoozeWakeLabel(snoozedUntil, { now: lifecycleNow })}`
+          ? (threadSnoozeStatusLabel(props.selectedThread, { now: lifecycleNow }) ?? "Snoozed")
           : settled
             ? "Settled"
             : "Woke from snooze";

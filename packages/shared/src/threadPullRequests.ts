@@ -7,6 +7,15 @@ export function visibleThreadPullRequests(
   return links.filter((link) => link.source !== "stack-dismissed");
 }
 
+/** The pull requests a snooze can wait on. One not read yet counts as open. */
+export function snoozablePullRequests(
+  links: ReadonlyArray<ThreadPullRequestLink>,
+): ReadonlyArray<ThreadPullRequestLink> {
+  return visibleThreadPullRequests(links).filter(
+    (link) => link.snapshot === null || link.snapshot.state === "open",
+  );
+}
+
 export function threadPullRequestUpdatedAtMs(link: ThreadPullRequestLink): number {
   const value = link.snapshot?.updatedAt ?? link.linkedAt;
   const ms = Date.parse(value);

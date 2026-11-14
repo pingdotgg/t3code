@@ -23,6 +23,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useRouter } from "@tanstack/react-router";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
+import type { SnoozeChoice } from "../components/Sidebar.snooze";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { environmentSession, readEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -235,6 +236,14 @@ export function useAcknowledgeThreadWoke() {
 
 // These Undos restore a thread's place in the list, which archiving or deleting it ends.
 const LIST_PLACEMENT_UNDO_KINDS = ["settle", "snooze", "pin"];
+
+function snoozeInput(target: ScopedThreadRef, choice: SnoozeChoice) {
+  return {
+    threadId: target.threadId,
+    snoozedUntil: choice.snoozedUntil,
+    ...(choice.untilPullRequest ? { untilPullRequest: choice.untilPullRequest } : {}),
+  };
+}
 
 function expireThreadUndos(target: ScopedThreadRef, kinds: readonly string[]) {
   for (const kind of kinds) ThreadUndo.invalidate(kind, scopedThreadKey(target));
@@ -909,7 +918,7 @@ export function useThreadActions() {
     });
   };
 
-  const snoozeThread = async (target: ScopedThreadRef, snoozedUntil: string) => {
+  const snoozeThread = async (target: ScopedThreadRef, choice: SnoozeChoice) => {
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
       return AsyncResult.failure(
         Cause.fail(
@@ -935,7 +944,7 @@ export function useThreadActions() {
     const action = ThreadUndo.begin("snooze", scopedThreadKey(target));
     const result = await snoozeThreadMutation({
       environmentId: target.environmentId,
-      input: { threadId: target.threadId, snoozedUntil },
+      input: snoozeInput(target, choice),
     });
     if (result._tag !== "Success") {
       action.finish();
@@ -964,7 +973,7 @@ export function useThreadActions() {
           case "snooze":
             return snoozeThreadMutation({
               environmentId: target.environmentId,
-              input: { threadId: target.threadId, snoozedUntil: step.snoozedUntil },
+              input: snoozeInput(target, step),
             });
         }
       },

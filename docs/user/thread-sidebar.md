@@ -335,6 +335,14 @@ local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
 
+On a thread with an open pull request, the menu also offers **Until PR updates**. The
+thread wakes when the pull request's review decision changes to approved or changes
+requested, when it has a merge conflict, or when its checks finish. Finished checks don't wake it while an agent
+watches the pull request. Merging or closing the pull request also wakes it, so auto-settle
+can take over, and every pull request snooze wakes after 30 days at most. In **Settings → Threads → Snooze**, under
+**Pull request snoozes**, you can remove it or add narrower choices: **Until PR review**, **Until checks
+finish**, or **Until merge conflict**.
+
 A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work. It comes back early for an approval,
 a new question, a failed run, or a message or answer you send. You can snooze an existing

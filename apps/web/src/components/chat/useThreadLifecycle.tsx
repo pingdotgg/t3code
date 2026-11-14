@@ -23,17 +23,14 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
-import {
-  effectiveSnoozed,
-  snoozeWakeLabel,
-  threadWokeAt,
-} from "@t3tools/client-runtime/state/thread-settled";
+import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import {
   BACKGROUND_WORK_STOP_RETRY_AFTER_MS,
   type BackgroundWorkStopRequest,
   isBackgroundWorkStopPending,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../../hooks/useThreadActions";
+import { snoozeStatusLabel } from "../Sidebar.snooze";
 import { settleAndAdvance } from "../../settleAndAdvance";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
 import { resolveThreadLastVisitedAt } from "../Sidebar.logic";
@@ -613,17 +610,19 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       })
     : null;
   // The relative times read the clock; nowMinute re-renders them on the minute.
-  const snoozedUntil = activeThreadShell?.snoozedUntil ?? null;
   const settledAt = activeThreadShell?.settledAt ?? null;
-  // Same rounding as the sidebar's snoozed shelf, so both read the same hour.
-  const snoozeWake = snoozedUntil
-    ? snoozeWakeLabel(snoozedUntil, { now: `${nowMinute}:00.000Z` })
-    : null;
   const threadStatusLine = activeThreadSnoozed ? (
     limitRecoveryHoldsSnooze ? null : (
       <ThreadStatusLine
         icon={<AlarmClockIcon />}
-        label={snoozeWake && snoozeWake !== "now" ? `Snoozed, ${snoozeWake} left` : "Snoozed"}
+        // Same rounding as the sidebar's snoozed shelf, so both read the same hour.
+        label={snoozeStatusLabel(
+          {
+            snoozedUntil: activeThreadShell?.snoozedUntil ?? null,
+            snoozeUntilPullRequest: activeThreadShell?.snoozeUntilPullRequest,
+          },
+          `${nowMinute}:00.000Z`,
+        )}
         clockMinute={nowMinute}
         actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
         actionDisabled={!canOperateThread || isUnsnoozing}

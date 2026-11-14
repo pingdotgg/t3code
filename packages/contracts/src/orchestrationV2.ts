@@ -58,6 +58,7 @@ import {
 } from "./checkpointDiff.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
+  PullRequestSnoozeTrigger,
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
   ThreadPullRequestKey,
@@ -505,6 +506,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** Set while a snooze waits on the thread's open pull requests; snoozedUntil is then its cap. */
+  snoozeUntilPullRequest: Schema.optional(Schema.NullOr(PullRequestSnoozeTrigger)),
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   guestShare: Schema.optional(Schema.NullOr(ThreadGuestShare)),
@@ -2232,6 +2235,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  snoozeUntilPullRequest: Schema.optional(Schema.NullOr(PullRequestSnoozeTrigger)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -3142,6 +3146,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     snoozedUntil: IsoDateTime,
+    /** Also wake on this change to the thread's open pull requests. */
+    untilPullRequest: Schema.optional(PullRequestSnoozeTrigger),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),
