@@ -28,6 +28,7 @@ const returnedAt = "2026-10-30T23:03:21.000Z";
 function sendInput(
   overrides: {
     readonly usedTokens?: number;
+    readonly maxTokens?: number;
     readonly promptCacheTtlMs?: number;
     readonly now?: string;
     readonly settings?: Partial<ServerSettings>;
@@ -102,6 +103,7 @@ function sendInput(
         ),
         tokenUsage: {
           usedTokens: overrides.usedTokens ?? 293_611,
+          ...(overrides.maxTokens === undefined ? {} : { maxTokens: overrides.maxTokens }),
           updatedAt: lastTurnAt,
           ...(overrides.promptCacheTtlMs === undefined
             ? {}
@@ -202,6 +204,13 @@ describe("compactBeforeSendTokens", () => {
     },
     { name: "within the fallback TTL", now: "2026-10-30T15:23:02.000Z", expected: false },
     { name: "under 200K", usedTokens: 150_000, expected: false },
+    { name: "at 250K of a 1M window", usedTokens: 250_000, maxTokens: 1_000_000, expected: true },
+    {
+      name: "a stale Claude thread at 160K of a 200K window",
+      usedTokens: 160_000,
+      maxTokens: 200_000,
+      expected: true,
+    },
     { name: "with idle compaction off", settings: { idleCompaction: "off" }, expected: false },
     {
       name: "with the Claude instance overriding idle compaction to off",

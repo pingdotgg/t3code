@@ -39,8 +39,13 @@ export function claudeResumeCompactionAge(questionAnswer: {
 }
 
 /**
- * Context size below which T3 does not suggest or run a Claude compaction:
- * the stale-thread Compact chip and idle compaction. Matches Claude Code's
- * idleCompaction default of 200K.
+ * Context size below which T3 does not suggest or run a Claude compaction: the stale-thread
+ * Compact chip and idle compaction. Below it a cold re-read is cheap, so compacting mostly loses
+ * context. Matches Claude Code's idleCompaction default of 200K, but Claude auto-compacts a 200K
+ * window near 167K, so smaller windows use half the window, down to idleCompaction's 100K floor.
  */
-export const COMPACTION_SUGGESTION_MIN_TOKENS = 200_000;
+export function compactionSuggestionMinTokens(maxTokens: number | null | undefined): number {
+  return maxTokens != null && maxTokens > 0
+    ? Math.min(200_000, Math.max(100_000, maxTokens / 2))
+    : 200_000;
+}

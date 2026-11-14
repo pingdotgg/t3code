@@ -10,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
-  COMPACTION_SUGGESTION_MIN_TOKENS,
+  compactionSuggestionMinTokens,
   isClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
 import * as DateTime from "effect/DateTime";
@@ -213,13 +213,14 @@ export function hasDismissedResumeCompaction(
 export function shouldOfferResumeCompaction(input: {
   readonly provider: string | null | undefined;
   readonly usedTokens: number | null | undefined;
+  readonly maxTokens: number | null | undefined;
   readonly updatedAt: string | null | undefined;
   readonly promptCacheTtlMs?: number | undefined;
   readonly now: string;
 }): boolean {
   if (
     input.provider !== "claudeAgent" ||
-    (input.usedTokens ?? 0) < COMPACTION_SUGGESTION_MIN_TOKENS
+    (input.usedTokens ?? 0) < compactionSuggestionMinTokens(input.maxTokens)
   ) {
     return false;
   }
@@ -311,6 +312,7 @@ export function compactBeforeSendTokens(input: {
     shouldOfferResumeCompaction({
       provider: provider.driver,
       usedTokens: contextWindow.usedTokens,
+      maxTokens: contextWindow.maxTokens,
       updatedAt: contextWindow.updatedAt,
       promptCacheTtlMs: liveUsage?.promptCacheTtlMs,
       now: input.now,

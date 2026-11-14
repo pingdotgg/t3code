@@ -2534,9 +2534,11 @@ export default function ChatView(props: ChatViewProps) {
     !compactDisabled &&
     !hasHeldQueuedRuns &&
     multipleModelSelections === null &&
+    pendingHandoff === null &&
     shouldOfferResumeCompaction({
       provider: selectedProvider,
       usedTokens: activeContextWindow.usedTokens,
+      maxTokens: activeContextWindow.maxTokens,
       updatedAt: activeContextWindow.updatedAt,
       promptCacheTtlMs: activeThreadLiveTokenUsage?.promptCacheTtlMs,
       now: `${nowMinute}:00.000Z`,
