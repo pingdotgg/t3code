@@ -72,7 +72,22 @@ export function resolveHandoffEndpoints(
           instanceId,
           model: latestRunModelBefore(runs, instanceId, handoffRun?.ordinal),
         }));
-  return { from: fromEndpoints, to: { instanceId: item.toProviderInstanceId, model: toModel } };
+  const to = { instanceId: item.toProviderInstanceId, model: toModel };
+  // A fork onto the same model moves context, not the conversation, so it has no source to show.
+  const sameModel =
+    to.model !== undefined &&
+    fromEndpoints.every(
+      (endpoint) => endpoint.instanceId === to.instanceId && endpoint.model === to.model,
+    );
+  return { from: sameModel ? [] : fromEndpoints, to };
+}
+
+/** The server's title ("Fork context") names a transfer that switched no model. */
+export function resolveHandoffLabel(
+  item: Pick<Extract<OrchestrationV2TurnItem, { type: "handoff" }>, "title">,
+  endpoints: HandoffEndpoints,
+) {
+  return endpoints.from.length === 0 && item.title ? item.title : "Context handoff";
 }
 
 function latestRunModelBefore(
