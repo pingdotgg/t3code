@@ -4490,13 +4490,23 @@ function expiredBufferedWakeRateLimitFrames(
   // Like result handling, a standalone event wins for its own limit type only.
   const embeddedResets = segment.flatMap((frame) => {
     if (!isClaudeBlockedAssistantRateLimit(frame)) return [];
-    const { rateLimitType, resetsAt } = frame.api_error_params.rate_limit_info;
+    const info = frame.api_error_params.rate_limit_info;
+    if (
+      info.overageStatus === "allowed" ||
+      info.overageStatus === "allowed_warning" ||
+      info.isUsingOverage === true ||
+      info.overageInUse === true
+    ) {
+      return [];
+    }
+    const { rateLimitType, resetsAt } = info;
     return directLimits.length === 0 ||
       (rateLimitType != null && !directTypes.has(String(rateLimitType)))
       ? [resetsAt]
       : [];
   });
   const resets = [...directLimits.map((limit) => limit.resetsAt), ...embeddedResets];
+  // Without a blocking reset, an overage-allowed payload cannot prove a 429 expired.
   if (
     resets.length === 0 ||
     !resets.every(

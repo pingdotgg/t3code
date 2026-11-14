@@ -15464,6 +15464,33 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       { standaloneEvent: true, arrivedAfterReset: false, expired: true, newerTurn: true },
       { standaloneEvent: true, arrivedAfterReset: true, expired: false, newerTurn: false },
       { standaloneEvent: true, arrivedAfterReset: false, expired: true, weeklyStillActive: true },
+      {
+        standaloneEvent: true,
+        arrivedAfterReset: false,
+        expired: true,
+        weeklyStillActive: true,
+        overageIndicator: "status",
+      },
+      {
+        standaloneEvent: true,
+        arrivedAfterReset: false,
+        expired: true,
+        weeklyStillActive: true,
+        overageIndicator: "using",
+      },
+      {
+        standaloneEvent: true,
+        arrivedAfterReset: false,
+        expired: true,
+        weeklyStillActive: true,
+        overageIndicator: "inUse",
+      },
+      {
+        standaloneEvent: false,
+        arrivedAfterReset: false,
+        expired: true,
+        overageIndicator: "status",
+      },
       { standaloneEvent: true, arrivedAfterReset: false, expired: true, twoWakes: true },
       {
         standaloneEvent: true,
@@ -15477,10 +15504,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       weeklyStillActive: false,
       twoWakes: false,
       secondWakeStillActive: false,
+      overageIndicator: "none",
       ...row,
     })),
   )(
-    "replays a rejected wake rate limit only while it is current (event=$standaloneEvent arrivedAfterReset=$arrivedAfterReset expired=$expired newerTurn=$newerTurn weekly=$weeklyStillActive twoWakes=$twoWakes secondActive=$secondWakeStillActive)",
+    "replays a rejected wake rate limit only while it is current (event=$standaloneEvent arrivedAfterReset=$arrivedAfterReset expired=$expired newerTurn=$newerTurn weekly=$weeklyStillActive twoWakes=$twoWakes secondActive=$secondWakeStillActive overage=$overageIndicator)",
     ({
       standaloneEvent,
       arrivedAfterReset,
@@ -15489,6 +15517,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       weeklyStillActive,
       twoWakes,
       secondWakeStillActive,
+      overageIndicator,
     }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
@@ -15543,6 +15572,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   : standaloneEvent
                     ? resetsAt + 3_600
                     : resetsAt,
+                ...(overageIndicator === "status" ? { overageStatus: "allowed" } : {}),
+                ...(overageIndicator === "using" ? { isUsingOverage: true } : {}),
+                ...(overageIndicator === "inUse" ? { overageInUse: true } : {}),
               },
             },
           }),
@@ -15654,7 +15686,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         const terminal = yield* Queue.take(harness.terminalReceipts);
-        if (expired && !weeklyStillActive && !secondWakeStillActive) {
+        if (
+          expired &&
+          !secondWakeStillActive &&
+          (overageIndicator !== "none" ? standaloneEvent : !weeklyStillActive)
+        ) {
           assert.equal(terminal.status, "completed");
           assert.isFalse(
             harness.events.some(
@@ -15677,12 +15713,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(terminal.status, "failed");
         if (terminal.status !== "failed") return;
         assert.equal(terminal.failure.class, "usage_limit");
-        assert.equal(
-          terminal.failure.resetAt,
-          weeklyStillActive || secondWakeStillActive
-            ? "2026-10-02T01:10:00.000Z"
-            : "2026-09-25T01:10:00.000Z",
-        );
+        if (!standaloneEvent && overageIndicator !== "none") {
+          // With no blocking reset evidence, preserve the actual 429 failure,
+          // but do not infer a reset timestamp from overage-allowed metadata.
+          assert.isNotOk(terminal.failure.resetAt);
+        } else {
+          assert.equal(
+            terminal.failure.resetAt,
+            weeklyStillActive || secondWakeStillActive
+              ? "2026-10-02T01:10:00.000Z"
+              : "2026-09-25T01:10:00.000Z",
+          );
+        }
         if (standaloneEvent) {
           const pause = yield* Queue.take(harness.systemNoticeReceipts);
           assert.equal(pause.turnItem.type, "system_notice");
