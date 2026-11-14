@@ -359,3 +359,33 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
   const kept = shown.slice(0, -2).flatMap((structure, round) => (structure.deref() ? [round] : []));
   expect(kept).toEqual([]);
 });
+
+it("moving the caret back onto a typed /command does not reopen its suggestions", async () => {
+  const thread = threadWithHistory("caret-trigger", 1);
+  using _environment = installFakeEnvironment([thread]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText("Answer 0 for caret-trigger.")).toBeVisible();
+  const editor = page.getByTestId("composer-editor");
+  await editor.click();
+
+  await userEvent.keyboard("/mod");
+  await expect.element(editor).toHaveAttribute("aria-activedescendant");
+  await userEvent.keyboard(" ab");
+  await expect.element(editor).not.toHaveAttribute("aria-activedescendant");
+
+  await userEvent.keyboard("{ArrowLeft}{ArrowLeft}{ArrowLeft}");
+  await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
+  await expect.element(editor).toHaveTextContent(/^\/mod\s*ab$/);
+  await expect.element(editor).not.toHaveAttribute("aria-activedescendant");
+});
