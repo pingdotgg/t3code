@@ -200,6 +200,10 @@ interface Slide {
   onRest: (() => void) | undefined;
   /** Moves with it (an edge); removed when it rests or a retarget brings another. */
   rider: { edge: Edge; run: MotionRun } | undefined;
+  /** Inside it, holding still on screen until it rests or retargets. */
+  held: MotionRun[];
+  /** Its end corners hold still (see `holdEnd`). */
+  holdsEnd: boolean;
 }
 
 const slides = new WeakMap<HTMLElement, Slide>();
@@ -241,6 +245,7 @@ function slide(
     dy += running.dy * progress;
     running.run.cancel();
     running.rider?.run.cancel();
+    for (const run of running.held) run.cancel();
     kept = running.rider?.edge;
     slides.delete(element);
     const earlier = running.onRest;
@@ -267,6 +272,8 @@ function slide(
           run: playMotion(edge.element, motion, keyframe, undefined, undefined, stepped),
         }
       : undefined,
+    held: [],
+    holdsEnd: false,
     run: playMotion(
       element,
       motion,
@@ -282,6 +289,40 @@ function slide(
     ),
   };
   slides.set(element, entry);
+}
+
+const END_CORNERS = '[data-pane-bar-corner="end"], [data-pane-notch-corner="right"]';
+
+/** Holds a sliding pane's `corner` still on screen until the pane rests, in step with its slide. */
+function holdCorner(pane: HTMLElement, entry: Slide, corner: HTMLElement): void {
+  if (corner.getAnimations().length > 0) return;
+  const lead = pane.getAnimations()[0];
+  const back = (progress: number) => translate(-entry.dx * progress, -entry.dy * progress);
+  entry.held.push(playMotion(corner, entry.run.motion, back, undefined, undefined, stepped));
+  const held = corner.getAnimations()[0];
+  if (!lead || !held) return;
+  if (lead.startTime !== null) held.startTime = lead.startTime;
+  else if (lead.playState === "paused") {
+    held.pause();
+    held.currentTime = lead.currentTime;
+  }
+}
+
+/** The window's end corner stays where a pane sliding in past the strip's end will rest. */
+function holdEnd(pane: HTMLElement): void {
+  const entry = slides.get(pane);
+  if (!entry) return;
+  entry.holdsEnd = true;
+  for (const corner of pane.querySelectorAll<HTMLElement>(END_CORNERS)) {
+    holdCorner(pane, entry, corner);
+  }
+}
+
+/** For an end corner that mounts mid-slide (a lazy panel's toolbar): holds it like the rest. */
+export function holdEndCornerWhileSliding(corner: HTMLElement | null): void {
+  const pane = corner?.closest<HTMLElement>("[data-layout-pane-id]");
+  const entry = pane ? slides.get(pane) : undefined;
+  if (corner && pane && entry?.holdsEnd) holdCorner(pane, entry, corner);
 }
 
 const overlaps = (a0: number, a1: number, b0: number, b1: number) =>
@@ -505,6 +546,12 @@ function holdClosedPane(ghost: HTMLElement, pane: HTMLElement | undefined): void
   ghost.append(pane);
 }
 
+/** A pane sliding past the strip's visible end while it rests there keeps the window's end corner
+ * (the curve under its bar, or under its right notch with black chrome) where it rests, instead of
+ * carrying it off or in from off screen. */
+const passesEnd = (box: Box, dx: number, viewEnd: number) =>
+  dx > 0 && Math.abs(box.x + box.width - viewEnd) < 1;
+
 const boxOf = (element: HTMLElement): Box => ({
   x: element.offsetLeft,
   y: element.offsetTop,
@@ -634,6 +681,7 @@ export function usePaneMotion(
       [...(before?.boxes ?? [])].map(([id, box]) => [id, { ...box, x: box.x - camera }]),
     );
     const view = visibleSpan(stage);
+    const viewEnd = scroller ? scroller.scrollLeft + scroller.clientWidth : Infinity;
     for (const { ghost, box: drawn } of closing) {
       ghosts.current.add(ghost);
       const box = { ...drawn, x: drawn.x - camera };
@@ -688,6 +736,12 @@ export function usePaneMotion(
       const keyframe = (progress: number) => translate(offset.dx * progress, offset.dy * progress);
       if (motion.durationMs > 0) holdClosedPane(ghost, before?.boxes.get(tabId)?.element);
       if (edge) playMotion(edge.element, motion, keyframe, undefined, undefined, true);
+      if (camera === 0 && passesEnd(box, offset.dx, viewEnd)) {
+        for (const corner of ghost.querySelectorAll<HTMLElement>(END_CORNERS)) {
+          const back = (progress: number) => translate(-offset.dx * progress, 0);
+          playMotion(corner, motion, back, undefined, undefined, true);
+        }
+      }
       playMotion(
         ghost,
         motion,
@@ -814,6 +868,7 @@ export function usePaneMotion(
           slide(box.element, offset.dx, offset.dy, undefined, (dx, dy) =>
             makeEdge(stage, box, side, gap, radius ?? 0, Math.abs(dx + dy), false),
           );
+          if (passesEnd(box, offset.dx, viewEnd)) holdEnd(box.element);
           continue;
         }
         // Otherwise a short way out from under it, beneath the panes moving off it.
