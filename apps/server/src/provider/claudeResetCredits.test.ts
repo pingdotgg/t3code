@@ -5,6 +5,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -36,6 +39,42 @@ const respond = (status: number, body: unknown) =>
     Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body, { status }))),
   );
 const refuseRequests = HttpClient.make(() => Effect.die("must not send a request"));
+
+// Answers `security find-generic-password` like the Keychain would, recording each service looked up.
+const keychain = (entries: Record<string, string>, lookups: Array<string>) =>
+  ChildProcessSpawner.make((command) => {
+    const args = ChildProcess.isStandardCommand(command) ? command.args.map(String) : [];
+    const service = args[args.indexOf("-s") + 1] ?? "";
+    lookups.push(service);
+    const secret = entries[service];
+    return Effect.succeed(
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(secret === undefined ? 44 : 0)),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.encodeText(Stream.make(secret ?? "")),
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      }),
+    );
+  });
+const bearer = (token: string) =>
+  HttpClient.make((request) => {
+    expect(request.headers.authorization).toBe(`Bearer ${token}`);
+    return Effect.succeed(
+      HttpClientResponse.fromWeb(
+        request,
+        Response.json({
+          cedar_ember: { eligible: true, next_grant_id: "grant_a", grants: [grant({})] },
+        }),
+      ),
+    );
+  });
 
 describe("claudeResetCreditsToContract", () => {
   it("counts live grants and pins the next usable one", () => {
@@ -149,22 +188,82 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
           ),
         );
       });
-      const credits = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const lookups: Array<string> = [];
+      const credits = yield* ClaudeResetCredits.readClaudeResetCredits(
+        configDir,
+        undefined,
+        "2.1.0",
+      ).pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, keychain({}, lookups)),
       );
       expect(credits).toMatchObject({ availableCount: 1, nextCreditId: "grant_a" });
+      expect(lookups).toEqual([]);
     }),
   );
 
-  it.effect("reads nothing from keychain logins or failed requests", () =>
+  it.effect("reads a macOS login from the entry Claude Code keeps for its config folder", () =>
     Effect.gen(function* () {
       const { configDir } = yield* writeLogin;
-      const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const login = (token: string) => JSON.stringify({ claudeAiOauth: { accessToken: token } });
+      const custom = ClaudeResetCredits.claudeKeychainService("/Users/me/.claude-work");
+      // The suffix Claude Code 2.1 derives: sha256 of the folder, first 8 hex characters.
+      expect(custom).toBe("Claude Code-credentials-1e91dd84");
+      const entries = {
+        "Claude Code-credentials": login("default-token"),
+        [custom]: login("work-token"),
+      };
+      const lookups: Array<string> = [];
+      const read = (customConfigDir: string | undefined, token: string) =>
+        ClaudeResetCredits.readClaudeResetCredits(configDir, customConfigDir, "2.1.0").pipe(
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(HttpClient.HttpClient, bearer(token)),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            keychain(entries, lookups),
+          ),
+        );
+      expect(yield* read(undefined, "default-token")).toMatchObject({
+        availableCount: 1,
+        nextCreditId: "grant_a",
+      });
+      expect(yield* read("/Users/me/.claude-work", "work-token")).toMatchObject({
+        availableCount: 1,
+        nextCreditId: "grant_a",
+      });
+      // No Keychain entry: Claude Code's plaintext fallback file.
+      expect(yield* read("/Users/me/.claude-other", "oauth-token")).toMatchObject({
+        availableCount: 1,
+        nextCreditId: "grant_a",
+      });
+      expect(lookups).toEqual([
+        "Claude Code-credentials",
+        custom,
+        ClaudeResetCredits.claudeKeychainService("/Users/me/.claude-other"),
+      ]);
+    }),
+  );
+
+  it.effect("reads nothing without a login or from failed requests", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const signedOut = yield* fs.makeTempDirectoryScoped();
+      const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(
+        signedOut,
+        undefined,
+        "2.1.0",
+      ).pipe(
         Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provideService(HttpClient.HttpClient, refuseRequests),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, keychain({}, [])),
       );
-      const limited = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const { configDir } = yield* writeLogin;
+      const limited = yield* ClaudeResetCredits.readClaudeResetCredits(
+        configDir,
+        undefined,
+        "2.1.0",
+      ).pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, respond(429, {})),
       );
@@ -183,6 +282,7 @@ const consume = (client: HttpClient.HttpClient, ids = { grantId: "grant_a", requ
     const login = yield* writeLogin;
     return yield* ClaudeResetCredits.consumeClaudeResetCredit({
       ...login,
+      customConfigDir: undefined,
       version: "2.1.0",
       ...ids,
     }).pipe(
