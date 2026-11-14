@@ -1,8 +1,4 @@
-import {
-  type ProviderInstanceId,
-  textGeneratorForSelection,
-  type UnifiedSettings,
-} from "@t3tools/contracts";
+import { type ProviderInstanceId, type UnifiedSettings } from "@t3tools/contracts";
 
 import { mergeEnvironmentSettings } from "../../hooks/useSettings";
 import {
@@ -15,28 +11,39 @@ import {
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
+import {
+  resolveScopedModelInstanceId,
+  scopedTextGenerator,
+  supportsScopedTextGenerator,
+  type ScopedModelSettingKey,
+} from "./scopedModelSelection";
 import { useSettingsScope } from "./SettingsScopeContext";
 
 export function useScopedModelDisabledReason(
   settings: UnifiedSettings,
   entries: readonly ProviderInstanceEntry[],
   textGeneration = false,
+  key: ScopedModelSettingKey = "textGenerationModelSelection",
 ) {
-  const { targets } = useSettingsScope();
+  const { targets, target: source } = useSettingsScope();
   const { environments } = useEnvironments();
   const providersByEnvironment = useEnvironmentProviders();
   return (instanceId: ProviderInstanceId, model: string): string | null => {
     const sourceEntry = entries.find((entry) => entry.instanceId === instanceId);
-    const shownGenerator = textGeneratorForSelection(settings, instanceId);
+    const sourceEnvironment = {
+      providers: (source && providersByEnvironment.get(source.environmentId)) ?? [],
+    };
+    const shownGenerator = scopedTextGenerator(settings, instanceId, key);
     for (const candidate of targets) {
       const environment = environments.find(
         (entry) => entry.environmentId === candidate.environmentId,
       );
       const unavailable = `This model is unavailable on ${environment?.label ?? "a selected environment"}. Select that environment to choose its model separately.`;
-      const generator = textGeneratorForSelection(candidate.settings, instanceId);
+      const generator = scopedTextGenerator(candidate.settings, instanceId, key);
       if (shownGenerator !== undefined || generator !== undefined) {
         // Only the shown environment's model list is loaded; elsewhere it must reach the same API.
         if (
+          !supportsScopedTextGenerator(key) ||
           !generator?.enabled ||
           generator.kind !== shownGenerator?.kind ||
           generator.baseUrl !== shownGenerator.baseUrl
@@ -47,18 +54,27 @@ export function useScopedModelDisabledReason(
       }
       const providers = providersByEnvironment.get(candidate.environmentId);
       if (!environment?.serverConfig || !providers) continue;
+      const localId = resolveScopedModelInstanceId(
+        instanceId,
+        sourceEnvironment,
+        { providers, settings: candidate.settings },
+        key,
+      );
+      if (localId === null) {
+        return `A unique matching account could not be verified on ${environment.label}. Select that environment to choose its model separately.`;
+      }
       const entry = applyProviderInstanceSettings(
         deriveProviderInstanceEntries(providers),
         candidate.settings,
         candidate.projectId,
-      ).find((option) => option.instanceId === instanceId);
+      ).find((option) => option.instanceId === localId);
       const optionsForInstance = textGeneration
         ? getTextGenerationModelOptionsByInstance
         : getCustomModelOptionsByInstance;
       const options = optionsForInstance(
         mergeEnvironmentSettings(candidate.settings, settings),
         providers,
-      ).get(instanceId);
+      ).get(localId);
       if (
         !entry?.enabled ||
         !entry.isAvailable ||

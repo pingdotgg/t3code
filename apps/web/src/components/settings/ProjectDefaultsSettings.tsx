@@ -111,7 +111,12 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     ? resolveProjectSettings(target.settings, null, null, null).settings
     : null;
 
-  const modelDisabledReason = useScopedModelDisabledReason(settings, entries);
+  const modelDisabledReason = useScopedModelDisabledReason(
+    settings,
+    entries,
+    false,
+    "defaultModelSelection",
+  );
   const effortDisabledReason = selection
     ? modelDisabledReason(selection.instanceId, selection.model)
     : null;

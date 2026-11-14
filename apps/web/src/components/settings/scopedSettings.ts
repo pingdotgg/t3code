@@ -12,6 +12,7 @@ import {
   type ProjectSettingsOverrides,
   ServerSettings,
   type T3ProjectFile,
+  type ServerProvider,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
@@ -25,6 +26,14 @@ import * as Equal from "effect/Equal";
 import * as Cause from "effect/Cause";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
+import {
+  isScopedModelSettingKey,
+  resolveScopedModelInstanceId,
+  SCOPED_MODEL_SETTING_KEYS,
+  scopedModelSelectionsEqual,
+  scopedTextGenerator,
+  supportsScopedTextGenerator,
+} from "./scopedModelSelection";
 
 export type ScopedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
 
@@ -125,16 +134,33 @@ export function resolveScopedSettingsTargets(
   );
 }
 
+type ProvidersByEnvironment = ReadonlyMap<EnvironmentId, readonly ServerProvider[]>;
+
 export function scopedSettingsAreMixed(
-  targets: readonly Pick<ScopedSettingsTarget, "settings">[],
+  targets: readonly Pick<ScopedSettingsTarget, "environmentId" | "settings">[],
   keys: readonly (keyof ServerSettings)[],
+  providersByEnvironment?: ProvidersByEnvironment,
 ): boolean {
-  const first = targets[0];
-  return (
-    first !== undefined &&
-    targets.some((candidate) =>
-      keys.some((key) => !Equal.equals(first.settings[key], candidate.settings[key])),
-    )
+  const at = ({ environmentId, settings }: (typeof targets)[number]) => ({
+    providers: providersByEnvironment?.get(environmentId) ?? [],
+    settings,
+  });
+  return targets.some((reference, index) =>
+    targets
+      .slice(index + 1)
+      .some((candidate) =>
+        keys.some((key) =>
+          providersByEnvironment && isScopedModelSettingKey(key)
+            ? !scopedModelSelectionsEqual(
+                reference.settings[key],
+                at(reference),
+                candidate.settings[key],
+                at(candidate),
+                key,
+              )
+            : !Equal.equals(reference.settings[key], candidate.settings[key]),
+        ),
+      ),
   );
 }
 
@@ -183,6 +209,7 @@ function projectOverrideWrites(
     current: ProjectSettingsOverrides,
     settings: ServerSettings,
     projectId: ProjectId,
+    environment: ScopedSettingsEnvironment,
   ) => ProjectSettingsOverrides | null,
 ): ScopedServerWrite[] {
   const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
@@ -193,7 +220,8 @@ function projectOverrideWrites(
       continue;
     }
     const settings = environment.serverConfig.settings;
-    const entry = update(settings.projectSettingsOverrides[member.id] ?? {}, settings, member.id);
+    const current = settings.projectSettingsOverrides[member.id] ?? {};
+    const entry = update(current, settings, member.id, environment);
     const existing = writes.get(member.environmentId);
     writes.set(member.environmentId, {
       environmentId: member.environmentId,
@@ -217,11 +245,57 @@ function forDestination(previous: ServerSettings, patch: ServerSettingsPatch): S
   return { ...rest, ...idleCompactionPatch(previous, idleCompaction) };
 }
 
+function forDestinationModels(
+  patch: ServerSettingsPatch,
+  modelSource: ScopedModelSource | null | undefined,
+  destination: ScopedSettingsEnvironment,
+): ServerSettingsPatch | null {
+  if (!modelSource || destination.environmentId === modelSource.target.environmentId) return patch;
+  const { target: source, providersByEnvironment } = modelSource;
+  const settings = destination.serverConfig?.settings;
+  const providers = providersByEnvironment.get(destination.environmentId);
+  const next = { ...patch };
+  for (const key of SCOPED_MODEL_SETTING_KEYS) {
+    const selection = patch[key];
+    if (selection?.instanceId === undefined) continue;
+    if (!settings) return null;
+    const shownGenerator = scopedTextGenerator(source.settings, selection.instanceId, key);
+    const generator = scopedTextGenerator(settings, selection.instanceId, key);
+    if (shownGenerator !== undefined || generator !== undefined) {
+      if (
+        !supportsScopedTextGenerator(key) ||
+        !generator?.enabled ||
+        generator.kind !== shownGenerator?.kind ||
+        generator.baseUrl !== shownGenerator.baseUrl
+      ) {
+        return null;
+      }
+      continue;
+    }
+    if (!providers) return null;
+    const instanceId = resolveScopedModelInstanceId(
+      selection.instanceId,
+      { providers: providersByEnvironment.get(source.environmentId) ?? [] },
+      { providers, settings },
+      key,
+    );
+    if (instanceId === null) return null;
+    Object.assign(next, { [key]: { ...selection, instanceId } });
+  }
+  return next;
+}
+
+export interface ScopedModelSource {
+  /** The target whose provider instances and text generators the picker offered. */
+  readonly target: Pick<ScopedSettingsTarget, "environmentId" | "settings">;
+  readonly providersByEnvironment: ProvidersByEnvironment;
+}
+
 export function planScopedSettingsPatch(
   scope: ResolvedSettingsScope,
   environments: readonly ScopedSettingsEnvironment[],
   patch: ScopedSettingsPatch,
-  options?: { readonly deviceOnly?: boolean },
+  options?: { readonly deviceOnly?: boolean; readonly modelSource?: ScopedModelSource | null },
 ) {
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const refusesClientKeys = isProjectScope && options?.deviceOnly !== true;
@@ -243,13 +317,20 @@ export function planScopedSettingsPatch(
   const clientPatch = Object.fromEntries(
     refusesClientKeys ? [] : Object.entries(patch).filter(([key]) => clientKeys.includes(key)),
   ) as ClientSettingsPatch;
+  const unmatched = new Set<string>();
+  const serverPatchFor = (environment: ScopedSettingsEnvironment) => {
+    const mapped = forDestinationModels(serverPatch, options?.modelSource, environment);
+    if (mapped === null) unmatched.add(environment.label);
+    return mapped ?? serverPatch;
+  };
   const serverWrites: ScopedServerWrite[] =
     serverKeys.length === 0
       ? []
       : isProjectScope
         ? unscopableKeys.length > 0
           ? []
-          : projectOverrideWrites(scope, environments, (current, settings, projectId) => {
+          : projectOverrideWrites(scope, environments, (current, settings, projectId, target) => {
+              const serverPatch = serverPatchFor(target);
               // Override entries store whole objects; complete partial patches from each target's effective
               // value.
               const effective = resolveProjectSettings(settings, projectId).settings;
@@ -296,6 +377,7 @@ export function planScopedSettingsPatch(
           ? connectedEnvironments.flatMap((environment) => {
               const previous = environment.serverConfig?.settings;
               if (!previous) return [];
+              const serverPatch = serverPatchFor(environment);
               return [
                 {
                   environmentId: environment.environmentId,
@@ -328,6 +410,14 @@ export function planScopedSettingsPatch(
               ];
             })
           : [];
+  if (unmatched.size > 0) {
+    return {
+      clientPatch,
+      hasClientWrite: false,
+      serverWrites: [],
+      unavailableReason: `This model's account or text generator could not be matched on ${[...unmatched].join(", ")}. Select that environment to choose its model separately.`,
+    };
+  }
   const hasClientWrite = Object.keys(clientPatch).length > 0;
   const hasWrite = hasClientWrite || serverWrites.length > 0;
   const unavailableReason =

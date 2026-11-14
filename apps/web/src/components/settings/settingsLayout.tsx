@@ -1,6 +1,10 @@
 import { SettingsGroup } from "./SettingsGroup";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
-import { usePrimaryEnvironmentId, usePrimaryEnvironment } from "../../state/environments";
+import {
+  useEnvironmentProviders,
+  usePrimaryEnvironment,
+  usePrimaryEnvironmentId,
+} from "../../state/environments";
 import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { useServerConfigs } from "../../state/entities";
 import { InfoIcon, Undo2Icon } from "lucide-react";
@@ -348,6 +352,7 @@ export function SettingsRow({
       context.connectedEnvironments.every((target) => writableIds.has(target.environmentId))
     : primaryCanWrite;
   const serverConfigs = useServerConfigs();
+  const providersByEnvironment = useEnvironmentProviders();
   // An administrator's lock on any target wins over every other reason a control is inert.
   const lockablePaths = [...settingKeys, ...managedPaths];
   const managedBy =
@@ -370,7 +375,9 @@ export function SettingsRow({
   const scopedKeys = settingKeys.filter(isProjectScopedSettingKey);
   const environmentWide = isProjectScope && serverScoped && scopedKeys.length === 0;
   const mixed =
-    mixedOverride ?? (context !== null && scopedSettingsAreMixed(context.targets, settingKeys));
+    mixedOverride ??
+    (context !== null &&
+      scopedSettingsAreMixed(context.targets, settingKeys, providersByEnvironment));
   const source =
     context && isProjectScope ? scopedSettingsSource(context.targets, scopedKeys) : null;
   const unavailable =

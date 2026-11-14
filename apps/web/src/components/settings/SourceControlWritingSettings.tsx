@@ -158,6 +158,12 @@ export function SourceControlWritingSettingsSection() {
     activeSelection.model,
   );
   const writerModelDisabledReason = useScopedModelDisabledReason(settings, writerEntries, true);
+  const reviewGuideModelDisabledReason = useScopedModelDisabledReason(
+    settings,
+    instanceEntries,
+    true,
+    "reviewGuideModelSelection",
+  );
   const writerInstanceEntry = writerEntries.find(
     (entry) => entry.instanceId === activeSelection.instanceId,
   );
@@ -353,9 +359,9 @@ export function SourceControlWritingSettingsSection() {
                       triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                       triggerAriaLabel="Review guide model"
                       {...(mixedReviewGuideModel ? { triggerLabel: "Mixed" } : {})}
-                      getModelDisabledReason={writerModelDisabledReason}
+                      getModelDisabledReason={reviewGuideModelDisabledReason}
                       onInstanceModelChange={(instanceId, model) => {
-                        const reason = writerModelDisabledReason(instanceId, model);
+                        const reason = reviewGuideModelDisabledReason(instanceId, model);
                         if (reason) {
                           toastManager.add({
                             type: "error",
@@ -405,7 +411,7 @@ export function SourceControlWritingSettingsSection() {
                       const seed = textGeneratorForSelection(settings, activeSelection.instanceId)
                         ? reviewGuideSelection
                         : activeSelection;
-                      const reason = writerModelDisabledReason(seed.instanceId, seed.model);
+                      const reason = reviewGuideModelDisabledReason(seed.instanceId, seed.model);
                       if (reason) {
                         toastManager.add({
                           type: "error",
