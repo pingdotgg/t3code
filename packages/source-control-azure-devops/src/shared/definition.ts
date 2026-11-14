@@ -5,6 +5,7 @@ import {
   defineSourceControl,
   isChangeRequestAuthorityOfProject,
   parseChangeRequestPath,
+  parseIssuePath,
   parseCommitPath,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/shared/definition";
@@ -13,6 +14,8 @@ import { icon } from "./icon.ts";
 // Azure DevOps Server runs on any hostname; its `_git` route identifies it.
 const CHANGE_REQUEST_PATH = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/((?:[^/]+\/)*_git\/[^/]+)\/commit\/([0-9a-f]+)\/?$/iu;
+// Work items belong to the project: /{organization}/{project}/_workitems/edit/{id}.
+const WORK_ITEM_PATH = /^\/([^/]+\/[^/]+)\/_workitems\/edit\/(\d+)(?:\/|$)/u;
 const CHECKOUT_COMMAND = /^az\s+repos\s+pr\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
   /^https:\/\/(?:dev\.azure\.com\/[^/\s]+\/[^/\s]+|[^/\s]+\.visualstudio\.com\/(?:DefaultCollection\/)?[^/\s]+)\/_git\/[^/\s]+\/pullrequest\/(\d+)(?:[/?#].*)?$/i;
@@ -101,6 +104,13 @@ export const definition = defineSourceControl({
   parseChangeRequestUrl: (url) => {
     const link = parseChangeRequestPath(url, CHANGE_REQUEST_PATH);
     return link === null || url.port === "" ? link : { ...link, authority: url.host.toLowerCase() };
+  },
+  // A project named with spaces arrives percent-encoded; the binding it is matched against is not.
+  parseIssueUrl: (url) => {
+    const link = parseIssuePath(url, WORK_ITEM_PATH);
+    return link === null
+      ? null
+      : { ...link, scope: link.scope.split("/").map(decodeUrlPathSegment).join("/").toLowerCase() };
   },
   changeRequestUrlFromReferenceAutolink: () => null,
   changeRequestActions: new Set([

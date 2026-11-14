@@ -142,6 +142,29 @@ function makeService(input: {
 }
 
 describe("IssueService", () => {
+  it.effect("places a project where its host keeps its issues", () =>
+    Effect.gen(function* () {
+      const azure = IssueTrackerKind.make("azure-devops");
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "p",
+            provider: "azure-devops",
+            host: "dev.azure.com",
+            repository: "acme/Web App/_git/web",
+          }),
+        ],
+        trackers: [fakeTracker({ kind: azure })],
+      });
+      expect(yield* service.projectScope("p" as ProjectId)).toEqual({
+        projectId: "p",
+        tracker: "azure-devops",
+        host: "dev.azure.com",
+        scope: "acme/Web App",
+      });
+    }),
+  );
+
   it.effect("reads another repository on the same host but refuses to write to it", () =>
     Effect.gen(function* () {
       const writes: string[] = [];

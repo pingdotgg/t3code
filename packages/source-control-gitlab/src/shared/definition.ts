@@ -6,6 +6,7 @@ import {
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
+  parseIssuePath,
   parseCommitPath,
   repositoryUrlFromPagePath,
   projectChangeRequestHost,
@@ -21,6 +22,7 @@ const CHANGE_REQUEST_REFERENCE =
 // Self-managed GitLab runs on any hostname and nests projects in groups.
 const CHANGE_REQUEST_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/merge_requests\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/commit\/([0-9a-f]+)\/?$/iu;
+const ISSUE_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/(?:issues|work_items)\/(\d+)(?:\/|$)/u;
 // Every GitLab page inside a project sits below its first `/-/`.
 const REPOSITORY_PAGE_PATH = /^\/([^/]+(?:\/[^/]+)+?)\/-\//u;
 
@@ -48,6 +50,7 @@ export const definition = defineSourceControl({
       ? changeRequestUrlBelow(webUrl, `-/merge_requests/${number}`)
       : `${remoteWebOrigin(host, remoteUrl)}/${repository}/-/merge_requests/${number}`,
   parseChangeRequestUrl: (url) => parseChangeRequestPath(url, CHANGE_REQUEST_PATH),
+  parseIssueUrl: (url) => parseIssuePath(url, ISSUE_PATH),
   commitUrl: (input) => buildCommitUrl(input, "-/commit"),
   parseCommitUrl: (url) => parseCommitPath(url, COMMIT_PATH),
   repositoryUrlFromPage: (url) => repositoryUrlFromPagePath(url, REPOSITORY_PAGE_PATH),

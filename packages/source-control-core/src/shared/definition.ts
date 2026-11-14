@@ -27,6 +27,17 @@ export interface ChangeRequestLink {
   readonly authority?: string;
 }
 
+/**
+ * An issue as a URL names it: the host it is served from, the container the tracker addresses
+ * it by, and its native key there. Written like a project's own binding, lower case, because
+ * links are matched against those.
+ */
+export interface IssueLink {
+  readonly host: string;
+  readonly scope: string;
+  readonly key: string;
+}
+
 export interface ParsedChangeRequestUrl extends ChangeRequestLink {
   /** The repository's browser URL, without query or hash. */
   readonly repositoryUrl: string;
@@ -258,6 +269,8 @@ export interface SourceControlDefinition {
   readonly parseCommitUrl?: (url: URL, known: boolean) => CommitLink | null;
   /** Null when the URL is not one of this host's change requests. */
   readonly parseChangeRequestUrl: (url: URL) => ParsedChangeRequestUrl | null;
+  /** Null when the URL is not one of this host's issues. Absent for a host with none. */
+  readonly parseIssueUrl?: (url: URL) => IssueLink | null;
   /**
    * The repository URL when `url` is a page inside one of this host's repositories. `known` is set
    * when the caller already knows this host serves the URL's repository. Off a known host, return
@@ -427,6 +440,17 @@ export function parseChangeRequestPath(url: URL, route: RegExp): ParsedChangeReq
         number,
         repositoryUrl: `${url.origin}/${repository}`,
       }
+    : null;
+}
+
+/** Reads an issue from `url` with `route`, whose groups are the scope and the issue number. */
+export function parseIssuePath(url: URL, route: RegExp): IssueLink | null {
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  const match = route.exec(url.pathname);
+  const scope = match?.[1];
+  const number = Number(match?.[2]);
+  return scope && Number.isSafeInteger(number) && number > 0
+    ? { host: url.hostname.toLowerCase(), scope: scope.toLowerCase(), key: String(number) }
     : null;
 }
 
@@ -642,6 +666,10 @@ export interface SourceControlDefinitionRegistry {
   readonly findByPublicDomain: (hostname: string) => SourceControlDefinition | undefined;
   /** The first host, in registry order, that reads `url` as one of its change requests. */
   readonly parseChangeRequestUrl: (url: string) => ParsedChangeRequest | null;
+  /** The first host, in registry order, that reads `url` as one of its issues. */
+  readonly parseIssueUrl: (
+    url: string,
+  ) => { readonly definition: SourceControlDefinition; readonly link: IssueLink } | null;
   readonly parseCommitUrl: (url: string, kind?: SourceControlProviderKind) => ParsedCommit | null;
   readonly findByChangeRequestUrl: (url: string) => SourceControlDefinition | undefined;
   readonly hostLabelForChangeRequestUrl: (url: string) => string;
@@ -752,6 +780,15 @@ export function makeSourceControlDefinitionRegistry(
       );
     },
     parseChangeRequestUrl,
+    parseIssueUrl: (value) => {
+      const url = httpUrl(value);
+      if (url === null) return null;
+      for (const definition of claimOrder) {
+        const link = definition.parseIssueUrl?.(url) ?? null;
+        if (link !== null) return { definition, link };
+      }
+      return null;
+    },
     parseCommitUrl: (value, kind) => {
       const url = httpUrl(value);
       if (url === null) return null;
