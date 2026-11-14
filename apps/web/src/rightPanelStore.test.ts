@@ -11,6 +11,7 @@ import {
   pullRequestSurfaceId,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
+  selectThreadPanelOpen,
   selectThreadPanelVisibility,
   selectThreadRightPanelState,
   useRightPanelStore,
@@ -714,7 +715,30 @@ describe("rightPanelStore", () => {
         useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
         refA,
       ),
-    ).toEqual({ inlineOpen: true, popoverOpen: false });
+    ).toEqual({ popoverOpen: false });
+  });
+
+  it("follows the thread details default until the thread gets its own choice", async () => {
+    const inlineOpen = (ref: typeof refA, openByDefault: boolean) =>
+      selectThreadPanelOpen(
+        useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
+        ref,
+        "inline",
+        openByDefault,
+      );
+
+    useRightPanelStore.getState().toggleThreadPanel(refA, "inline", false);
+    useRightPanelStore.getState().setThreadPanelOpen(refB, "inline", true);
+    await reloadRightPanelStore();
+
+    const refC = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-C"));
+    expect(inlineOpen(refC, false)).toBe(false);
+    expect(inlineOpen(refC, true)).toBe(true);
+    expect(inlineOpen(refA, false)).toBe(true);
+    expect(inlineOpen(refB, false)).toBe(true);
+
+    useRightPanelStore.getState().toggleThreadPanel(refA, "inline", false);
+    expect(inlineOpen(refA, true)).toBe(false);
   });
 
   it("keeps an open popover visible by promoting it to inline when the real panel closes", () => {
