@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { deriveSubagentElapsedMs, formatDuration } from "./orchestrationTiming.ts";
+import {
+  deriveSubagentElapsedMs,
+  formatDuration,
+  formatLiveDuration,
+} from "./orchestrationTiming.ts";
 
 describe("formatDuration", () => {
   it.each([
@@ -13,6 +17,20 @@ describe("formatDuration", () => {
     [3_660_000, "1h 1m 0s"],
   ])("formats %i milliseconds as %s", (durationMs, expected) => {
     expect(formatDuration(durationMs)).toBe(expected);
+  });
+});
+
+describe("formatLiveDuration", () => {
+  it.each([
+    [Number.NaN, "0s"],
+    [-100, "0s"],
+    [999, "0s"],
+    [9_999, "9s"],
+    [59_999, "59s"],
+    [60_000, "1m 0s"],
+    [3_661_999, "1h 1m 1s"],
+  ])("formats %s ms as %s", (duration, expected) => {
+    expect(formatLiveDuration(duration)).toBe(expected);
   });
 });
 
