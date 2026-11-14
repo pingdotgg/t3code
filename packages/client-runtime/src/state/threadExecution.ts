@@ -385,6 +385,8 @@ export function deriveThreadStructureRuntime(
     ...threadErrorSummary(
       latestRootProviderFailure(latestRunProjection, projection.turnItems),
       providerSession?.lastError ?? null,
+      projection.thread.limitRecovery,
+      latestRunProjection?.id ?? null,
     ),
   };
 }

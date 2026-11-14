@@ -34,6 +34,7 @@ import {
   type ModelSelection,
   OrchestrationV2Command,
   type OrchestrationV2InternalCommand,
+  type OrchestrationV2LimitRecovery,
   type OrchestrationV2LimitRecoveryUpdate,
   type OrchestrationV2Notification,
   type OrchestrationV2ServerCommand,
@@ -1184,6 +1185,32 @@ function queuedRunCancellationEvents(
     });
   }
   return events;
+}
+
+function limitRecoveryWaitsForReset(
+  previous: OrchestrationV2LimitRecovery | null | undefined,
+  runId: RunId,
+): boolean {
+  return previous?.runId === runId && previous.waitForReset === true;
+}
+
+type LimitRecoverySnooze = Pick<OrchestrationV2AppThread, "snoozedUntil" | "limitRecovery">;
+
+function limitRecoveryOwnsSnooze(thread: LimitRecoverySnooze): boolean {
+  return (
+    thread.limitRecovery?.snooze === true &&
+    thread.snoozedUntil != null &&
+    DateTime.toEpochMillis(thread.snoozedUntil) === Date.parse(thread.limitRecovery.resetAt)
+  );
+}
+
+// The recovery's own snooze ends when the thread resumes early; a snooze the user set stays.
+export function snoozeHoldsLimitRecovery(thread: LimitRecoverySnooze, nowMs: number): boolean {
+  return (
+    thread.snoozedUntil != null &&
+    DateTime.toEpochMillis(thread.snoozedUntil) > nowMs &&
+    !limitRecoveryOwnsSnooze(thread)
+  );
 }
 
 function latestStableRun(
@@ -4460,7 +4487,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         thread.settledOverride === "settled" ||
         run?.id !== command.limitRecovery.runId ||
         failure?.class !== "usage_limit" ||
-        failure.resetAt !== command.limitRecovery.resetAt ||
+        (failure.resetAt ??
+          (thread.limitRecovery?.runId === run.id && thread.limitRecovery.waitForReset === true
+            ? thread.limitRecovery.resetAt
+            : null)) !== command.limitRecovery.resetAt ||
         resetMs <= DateTime.toEpochMillis(run.completedAt ?? run.requestedAt) ||
         projection.runtimeRequests.some((request) => request.status === "pending")
       ) {
@@ -4712,6 +4742,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       command.limitRecovery.autoResume ?? previousRecovery?.autoResume ?? false,
                     snooze: command.limitRecovery.snooze ?? previousRecovery?.snooze ?? false,
                     requestId: command.commandId,
+                    ...(limitRecoveryWaitsForReset(
+                      thread.limitRecovery,
+                      command.limitRecovery.runId,
+                    )
+                      ? { waitForReset: true }
+                      : {}),
                   };
           return {
             ...thread,
@@ -4725,11 +4761,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   // Recovery updates acknowledge the same stopped run; their timestamps must not trigger fresh failure wakes.
                   snoozedAt: now,
                 }
-              : command.limitRecovery !== undefined &&
-                  thread.limitRecovery?.snooze &&
-                  thread.snoozedUntil != null &&
-                  DateTime.toEpochMillis(thread.snoozedUntil) ===
-                    Date.parse(thread.limitRecovery.resetAt)
+              : command.limitRecovery !== undefined && limitRecoveryOwnsSnooze(thread)
                 ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now }
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
@@ -6702,15 +6734,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         !recovery?.autoResume ||
         recovery.requestId !== command.usageLimitRecoveryRequestId ||
         recovery.runId !== run.id ||
-        recovery.resetAt !== failure.resetAt ||
-        Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) ||
+        recovery.resetAt !==
+          (failure.resetAt ?? (recovery.waitForReset === true ? recovery.resetAt : null)) ||
+        (Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) &&
+          (recovery.waitForReset === true ||
+            command.usageLimitClearedAt === undefined ||
+            Date.parse(command.usageLimitClearedAt) <=
+              DateTime.toEpochMillis(run.completedAt ?? run.requestedAt))) ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
         projection.thread.settledOverride === "settled" ||
         projection.thread.providerInstanceId !== run.providerInstanceId ||
         projection.runtimeRequests.some((request) => request.status === "pending") ||
-        (projection.thread.snoozedUntil != null &&
-          DateTime.toEpochMillis(projection.thread.snoozedUntil) > DateTime.toEpochMillis(now))
+        snoozeHoldsLimitRecovery(projection.thread, DateTime.toEpochMillis(now))
       ) {
         yield* emit(
           events,
@@ -6724,13 +6760,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(recovery?.autoResume &&
             recovery.requestId === command.usageLimitRecoveryRequestId &&
             recovery.runId === command.usageLimitContinuationOfRunId &&
-            projection.thread.snoozedUntil != null &&
-            DateTime.toEpochMillis(projection.thread.snoozedUntil) > DateTime.toEpochMillis(now)
+            (projection.runtimeRequests.some((request) => request.status === "pending") ||
+              snoozeHoldsLimitRecovery(projection.thread, DateTime.toEpochMillis(now)))
               ? { limitRecovery: { ...recovery, requestId: command.commandId } }
               : {}),
           },
         });
         return;
+      }
+      if (Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now)) {
+        const event = yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: now,
+          payload: {
+            ...projection.thread,
+            limitRecovery: {
+              ...recovery,
+              runId: idAllocator.derive.run({
+                threadId: command.threadId,
+                ordinal: nextRunOrdinal(projection),
+              }),
+              waitForReset: true,
+            },
+          },
+        });
+        projection = applyToProjection(projection, event);
       }
     }
 
@@ -12482,6 +12540,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           resetAt: failure.resetAt,
           autoResume: false,
           snooze: false,
+          ...(limitRecoveryWaitsForReset(recovery, latest.id) ? { waitForReset: true } : {}),
         };
       }
     }
