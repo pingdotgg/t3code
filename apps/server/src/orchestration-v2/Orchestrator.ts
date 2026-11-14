@@ -4272,7 +4272,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .filter(
             (message) =>
               message.role === "user" &&
-              (message.notification !== undefined || message.delegatedCompletion !== undefined),
+              (message.createdBy !== "user" ||
+                message.scheduledTaskId !== undefined ||
+                message.notification !== undefined ||
+                message.delegatedCompletion !== undefined),
           )
           .map((message) => message.id),
       );
