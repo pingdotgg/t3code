@@ -532,17 +532,30 @@ function summarizeGitActionResult(
   return { title: "Done" };
 }
 
-function sanitizeCommitMessage(generated: {
-  subject: string;
-  body: string;
-  branch?: string | undefined;
-}): {
+// A backstop for models that ignore the preset's lowercase instruction; acronyms and names like GitHub are left alone.
+const CONVENTIONAL_CAPITALIZED_DESCRIPTION =
+  /^([a-z]+(?:\([^)\n]*\))?!?: )([A-Z][a-z]*)(?![A-Za-z0-9])/;
+
+function sanitizeCommitMessage(
+  generated: {
+    subject: string;
+    body: string;
+    branch?: string | undefined;
+  },
+  conventionalCommits: boolean,
+): {
   subject: string;
   body: string;
   branch?: string | undefined;
 } {
   const rawSubject = generated.subject.trim().split(/\r?\n/g)[0]?.trim() ?? "";
-  const subject = rawSubject.replace(/[.]+$/g, "").trim();
+  const trimmedSubject = rawSubject.replace(/[.]+$/g, "").trim();
+  const subject = conventionalCommits
+    ? trimmedSubject.replace(
+        CONVENTIONAL_CAPITALIZED_DESCRIPTION,
+        (_, prefix: string, word: string) => prefix + word.toLowerCase(),
+      )
+    : trimmedSubject;
   const safeSubject = subject.length > 0 ? subject.slice(0, 72).trimEnd() : "Update project files";
   return {
     subject: safeSubject,
@@ -2221,7 +2234,11 @@ export const make = Effect.gen(function* () {
           modelSelection: input.settings.modelSelection,
           projectId: input.settings.projectId,
         })
-        .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
+        .pipe(
+          Effect.map((result) =>
+            sanitizeCommitMessage(result, policy?.kind === "conventional_commits"),
+          ),
+        );
 
       return {
         subject: generated.subject,
