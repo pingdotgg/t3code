@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { fxSubagentOutcome } from "./adapter.ts";
+import { fxSubagentOutcome } from "./subagents.ts";
 
 describe("fx subagent replies", () => {
   it.each(["", "1", "12", "123"])("preserves literal Unicode spelling ending in u%s", (digits) => {

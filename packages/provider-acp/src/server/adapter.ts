@@ -1662,6 +1662,7 @@ interface ActiveAcpSubagent {
   readonly parentProviderThreadId: ProviderThreadId;
   childSessionId: string | null;
   assistantText: string;
+  hasSyntheticResultMessage: boolean;
   readonly assistantMessages: Map<string, string>;
   readonly childItemOrdinals: Map<string, number>;
   nextChildOrdinal: number;
@@ -3081,6 +3082,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           if (text.length === 0 && mode === "append") return;
           const nativeItemId = `${subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id}:message:${messageId ?? "result"}`;
+          // Unidentified native chunks share the fallback result slot.
+          if (messageId == null || messageId === "result") {
+            subagent.hasSyntheticResultMessage = false;
+          }
           const previous = subagent.assistantMessages.get(nativeItemId) ?? "";
           const messageText = mode === "replace" ? text : `${previous}${text}`;
           subagent.assistantMessages.set(nativeItemId, messageText);
@@ -3272,7 +3277,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             existing !== undefined &&
             existing.task.status === update.status &&
             updateIsTerminal &&
-            existing.terminalStatusProjected
+            existing.terminalStatusProjected &&
+            (update.result === null || update.result === existing.task.result)
           ) {
             return;
           }
@@ -3325,7 +3331,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             model: update.model?.trim() || existing?.task.model || null,
             status: taskStatus,
             result: update.result ?? existing?.task.result ?? null,
-            completedAt: acpSubagentStatusIsTerminal(taskStatus) ? now : null,
+            completedAt: acpSubagentStatusIsTerminal(taskStatus)
+              ? (existing?.task.completedAt ?? now)
+              : null,
             updatedAt: now,
           };
           const subagent: ActiveAcpSubagent = existing ?? {
@@ -3338,6 +3346,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             parentProviderThreadId: context.input.providerThread.id,
             childSessionId: null,
             assistantText: "",
+            hasSyntheticResultMessage: false,
             assistantMessages: new Map(),
             childItemOrdinals: new Map(),
             nextChildOrdinal: 101,
@@ -3441,19 +3450,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             );
           }
 
+          const previousResultMessage = subagent.hasSyntheticResultMessage
+            ? subagent.assistantMessages.get(`${nativeTaskId}:message:result`)
+            : undefined;
           if (
             taskStatus !== "running" &&
-            subagent.assistantText.length === 0 &&
-            update.result !== null
+            update.result !== null &&
+            (subagent.assistantText.length === 0 ||
+              (previousResultMessage !== undefined && previousResultMessage !== update.result))
           ) {
-            yield* emitSubagentAssistant(subagent, update.result);
+            yield* emitSubagentAssistant(subagent, update.result, "replace");
+            subagent.hasSyntheticResultMessage = true;
           }
           const result = update.result ?? subagent.task.result ?? (subagent.assistantText || null);
           subagent.task = {
             ...subagent.task,
             status: taskStatus,
             result,
-            completedAt: acpSubagentStatusIsTerminal(taskStatus) ? now : null,
+            completedAt: acpSubagentStatusIsTerminal(taskStatus)
+              ? (subagent.task.completedAt ?? now)
+              : null,
             updatedAt: now,
           };
           const providerThreadId = subagent.task.providerThreadId;
@@ -3560,6 +3576,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // A new execution replaces its result; live ownership transfers keep their progress.
             child.subagent.task = { ...child.subagent.task, result: null };
             child.subagent.assistantText = "";
+            child.subagent.hasSyntheticResultMessage = false;
             child.subagent.assistantMessages.clear();
           }
           child.status = status;
@@ -6308,7 +6325,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           ) {
             if (!acpSubagentStatusIsTerminal(update.status)) return false;
             if (acpSubagentStatusIsTerminal(subagent.task.status)) {
-              if (subagent.terminalStatusProjected || context.finalizedStatus !== "completed") {
+              if (
+                context.finalizedStatus !== "completed" ||
+                (subagent.terminalStatusProjected &&
+                  (update.result === null || update.result === subagent.task.result))
+              ) {
                 return true;
               }
             }
