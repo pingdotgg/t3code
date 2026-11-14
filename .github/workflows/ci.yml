@@ -34,8 +34,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Same as rust-version in Cargo.toml.
-  RUST_TOOLCHAIN: "1.95.0"
+  # Same as `channel` in rust-toolchain.toml; tools/check.sh fails when they differ.
+  RUST_TOOLCHAIN: "1.99.1"
 
 jobs:
   rust:

@@ -1,0 +1,7 @@
+# The toolchain for builds, clippy and rustfmt, the same as the Linux build host. A newer
+# clippy can report new warnings, so this pin moves on purpose, in its own change.
+# `rust-version` in Cargo.toml stays the minimum the code builds with.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

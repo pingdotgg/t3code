@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 conn-contract.workspace = true
@@ -13,7 +14,7 @@ serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
 # Bundled SQLite with JSON1 (built in since 3.38). No statement cache, no extra features.
-rusqlite = { version = "0.37", default-features = false, features = ["bundled"] }
+rusqlite.workspace = true
 
 [features]
 # A scripted provider for the client check (`examples/export_turn.rs`).

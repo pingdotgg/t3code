@@ -44,6 +44,18 @@ client_check() {
     node crates/conn-engine/tools/client-check.mjs "$scratch/export.json"
 }
 
+# CI installs the toolchain by name; it must be the one rust-toolchain.toml pins.
+toolchain_pin() {
+  local pinned ci
+  pinned="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+  ci="$(sed -n 's/^  RUST_TOOLCHAIN: "\(.*\)"$/\1/p' .github/workflows/ci.yml)"
+  if [ -z "$pinned" ] || [ "$pinned" != "$ci" ]; then
+    printf 'rust-toolchain.toml pins %s; .github/workflows/ci.yml installs %s\n' "$pinned" "$ci"
+    return 1
+  fi
+}
+
+run "toolchain pin" toolchain_pin
 run "cargo fmt --check" cargo fmt --check
 run "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings
 run "cargo test" cargo test --workspace

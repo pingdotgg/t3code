@@ -33,6 +33,16 @@ tokio = { version = "1", default-features = false, features = [
   "time",
   "macros",
 ] }
+# Third-party crates that more than one crate uses: one version for the workspace.
+# HMAC-SHA256 for signed URLs and tokens, diff hashes; shares `digest` with tungstenite's sha1.
+sha2 = { version = "0.10", default-features = false }
+# Tokens, keys and random ids from the OS random source; already in the tree through tungstenite.
+getrandom = "0.3"
+# Process groups, signals and terminal calls through safe wrappers; no `unsafe` in our code.
+# Each crate adds the features it needs.
+rustix = { version = "1", default-features = false, features = ["std"] }
+# Bundled SQLite with JSON1 (built in since 3.38). No statement cache, no extra features.
+rusqlite = { version = "0.37", default-features = false, features = ["bundled"] }
 axum = { version = "0.8", default-features = false, features = [
   "http1",
   "json",

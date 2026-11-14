@@ -324,7 +324,8 @@ mod tests {
         assert!(table.get("server.probe").is_some());
         // The T3 server checks a scope inside these handlers, outside the table (the bump
         // report lists new ones). Serving one means applying that rule in the handler.
-        for (rule, tag) in [("requiredScopeForDeviceList", "device.list")] {
+        const IN_HANDLER: &[(&str, &str)] = &[("requiredScopeForDeviceList", "device.list")];
+        for &(rule, tag) in IN_HANDLER {
             if generated::IN_HANDLER_RULES.contains(&rule) {
                 assert!(
                     table.get(tag).is_none(),
