@@ -145,6 +145,45 @@ describe("workspace provider snapshots", () => {
     expect(resolveProvidersForCwd(providers, "/workspace/project-a")[0]).toBe(provider);
     expect(resolveProvidersForCwd(providers, "/workspace/project-b")).toBe(providers);
   });
+
+  it("applies a workspace agent descriptor to that cwd's models", () => {
+    const agentDescriptor = {
+      id: "agent",
+      label: "Agent",
+      type: "select" as const,
+      options: [
+        { id: "build", label: "Build", isDefault: true },
+        { id: "reviewer", label: "Reviewer" },
+      ],
+      currentValue: "build",
+    };
+    const projectModel = {
+      slug: "uni/medium-gpt",
+      name: "Medium GPT",
+      isCustom: false,
+      capabilities: {
+        optionDescriptors: [
+          { id: "variant", label: "Reasoning", type: "select" as const, options: [] },
+        ],
+      },
+    } satisfies ServerProvider["models"][number];
+    const withDescriptor = {
+      ...provider,
+      workspaceSnapshots: provider.workspaceSnapshots.map((snapshot) => ({
+        ...snapshot,
+        models: [projectModel],
+        optionDescriptors: [agentDescriptor],
+      })),
+    } satisfies ServerProvider;
+
+    const providers: ReadonlyArray<ServerProvider> = [provider, withDescriptor];
+    const resolved = resolveProvidersForCwd(providers, "/workspace/project-a");
+    expect(resolved[0]).toBe(provider);
+    expect(resolved[1]?.models[0]?.capabilities?.optionDescriptors).toEqual([
+      ...(projectModel.capabilities?.optionDescriptors ?? []),
+      agentDescriptor,
+    ]);
+  });
 });
 
 describe("provider workspace snapshot refresh atom", () => {

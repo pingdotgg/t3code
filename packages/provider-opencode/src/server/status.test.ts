@@ -1119,6 +1119,7 @@ const builtinSkills = [
   { id: "report", name: "Report", path: "/builtin/report.md" },
 ];
 const scanned: OpenCode2Workspace = {
+  agents: [],
   commands: [...builtinCommands, { name: "hello", description: "Say hello to the workspace" }],
   skills: [
     ...builtinSkills,
@@ -1135,7 +1136,7 @@ it.effect(
   "reads a loaded OpenCode 2 directory listing no commands again once its scan has ended",
   () =>
     Effect.gen(function* () {
-      const reads: Array<OpenCode2Workspace> = [{ commands: [], skills: [] }, scanned];
+      const reads: Array<OpenCode2Workspace> = [{ agents: [], commands: [], skills: [] }, scanned];
       const scanEnded = yield* Deferred.make<void>();
       const load = yield* loadOpenCode2Workspace(
         Effect.sync(() => reads.shift()!),
@@ -1153,7 +1154,7 @@ it.effect("waits for the scan of a cold OpenCode 2 directory that first lists on
   Effect.gen(function* () {
     const calls: Array<string> = [];
     const reads: Array<OpenCode2Workspace> = [
-      { commands: builtinCommands, skills: builtinSkills },
+      { agents: [], commands: builtinCommands, skills: builtinSkills },
       scanned,
     ];
     const workspace = yield* loadOpenCode2Workspace(

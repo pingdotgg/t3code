@@ -133,12 +133,31 @@ export function resolveProviderSlashCommandsForCwd(
   return resolveProviderWorkspaceSnapshot(provider, cwd)?.slashCommands ?? provider.slashCommands;
 }
 
-/** A project's own provider config can add models that only its workspace snapshot lists. */
+/**
+ * A project's own provider config can add models that only its workspace
+ * snapshot lists, and its agents are published as option descriptors.
+ */
 function resolveProviderModelsForCwd(
   provider: ServerProvider,
   cwd: string | null | undefined,
 ): ServerProvider["models"] {
-  return resolveProviderWorkspaceSnapshot(provider, cwd)?.models ?? provider.models;
+  const snapshot = resolveProviderWorkspaceSnapshot(provider, cwd);
+  const models = snapshot?.models ?? provider.models;
+  const descriptors = snapshot?.optionDescriptors;
+  if (descriptors === undefined) return models;
+  const overriddenIds = new Set(descriptors.map((descriptor) => descriptor.id));
+  return models.map((model) => ({
+    ...model,
+    capabilities: {
+      ...model.capabilities,
+      optionDescriptors: [
+        ...(model.capabilities?.optionDescriptors ?? []).filter(
+          (descriptor) => !overriddenIds.has(descriptor.id),
+        ),
+        ...descriptors,
+      ],
+    },
+  }));
 }
 
 /** Providers keep their identity unless the cwd has its own catalog. */

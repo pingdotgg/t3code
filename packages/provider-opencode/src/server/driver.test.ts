@@ -267,6 +267,62 @@ const lazyMiseShim = {
 } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"];
 
 it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
+  it.effect("lists each OpenCode 2 workspace's own agents", () =>
+    Effect.gen(function* () {
+      serverStarts.length = 0;
+      const requested: Array<string> = [];
+      const server = HttpClient.make((request, url) => {
+        const directory = url.searchParams.get("location[directory]");
+        const responses = {
+          ...OPENCODE_2_RESPONSES,
+          ...OPENCODE_2_WORKSPACE_RESPONSES,
+          "/api/agent": {
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              location: { directory },
+              data: [
+                { id: "build", mode: "primary", hidden: false },
+                {
+                  id: directory === "/work" ? "reviewer" : "writer",
+                  mode: "all",
+                  hidden: false,
+                },
+                { id: "internal", mode: "primary", hidden: true },
+              ].map((agent) => ({
+                ...agent,
+                name: agent.id,
+                request: { settings: {}, headers: {}, body: {} },
+                permissions: [],
+              })),
+            }),
+          },
+        };
+        return replayOpenCodeServer(responses, "secret", requested).execute(request);
+      });
+      const instance = yield* create(
+        { serverUrl: "http://127.0.0.1:4096", serverPassword: "secret" },
+        server,
+      );
+
+      const workAgent = (yield* instance.snapshotForCwd!("/work")).optionDescriptors?.find(
+        (option) => option.id === "agent",
+      );
+      assert.deepStrictEqual(
+        workAgent?.type === "select" ? workAgent.options.map((option) => option.id) : undefined,
+        ["build", "reviewer"],
+      );
+      const otherAgent = (yield* instance.snapshotForCwd!("/other")).optionDescriptors?.find(
+        (option) => option.id === "agent",
+      );
+      assert.deepStrictEqual(
+        otherAgent?.type === "select" ? otherAgent.options.map((option) => option.id) : undefined,
+        ["build", "writer"],
+      );
+      assert.deepStrictEqual(serverStarts, []);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("never starts a 1.x server for an OpenCode 2 instance", () =>
     Effect.gen(function* () {
       serverStarts.length = 0;
@@ -537,6 +593,50 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.effect("keeps workspace skills and commands when the agent endpoint stalls", () =>
+    Effect.gen(function* () {
+      const answers: Record<string, string> = {
+        "/api/info": OPENCODE_2_RESPONSES["/api/info"].body,
+        "/api/debug/location": "[]",
+        "/api/model": '{"location":{"directory":"/work"},"data":[]}',
+        "/api/provider": '{"location":{"directory":"/work"},"data":[]}',
+        "/api/command": OPENCODE_2_WORKSPACE_RESPONSES["/api/command"].body,
+        "/api/skill": OPENCODE_2_WORKSPACE_RESPONSES["/api/skill"].body,
+      };
+      const http = HttpClient.make((request) => {
+        const path = new URL(request.url).pathname;
+        if (path === "/api/agent") return Effect.never;
+        if (path === "/api/event")
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(new ReadableStream(), {
+                headers: { "content-type": "text/event-stream" },
+              }),
+            ),
+          );
+        const body = answers[path];
+        return body === undefined
+          ? Effect.die(`Unexpected request: ${path}`)
+          : Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(JSON.parse(body))));
+      });
+      const instance = yield* create({ serverUrl: "http://127.0.0.1:4096" }, http);
+
+      const snapshot = yield* instance.snapshotForCwd!("/work").pipe(Effect.forkChild);
+      yield* TestClock.adjust("30 seconds");
+      const { skills, slashCommands, optionDescriptors } = yield* Fiber.join(snapshot);
+      assert.include(
+        skills.map((skill) => skill.name),
+        "plum",
+      );
+      assert.include(
+        slashCommands.map((command) => command.name),
+        "review",
+      );
+      assert.isUndefined(optionDescriptors?.find((option) => option.id === "agent"));
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect("caches a cold OpenCode 2 directory's skills only after its scan ends", () =>
     Effect.gen(function* () {
       // OpenCode 2.2.7: touching a location lists it as loaded with built-in commands and skills
@@ -585,6 +685,22 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
               Effect.flatMap((done) =>
                 json(done ? OPENCODE_2_WORKSPACE_RESPONSES["/api/skill"].body : builtinSkills),
               ),
+            );
+          case "/api/agent":
+            return json(
+              JSON.stringify({
+                location: { directory: "/work" },
+                data: [
+                  {
+                    id: "build",
+                    name: "build",
+                    mode: "primary",
+                    hidden: false,
+                    request: { settings: {}, headers: {}, body: {} },
+                    permissions: [],
+                  },
+                ],
+              }),
             );
           default:
             return Effect.die(`Unexpected request: ${path}`);
@@ -1168,6 +1284,7 @@ const openCode1Provider = (id: string, models: ReadonlyArray<string>) => ({
 });
 const openCode1Project = "/work/project-with-config";
 const openCode1UnreadableProject = "/work/unreadable-project";
+const openCode1StalledAgents = "/work/stalled-agents";
 const openCode1Providers = (directory: string) => {
   const all = [
     openCode1Provider("opencode", ["big-pickle"]),
@@ -1191,7 +1308,14 @@ const openCode1Runtime = {
           ? Promise.reject(new Error("provider list failed"))
           : Promise.resolve({ data: openCode1Providers(directory) }),
     },
-    app: { agents: () => Promise.resolve({ data: [] }) },
+    app: {
+      agents: (_input: unknown, options?: { readonly signal?: AbortSignal }) =>
+        directory === openCode1StalledAgents
+          ? new Promise((_resolve, reject) => {
+              options?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+            })
+          : Promise.resolve({ data: [] }),
+    },
     command: { list: () => Promise.resolve({ data: [] }) },
   }),
   loadOpenCodeInventory: () =>
@@ -1228,6 +1352,31 @@ it.layer(Layer.mergeAll(layer, Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, op
         assert.strictEqual(unreadable.workspaceModels, undefined);
         assert.strictEqual(unreadable.workspaceModelsPending, true);
       }),
+    );
+
+    it.effect("keeps commands and skills when OpenCode 1 agent discovery stalls", () =>
+      Effect.gen(function* () {
+        const instance = yield* create({}, noHttp);
+        const ready = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.status === "ready"),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Fiber.join(ready);
+
+        const snapshotFiber = yield* instance.snapshotForCwd!(openCode1StalledAgents).pipe(
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("10 seconds");
+        const snapshot = yield* Fiber.join(snapshotFiber);
+        assert.deepStrictEqual(snapshot.skills, []);
+        assert.include(
+          snapshot.slashCommands.map((command) => command.name),
+          "compact",
+        );
+        assert.isUndefined(snapshot.optionDescriptors);
+      }).pipe(Effect.scoped),
     );
   },
 );
