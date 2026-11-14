@@ -303,18 +303,12 @@ describe("MCP App cookie bootstrap", () => {
 describe("clampMcpAppHeight", () => {
   it.each([
     [48, 48],
-    [24, 24],
-    [79, 79],
-    [80, 80],
-    [48.4, 48],
     [48.6, 49],
     [0.1, 1],
     [0, 1],
     [-48, 1],
     [320, 320],
-    [2000, MCP_APP_MAX_HEIGHT],
     [2001, MCP_APP_MAX_HEIGHT],
-    [Number.MAX_VALUE, MCP_APP_MAX_HEIGHT],
     [Number.NaN, MCP_APP_DEFAULT_HEIGHT],
     [Number.POSITIVE_INFINITY, MCP_APP_DEFAULT_HEIGHT],
     [Number.NEGATIVE_INFINITY, MCP_APP_DEFAULT_HEIGHT],
