@@ -126,7 +126,7 @@ export interface ExecuteGitProgress {
 export interface CreateWorktreeProgress {
   /**
    * Runs uninterruptibly once the worktree exists; from then on the caller owns its cleanup.
-   * Cancelled before the claim, createWorktree removes the worktree and new branch it made.
+   * For new-branch calls on Git supporting add --reason, cancellation before the claim removes what it made.
    */
   readonly onWorktreeClaimed?: (path: string) => Effect.Effect<void, never>;
   readonly onCheckoutProgress?: (input: {

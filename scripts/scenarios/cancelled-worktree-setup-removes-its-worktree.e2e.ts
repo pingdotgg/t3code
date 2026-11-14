@@ -1,3 +1,4 @@
+import * as NodeNet from "node:net";
 import { expect } from "e2e";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -18,16 +19,36 @@ test(
     const project = await t3.project("demo");
     const git = (...args: ReadonlyArray<string>) =>
       runPromise(run("git", args, { cwd: project })).then(({ stdout }) => stdout);
-    // The hook reports a percent no real checkout of one file shows, then holds the setup open.
+    const connected = Promise.withResolvers<void>();
+    const sockets = new Set<NodeNet.Socket>();
+    const server = NodeNet.createServer((socket) => {
+      sockets.add(socket);
+      connected.resolve();
+    });
+    using _gateServer = {
+      [Symbol.dispose]() {
+        for (const socket of sockets) socket.destroy();
+        server.close();
+      },
+    };
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Missing hook gate port");
     await runPromise(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const hook = `${project}/.git/hooks/post-checkout`;
-        const fifo = `${project}/hook-gate`;
-        yield* run("mkfifo", [fifo]);
+        const gate = `${project}/hook-gate.cjs`;
+        yield* fs.writeFileString(
+          gate,
+          `const s = require('node:net').connect(${address.port}, '127.0.0.1'); s.on('connect', () => process.stderr.write('Updating files:  50% (1/1000)\\n')); s.resume();`,
+        );
         yield* fs.writeFileString(
           hook,
-          `#!/bin/sh\nprintf 'Updating files:  50%% (1/1000)\\n' >&2\nread ignored < '${fifo}'\n`,
+          `#!/bin/sh\nexec "${process.execPath.replaceAll("\\", "/")}" "${gate.replaceAll("\\", "/")}"\n`,
         );
         yield* fs.chmod(hook, 0o755);
       }),
@@ -55,6 +76,7 @@ test(
       ).pipe(Effect.flatMap(({ stdout }) => decodeLaunched(stdout))),
     );
 
+    await connected.promise;
     await t3.open(started);
     await expect(screen.getByText("50%")).toBeVisible();
     await screen.getByRole("button", "Cancel").tap();
