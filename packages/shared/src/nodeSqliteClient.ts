@@ -244,6 +244,7 @@ parentPort.on("message", (request) => {
   }
   const { id, sql, params, cached, values, raw, safeIntegers, received } = request;
   let operation = "open";
+  let iterator;
   try {
     if (db === undefined) throw new Error("database connection is unavailable");
     operation = "prepare";
@@ -255,7 +256,8 @@ parentPort.on("message", (request) => {
       let rows = [];
       let bytes = 0;
       let pendingBatch = false;
-      for (const row of statement.iterate(...params)) {
+      iterator = statement.iterate(...params);
+      for (const row of iterator) {
         let rowBytes = 0;
         for (const key in row) {
           const value = row[key];
@@ -281,6 +283,10 @@ parentPort.on("message", (request) => {
       parentPort.postMessage({ id, rows: raw ? result : [] });
     }
   } catch (error) {
+    // A step that throws leaves its statement active; an active write blocks every later COMMIT.
+    try {
+      iterator?.return();
+    } catch {}
     // A failed iterator can report its previous SQLite error when the statement is reused.
     statements.delete(sql);
     parentPort.postMessage({ id, error: { operation, ...describe(error) } });
