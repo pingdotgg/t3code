@@ -357,6 +357,7 @@ const cleanupFixture = (
     let sessionLiveChecks = 0;
     let onLiveCheck: Effect.Effect<void> = Effect.void;
     let outboxStatus: string | null = null;
+    let scheduledThreadIds: string[] = [];
     let fullStatusCalls = 0;
     let gitInspections = 0;
     let snapshotReads = 0;
@@ -467,7 +468,9 @@ const cleanupFixture = (
                       ...threads.flatMap((thread) => thread.worktreePath ?? []),
                       ...storedWorktreePaths,
                     ].map((worktreePath) => ({ worktreePath }))
-                  : [],
+                  : strings.join("").includes("scheduled_tasks")
+                    ? scheduledThreadIds.map((threadId) => ({ threadId }))
+                    : [],
         )) as unknown as SqlClient.SqlClient),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
@@ -532,6 +535,9 @@ const cleanupFixture = (
       },
       setOutboxStatus: (status: string | null) => {
         outboxStatus = status;
+      },
+      setScheduledThreadIds: (next: string[]) => {
+        scheduledThreadIds = next;
       },
       setDeletedThreads: (next: OrchestrationV2ThreadShell[]) => {
         deletedThreads = next;
@@ -610,7 +616,7 @@ const runCleanupTest = <A, E>(
     | Path.Path
     | Scope.Scope
   >,
-) => effect.pipe(Effect.provide(cleanupTestLayer), Effect.scoped);
+) => effect.pipe(Effect.provide(cleanupTestLayer));
 
 it.live.each(["repository", "uppercase", "bare"] as const)(
   "keeps a worktree holding an ignored nested %s",
@@ -1005,7 +1011,7 @@ describe("subagent worktree ownership", () => {
                   ? "Thread is running or has pending work"
                   : "Not settled",
       });
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect.each([
@@ -1210,7 +1216,7 @@ describe("subagent worktree ownership", () => {
                       ? "Settled moments ago"
                       : "Not settled",
       });
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect("keeps a checkout two top-level threads store through a symlinked parent", () =>
@@ -1232,7 +1238,7 @@ describe("subagent worktree ownership", () => {
         expect.objectContaining({ outcome: "kept", reason: "Shared by 2 threads" }),
       ]);
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect("keeps a checkout two top-level threads store in different case on Windows", () =>
@@ -1256,7 +1262,7 @@ describe("subagent worktree ownership", () => {
         expect.objectContaining({ outcome: "kept", reason: "Shared by 2 threads" }),
       ]);
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect.each([
@@ -1361,7 +1367,7 @@ describe("deleted thread worktrees", () => {
           reason: "Thread was deleted",
         });
         expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-      }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+      }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect("applies the remaining subagent's rules when deletion cleanup is off", () =>
@@ -1383,7 +1389,7 @@ describe("deleted thread worktrees", () => {
         reason: "Inactive for 30 days",
       });
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   // Releases one stopped-session event after the startup sweep and returns the snapshot reads it caused.
@@ -1442,7 +1448,7 @@ describe("deleted thread worktrees", () => {
       const fixture = yield* cleanupFixture();
       const reads = yield* stopSessionAfterStartupSweep(fixture, ThreadId.make("thread-1"));
       expect(reads, "a live thread's stopped session re-read every thread").toBe(0);
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect("removes a deleted thread's worktree once its session stops", () =>
@@ -1464,7 +1470,7 @@ describe("deleted thread worktrees", () => {
       );
       expect(reads).toBeGreaterThan(0);
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect("removes a deleted thread's worktree once a live thread's session in it stops", () =>
@@ -1494,7 +1500,7 @@ describe("deleted thread worktrees", () => {
       );
       expect(reads).toBeGreaterThan(0);
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect(
@@ -1540,7 +1546,7 @@ describe("deleted thread worktrees", () => {
         );
         expect(reads).toBeGreaterThan(0);
         expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-      }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+      }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect(
@@ -1573,7 +1579,7 @@ describe("deleted thread worktrees", () => {
         );
         expect(reads).toBeGreaterThan(0);
         expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-      }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+      }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect("does not sweep for a kept deleted worktree when a session elsewhere stops", () =>
@@ -1595,7 +1601,7 @@ describe("deleted thread worktrees", () => {
       );
       expect(reads).toBe(0);
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect(
@@ -1625,7 +1631,7 @@ describe("deleted thread worktrees", () => {
           fixture.repo,
         );
         expect(reads).toBe(0);
-      }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+      }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect(
@@ -1699,7 +1705,7 @@ describe("deleted thread worktrees", () => {
         yield* Deferred.await(delivered);
         yield* fixture.service.drain;
         expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-      }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+      }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect("waits out the settle grace of a subagent that just settled", () =>
@@ -1720,7 +1726,7 @@ describe("deleted thread worktrees", () => {
         reason: "Settled moments ago",
       });
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 });
 
@@ -2329,6 +2335,114 @@ describe("storage cleanup reports and local file policies", () => {
           ],
         });
         expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
+      }),
+    ),
+  );
+  it.effect("removes an idle No project thread's scratch folder past the retention", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* cleanupFixture();
+        const scratchRoot = `${fixture.config.baseDir}/scratch`;
+        const folder = `${scratchRoot}/quiet-otter`;
+        yield* fixture.fs.makeDirectory(folder, { recursive: true });
+        yield* fixture.fs.writeFileString(`${folder}/notes.md`, "scratch\n");
+        fixture.setProjectRoots([scratchRoot]);
+        fixture.setStoredWorktreePaths([]);
+        // Only this rule lets cleanup delete untracked files, which is all a scratch folder has.
+        fixture.setPolicy("tracked-changes");
+        fixture.setThreads([
+          shell({ worktreePath: folder, settledAt: at(-20 * DAY_MS), status: "completed" }),
+        ]);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toEqual([
+          expect.objectContaining({ path: folder, outcome: "removed" }),
+        ]);
+        expect(yield* fixture.fs.exists(folder)).toBe(false);
+      }),
+    ),
+  );
+  it.effect.each([
+    {
+      name: "a Git repository in a subfolder",
+      policy: "tracked-changes",
+      repository: "clone/.git",
+      reason: "Contains a nested Git repository",
+    },
+    {
+      name: "a Git repository of its own",
+      policy: "tracked-changes",
+      repository: ".git",
+      reason: "Contains a nested Git repository",
+    },
+    { name: "files under the default keep rule", reason: "Has local files (notes.md)" },
+    {
+      name: "a scheduled task",
+      policy: "tracked-changes",
+      scheduled: true,
+      reason: "Thread has a scheduled task",
+    },
+  ] as const)(
+    "keeps an idle No project thread's scratch folder with $name",
+    ({
+      policy,
+      repository,
+      scheduled,
+      reason,
+    }: {
+      readonly policy?: WorktreeKeepWhen;
+      readonly repository?: string;
+      readonly scheduled?: boolean;
+      readonly reason: string;
+    }) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(NOW_MS);
+          const fixture = yield* cleanupFixture();
+          const scratchRoot = `${fixture.config.baseDir}/scratch`;
+          const folder = `${scratchRoot}/quiet-otter`;
+          yield* fixture.fs.makeDirectory(
+            repository === undefined ? folder : `${folder}/${repository}`,
+            { recursive: true },
+          );
+          yield* fixture.fs.writeFileString(`${folder}/notes.md`, "scratch\n");
+          // No thread owns this one, so it is listed and never removed.
+          const leftover = `${scratchRoot}/leftover`;
+          yield* fixture.fs.makeDirectory(leftover);
+          yield* fixture.fs.utimes(leftover, 1, 1);
+          fixture.setProjectRoots([scratchRoot]);
+          fixture.setStoredWorktreePaths([]);
+          if (policy !== undefined) fixture.setPolicy(policy);
+          if (scheduled) fixture.setScheduledThreadIds(["thread-1"]);
+          fixture.setThreads([
+            shell({ worktreePath: folder, settledAt: at(-20 * DAY_MS), status: "completed" }),
+          ]);
+          const report = yield* fixture.service.runNow;
+          expect(
+            report.entries.map(({ path, outcome, reason }) => ({ path, outcome, reason })),
+          ).toEqual([
+            { path: leftover, outcome: "kept", reason: "No thread uses this folder" },
+            { path: folder, outcome: "kept", reason },
+          ]);
+          expect(yield* fixture.fs.exists(`${folder}/notes.md`)).toBe(true);
+        }),
+      ),
+  );
+  it.effect("keeps a thread's worktree folder that lost its .git link", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([
+          shell({ branch: "feature", worktreePath: fixture.worktree, archivedAt: at(-DAY_MS) }),
+        ]);
+        yield* fixture.fs.remove(`${fixture.worktree}/.git`);
+        yield* fixture.fs.makeDirectory(`${fixture.worktree}/node_modules`);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toEqual([
+          expect.objectContaining({ path: fixture.worktree, outcome: "kept" }),
+        ]);
+        expect(yield* fixture.fs.exists(`${fixture.worktree}/node_modules`)).toBe(true);
       }),
     ),
   );

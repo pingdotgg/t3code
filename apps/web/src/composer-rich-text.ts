@@ -23,9 +23,52 @@ function sameMarks(left: readonly RichTextMark[], right: readonly RichTextMark[]
   return left.length === right.length && left.every((mark, index) => mark === right[index]);
 }
 
+// Brackets, quotes, commas, and Markdown delimiters end a URL or path token; a lone `~` does not.
+const PATH_TOKEN = /(?:[\p{L}\p{N}_/.:@%+=&?#-]|(?<!~)~(?!~))+/gu;
+const FILE_EXTENSION = /^\.[a-z][a-z0-9]*(?::\d+){0,2}$/i;
+// `_yes_/_no_`: each side of a slash is its own emphasis span, so the word is not a path.
+const EMPHASIS_ALTERNATIVES = /^_[^/]+_(?:\/_[^/]+_)+$/;
+
+/**
+ * Starts of underscore runs that belong to a URL, path, or filename, not to emphasis.
+ * A run ending the token stays a delimiter so emphasis wrapped around the token still closes.
+ */
+function literalUnderscoreRuns(text: string): Set<number> {
+  const literal = new Set<number>();
+  if (!text.includes("_")) return literal;
+  for (const match of text.matchAll(PATH_TOKEN)) {
+    const token = match[0];
+    let bodyEnd = token.length;
+    while (bodyEnd > 0 && ".:?".includes(token[bodyEnd - 1]!)) bodyEnd -= 1;
+    if (EMPHASIS_ALTERNATIVES.test(token.slice(0, bodyEnd))) continue;
+    while (bodyEnd > 0 && token[bodyEnd - 1] === "_") bodyEnd -= 1;
+    const body = token.slice(0, bodyEnd);
+    // A slash alone is prose (`and/_or_`); a path also has a dot, a scheme or port, or a root.
+    const isPath = body.includes("/")
+      ? /^~?\/|[.:]/.test(body)
+      : FILE_EXTENSION.test(body.slice(body.lastIndexOf(".")));
+    if (!isPath) continue;
+    let closesInside = false;
+    let start = body.indexOf("_");
+    while (start !== -1) {
+      let end = start;
+      while (body[end] === "_") end += 1;
+      if (start > 0) {
+        literal.add(match.index + start);
+        closesInside ||= !/\w/.test(body[end]!);
+      }
+      start = body.indexOf("_", end);
+    }
+    // A leading run could only pair with a run inside the name, as in `__init__.py`.
+    if (closesInside && body[0] === "_") literal.add(match.index);
+  }
+  return literal;
+}
+
 // Pieces keep source offsets, so callers can map parsed text back onto the
 // characters it came from; parsing only drops delimiters.
 function parseInlineMarkdownPieces(text: string): SourcePiece[] {
+  const literalRuns = literalUnderscoreRuns(text);
   const root: SourcePiece[] = [];
   const stack: { delimiter: string; mark: RichTextMark; start: number; pieces: SourcePiece[] }[] =
     [];
@@ -68,6 +111,11 @@ function parseInlineMarkdownPieces(text: string): SourcePiece[] {
     }
     let end = index;
     while (text[end] === char) end += 1;
+    if (literalRuns.has(index)) {
+      push(index, end);
+      index = end;
+      continue;
+    }
     const before = text[index - 1] ?? "";
     const after = text[end] ?? "";
     const canClose = before !== "" && !/\s/.test(before) && (char !== "_" || !/\w/.test(after));
