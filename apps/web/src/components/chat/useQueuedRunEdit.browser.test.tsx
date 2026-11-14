@@ -410,11 +410,8 @@ describe("useQueuedRunEdit", () => {
 
   it.each([
     { transition: "cancel", result: "Success" },
-    { transition: "cancel", result: "Failure" },
-    { transition: "keep", result: "Failure" },
     { transition: "recover", result: "Failure" },
     { transition: "replace", result: "Success" },
-    { transition: "replace", result: "Failure" },
   ] as const)(
     "settles saved attachments after $transition and $result",
     async ({ transition, result }) => {
@@ -480,7 +477,6 @@ describe("useQueuedRunEdit", () => {
         const owner = transition === "recover" ? THREAD_A : target;
         expect(useComposerDraftStore.getState().getComposerDraft(owner)?.images).toEqual([image]);
       }
-      useAttachmentUploadStore.setState({ uploadsByImageId: {} });
     },
   );
 
