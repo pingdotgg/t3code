@@ -1478,22 +1478,26 @@ html[data-theme-id] [data-chat-header] [data-toolbar-control] {
   color: var(--contrast-toolbar-control-foreground);
 }
 
-/* The panel layout toggles stay ghost: they render both inside the header and
-   in the titlebar strip, so filling them would make them change appearance as
-   the panel opens. They only take the themed foreground; hover and pressed
-   keep the base ghost accent. The tooltip trigger's data-slot wins over the
-   toggle's when the trigger renders the toggle, so match both. */
+/* The panel layout controls stay ghost: some render inside the header and
+   others in the titlebar strip, so filling them would make them disagree. They
+   only take the themed foreground; hover and pressed keep the base ghost
+   accent. The tooltip trigger's data-slot wins over the control's when the
+   trigger renders it, so match both. */
 html[data-theme-id] [data-panel-layout-controls] [data-slot="toggle"],
+html[data-theme-id] [data-panel-layout-controls] [data-slot="button"],
 html[data-theme-id] [data-panel-layout-controls] [data-slot="tooltip-trigger"],
 html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="toggle"],
+html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="button"],
 html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="tooltip-trigger"] {
   --control-icon-color: var(--contrast-toolbar-foreground);
   color: var(--contrast-toolbar-foreground);
 }
 
 html[data-theme-id] [data-panel-layout-controls] [data-slot="toggle"]:disabled,
+html[data-theme-id] [data-panel-layout-controls] [data-slot="button"]:disabled,
 html[data-theme-id] [data-panel-layout-controls] [data-slot="tooltip-trigger"]:disabled,
 html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="toggle"]:disabled,
+html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="button"]:disabled,
 html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="tooltip-trigger"]:disabled {
   --control-icon-color: color-mix(
     in oklab,

@@ -1,5 +1,7 @@
 import {
+  PanelBottomCloseIcon,
   PanelBottomIcon,
+  PanelRightCloseIcon,
   PanelRightIcon,
   SquareMenuIcon,
   Maximize2Icon,
@@ -10,6 +12,7 @@ import { memo, type ReactNode } from "react";
 import { cn } from "~/lib/utils";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
+import { Button } from "../ui/button";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
 import { useMobileSidebarSheetMounted } from "../ui/sidebar";
 import { Toggle } from "../ui/toggle";
@@ -91,17 +94,21 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       {showTerminalControl ? (
         <Tooltip>
           <TooltipTrigger render={<span className="flex shrink-0" />}>
-            <Toggle
-              className="shrink-0 [-webkit-app-region:no-drag]"
-              pressed={terminalOpen}
-              onPressedChange={onToggleTerminal}
+            <Button
+              className="[-webkit-app-region:no-drag]"
+              aria-pressed={terminalOpen}
+              onClick={onToggleTerminal}
               aria-label="Toggle terminal drawer"
               variant="ghost"
-              size="sm"
+              size="icon-sm"
               disabled={!terminalAvailable}
             >
-              <PanelBottomIcon className="size-4" />
-            </Toggle>
+              {terminalOpen ? (
+                <PanelBottomCloseIcon className="size-4" />
+              ) : (
+                <PanelBottomIcon className="size-4" />
+              )}
+            </Button>
           </TooltipTrigger>
           <TooltipPopup side="bottom">
             {terminalAvailable
@@ -113,18 +120,22 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       {showRightPanelControl ? (
         <Tooltip>
           <TooltipTrigger render={<span className="flex shrink-0" />}>
-            <Toggle
-              className="shrink-0 [-webkit-app-region:no-drag]"
-              pressed={rightPanelOpen}
-              onPressedChange={onToggleRightPanel}
+            <Button
+              className="[-webkit-app-region:no-drag]"
+              aria-pressed={rightPanelOpen}
+              onClick={onToggleRightPanel}
               aria-label="Toggle right panel"
               data-right-panel-toggle
               variant="ghost"
-              size="sm"
+              size="icon-sm"
               disabled={!rightPanelAvailable}
             >
-              <PanelRightIcon className="size-4" />
-            </Toggle>
+              {rightPanelOpen ? (
+                <PanelRightCloseIcon className="size-4" />
+              ) : (
+                <PanelRightIcon className="size-4" />
+              )}
+            </Button>
           </TooltipTrigger>
           <TooltipPopup side="bottom">
             {rightPanelAvailable
