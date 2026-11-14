@@ -19,7 +19,12 @@ with its state and what it needs from outside the server.
   `_deleted.json`. Each call reads the project's folder under the project's lock on a
   blocking thread and writes what changed (atomic writes). Nothing stays in memory between
   calls but one lock and one change counter per project used. At most 1,000 annotations per
-  project (the T3 server has no limit); a 1,001st is refused as invalid.
+  project (the T3 server has no limit); a 1,001st is refused as invalid. A screenshot is
+  decoded on a blocking thread and may be at most 8 MiB decoded (the T3 server has no cap): a
+  larger one is refused as invalid ("The screenshot is larger than 8 MB.") before it is
+  decoded. `_deleted.json` keeps the newest 10,000 removed ids per project, oldest dropped
+  first (the T3 server keeps all); a longer file the T3 server wrote loads whole, and the next
+  removal here trims it.
 - **Rules from `AnnotationStore.ts`:** numbers per project are never reused; an edit keeps the
   number, status and times; a removed id can never come back; claim by id only from `todo`,
   otherwise the oldest todo that is not a question; complete and release are idempotent from

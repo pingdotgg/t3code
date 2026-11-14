@@ -537,3 +537,88 @@ async fn the_engine_refuses_dot_project_ids() {
         assert_eq!(error["cause"]["_tag"], "ProjectInvalidError", "{error}");
     }
 }
+
+/// Finding 10: a screenshot over `MAX_SCREENSHOT_BYTES` is refused with a clear error before
+/// it is decoded; one at the cap is stored.
+#[tokio::test(flavor = "current_thread")]
+async fn a_screenshot_over_the_cap_is_refused() {
+    let (store, _dir) = store("screenshot-cap");
+    let encode = |len: usize| {
+        format!(
+            "data:image/png;base64,{}",
+            conn_support::base64::encode(&vec![7u8; len])
+        )
+    };
+    let with = |id: &str, url: String| -> AnnotationCapture {
+        from_json(json!({"id": id, "comment": "c", "screenshot": url})).expect("capture")
+    };
+    let error = store
+        .create(
+            PROJECT,
+            with("big", encode(super::MAX_SCREENSHOT_BYTES + 1)),
+        )
+        .await
+        .expect_err("over the cap");
+    assert_eq!(
+        error,
+        AnnotationError::Invalid {
+            reason: "The screenshot is larger than 8 MB.".into()
+        }
+    );
+    let stored = store
+        .create(PROJECT, with("cap", encode(super::MAX_SCREENSHOT_BYTES)))
+        .await
+        .expect("at the cap");
+    assert_eq!(stored["hasScreenshot"], true);
+    let error = store
+        .create(PROJECT, with("bad", "data:image/gif;base64,AAAA".into()))
+        .await
+        .expect_err("not an image type");
+    assert_eq!(
+        error,
+        AnnotationError::Invalid {
+            reason: "The screenshot must be a base64 PNG, JPEG or WebP data URL.".into()
+        }
+    );
+}
+
+/// Finding 10: `_deleted.json` keeps at most `MAX_TOMBSTONES` ids, the oldest go first; a
+/// longer file the T3 server wrote still loads, and every id in it stays refused until a
+/// removal here trims it.
+#[tokio::test(flavor = "current_thread")]
+async fn removed_ids_are_bounded_and_a_longer_t3_file_loads() {
+    let (store, dir) = store("tombstones");
+    let folder = dir.0.join("annotations").join("project_annotations");
+    std::fs::create_dir_all(&folder).expect("dir");
+    let old: Vec<String> = (0..super::MAX_TOMBSTONES + 2)
+        .map(|i| format!("old{i}"))
+        .collect();
+    std::fs::write(folder.join("_deleted.json"), json!(old).to_string()).expect("deleted");
+    assert_eq!(
+        store.create(PROJECT, capture("old0")).await,
+        Err(AnnotationError::Removed { id: "old0".into() })
+    );
+    store.create(PROJECT, capture("new")).await.expect("new");
+    store
+        .remove(PROJECT, Some(vec!["new".into()]), None)
+        .await
+        .expect("remove");
+    let kept: Vec<String> =
+        serde_json::from_str(&std::fs::read_to_string(folder.join("_deleted.json")).expect("read"))
+            .expect("ids");
+    assert_eq!(kept.len(), super::MAX_TOMBSTONES);
+    assert_eq!(
+        kept.first().map(String::as_str),
+        Some("old3"),
+        "oldest first out"
+    );
+    assert_eq!(kept.last().map(String::as_str), Some("new"));
+    assert!(
+        store.create(PROJECT, capture("old2")).await.is_ok(),
+        "trimmed"
+    );
+    assert_eq!(
+        store.create(PROJECT, capture("new")).await,
+        Err(AnnotationError::Removed { id: "new".into() })
+    );
+}
