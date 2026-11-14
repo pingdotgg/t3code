@@ -61,10 +61,10 @@ export class PortDiscovery extends Context.Service<
       input: PreviewStopLocalServerInput,
     ) => Effect.Effect<void, PreviewStopLocalServerError>;
     /**
-     * Consumes one recent `stopServer` of a server this thread's agent started, so the agent's
-     * command ending from it is not reported back as a crash.
+     * Consumes a recent `stopServer` of a server this thread's agent started with `command`, so
+     * that command ending is not reported back to the agent as a crash.
      */
-    readonly takeUserStop: (threadId: ThreadId) => Effect.Effect<boolean>;
+    readonly takeUserStop: (threadId: ThreadId, command: string) => Effect.Effect<boolean>;
   }
 >()("t3/preview/PortScanner/PortDiscovery") {}
 
@@ -399,6 +399,35 @@ const parseProcessTable = (raw: string): ReadonlyMap<number, ProcessTableRow> =>
   return rows;
 };
 
+const commandWords = (command: string): ReadonlyArray<string> =>
+  command
+    .replace(/['"]/g, "")
+    .split(/\s+/)
+    .filter((word) => word.length > 0);
+
+/**
+ * True when a process's argv appears word for word in an agent's command, as it does for the
+ * shell an agent tool runs (`/bin/bash -lc 'npm run dev'`) and for the job that shell execs.
+ */
+export const commandRanProcess = (command: string, processArgs: string): boolean => {
+  const words = commandWords(command);
+  const args = commandWords(processArgs);
+  if (args.length === 0) return false;
+  for (let start = 0; start + args.length <= words.length; start += 1) {
+    if (args.every((arg, index) => words[start + index] === arg)) return true;
+  }
+  return false;
+};
+
+const parseProcessArgs = (raw: string): ReadonlyMap<number, string> => {
+  const args = new Map<number, string>();
+  for (const line of raw.split("\n")) {
+    const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (match) args.set(Number(match[1]), match[2]!);
+  }
+  return args;
+};
+
 /**
  * The process group stopping `pid` signals. Shells with job control and agent tool shells give
  * every job its own group, so the group is the job. Null when the group also holds this server,
@@ -482,8 +511,14 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // environment, so a pid is read once while it listens. Cleared while no client retains the
   // scanner, since unscanned pids can be reused.
   const agentThreadsRef = yield* Ref.make<ReadonlyMap<number, ThreadId | null>>(new Map());
-  // Expiry times of user stops not yet matched to the agent command they ended, per thread.
-  const userStopsRef = yield* Ref.make<ReadonlyMap<ThreadId, ReadonlyArray<number>>>(new Map());
+  // User stops not yet matched to the agent command they ended, per thread, with the argv of the
+  // stopped server and its group leader.
+  const userStopsRef = yield* Ref.make<
+    ReadonlyMap<
+      ThreadId,
+      ReadonlyArray<{ readonly expiresAt: number; readonly args: ReadonlyArray<string> }>
+    >
+  >(new Map());
   let runningAgents = 0;
   // An agent that exited, or a cache cleared with a marked listener, owes one listener read: the
   // servers it left may still run. So does startup, for agents that ran before a restart.
@@ -1087,16 +1122,28 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       });
     const agentThreadId = listed.agent?.threadId;
     if (agentThreadId !== undefined) {
+      const args = yield* processRunner
+        .run({
+          command: "ps",
+          args: ["-ww", "-o", "pid=,args=", "-p", `${input.pid},${group}`],
+          timeout: Duration.millis(PS_TIMEOUT_MS),
+          maxOutputBytes: PS_MAX_OUTPUT_BYTES,
+        })
+        .pipe(
+          Effect.map((result) => [...parseProcessArgs(result.stdout).values()]),
+          Effect.orElseSucceed((): ReadonlyArray<string> => []),
+        );
       const now = yield* Clock.currentTimeMillis;
       yield* Ref.update(userStopsRef, (stops) => {
-        const next = new Map<ThreadId, ReadonlyArray<number>>();
-        for (const [threadId, expiries] of stops) {
-          const live = expiries.filter((expiresAt) => expiresAt > now);
-          if (live.length > 0) next.set(threadId, live);
-        }
+        const next = new Map(
+          [...stops].map(
+            ([threadId, pending]) =>
+              [threadId, pending.filter((stop) => stop.expiresAt > now)] as const,
+          ),
+        );
         return next.set(agentThreadId, [
           ...(next.get(agentThreadId) ?? []),
-          now + USER_STOP_TTL_MS,
+          { expiresAt: now + USER_STOP_TTL_MS, args },
         ]);
       });
     }
@@ -1120,14 +1167,18 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     // Subscribers see the server leave now rather than on the next poll.
     signalUntilStopped(input).pipe(Effect.andThen(pollIfRetained));
 
-  const takeUserStop: PortDiscovery["Service"]["takeUserStop"] = (threadId) =>
+  const takeUserStop: PortDiscovery["Service"]["takeUserStop"] = (threadId, command) =>
     Effect.flatMap(Clock.currentTimeMillis, (now) =>
       Ref.modify(userStopsRef, (stops) => {
-        const live = (stops.get(threadId) ?? []).filter((expiresAt) => expiresAt > now);
+        const live = (stops.get(threadId) ?? []).filter((stop) => stop.expiresAt > now);
+        const match = live.findIndex((stop) =>
+          stop.args.some((args) => commandRanProcess(command, args)),
+        );
+        const rest = match === -1 ? live : live.filter((_, index) => index !== match);
         const next = new Map(stops);
-        if (live.length <= 1) next.delete(threadId);
-        else next.set(threadId, live.slice(1));
-        return [live.length > 0, next] as const;
+        if (rest.length === 0) next.delete(threadId);
+        else next.set(threadId, rest);
+        return [match !== -1, next] as const;
       }),
     );
 

@@ -5243,68 +5243,147 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ],
   });
 
-  it.effect.each([false, true])(
-    "wakes the agent once a root command finishes unless the user stopped it (%s)",
-    (userStopped) =>
-      Effect.gen(function* () {
-        const userStops: Array<ThreadId> = [];
-        const harness = yield* makeCodexReplayHarness(
-          {
-            ...backgroundExecTranscript,
-            entries: backgroundExecTranscript.entries.map((entry) =>
-              entry.type === "emit_inbound" && entry.label === "item/completed/command-late"
-                ? { ...entry, afterMs: 0 }
-                : entry,
-            ),
-          },
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          (threadId) =>
-            Effect.sync(() => {
-              userStops.push(threadId);
-              return userStopped;
-            }),
+  it.effect("marks a root command it wakes the agent for once the command finishes", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeCodexReplayHarness({
+        ...backgroundExecTranscript,
+        entries: backgroundExecTranscript.entries.map((entry) =>
+          entry.type === "emit_inbound" && entry.label === "item/completed/command-late"
+            ? { ...entry, afterMs: 0 }
+            : entry,
+        ),
+      });
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-command-completion-wake"),
+          text: BG_PROMPT,
+        }),
+      );
+      const commands = () =>
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+            ? [[event.turnItem.status, event.turnItem.completionWake]]
+            : [],
         );
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("attempt-command-completion-wake"),
-            text: BG_PROMPT,
-          }),
-        );
-        const commands = () =>
-          harness.events.flatMap((event) =>
-            event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
-              ? [[event.turnItem.status, event.turnItem.completionWake]]
-              : [],
-          );
-        yield* harness.until(() => userStops.length === 1 && commands().length === 2);
-        assert.deepEqual(userStops, [harness.threadId]);
-        assert.lengthOf(harness.continuationRequests, userStopped ? 0 : 1);
-        // Restart recovery reads this to keep the wake the restart cut.
-        assert.deepEqual(commands(), [
-          ["running", "always"],
-          ["completed", "always"],
-        ]);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
+      yield* harness.until(
+        () => harness.continuationRequests.length === 1 && commands().length === 2,
+      );
+      // Restart recovery reads this to keep the wake the restart cut.
+      assert.deepEqual(commands(), [
+        ["running", "always"],
+        ["completed", "always"],
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
         ),
       ),
+    ),
+  );
+
+  it.effect("wakes for other background commands but not one the user stopped", () =>
+    Effect.gen(function* () {
+      const serverCommand = "/bin/bash -lc 'python3 -m http.server 18765'";
+      const serverItem = (status: "inProgress" | "completed") => ({
+        ...backgroundCommandItem(status),
+        id: "call-codex-bg-server",
+        command: serverCommand,
+        processId: "4343",
+        exitCode: status === "completed" ? 143 : null,
+      });
+      const lateCompletion = (label: string, item: Record<string, unknown>) => ({
+        type: "emit_inbound" as const,
+        label,
+        frame: {
+          method: "item/completed",
+          params: {
+            item,
+            threadId: BG_NATIVE_THREAD,
+            turnId: BG_NATIVE_TURN,
+            completedAtMs: 1782622465500,
+          },
+        },
+      });
+      const [preamble, startedCommand, rootAnswer, turnCompleted] = [
+        backgroundExecTranscript.entries.slice(0, -4),
+        ...backgroundExecTranscript.entries.slice(-4, -1),
+      ];
+      // The user stopped the server; the other command still finishes first.
+      let stopPending = true;
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "codex-bg-user-stop",
+          entries: [
+            ...preamble!,
+            startedCommand!,
+            {
+              type: "emit_inbound",
+              label: "item/started/server",
+              frame: {
+                method: "item/started",
+                params: {
+                  item: serverItem("inProgress"),
+                  threadId: BG_NATIVE_THREAD,
+                  turnId: BG_NATIVE_TURN,
+                  startedAtMs: 1782622440600,
+                },
+              },
+            },
+            rootAnswer!,
+            turnCompleted!,
+            lateCompletion("item/completed/command-late", backgroundCommandItem("completed")),
+            lateCompletion("item/completed/server-late", serverItem("completed")),
+          ],
+        }),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        (_threadId, command) =>
+          Effect.sync(() => {
+            const matched =
+              stopPending && PortScanner.commandRanProcess(command, "python3 -m http.server 18765");
+            if (matched) stopPending = false;
+            return matched;
+          }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-command-user-stop"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* harness.until(() => !stopPending && harness.continuationRequests.length === 1);
+      assert.deepEqual(
+        harness.continuationRequests.map((request) => request.notification?.detail),
+        [BG_COMMAND],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   it.effect("wakes with well-formed text when the cuts split an emoji", () =>

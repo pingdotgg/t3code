@@ -940,6 +940,23 @@ effectIt.effect("stops only a job's own process group", () =>
   }),
 );
 
+effectIt.effect.each([
+  // The tool shell itself, when the script is not a single command.
+  ["/bin/bash -lc 'cd web && npm run dev'", "/bin/bash -lc cd web && npm run dev", true],
+  // The job the tool shell execs.
+  ["/bin/bash -lc 'python3 -m http.server 18765'", "python3 -m http.server 18765", true],
+  ["/bin/bash -lc 'python3 -m http.server 18765 > log 2>&1'", "python3 -m http.server 18765", true],
+  ["/bin/bash -lc 'python3 -m http.server 18766'", "python3 -m http.server 18765", false],
+  ["/bin/bash -lc 'npm test'", "python3 -m http.server 18765", false],
+  ["/bin/bash -lc 'npm test'", "", false],
+] as const)(
+  "matches a stopped process %s to the agent command that ran it",
+  ([command, args, matches]) =>
+    Effect.sync(() => {
+      expect(PortScanner.commandRanProcess(command, args)).toBe(matches);
+    }),
+);
+
 const AGENT_SERVER_SCRIPT = `
 const server = require("node:http").createServer((_, response) => {
   response.writeHead(200, { "content-type": "text/html" });
@@ -1019,15 +1036,26 @@ effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       const unlisted = yield* Effect.flip(scanner.stopServer({ pid: process.pid, port: job.port }));
       expect(unlisted.reason).toBe("not-found");
       const threadId = ThreadId.make("thread-live");
-      expect(yield* scanner.takeUserStop(threadId)).toBe(false);
+      const jobArgs = NodeChildProcess.execFileSync("ps", [
+        "-ww",
+        "-o",
+        "args=",
+        "-p",
+        `${job.pid}`,
+      ])
+        .toString()
+        .trim();
+      const jobCommand = `/bin/bash -lc '${jobArgs}'`;
+      expect(yield* scanner.takeUserStop(threadId, jobCommand)).toBe(false);
 
       yield* scanner.stopServer({ pid: job.pid, port: job.port });
       // The shell waits on its job, so it exits once the job has.
       yield* Effect.promise(() => job.exited);
       expect(isRunning(job.pid)).toBe(false);
-      // The agent's command ends from this stop once, not every later command.
-      expect(yield* scanner.takeUserStop(threadId)).toBe(true);
-      expect(yield* scanner.takeUserStop(threadId)).toBe(false);
+      // Only the command that ran the stopped server, and only once.
+      expect(yield* scanner.takeUserStop(threadId, "/bin/bash -lc 'npm test'")).toBe(false);
+      expect(yield* scanner.takeUserStop(threadId, jobCommand)).toBe(true);
+      expect(yield* scanner.takeUserStop(threadId, jobCommand)).toBe(false);
     }).pipe(
       Effect.scoped,
       Effect.provide(
