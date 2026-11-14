@@ -1823,8 +1823,8 @@ const MarkdownSource = memo(function MarkdownSource({
         components: CHAT_MARKDOWN_COMPONENTS,
         urlTransform: markdownUrlTransform,
       });
-  const element = render(text, false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Promote the committed element into the shared parse cache when its block finishes.
+  const element = render(text);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Caching during render would make React Compiler rebuild the element when `cache` flips.
   useEffect(() => {
     if (shared && cache) render.remember(text, element);
   }, [render, text, element, shared, cache]);

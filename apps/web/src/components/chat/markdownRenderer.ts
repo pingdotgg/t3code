@@ -82,7 +82,7 @@ export function createMarkdownRenderer({
     }
   };
 
-  const render = (text: string, cache: boolean): ReactElement => {
+  const render = (text: string): ReactElement => {
     const key = keyPrefix + text;
     const cached = rendered.get(key);
     if (cached !== undefined) {
@@ -94,7 +94,7 @@ export function createMarkdownRenderer({
     const file = new VFile(text);
     const tree = processor.runSync(processor.parse(file), file) as Root;
     prepare(tree);
-    const element = toJsxRuntime(tree, {
+    return toJsxRuntime(tree, {
       Fragment,
       components,
       ignoreInvalidStyle: true,
@@ -103,8 +103,6 @@ export function createMarkdownRenderer({
       passKeys: true,
       passNode: true,
     });
-    if (cache) remember(key, element);
-    return element;
   };
 
   return Object.assign(render, {
