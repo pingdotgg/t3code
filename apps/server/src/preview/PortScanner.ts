@@ -570,9 +570,53 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
                   return new Map();
                 }),
               );
+    const resolved = new Map(read);
+    const unowned = unread.filter((pid) => read.get(pid) === null);
+    // Node's process.title can hide its launch environment from macOS ps.
+    if (hostPlatform === "darwin" && unowned.length > 0) {
+      const table = yield* readProcessTable.pipe(Effect.option);
+      if (Option.isNone(table)) {
+        agentScanPending = true;
+        for (const pid of unowned) resolved.delete(pid);
+      } else {
+        const ancestry = new Map<number, number[]>();
+        for (const pid of unowned) {
+          const parents: number[] = [];
+          const seen = new Set([pid, process.pid]);
+          let parent = table.value.get(pid)?.ppid;
+          while (parent !== undefined && parent > 1 && !seen.has(parent)) {
+            seen.add(parent);
+            parents.push(parent);
+            parent = table.value.get(parent)?.ppid;
+          }
+          ancestry.set(pid, parents);
+        }
+        const parents = [...new Set([...ancestry.values()].flat())];
+        if (parents.length > 0) {
+          const variables = yield* readEnvironmentVariables(parents, [AGENT_THREAD_ENV]);
+          for (const [pid, ancestors] of ancestry) {
+            for (const ancestor of ancestors) {
+              if (!variables.has(ancestor)) break;
+              const threadId = variables.get(ancestor)?.get(AGENT_THREAD_ENV)?.trim();
+              if (threadId) {
+                resolved.set(pid, ThreadId.make(threadId));
+                break;
+              }
+            }
+            if (
+              resolved.get(pid) === null &&
+              ancestors.some((ancestor) => !variables.has(ancestor))
+            ) {
+              resolved.delete(pid);
+              agentScanPending = true;
+            }
+          }
+        }
+      }
+    }
     const next = new Map<number, ThreadId | null>();
     for (const pid of pids) {
-      const threadId = cached.has(pid) ? cached.get(pid) : read.get(pid);
+      const threadId = cached.has(pid) ? cached.get(pid) : resolved.get(pid);
       if (threadId !== undefined) next.set(pid, threadId);
     }
     yield* Ref.set(agentThreadsRef, next);
