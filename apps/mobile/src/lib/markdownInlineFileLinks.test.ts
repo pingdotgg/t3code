@@ -13,6 +13,25 @@ import {
 const rewrite = (markdown: string) =>
   markdownWithInlineFileLinks(markdown, ENRICHED_INLINE_FILE_LINK_REGEX);
 
+describe("absolute paths in prose", () => {
+  it("become links without corrupting the source around them", () => {
+    const path =
+      "/tmp/claude-1000/-home-user--t3-worktrees-app-t3-abc123/session/scratchpad/notes.md";
+    expect(rewrite(`Saved to ${path}.`)).toBe(`Saved to [${path}](<${path}>).`);
+    expect(
+      markdownForNativeRendering(
+        "Intro /tmp/notes.md\n| a | c |\n|---|---|\n| `./a\\|b.ts` | b |",
+        ENRICHED_INLINE_FILE_LINK_REGEX,
+      ),
+    ).toContain("[/tmp/notes.md](</tmp/notes.md>)");
+    expect(rewrite(String.raw`See \* and /tmp/notes.md.`)).toBe(
+      String.raw`See \* and [/tmp/notes.md](</tmp/notes.md>).`,
+    );
+    for (const decoded of [String.raw`See /tmp/a\_b.md.`, "See /tmp/a&copy;.md."])
+      expect(rewrite(decoded)).toBe(decoded);
+  });
+});
+
 describe("inline code that names a file", () => {
   it.each([
     [
@@ -69,9 +88,14 @@ describe("inline code that names a file", () => {
   });
 
   it("becomes a link to the same path", () => {
+    expect(rewrite("See `/tmp/claude-1000/...`.")).toBe("See `/tmp/claude-1000/...`.");
+    expect(rewrite("See `bin/python3.12`.")).toBe("See [bin/python3.12](<bin/python3.12>).");
     expect(rewrite("See `src/math.ts:2` and `./README.md`.")).toBe(
       "See [src/math.ts:2](<src/math.ts:2>) and [./README.md](<./README.md>).",
     );
+    for (const path of ["src/數學.ts:2", "數學/math.ts:2", "數學.ts:2", "src/數學.ts:2-4"]) {
+      expect(rewrite(`See \`${path}\`.`), path).toBe(`See [${path}](<${path}>).`);
+    }
   });
 
   it("keeps commands, identifiers and URLs as code", () => {
