@@ -8,9 +8,39 @@ import {
   requiresDefaultBranchConfirmation,
   resolveChangesTotals,
   resolveDefaultBranchActionDialogCopy,
+  resolveGitActionSuccessDescription,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
 } from "./GitActionsControl.logic";
+
+it("keeps the complete commit subject for the success tooltip without replacing PR results", () => {
+  const subject =
+    "fix(web): keep the complete automatically generated commit subject readable when the success row truncates its description";
+  const result = {
+    commit: { status: "created", subject },
+    pr: { status: "skipped_not_requested" },
+    toast: {
+      title: "Committed abc1234",
+      description: `${subject.slice(0, 69)}...`,
+      cta: { kind: "none" },
+    },
+  } as const;
+
+  assert.equal(resolveGitActionSuccessDescription(result), subject);
+  assert.equal(
+    resolveGitActionSuccessDescription({ ...result, commit: { status: "skipped_not_requested" } }),
+    result.toast.description,
+  );
+  assert.equal(resolveGitActionSuccessDescription({ ...result, pr: { status: "created" } }), null);
+  assert.equal(
+    resolveGitActionSuccessDescription({
+      ...result,
+      pr: { status: "opened_existing" },
+      toast: { ...result.toast, title: "Opened PR #1", description: "Existing PR title" },
+    }),
+    "Existing PR title",
+  );
+});
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {
