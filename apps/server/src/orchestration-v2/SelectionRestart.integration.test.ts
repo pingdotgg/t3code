@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -456,7 +457,8 @@ it.live("retries a failed selection restart session open before completing", () 
 const switchModeMidTurn = (
   name: string,
   options: {
-    readonly backgroundWork: boolean;
+    /** When the provider reports background work: never, before the mode change, or only after it. */
+    readonly backgroundWork: "none" | "before" | "after";
     readonly probeDefects?: boolean;
     readonly shared?: boolean;
     readonly continuation?: boolean;
@@ -472,6 +474,7 @@ const switchModeMidTurn = (
       closedSessionCount: 0,
       failedReplacementOpen: true,
     });
+    const backgroundWork = yield* Ref.make(options.backgroundWork === "before");
     const base = makeRestartAdapter(state, {
       ...exclusiveCapabilities,
       sessions: {
@@ -488,7 +491,7 @@ const switchModeMidTurn = (
             ...session,
             hasPendingBackgroundWork: options.probeDefects
               ? Effect.die("background work probe failed")
-              : Effect.succeed(options.backgroundWork),
+              : Ref.get(backgroundWork),
           })),
         ),
     });
@@ -539,13 +542,16 @@ const switchModeMidTurn = (
       });
       yield* send("first");
 
-      yield* orchestrator.dispatch({
-        type: "thread.runtime-mode.set",
-        commandId: CommandId.make(`${name}:auto`),
-        threadId,
-        runtimeMode: "auto",
-      });
+      const modeChange = yield* orchestrator
+        .dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make(`${name}:auto`),
+          threadId,
+          runtimeMode: "auto",
+        })
+        .pipe(Effect.exit);
       yield* worker.drain();
+      if (options.backgroundWork === "after") yield* Ref.set(backgroundWork, true);
       const midTurn = yield* orchestrator.getThreadProjection(threadId);
       const closedMidTurn = (yield* Ref.get(state)).closedSessionCount;
 
@@ -567,6 +573,7 @@ const switchModeMidTurn = (
       yield* Fiber.join(interrupted);
       yield* send("second");
       return {
+        modeChangeRefused: Exit.isFailure(modeChange),
         midTurn,
         closedMidTurn,
         final: yield* orchestrator.getThreadProjection(threadId),
@@ -583,7 +590,7 @@ it.live.each([false, true])(
       Effect.gen(function* () {
         const { midTurn, closedMidTurn, captured } = yield* switchModeMidTurn(
           "runtime-mode-mid-turn",
-          { backgroundWork: continuation, continuation },
+          { backgroundWork: "none", continuation },
         );
         assert.equal(midTurn.thread.runtimeMode, "auto");
         assert.equal(closedMidTurn, 0);
@@ -604,20 +611,33 @@ it.live.each([false, true])(
     ),
 );
 
-it.live.each([
-  { shared: false, probeDefects: false },
-  { shared: true, probeDefects: false },
-  { shared: false, probeDefects: true },
-])(
-  "a runtime mode change preserves background or shared sessions (%s)",
-  ({ shared, probeDefects }) =>
+it.live.each([{ probeDefects: false }, { probeDefects: true }])(
+  "a runtime mode change is refused while background work keeps the old mode (%s)",
+  ({ probeDefects }) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { final, captured } = yield* switchModeMidTurn("runtime-mode-background-work", {
-          backgroundWork: !shared,
-          shared,
-          probeDefects,
-        });
+        const { modeChangeRefused, midTurn, captured } = yield* switchModeMidTurn(
+          "runtime-mode-refused",
+          { backgroundWork: "before", probeDefects },
+        );
+        assert.isTrue(modeChangeRefused);
+        assert.equal(midTurn.thread.runtimeMode, "approval-required");
+        assert.equal(captured.closedSessionCount, 0);
+        assert.lengthOf(captured.opened, 1);
+      }),
+    ),
+);
+
+it.live.each([{ shared: false }, { shared: true }])(
+  "a deferred runtime mode change keeps background or shared sessions open (%s)",
+  ({ shared }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { modeChangeRefused, final, captured } = yield* switchModeMidTurn(
+          "runtime-mode-deferred-blocked",
+          { backgroundWork: shared ? "none" : "after", shared },
+        );
+        assert.isFalse(modeChangeRefused);
         assert.equal(captured.closedSessionCount, 0);
         assert.lengthOf(captured.opened, 1);
         assert.deepEqual(

@@ -4393,6 +4393,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     const needsProviderState =
+      command.type === "thread.runtime-mode.set" ||
       command.type === "thread.model-selection.set" ||
       command.type === "provider.switch" ||
       command.type === "thread.archive" ||
@@ -4461,10 +4462,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         session.status !== "stopped" &&
         session.status !== "error",
     );
+    // A mode change waits for the next user turn instead of detaching, so refuse it while
+    // background work would keep running under the previous mode.
+    const probedSessions =
+      command.type === "thread.runtime-mode.set"
+        ? (providerContext?.providerSessions ?? []).filter(
+            (session) =>
+              !session.capabilities.sessions.supportsRuntimeModeSwitchInSession &&
+              session.status !== "stopped" &&
+              session.status !== "error",
+          )
+        : liveSessions;
     if (
       command.type !== "thread.archive" &&
       command.type !== "thread.settle" &&
-      liveSessions.length > 0
+      probedSessions.length > 0
     ) {
       // The provider context holds only the active and target provider threads; a session kept
       // busy by an earlier queued hand-off owns neither, so probe every thread of this one.
@@ -4473,7 +4485,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           omitSettledSubagentRecords: true,
         })
         .pipe(mapDispatchError(command));
-      for (const session of liveSessions) {
+      for (const session of probedSessions) {
         if (yield* sessionHasBackgroundWork(session, providerThreads)) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
