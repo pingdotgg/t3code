@@ -473,7 +473,12 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
               Effect.orElseSucceed(() => ""),
               Effect.map((source) => {
                 const problem = broken.get(name);
-                return { name, source, problems: problem === undefined ? [] : [problem] };
+                return {
+                  name,
+                  source,
+                  workflows: (good.get(name) ?? []).map(engineTag),
+                  problems: problem === undefined ? [] : [problem],
+                };
               }),
             ),
           );

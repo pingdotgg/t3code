@@ -10,7 +10,8 @@ export const Route = createFileRoute("/_chat/workflows")({
     ...(typeof raw.threadEnv === "string" && raw.threadEnv
       ? { threadEnv: raw.threadEnv.slice(0, 200) }
       : {}),
-    ...(raw.file === true || raw.file === "true" || raw.file === 1 ? { file: true } : {}),
+    ...(raw.definitions === true || raw.definitions === "true" ? { definitions: true } : {}),
+    ...(typeof raw.file === "string" && raw.file ? { file: raw.file.slice(0, 200) } : {}),
   }),
   component: WorkflowsPage,
 });
