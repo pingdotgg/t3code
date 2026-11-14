@@ -1,5 +1,4 @@
 import * as Clock from "effect/Clock";
-import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -41,17 +40,13 @@ class LockTimeout extends Data.TaggedError("LockTimeout")<{
  *
  * @internal exported for unit testing.
  */
-export const sanitizeLockKey = (key: string): string =>
-  key.replace(/[^A-Za-z0-9._-]/g, "_");
+export const sanitizeLockKey = (key: string): string => key.replace(/[^A-Za-z0-9._-]/g, "_");
 
 /**
  * Take the cross-process lock. On success the ambient scope owns it: a
  * finalizer removes it and a forked heartbeat keeps its mtime fresh.
  */
-const acquireFileLock = Effect.fn(function* (
-  lockPath: string,
-  timeout: Duration.Input,
-) {
+const acquireFileLock = Effect.fn(function* (lockPath: string, timeout: Duration.Input) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const ownerPath = path.join(lockPath, "owner");
@@ -83,9 +78,7 @@ const acquireFileLock = Effect.fn(function* (
             .writeFileString(ownerPath, owner)
             .pipe(
               Effect.onError(() =>
-                fs
-                  .remove(lockPath, { recursive: true, force: true })
-                  .pipe(Effect.ignore),
+                fs.remove(lockPath, { recursive: true, force: true }).pipe(Effect.ignore),
               ),
             ),
         ),
@@ -102,9 +95,7 @@ const acquireFileLock = Effect.fn(function* (
     ),
     Effect.retry({
       while: (error) => error._tag === "LockHeld",
-      schedule: Schedule.spaced(RETRY_INTERVAL).pipe(
-        Schedule.upTo({ duration: timeout }),
-      ),
+      schedule: Schedule.spaced(RETRY_INTERVAL).pipe(Schedule.upTo({ duration: timeout })),
     }),
     Effect.catchTag("LockHeld", () =>
       Effect.die(
@@ -122,9 +113,7 @@ const acquireFileLock = Effect.fn(function* (
 
   yield* fs.readFileString(ownerPath).pipe(
     Effect.filterOrFail((current) => current === owner),
-    Effect.andThen(
-      Clock.currentTimeMillis.pipe(Effect.map((now) => new Date(now))),
-    ),
+    Effect.andThen(Clock.currentTimeMillis.pipe(Effect.map((now) => new Date(now)))),
     // NB: utimes interprets a bare number as *seconds* since epoch.
     Effect.flatMap((now) => fs.utimes(lockPath, now, now)),
     Effect.repeat(Schedule.spaced(REFRESH)),
@@ -143,19 +132,11 @@ type Phase = { current: "waiting" | "held" };
 /**
  * Periodic "I am not dead, I am stuck here" notice, forked for the lifetime
  * of a {@link withLock} call.
- *
- * Deliberately `Console.error` rather than `Effect.logWarning`: the CLI's
- * telemetry layer replaces the console logger with the OTLP one (see
- * `Telemetry/Layer.ts`), so log records reach `.alchemy/log/out` but never
- * the terminal. The whole point of this notice is to reach the user who is
- * watching a frozen terminal, so it must not go through the logger.
+ * Logged as a warning: the console logger shows it above the noise floor
+ * (telemetry merges with it rather than replacing it), and JSON output and
+ * the run log carry it too.
  */
-const stallNotice = (
-  lockPath: string,
-  label: string,
-  phase: Phase,
-  interval: Duration.Input,
-) =>
+const stallNotice = (lockPath: string, label: string, phase: Phase, interval: Duration.Input) =>
   Effect.gen(function* () {
     const start = yield* Clock.currentTimeMillis;
     const notice = Effect.gen(function* () {
@@ -163,7 +144,7 @@ const stallNotice = (
       // notice cadence and the reported wait must not drift apart.
       const now = yield* Clock.currentTimeMillis;
       const seconds = Math.round((now - start) / 1000);
-      yield* Console.error(
+      yield* Effect.logWarning(
         phase.current === "waiting"
           ? `alchemy: ${seconds}s waiting for the auth lock '${lockPath}' (${label}). ` +
               `Another alchemy process holds it; if none is running, delete that directory.`
@@ -230,25 +211,15 @@ export const withLock = <A, E, R>(
       const phase: Phase = { current: "waiting" };
       if (options?.watchdog !== false) {
         yield* Effect.forkScoped(
-          stallNotice(
-            lockPath,
-            label,
-            phase,
-            options?.stallInterval ?? STALL_INTERVAL,
-          ),
+          stallNotice(lockPath, label, phase, options?.stallInterval ?? STALL_INTERVAL),
         );
       }
       yield* Effect.logDebug(`auth lock: acquiring '${lockPath}' for ${label}`);
-      yield* acquireFileLock(
-        lockPath,
-        options?.timeout ?? DEFAULT_TIMEOUT,
-      ).pipe(Effect.orDie);
+      yield* acquireFileLock(lockPath, options?.timeout ?? DEFAULT_TIMEOUT).pipe(Effect.orDie);
       phase.current = "held";
       yield* Effect.logDebug(`auth lock: acquired '${lockPath}' for ${label}`);
       return yield* effect.pipe(
-        Effect.onExit(() =>
-          Effect.logDebug(`auth lock: releasing '${lockPath}' for ${label}`),
-        ),
+        Effect.onExit(() => Effect.logDebug(`auth lock: releasing '${lockPath}' for ${label}`)),
       );
     }).pipe(Effect.scoped),
   );

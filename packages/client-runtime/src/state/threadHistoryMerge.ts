@@ -89,9 +89,13 @@ export function mergeOlderHistoryIntoProjection(
       (row.visibility === "local" || row.sourceThreadId === projection.thread.id)
     ) {
       const currentItem = turnItemById.get(String(row.sourceItemId));
+      // Hidden live items stay hidden. Snapshots also retain interrupt requests and
+      // pending request cards outside the visible window; their history page shows them.
       if (currentItem !== undefined) {
         if (
-          currentItem.type !== "run_interrupt_request" ||
+          (currentItem.type !== "run_interrupt_request" &&
+            currentItem.type !== "approval_request" &&
+            currentItem.type !== "user_input_request") ||
           !isOrchestrationV2TurnItemVisible({
             item: currentItem,
             runs: projection.runs,
@@ -112,10 +116,7 @@ export function mergeOlderHistoryIntoProjection(
       turnItemById.set(String(row.sourceItemId), row.item);
   }
   if (page.length === 0 && work === undefined) return projection;
-  let visible = [
-    ...page,
-    ...projection.visibleTurnItems.filter((row) => !pageKeys.has(projectedItemKey(row))),
-  ];
+  let visible: OrchestrationV2ProjectedTurnItem[];
   if (work && anchor && deferred) {
     let end = start + 1;
     while (end < projection.visibleTurnItems.length) {
@@ -147,6 +148,11 @@ export function mergeOlderHistoryIntoProjection(
       ...projection.visibleTurnItems.slice(end),
     ];
     if (anchor.visibility === "local") turnItemById.set(String(updated.item.id), updated.item);
+  } else {
+    visible = [
+      ...page,
+      ...projection.visibleTurnItems.filter((row) => !pageKeys.has(projectedItemKey(row))),
+    ];
   }
   if (
     visible.length === projection.visibleTurnItems.length &&

@@ -26,7 +26,7 @@ export async function recoverFailedThreadDraft(message: QueuedThreadMessage): Pr
   appendComposerDraftAttachments(
     targetKey,
     source.attachments.filter((attachment) => !existingIds.has(attachment.id)),
-    { allowOverflow: true },
+    { restore: true },
   );
   // Recovery may exceed caps; preserve every file and leave trimming to the editor.
   await flushComposerDrafts();
