@@ -2108,6 +2108,51 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("forks a resumed session recorded in another cwd into the runtime cwd", () =>
+    Effect.gen(function* () {
+      const host = yield* ProviderHost.ProviderHost;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const fake = yield* makeFakePi;
+      const forkFake = yield* makeFakePi;
+      const forkFile = "/fake/forked-into-worktree.jsonl";
+      const { runtime } = yield* openRuntime(fake, "default", THREAD_ID, SESSION_ID, forkFake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const dir = yield* fileSystem.makeTempDirectoryScoped();
+      const sessionAt = (sessionCwd: string) =>
+        Effect.gen(function* () {
+          const file = `${dir}/${sessionCwd.length}.jsonl`;
+          yield* fileSystem.writeFileString(
+            file,
+            `${JSON.stringify({ type: "session", version: 3, id: "s", cwd: sessionCwd })}\n{}\n`,
+          );
+          return {
+            ...providerThread,
+            nativeThreadRef: { driver: PI_PROVIDER, nativeId: file, strength: "strong" as const },
+          };
+        });
+      const lastSwitch = () =>
+        fake.allRequests().findLast((request) => request.type === "switch_session")?.sessionPath;
+
+      const sameCwd = yield* sessionAt(host.paths.cwd);
+      yield* runtime.resumeThread({ providerThread: sameCwd });
+      assert.equal(lastSwitch(), sameCwd.nativeThreadRef?.nativeId);
+      assert.isFalse(forkFake.allRequests().some((request) => request.type === "get_state"));
+
+      const otherCwd = yield* sessionAt(`${host.paths.cwd}-original-checkout`);
+      forkFake.queueState({ sessionFile: forkFile });
+      fake.queueState({ sessionFile: forkFile });
+      const resumed = yield* runtime.resumeThread({ providerThread: otherCwd });
+      const args = forkFake.lastSpawn().args;
+      assert.equal(args[args.indexOf("--fork") + 1], otherCwd.nativeThreadRef?.nativeId);
+      assert.equal(lastSwitch(), forkFile);
+      assert.equal(resumed.nativeThreadRef?.nativeId, forkFile);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("creates a distinct native session after a failed resume", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
@@ -3887,24 +3932,28 @@ describe("PiAdapterV2", () => {
         );
         yield* fake.takeRequest("get_state");
       }
-      yield* fake.emit({
-        type: "extension_ui_request",
-        id: "ui-cmd",
-        method: "notify",
-        message: "Command finished\nwith details",
-        notifyType: "info",
-      });
-      const notice = yield* takeEvent(
-        (event) =>
-          (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") ||
-          event.type === "turn.terminal",
-      );
-      assert.isTrue(
-        notice.type === "turn_item.updated" &&
-          notice.turnItem.type === "system_notice" &&
-          notice.turnItem.status === "completed" &&
-          notice.turnItem.message === "Command finished\nwith details",
-      );
+      for (const notifyType of ["info", "warning", "error", undefined, "unknown"] as const) {
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id: "ui-cmd",
+          method: "notify",
+          message: "Command finished\nwith details",
+          ...(notifyType === undefined ? {} : { notifyType }),
+        });
+        const notice = yield* takeEvent(
+          (event) =>
+            (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") ||
+            event.type === "turn.terminal",
+        );
+        assert.isTrue(
+          notice.type === "turn_item.updated" &&
+            notice.turnItem.type === "system_notice" &&
+            notice.turnItem.status === "completed" &&
+            notice.turnItem.level ===
+              (notifyType === "warning" || notifyType === "error" ? notifyType : "info") &&
+            notice.turnItem.message === "Command finished\nwith details",
+        );
+      }
       assert.equal(runtime.providerSession.status, "running");
       yield* fake.emit({ type: "response", command: "prompt", success: true, data });
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
@@ -4078,6 +4127,23 @@ describe("PiAdapterV2", () => {
             running.turnItem.status === "running" &&
             running.turnItem.input === "echo hello",
         );
+        // Pi resends the whole output so far every 100 ms; each snapshot item is a stored row.
+        // Past its limit Pi sends only the tail, with the running total in details.truncation.
+        for (const [text, totalBytes] of [
+          ["hel", undefined],
+          ["hello", undefined],
+          ["lo\n\u00e9!", 9],
+        ] as const) {
+          yield* fake.emit({
+            type: "tool_execution_update",
+            toolCallId: "shell-call",
+            toolName,
+            partialResult: {
+              content: [{ type: "text", text }],
+              ...(totalBytes === undefined ? {} : { details: { truncation: { totalBytes } } }),
+            },
+          });
+        }
         yield* fake.emit({
           type: "tool_execution_end",
           toolCallId: "shell-call",
@@ -4089,10 +4155,18 @@ describe("PiAdapterV2", () => {
             ...(legacy ? {} : { structuredContent: { exit_code: exitCode } }),
           },
         });
-        const completed = yield* takeEvent(
-          (event) =>
-            event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
-        );
+        const chunks: Array<string> = [];
+        let completed: ProviderAdapter.ProviderAdapterV2Event;
+        while (true) {
+          completed = yield* takeEvent(
+            (event) =>
+              event.type === "command_output.delta" ||
+              (event.type === "turn_item.updated" && event.turnItem.type === "command_execution"),
+          );
+          if (completed.type !== "command_output.delta") break;
+          chunks.push(completed.chunk);
+        }
+        assert.deepStrictEqual(chunks, ["hel", "lo", "\n\u00e9!"]);
         assert.isTrue(
           completed.type === "turn_item.updated" &&
             completed.turnItem.type === "command_execution" &&
