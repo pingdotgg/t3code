@@ -1,4 +1,5 @@
 import {
+  RelayEnvironmentConnectNotAuthorizedError,
   RelayEnvironmentEndpointUnavailableError,
   type RelayProtectedError,
 } from "@t3tools/contracts/relay";
@@ -128,6 +129,31 @@ describe("presentConnectionDiagnosis", () => {
       relayStatus: { status: "offline", endpointFailure: "origin_unreachable" },
     });
     expect(origin?.hops.map((hop) => hop.hop)).toEqual(["device", "relay", "tunnel", "server"]);
+  });
+
+  it("tells the user to remove a host that is no longer on their T3 Connect account", () => {
+    const failure = fromRelay(
+      new RelayEnvironmentConnectNotAuthorizedError({
+        code: "environment_connect_not_authorized",
+        reason: "environment_link_not_found",
+        traceId: "trace-1",
+      }),
+    );
+    const withRegistration = (relayRegistration: "registered" | "unregistered") =>
+      presentConnectionDiagnosis({
+        hostLabel: "Mac mini",
+        state: backoff(failure),
+        via: "relay",
+        relayRegistration,
+      });
+    const listed = withRegistration("registered");
+    expect(listed?.headline).toBe("Mac mini is not linked to your T3 Connect account");
+    expect(listed?.steps[1]).toContain("turn T3 Connect on");
+    expect(listed?.steps[2]).toMatch(/^If T3 Code was reinstalled on Mac mini, remove this entry/);
+    const diagnosis = withRegistration("unregistered");
+    expect(diagnosis?.headline).toContain("no longer on your T3 Connect account");
+    expect(diagnosis?.steps[0]).toContain("turn T3 Connect on");
+    expect(diagnosis?.steps[1]).toContain("remove it from this device");
   });
 
   it("blames this device, not the host, while its own T3 Connect sign-in loads", () => {

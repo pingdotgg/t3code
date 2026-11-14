@@ -110,6 +110,11 @@ an active link between your account and the host.
 - **T3 Connect is off on the host, or the host only publishes agent activity.**
   On the host, open **Settings > Sharing & access** and turn **T3 Connect** on, or
   run `t3 connect`.
+- **The host was deregistered from your account, or T3 Code was reinstalled on
+  it.** If it was only deregistered, turn **T3 Connect** on again on the host, then
+  retry on this device.
+  A reinstalled host links under a new identity, so remove the old entry from
+  this device and add the host again from the T3 Connect list.
 - **The host was linked, but the server did not apply the link yet.** Restart
   the server on the host: quit and reopen the T3 Code desktop app, run
   `t3 service restart`, or stop `t3 serve` and run it again.
