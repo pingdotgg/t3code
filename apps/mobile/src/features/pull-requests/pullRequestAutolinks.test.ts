@@ -21,12 +21,21 @@ describe("linkReferenceAutolinks", () => {
     expect(linkReferenceAutolinks(text, github)).toBe(text);
   });
 
-  it("does not nest links inside HTML anchors or code", () => {
-    const text = 'See <a href="https://example.com">#12</a> and <code>#13</code>, then #14.';
-    expect(linkReferenceAutolinks(text, github)).toBe(
+  it.each([
+    [
+      'See <a href="https://example.com">#12</a> and <code>#13</code>, then #14.',
       'See <a href="https://example.com">#12</a> and <code>#13</code>, then [#14](https://github.com/team/repo/issues/14).',
-    );
-  });
+    ],
+    [
+      "<details><summary>@reader</summary>Thanks @reader <code>@code</code><!-- @hidden --></details>",
+      "<details><summary>[@reader](https://github.com/reader)</summary>Thanks [@reader](https://github.com/reader) <code>@code</code><!-- @hidden --></details>",
+    ],
+  ])(
+    "links HTML text without nesting links inside anchors, code or comments: %s",
+    (text, linked) => {
+      expect(linkReferenceAutolinks(text, github)).toBe(linked);
+    },
+  );
 
   it("leaves markdown unchanged for a host that links nothing", () => {
     const forgejo = changeRequestReferenceAutolinker({
