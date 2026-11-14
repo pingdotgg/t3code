@@ -3017,7 +3017,13 @@ it.effect("carries a slice on without sending the rows it already sent", () =>
       cursors: { "github.com acme/web": "2026-07-02T00:00:00Z|1|3" },
     });
 
-    assert.deepStrictEqual(cursors, [{ updatedBefore: "2026-07-02T00:00:00Z", delivered: 1 }]);
+    assert.deepStrictEqual(cursors, [
+      {
+        updatedBefore: "2026-07-02T00:00:00Z",
+        delivered: 1,
+        seenAt: [{ repository: "acme/web", number: 3 }],
+      },
+    ]);
     assert.deepStrictEqual(
       result.entries.map((entry) => entry.number),
       [4],
@@ -3568,19 +3574,31 @@ it.effect("deduplicates routed PR reports without dropping draft changes", () =>
   }),
 );
 
-it.effect(
-  "reuses fresh detail checks without extending their refresh interval on detail cache hits",
-  () =>
+it.effect.each(["github", "azure-devops"])(
+  "reuses fresh %s detail checks without extending their refresh interval on detail cache hits",
+  (provider) =>
     Effect.gen(function* () {
       let reads = 0;
-      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const repository = provider === "azure-devops" ? "web" : "acme/web";
+      const reference = { projectId: "p1" as ProjectId, repository, number: 1 };
       const service = yield* makeService({
         projects: [
-          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+          project({
+            id: "p1",
+            title: "web",
+            workspaceRoot: "/a",
+            repository,
+            provider,
+            ...(provider === "azure-devops" ? { host: "dev.azure.com" } : {}),
+          }),
         ],
         providers: [
-          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-            getChangeRequest: () => Effect.succeed(hostedChangeRequest("Description")),
+          fakePullRequestProvider(SourceControlProviderKind.make(provider), {
+            getChangeRequest: () =>
+              Effect.succeed({
+                ...hostedChangeRequest("Description"),
+                checks: [{ name: "build", status: "success", description: null, url: null }],
+              }),
             getChangeRequestChecks: () =>
               Effect.sync(() => {
                 reads += 1;
@@ -3608,6 +3626,37 @@ it.effect(
       expect((yield* service.checks(reference))?.state).toBe("closed");
       expect(reads).toBe(1);
     }),
+);
+
+it.effect("asks Azure for checks when its detail came back with none", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const reference = { projectId: "p1" as ProjectId, repository: "web", number: 1 };
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/a",
+          repository: "web",
+          provider: "azure-devops",
+        }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("azure-devops"), {
+          getChangeRequest: () => Effect.succeed(hostedChangeRequest("Description")),
+          getChangeRequestChecks: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return { state: "open" as const, checks: [] };
+            }),
+        }),
+      ],
+    });
+    yield* service.detail(reference);
+    yield* service.checks(reference);
+    expect(reads).toBe(1);
+  }),
 );
 
 it.effect("preserves check observation time on cache hits and advances it on refresh", () =>
@@ -4373,6 +4422,43 @@ it.effect("keeps viewed files itself for a host that keeps none of its own", () 
       asked.map((paths) => [...paths].toSorted()),
       [["src/a.ts", "src/b.ts"]],
     );
+  }),
+);
+
+it.effect("records shown revisions until the reader ticks the pushed version", () =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const revisions = new Map([
+      ["src/a.ts", "pushed-a"],
+      ["src/b.ts", "current-b"],
+    ]);
+    const service = yield* environmentViewedService(revisions, asked);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [
+        { path: "src/a.ts", viewed: true, revision: "shown-a" },
+        { path: "src/b.ts", viewed: true },
+      ],
+    });
+    assert.deepStrictEqual(asked, [["src/b.ts"]]);
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "dismissed" },
+      { path: "src/b.ts", state: "viewed" },
+    ]);
+
+    const reads = asked.length;
+    revisions.set("src/a.ts", "pushed-a-again");
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true, revision: "pushed-a-again" }],
+    });
+    assert.strictEqual(asked.length, reads);
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "viewed" },
+      { path: "src/b.ts", state: "viewed" },
+    ]);
   }),
 );
 
