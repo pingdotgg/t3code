@@ -315,6 +315,49 @@ impl Store {
         Ok(rows)
     }
 
+    /// T3's projection also lists the provider threads this thread's subagents run on
+    /// (`provider_thread_id IN (SELECT provider_thread_id FROM subagents WHERE thread_id =
+    /// …)` in `ProjectionStore`). Those rows live on the child threads; each is read by key.
+    fn add_subagent_provider_threads(
+        &self,
+        projection: &mut serde_json::Map<String, Value>,
+    ) -> StoreResult<()> {
+        let wanted: Vec<(String, String)> = projection
+            .get("subagents")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|s| {
+                Some((
+                    s["childThreadId"].as_str()?.to_owned(),
+                    s["providerThreadId"].as_str()?.to_owned(),
+                ))
+            })
+            .collect();
+        let Some(Value::Array(rows)) = projection.get_mut("providerThreads") else {
+            return Ok(());
+        };
+        for (child, id) in wanted {
+            if rows.iter().any(|row| row["id"] == id.as_str()) {
+                continue;
+            }
+            let row = self
+                .conn
+                .query_row(
+                    "SELECT body FROM entities
+                     WHERE thread_id = ?1 AND kind = 'providerThreads' AND id = ?2",
+                    params![child, id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(err)?;
+            if let Some(row) = row {
+                rows.push(parse(row)?);
+            }
+        }
+        Ok(())
+    }
+
     /// `OrchestrationV2ThreadProjection`, or `None` for an unknown or deleted thread.
     pub(crate) fn thread_projection(&self, thread_id: &str) -> StoreResult<Option<Value>> {
         Ok(self
@@ -360,6 +403,7 @@ impl Store {
             };
             projection.insert(kind.into(), Value::Array(rows));
         }
+        self.add_subagent_provider_threads(&mut projection)?;
         // Turn items in timeline order, read once and moved into their rows.
         let mut items = self.query_json(
             "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'

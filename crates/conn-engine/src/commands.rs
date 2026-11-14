@@ -1318,6 +1318,7 @@ struct RuntimeRequestRespond {
     decision: Option<Value>,
     feedback: Option<String>,
     answers: Option<Value>,
+    attachments_by_question_id: Option<Value>,
 }
 
 fn runtime_request_respond(tx: &mut Tx<'_>, command: Value) -> Outcome {
@@ -1342,6 +1343,7 @@ fn runtime_request_respond(tx: &mut Tx<'_>, command: Value) -> Outcome {
     }
     let node = request["nodeId"].as_str().map(str::to_owned);
     tx.append(Draft::new(&c.thread_id, "runtime-request.updated", request).node(node.as_deref()))?;
+    settle_request_rows(tx, &c, node.as_deref())?;
     Ok(vec![Effect::Respond {
         thread_id: c.thread_id,
         request: json!({
@@ -1351,6 +1353,85 @@ fn runtime_request_respond(tx: &mut Tx<'_>, command: Value) -> Outcome {
             "answers": c.answers,
         }),
     }])
+}
+
+/// The answered request's node and its turn item end (`runtime-request.respond` in T3's
+/// `Orchestrator`): `cancelled` for a declined or cancelled request, else `completed`; a
+/// question's item carries the answer (`questionAnswer`).
+fn settle_request_rows(
+    tx: &mut Tx<'_>,
+    c: &RuntimeRequestRespond,
+    node_id: Option<&str>,
+) -> StoreResult<()> {
+    let Some(node_id) = node_id else {
+        return Ok(());
+    };
+    let status = match c.decision.as_ref().and_then(Value::as_str) {
+        Some("decline" | "cancel") => "cancelled",
+        _ => "completed",
+    };
+    let now = tx.now().to_owned();
+    if let Some(mut node) = tx.entity(&c.thread_id, "nodes", node_id)? {
+        node["status"] = json!(status);
+        node["completedAt"] = json!(now);
+        let run = node["runId"].as_str().map(str::to_owned);
+        tx.append(
+            Draft::new(&c.thread_id, "node.updated", node)
+                .run(run.as_deref())
+                .node(Some(node_id)),
+        )?;
+    }
+    let item = tx
+        .entities_where(&c.thread_id, "turnItems", "nodeId", node_id)?
+        .into_iter()
+        .filter(|item| {
+            matches!(
+                item["type"].as_str(),
+                Some("approval_request" | "user_input_request")
+            ) && item["requestId"] == c.request_id.as_str()
+        })
+        .min_by_key(|item| item["ordinal"].as_u64().unwrap_or(u64::MAX));
+    if let Some(mut item) = item {
+        if item["type"] == "user_input_request"
+            && let Some(answers) = &c.answers
+        {
+            // T3 keeps each question's answer list (`{answers: [...]}` → `[...]`).
+            let answers: serde_json::Map<String, Value> = answers
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(id, answer)| {
+                    let answer = answer
+                        .get("answers")
+                        .cloned()
+                        .unwrap_or_else(|| answer.clone());
+                    (id.clone(), answer)
+                })
+                .collect();
+            let questions: serde_json::Map<String, Value> = item["questions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|q| Some((q["id"].as_str()?.to_owned(), q["question"].clone())))
+                .collect();
+            item["questionAnswer"] = json!({
+                "requestId": c.request_id,
+                "answers": answers,
+                "attachmentsByQuestionId": c.attachments_by_question_id.clone().unwrap_or_else(|| json!({})),
+                "questionTextById": questions,
+            });
+        }
+        item["status"] = json!(status);
+        item["completedAt"] = json!(now);
+        item["updatedAt"] = json!(now);
+        let run = item["runId"].as_str().map(str::to_owned);
+        tx.append(
+            Draft::new(&c.thread_id, "turn-item.updated", item)
+                .run(run.as_deref())
+                .node(Some(node_id)),
+        )?;
+    }
+    Ok(())
 }
 
 /// Replaces fields of the thread record and records it as `event_type`.

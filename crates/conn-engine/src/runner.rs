@@ -1597,11 +1597,28 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
                 to_json(&provider_session),
             ))
         }
-        ProviderEvent::ProviderThreadUpdated { provider_thread } => Translated::Event(Draft::new(
-            thread_id,
-            "provider-thread.updated",
-            to_json(&provider_thread),
-        )),
+        // T3's `ProviderEventIngestor`: a provider thread goes to its app thread (a subagent's
+        // child thread has its own).
+        ProviderEvent::ProviderThreadUpdated { provider_thread } => {
+            let payload = to_json(&provider_thread);
+            let target = payload["appThreadId"]
+                .as_str()
+                .unwrap_or(thread_id)
+                .to_owned();
+            Translated::Event(Draft::new(&target, "provider-thread.updated", payload))
+        }
+        // A provider turn of another thread (a subagent's turn on its child thread) goes to
+        // that thread, under its own node, outside the run.
+        ProviderEvent::ProviderTurnUpdated {
+            thread_id: Some(other),
+            provider_turn,
+        } if other.as_str() != thread_id => {
+            let payload = to_json(&provider_turn);
+            let node = payload["nodeId"].as_str().map(str::to_owned);
+            Translated::Event(
+                Draft::new(other.as_str(), "provider-turn.updated", payload).node(node.as_deref()),
+            )
+        }
         ProviderEvent::ProviderTurnUpdated { provider_turn, .. } => {
             let payload = to_json(&provider_turn);
             let id = from_json(payload["id"].clone());
@@ -1624,6 +1641,17 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
         }
         ProviderEvent::TurnItemUpdated { turn_item } => {
             Translated::Event(scoped("turn-item.updated", to_json(&turn_item)))
+        }
+        ProviderEvent::RuntimeRequestUpdated {
+            thread_id: Some(other),
+            runtime_request,
+        } if other.as_str() != thread_id => {
+            let payload = to_json(&runtime_request);
+            let node = payload["nodeId"].as_str().map(str::to_owned);
+            Translated::Event(
+                Draft::new(other.as_str(), "runtime-request.updated", payload)
+                    .node(node.as_deref()),
+            )
         }
         ProviderEvent::RuntimeRequestUpdated {
             runtime_request, ..
