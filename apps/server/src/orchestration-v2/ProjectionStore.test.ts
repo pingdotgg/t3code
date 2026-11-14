@@ -10562,6 +10562,26 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ["local", targetThreadId, "command_execution"],
         ],
       );
+
+      const sourceThread = (yield* projectionStore.getThreadProjection(sourceThreadId)).thread;
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:source-deleted"),
+        type: "thread.deleted",
+        threadId: sourceThreadId,
+        occurredAt: now,
+        payload: { ...sourceThread, deletedAt: now },
+      });
+      const afterSourceDeleted = yield* projectionStore.getShellSnapshot();
+      assert.isUndefined(afterSourceDeleted.threads.find((thread) => thread.id === sourceThreadId));
+      for (const forkId of [targetThreadId, nestedThreadId]) {
+        const expected = (yield* projectionStore.getThreadProjection(forkId)).visibleTurnItems
+          .length;
+        assert.equal((yield* projectionStore.getThreadShell(forkId))?.visibleItemCount, expected);
+        assert.equal(
+          afterSourceDeleted.threads.find((thread) => thread.id === forkId)?.visibleItemCount,
+          expected,
+        );
+      }
     }),
   );
 
