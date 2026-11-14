@@ -9,11 +9,24 @@ import {
 } from "./codexLaunchArgs.ts";
 
 describe("codexAppServerArgs", () => {
-  it("preserves escaped TOML quotes in config values", () => {
-    NodeAssert.deepStrictEqual(
-      codexAppServerArgs(String.raw`--config model=\"gpt-6.1-sol\" --strict-config`),
-      ["app-server", "--config", 'model="gpt-6.1-sol"', "--strict-config"],
-    );
+  it.each([
+    {
+      name: "preserves escaped TOML quotes in config values",
+      launchArgs: String.raw`--config model=\"gpt-6.1-sol\" --strict-config`,
+      expected: ["--config", 'model="gpt-6.1-sol"', "--strict-config"],
+    },
+    {
+      name: "lets launch args override the unload delay",
+      launchArgs: "-c thread_unload_delay_secs=1800",
+      expected: ["-c", "thread_unload_delay_secs=1800"],
+    },
+  ])("asks Codex to unload unsubscribed threads immediately and $name", (row) => {
+    NodeAssert.deepStrictEqual(codexAppServerArgs(row.launchArgs), [
+      "app-server",
+      "-c",
+      "thread_unload_delay_secs=0",
+      ...row.expected,
+    ]);
   });
 });
 
