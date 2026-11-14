@@ -1,14 +1,9 @@
 // Written the way an agent with only the skill would write it.
 // @effect-diagnostics globalDateInEffect:off globalJsonInEffect:off
 // The mistake the replay case exists for: the time is read by the body, so a replay reads it again.
-export default ({
-  workflow,
-  wait,
-  stop,
-  Effect,
-  Schema,
-  Option,
-}: typeof import("../../../apps/server/src/workflows/api.ts")) => [
+const { workflow, wait, stop } = T3;
+
+export default [
   workflow(
     "stamp",
     { version: 1, payload: Schema.Struct({ label: Schema.String }), returns: Schema.String },

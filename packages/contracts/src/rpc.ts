@@ -395,10 +395,11 @@ import {
 import {
   WorkflowAnswerInput,
   WorkflowRequestError,
+  WorkflowDefinitionChangeResult,
+  WorkflowDefinitionDeleteInput,
+  WorkflowDefinitionFiles,
   WorkflowDefinitionGetInput,
-  WorkflowDefinitionGetResult,
   WorkflowDefinitionSaveInput,
-  WorkflowDefinitionSaveResult,
   WorkflowRunCancelInput,
   WorkflowRunDetail,
   WorkflowRunGetInput,
@@ -599,6 +600,7 @@ export const WS_METHODS = {
   workflowsCancel: "workflows.cancel",
   workflowsGetDefinition: "workflows.getDefinition",
   workflowsSaveDefinition: "workflows.saveDefinition",
+  workflowsDeleteDefinition: "workflows.deleteDefinition",
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
@@ -2218,13 +2220,19 @@ const WsWorkflowsCancelRpc = Rpc.make(WS_METHODS.workflowsCancel, {
 
 const WsWorkflowsGetDefinitionRpc = Rpc.make(WS_METHODS.workflowsGetDefinition, {
   payload: WorkflowDefinitionGetInput,
-  success: WorkflowDefinitionGetResult,
+  success: WorkflowDefinitionFiles,
   error: EnvironmentAuthorizationError,
 });
 
 const WsWorkflowsSaveDefinitionRpc = Rpc.make(WS_METHODS.workflowsSaveDefinition, {
   payload: WorkflowDefinitionSaveInput,
-  success: WorkflowDefinitionSaveResult,
+  success: WorkflowDefinitionChangeResult,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsWorkflowsDeleteDefinitionRpc = Rpc.make(WS_METHODS.workflowsDeleteDefinition, {
+  payload: WorkflowDefinitionDeleteInput,
+  success: WorkflowDefinitionChangeResult,
   error: EnvironmentAuthorizationError,
 });
 
@@ -2399,6 +2407,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsWorkflowsCancelRpc,
   WsWorkflowsGetDefinitionRpc,
   WsWorkflowsSaveDefinitionRpc,
+  WsWorkflowsDeleteDefinitionRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,

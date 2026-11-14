@@ -28,7 +28,7 @@ export interface WorkflowsSearch {
   /** The agent thread open beside the run, and the linked environment it is in when not `env`. */
   readonly thread?: string;
   readonly threadEnv?: string;
-  /** Show the definitions file instead of the runs. */
+  /** Show the definition files instead of the runs. */
   readonly file?: boolean;
 }
 

@@ -1,14 +1,8 @@
 // Written the way an agent with only the skill would write it.
 // @effect-diagnostics globalDateInEffect:off globalJsonInEffect:off
-export default ({
-  workflow,
-  step,
-  wait,
-  stop,
-  Effect,
-  Schema,
-  Option,
-}: typeof import("../../../apps/server/src/workflows/api.ts")) => [
+const { workflow, step, wait, stop } = T3;
+
+export default [
   workflow(
     "stamp",
     { version: 1, payload: Schema.Struct({ label: Schema.String }), returns: Schema.String },
