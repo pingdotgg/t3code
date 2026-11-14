@@ -92,6 +92,7 @@ function candidate(
         { role: "assistant" as const, text: "Fixed", createdAt: timestamp },
       ],
     },
+    worktree: null as { path: string; branch: string | null } | null,
   } satisfies AgentSessionScanner.AgentSessionRecentThread;
 }
 
@@ -304,6 +305,7 @@ it.effect(
       );
       const unowned = candidate(CODEX_MODEL_SELECTION, "unowned");
       unowned.thread.omittedMessageCount = 1;
+      unowned.worktree = { path: "/workspace/project/.claude/worktrees/feat", branch: "feat" };
       const unownedPi = candidate(PI_MODEL_SELECTION, "unowned-pi", "pi");
       const importer = yield* makeImporter([
         active,
@@ -356,6 +358,8 @@ it.effect(
           expect(notices).toEqual([]);
         }
         expect(records.thread.historyOrigin).toBe("v1_import");
+        expect(records.thread.worktreePath).toBe(source.worktree?.path ?? null);
+        expect(records.thread.branch).toBe(source.worktree?.branch ?? null);
         expect(records.thread.activeProviderThreadId).toBe(records.providerThreads[0]?.id);
         expect(records.providerThreads[0]?.nativeThreadRef?.nativeId).toBe(nativeId(source));
         expect(Option.getOrThrow(yield* runtimes.getByThreadId({ threadId }))).toMatchObject({
@@ -364,7 +368,10 @@ it.effect(
             source.source.provider === "claudeAgent"
               ? { threadId, resume: source.source.providerSessionId }
               : { threadId: nativeId(source) },
-          runtimePayload: { importedTranscripts: [source.source] },
+          runtimePayload: {
+            cwd: source.worktree?.path ?? "/workspace/project",
+            importedTranscripts: [source.source],
+          },
         });
       }
     }).pipe(Effect.scoped, Effect.provide(persistence)),
@@ -444,6 +451,47 @@ it.effect(
         runtimePayload: { importedTranscripts: [source.source] },
       });
     }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("does not record a changed transcript as imported without its new messages", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+    const first = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "6f1c2a7e-3b4d-4e5f-9a8b-1c2d3e4f5a6b",
+      "claudeAgent",
+    );
+    const threadId = importId(first);
+    expect(yield* (yield* makeImporter([first])).run).toEqual({
+      importedCount: 1,
+      skippedCount: 0,
+    });
+
+    const continued = candidate(
+      CLAUDE_MODEL_SELECTION,
+      first.source.providerSessionId,
+      "claudeAgent",
+    );
+    continued.source.size = 200;
+    continued.source.mtimeMs = 3;
+    continued.thread.messages.push(
+      { role: "user", text: "Continue", createdAt: timestamp },
+      { role: "assistant", text: "Continued", createdAt: timestamp },
+    );
+    yield* (yield* makeImporter([continued])).run;
+
+    const recorded = AgentSessionScanner.decodeImportedTranscriptPayload(
+      Option.getOrThrow(yield* runtimes.getByThreadId({ threadId })).runtimePayload,
+    ).pipe(Option.getOrThrow).importedTranscripts;
+    const texts = (yield* projections.getThreadRecords(threadId, ["messages"])).messages.map(
+      (message) => message.text,
+    );
+    expect({
+      recordsChangedTranscript: recorded?.some((source) => source.size === 200) ?? false,
+      showsNewMessages: texts.includes("Continued"),
+    }).not.toEqual({ recordsChangedTranscript: true, showsNewMessages: false });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
 it.effect(
