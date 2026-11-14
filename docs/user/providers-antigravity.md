@@ -161,10 +161,9 @@ for Google sign-ins. Each group has separate five-hour and weekly limits and res
 times. Limits refresh with provider status and include usage outside T3 Code.
 
 Antigravity 1.5 and later keeps its Google sign-in in your system keyring (Keychain on
-macOS, Secret Service on Linux). T3 Code reads that sign-in to check limits, so your
-keyring may ask you to allow access the first time. Antigravity renews the sign-in only
-while it runs, so limits update when an Antigravity session starts. On Windows, limits
-show only for a sign-in Antigravity saved to a file instead of Credential Manager.
+macOS, Credential Manager on Windows, Secret Service on Linux). T3 Code reads that sign-in
+to check limits, so your keyring may ask you to allow access the first time. Antigravity
+renews the sign-in only while it runs, so limits update when an Antigravity session starts.
 
 A server restart keeps your Google sign-in. The provider shows the saved account
 until a session, a refresh, or a sign-out reports something new.

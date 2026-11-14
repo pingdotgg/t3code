@@ -15,6 +15,8 @@ import {
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
 
+import { readWindowsGenericCredential } from "./windowsCredential.ts";
+
 export function antigravityUserAgent(platform: NodeJS.Platform, architecture: NodeJS.Architecture) {
   return `antigravity/hub/2.24.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`;
 }
@@ -168,29 +170,37 @@ export class AntigravityKeyringError extends Schema.TaggedError<AntigravityKeyri
 /** Reads the CLI's keyring entry; `undefined` when there is none. */
 const readAntigravityKeyringSecret = Effect.fn("readAntigravityKeyringSecret")(function* (
   platform: NodeJS.Platform,
+  architecture: string,
 ) {
-  // go-keyring's Windows target is `gemini:antigravity`; @napi-rs/keyring 1.3 reaches it only via
-  // `withTarget`, which writes an empty secret first and would wipe the CLI's sign-in.
-  if (platform === "win32") return undefined;
-  // Loading the native binding lazily keeps a broken binding from blocking server startup.
-  const Keyring = yield* Effect.tryPromise({
-    try: () => import("@napi-rs/keyring"),
-    catch: (cause) => new AntigravityKeyringError({ cause }),
-  });
-  const entry = yield* Effect.try({
-    try: () => new Keyring.AsyncEntry(KEYRING_SERVICE, KEYRING_ACCOUNT),
-    catch: (cause) => new AntigravityKeyringError({ cause }),
-  });
   // Typed as `Uint8Array`, but the binding returns a plain array of bytes.
-  const secret: ArrayLike<number> | undefined = yield* Effect.tryPromise({
-    try: () => entry.getSecret(),
-    catch: (cause) => new AntigravityKeyringError({ cause }),
-  }).pipe(
-    Effect.catchIf(
-      (error) => /no (matching )?entry|not found/i.test(String(error.cause)),
-      () => Effect.undefined,
-    ),
-  );
+  let secret: ArrayLike<number> | undefined;
+  if (platform === "win32") {
+    // go-keyring writes the Windows target `service:account`, which @napi-rs/keyring cannot read.
+    secret = yield* Effect.try({
+      try: () =>
+        readWindowsGenericCredential(`${KEYRING_SERVICE}:${KEYRING_ACCOUNT}`, architecture),
+      catch: (cause) => new AntigravityKeyringError({ cause }),
+    });
+  } else {
+    // Loading the native binding lazily keeps a broken binding from blocking server startup.
+    const Keyring = yield* Effect.tryPromise({
+      try: () => import("@napi-rs/keyring"),
+      catch: (cause) => new AntigravityKeyringError({ cause }),
+    });
+    const entry = yield* Effect.try({
+      try: () => new Keyring.AsyncEntry(KEYRING_SERVICE, KEYRING_ACCOUNT),
+      catch: (cause) => new AntigravityKeyringError({ cause }),
+    });
+    secret = yield* Effect.tryPromise({
+      try: () => entry.getSecret(),
+      catch: (cause) => new AntigravityKeyringError({ cause }),
+    }).pipe(
+      Effect.catchIf(
+        (error) => /no (matching )?entry|not found/i.test(String(error.cause)),
+        () => Effect.undefined,
+      ),
+    );
+  }
   if (!secret) return undefined;
   return yield* Effect.try({
     try: () => decodeGoKeyringSecret(secret),
@@ -295,7 +305,8 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   const architecture = yield* HostProcess.Architecture;
   const tokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
   const storedTokenPath = path.join(input.profileDirectory, "antigravity-acp", STORED_TOKEN_FILE);
-  const readKeyringSecret = input.readKeyringSecret ?? readAntigravityKeyringSecret(platform);
+  const readKeyringSecret =
+    input.readKeyringSecret ?? readAntigravityKeyringSecret(platform, architecture);
   const readStoredToken = Effect.gen(function* () {
     const secret = (yield* fs.exists(storedTokenPath))
       ? yield* fs.readFileString(storedTokenPath)
