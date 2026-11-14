@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  EnvironmentId,
   ProjectId,
   MessageId,
   NodeId,
@@ -288,6 +289,52 @@ describe("Grok launch permission mode", () => {
       cwd: process.cwd(),
       ...override,
     });
+
+  it.effect("launches the agent with the env that names the thread it serves", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("grok-launch-test");
+      const threadId = ThreadId.make("grok-launch-thread-env");
+      const endpoint = "http://127.0.0.1:43123/mcp";
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-grok-launch-thread-env"),
+        threadId,
+        providerSessionId: "mcp-session-grok-launch-thread-env",
+        providerInstanceId: instanceId,
+        endpoint,
+        authorizationHeader: "Bearer grok-thread-env-token",
+        browserToolsAvailable: false,
+      });
+      const environments: Array<Record<string, unknown> | undefined> = [];
+      const childProcessSpawner = ChildProcessSpawner.make((command) => {
+        if (command._tag === "StandardCommand") environments.push(command.options.env);
+        return Effect.fail(
+          PlatformError.systemError({
+            _tag: "NotFound",
+            module: "grok-launch-test",
+            method: "spawn",
+          }),
+        );
+      });
+      const adapter = yield* makeGrokAdapterV2({
+        instanceId,
+        settings: LAUNCH_TEST_GROK_SETTINGS,
+        environment: {},
+        hostPlatform: "darwin",
+        selfInvocation: yield* resolveSelfInvocation(),
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner));
+      yield* adapter
+        .openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("grok-launch-thread-env"),
+          modelSelection: { instanceId, model: "grok-build" },
+          runtimePolicy: policy("full-access"),
+        })
+        .pipe(Effect.scoped, Effect.ignore);
+      assert.lengthOf(environments, 1);
+      assert.equal(environments[0]?.T3CODE_THREAD_ID, "grok-launch-thread-env");
+      assert.equal(environments[0]?.T3_ACP_MCP_ENDPOINT, endpoint);
+    }).pipe(Effect.provideService(HostProcess.Platform, "darwin"), Effect.provide(layerTest)),
+  );
 
   it.effect.each(
     (
