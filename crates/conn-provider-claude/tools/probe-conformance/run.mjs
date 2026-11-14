@@ -135,6 +135,35 @@ const SCENARIOS = [
     title: { message: "Add dark mode", modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-4-6" } },
     behaviour: { title: [{ code: 1, stdout: JSON.stringify({ is_error: true, result: "Credit balance is too low" }), stderr: "wrapper notice\n" }] },
   },
+  // An instance as Orbit writes one: a `~` binary path (made relative to the throwaway HOME
+  // below), a sensitive variable, `CLAUDE_CONFIG_DIR` with `~`, a display name and accent.
+  {
+    name: "instance-settings",
+    instance: {
+      driver: "claudeAgent",
+      displayName: " Claude Max ",
+      accentColor: "#aa5500",
+      environment: [
+        { name: "CONFORMANCE_SENSITIVE", value: "conformance-sensitive-value", sensitive: true },
+        { name: "CLAUDE_CONFIG_DIR", value: "~/env-claude-home" },
+      ],
+    },
+    binary: "stub",
+    tilde: true,
+    behaviour: signedIn(PRO),
+  },
+  {
+    name: "title-instance",
+    instance: {
+      driver: "claudeAgent",
+      config: { homePath: "~/claude-home" },
+      environment: [{ name: "CONFORMANCE_SENSITIVE", value: "conformance-sensitive-value", sensitive: true }],
+    },
+    binary: "stub",
+    tilde: true,
+    title: { message: "Add dark mode", modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-4-6" } },
+    behaviour: { title: [{ code: 0, stdout: JSON.stringify({ structured_output: { title: "Dark Mode", needsRefinement: false } }) }] },
+  },
 ].filter((s) => only.length === 0 || only.includes(s.name));
 
 const work = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-claude-probe-")));
@@ -164,7 +193,9 @@ const plan = SCENARIOS.map((scenario) => {
   NodeFS.mkdirSync(cwd, { recursive: true });
   const withBinary = (binary) => {
     const instance = fill(scenario.instance);
-    return { ...instance, config: { ...instance.config, binaryPath: binary } };
+    // `tilde`: the stub named from the throwaway HOME, as `~/../<scenario>/<side>/claude`.
+    const binaryPath = scenario.tilde ? `~/${NodePath.relative(home, binary)}` : binary;
+    return { ...instance, config: { ...instance.config, binaryPath } };
   };
   return {
     name: scenario.name,
@@ -184,8 +215,9 @@ import { it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { ClaudeSettings, resolveProviderInstanceEnabled } from "@t3tools/contracts";
+import { ClaudeSettings, ProviderInstanceConfig, resolveProviderInstanceEnabled } from "@t3tools/contracts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { checkClaudeProviderStatus, probeClaudeCapabilities } from "./ClaudeProvider.ts";
 import { makeClaudeTextGeneration } from "../textGeneration/ClaudeTextGeneration.ts";
 import { buildThreadTitlePrompt } from "@t3tools/provider-core/server/textGenerationPrompts";
@@ -202,9 +234,12 @@ it.live("conn claude probe: every scenario", () =>
     PLAN,
     (scenario: any) =>
       Effect.gen(function* () {
-        const instance = scenario.tsInstance;
+        // As the registry reads it: decoded (display name and accent trimmed).
+        const instance = Schema.decodeUnknownSync(ProviderInstanceConfig)(scenario.tsInstance);
         const enabled = resolveProviderInstanceEnabled(instance);
-        const settings = { ...Schema.decodeSync(ClaudeSettings)(instance.config ?? {}), enabled };
+        // As the Claude driver builds its effective settings: binaryPath with \`~\` expanded.
+        const decoded = Schema.decodeSync(ClaudeSettings)(instance.config ?? {});
+        const settings = { ...decoded, enabled, binaryPath: expandHomePath(decoded.binaryPath, BASE_ENV.HOME) };
         const processEnv = yield* mergeClaudeProcessEnvironment(settings, instance.environment, BASE_ENV);
         if (scenario.title !== null) {
           // What ours gets: T3's own prompt and output schema for this message.
