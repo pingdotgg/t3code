@@ -36,6 +36,8 @@ const CLAUDE_FAKE_HOST = NodePath.join(
   repoRoot,
   "crates/conn-provider-claude/tools/t3-replay/fake-host.mjs",
 );
+const ACP_STUB = NodePath.join(repoRoot, "crates/conn-provider-acp/tools/acp-stub.mjs");
+const ACP_REPLAY_AGENT = NodePath.join(MONOREPO, "apps/server/scripts/acp-replay-agent.ts");
 const EXPECTED = NodePath.join(HERE, "expected-failures.txt");
 
 const args = process.argv.slice(2);
@@ -67,6 +69,8 @@ const config = {
   codexStub: CODEX_STUB,
   claudeFakeHost: CLAUDE_FAKE_HOST,
   claudeShim: NodePath.join(HERE, "claude-session-shim.mjs"),
+  acpStub: ACP_STUB,
+  acpReplayAgent: ACP_REPLAY_AGENT,
   node: process.execPath,
   only,
 };
@@ -82,6 +86,7 @@ import * as Effect from "effect/Effect";
 import { materializeReplayTranscriptWorkspace } from "@t3tools/provider-testing/replayTranscript";
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
+import { GrokOrchestratorReplayHarness } from "../Adapters/GrokAdapterV2.testkit.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
 import { itRunsReplayFixtures, runReplayFixture } from "./ProviderReplayFixtures.ts";
 
@@ -115,8 +120,9 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
   };
 
   // The provider's stand-in: Codex gets a stub codex executable that replays the recording
-  // (codex-stub.mjs); Claude gets the fake SDK host of the Claude transcript replay.
-  const standIn = (driver: string, dir: string, transcript: any) => {
+  // (codex-stub.mjs); Claude gets the fake SDK host of the Claude transcript replay; Grok gets
+  // a stub grok executable (acp-stub.mjs) that runs T3's own ACP replay agent on it.
+  const standIn = (driver: string, dir: string, transcript: any, workspace: string) => {
     if (driver === "codex") {
       fs.writeFileSync(path.join(dir, "transcript.json"), JSON.stringify(transcript));
       const stubConfig = path.join(dir, "stub-config.json");
@@ -143,11 +149,46 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
         helperArgs: [CONFIG.claudeShim, recorded, CONFIG.claudeFakeHost, ndjson, path.join(dir, "host-result.json")],
       };
     }
+    if (driver === "grok") {
+      fs.writeFileSync(path.join(dir, "transcript.json"), JSON.stringify(transcript));
+      const stubConfig = path.join(dir, "stub-config.json");
+      fs.writeFileSync(
+        stubConfig,
+        JSON.stringify({
+          transcript: path.join(dir, "transcript.json"),
+          status: path.join(dir, "status.json"),
+          log: path.join(dir, "stub.ndjson"),
+          replayAgent: CONFIG.acpReplayAgent,
+          workspace,
+        }),
+      );
+      const wrapper = path.join(dir, "grok");
+      fs.writeFileSync(
+        wrapper,
+        "#!/bin/sh\nexec " + JSON.stringify(CONFIG.node) + " " + JSON.stringify(CONFIG.acpStub) +
+          " --stub-config " + JSON.stringify(stubConfig) + ' "$@"\n',
+        { mode: 0o755 },
+      );
+      return { binary: wrapper };
+    }
     throw new Error("conn: driver " + driver + " is not offered by this server");
   };
 
   // What the stand-in saw that the recording did not expect: T3's replay fails on it.
-  const frameDifference = (driver: string, dir: string): string | null => {
+  const frameDifference = (driver: string, dir: string, transcript: any): string | null => {
+    if (driver === "grok") {
+      // T3's makeAcpReplayCompletenessAssertion: no mismatch, and every frame consumed.
+      const file = path.join(dir, "status.json");
+      if (!fs.existsSync(file)) return "the replay agent never started";
+      const status = JSON.parse(fs.readFileSync(file, "utf8"));
+      if (status.failure !== undefined) {
+        return "the replay agent stopped at entry " + status.failure.cursor + ": " + status.failure.detail;
+      }
+      if (status.cursor !== transcript.entries.length) {
+        return "the replay agent consumed " + status.cursor + " of " + transcript.entries.length + " frames";
+      }
+      return null;
+    }
     if (driver === "codex") {
       const log = path.join(dir, "stub.ndjson");
       if (!fs.existsSync(log)) return null;
@@ -174,7 +215,7 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
       const dir = path.join(CONFIG.work, scenario.name.replace(/[^a-zA-Z0-9_-]+/g, "-") + "-" + counter);
       fs.mkdirSync(path.join(dir, "home"), { recursive: true });
       fs.mkdirSync(path.join(dir, "state"), { recursive: true });
-      const provider = standIn(harness.driver, dir, scenario.transcript);
+      const provider = standIn(harness.driver, dir, scenario.transcript, scenario.runtimePolicyOverride?.cwd);
       const create = scenario.commands.find((c: any) => c.type === "thread.create");
       const out = path.join(dir, "result.json");
       const plan = {
@@ -197,7 +238,7 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
         child.on("exit", (status) => resolve(status));
       });
       const raw = fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, "utf8")) : { error: "no result (exit " + code + ")" };
-      const difference = frameDifference(harness.driver, dir);
+      const difference = frameDifference(harness.driver, dir, scenario.transcript);
       if (difference !== null) throw new Error("provider frames differ: " + difference + " [" + dir + "]");
       if (raw.error) throw new Error("conn driver: " + raw.error + " [" + dir + "]");
       const storedEvents = decodeEvents(raw.storedEvents);
@@ -265,6 +306,9 @@ describe("conn engine: T3 replay fixtures", () => {
       }
       if (driver === "claudeAgent") {
         return runReplayFixture({ ...input, harness: ClaudeOrchestratorReplayHarness });
+      }
+      if (driver === "grok") {
+        return runReplayFixture({ ...input, harness: GrokOrchestratorReplayHarness });
       }
       return runReplayFixture({ ...input, harness: generic(driver) as any });
     });

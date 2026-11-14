@@ -78,6 +78,18 @@ fn provider(plan: &Value) -> Result<Arc<dyn Provider>, Failure> {
                 config,
             )))
         }
+        // The executable is a stub that runs T3's ACP replay agent on the recording
+        // (`crates/conn-provider-acp/tools/acp-stub.mjs`).
+        "grok" => Ok(Arc::new(conn_provider_acp::AcpProvider::new(
+            "grok".into(),
+            &conn_provider_acp::GROK,
+            conn_provider_acp::AcpConfig {
+                binary: text(plan, "binary")?.to_owned(),
+                // T3's TestClock never fires the 50 ms text flush unless a step moves it.
+                text_flush_interval: None,
+                ..conn_provider_acp::AcpConfig::default()
+            },
+        ))),
         other => Err(format!("driver {other} is not offered by this replay")),
     }
 }
