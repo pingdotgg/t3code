@@ -60,24 +60,23 @@ compacts automatically. To see context usage, see
 [commands and skills](./composer.md#commands-and-skills).
 
 When you return to a large thread after Claude's prompt cache expires, a
-**Compact** chip with the thread's token count shows
-next to the send button. While it is on, Enter summarizes the history first, then
-sends your message. Click the chip to switch it to **Keep** and keep the full
-history for that message. The mobile app shows no chip: an eligible message sent
-from it summarizes first. The cache lasts about an hour on a Claude
+**Compact** switch with the thread's token count shows next to the send button.
+While it is on, Enter summarizes the history first, then sends your message.
+Turn it off to keep the full history for that message. The mobile app shows no
+switch: an eligible message sent from it summarizes first. The cache lasts about an hour on a Claude
 subscription and 5 minutes with an API key, Bedrock, or Vertex. See [commands and skills](./composer.md#commands-and-skills) for using
 composer commands.
 
 **Compact idle threads** in **Settings > Providers > Advanced** controls this for threads
 over 200,000 tokens. Each Claude provider's settings can override it:
 
-- **When you return** shows the **Compact** chip described above. This is the default.
+- **When you return** shows the **Compact** switch described above. This is the default.
 - **Before the cache expires (beta)** tries to compact an idle thread shortly before its
   prompt cache expires, while the history is still cached.
   The compaction appears in the thread as a `/compact` turn sent by T3 Code.
   If the window is missed, such as when you enable this mode after the cache has
   expired or the server restarts before compaction runs, it falls back to
-  **When you return**. Switch the chip to **Keep** to keep the full history for that message.
+  **When you return**. Turn the switch off to keep the full history for that message.
 - **Never** skips idle compaction and Claude's resume prompt. **Auto-compact after**
   still applies, and you can still compact by hand.
 
