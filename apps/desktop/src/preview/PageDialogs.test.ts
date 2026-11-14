@@ -61,4 +61,17 @@ describe("holdPageDialogs", () => {
     expect(hold.answer(true)).toBe(false);
     expect(callback).not.toHaveBeenCalled();
   });
+
+  it("dismisses a pending dialog when a main-frame navigation starts", () => {
+    const { contents, changed, callback } = setup();
+    contents.emit("-run-dialog", info, callback);
+
+    contents.emit("did-start-navigation", { isMainFrame: false, isSameDocument: false });
+    contents.emit("did-start-navigation", { isMainFrame: true, isSameDocument: true });
+    expect(callback).not.toHaveBeenCalled();
+
+    contents.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+    expect(callback).toHaveBeenCalledExactlyOnceWith(false, "");
+    expect(changed).toHaveBeenLastCalledWith(null);
+  });
 });
