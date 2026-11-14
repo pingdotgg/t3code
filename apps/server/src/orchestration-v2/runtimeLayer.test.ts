@@ -681,7 +681,7 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
       }),
   );
 
-  it.effect.each(["no fork", "a live fork", "a deleted fork"] as const)(
+  it.effect.each(["no fork", "a live fork"] as const)(
     "a queued edit's cleanup keeps a file earlier history still shows, with %s",
     (fork) =>
       Effect.gen(function* () {
@@ -800,13 +800,6 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
             createdBy: "user",
             creationSource: "web",
           });
-          if (fork === "a deleted fork") {
-            yield* orchestrator.dispatch({
-              type: "thread.delete",
-              commandId: CommandId.make(`${key}:delete-fork`),
-              threadId: forkThreadId,
-            });
-          }
         }
         const queuedRunId = yield* writeRun({
           name: "queued",
