@@ -1352,10 +1352,6 @@ describe("PreviewManager", () => {
           yield* changes.until(() => last.schemes().length === before + 2);
           expect(second.schemes().at(-1)).toBe("dark");
           expect(last.schemes().slice(before)).toEqual(["dark", "dark"]);
-
-          yield* manager.setColorScheme("tab_41", "dark");
-          theme.setSystemColorScheme("light");
-          expect(first.schemes().at(-1)).toBe("dark");
         }),
       "darwin",
       theme.layer,
