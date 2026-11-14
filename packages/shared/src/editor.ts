@@ -71,24 +71,8 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const names = installNames[editor.id] ?? [editor.label];
   const command = editor.commands[0];
   const jetbrains = editor.launchStyle === "line-column";
-  // Toolbox names a launch script `idea1`, `idea2`, ... while `idea` is taken, and keeps that name
-  // after the other install is removed.
-  const numberedToolboxScripts = Effect.fn("editor.numberedToolboxScripts")(function* (
-    dir: string,
-    suffix: string,
-  ) {
-    const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => []));
-    return entries
-      .filter(
-        (entry) =>
-          entry.startsWith(command) &&
-          entry.endsWith(suffix) &&
-          /^\d+$/.test(entry.slice(command.length, entry.length - suffix.length)),
-      )
-      .sort((a, b) => a.length - b.length || a.localeCompare(b))
-      .map((entry) => path.join(dir, entry));
-  });
   const candidates: string[] = [];
+  let toolbox: { dir: string; suffix: string } | undefined;
 
   if (platform === "darwin") {
     const roots = [...(home ? [path.join(home, "Applications")] : []), "/Applications"];
@@ -114,8 +98,11 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       }
     }
     if (home && jetbrains) {
-      const dir = path.join(home, "Library/Application Support/JetBrains/Toolbox/scripts");
-      candidates.push(path.join(dir, command), ...(yield* numberedToolboxScripts(dir, "")));
+      toolbox = {
+        dir: path.join(home, "Library/Application Support/JetBrains/Toolbox/scripts"),
+        suffix: "",
+      };
+      candidates.push(path.join(toolbox.dir, command));
     }
   } else if (platform === "win32") {
     const roots = [
@@ -126,11 +113,8 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
     ];
     if (jetbrains) {
       if (env.LOCALAPPDATA) {
-        const dir = path.join(env.LOCALAPPDATA, "JetBrains/Toolbox/scripts");
-        candidates.push(
-          path.join(dir, `${command}.cmd`),
-          ...(yield* numberedToolboxScripts(dir, ".cmd")),
-        );
+        toolbox = { dir: path.join(env.LOCALAPPDATA, "JetBrains/Toolbox/scripts"), suffix: ".cmd" };
+        candidates.push(path.join(toolbox.dir, `${command}.cmd`));
       }
       for (const directory of roots.flatMap((root) => [root, path.join(root, "JetBrains")])) {
         const entries = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
@@ -171,9 +155,10 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       "/snap/bin",
     ];
     const dataHome = env.XDG_DATA_HOME || (home ? path.join(home, ".local/share") : undefined);
-    const toolboxDir =
-      jetbrains && dataHome ? path.join(dataHome, "JetBrains/Toolbox/scripts") : undefined;
-    if (toolboxDir) dirs.push(toolboxDir);
+    if (jetbrains && dataHome) {
+      toolbox = { dir: path.join(dataHome, "JetBrains/Toolbox/scripts"), suffix: "" };
+      dirs.push(toolbox.dir);
+    }
     if (preferZeditor) {
       // Linux packages use zeditor because OpenZFS owns the zed command.
       for (const name of ["zeditor", "zed"]) {
@@ -184,10 +169,26 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
         for (const name of editor.commands) candidates.push(path.join(dir, name));
       }
     }
-    if (toolboxDir) candidates.push(...(yield* numberedToolboxScripts(toolboxDir, "")));
   }
 
   if (preferBundle) candidates.push(...editor.commands);
+  if (toolbox) {
+    // Toolbox names a launch script `idea1`, `idea2`, ... while `idea` is taken, and keeps that
+    // name after the other install is removed. Try these only after every canonical candidate.
+    const { dir, suffix } = toolbox;
+    const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => []));
+    candidates.push(
+      ...entries
+        .filter(
+          (entry) =>
+            entry.startsWith(command) &&
+            entry.endsWith(suffix) &&
+            /^\d+$/.test(entry.slice(command.length, entry.length - suffix.length)),
+        )
+        .sort((a, b) => a.length - b.length || a.localeCompare(b))
+        .map((entry) => path.join(dir, entry)),
+    );
+  }
   const rejected = new Set<string>();
   for (const candidate of candidates) {
     const resolved = yield* resolveCommandPath(candidate, { env });

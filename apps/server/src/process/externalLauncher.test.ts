@@ -800,9 +800,15 @@ it.effect.each([
   },
   { platform: "linux", scripts: ".local/share/JetBrains/Toolbox/scripts", suffix: "" },
   { platform: "win32", scripts: "JetBrains/Toolbox/scripts", suffix: ".cmd" },
+  {
+    platform: "win32",
+    scripts: "JetBrains/Toolbox/scripts",
+    suffix: ".cmd",
+    install: "Programs/IntelliJ IDEA/bin/idea64.exe",
+  },
 ] as const)(
   "discovers a numbered JetBrains Toolbox script on $platform",
-  ({ platform, scripts, suffix }) =>
+  ({ platform, scripts, suffix, ...row }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -812,6 +818,11 @@ it.effect.each([
       for (const name of ["idea10", "idea2"]) {
         yield* fs.writeFileString(path.join(dir, `${name}${suffix}`), "#!/bin/sh\n");
         yield* fs.chmod(path.join(dir, `${name}${suffix}`), 0o755);
+      }
+      const install = "install" in row ? path.join(home, row.install) : undefined;
+      if (install) {
+        yield* fs.makeDirectory(path.dirname(install), { recursive: true });
+        yield* fs.writeFileString(install, "");
       }
 
       const editor = EDITORS.find((editor) => editor.id === "idea")!;
@@ -832,7 +843,7 @@ it.effect.each([
 
       assert.deepEqual(
         resolved,
-        Option.some({ command: path.join(dir, `idea2${suffix}`), baseArgs: [] }),
+        Option.some({ command: install ?? path.join(dir, `idea2${suffix}`), baseArgs: [] }),
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
