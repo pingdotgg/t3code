@@ -79,6 +79,36 @@ export class CheckpointRefUnavailableError extends Schema.TaggedError<Checkpoint
 
 export type CheckpointStoreError = VcsError;
 
+export class CheckpointFolderMissingError extends Schema.TaggedError<CheckpointFolderMissingError>()(
+  "CheckpointFolderMissingError",
+  {
+    operation: CheckpointDiffOperation,
+    threadId: ThreadId,
+    cwd: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `The folder these changes were made in no longer exists: ${this.cwd}`;
+  }
+}
+
+export class CheckpointRangeSpansFoldersError extends Schema.TaggedError<CheckpointRangeSpansFoldersError>()(
+  "CheckpointRangeSpansFoldersError",
+  {
+    operation: CheckpointDiffOperation,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "These turns ran in different folders after the thread moved, so their changes can't be shown together. Pick a single turn.";
+  }
+}
+
+/** Diff failures caused by a thread's folder, whose messages are meant for the user. */
+export const isCheckpointFolderError = Schema.is(
+  Schema.Union([CheckpointFolderMissingError, CheckpointRangeSpansFoldersError]),
+);
+
 export type CheckpointServiceError =
   | CheckpointStoreError
   | ProjectionRepositoryError
@@ -86,4 +116,6 @@ export type CheckpointServiceError =
   | CheckpointThreadNotFoundError
   | CheckpointWorkspacePathMissingError
   | CheckpointTurnRangeUnavailableError
-  | CheckpointRefUnavailableError;
+  | CheckpointRefUnavailableError
+  | CheckpointFolderMissingError
+  | CheckpointRangeSpansFoldersError;

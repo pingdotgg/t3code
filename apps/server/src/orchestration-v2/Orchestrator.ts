@@ -650,6 +650,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pull-request.sync":
     case "thread.title.regeneration.complete":
     case "thread.project.adopt-folder":
+    case "thread.project.move":
     case "thread.runtime-mode.set":
     case "thread.interaction-mode.set":
     case "thread.model-selection.set":
@@ -2858,6 +2859,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             Effect.flatMap((resolvedRuntimePolicy) =>
               checkpointService.prepareRootRunScope({
                 threadId,
+                scopeProjectId: projection.thread.checkpointScopeProjectId,
                 runId: queuedRun.id,
                 rootNodeId: rootNode.id,
                 providerThreadId: queuedProviderThread.id,
@@ -4083,6 +4085,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.pull-request-watch.checks-reopen"
           | "thread.pull-request.sync"
           | "thread.title.regeneration.complete"
+          | "thread.project.move"
           | "thread.runtime-mode.set"
           | "thread.interaction-mode.set"
           | "thread.model-selection.set"
@@ -4392,6 +4395,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
 
+    let projectMoveChangesCwd = false;
+    if (command.type === "thread.project.move") {
+      const reject = (cause: string) =>
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} ${cause}`,
+        });
+      if (thread.projectId === command.projectId) return yield* reject("is already there.");
+      const records = yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs", "runtimeRequests"], { turnItemTypes: [] })
+        .pipe(mapDispatchError(command));
+      if (threadHasUnfinishedWork(records)) {
+        return yield* reject("still has work in progress. Finish or stop it first.");
+      }
+      const current = yield* projects.get(thread.projectId).pipe(mapDispatchError(command));
+      const target = yield* projects.get(command.projectId).pipe(mapDispatchError(command));
+      if (Option.isNone(target) || target.value.deletedAt !== null) {
+        return yield* reject(`cannot move to missing project ${command.projectId}.`);
+      }
+      projectMoveChangesCwd =
+        (thread.worktreePath ?? Option.getOrUndefined(current)?.workspaceRoot) !==
+        target.value.workspaceRoot;
+    }
+
     const needsProviderState =
       command.type === "thread.runtime-mode.set" ||
       command.type === "thread.model-selection.set" ||
@@ -4400,7 +4428,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.type === "thread.settle" ||
       (command.type === "thread.metadata.update" &&
         command.worktreePath !== undefined &&
-        command.worktreePath !== thread.worktreePath);
+        command.worktreePath !== thread.worktreePath) ||
+      projectMoveChangesCwd;
     const providerContext = needsProviderState
       ? yield* projectionStore
           .getThreadProviderContext(
@@ -4450,9 +4479,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const detachSessionIds = new Set(
       command.type === "thread.archive" || command.type === "thread.settle"
         ? (providerContext?.providerSessions ?? []).map((session) => session.id)
-        : command.type === "thread.metadata.update" &&
-            command.worktreePath !== undefined &&
-            command.worktreePath !== thread.worktreePath
+        : (command.type === "thread.metadata.update" &&
+              command.worktreePath !== undefined &&
+              command.worktreePath !== thread.worktreePath) ||
+            projectMoveChangesCwd
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
           : command.type === "thread.runtime-mode.set"
             ? (providerContext?.providerSessions ?? [])
@@ -4853,6 +4883,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: now,
           };
         }
+        case "thread.project.move":
+          return {
+            ...thread,
+            projectId: command.projectId,
+            worktreePath: null,
+            branch: projectMoveChangesCwd ? command.branch : thread.branch,
+            ...(projectMoveChangesCwd ? { checkpointScopeProjectId: command.projectId } : {}),
+            updatedAt: now,
+          };
         case "thread.pull-request.link":
         case "thread.pull-request.unlink":
         case "thread.pull-request-link.sync": {
@@ -5189,6 +5228,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.marked-unread" as const;
         case "thread.metadata.update":
         case "thread.title.regeneration.complete":
+        case "thread.project.move":
           return "thread.metadata-updated" as const;
         case "thread.pull-request.link":
         case "thread.pull-request.unlink":
@@ -5389,7 +5429,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ? "Thread archived."
                     : command.type === "thread.settle"
                       ? "Thread settled."
-                      : command.type === "thread.metadata.update"
+                      : command.type === "thread.metadata.update" ||
+                          command.type === "thread.project.move"
                         ? "Workspace changed."
                         : command.type === "thread.runtime-mode.set"
                           ? "Runtime mode changed."
@@ -6448,6 +6489,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const checkpointScope = yield* checkpointService
       .prepareRootRunScope({
         threadId: input.command.threadId,
+        scopeProjectId: input.projection.thread.checkpointScopeProjectId,
         runId: targetRun.id,
         rootNodeId: nextRootNodeId,
         providerThreadId: restartProviderThread.id,
@@ -7506,6 +7548,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               Effect.flatMap((resolvedRuntimePolicy) =>
                 checkpointService.prepareRootRunScope({
                   threadId: command.threadId,
+                  scopeProjectId: projection.thread.checkpointScopeProjectId,
                   runId,
                   rootNodeId,
                   providerThreadId: queuedProviderThread.id,
@@ -7988,6 +8031,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 Effect.flatMap((resolvedRuntimePolicy) =>
                   checkpointService.prepareRootRunScope({
                     threadId: command.threadId,
+                    scopeProjectId: projection.thread.checkpointScopeProjectId,
                     runId,
                     rootNodeId,
                     providerThreadId,
@@ -8773,6 +8817,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const checkpointScope = yield* checkpointService
       .prepareRootRunScope({
         threadId: command.threadId,
+        scopeProjectId: projection.thread.checkpointScopeProjectId,
         runId,
         rootNodeId,
         providerThreadId: providerThread.id,
@@ -11838,6 +11883,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const checkpointScope = yield* checkpointService
         .prepareRootRunScope({
           threadId: command.threadId,
+          scopeProjectId: projection.thread.checkpointScopeProjectId,
           runId: state.run.id,
           rootNodeId: state.rootNode.id,
           providerThreadId: state.providerThread.id,
@@ -15001,6 +15047,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pull-request.watch":
       case "thread.pull-request.sync":
       case "thread.title.regeneration.complete":
+      case "thread.project.move":
       case "thread.runtime-mode.set":
       case "thread.interaction-mode.set":
       case "thread.model-selection.set":

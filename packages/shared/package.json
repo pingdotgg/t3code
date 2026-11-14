@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./threadMove": {
+      "types": "./src/threadMove.ts",
+      "import": "./src/threadMove.ts"
+    },
     "./png": {
       "types": "./src/png.ts",
       "import": "./src/png.ts"

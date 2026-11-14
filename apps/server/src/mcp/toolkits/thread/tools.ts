@@ -25,13 +25,14 @@ import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as ThreadProjectMove from "../../../project/ThreadProjectMove.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
+    "Pin, snooze, settle, archive, mark unread, or move a thread to another project. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. Settling this thread applies at turn end. A failed turn or queued message leaves it active. `move` needs `projectId` and an idle thread (not this one mid-turn); its history continues in that project's root. From a worktree, its changes stay behind and earlier turns can't be restored; `notice` says what changed.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
@@ -45,18 +46,22 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
       "archive",
       "unarchive",
       "mark_unread",
+      "move",
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),
+    projectId: Schema.optional(ProjectId),
   }),
   success: Schema.Union([
     OrchestrationV2DispatchCommandResult,
     Schema.Struct({ settlesWhenTurnEnds: Schema.Literal(true) }),
+    Schema.Struct({ movedToProjectId: ProjectId, notice: Schema.String }),
   ]),
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
   dependencies: [
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
+    ThreadProjectMove.ThreadProjectMove,
     SecureRandom.SecureRandom,
   ],
 })

@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import {
   CheckpointId,
@@ -218,6 +219,7 @@ it.effect("resolves the thread baseline after a second root run replaces scope o
           Layer.mock(ThreadManagement.ThreadManagementService)({
             getCheckpointContext: () => Effect.succeed(context),
           }),
+          FileSystem.layerNoop({ exists: () => Effect.succeed(true) }),
           Layer.mock(CheckpointStore.CheckpointStore)({
             listAuthoredPaths: () => Effect.succeed(null),
             diffCheckpoints: (input) => {

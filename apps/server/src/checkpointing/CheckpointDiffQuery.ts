@@ -10,6 +10,7 @@ import {
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
@@ -18,6 +19,8 @@ import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointServ
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import {
   CheckpointDiffResultInvalidError,
+  CheckpointFolderMissingError,
+  CheckpointRangeSpansFoldersError,
   CheckpointRefUnavailableError,
   CheckpointThreadNotFoundError,
   CheckpointTurnRangeUnavailableError,
@@ -85,6 +88,7 @@ export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const digest = yield* Digest.Digest;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
@@ -179,6 +183,13 @@ export const make = Effect.gen(function* () {
         input.fromTurnCount === 0
           ? projection.checkpointScopes.find((scope) => scope.kind === "root_run")
           : undefined;
+      const fromCheckpoint =
+        input.fromTurnCount === 0
+          ? undefined
+          : (parentCheckpoint ??
+            readyCheckpoints.find(
+              (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,
+            ));
       const fromCheckpointRef =
         input.fromTurnCount === 0
           ? firstScope === undefined
@@ -187,12 +198,21 @@ export const make = Effect.gen(function* () {
                 scopeId: firstScope.id,
                 ordinalWithinScope: 0,
               }).pipe(Effect.provideService(Digest.Digest, digest))
-          : (
-              parentCheckpoint ??
-              readyCheckpoints.find(
-                (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,
-              )
-            )?.ref;
+          : fromCheckpoint?.ref;
+      // A moved thread's earlier refs live in the repository it left.
+      const fromScope =
+        firstScope ??
+        projection.checkpointScopes.find((scope) => scope.id === fromCheckpoint?.scopeId);
+      if (fromScope !== undefined && fromScope.cwd !== toScope.cwd) {
+        return yield* new CheckpointRangeSpansFoldersError({ operation, threadId: input.threadId });
+      }
+      if (!(yield* fileSystem.exists(toScope.cwd).pipe(Effect.orElseSucceed(() => true)))) {
+        return yield* new CheckpointFolderMissingError({
+          operation,
+          threadId: input.threadId,
+          cwd: toScope.cwd,
+        });
+      }
       if (fromCheckpointRef === undefined) {
         return yield* new CheckpointRefUnavailableError({
           operation,

@@ -20,6 +20,7 @@ import {
   unavailable,
 } from "../../threadAccess.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as ThreadProjectMove from "../../../project/ThreadProjectMove.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
@@ -346,6 +347,18 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     Effect.gen(function* () {
       const { threads, projection, caller } = yield* readThread(input.threadId);
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
+      if (input.action === "move") {
+        const projectId = yield* required(input.projectId, "projectId");
+        const { notice } = yield* (yield* ThreadProjectMove.ThreadProjectMove)
+          .move({ threadId: projection.thread.id, projectId })
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+            ),
+          );
+        return { movedToProjectId: projectId, notice };
+      }
       if (input.action === "settle") {
         return yield* threads
           .settleThread({ ...common, byOwnAgent: caller?.id === projection.thread.id })

@@ -120,6 +120,8 @@ import {
 } from "../threadSelectionStore";
 import {
   canTurnThreadIntoProject,
+  confirmThreadMove,
+  readThreadMoveTargets,
   useAcknowledgeThreadWoke,
   useThreadActions,
 } from "../hooks/useThreadActions";
@@ -930,6 +932,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     confirmAndUnpinThread,
     setThreadAutoSettle,
     turnThreadIntoProject,
+    moveThreadToProject,
     reorderPinnedThread,
     reorderActiveThread,
     markThreadUnread,
@@ -2652,6 +2655,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              moveTargets: readThreadMoveTargets(threadRef),
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2677,6 +2681,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   thread.environmentId,
                 );
           if (preset) attemptSnooze(threadRef, preset);
+          return;
+        }
+        if (clicked.value.startsWith("move-to-project:")) {
+          const projectId = ProjectId.make(clicked.value.slice("move-to-project:".length));
+          if (!(await confirmThreadMove(threadRef, projectId))) return;
+          const result = await moveThreadToProject(threadRef, projectId);
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not move thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
           return;
         }
         switch (clicked.value) {

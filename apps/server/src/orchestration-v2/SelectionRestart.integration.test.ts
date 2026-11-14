@@ -29,7 +29,9 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -590,6 +592,162 @@ it.live.each(["pooled", "exclusive"] as const)(
         [cwd, handoffCwd],
       );
     }),
+);
+
+it.live("moving a thread to another project resumes its conversation in the new root", () =>
+  Effect.gen(function* () {
+    const name = "project-move";
+    const sourceRoot = yield* checkpointWorkspace(`${name}-source`);
+    const targetRoot = yield* checkpointWorkspace(`${name}-target`);
+    const threadId = ThreadId.make(`thread:${name}`);
+    const sourceId = ProjectId.make(`project:${name}:source`);
+    const targetId = ProjectId.make(`project:${name}:target`);
+    const state = yield* Ref.make<RestartAdapterState>({
+      activeTurn: null,
+      opened: [],
+      started: [],
+      closedSessionCount: 0,
+      failedReplacementOpen: true,
+    });
+    const database = SqlitePersistence.layerMemory;
+
+    const result = yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projects = yield* ProjectStore.ProjectStoreV2;
+      for (const [index, [projectId, workspaceRoot]] of (
+        [
+          [sourceId, sourceRoot],
+          [targetId, targetRoot],
+        ] as const
+      ).entries()) {
+        yield* projects.apply({
+          sequence: index + 1,
+          eventId: EventId.make(`event:${projectId}`),
+          aggregateKind: "project",
+          aggregateId: projectId,
+          occurredAt: "2026-01-01T00:00:00.000Z",
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "project.created",
+          payload: {
+            projectId,
+            title: projectId,
+            workspaceRoot,
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        });
+      }
+      const send = (step: string) =>
+        Effect.gen(function* () {
+          const terminal = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) => event.type === "run.updated" && event.payload.status === "completed",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${name}:${step}`),
+            threadId,
+            messageId: MessageId.make(`${name}:${step}`),
+            text: step,
+            attachments: [],
+            modelSelection: seedSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* worker.drain();
+          yield* Fiber.join(terminal);
+          yield* worker.drain();
+          return yield* orchestrator.getThreadProjection(threadId);
+        });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${name}:create`),
+        threadId,
+        projectId: sourceId,
+        title: name,
+        modelSelection: seedSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "source-branch",
+        worktreePath: null,
+      });
+      const first = yield* send("first");
+      const move = (projectId: ProjectId, branch: string | null) =>
+        orchestrator.dispatch({
+          type: "thread.project.move",
+          commandId: CommandId.make(`${name}:move:${projectId}`),
+          threadId,
+          projectId,
+          branch,
+        });
+      const moved = yield* move(targetId, "target-branch");
+      yield* worker.drain();
+      const second = yield* send("second");
+      yield* move(sourceId, "source-branch");
+      yield* worker.drain();
+      const third = yield* send("third");
+      const detached = yield* eventSink
+        .readByCommandId({ commandId: CommandId.make(`${name}:move:${targetId}`) })
+        .pipe(Stream.runCollect);
+      return { first, moved, second, third, detached: [...detached] };
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          ProviderReplayHarness.layerWithRegistry(
+            { name },
+            ProviderAdapterRegistry.layerSingle(makeRestartAdapter(state, exclusiveCapabilities)),
+            { databaseLayer: database },
+          ),
+          ProjectStore.layer.pipe(Layer.provide(database)),
+        ),
+      ),
+    );
+
+    const firstSession = result.first.providerSessions.find(
+      (session) => session.status !== "stopped" && session.status !== "error",
+    );
+    assert.isDefined(firstSession);
+    assert.deepEqual(
+      result.detached.flatMap(({ event }) =>
+        event.type === "provider-session.detached" ? [event.payload.providerSessionId] : [],
+      ),
+      [firstSession.id],
+    );
+    assert.equal(result.second.thread.projectId, targetId);
+    assert.isNull(result.second.thread.worktreePath);
+    assert.equal(result.second.thread.branch, "target-branch");
+    assert.equal(result.third.thread.projectId, sourceId);
+    // Each move ends the live session, so every turn opens one in its new root.
+    assert.lengthOf((yield* Ref.get(state)).opened, 3);
+    // Each move starts a checkpoint scope of its own, so earlier refs stay in their repository.
+    assert.lengthOf(
+      new Set(
+        result.third.checkpointScopes
+          .filter((scope) => scope.kind === "root_run")
+          .map((scope) => scope.id),
+      ),
+      3,
+    );
+    // The provider conversation carries over; only its session moved.
+    assert.deepEqual(
+      [...new Set(result.third.providerThreads.map((thread) => thread.nativeThreadRef?.nativeId))],
+      [`native-thread:${threadId}`],
+    );
+  }),
 );
 
 it.live("Stop during a restart interrupts the turn the restart could not stop", () =>
