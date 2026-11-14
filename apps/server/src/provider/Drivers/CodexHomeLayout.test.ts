@@ -11,6 +11,7 @@ import {
   CodexShadowHomePathConflictError,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
+  withCodexEnvironmentHome,
 } from "./CodexHomeLayout.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 const decodeCodexSettingsValue = Schema.decodeSync(CodexSettings);
@@ -22,6 +23,21 @@ const decodeCodexSettings = (input: {
   readonly customModels?: readonly string[];
   readonly binaryPath?: string;
 }): CodexSettings => decodeCodexSettingsValue(input);
+
+describe("withCodexEnvironmentHome", () => {
+  it("fills only a blank settings home, keeping the environment value verbatim", () => {
+    const blank = decodeCodexSettings({});
+    expect(withCodexEnvironmentHome(blank, "  /tmp/padded  ").homePath).toBe("  /tmp/padded  ");
+    expect(withCodexEnvironmentHome(blank, "   ")).toStrictEqual(blank);
+    expect(withCodexEnvironmentHome(blank, undefined)).toStrictEqual(blank);
+
+    const shadow = decodeCodexSettings({ shadowHomePath: "/tmp/shadow-home" });
+    expect(withCodexEnvironmentHome(shadow, "/tmp/env-home").homePath).toBe("/tmp/env-home");
+
+    const configured = decodeCodexSettings({ homePath: "/tmp/instance-home" });
+    expect(withCodexEnvironmentHome(configured, "/tmp/env-home")).toStrictEqual(configured);
+  });
+});
 
 const makeTempDir = Effect.fn("CodexHomeLayout.test.makeTempDir")(function* (prefix: string) {
   const fileSystem = yield* FileSystem.FileSystem;

@@ -46,6 +46,16 @@ function resolveHomePath(path: Path.Path, home: string, value: string | undefine
   return path.resolve(expanded);
 }
 
+// CODEX_HOME in the provider environment stands in for a blank settings home; a shadow home
+// overlays it. The raw value is kept: the process receives it verbatim, so "work " is its own home.
+export const withCodexEnvironmentHome = (
+  config: CodexSettings,
+  environmentHome: string | undefined,
+): CodexSettings =>
+  config.homePath.trim().length === 0 && environmentHome !== undefined && environmentHome.trim()
+    ? { ...config, homePath: environmentHome }
+    : config;
+
 export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(function* (
   config: CodexSettings,
 ): Effect.fn.Return<CodexHomeLayout, never, Path.Path> {

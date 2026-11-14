@@ -55,6 +55,7 @@ import {
   codexContinuationIdentity,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
+  withCodexEnvironmentHome,
 } from "./CodexHomeLayout.ts";
 import { makeManagedCodexProvider } from "./CodexManagedProvider.ts";
 import { codexUsageReader } from "./codexUsage.ts";
@@ -189,11 +190,7 @@ export const CodexDriver: ProviderDriver<
       environment,
       yield* HostProcess.Environment,
     );
-    const environmentHome = processEnv.CODEX_HOME;
-    const homeConfig =
-      !config.homePath.trim() && environmentHome?.trim()
-        ? { ...config, homePath: environmentHome }
-        : config;
+    const homeConfig = withCodexEnvironmentHome(config, processEnv.CODEX_HOME);
     const homeLayout = yield* resolveCodexHomeLayout(homeConfig);
     const continuationIdentity = codexContinuationIdentity(homeLayout);
     const stampIdentity = withInstanceIdentity({
