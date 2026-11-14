@@ -220,19 +220,26 @@ function codeBlockElement(
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { renderImage, resolveImageSource, fileEmbedLabel } = props;
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
-  const { markdown, fileHrefs } = useMemo(() => {
+  const { markdown, fileHrefs, inlineCodeHrefs } = useMemo(() => {
+    const inlineCodeHrefs = new Set<string>();
     if (!fileEmbedLabel) {
       return {
-        markdown: markdownForNativeRendering(props.markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+        markdown: markdownForNativeRendering(
+          props.markdown,
+          ENRICHED_INLINE_FILE_LINK_REGEX,
+          inlineCodeHrefs,
+        ),
         fileHrefs: new Set<string>(),
+        inlineCodeHrefs,
       };
     }
     const content = markdownWithInlineFileLinks(
       markdownForNativeParsing(props.markdown),
       ENRICHED_INLINE_FILE_LINK_REGEX,
+      inlineCodeHrefs,
     );
     const files = markdownWithFileEmbeds(content, fileEmbedLabel);
-    return { ...files, markdown: markdownWithTableBreaks(files.markdown) };
+    return { ...files, markdown: markdownWithTableBreaks(files.markdown), inlineCodeHrefs };
   }, [props.markdown, fileEmbedLabel]);
   const [parsedLinkUrls, setParsedLinkUrls] = useState<ReadonlyArray<string>>([]);
   const onLinksChange = (links: MarkdownLinkOccurrence[]) => {
@@ -259,7 +266,12 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const linkUrls = textLinkKey
     ? [...new Set([...parsedLinkUrls, ...textLinkKey.split("\n")])]
     : parsedLinkUrls;
-  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(linkUrls, props, fileHrefs);
+  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(
+    linkUrls,
+    props,
+    fileHrefs,
+    inlineCodeHrefs,
+  );
   const linkRecognition = useMemo(() => ({ text: textLinkRegex ?? undefined }), [textLinkRegex]);
   const [activeMenu, setActiveMenu] = useState<{
     url: string;
