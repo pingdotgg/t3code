@@ -296,19 +296,9 @@ impl Inner {
     ) -> Result<Option<Arc<LiveThread>>, String> {
         let subagent = thread["lineage"]["relationshipToParent"] == "subagent";
         // Only a run that names no instance may go to the one configured provider.
-        let provider = self
-            .providers
-            .iter()
-            .find(|p| p.instance_id().as_str() == instance)
-            .or_else(|| {
-                (instance.is_empty() && self.providers.len() == 1)
-                    .then(|| self.providers.first())
-                    .flatten()
-            })
-            .cloned()
-            .ok_or_else(|| {
-                format!("No provider instance `{instance}` is configured on this server.")
-            })?;
+        let provider = self.providers.resolve(instance).ok_or_else(|| {
+            format!("No provider instance `{instance}` is configured on this server.")
+        })?;
         let tools = self.host.as_ref().and_then(|host| {
             host.agent_tools(crate::AgentSession {
                 thread_id: thread_id.to_owned(),

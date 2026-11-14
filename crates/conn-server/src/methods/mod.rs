@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use crate::environment::Environment;
 use conn_engine::Engine;
-use conn_provider::Provider;
 
 use crate::table::MethodTable;
 
@@ -25,7 +24,10 @@ pub mod vcs;
 #[derive(Clone, Default)]
 pub struct Deps {
     pub engine: Option<Arc<dyn Engine>>,
-    pub providers: Vec<Arc<dyn Provider>>,
+    /// The provider instances; `instances` changes them as the settings change.
+    pub providers: conn_provider::ProviderSet,
+    /// Builds Claude and Codex instances from `providerInstances` (`crate::instances`).
+    pub instances: Option<Arc<crate::instances::Instances>>,
     /// Set by `main.rs`; without it the server config streams are not registered.
     pub environment: Option<Arc<Environment>>,
     /// `/mcp`; `serve.rs` builds it with `routes::mcp::service`.

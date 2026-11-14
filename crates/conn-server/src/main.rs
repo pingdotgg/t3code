@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use conn_provider::Provider;
 use conn_provider_claude::{ClaudeConfig, ClaudeProvider, HelperCommand};
-use conn_server::serve::{ServeOptions, serve};
+use conn_server::serve::{ServeOptions, serve_with_instances};
 
 fn main() {
     // Runs and exits for every command but `serve`.
@@ -31,16 +31,35 @@ fn main() {
     if let Some(helper) = &options.sdk_host {
         claude.helper = HelperCommand::from_path(helper);
     }
-    let mut providers: Vec<Arc<dyn Provider>> =
-        vec![Arc::new(ClaudeProvider::new("claudeAgent".into(), claude))];
     let codex = conn_provider_codex::CodexConfig {
         // The same store Claude reads; Codex gets a path line per attachment and the images.
         attachments_dir: Some(options.state_dir.join("attachments")),
         ..Default::default()
     };
-    if let Some(codex) = conn_provider_codex::CodexProvider::detect("codex".into(), codex) {
-        providers.push(Arc::new(codex));
-    }
+    // `claudeAgent` and `codex`, and one more provider per `providerInstances` entry of either
+    // driver, each with its entry's settings (`conn_server::instances`).
+    let instances = Arc::new(conn_server::instances::Instances::new(
+        &[conn_provider_claude::DRIVER, conn_provider_codex::DRIVER],
+        Arc::new(
+            move |id: &str, driver: &str, entry: Option<&serde_json::Value>| {
+                let provider: Arc<dyn Provider> = if driver == conn_provider_claude::DRIVER {
+                    Arc::new(ClaudeProvider::for_instance(
+                        id.into(),
+                        claude.clone(),
+                        entry,
+                    ))
+                } else {
+                    Arc::new(conn_provider_codex::CodexProvider::for_instance(
+                        id.into(),
+                        codex.clone(),
+                        entry,
+                    )?)
+                };
+                Some(provider)
+            },
+        ),
+    ));
+    let mut providers: Vec<Arc<dyn Provider>> = Vec::new();
     // T3's default `grok` instance: off until `providerInstances.grok` enables it. It starts
     // with the stored settings, so a Grok task due at start can run; the server's status task
     // applies later changes and probes the CLI.
@@ -63,7 +82,7 @@ fn main() {
             .build(),
         "cannot start the runtime",
     );
-    runtime.block_on(serve(options, providers));
+    runtime.block_on(serve_with_instances(options, providers, Some(instances)));
     // Dropping the tasks drops provider children, which kills them (`kill_on_drop`).
     runtime.shutdown_timeout(std::time::Duration::from_secs(2));
 }

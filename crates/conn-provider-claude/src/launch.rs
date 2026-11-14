@@ -14,6 +14,8 @@ use std::{path::PathBuf, time::Duration};
 
 use serde_json::{Map, Value, json};
 
+use conn_provider_support::instance::{self, InstanceEnv, InstanceEnvelope};
+
 use crate::helper::HelperCommand;
 
 /// What `CLAUDE_HOST_SESSION_VARIABLES` in `ClaudeHome.ts` removes: a parent Claude Code
@@ -44,8 +46,12 @@ pub struct ClaudeConfig {
     pub binary: PathBuf,
     /// `homePath`: a custom `CLAUDE_CONFIG_DIR`. `None` keeps the inherited one.
     pub home_path: Option<PathBuf>,
-    /// The provider instance's own environment entries, applied after T3's changes.
-    pub instance_env: Vec<(String, String)>,
+    /// The provider instance's own environment entries, applied after T3's changes. Values
+    /// may be secrets; its `Debug` prints names only.
+    pub instance_env: InstanceEnv,
+    /// `launchArgs`, as stored (T3 does not trim them). Parsed per query
+    /// (`makeClaudeQueryOptions`); probes and titles do not use them.
+    pub launch_args: String,
     /// `buildRuntimeInstructions({ harness: "Claude Code" })`: the start of
     /// `systemPrompt.append`.
     pub append_system_prompt: Option<String>,
@@ -105,12 +111,60 @@ pub const READ_ONLY_T3_MCP_TOOLS: &[&str] = &[
     "mcp__t3-code__send_to_user",
 ];
 
+impl ClaudeConfig {
+    /// This configuration with the instance's `providerInstances[id]` entry applied, as the
+    /// T3 server's Claude driver builds its adapter (`ClaudeSettings`, `makeClaudeEnvironment`,
+    /// `ClaudeAdapterV2` 13884-13890): `binaryPath` trimmed with `~` expanded (`claude` when
+    /// empty), `homePath` expanded and made absolute, the instance environment, `launchArgs`.
+    /// `None` is the default instance with no entry: the defaults.
+    #[must_use]
+    pub fn with_instance(mut self, entry: Option<&Value>) -> Self {
+        let envelope = InstanceEnvelope::parse(entry, true);
+        self.binary = envelope.config_str("binaryPath").map_or_else(
+            || PathBuf::from("claude"),
+            |b| PathBuf::from(instance::expand_home(&b)),
+        );
+        self.home_path = envelope
+            .config_str("homePath")
+            .map(|home| absolute(&instance::expand_home(&home)));
+        self.instance_env = envelope.environment;
+        self.launch_args = envelope.config["launchArgs"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        self
+    }
+}
+
+/// `path.resolve` against the server's working folder.
+pub(crate) fn absolute(path: &str) -> PathBuf {
+    let path = PathBuf::from(path);
+    let joined = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    };
+    // `path.resolve` also folds `.` and `..`.
+    let mut out = PathBuf::new();
+    for part in joined.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 impl Default for ClaudeConfig {
     fn default() -> Self {
         Self {
             binary: PathBuf::from("claude"),
             home_path: None,
-            instance_env: Vec::new(),
+            instance_env: InstanceEnv::default(),
+            launch_args: String::new(),
             append_system_prompt: Some(default_append_system_prompt()),
             attachments_dir: None,
             setting_sources: None,

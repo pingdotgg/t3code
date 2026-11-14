@@ -82,6 +82,28 @@ impl ClaudeProvider {
         }
     }
 
+    /// The provider for one `providerInstances` entry (`None`: the default instance with no
+    /// entry), over the server's base configuration. Until the first status probe its entry
+    /// is T3's pending snapshot for these settings (`makePendingClaudeProvider` with
+    /// `withInstanceIdentity`), disabled when the instance is.
+    pub fn for_instance(
+        instance_id: ProviderInstanceId,
+        base: ClaudeConfig,
+        entry: Option<&Value>,
+    ) -> Self {
+        let config = base.with_instance(entry);
+        let settings = status::StatusSettings::from_instance(entry);
+        let pending = pending_entry_for(
+            instance_id.as_str(),
+            &settings,
+            &config,
+            &conn_support::time::now_iso(),
+        );
+        let provider = Self::new(instance_id, config);
+        *lock(&provider.status) = Some(pending);
+        provider
+    }
+
     /// The instance settings for the status probe: the stored `providerInstances` entry, and
     /// this provider's own launch configuration where the entry says nothing.
     fn status_settings(&self, instance: Option<&Value>) -> status::StatusSettings {
@@ -164,10 +186,11 @@ impl Provider for ClaudeProvider {
     /// the capabilities probe in the SDK host (which starts for it and stops again).
     fn refresh_status(&self, instance: Option<Value>) -> BoxFuture<'_, ()> {
         Box::pin(async move {
-            if !self.config.status_probe {
+            let settings = self.status_settings(instance.as_ref());
+            // A disabled instance spawns nothing, so its entry is built even with the probe off.
+            if !self.config.status_probe && settings.enabled {
                 return;
             }
-            let settings = self.status_settings(instance.as_ref());
             let config_dir = launch::config_dir(
                 &ClaudeConfig {
                     home_path: (!settings.home_path.is_empty())
@@ -370,6 +393,40 @@ pub fn pending_entry(instance_id: &str, checked_at: &str) -> Value {
             launch::config_dir(&ClaudeConfig::default(), &serde_json::Map::new()).to_string_lossy()
         )},
     })
+}
+
+/// [`pending_entry`] for an instance's settings: its config folder as the continuation
+/// group, `displayName` and `accentColor` when set, and T3's disabled snapshot when off.
+pub fn pending_entry_for(
+    instance_id: &str,
+    settings: &status::StatusSettings,
+    config: &ClaudeConfig,
+    checked_at: &str,
+) -> Value {
+    let mut entry = pending_entry(instance_id, checked_at);
+    let env = launch::query_env(
+        config,
+        "",
+        false,
+        conn_support::login_env::child_env(),
+        None,
+    );
+    entry["continuation"] = json!({"groupKey": format!(
+        "claude:home:{}",
+        launch::config_dir(config, &env).to_string_lossy()
+    )});
+    if !settings.enabled {
+        entry["enabled"] = json!(false);
+        entry["status"] = json!("disabled");
+        entry["message"] = json!("Claude is disabled in T3 Code settings.");
+    }
+    if let Some(name) = &settings.display_name {
+        entry["displayName"] = json!(name);
+    }
+    if let Some(color) = &settings.accent_color {
+        entry["accentColor"] = json!(color);
+    }
+    entry
 }
 
 /// The `ServerProvider` entry (`packages/contracts/src/server.ts`) a client needs to offer

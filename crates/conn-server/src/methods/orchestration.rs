@@ -300,7 +300,7 @@ mod tests {
         let engine: Arc<dyn Engine> = Arc::new(SqliteEngine::open(config).unwrap());
         let deps = Deps {
             engine: Some(engine),
-            providers: vec![],
+            providers: conn_provider::ProviderSet::default(),
             ..Deps::default()
         };
         let mut table = MethodTable::new();

@@ -2,6 +2,7 @@
 //!
 //! - [`attachments`]: chat attachments as T3 stores them and lists them in a prompt.
 //! - [`ids`]: `IdAllocatorV2` id formats, an injectable clock and uuids.
+//! - [`instance`]: a provider instance's settings envelope, its environment and `~` expansion.
 //! - [`lines`]: newline framing with a per-line cap.
 //! - [`redact`]: secrets out of provider failure text, length capped (T3 `failure.ts`).
 //! - [`probe`]: a CLI run for a status probe, as T3's `spawnAndCollect`.
@@ -13,6 +14,7 @@
 pub mod attachments;
 pub mod host_files;
 pub mod ids;
+pub mod instance;
 pub mod lines;
 pub mod probe;
 pub mod process;

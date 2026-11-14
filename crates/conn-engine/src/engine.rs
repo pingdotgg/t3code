@@ -39,6 +39,8 @@ pub struct EngineConfig {
     pub home: Option<PathBuf>,
     pub projects: Vec<ProjectConfig>,
     pub providers: Vec<Arc<dyn Provider>>,
+    /// The server's shared, changing list of instances. When set, it replaces `providers`.
+    pub provider_set: Option<conn_provider::ProviderSet>,
     /// A provider session with no turn for this long is closed, ending its process (a
     /// `claude` child holds about 140 MiB). Default 30 minutes, as T3's session manager;
     /// `None` keeps sessions open.
@@ -112,6 +114,7 @@ impl EngineConfig {
             home: None,
             projects: vec![],
             providers: vec![],
+            provider_set: None,
             idle_session: Some(DEFAULT_IDLE_SESSION),
             idle_max_hold: Duration::from_secs(4 * 60 * 60),
             host: None,
@@ -139,7 +142,7 @@ pub(crate) struct Inner {
     store: Arc<Mutex<Store>>,
     /// The latest committed sequence. Stream tasks wake on it and read from the store.
     pub(crate) notify: watch::Sender<u64>,
-    pub(crate) providers: Vec<Arc<dyn Provider>>,
+    pub(crate) providers: conn_provider::ProviderSet,
     /// Threads with an open provider session. The only per-thread state kept in memory.
     pub(crate) live: Mutex<HashMap<String, Arc<LiveThread>>>,
     pub(crate) home: PathBuf,
@@ -275,7 +278,9 @@ impl SqliteEngine {
             inner: Arc::new(Inner {
                 store: Arc::new(Mutex::new(store)),
                 notify: watch::Sender::new(high),
-                providers: config.providers,
+                providers: config
+                    .provider_set
+                    .unwrap_or_else(|| config.providers.into()),
                 live: Mutex::new(HashMap::new()),
                 command_output: crate::output::CommandOutputHub::default(),
                 shutting_down: std::sync::atomic::AtomicBool::new(false),
@@ -488,10 +493,7 @@ impl Inner {
         let same_instance = current["instanceId"] == target["instanceId"];
         let plan = match (same_instance && current != target, capabilities) {
             (true, Some(capabilities)) => {
-                let provider = self
-                    .providers
-                    .iter()
-                    .find(|p| p.instance_id().as_str() == instance);
+                let provider = self.providers.get(&instance);
                 let decoded = (from_json(current), from_json(target));
                 match (provider, decoded) {
                     (Some(provider), (Ok(current), Ok(target))) => provider
@@ -550,15 +552,7 @@ impl Inner {
         };
         // As a turn start finds it: only a thread that names no instance may use the one
         // configured provider.
-        let provider = self
-            .providers
-            .iter()
-            .find(|p| p.instance_id().as_str() == instance)
-            .or_else(|| {
-                (instance.is_empty() && self.providers.len() == 1)
-                    .then(|| self.providers.first())
-                    .flatten()
-            });
+        let provider = self.providers.resolve(&instance);
         command["providerCapabilities"] = match provider {
             Some(provider) => match provider.capabilities().await {
                 Ok(capabilities) => {

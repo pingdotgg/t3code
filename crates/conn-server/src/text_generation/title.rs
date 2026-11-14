@@ -15,7 +15,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use conn_engine::{BoxFuture, TitleGenerator, TitleKind, TitleMessage, TitleRequest};
-use conn_provider::{Provider, ProviderError, TextGenerationRequest};
+use conn_provider::{ProviderError, TextGenerationRequest};
 use serde_json::{Map, Value};
 
 use super::{
@@ -36,7 +36,7 @@ pub struct Titles {
     generators: Arc<TextGenerators>,
     retry_delays: Vec<Duration>,
     /// The agent provider instances a title model can name.
-    providers: Vec<Arc<dyn Provider>>,
+    providers: conn_provider::ProviderSet,
     /// T3's attachment store, where a title's image attachments are read from.
     attachments_dir: Option<PathBuf>,
 }
@@ -55,7 +55,7 @@ impl Titles {
         Self {
             generators,
             retry_delays: INITIAL_RETRY_DELAYS.to_vec(),
-            providers: Vec::new(),
+            providers: conn_provider::ProviderSet::default(),
             attachments_dir: None,
         }
     }
@@ -63,10 +63,10 @@ impl Titles {
     /// Lets a title model name an agent provider instance.
     pub fn with_providers(
         mut self,
-        providers: Vec<Arc<dyn Provider>>,
+        providers: impl Into<conn_provider::ProviderSet>,
         attachments_dir: Option<PathBuf>,
     ) -> Self {
-        self.providers = providers;
+        self.providers = providers.into();
         self.attachments_dir = attachments_dir;
         self
     }
@@ -270,11 +270,7 @@ impl Titles {
         prompt: &str,
         images: &[PathBuf],
     ) -> Attempt {
-        let Some(provider) = self
-            .providers
-            .iter()
-            .find(|p| p.instance_id().as_str() == instance)
-        else {
+        let Some(provider) = self.providers.get(instance) else {
             return Attempt::Failed(format!(
                 "No provider instance registered for id '{instance}'."
             ));

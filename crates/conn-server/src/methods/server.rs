@@ -397,14 +397,15 @@ mod tests {
             "serverTime is the host clock as an ISO time: {server_time}"
         );
         let deps = Deps {
-            providers: vec![std::sync::Arc::new(
-                conn_provider_acp::AcpProvider::with_settings(
+            providers: vec![
+                std::sync::Arc::new(conn_provider_acp::AcpProvider::with_settings(
                     "grok".into(),
                     &conn_provider_acp::GROK,
                     conn_provider_acp::AcpConfig::default(),
                     conn_provider_acp::GrokSettings::default(),
-                ),
-            )],
+                )) as std::sync::Arc<dyn conn_provider::Provider>,
+            ]
+            .into(),
             ..Deps::default()
         };
         let mut stream = config_stream(env.clone(), deps.clone(), config);

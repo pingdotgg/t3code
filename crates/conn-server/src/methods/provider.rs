@@ -52,8 +52,7 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     table.stream("provider.install.subscribe", move |_, input: SetupInput| {
         let driver = deps
             .providers
-            .iter()
-            .find(|p| p.instance_id().as_str() == input.instance_id)
+            .get(&input.instance_id)
             .map(|p| p.driver().to_owned())
             .unwrap_or_else(|| input.instance_id.clone());
         async move {
@@ -215,7 +214,7 @@ fn refresh_interval(deps: &Deps) -> Option<Duration> {
 /// Probes the providers (all, or the one named) with their current settings, then tells the
 /// config streams.
 pub async fn refresh(deps: &Deps, only: Option<&str>) {
-    for provider in &deps.providers {
+    for provider in deps.providers.snapshot() {
         let id = provider.instance_id().as_str();
         if only.is_some_and(|only| only != id) {
             continue;
@@ -246,7 +245,7 @@ async fn refresh_on_interval(deps: &Deps, recheck: bool) -> bool {
     let performance = performance_profile(deps);
     let mut again = false;
     let mut any = false;
-    for provider in &deps.providers {
+    for provider in deps.providers.snapshot() {
         let id = provider.instance_id().as_str();
         if deps.provider_status.wants(id, performance) {
             again |= provider
@@ -272,10 +271,17 @@ pub fn start_status_refresh(deps: &Deps) {
     let deps = deps.clone();
     tokio::spawn(async move {
         let mut settings = deps.environment.as_ref().map(|e| e.settings.subscribe());
-        let snapshot = |deps: &Deps| -> Vec<Option<Value>> {
+        // What each instance's settings entry was at the last look, by id. Instances come and
+        // go with the settings, so this holds one entry per live instance.
+        let snapshot = |deps: &Deps| -> Vec<(String, Option<Value>)> {
             deps.providers
+                .snapshot()
                 .iter()
-                .map(|p| instance_settings(deps, p.instance_id().as_str()))
+                .map(|p| {
+                    let id = p.instance_id().as_str().to_owned();
+                    let entry = instance_settings(deps, &id);
+                    (id, entry)
+                })
                 .collect()
         };
         let mut last = snapshot(&deps);
@@ -304,12 +310,25 @@ pub fn start_status_refresh(deps: &Deps) {
                     if !alive {
                         return;
                     }
-                    let next = snapshot(&deps);
-                    for (provider, (before, after)) in deps.providers.iter().zip(last.iter().zip(&next)) {
-                        if before != after {
-                            provider.refresh_status(after.clone()).await;
-                            deps.provider_status.bump();
+                    // New, changed and removed Claude and Codex instances first; a new
+                    // provider is probed with its entry.
+                    let rebuilt = match (&deps.instances, &deps.environment) {
+                        (Some(instances), Some(environment)) => {
+                            instances.reconcile(&deps.providers, &environment.settings.raw()).await
                         }
+                        _ => Vec::new(),
+                    };
+                    let next = snapshot(&deps);
+                    for (id, after) in &next {
+                        let before = last.iter().find(|(b, _)| b == id).map(|(_, e)| e);
+                        if rebuilt.contains(id) || before != Some(after) {
+                            if let Some(provider) = deps.providers.get(id) {
+                                provider.refresh_status(after.clone()).await;
+                            }
+                        }
+                    }
+                    if !rebuilt.is_empty() || next != last {
+                        deps.provider_status.bump();
                     }
                     last = next;
                 }
@@ -322,6 +341,7 @@ pub fn start_status_refresh(deps: &Deps) {
 /// `ServerConfig.providers` entries for the configured providers. `checked_at` is ISO-8601.
 pub fn server_providers(deps: &Deps, checked_at: &str) -> Vec<Value> {
     deps.providers
+        .snapshot()
         .iter()
         .filter_map(|p| p.server_provider_entry(checked_at))
         .collect()
@@ -392,7 +412,7 @@ mod tests {
         });
         let deps = Deps {
             engine: None,
-            providers: vec![flaky.clone()],
+            providers: vec![flaky.clone() as Arc<dyn conn_provider::Provider>].into(),
             ..Deps::default()
         };
         // The periodic probe runs only while a client in the foreground asks for provider status.
@@ -429,7 +449,8 @@ mod tests {
             providers: vec![Arc::new(ClaudeProvider::new(
                 "claudeAgent".into(),
                 ClaudeConfig::default(),
-            ))],
+            )) as Arc<dyn conn_provider::Provider>]
+            .into(),
             ..Deps::default()
         };
         let entries = server_providers(&deps, "2026-11-13T00:00:00.000Z");
@@ -486,7 +507,8 @@ mod tests {
                 &GROK,
                 AcpConfig::default(),
                 GrokSettings::default(),
-            ))],
+            )) as Arc<dyn conn_provider::Provider>]
+            .into(),
             ..Deps::default()
         };
         let changes = deps.provider_status.subscribe();
