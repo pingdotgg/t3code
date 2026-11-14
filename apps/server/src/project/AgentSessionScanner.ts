@@ -73,6 +73,7 @@ const METADATA_READ_BYTES = 8 * 1024;
 const MAX_TRANSCRIPT_SCAN_BYTES = 1024 * 1024;
 const MAX_CODEX_SESSION_INDEX_BYTES = 1024 * 1024;
 const MAX_CODEX_PROJECT_ROOT_ROWS = 100_000;
+const MAX_CODEX_GLOBAL_STATE_BYTES = 32 * 1024 * 1024;
 
 const MAX_TRANSCRIPTS_PER_SOURCE = 5000;
 
@@ -185,8 +186,24 @@ const CODEX_ROLLOUT_ID_PATTERN =
 const COMPRESSED_TRANSCRIPT_SUFFIX = ".jsonl.zst";
 const isCompressedTranscript = (filePath: string) =>
   filePath.endsWith(COMPRESSED_TRANSCRIPT_SUFFIX);
-// Codex records a chat's project only here; moving a chat leaves its rollout cwd unchanged.
+// Codex records a chat's project here, not in the rollout; moving a chat leaves its cwd unchanged.
 const CODEX_STATE_DATABASE = "state_5.sqlite";
+// Codex Desktop keeps chats moved into a local project here and leaves threads.project_id NULL.
+const CODEX_GLOBAL_STATE = ".codex-global-state.json";
+const decodeCodexGlobalState = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      "thread-project-assignments": Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+      "local-projects": Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+    }),
+  ),
+);
+const decodeCodexProjectAssignment = Schema.decodeUnknownOption(
+  Schema.Struct({ projectKind: Schema.Literal("local"), projectId: Schema.String }),
+);
+const decodeCodexLocalProject = Schema.decodeUnknownOption(
+  Schema.Struct({ rootPaths: Schema.Array(Schema.String) }),
+);
 const decodeCodexSessionIndexEntry = Schema.decodeUnknownOption(
   Schema.fromJsonString(CodexSessionIndexEntry),
 );
@@ -1429,12 +1446,49 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const readCodexGlobalStateRoots = Effect.fn("AgentSessionScanner.readCodexGlobalStateRoots")(
+    function* (homePath: string) {
+      const rootsByThread = new Map<string, ReadonlyArray<string>>();
+      const filePath = path.join(homePath, CODEX_GLOBAL_STATE);
+      const stats = yield* statOption(filePath);
+      if (
+        Option.isNone(stats) ||
+        stats.value.type !== "File" ||
+        Number(stats.value.size) > MAX_CODEX_GLOBAL_STATE_BYTES
+      ) {
+        return rootsByThread;
+      }
+      const contents = yield* fileSystem
+        .readFileString(filePath)
+        .pipe(Effect.orElseSucceed(() => ""));
+      const state = decodeCodexGlobalState(contents);
+      if (Option.isNone(state)) return rootsByThread;
+      const localProjects = state.value["local-projects"] ?? {};
+      for (const [threadId, value] of Object.entries(
+        state.value["thread-project-assignments"] ?? {},
+      )) {
+        const assignment = decodeCodexProjectAssignment(value);
+        if (
+          Option.isNone(assignment) ||
+          !Object.hasOwn(localProjects, assignment.value.projectId)
+        ) {
+          continue;
+        }
+        const project = decodeCodexLocalProject(localProjects[assignment.value.projectId]);
+        if (Option.isNone(project)) continue;
+        const roots = project.value.rootPaths.filter((root) => root.trim().length > 0);
+        if (roots.length > 0) rootsByThread.set(threadId, roots);
+      }
+      return rootsByThread;
+    },
+  );
+
   const readCodexProjectRoots = Effect.fn("AgentSessionScanner.readCodexProjectRoots")(function* (
     homePath: string,
   ) {
     const rootsByThread = new Map<string, Array<string>>();
     const databasePath = path.join(homePath, CODEX_STATE_DATABASE);
-    return yield* Effect.try({
+    const databaseRoots: Map<string, ReadonlyArray<string>> = yield* Effect.try({
       try: () => {
         const database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
         try {
@@ -1460,7 +1514,11 @@ export const make = Effect.gen(function* () {
         }
       },
       catch: (cause) => new CodexStateReadError({ databasePath, cause }),
-    }).pipe(Effect.orElseSucceed((): ReadonlyMap<string, ReadonlyArray<string>> => new Map()));
+    }).pipe(Effect.orElseSucceed((): Map<string, ReadonlyArray<string>> => new Map()));
+    for (const [threadId, roots] of yield* readCodexGlobalStateRoots(homePath)) {
+      if (!databaseRoots.has(threadId)) databaseRoots.set(threadId, roots);
+    }
+    return databaseRoots;
   });
 
   // Only chats left in an excluded folder, such as Codex's scratch folder, take their project's root.
