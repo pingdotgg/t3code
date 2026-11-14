@@ -315,7 +315,7 @@ setInterval(() => {}, 1_000);
               (await fs.exists(backupPath).pipe(Effect.runPromise))
             )
               low = true;
-            return { ...stats, bavail: low ? 0 : 64 * 1024 ** 2, bsize: 1 };
+            return { ...stats, bavail: low ? 0 : 1024 ** 4, bsize: 1 };
           });
           const log = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
             if (String(chunk).includes("Waiting for free space")) blocked.resolve();

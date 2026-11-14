@@ -1014,12 +1014,12 @@ export class Launcher {
   }
 
   async #deferForDiskSpace(retry: () => Promise<void>): Promise<boolean> {
-    if (this.#stopping || this.#stopRequested) return true;
     const reason = await this.#serviceStartDiskSpaceBlocker();
-    if (this.#stopping || this.#stopRequested) return true;
     if (reason === undefined) return false;
+    // A stop during the probe must not arm a retry that outlives it.
+    if (this.#stopRequested) return true;
     this.#clearTimer();
-    process.stderr.write(`[service-launcher] ${reason} Waiting for free space before retrying.\n`);
+    this.#log(`[service-launcher] ${reason} Waiting for free space before retrying.\n`);
     this.#timer = setInterval(
       () =>
         this.#enqueue(async () => {
@@ -1083,7 +1083,6 @@ export class Launcher {
         `[service-launcher] Could not clear ${restartPending}: ${error instanceof Error ? error.message : String(error)}\n`,
       );
     }
-    if (await this.#deferForDiskSpace(() => this.#recover())) return;
     const update = this.#state.update;
     if (update?.status !== "pending") {
       if (update !== undefined) {
