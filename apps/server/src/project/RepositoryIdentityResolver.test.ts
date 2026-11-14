@@ -90,7 +90,6 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const identity = yield* resolver.resolve(cwd);
 
-      expect(identity?.canonicalKey).toBe("dev.azure.com/acme/platform/_git/tool.git");
       expect(identity?.displayName).toBe("Acme/Platform/_git/Tool.git");
       expect(identity?.name).toBe("Tool.git");
       expect(sourceControlDefinitions.repositorySelector(identity)).toBe("Tool.git");

@@ -157,6 +157,12 @@ describe("Azure DevOps repository keys", () => {
     ).toBe(false);
   });
 
+  it("still drops .git from other hosts' repository keys", () => {
+    expect(registry.repositoryKeyFromRemote("git@github.com:acme/tool.git")).toBe(
+      "github.com/acme/tool",
+    );
+  });
+
   it("keeps the organization in the host for the legacy visualstudio.com remotes", () => {
     for (const remote of [
       "T3Tools@vs-ssh.visualstudio.com:v3/T3Tools/Platform/T3Code",

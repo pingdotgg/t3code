@@ -124,8 +124,8 @@ export function isTemporaryWorktreeBranch(refName: string): boolean {
 
 const stripGitSuffix = (path: string) => path.replace(/\.git$/i, "");
 
-function lowerCaseRemote(value: string): string {
-  return stripGitSuffix(value.trim().replace(/\/+$/g, "")).toLowerCase();
+function lowerCaseRemote(value: string, dropSuffix = stripGitSuffix): string {
+  return dropSuffix(value.trim().replace(/\/+$/g, "")).toLowerCase();
 }
 
 /**
@@ -138,7 +138,7 @@ export function parseGitRemoteRepository(
   options?: { readonly keepGitSuffix?: boolean },
 ): { readonly host: string; readonly path: string } | null {
   const dropSuffix = options?.keepGitSuffix ? (path: string) => path : stripGitSuffix;
-  const normalized = dropSuffix(value.trim().replace(/\/+$/g, "")).toLowerCase();
+  const normalized = lowerCaseRemote(value, dropSuffix);
 
   if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
     try {
