@@ -1,6 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
+import { decodeScanCache, dedupeWithinFile, makeScanCacheWriter } from "./usageScanCache.ts";
+import { TEST_FORMAT_MAP } from "./usageTestFormats.ts";
+import { parseClaudeLine } from "../provider/Drivers/claudeUsage.ts";
 import type { RateTable } from "./usagePricing.ts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
@@ -151,6 +154,110 @@ describe("UsageAggregator", () => {
     expect(result.outOfWindow).toBe(1);
     expect(result.buckets).toHaveLength(0);
   });
+
+  it.each([false, true])(
+    "replaces a fallback's stream-start copy across cached files (reverse=%s)",
+    (reverse) => {
+      const attempt = {
+        type: "message",
+        model: "claude-opus-5-5",
+        input_tokens: 3,
+        cache_creation_input_tokens: 20000,
+        output_tokens: 250,
+      };
+      const fallback = {
+        type: "fallback_message",
+        model: "claude-fable-5",
+        input_tokens: 6,
+        cache_creation_input_tokens: 10000,
+        output_tokens: 900,
+      };
+      const line = (usage: unknown) =>
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-08-07T04:05:13.944Z",
+          sessionId: "session-a",
+          requestId: "req_fallback",
+          message: { id: "msg_fallback", model: attempt.model, usage },
+        });
+      const early = parseClaudeLine(line({ ...attempt, output_tokens: 3 }));
+      const complete = parseClaudeLine(
+        line({ ...fallback, cache_creation_input_tokens: 30000, iterations: [attempt, fallback] }),
+      );
+      const original = new Map(
+        [
+          ...new Map<string, readonly UsageRecord[]>([
+            ["/partial.jsonl", early.map((entry) => ({ ...entry, sessionId: "session-fork" }))],
+            ["/complete.jsonl", dedupeWithinFile([...early, ...complete, ...complete])],
+            [
+              "/deleted.jsonl",
+              [
+                {
+                  ...early[0]!,
+                  sessionId: "session-deleted",
+                  totals: { ...early[0]!.totals, cacheCreationTokens: 30000 },
+                },
+              ],
+            ],
+          ]),
+        ].map(
+          ([path, records]) =>
+            [
+              path,
+              {
+                provider: "claude" as const,
+                size: 100,
+                mtimeMs: 100,
+                records,
+                tailRecords: [],
+                malformedRecords: 0,
+                position: { resumeOffset: 100, guardLength: 0, guardHash: 0, state: null },
+              },
+            ] as const,
+        ),
+      );
+      const cache = decodeScanCache(
+        JSON.parse([...makeScanCacheWriter()(original, {})].join("")),
+        TEST_FORMAT_MAP,
+      );
+      const copies = [...cache.values()];
+      if (reverse) copies.reverse();
+      for (const model of [undefined, attempt.model, fallback.model]) {
+        const aggregator = new UsageAggregator({
+          timeZone: "UTC",
+          sinceDay: "2026-08-01",
+          untilDay: "2026-08-31",
+          rates,
+          ...(model === undefined ? {} : { modelFilter: { include: [{ model }] } }),
+        });
+        for (const file of copies) for (const record of file.records) aggregator.add(record);
+        const buckets = aggregator.finish().buckets;
+        const expected =
+          model === undefined
+            ? [attempt, fallback]
+            : [model === attempt.model ? attempt : fallback];
+        expect(
+          buckets.map((bucket) => [
+            bucket.model,
+            bucket.totals.cacheCreationTokens,
+            bucket.totals.outputTokens,
+            bucket.records,
+            bucket.sessions,
+          ]),
+        ).toEqual(
+          expected
+            .toSorted((a, b) => a.model.localeCompare(b.model))
+            .map((entry) => [
+              entry.model,
+              entry.cache_creation_input_tokens,
+              entry.output_tokens,
+              1,
+              1,
+            ]),
+        );
+      }
+    },
+  );
 
   it("buckets by the day in the requested time zone", () => {
     const utc = aggregate([record()], "UTC");

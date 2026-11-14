@@ -68,7 +68,8 @@ describe("scan cache round trip", () => {
         [
           record(),
           record({
-            dedupeKey: "msg_2:",
+            dedupeKey: "msg_2::fallback",
+            supersedesDedupeKey: "msg_2:",
             model: "claude-opus-5-5",
             speed: "fast",
             cacheCreation1hTokens: 8,
@@ -168,7 +169,7 @@ describe("scan cache round trip", () => {
     expect(restored).toEqual(original);
   });
 
-  it.each([5, 6, 7, 8, 10, 11, 12, 13])(
+  it.each([5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16])(
     "retains v%s history and compatible positions but invalidates obsolete state",
     (version) => {
       const original = cacheWith([["/gone.jsonl", 100, [record({ speed: "fast" })]]]);
@@ -225,25 +226,29 @@ describe("scan cache round trip", () => {
       };
 
       const restored = decodeScanCache(JSON.parse(JSON.stringify(legacy)), TEST_FORMAT_MAP);
-      expect(restored.get("/gone.jsonl")).toEqual(
-        version >= 13
-          ? original.get("/gone.jsonl")
+      expect(restored.get("/gone.jsonl")).toEqual({
+        ...original.get("/gone.jsonl"),
+        size: -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+      });
+      expect(restored.get("/gone-codex.jsonl")).toEqual(
+        version >= 16
+          ? original.get("/gone-codex.jsonl")
           : {
-              ...original.get("/gone.jsonl"),
-              size: -1,
+              ...original.get("/gone-codex.jsonl"),
+              size: version === 15 ? original.get("/gone-codex.jsonl")!.size : -1,
               position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
             },
       );
-      expect(restored.get("/gone-codex.jsonl")).toEqual({
-        ...original.get("/gone-codex.jsonl"),
-        size: -1,
-        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-      });
-      expect(restored.get("/clean-codex.jsonl")).toEqual({
-        ...cleanCodex,
-        size: -1,
-        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-      });
+      expect(restored.get("/clean-codex.jsonl")).toEqual(
+        version >= 16
+          ? cleanCodex
+          : {
+              ...cleanCodex,
+              size: version >= 14 ? cleanCodex.size : -1,
+              position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+            },
+      );
       expect(restored.get("/gone-pi.jsonl")).toEqual(
         version >= 6
           ? original.get("/gone-pi.jsonl")
@@ -327,17 +332,20 @@ describe("scan cache round trip", () => {
     expect(decodeScanCache(current, TEST_FORMAT_MAP).get("/codex.jsonl")).toEqual(entry);
   });
 
-  it("re-parses a Claude transcript cached before 1-hour cache writes were counted", () => {
-    const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
-    const v12 = { ...parse(makeScanCacheWriter()(original, {})), version: 12 };
+  it.each([11, 12, 13, 14, 15, 16])(
+    "re-parses v%s Claude transcripts for corrected attempt usage",
+    (version) => {
+      const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
+      const legacy = { ...parse(makeScanCacheWriter()(original, {})), version };
 
-    const restored = decodeScanCache(JSON.parse(JSON.stringify(v12)), TEST_FORMAT_MAP);
-    expect(restored.get("/claude.jsonl")).toEqual({
-      ...original.get("/claude.jsonl"),
-      size: -1,
-      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-    });
-  });
+      const restored = decodeScanCache(JSON.parse(JSON.stringify(legacy)), TEST_FORMAT_MAP);
+      expect(restored.get("/claude.jsonl")).toEqual({
+        ...original.get("/claude.jsonl"),
+        size: -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+      });
+    },
+  );
 
   it("rewrites only changed entries and still restores the whole cache", () => {
     const write = makeScanCacheWriter();

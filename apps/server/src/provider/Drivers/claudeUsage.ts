@@ -63,59 +63,84 @@ function parseClaudeRecord(parsed: unknown): readonly UsageRecord[] {
     messageId === null && requestId === null ? null : `${messageId ?? ""}:${requestId ?? ""}`;
 
   const cost = record["costUSD"];
+  const iterations: readonly unknown[] = Array.isArray(usageRecord["iterations"])
+    ? usageRecord["iterations"]
+    : [];
+  // After a server-side fallback the top-level usage can name the declined model and merge
+  // attempts; the serving `fallback_message` iteration holds what its own model billed.
+  const fallbackIndex = iterations.findLastIndex(
+    (iteration) => iterationRecord(iteration)?.["type"] === "fallback_message",
+  );
+  const fallback = iterationRecord(iterations[fallbackIndex]);
+  const fallbackModel = fallback === null ? null : iterationModel(fallback);
+  const serving = fallbackModel === null ? null : fallback;
+  const servingIndex = serving === null ? -1 : fallbackIndex;
 
   const executor: UsageRecord = {
     provider: "claude",
     timestampMs,
-    model,
+    model: fallbackModel ?? model,
     sessionId: typeof record["sessionId"] === "string" ? record["sessionId"] : "",
-    totals: {
-      uncachedInputTokens: tokenCount(usageRecord["input_tokens"]),
-      cachedInputTokens: tokenCount(usageRecord["cache_read_input_tokens"]),
-      cacheCreationTokens: tokenCount(usageRecord["cache_creation_input_tokens"]),
-      outputTokens: tokenCount(usageRecord["output_tokens"]),
-      // Anthropic folds thinking tokens into output and does not break them out.
-      reasoningTokens: 0,
-    },
-    ...cacheCreation1h(usageRecord),
+    totals: usageTotals(serving ?? usageRecord),
+    ...cacheCreation1h(serving ?? usageRecord),
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
     speed: usageRecord["speed"] === "fast" ? "fast" : "standard",
-    dedupeKey,
+    dedupeKey: serving === null || dedupeKey === null ? dedupeKey : `${dedupeKey}:fallback`,
+    ...(serving === null || dedupeKey === null ? {} : { supersedesDedupeKey: dedupeKey }),
   };
 
-  // Top-level `usage` is the executor's alone. Advisor calls run on another model at its own rates
-  // and appear only in `iterations`, so each one is its own record under that model.
+  // Advisor calls and declined attempts bill at their own model's rates. Anthropic bills a
+  // declined attempt that produced output; most declines before any output are free.
   const records = [executor];
-  const iterations: readonly unknown[] = Array.isArray(usageRecord["iterations"])
-    ? usageRecord["iterations"]
-    : [];
   for (const [index, iteration] of iterations.entries()) {
-    if (typeof iteration !== "object" || iteration === null) continue;
-    const advisor = iteration as Record<string, unknown>;
-    if (advisor["type"] !== "advisor_message") continue;
-
-    const advisorModel = typeof advisor["model"] === "string" ? advisor["model"] : "";
-    if (advisorModel.length === 0 || advisorModel === CLAUDE_SYNTHETIC_MODEL) continue;
+    const entry = iterationRecord(iteration);
+    if (entry === null) continue;
+    const kind =
+      entry["type"] === "advisor_message"
+        ? "advisor"
+        : entry["type"] === "message" &&
+            index < servingIndex &&
+            tokenCount(entry["output_tokens"]) > 0
+          ? "attempt"
+          : null;
+    const entryModel = iterationModel(entry);
+    if (kind === null || entryModel === null) continue;
 
     records.push({
       provider: "claude",
       timestampMs,
-      model: advisorModel,
+      model: entryModel,
       sessionId: executor.sessionId,
-      totals: {
-        uncachedInputTokens: tokenCount(advisor["input_tokens"]),
-        cachedInputTokens: tokenCount(advisor["cache_read_input_tokens"]),
-        cacheCreationTokens: tokenCount(advisor["cache_creation_input_tokens"]),
-        outputTokens: tokenCount(advisor["output_tokens"]),
-        reasoningTokens: 0,
-      },
-      ...cacheCreation1h(advisor),
+      totals: usageTotals(entry),
+      ...cacheCreation1h(entry),
       reportedCostUsd: null,
       speed: executor.speed,
-      dedupeKey: dedupeKey === null ? null : `${dedupeKey}:advisor:${index}`,
+      dedupeKey: dedupeKey === null ? null : `${dedupeKey}:${kind}:${index}`,
     });
   }
   return records;
+}
+
+function iterationRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function iterationModel(iteration: Record<string, unknown>): string | null {
+  const model = iteration["model"];
+  return typeof model === "string" && model.length > 0 && model !== CLAUDE_SYNTHETIC_MODEL
+    ? model
+    : null;
+}
+
+function usageTotals(usage: Record<string, unknown>): UsageRecord["totals"] {
+  return {
+    uncachedInputTokens: tokenCount(usage["input_tokens"]),
+    cachedInputTokens: tokenCount(usage["cache_read_input_tokens"]),
+    cacheCreationTokens: tokenCount(usage["cache_creation_input_tokens"]),
+    outputTokens: tokenCount(usage["output_tokens"]),
+    // Anthropic folds thinking tokens into output and does not break them out.
+    reasoningTokens: 0,
+  };
 }
 
 export const claudeUsageFormat: TranscriptUsageFormat<void> = {

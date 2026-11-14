@@ -893,7 +893,7 @@ export const make = Effect.gen(function* () {
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
     });
 
-    const sources: UsageSource[] = [];
+    const sources: Array<Omit<UsageSource, "distinctSessions">> = [];
 
     // Deleted transcripts' saved usage still aggregates and deduplicates normally.
     const retainedSinceMs = Math.max(windowStartMs, retentionCutoffMs);
@@ -1020,9 +1020,6 @@ export const make = Effect.gen(function* () {
       let scannedFiles = 0;
       let skippedFiles = 0;
       let malformedRecords = 0;
-      // Distinct per directory. Buckets carry per-cell session counts, but a
-      // session spans days and models, so clients total this figure instead.
-      const sessionIds = new Set<string>();
       let counted = false;
 
       for (const file of filesByDir[index] ?? []) {
@@ -1052,10 +1049,7 @@ export const make = Effect.gen(function* () {
             eventOccurrences.set(key, occurrence);
             usageRecord = { ...record, dedupeKey: key + ":" + occurrence };
           }
-          if (aggregator.add(usageRecord, dir)) {
-            counted = true;
-            if (record.sessionId.length > 0) sessionIds.add(record.sessionId);
-          }
+          if (aggregator.add(usageRecord, dir)) counted = true;
         }
       }
 
@@ -1080,7 +1074,6 @@ export const make = Effect.gen(function* () {
         scannedFiles,
         skippedFiles,
         malformedRecords,
-        distinctSessions: sessionIds.size,
         message:
           malformedRecords > 0
             ? [sourceMessage, formatMalformedUsageWarning(malformedRecords)]
@@ -1115,7 +1108,13 @@ export const make = Effect.gen(function* () {
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
       buckets: aggregated.buckets,
-      sources,
+      sources: sources.map((source) => ({
+        ...source,
+        distinctSessions:
+          aggregated.sourceSessionCounts
+            .get(source.fingerprint.provider)
+            ?.get(source.fingerprint.resolvedHomePath) ?? 0,
+      })),
       pricing: pricing(),
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),

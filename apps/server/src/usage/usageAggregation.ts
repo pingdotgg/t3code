@@ -126,6 +126,7 @@ export function canonicalModelFilter(
 
 export interface AggregateResult {
   readonly buckets: readonly UsageBucket[];
+  readonly sourceSessionCounts: ReadonlyMap<string, ReadonlyMap<string, number>>;
   readonly duplicatesDropped: number;
   readonly outOfWindow: number;
 }
@@ -180,6 +181,7 @@ interface Contribution {
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
   readonly #seen = new Map<string, Contribution>();
+  readonly #supersededKeys = new Set<string>();
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
@@ -211,6 +213,15 @@ export class UsageAggregator {
   }
 
   add(input: UsageRecord, sourcePath?: string): boolean {
+    // A completed fallback replaces provisional snapshots even when its serving model is filtered out.
+    if (input.supersedesDedupeKey !== undefined) {
+      this.#supersededKeys.add(input.supersedesDedupeKey);
+      if (this.#seen.delete(input.supersedesDedupeKey)) this.#duplicatesDropped += 1;
+    }
+    if (input.dedupeKey !== null && this.#supersededKeys.has(input.dedupeKey)) {
+      this.#duplicatesDropped += 1;
+      return false;
+    }
     if (!keepsUsageRecord(this.#options.modelFilter, input)) return false;
     const record = this.#mapModel(input);
     if (record.dedupeKey !== null) {
@@ -230,7 +241,6 @@ export class UsageAggregator {
     }
     // Keyed usage is counted in finish(), once all its copies are merged.
     if (record.dedupeKey === null) this.#accumulate(bucket, record);
-    if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
     return true;
   }
 
@@ -259,6 +269,7 @@ export class UsageAggregator {
   }
 
   #accumulate(bucket: MutableBucket, record: UsageRecord): void {
+    if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
     const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
 
     const totals = bucket.totals;
@@ -359,10 +370,24 @@ export class UsageAggregator {
       if (bucket !== null) this.#accumulate(bucket, record);
     }
     this.#seen.clear();
+    this.#supersededKeys.clear();
     const buckets: UsageBucket[] = [];
+    const sourceSessions = new Map<string, Map<string, Set<string>>>();
     for (const [key, bucket] of this.#buckets) {
+      if (bucket.records === 0) continue;
       const [day = "", hourStart = "", provider = "", model = "", sourcePath = ""] =
         key.split("\u0000");
+      let providerSources = sourceSessions.get(provider);
+      if (providerSources === undefined) {
+        providerSources = new Map();
+        sourceSessions.set(provider, providerSources);
+      }
+      let sessions = providerSources.get(sourcePath);
+      if (sessions === undefined) {
+        sessions = new Set();
+        providerSources.set(sourcePath, sessions);
+      }
+      for (const sessionId of bucket.sessions) sessions.add(sessionId);
       const category = bucket.categoryCostUsd;
       const fastCostUsd = roundUsd(bucket.fastCostUsd);
       const ultrafastCostUsd = roundUsd(bucket.ultrafastCostUsd);
@@ -406,6 +431,12 @@ export class UsageAggregator {
 
     return {
       buckets,
+      sourceSessionCounts: new Map(
+        [...sourceSessions].map(([provider, paths]) => [
+          provider,
+          new Map([...paths].map(([path, sessions]) => [path, sessions.size])),
+        ]),
+      ),
       duplicatesDropped: this.#duplicatesDropped,
       outOfWindow: this.#outOfWindow,
     };

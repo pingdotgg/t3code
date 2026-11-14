@@ -24,6 +24,8 @@ export interface UsageRecord {
   readonly speed: UsageSpeed;
   readonly unresolvedServiceTierTurnId?: string;
   readonly dedupeKey: string | null;
+  /** An authoritative attempt replaces this provisional message, including cached copies. */
+  readonly supersedesDedupeKey?: string;
 }
 
 export const EMPTY_TOTALS: UsageTokenTotals = {

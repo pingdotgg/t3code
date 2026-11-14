@@ -3140,7 +3140,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v16.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v17.json");
           assert.deepStrictEqual(
             (yield* Effect.promise(() => NodeFSP.readdir(stateDir)))
               .filter((name) => name.startsWith("usage-scan-cache"))
@@ -3370,42 +3370,70 @@ describe("UsageService", () => {
     }),
   );
 
-  it.effect("credits the same copy of a duplicate after its transcripts are deleted", () =>
-    Effect.gen(function* () {
-      const { transcript, settings, home } = yield* setup;
-      const dir = NodePath.dirname(transcript);
-      const [first = "", second = ""] = yield* Effect.promise(async () => {
-        await NodeFSP.writeFile(NodePath.join(dir, "a.jsonl"), "");
-        await NodeFSP.writeFile(NodePath.join(dir, "b.jsonl"), "");
-        return (await NodeFSP.readdir(dir)).map((name) => NodePath.join(dir, name));
-      });
-      const forked = (line: string) => line.replace('"session-1"', '"session-2"');
-      yield* Effect.promise(async () => {
-        await NodeFSP.writeFile(
-          first,
+  it.effect.each([
+    { fallback: false, reverse: false, keepOther: true },
+    { fallback: true, reverse: false, keepOther: false },
+    { fallback: true, reverse: true, keepOther: false },
+    { fallback: true, reverse: false, keepOther: true },
+  ])(
+    "credits surviving sessions after their transcripts are deleted (%j)",
+    ({ fallback, reverse, keepOther }) =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        const dir = NodePath.dirname(transcript);
+        const [first = "", second = ""] = yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(NodePath.join(dir, "a.jsonl"), "");
+          await NodeFSP.writeFile(NodePath.join(dir, "b.jsonl"), "");
+          return (await NodeFSP.readdir(dir)).map((name) => NodePath.join(dir, name));
+        });
+        const forked = (line: string) => line.replace('"session-1"', '"session-2"');
+        const completed = fallback
+          ? encodeUnknownJsonString({
+              type: "assistant",
+              timestamp: "2026-08-01T10:00:00Z",
+              requestId: "req_1",
+              sessionId: "session-1",
+              message: {
+                id: "msg_1",
+                model: "claude-fable-5",
+                usage: {
+                  ...COMPLETE_USAGE,
+                  iterations: [
+                    { type: "message", model: "claude-fable-5", output_tokens: 0 },
+                    { type: "fallback_message", model: "claude-opus-5-5", ...COMPLETE_USAGE },
+                  ],
+                },
+              },
+            }) + "\n"
+          : claudeLine(1, 5);
+        const partial =
           claudeLine(1, 5).replace(
             '"message":',
             '"padding":' + encodeUnknownJsonString("x".repeat(9 * 1024 * 1024)) + ',"message":',
-          ),
-        );
-        await NodeFSP.writeFile(second, forked(claudeLine(1, 5)) + forked(claudeLine(2, 7)));
-      });
-      yield* Effect.gen(function* () {
-        const service = yield* UsageService.make;
-        const live = yield* service.readSummary(WINDOW);
-        assert.strictEqual(live.buckets[0]?.sessions, 2);
+          ) + (fallback && keepOther ? claudeLine(3, 11) : "");
+        const final = forked(completed) + (!fallback ? forked(claudeLine(2, 7)) : "");
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(first, reverse ? final : partial);
+          await NodeFSP.writeFile(second, reverse ? partial : final);
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          const live = yield* service.readSummary(WINDOW);
+          assert.strictEqual(live.sources[0]?.distinctSessions, keepOther ? 2 : 1);
+          assert.strictEqual(totalOutputTokens(live), fallback ? 264 + (keepOther ? 11 : 0) : 12);
 
-        yield* Effect.promise(() => Promise.all([NodeFSP.rm(first), NodeFSP.rm(second)]));
-        const saved = yield* service.readSummary(WINDOW);
-        assert.deepStrictEqual(saved.buckets, live.buckets);
-        assert.deepStrictEqual(saved.sources, live.sources);
-        yield* service.awaitPersisted;
-        const restored = yield* (yield* UsageService.make).readSummary(WINDOW);
-        assert.deepStrictEqual(restored.buckets, live.buckets);
-      }).pipe(
-        Effect.provide(layerService({ prefix: "usage-service-copy-order-test", home, settings })),
-      );
-    }),
+          yield* Effect.promise(() => Promise.all([NodeFSP.rm(first), NodeFSP.rm(second)]));
+          const saved = yield* service.readSummary(WINDOW);
+          assert.deepStrictEqual(saved.buckets, live.buckets);
+          assert.deepStrictEqual(saved.sources, live.sources);
+          yield* service.awaitPersisted;
+          const restored = yield* (yield* UsageService.make).readSummary(WINDOW);
+          assert.deepStrictEqual(restored.buckets, live.buckets);
+          assert.deepStrictEqual(restored.sources, live.sources);
+        }).pipe(
+          Effect.provide(layerService({ prefix: "usage-service-copy-order-test", home, settings })),
+        );
+      }),
   );
 
   it.effect("credits the same copy of a duplicate from the last scan as an exact read does", () =>
