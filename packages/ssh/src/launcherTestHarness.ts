@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeSqlite from "node:sqlite";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -58,6 +59,12 @@ export const captureLauncherFor = Effect.fn("test.captureLauncher")(function* (
 
 export const captureLauncher = captureLauncherFor({ nodeScriptPath: "/fake/server.ts" });
 
+function holdLock(path: string) {
+  const db = new NodeSqlite.DatabaseSync(path);
+  db.exec("BEGIN EXCLUSIVE;");
+  return { [Symbol.dispose]: () => db.close() };
+}
+
 export function runLauncher(
   script: string,
   options: {
@@ -68,9 +75,8 @@ export function runLauncher(
     readonly clockJump?: number;
     readonly readyAt?: number;
     readonly initialPort?: number;
-    // The recorded server on 4888 answers to a readiness wait at least this long.
-    readonly readyWithinMs?: number;
-    readonly deadRuntimePid?: boolean;
+    // A service launcher holds the home between children, with no runtime record yet.
+    readonly serviceRunning?: boolean;
     readonly allowFailure?: boolean;
     // The desktop publishes runtime and removes the marker right after the first runtime read.
     readonly publishAfterFirstRuntimeRead?: boolean;
@@ -125,7 +131,7 @@ case "\${2:-}" in
       printf '{}' > "$2"
       rm -f "$HOME/.t3/runtime/desktop-update-in-progress"
       exit 1
-    elif [ -n "$TEST_INITIAL_PORT" ]; then printf '%s %s' "$TEST_RUNTIME_PID" "$TEST_INITIAL_PORT"
+    elif [ -n "$TEST_INITIAL_PORT" ]; then printf '%s %s' "$TEST_SERVER_PID" "$TEST_INITIAL_PORT"
     else exit 1; fi ;;
   */port)
     printf 'start %s\\n' "$(cat "$HOME/clock")" >> "$HOME/events"
@@ -134,7 +140,7 @@ case "\${2:-}" in
   [0-9]*)
     NOW="$(cat "$HOME/clock")"
     printf 'probe %s %s\\n' "$2" "$NOW" >> "$HOME/events"
-    [ "$2" = 5999 ] || { [ "$2" = 4888 ] && { [ "$NOW" -ge "$TEST_READY_AT" ] || [ "$3" -ge "$TEST_READY_WITHIN" ] || [ -e "$HOME/.t3/userdata/server-runtime.json" ]; }; } ;;
+    [ "$2" = 5999 ] || { [ "$2" = 4888 ] && { [ "$NOW" -ge "$TEST_READY_AT" ] || [ -e "$HOME/.t3/userdata/server-runtime.json" ]; }; } ;;
   */desktop-update-in-progress)
     printf 'marker %s\\n' "$(cat "$HOME/clock")" >> "$HOME/events"
     exec "$TEST_REAL_NODE" --require "$HOME/clock.cjs" "$@" ;;
@@ -203,6 +209,9 @@ esac
         { mode: 0o755 },
       );
     }
+    using _serviceLock = options.serviceRunning
+      ? holdLock(NodePath.join(runtime, "service-launcher.lock"))
+      : undefined;
     const result = NodeChildProcess.spawnSync("/bin/sh", ["-s", "--", "test-target"], {
       input: `kill() {
   if [ "$1" = -0 ]; then command kill "$@"; else
@@ -221,10 +230,6 @@ ${script}`,
         TEST_CLEAR_MARKER: options.clearMarkerOnReady ? "1" : "0",
         TEST_CLOCK_JUMP: options.clockJump === undefined ? "" : String(options.clockJump),
         TEST_SERVER_PID: String(process.pid),
-        TEST_RUNTIME_PID: String(
-          options.deadRuntimePid ? NodeChildProcess.spawnSync("true").pid : process.pid,
-        ),
-        TEST_READY_WITHIN: String(options.readyWithinMs ?? 1_000_000),
         TEST_READY_AT: String(options.readyAt ?? 1_000_000),
         TEST_INITIAL_PORT: options.initialPort === undefined ? "" : String(options.initialPort),
         TEST_PUBLISH_AFTER_FIRST_READ: options.publishAfterFirstRuntimeRead ? "1" : "0",

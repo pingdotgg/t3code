@@ -1520,38 +1520,23 @@ describe("SSH launch during desktop update", () => {
     }),
   );
 
-  it.effect("waits for a live server that is slow to answer instead of starting another", () =>
+  it.effect("waits for a service between children instead of starting another server", () =>
     Effect.gen(function* () {
-      const result = runLauncher(yield* captureLauncher, {
-        initialPort: 4888,
-        readyWithinMs: 10_000,
-      });
+      const result = runLauncher(yield* captureLauncher, { serviceRunning: true, readyAt: 5_000 });
       assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
       assert.isFalse(result.events.some((event) => event.startsWith("start ")));
     }),
   );
 
-  it.effect("fails without starting a second server beside a live server that never answers", () =>
+  it.effect("fails without starting a second server when the service never becomes ready", () =>
     Effect.gen(function* () {
       const result = runLauncher(yield* captureLauncher, {
-        initialPort: 4888,
+        serviceRunning: true,
         allowFailure: true,
       });
       assert.equal(result.status, 1);
       assert.include(result.stderr, "no second server was started");
       assert.isFalse(result.events.some((event) => event.startsWith("start ")));
-    }),
-  );
-
-  it.effect("starts a server when the runtime record names a dead process", () =>
-    Effect.gen(function* () {
-      const result = runLauncher(yield* captureLauncher, {
-        initialPort: 4888,
-        deadRuntimePid: true,
-        readyWithinMs: 10_000,
-      });
-      assert.deepEqual(result.output, { remotePort: 5999, serverKind: "managed" });
-      assert.equal(result.events.filter((event) => event.startsWith("start ")).length, 1);
     }),
   );
 

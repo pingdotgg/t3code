@@ -82,11 +82,12 @@ const REMOTE_UPDATE_WAIT_MS =
   DESKTOP_UPDATE_IN_PROGRESS_TTL_MS +
   2 * (REMOTE_REUSE_READY_TIMEOUT_MS + SSH_READY_PROBE_TIMEOUT_MS) +
   1_000;
-// A launch holds the home lock through up to two reuse probes, readiness, two
-// server exit waits, the runtime record wait, and the update wait; each probe
-// may overrun its deadline by one request.
+// A launch holds the home lock through up to two reuse probes, readiness (twice
+// when a service owns the home: its runtime record, then its port), two server
+// exit waits, the runtime record wait, and the update wait; each probe may
+// overrun its deadline by one request.
 const REMOTE_LAUNCH_LOCK_WAIT_SECONDS = Math.ceil(
-  (REMOTE_READY_TIMEOUT_MS +
+  (2 * REMOTE_READY_TIMEOUT_MS +
     2 * REMOTE_REUSE_READY_TIMEOUT_MS +
     2 * REMOTE_PID_EXIT_WAIT_MS +
     REMOTE_RUNTIME_RECORD_WAIT_SECONDS * 1000 +
@@ -708,6 +709,35 @@ server_running() {
   esac
 }
 @@T3_MANAGED_SERVER_RUNNING_SCRIPT@@
+home_owned() {
+  if [ "$T3_ARCHIVE_MODE" = "1" ]; then
+    "$RUNNER_FILE" __ssh-helper home-owned "$DEFAULT_SERVER_HOME" 2>/dev/null
+    return
+  fi
+  node - "$DEFAULT_SERVER_HOME" 2>/dev/null <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const { DatabaseSync } = require("node:sqlite");
+const held = (file) => {
+  if (!fs.existsSync(file)) return false;
+  const db = new DatabaseSync(file);
+  try {
+    db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+    return false;
+  } catch (error) {
+    return error?.errcode === 5;
+  } finally {
+    db.close();
+  }
+};
+const home = process.argv[2];
+process.exitCode =
+  held(path.join(home, "runtime", "service-launcher.lock")) ||
+  held(path.join(home, "userdata", "server-owner.sqlite"))
+    ? 0
+    : 1;
+NODE
+}
 resolve_default_runtime_port() {
   if [ "$T3_ARCHIVE_MODE" = "1" ]; then
     "$RUNNER_FILE" __ssh-helper runtime-port "$DEFAULT_RUNTIME_FILE"
@@ -896,14 +926,19 @@ if [ -z "$REMOTE_PORT" ]; then
     REMOTE_MANAGED=""
   fi
 fi
-# A live server named by the runtime record still owns the home while it
-# restarts or migrates; a second server would only fail on its lock. The
-# managed server an update just stopped may not have exited yet.
-if [ -z "$REMOTE_PORT" ] && server_running "$DEFAULT_RUNTIME_PID" &&
-  [ "$DEFAULT_RUNTIME_PID" != "$(cat "$PID_FILE" 2>/dev/null || true)" ] &&
-  ! adopt_default_server "@@T3_READY_TIMEOUT_MS@@"; then
-  printf 'The T3 server running on this host (PID %s) did not become ready, so no second server was started. Retry once it finishes starting; if it is not a T3 server, delete %s.\\n' "$DEFAULT_RUNTIME_PID" "$DEFAULT_RUNTIME_FILE" >&2
-  exit 1
+# A service between children (stopped for a database backup, or migrating
+# before it publishes runtime) still owns the home; a second server would race
+# it for the lock. The managed server an update just stopped may still hold it.
+if [ -z "$REMOTE_PORT" ] && ! managed_server_running "$(cat "$PID_FILE" 2>/dev/null || true)" && home_owned; then
+  OWNER_WAITED=0
+  while [ -z "$(resolve_default_runtime_port 2>/dev/null || true)" ] && [ "$OWNER_WAITED" -lt @@T3_READY_TIMEOUT_SECONDS@@ ]; do
+    sleep 1
+    OWNER_WAITED=$((OWNER_WAITED + 1))
+  done
+  if ! adopt_default_server "@@T3_READY_TIMEOUT_MS@@"; then
+    printf 'A T3 server or service already owns %s but did not become ready, so no second server was started. Retry once it finishes starting.\\n' "$DEFAULT_SERVER_HOME" >&2
+    exit 1
+  fi
 fi
 if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true
@@ -1069,6 +1104,7 @@ function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_DEFAULT_REMOTE_PORT: String(DEFAULT_REMOTE_PORT),
     T3_REMOTE_PORT_SCAN_WINDOW: String(REMOTE_PORT_SCAN_WINDOW),
     T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
+    T3_READY_TIMEOUT_SECONDS: String(REMOTE_READY_TIMEOUT_MS / 1000),
     T3_REUSE_READY_TIMEOUT_MS: String(REMOTE_REUSE_READY_TIMEOUT_MS),
     T3_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
     T3_PID_EXIT_WAIT_TICKS: String(REMOTE_PID_EXIT_WAIT_MS / 100),

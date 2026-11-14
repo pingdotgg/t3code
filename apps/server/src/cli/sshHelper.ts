@@ -10,6 +10,11 @@ import * as Option from "effect/Option";
 import { Argument, Command } from "effect/cli";
 
 import * as DesktopUpdateMarker from "../desktopUpdate/DesktopUpdateMarker.ts";
+import {
+  serviceLauncherIsRunning,
+  serviceLauncherLockPath,
+  stateDirOwned,
+} from "../serviceLauncher.ts";
 
 const canBind = (port: number) =>
   new Promise<boolean>((resolve) => {
@@ -142,7 +147,21 @@ const updateRemaining = Command.make("update-remaining", {
   Command.provide(DesktopUpdateMarker.layer),
 );
 
+/** Exits 0 while a service launcher or a server holds this home, even between children. */
+const homeOwned = Command.make("home-owned", {
+  baseDir: Argument.String("base-dir"),
+}).pipe(
+  Command.withHandler(({ baseDir }) =>
+    Effect.promise(async () => {
+      const owned =
+        (await serviceLauncherIsRunning(serviceLauncherLockPath(baseDir)).catch(() => false)) ||
+        (await stateDirOwned(baseDir));
+      if (!owned) process.exitCode = 1;
+    }),
+  ),
+);
+
 export const sshHelperCommand = Command.make("__ssh-helper").pipe(
   Command.unlisted,
-  Command.withSubcommands([pickPort, waitReady, runtimePort, updateRemaining]),
+  Command.withSubcommands([pickPort, waitReady, runtimePort, updateRemaining, homeOwned]),
 );
