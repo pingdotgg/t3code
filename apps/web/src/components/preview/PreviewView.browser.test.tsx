@@ -181,9 +181,22 @@ import { commitBrowserViewportChange } from "~/browser/browserViewportActions";
 import { resolveResponsiveBrowserViewportSize } from "~/browser/browserViewportLayout";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
-import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import {
+  browserMiniPlayerSource,
+  selectThreadPreviewMiniPlayerTabId,
+  selectThreadPreviewMiniPlayer,
+  usePreviewMiniPlayerStore,
+} from "~/previewMiniPlayerStore";
 import { dispatchPreviewAction } from "./previewActionBus";
 import { PreviewView } from "./PreviewView";
+import { ThreadPreviewMiniPlayer } from "./ThreadPreviewMiniPlayer";
+import { ChatCanvas } from "../chat/ChatCanvas";
+import { createChatCanvasStore } from "../chat/canvasStore";
+import { shouldRenderPreviewMiniPlayer } from "../ChatView.logic";
+import { selectActiveRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
+import { closePreviewPanel } from "../chat/closePreviewPanel";
+import { useRightPanelActions } from "../chat/useRightPanelActions";
+import { __testing as previewStateTesting } from "~/previewStateStore";
 import { ToastProvider } from "~/components/ui/toast";
 
 const TEST_THREAD_REF = {
@@ -201,6 +214,38 @@ function view(onSendAnnotation?: ComponentProps<typeof PreviewView>["onSendAnnot
       {...(onSendAnnotation ? { onSendAnnotation } : {})}
     />
   );
+}
+
+function PanelCloseAction() {
+  const activeRightPanelSurface = useRightPanelStore((state) =>
+    selectActiveRightPanelSurface(state.byThreadKey, TEST_THREAD_REF),
+  );
+  const { closePreviewPanelStable } = useRightPanelActions({
+    activeThreadRef: TEST_THREAD_REF,
+    activeProject: null,
+    activeRightPanelSurface,
+    activePreviewState: previewStateTesting.EMPTY_THREAD_PREVIEW_STATE,
+    deviceState: {} as Parameters<typeof useRightPanelActions>[0]["deviceState"],
+    pullRequestPanelTarget: null,
+    threadPanelPresentation: "inline",
+    embedded: false,
+    isServerThread: true,
+    isGitRepo: false,
+    browserAvailable: true,
+    canOperatePreview: true,
+    diffOpen: false,
+    previewPanelOpen: true,
+    rightPanelOpen: true,
+    canMaximizeRightPanel: false,
+    rightPanelMaximized: false,
+    supportsPullRequests: false,
+    pullRequestsSurfaceAvailable: false,
+    gitCwd: null,
+    activeProjectCwd: null,
+    onDiffPanelOpen: undefined,
+    closeRightPanelSurface: () => {},
+  });
+  return <button onClick={closePreviewPanelStable}>Close panel</button>;
 }
 
 function annotation(id: string, screenshot: unknown = null) {
@@ -244,6 +289,89 @@ function setup() {
 }
 
 describe("PreviewView", () => {
+  it("does not restore a dismissed floating preview when the panel action closes", async () => {
+    setup();
+    useRightPanelStore.setState({ byThreadKey: {} });
+    usePreviewMiniPlayerStore.getState().open(TEST_THREAD_REF, browserMiniPlayerSource("tab-1"));
+    useRightPanelStore.getState().openBrowser(TEST_THREAD_REF, "tab-1");
+    usePreviewMiniPlayerStore.getState().close(TEST_THREAD_REF);
+
+    await using screen = await render(<PanelCloseAction />);
+    await userEvent.click(screen.getByRole("button", { name: "Close panel" }));
+    await vi.waitFor(() => {
+      expect(
+        selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, TEST_THREAD_REF),
+      ).toBeNull();
+      expect(
+        selectThreadPreviewMiniPlayerTabId(
+          usePreviewMiniPlayerStore.getState().byThreadKey,
+          TEST_THREAD_REF,
+        ),
+      ).toBeNull();
+    });
+  });
+
+  it("returns to the same floating preview after docking and closing the panel", async () => {
+    setup();
+    useRightPanelStore.setState({ byThreadKey: {} });
+    const store = usePreviewMiniPlayerStore.getState();
+    store.open(TEST_THREAD_REF, browserMiniPlayerSource("tab-1"));
+    store.resize(TEST_THREAD_REF, "browser:tab-1", 320, { x: 100, y: 150 });
+    const miniPlayer = selectThreadPreviewMiniPlayer(
+      usePreviewMiniPlayerStore.getState().byThreadKey,
+      TEST_THREAD_REF,
+    )!;
+    const canvasStore = createChatCanvasStore();
+    function FloatingPreviewHost() {
+      const current = usePreviewMiniPlayerStore((state) =>
+        selectThreadPreviewMiniPlayer(state.byThreadKey, TEST_THREAD_REF),
+      );
+      const surface = useRightPanelStore((state) =>
+        selectActiveRightPanelSurface(state.byThreadKey, TEST_THREAD_REF),
+      );
+      if (!current || !shouldRenderPreviewMiniPlayer(current.source, surface)) return null;
+      return (
+        <ChatCanvas
+          store={canvasStore}
+          threadRef={TEST_THREAD_REF}
+          preview={{
+            key: "browser:tab-1",
+            width: current.width,
+            position: current.position,
+            source: { width: 1024, height: 768 },
+          }}
+          composerOverlayElement={null}
+        >
+          <ThreadPreviewMiniPlayer threadRef={TEST_THREAD_REF} miniPlayer={current} />
+        </ChatCanvas>
+      );
+    }
+    await using screen = await render(
+      <div className="flex w-[1000px] h-[700px]">
+        <FloatingPreviewHost />
+      </div>,
+    );
+    await userEvent.hover(
+      screen
+        .getByRole("region", { name: "Floating browser preview" })
+        .element()
+        .querySelector(".group")!,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Open preview in right panel" }));
+    await expect
+      .element(screen.getByRole("region", { name: "Floating browser preview" }))
+      .not.toBeInTheDocument();
+    expect(
+      selectThreadPreviewMiniPlayer(
+        usePreviewMiniPlayerStore.getState().byThreadKey,
+        TEST_THREAD_REF,
+      ),
+    ).toEqual(miniPlayer);
+    closePreviewPanel(TEST_THREAD_REF);
+    await expect
+      .element(screen.getByRole("region", { name: "Floating browser preview" }))
+      .toBeInTheDocument();
+  });
   it.each(["mailto:alice@example.com", "http://"])(
     "reports rejected address %s without navigating or recording it",
     async (address) => {
@@ -435,6 +563,28 @@ describe("PreviewView", () => {
     await expect.element(address).not.toHaveFocus();
     act(() => dispatchPreviewAction("focus-url"));
     await expect.element(address).toHaveFocus();
+  });
+
+  it("floats a docked preview from the panel in one click", async () => {
+    setup();
+    useRightPanelStore.setState({ byThreadKey: {} });
+    usePreviewMiniPlayerStore.getState().open(TEST_THREAD_REF, browserMiniPlayerSource("tab-1"));
+    useRightPanelStore.getState().openBrowser(TEST_THREAD_REF, "tab-1");
+
+    await using screen = await render(view());
+    const float = screen.getByRole("button", { name: "Float preview over chat" });
+    await expect.element(float).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(float);
+
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, TEST_THREAD_REF),
+    ).toBeNull();
+    expect(
+      selectThreadPreviewMiniPlayerTabId(
+        usePreviewMiniPlayerStore.getState().byThreadKey,
+        TEST_THREAD_REF,
+      ),
+    ).toBe("tab-1");
   });
 
   it("does not reopen find when the user returns to a tab they left with find open", async () => {
