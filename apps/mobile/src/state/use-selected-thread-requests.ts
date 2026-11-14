@@ -144,13 +144,18 @@ function returnUnsentAttachmentsToThreadDraft(
   unansweredRequestIds: ReadonlyArray<RuntimeRequestId>,
 ): void {
   const prefix = questionAttachmentDraftPrefix(environmentId, threadId);
-  moveComposerDraftAttachments(
+  const left = moveComposerDraftAttachments(
     questionDraftKeysForRequests(
       Object.keys(appAtomRegistry.get(questionAttachmentDraftsAtom(prefix))),
       prefix,
       unansweredRequestIds,
     ),
     scopedThreadKey(environmentId, threadId),
+  );
+  if (left.length === 0) return;
+  Dialog.alert(
+    "Some question attachments were not returned",
+    `${left.map((attachment) => attachment.name).join(", ")} could not be returned to the draft.`,
   );
 }
 

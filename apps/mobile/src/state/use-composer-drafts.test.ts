@@ -16,6 +16,7 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
+  COMPOSER_CONTEXT_MAX_RECORDS,
   ComposerContextId,
   EnvironmentId,
   MessageId,
@@ -494,7 +495,7 @@ describe("mobile composer drafts", () => {
     rememberComposerDraftSelection("thread", "Earlier draft", { start: 0, end: 7 });
     appendComposerDraftAttachments(question, [file]);
 
-    moveComposerDraftAttachments([question], "thread");
+    expect(moveComposerDraftAttachments([question], "thread")).toEqual([]);
 
     const thread = getComposerDraftSnapshot("thread");
     // Appended after the text, not over the remembered selection.
@@ -504,6 +505,20 @@ describe("mobile composer drafts", () => {
     expect(getComposerDraftSnapshot(question).attachments).toEqual([]);
     await releaseUnusedComposerAttachmentFiles([file]);
     expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalledWith(file.fileUri);
+
+    // A thread draft without chip room returns what it could not take.
+    appendComposerDraftAttachments(
+      "thread",
+      Array.from({ length: COMPOSER_CONTEXT_MAX_RECORDS - 1 }, (_, index) => ({
+        ...file,
+        id: `filler-${index}`,
+      })),
+      { allowOverflow: true, appendReference: true },
+    );
+    const overflow = { ...file, id: "overflow-file" };
+    appendComposerDraftAttachments(question, [overflow]);
+    expect(moveComposerDraftAttachments([question], "thread")).toEqual([overflow]);
+    expect(getComposerDraftSnapshot(question).attachments).toEqual([]);
   });
 
   it("retains a pick matching cached state until the live shell confirms it", () => {
