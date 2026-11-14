@@ -640,7 +640,11 @@ export function openCodePermissionRules(
     sandboxType === undefined && runtimePolicy.runtimeMode === "full-access";
 
   if (!requiresApproval && (externallySandboxed || dangerFullAccess || implicitFullAccess)) {
-    return [{ permission: "*", pattern: "*", action: "allow" }];
+    // Task children copy only external_directory and deny rules before their first tool call.
+    return [
+      { permission: "*", pattern: "*", action: "allow" },
+      { permission: "external_directory", pattern: "*", action: "allow" },
+    ];
   }
 
   // Children initially inherit only denies; seed them before overrides to protect the policy-install gap.
