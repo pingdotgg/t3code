@@ -5492,7 +5492,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return remoteNames.includes(remoteName) &&
         branchName !== "HEAD" &&
         !branchName.startsWith("-") &&
-        !/[~^:?*[\\\s]|\.\.|@\{/.test(branchName)
+        !/[\x00-\x20\x7f~^:?*[\\]|\.\.|@\{/.test(branchName)
         ? { remoteName, branchName }
         : null;
     });
