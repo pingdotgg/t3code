@@ -168,6 +168,18 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
   return connection;
 });
 
+// A failed response echoes Pi's own `command` field as the operation, so log only names we sent.
+const PI_LOGGED_RPC_OPERATIONS = new Set([
+  "spawn",
+  "read",
+  "write",
+  "exit",
+  "terminate",
+  "get_state",
+  "get_available_models",
+  "get_commands",
+]);
+
 const PI_PROJECT_TRUST_ARGUMENTS = new Set(["--approve", "-a", "--no-approve", "-na"]);
 
 /**
@@ -554,7 +566,9 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     const failure = Cause.findErrorOption(discoveryExit.cause);
     yield* Effect.logWarning("Pi RPC discovery failed.", {
       errorTag: causeErrorTag(discoveryExit.cause),
-      ...(Option.isSome(failure) ? { operation: failure.value.operation } : {}),
+      ...(Option.isSome(failure) && PI_LOGGED_RPC_OPERATIONS.has(failure.value.operation)
+        ? { operation: failure.value.operation }
+        : {}),
     });
     return buildServerProvider({
       presentation: PI_PRESENTATION,
