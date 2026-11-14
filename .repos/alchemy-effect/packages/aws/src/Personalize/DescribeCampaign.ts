@@ -1,0 +1,34 @@
+import type * as personalize from "@distilled.cloud/aws/personalize";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `personalize:DescribeCampaign` — Reads a campaign's status and the solution version it serves — used to
+ * confirm a campaign update finished before switching traffic.
+ * Provide the implementation with
+ * `Effect.provide(AWS.Personalize.DescribeCampaignHttp)`.
+ *
+ * ### Retraining Loop
+ * **Example:** Poll a Campaign Update
+ * ```typescript
+ * // init
+ * const describeCampaign = yield* Personalize.DescribeCampaign();
+ *
+ * const { campaign } = yield* describeCampaign({ campaignArn });
+ * const live = campaign?.status === "ACTIVE";
+ * ```
+ *
+ * @binding
+ */
+export interface DescribeCampaign extends Binding.Service<
+  DescribeCampaign,
+  "AWS.Personalize.DescribeCampaign",
+  () => Effect.Effect<
+    (
+      request: personalize.DescribeCampaignRequest,
+    ) => Effect.Effect<personalize.DescribeCampaignResponse, personalize.DescribeCampaignError>
+  >
+> {}
+export const DescribeCampaign = Binding.Service<DescribeCampaign>(
+  "AWS.Personalize.DescribeCampaign",
+);

@@ -71,10 +71,11 @@ struct Bounds {
     height: u32,
 }
 
-struct ScriptReply {
-    owner: String,
-    result: mpsc::SyncSender<String>,
-}
+const REPLY: &str = "/com/t3tools/KdeCapture";
+
+/// KWin's bus name and the channel of the script call in flight. `None` between calls.
+#[derive(Default)]
+struct ScriptReply(Option<(String, mpsc::SyncSender<String>)>);
 #[zbus::interface(name = "com.t3tools.KdeCapture")]
 impl ScriptReply {
     fn reply(
@@ -82,7 +83,12 @@ impl ScriptReply {
         value: &str,
         #[zbus(header)] header: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<()> {
-        if header.sender().map(|name| name.as_str()) != Some(self.owner.as_str()) {
+        let Some((owner, result)) = &self.0 else {
+            return Err(zbus::fdo::Error::AccessDenied(
+                "No script is running".into(),
+            ));
+        };
+        if header.sender().map(|name| name.as_str()) != Some(owner.as_str()) {
             return Err(zbus::fdo::Error::AccessDenied("Not KWin".into()));
         }
         if value.len() > 64 * 1024 {
@@ -90,9 +96,18 @@ impl ScriptReply {
                 "Oversized window metadata".into(),
             ));
         }
-        let _ = self.result.try_send(value.to_owned());
+        let _ = result.try_send(value.to_owned());
         Ok(())
     }
+}
+
+/// Serves the reply object from the start, so zbus waits for its method-call listener.
+/// A listener started after connecting can miss the first call from KWin.
+fn connect(builder: Builder<'_>) -> zbus::Result<Connection> {
+    builder
+        .method_timeout(DEADLINE)
+        .serve_at(REPLY, ScriptReply::default())?
+        .build()
 }
 
 /// Scripts exist only for this operation. Unload even when evaluation/callback fails.
@@ -100,13 +115,10 @@ fn script(connection: &Connection, directory: &Path, body: &str) -> Result<Strin
     let dbus = zbus::blocking::fdo::DBusProxy::new(connection)?;
     let owner = dbus.get_name_owner("org.kde.KWin".try_into()?)?.to_string();
     let (send, receive) = mpsc::sync_channel(1);
-    connection.object_server().at(
-        "/com/t3tools/KdeCapture",
-        ScriptReply {
-            owner,
-            result: send,
-        },
-    )?;
+    let reply = connection
+        .object_server()
+        .interface::<_, ScriptReply>(REPLY)?;
+    reply.get_mut().0 = Some((owner, send));
     let path = directory.join("window.js");
     let name = format!("t3-capture-{}", std::process::id());
     let destination = serde_json::to_string(
@@ -147,9 +159,7 @@ fn script(connection: &Connection, directory: &Path, body: &str) -> Result<Strin
         let _: std::result::Result<bool, _> = scripting.call("unloadScript", &(&name,));
         result
     })();
-    connection
-        .object_server()
-        .remove::<ScriptReply, _>("/com/t3tools/KdeCapture")?;
+    reply.get_mut().0 = None;
     let _ = std::fs::remove_file(path);
     result
 }
@@ -261,6 +271,26 @@ fn rgba(raw: &[u8], width: usize, height: usize, stride: usize, format: usize) -
     Ok(output)
 }
 
+/// The desktop app rejects larger capture PNGs (`linuxCaptureSession.ts`).
+const MAX_PNG_BYTES: usize = 32 * 1024 * 1024;
+
+/// Level 6 dominated capture time, so encode at the much faster level 2 and fall back
+/// to level 6 only when level 2's slightly larger output would be rejected.
+fn encode_png(rgba: &[u8], width: u32, height: u32, limit: usize) -> Result<Vec<u8>> {
+    for level in [2, 6] {
+        let mut png = Vec::new();
+        let mut encoder = png::Encoder::new(&mut png, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_deflate_compression(png::DeflateCompression::Level(level));
+        encoder.write_header()?.write_image_data(rgba)?;
+        if png.len() <= limit {
+            return Ok(png);
+        }
+    }
+    Err("Screenshot too large".into())
+}
+
 fn capture(connection: &Connection, directory: &Path) -> Result<Option<Window>> {
     // Lack of scripting only loses identity/text; never guess which app was captured.
     let before = window(connection, directory, None).ok().flatten();
@@ -299,16 +329,12 @@ fn capture(connection: &Connection, directory: &Path) -> Result<Option<Window>> 
     let mut raw = vec![0; bytes];
     reader.read_exact(&mut raw)?;
     let pixels = rgba(&raw, width, height, stride, uint(&metadata, "format")?)?;
-    let image = OpenOptions::new()
+    let png = encode_png(&pixels, width as u32, height as u32, MAX_PNG_BYTES)?;
+    OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(directory.join("capture.png"))?;
-    let mut encoder = png::Encoder::new(image, width as u32, height as u32);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut image = encoder.write_header()?;
-    image.write_image_data(&pixels)?;
-    image.finish()?;
+        .open(directory.join("capture.png"))?
+        .write_all(&png)?;
     let identity = before.filter(|before| {
         window(connection, directory, Some(&before.id))
             .ok()
@@ -320,7 +346,7 @@ fn capture(connection: &Connection, directory: &Path) -> Result<Option<Window>> 
 
 fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let connection = Builder::session()?.method_timeout(DEADLINE).build()?;
+    let connection = connect(Builder::session()?)?;
     match args.get(1).map(String::as_str) {
         Some("check") => {
             check(&connection)?;
@@ -451,6 +477,28 @@ mod tests {
             }
             assert!(!before.matches_after_capture(&after), "{field}");
         }
+    }
+
+    #[test]
+    fn falls_back_to_smaller_png_when_fast_encode_exceeds_limit() {
+        let (width, height) = (256, 256);
+        let rgba: Vec<u8> = (0..width * height * 4)
+            .map(|i| (((i / 4) % 251) ^ (i % 7)) as u8)
+            .collect();
+        let decode = |png: &[u8]| {
+            let mut reader = png::Decoder::new(std::io::Cursor::new(png))
+                .read_info()
+                .unwrap();
+            let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+            reader.next_frame(&mut pixels).unwrap();
+            pixels
+        };
+        let fast = encode_png(&rgba, width, height, usize::MAX).unwrap();
+        let fallback = encode_png(&rgba, width, height, fast.len() - 1).unwrap();
+        assert!(fallback.len() < fast.len());
+        assert_eq!(decode(&fast), rgba);
+        assert_eq!(decode(&fallback), rgba);
+        assert!(encode_png(&rgba, width, height, fallback.len() - 1).is_err());
     }
 
     #[test]

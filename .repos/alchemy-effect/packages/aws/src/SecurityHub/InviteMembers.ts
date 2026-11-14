@@ -1,0 +1,33 @@
+import type * as securityhub from "@distilled.cloud/aws/securityhub";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `securityhub:InviteMembers`.
+ *
+ * Invites the specified accounts to associate with this account as Security Hub members.
+ * Account-level operation — invoked with the caller's request as-is.
+ * Provide the implementation with
+ * `Effect.provide(AWS.SecurityHub.InviteMembersHttp)`.
+ * ### Members & Organization
+ * **Example:** Invite Members
+ * ```typescript
+ * // init — account-level binding, no resource argument
+ * const inviteMembers = yield* AWS.SecurityHub.InviteMembers();
+ *
+ * // runtime
+ * yield* inviteMembers({ AccountIds: ["111122223333"] });
+ * ```
+ *
+ * @binding
+ */
+export interface InviteMembers extends Binding.Service<
+  InviteMembers,
+  "AWS.SecurityHub.InviteMembers",
+  () => Effect.Effect<
+    (
+      request?: securityhub.InviteMembersRequest,
+    ) => Effect.Effect<securityhub.InviteMembersResponse, securityhub.InviteMembersError>
+  >
+> {}
+export const InviteMembers = Binding.Service<InviteMembers>("AWS.SecurityHub.InviteMembers");

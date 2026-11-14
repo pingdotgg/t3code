@@ -1,4 +1,5 @@
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import type { Nodes } from "mdast";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
@@ -26,7 +27,7 @@ export function deriveTimelineMinimapItems(
     items.push({
       id: row.id,
       rowIndex: index,
-      userText: row.message.text,
+      userText: isAttachmentOnlyBootstrapPrompt(row.message.text) ? "" : row.message.text,
       assistantText: resolveFinalAssistantTextForTurn(rows, index),
     });
   }
@@ -86,6 +87,11 @@ function markdownNodeText(node: Nodes): string {
   const text = node.children.map(markdownNodeText).join(separator);
   // A thread autolink's only text is its URL.
   return node.type === "link" && parseThreadLinkHref(text) !== null ? "a thread" : text;
+}
+
+/** Markdown as one line of the text it renders, without markup or link targets. */
+export function markdownPlainText(markdown: string): string {
+  return markdownNodeText(markdownPreviewParser.parse(markdown)).replace(/\s+/g, " ").trim();
 }
 
 function compactMinimapPreview(text: string | null | undefined) {

@@ -1,11 +1,10 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { Toolbar } from "../../../components/ui/Toolbar";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useEffect } from "react";
-import { Platform, Pressable, View } from "react-native";
-import { AndroidScreenHeader } from "../../../components/ui/AndroidScreenHeader";
+import { Pressable, View } from "react-native";
+import { AppBar } from "../../../components/ui/AppBar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   letterStopNotes,
@@ -16,10 +15,7 @@ import { SymbolView } from "../../../components/ui/AppSymbol";
 import { GuideOutline } from "./GuideOutline";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { ScreenScrollView } from "../../../components/ui/ScreenScrollView";
-import { Menu } from "../../../components/ui/Menu";
-import { IconButton } from "../../../components/ui/IconButton";
 import { useAppearancePreferences } from "../../settings/appearance/AppearancePreferencesProvider";
-import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { PullRequestCardGroup, PullRequestCardRow } from "../PullRequestControls";
 import { PullRequestMarkdown, PullRequestMarkdownRepository } from "../PullRequestMarkdown";
 import { usePullRequestDiff, type PullRequestParams } from "../usePullRequestDiff";
@@ -132,46 +128,25 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
   const notes = stop ? letterStopNotes(stop).lettered : [];
   return (
     <View className="flex-1 bg-screen">
-      <NativeStackScreenOptions
-        options={{
-          title: `Stop ${route.params.position + 1}`,
-          headerTitle: `Stop ${route.params.position + 1} of ${guide?.stops.length ?? "…"}`,
-        }}
+      <AppBar
+        title={`Stop ${route.params.position + 1} of ${guide?.stops.length ?? "…"}`}
+        onBack={() => navigation.goBack()}
+        menus={[
+          {
+            title: "Guide options",
+            icon: "ellipsis",
+            items: [
+              {
+                id: "word-wrap",
+                title: "Word wrap",
+                icon: "text.alignleft",
+                selected: appearance.codeWordBreak,
+                onPress: () => setCodeWordBreak(!appearance.codeWordBreak),
+              },
+            ],
+          },
+        ]}
       />
-      {Platform.OS === "android" ? (
-        <AndroidScreenHeader
-          title={`Stop ${route.params.position + 1}`}
-          onBack={() => navigation.goBack()}
-          trailing={
-            <Menu
-              actions={[
-                {
-                  id: "word-wrap",
-                  title: "Word wrap",
-                  image: "text.alignleft",
-                  state: appearance.codeWordBreak ? "on" : "off",
-                },
-              ]}
-              onPressAction={() => setCodeWordBreak(!appearance.codeWordBreak)}
-            >
-              <View pointerEvents="none">
-                <IconButton icon="ellipsis" accessibilityLabel="Guide options" />
-              </View>
-            </Menu>
-          }
-        />
-      ) : null}
-      <Toolbar placement="right">
-        <Toolbar.Menu title="Guide options" accessibilityLabel="Guide options" icon="ellipsis">
-          <Toolbar.MenuAction
-            icon="text.alignleft"
-            isOn={appearance.codeWordBreak}
-            onPress={() => setCodeWordBreak(!appearance.codeWordBreak)}
-          >
-            <Toolbar.Label>Word wrap</Toolbar.Label>
-          </Toolbar.MenuAction>
-        </Toolbar.Menu>
-      </Toolbar>
       <PullRequestMarkdownRepository params={route.params} changeRequest={detail.data}>
         <ScreenScrollView
           contentInsetAdjustmentBehavior="automatic"
@@ -188,7 +163,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
               <>
                 <GuideNotice state={state} />
                 <Text className="text-2xl leading-8 font-t3-semibold">{stop.title}</Text>
-                <PullRequestMarkdown markdown={stop.summary} />
+                <PullRequestMarkdown lineBreaks={false} markdown={stop.summary} />
                 {stop.attention ? (
                   <View className="gap-3 rounded-xl border border-border bg-grouped-card p-4">
                     <View className="flex-row items-center gap-2">
@@ -197,7 +172,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                         {attentionLabels[stop.attention.kind]}
                       </Text>
                     </View>
-                    <PullRequestMarkdown markdown={stop.attention.note} />
+                    <PullRequestMarkdown lineBreaks={false} markdown={stop.attention.note} />
                   </View>
                 ) : null}
                 {stale ? (
@@ -237,7 +212,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                           <Text className="text-xs text-foreground-muted">
                             {note.path.split("/").at(-1)}:{note.line}
                           </Text>
-                          <PullRequestMarkdown markdown={note.body} />
+                          <PullRequestMarkdown lineBreaks={false} markdown={note.body} />
                         </View>
                       </View>
                     ))}
@@ -266,7 +241,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                   <View className="gap-3">
                     <Text className="font-t3-semibold">Questions to consider</Text>
                     {stop.questions.map((question) => (
-                      <PullRequestMarkdown key={question} markdown={question} />
+                      <PullRequestMarkdown key={question} lineBreaks={false} markdown={question} />
                     ))}
                   </View>
                 ) : null}
