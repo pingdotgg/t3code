@@ -327,8 +327,8 @@ const make = Effect.gen(function* () {
             if (existing.value.thread.historyOrigin !== "v1_import") {
               return yield* new AgentSessionThreadModifiedError({ threadId });
             }
-            // A transcript that changed since the import holds messages this thread lacks,
-            // so it is recorded only when the thread already holds exactly its messages.
+            // A transcript can change after the import, so record it only when the
+            // thread already holds exactly its messages.
             const stored = existing.value.messages;
             if (
               stored.length !== thread.messages.length ||

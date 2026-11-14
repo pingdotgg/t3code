@@ -472,24 +472,17 @@ it.effect("does not certify new native history after a partial import retry", ()
       { role: "user", text: "Continue outside T3", createdAt: timestamp },
       { role: "assistant", text: "Native continuation", createdAt: timestamp },
     );
-    const retry = yield* makeImporter([continued]);
-    const result = yield* retry.run;
-    const messages = (yield* projections.getThreadRecords(threadId, ["messages"])).messages;
-    const row = yield* runtimes.getByThreadId({ threadId });
-    const recorded = Option.flatMap(row, (runtime) =>
-      AgentSessionScanner.decodeImportedTranscriptPayload(runtime.runtimePayload),
-    );
-    const certified =
-      Option.isSome(recorded) &&
-      recorded.value.importedTranscripts?.some((source) =>
-        AgentSessionScanner.sameTranscriptIdentity(source, continued.source),
-      );
-    // Reporting the continued transcript as imported requires its new messages to be stored.
-    if (result.importedCount > 0 || certified) {
-      expect(messages.map((message) => message.text)).toEqual(
-        continued.thread.messages.map((message) => message.text),
-      );
-    }
+    // The thread holds only the original messages, so the continued transcript stays unrecorded.
+    expect(yield* (yield* makeImporter([continued])).run).toEqual({
+      importedCount: 0,
+      skippedCount: 1,
+    });
+    expect(yield* runtimes.list()).toEqual([]);
+    expect(
+      (yield* projections.getThreadRecords(threadId, ["messages"])).messages.map(
+        (message) => message.text,
+      ),
+    ).toEqual(["Fix it", "Fixed"]);
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
