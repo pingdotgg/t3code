@@ -1024,6 +1024,36 @@ it.effect("a desktop tab that paints nothing moves to headless and its viewer re
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a desktop tab that never committed its first page moves to headless with that URL", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* ready;
+      desktopRendersNext = true;
+      desktopPaintsNothing = true;
+      const url = "https://example.com/slow";
+      const { tabId } = yield* manager.open({
+        threadId: scope.thread.threadId,
+        runtime: "server",
+        url,
+      });
+      const stalled = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* Effect.promise(() => desktopCaptureStarted.promise);
+      yield* TestClock.adjust("5 seconds");
+      let end = yield* Queue.take(stalled.output);
+      while (end._tag !== "reconnect") end = yield* Queue.take(stalled.output);
+
+      desktopPaintsNothing = false;
+      yield* browser.attachViewer(viewerInput(tabId, true));
+      expect(contexts.at(-1)!.page.goto).toHaveBeenCalledWith(
+        url,
+        expect.objectContaining({ waitUntil: "commit" }),
+      );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("a server started without the desktop browser channel marks its tabs headless", () =>
   Effect.scoped(
     Effect.gen(function* () {

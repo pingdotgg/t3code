@@ -557,7 +557,7 @@ const make = Effect.gen(function* () {
   /** What a tab keeps while it moves to a new headless page. */
   const movedTabs = new Map<
     string,
-    { readonly url: string; readonly downloads: Array<ServerDownload> }
+    { readonly url: string | null; readonly downloads: Array<ServerDownload> }
   >();
   const closedSessions = new Set<string>();
   let hostConnectionId: string | null = null;
@@ -936,7 +936,9 @@ const make = Effect.gen(function* () {
     yield* manager.markHeadless({ threadId: tab.threadId, tabId: tab.tabId }).pipe(Effect.ignore);
     // Another viewer that timed out on this tab may have moved it already.
     if (tabs.get(key) !== tab) return;
-    movedTabs.set(key, { url: tab.page.url(), downloads: tab.downloads });
+    // An uncommitted first navigation leaves the session's Loading URL to the new page.
+    const url = tab.page.url() === "about:blank" ? null : tab.page.url();
+    movedTabs.set(key, { url, downloads: tab.downloads });
     dropTab(tab, false);
     yield* findTab(tab.threadId, tab.tabId).pipe(
       // A failed launch keeps the move for the next viewer; a closed session leaves nothing to own the files.
