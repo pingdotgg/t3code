@@ -738,6 +738,27 @@ fn credentials_expire_when_idle_and_stay_bounded() {
     assert_eq!(credentials.len(), 1024);
 }
 
+/// Orbit freezes a container: on wake the wall clock jumped and the monotonic clock may not
+/// have moved. Idle time on either clock counts, as T3's `idleMs` (`McpSessionRegistry.ts`).
+#[test]
+fn a_credential_counts_idle_time_the_wall_clock_shows_after_a_freeze() {
+    let mut credentials = crate::credentials::Credentials::default();
+    let (token, _) = credentials.issue(ThreadCredentialRequest {
+        thread_id: "t".into(),
+        provider_instance_id: "claudeAgent".into(),
+        subagent: false,
+    });
+    credentials.jump_wall(Duration::from_secs(10 * 60));
+    assert!(credentials.resolve(&token).is_some(), "10 minutes: alive");
+    credentials.jump_wall(Duration::from_secs(2 * 60 * 60));
+    assert!(credentials.resolve(&token).is_some(), "2 hours: alive");
+    credentials.jump_wall(Duration::from_secs(3 * 24 * 60 * 60));
+    assert!(credentials.resolve(&token).is_none(), "3 days: idle too long");
+    assert!(credentials.resolve(&token).is_none(), "stays expired");
+    credentials.touch("t");
+    assert!(credentials.resolve(&token).is_some(), "the thread's next run");
+}
+
 #[test]
 fn sessions_stay_bounded() {
     let mut sessions = crate::sessions::Sessions::default();
