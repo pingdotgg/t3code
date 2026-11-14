@@ -9749,7 +9749,13 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
 });
 
 it.layer(layerTest)("snooze queued runs", (it) => {
-  it.effect.each(["notification", "delegated-completion", "user", "limited-user"] as const)(
+  it.effect.each([
+    "notification",
+    "delegated-completion",
+    "scheduled-task",
+    "user",
+    "limited-user",
+  ] as const)(
     "only user messages block snooze with a queued %s run, unless a usage limit holds them",
     (kind) =>
       Effect.gen(function* () {
@@ -9819,8 +9825,17 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           attachments: [],
           modelSelection,
           dispatchMode: { type: "queue_after_active" },
-          createdBy: kind === "user" || kind === "limited-user" ? "user" : "agent",
-          creationSource: kind === "user" || kind === "limited-user" ? "web" : "server",
+          createdBy:
+            kind === "user" || kind === "limited-user" || kind === "scheduled-task"
+              ? "user"
+              : "agent",
+          creationSource:
+            kind === "user" || kind === "limited-user" || kind === "scheduled-task"
+              ? "web"
+              : "server",
+          ...(kind === "scheduled-task"
+            ? { scheduledTaskId: ScheduledTaskId.make(`${threadId}:task`) }
+            : {}),
           ...(kind === "notification"
             ? {
                 notification: {
