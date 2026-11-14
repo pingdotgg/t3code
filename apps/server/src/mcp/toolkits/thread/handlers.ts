@@ -310,6 +310,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             return yield* dispatch(input.threadId, (common) => ({
               ...common,
               type: "queued-run.edit",
+              editor: { createdBy: "agent", creationSource: "mcp" },
               runId,
               text,
             }));

@@ -80,6 +80,35 @@ it("stamps authoritative provenance on commands that create threads or messages"
   });
   expect(stamped).not.toHaveProperty("linkOrigin");
   expect(stamped).not.toHaveProperty("delegatedFrom");
+
+  for (const creationSource of ["web", "mobile"] as const) {
+    expect(
+      ThreadManagementService.withCreationProvenance(
+        {
+          type: "queued-run.edit",
+          commandId: CommandId.make("command:thread-management:edit"),
+          threadId: command.threadId,
+          runId: RunId.make("run:thread-management:edit"),
+          text: "Edited by the user",
+          editor: { createdBy: "agent", creationSource: "mcp" },
+        },
+        { createdBy: "user", creationSource },
+      ),
+    ).toMatchObject({ editor: { createdBy: "user", creationSource } });
+  }
+  // Older clients send no editor, so the edit keeps the message's existing provenance.
+  expect(
+    ThreadManagementService.withCreationProvenance(
+      {
+        type: "queued-run.edit",
+        commandId: CommandId.make("command:thread-management:edit-legacy"),
+        threadId: command.threadId,
+        runId: RunId.make("run:thread-management:edit"),
+        text: "Edited by an older client",
+      },
+      { createdBy: "user", creationSource: "web" },
+    ),
+  ).not.toHaveProperty("editor");
 });
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(

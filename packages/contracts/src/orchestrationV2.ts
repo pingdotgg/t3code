@@ -734,6 +734,8 @@ export const OrchestrationV2Run = Schema.Struct({
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
   queueHeld: Schema.optional(Schema.Boolean),
+  /** Who queued the message, kept when an edit restamps it. Absent means its `createdBy`. */
+  queuedBy: Schema.optional(OrchestrationV2Actor),
   steerWhenReadyRunId: Schema.optional(RunId),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -3437,6 +3439,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("queued-run.edit"),
+    editor: Schema.optional(Schema.Struct(OrchestrationV2CreationFields)),
     context: Schema.optional(OrchestrationMessageContext),
     commandId: CommandId,
     threadId: ThreadId,

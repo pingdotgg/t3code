@@ -161,7 +161,7 @@ async function recordTurn(input: {
   readonly label: string;
   readonly pathFragments: ReadonlyArray<readonly [string, string]>;
 }): Promise<SDKAssistantMessage["uuid"]> {
-  const message = makeClaudeUserMessage({ text: input.prompt });
+  const message = makeClaudeUserMessage({ text: input.prompt, origin: { kind: "human" } });
   input.entries.push({
     type: "expect_outbound",
     label: input.label,

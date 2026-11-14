@@ -6564,6 +6564,34 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         blocked.runs.filter((run) => run.status === "queued").map((run) => run.userMessageId),
         ["settle-automatic-user-queued", "settle-automatic-agent-queued-2"],
       );
+
+      // An agent's edit restamps the user's held message; it stays the user's and still blocks.
+      const userRun = blocked.runs.find(
+        (run) => run.userMessageId === "settle-automatic-user-queued",
+      );
+      assert.isDefined(userRun);
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("settle-automatic-agent-edit"),
+        threadId,
+        runId: userRun.id,
+        text: "settle-automatic-user-queued, edited by an agent",
+        editor: { createdBy: "agent", creationSource: "mcp" },
+      });
+      const editedError = yield* orchestrator
+        .dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("settle-automatic-settle-3"),
+          threadId,
+        })
+        .pipe(Effect.flip);
+      assert.equal(editedError.cause, error.cause);
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).runs
+          .filter((run) => run.status === "queued")
+          .map((run) => run.userMessageId),
+        ["settle-automatic-user-queued", "settle-automatic-agent-queued-2"],
+      );
     }),
   );
 
@@ -7613,6 +7641,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
   it.effect("releases held agent messages once a later run completes, not the user's", () =>
     Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
       const threadId = ThreadId.make("runtime-layer-failed-queue-agent-messages");
       const { send, runFor, end, startedRunIds, releasedAfter, awaitHeld } =
@@ -7625,6 +7654,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* end("active", "failed");
       yield* awaitHeld("issue");
       assert.isTrue((yield* runFor("issue")).queueHeld);
+      // An agent's edit restamps the user's message but leaves the user's hold in place.
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make(`${threadId}:edit:user`),
+        threadId,
+        runId: (yield* runFor("user")).id,
+        text: "user, edited by an agent",
+        editor: { createdBy: "agent", creationSource: "mcp" },
+      });
       // Delivery bookkeeping rewrites an older completed run; the thread has not moved on.
       yield* end("earlier", "completed", ":bookkeeping");
       // A scheduled tick finds the thread idle and starts past the held queue.
@@ -9454,6 +9492,51 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ["runtime-layer-queued-edit-attachment"],
         "an edit without attachments must leave the stored attachments untouched",
       );
+
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("runtime-layer-queued-edit-agent"),
+        threadId,
+        runId: queuedRun.id,
+        text: "Agent-authored replacement.",
+        editor: { createdBy: "agent", creationSource: "mcp" },
+      });
+      const afterAgentEdit = yield* orchestrator.getThreadProjection(threadId);
+      const agentEditedMessage = afterAgentEdit.messages.find(
+        (message) => message.id === queuedRun.userMessageId,
+      );
+      assert.equal(agentEditedMessage?.createdBy, "agent");
+      assert.equal(agentEditedMessage?.creationSource, "mcp");
+      assert.equal(agentEditedMessage?.text, "Agent-authored replacement.");
+
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("runtime-layer-queued-edit-legacy"),
+        threadId,
+        runId: queuedRun.id,
+        text: "An unattributed edit must not restore human provenance.",
+      });
+      const afterLegacyEdit = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        afterLegacyEdit.messages.find((message) => message.id === queuedRun.userMessageId)
+          ?.createdBy,
+        "agent",
+      );
+
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("runtime-layer-queued-edit-human"),
+        threadId,
+        runId: queuedRun.id,
+        text: "Human-authored replacement.",
+        editor: { createdBy: "user", creationSource: "mobile" },
+      });
+      const afterHumanEdit = yield* orchestrator.getThreadProjection(threadId);
+      const humanEditedMessage = afterHumanEdit.messages.find(
+        (message) => message.id === queuedRun.userMessageId,
+      );
+      assert.equal(humanEditedMessage?.createdBy, "user");
+      assert.equal(humanEditedMessage?.creationSource, "mobile");
 
       const emptyEditError = yield* orchestrator
         .dispatch({

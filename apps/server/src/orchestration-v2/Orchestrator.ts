@@ -3245,14 +3245,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       worktreeSetupPending(projection)
     )
       return;
-    const { messages } = projection;
-    const unattended = new Set(
-      messages
-        .filter((message) => message.createdBy !== "user" || message.scheduledTaskId !== undefined)
-        .map((message) => message.id),
-    );
+    const messages = new Map(projection.messages.map((message) => [message.id, message]));
     const now = yield* DateTime.now;
-    const released = held.filter((run) => unattended.has(run.userMessageId));
+    const released = held.filter((run) => {
+      const message = messages.get(run.userMessageId);
+      return (
+        message !== undefined &&
+        ((run.queuedBy ?? message.createdBy) !== "user" || message.scheduledTaskId !== undefined)
+      );
+    });
     if (released.length === 0) return;
     yield* writeSystemEvents(
       released.map((run) => ({
@@ -4279,21 +4280,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.runs.filter((run) => run.status === "queued").map((run) => run.userMessageId),
         )
         .pipe(mapDispatchError(command));
-      const automaticMessageIds = new Set(
-        [...queuedMessages.values()]
-          .filter(
-            (message) =>
-              message.role === "user" &&
-              (message.createdBy !== "user" ||
-                message.scheduledTaskId !== undefined ||
-                message.notification !== undefined ||
-                message.delegatedCompletion !== undefined),
-          )
-          .map((message) => message.id),
-      );
-      const automaticQueuedRuns = projection.runs.filter(
-        (run) => run.status === "queued" && automaticMessageIds.has(run.userMessageId),
-      );
+      const automaticQueuedRuns = projection.runs.filter((run) => {
+        const message = queuedMessages.get(run.userMessageId);
+        return (
+          run.status === "queued" &&
+          message?.role === "user" &&
+          ((run.queuedBy ?? message.createdBy) !== "user" ||
+            message.scheduledTaskId !== undefined ||
+            message.notification !== undefined ||
+            message.delegatedCompletion !== undefined)
+        );
+      });
       const runningRunExists = projection.runs.some((run) =>
         ["preparing", "starting", "running", "waiting"].includes(run.status),
       );
@@ -7476,6 +7473,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               .map((candidate) => candidate.queuePosition ?? candidate.ordinal),
           ) + 1;
       }
+      const queuedBy = projection.runs.find(
+        (candidate) =>
+          candidate.userMessageId === command.messageId && candidate.queuedBy !== undefined,
+      )?.queuedBy;
       const run: OrchestrationV2Run = {
         id: runId,
         threadId: command.threadId,
@@ -7487,6 +7488,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         rootNodeId,
         activeAttemptId: attemptId,
         status: "queued",
+        ...(queuedBy === undefined ? {} : { queuedBy }),
         ...(steerWhenReadyRunId === undefined ? {} : { steerWhenReadyRunId }),
         ...(worktreeMissingRun !== undefined ||
         (heldRunsToRelease.length === 0 &&
@@ -11562,6 +11564,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
+    if (
+      command.editor !== undefined &&
+      command.editor.createdBy !== queuedMessage.createdBy &&
+      queuedRun.queuedBy === undefined
+    ) {
+      yield* emitEvent({
+        type: "run.updated",
+        threadId: command.threadId,
+        runId: queuedRun.id,
+        providerInstanceId: queuedRun.providerInstanceId,
+        occurredAt: now,
+        payload: { ...queuedRun, queuedBy: queuedMessage.createdBy },
+      });
+    }
     const editedAttachments =
       command.attachments === undefined ? {} : { attachments: command.attachments };
     yield* emitEvent({
@@ -11573,6 +11589,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: withoutGuestAttribution({
         ...queuedMessage,
+        ...command.editor,
         text: command.text,
         ...editedAttachments,
         ...(command.context ? { context: command.context } : {}),
@@ -11589,6 +11606,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: withoutGuestAttribution({
           ...queuedTurnItem,
+          ...command.editor,
           text: command.text,
           ...editedAttachments,
           ...(command.context ? { context: command.context } : {}),

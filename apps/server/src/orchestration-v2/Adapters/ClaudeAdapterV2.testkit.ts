@@ -464,6 +464,9 @@ function makeClaudeQueryOpenFrame(
   };
 }
 
+// Recorded prompts stand in for composer messages, which T3 stamps as typed by the user.
+const RECORDED_PROMPT_ORIGIN = { kind: "human" } as const;
+
 function makeClaudePromptOfferFrame(message: SDKUserMessage): ClaudePromptOfferFrame {
   return {
     type: "prompt.offer",
@@ -1619,6 +1622,7 @@ async function recordClaudeStreamingQuery(input: {
   try {
     for (const [index, prompt] of input.prompts.entries()) {
       const message = ClaudeAdapterV2.makeClaudeUserMessage({
+        origin: RECORDED_PROMPT_ORIGIN,
         text: prompt,
         uuid: await Effect.runPromise(
           SecureRandom.SecureRandom.pipe(
@@ -1693,6 +1697,7 @@ async function recordClaudeActiveSteeringQuery(input: {
   const promptQueue = new RecordingPromptQueue();
   const offerPrompt = (index: number, priority?: SDKUserMessage["priority"]) => {
     const message = ClaudeAdapterV2.makeClaudeUserMessage({
+      origin: RECORDED_PROMPT_ORIGIN,
       text: input.prompts[index]!,
       ...(priority === undefined ? {} : { priority }),
     });
@@ -1839,7 +1844,10 @@ async function recordClaudeRestartingQueries(input: {
       label: `query.open:${index + 1}`,
       frame: makeClaudeQueryOpenFrame({ options }),
     });
-    const message = ClaudeAdapterV2.makeClaudeUserMessage({ text: prompt });
+    const message = ClaudeAdapterV2.makeClaudeUserMessage({
+      origin: RECORDED_PROMPT_ORIGIN,
+      text: prompt,
+    });
     input.entries.push({
       type: "expect_outbound",
       label: `prompt.offer:${index + 1}`,
@@ -1941,7 +1949,10 @@ async function recordClaudeResumeAtCursorQuery(input: {
   try {
     const sourceCursors: Array<SDKAssistantMessage["uuid"]> = [];
     for (const [index, prompt] of input.prompts.slice(0, 2).entries()) {
-      const message = ClaudeAdapterV2.makeClaudeUserMessage({ text: prompt });
+      const message = ClaudeAdapterV2.makeClaudeUserMessage({
+        origin: RECORDED_PROMPT_ORIGIN,
+        text: prompt,
+      });
       input.entries.push({
         type: "expect_outbound",
         label: `prompt.offer:${index + 1}`,
@@ -2003,7 +2014,10 @@ async function recordClaudeResumeAtCursorQuery(input: {
       label: "query.open:resume_at_cursor",
       frame: makeClaudeQueryOpenFrame({ options: resumedOptions }),
     });
-    const resumedMessage = ClaudeAdapterV2.makeClaudeUserMessage({ text: input.prompts[2]! });
+    const resumedMessage = ClaudeAdapterV2.makeClaudeUserMessage({
+      origin: RECORDED_PROMPT_ORIGIN,
+      text: input.prompts[2]!,
+    });
     input.entries.push({
       type: "expect_outbound",
       label: "prompt.offer:3",
@@ -2123,7 +2137,10 @@ async function recordClaudeForkSessionQuery(input: {
   try {
     const sourceCursors: Array<SDKAssistantMessage["uuid"]> = [];
     for (const [index, prompt] of input.prompts.slice(0, sourcePromptCount).entries()) {
-      const message = ClaudeAdapterV2.makeClaudeUserMessage({ text: prompt });
+      const message = ClaudeAdapterV2.makeClaudeUserMessage({
+        origin: RECORDED_PROMPT_ORIGIN,
+        text: prompt,
+      });
       input.entries.push({
         type: "expect_outbound",
         label: `prompt.offer:${index + 1}`,
@@ -2225,7 +2242,10 @@ async function recordClaudeForkSessionQuery(input: {
       const targetIterator = targetRuntime[Symbol.asyncIterator]();
       for (const prompt of forkPrompts) {
         promptOrdinal += 1;
-        const targetMessage = ClaudeAdapterV2.makeClaudeUserMessage({ text: prompt });
+        const targetMessage = ClaudeAdapterV2.makeClaudeUserMessage({
+          origin: RECORDED_PROMPT_ORIGIN,
+          text: prompt,
+        });
         input.entries.push({
           type: "expect_outbound",
           label: `prompt.offer:${promptOrdinal}`,
@@ -2283,7 +2303,10 @@ async function recordClaudeForkSessionQuery(input: {
       const continuationIterator = continuationRuntime[Symbol.asyncIterator]();
       for (const prompt of input.prompts.slice(forkPromptEnd)) {
         promptOrdinal += 1;
-        const continuationMessage = ClaudeAdapterV2.makeClaudeUserMessage({ text: prompt });
+        const continuationMessage = ClaudeAdapterV2.makeClaudeUserMessage({
+          origin: RECORDED_PROMPT_ORIGIN,
+          text: prompt,
+        });
         input.entries.push({
           type: "expect_outbound",
           label: `prompt.offer:${promptOrdinal}`,
@@ -2371,7 +2394,10 @@ async function recordInterruptedClaudeQuery(input: {
     options,
   });
   const iterator = runtime[Symbol.asyncIterator]();
-  const message = ClaudeAdapterV2.makeClaudeUserMessage({ text: input.prompt });
+  const message = ClaudeAdapterV2.makeClaudeUserMessage({
+    origin: RECORDED_PROMPT_ORIGIN,
+    text: input.prompt,
+  });
   input.entries.push({
     type: "expect_outbound",
     label: input.promptOfferLabel,
@@ -2547,7 +2573,10 @@ async function recordClaudeInterruptRestartQuery(input: {
     label: "query.open:2",
     frame: makeClaudeQueryOpenFrame({ options: secondOptions }),
   });
-  const secondMessage = ClaudeAdapterV2.makeClaudeUserMessage({ text: input.prompts[1]! });
+  const secondMessage = ClaudeAdapterV2.makeClaudeUserMessage({
+    origin: RECORDED_PROMPT_ORIGIN,
+    text: input.prompts[1]!,
+  });
   input.entries.push({
     type: "expect_outbound",
     label: "prompt.offer:2",
