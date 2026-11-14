@@ -82,6 +82,7 @@ import { isBrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { Badge } from "~/components/ui/badge";
+import { BrowserDialogCard } from "~/browser/BrowserDialogCard";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
 import { ServerBrowserSurface, type ServerBrowserHandle } from "~/browser/ServerBrowserSurface";
@@ -1126,6 +1127,18 @@ export function PreviewView({
             recentEntries={recentHistoryEntries}
             onRemoveRecent={(url) => removeUrlForThread(threadRef, url)}
             onOpenUrl={(next) => void handleOpenServerUrl(next)}
+          />
+        ) : null}
+        {desktopOverlay?.dialog && runtimeTabId ? (
+          <BrowserDialogCard
+            key={`${desktopOverlay.dialog.message}\n${desktopOverlay.dialog.defaultValue}`}
+            dialog={desktopOverlay.dialog}
+            canAnswer
+            onAnswer={(accept, promptText) =>
+              void previewBridge
+                ?.answerDialog(runtimeTabId, accept, promptText)
+                .catch(() => undefined)
+            }
           />
         ) : null}
         {snapshot && desktopOverlay ? (
