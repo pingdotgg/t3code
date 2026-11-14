@@ -5,7 +5,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
+import type { OpencodeClient, PermissionRuleset, ToolPart } from "@opencode-ai/sdk/v2";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
   CheckpointId,
@@ -19,6 +19,7 @@ import {
   RunId,
   MessageId,
   ThreadId,
+  type ModelSelection,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type ProviderOptionSelection,
@@ -162,7 +163,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
   const threadId = ThreadId.make(`thread-opencode-${suffix}`);
-  const modelSelection = {
+  const modelSelection: ModelSelection = {
     instanceId,
     model: turnSettings.model ?? "anthropic/claude-sonnet",
     options: turnSettings.options ?? [],
@@ -203,8 +204,10 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     startProviderThread: OrchestrationV2ProviderThread = providerThread,
     turnPolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy = policy,
     resume = false,
+    turnRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime = runtime,
+    turnModelSelection: ModelSelection = modelSelection,
   ) =>
-    runtime.startTurn({
+    turnRuntime.startTurn({
       appThread: {
         id: threadId,
         projectId: ProjectId.make(`project-opencode-${suffix}`),
@@ -243,10 +246,12 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
         text,
         attachments: [],
       },
-      modelSelection,
+      modelSelection: turnModelSelection,
       runtimePolicy: turnPolicy,
     });
   return {
+    adapter,
+    modelSelection,
     nativeSessionId,
     now,
     policy,
@@ -316,6 +321,7 @@ describe("OpenCodeAdapterV2", () => {
               };
             },
           },
+          app: { agents: async () => ({ data: [{ name: "plan", permission: [] }] }) },
           command: { list: async () => ({ data: [{ name: "review" }] }) },
           session: {
             create: async () => ({ data: { id: suffix, time: { created: 1, updated: 1 } } }),
@@ -691,32 +697,39 @@ describe("OpenCodeAdapterV2", () => {
         [child, [taskDeny]],
       ]);
       let failNextChildUpdate = false;
-      const harness = yield* makeOpenCodeRuntimeHarness("child-policy-change", root, {
-        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
-        session: {
-          create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
-          get: async ({ sessionID }: { sessionID: string }) => ({
-            data: {
-              id: sessionID,
-              ...(sessionID === child ? { parentID: root } : {}),
-              permission: nativePermissions.get(sessionID),
-              time: { created: 1, updated: 1 },
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "child-policy-change",
+        root,
+        {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          app: { agents: async () => ({ data: [{ name: "review", permission: [taskDeny] }] }) },
+          session: {
+            create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+            get: async ({ sessionID }: { sessionID: string }) => ({
+              data: {
+                id: sessionID,
+                ...(sessionID === child ? { parentID: root } : {}),
+                permission: nativePermissions.get(sessionID),
+                time: { created: 1, updated: 1 },
+              },
+            }),
+            update: async (input: (typeof updates)[number]) => {
+              if (input.sessionID === child && failNextChildUpdate) {
+                failNextChildUpdate = false;
+                throw new Error("child update failed");
+              }
+              updates.push(input);
+              nativePermissions.set(input.sessionID, input.permission);
+              return { data: { id: input.sessionID, time: { created: 1, updated: 2 } } };
             },
-          }),
-          update: async (input: (typeof updates)[number]) => {
-            if (input.sessionID === child && failNextChildUpdate) {
-              failNextChildUpdate = false;
-              throw new Error("child update failed");
-            }
-            updates.push(input);
-            nativePermissions.set(input.sessionID, input.permission);
-            return { data: { id: input.sessionID, time: { created: 1, updated: 2 } } };
+            promptAsync: async () => ({ data: true }),
+            abort: async () => ({ data: true }),
+            children: async () => ({ data: [] }),
           },
-          promptAsync: async () => ({ data: true }),
-          abort: async () => ({ data: true }),
-          children: async () => ({ data: [] }),
         },
-      });
+        {},
+        { options: [{ id: "agent", value: "review" }] },
+      );
 
       yield* harness.startTurn("hello", harness.providerThread, fullAccess);
       yield* push({
@@ -2332,9 +2345,11 @@ describe("OpenCodeAdapterV2", () => {
         "root",
         {
           event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          app: { agents: async () => ({ data: [{ name: "plan", permission: [] }] }) },
           session: {
             create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
             get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            update: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
             messages: async () => ({ data: [] }),
             promptAsync: async (input: { agent?: string; variant?: string; system?: string }) => {
               promptInputs.push(input);
@@ -3601,6 +3616,174 @@ describe("OpenCodeAdapterV2", () => {
           TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
         ),
       ),
+    ),
+  );
+
+  it.effect("keeps the selected agent's denies under full access", () =>
+    Effect.gen(function* () {
+      const review: PermissionRuleset = [
+        { permission: "*", pattern: "*", action: "allow" },
+        { permission: "*", pattern: "*", action: "deny" },
+        { permission: "read", pattern: "*", action: "allow" },
+        { permission: "external_directory", pattern: "*", action: "ask" },
+        { permission: "edit", pattern: "*", action: "deny" },
+        { permission: "bash", pattern: "*", action: "deny" },
+      ];
+      const sessions = new Map<
+        string,
+        { readonly id: string; readonly permission?: PermissionRuleset }
+      >();
+      const prompts: Array<{ readonly agent: unknown; readonly permission: PermissionRuleset }> =
+        [];
+      const client = {
+        event: {
+          subscribe: async (_input?: unknown, options?: { readonly signal?: AbortSignal }) => ({
+            stream: {
+              [Symbol.asyncIterator]: () => ({
+                next: () =>
+                  new Promise<IteratorResult<never>>((resolve) => {
+                    const done = () => resolve({ done: true, value: undefined });
+                    if (options?.signal?.aborted) return done();
+                    options?.signal?.addEventListener("abort", done, { once: true });
+                  }),
+              }),
+            },
+          }),
+        },
+        app: {
+          agents: async () => ({
+            data: [
+              { name: "review", mode: "primary", options: {}, permission: review },
+              { name: "plan", mode: "primary", options: {}, permission: review },
+            ],
+          }),
+        },
+        session: {
+          create: async (input: { readonly permission?: PermissionRuleset }) => {
+            const nativeSession = {
+              id: "native-review",
+              permission: input.permission ?? [],
+              time: { created: 1, updated: 1 },
+            };
+            sessions.set(nativeSession.id, nativeSession);
+            return { data: nativeSession };
+          },
+          get: async ({ sessionID }: { readonly sessionID: string }) => ({
+            data: sessions.get(sessionID),
+          }),
+          update: async (input: {
+            readonly sessionID: string;
+            readonly permission: PermissionRuleset;
+          }) => {
+            const existing = sessions.get(input.sessionID)!;
+            // OpenCode appends updated rules after the session's own.
+            const nativeSession = {
+              ...existing,
+              permission: [...(existing.permission ?? []), ...input.permission],
+            };
+            sessions.set(input.sessionID, nativeSession);
+            return { data: nativeSession };
+          },
+          promptAsync: async (input: { readonly sessionID: string; readonly agent?: string }) => {
+            prompts.push({
+              agent: input.agent,
+              permission: sessions.get(input.sessionID)?.permission ?? [],
+            });
+            return { data: true };
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      };
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "agent-denies",
+        "native-review",
+        client,
+        {},
+        { options: [{ id: "agent", value: "review" }] },
+      );
+      const noAgent = { ...harness.modelSelection, options: [] };
+      const reopen = Effect.fn("reopen")(function* (suffix: string) {
+        const runtime = yield* harness.adapter.openSession({
+          threadId: harness.threadId,
+          providerSessionId: ProviderSessionId.make(`session-opencode-agent-denies-${suffix}`),
+          modelSelection: harness.modelSelection,
+          runtimePolicy: harness.policy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId: harness.threadId,
+          modelSelection: harness.modelSelection,
+          runtimePolicy: harness.policy,
+          existingProviderThread: harness.providerThread,
+        });
+        return { runtime, providerThread };
+      });
+      const lastPermission = (permission: string) =>
+        permissionAction(prompts.at(-1)!.permission, permission);
+
+      yield* harness.startTurn("Review the change");
+      assert.equal(lastPermission("bash"), "deny");
+      assert.equal(lastPermission("edit"), "deny");
+      // Full access never prompts, so the agent's asks become allows.
+      assert.equal(lastPermission("external_directory"), "allow");
+
+      const resumed = yield* reopen("resumed");
+      yield* harness.startTurn(
+        "Again",
+        resumed.providerThread,
+        harness.policy,
+        false,
+        resumed.runtime,
+      );
+      assert.deepEqual(prompts[1]?.permission, prompts[0]?.permission);
+
+      const plain = yield* reopen("plain");
+      yield* harness.startTurn(
+        "Fix it",
+        plain.providerThread,
+        harness.policy,
+        false,
+        plain.runtime,
+        noAgent,
+      );
+      assert.equal(prompts.at(-1)?.agent, undefined);
+      assert.equal(lastPermission("bash"), "allow");
+
+      const planned = yield* reopen("plan");
+      yield* harness.startTurn(
+        "Plan it",
+        planned.providerThread,
+        { ...harness.policy, interactionMode: "plan" },
+        false,
+        planned.runtime,
+        noAgent,
+      );
+      assert.equal(prompts.at(-1)?.agent, "plan");
+      assert.equal(lastPermission("edit"), "deny");
+
+      const supervised = yield* reopen("supervised");
+      yield* harness.startTurn(
+        "Ask first",
+        supervised.providerThread,
+        runtimePolicy("approval-required"),
+        false,
+        supervised.runtime,
+      );
+      assert.equal(lastPermission("bash"), "ask");
+
+      const missing = yield* reopen("missing");
+      const beforeMissing = prompts.length;
+      const result = yield* Effect.exit(
+        harness.startTurn("Nope", missing.providerThread, harness.policy, false, missing.runtime, {
+          ...harness.modelSelection,
+          options: [{ id: "agent", value: "missing" }],
+        }),
+      );
+      assert(Exit.isFailure(result));
+      assert.equal(prompts.length, beforeMissing);
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
     ),
   );
 
