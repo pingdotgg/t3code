@@ -1765,7 +1765,7 @@ describe("CursorAdapterV2", () => {
                   for (const chunk of chunks) {
                     yield* input.onDelta!({
                       type: "shell-output-delta",
-                      event: { stdout: chunk },
+                      event: { case: "stdout", value: { data: chunk }, toolCallId: "shell-call" },
                     });
                   }
                   yield* input.onDelta!({
