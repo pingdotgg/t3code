@@ -758,6 +758,8 @@ export const OrchestrationV2Run = Schema.Struct({
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
   /** Starts a new provider conversation; earlier runs stay visible but never reach the provider. */
   freshContext: Schema.optional(Schema.Boolean),
+  /** The workspace the run started in; its checkpoints are taken there. Absent on older runs. */
+  workspaceCwd: Schema.optional(TrimmedNonEmptyString),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 

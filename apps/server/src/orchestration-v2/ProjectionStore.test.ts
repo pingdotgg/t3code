@@ -7260,6 +7260,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           nextGeneration: 2,
           delivery: null,
         },
+        workspaceCwd: "/repo/worktree-a",
       };
       const task = {
         id: taskId,
@@ -7288,23 +7289,25 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         updatedAt: now,
       };
 
-      yield* projectionStore.apply({
+      const threadCreated = {
         id: EventId.make("event:projection-delegated-completion:thread"),
-        type: "thread.created",
+        type: "thread.created" as const,
         threadId,
         occurredAt: now,
         payload: thread,
-      });
-      yield* projectionStore.apply({
+      };
+      const runUpdated = {
         id: EventId.make("event:projection-delegated-completion:run"),
-        type: "run.updated",
+        type: "run.updated" as const,
         threadId,
         runId,
         nodeId: rootNodeId,
         providerInstanceId,
         occurredAt: now,
         payload: run,
-      });
+      };
+      yield* projectionStore.apply(threadCreated);
+      yield* projectionStore.apply(runUpdated);
       yield* projectionStore.apply({
         id: EventId.make("event:projection-delegated-completion:task"),
         type: "subagent.updated",
@@ -7317,18 +7320,23 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         payload: task,
       });
 
-      const { delegatedCompletion: _delegatedCompletion, ...staleRun } = run;
+      const {
+        delegatedCompletion: _delegatedCompletion,
+        workspaceCwd: _workspaceCwd,
+        ...staleRun
+      } = run;
       const { completionDelivery: _completionDelivery, ...staleTask } = task;
-      yield* projectionStore.apply({
+      const staleRunUpdated = {
         id: EventId.make("event:projection-delegated-completion:stale-run"),
-        type: "run.updated",
+        type: "run.updated" as const,
         threadId,
         runId,
         nodeId: rootNodeId,
         providerInstanceId,
         occurredAt: later,
-        payload: { ...staleRun, status: "interrupted", completedAt: later },
-      });
+        payload: { ...staleRun, status: "interrupted" as const, completedAt: later },
+      };
+      yield* projectionStore.apply(staleRunUpdated);
       yield* projectionStore.apply({
         id: EventId.make("event:projection-delegated-completion:stale-task"),
         type: "subagent.updated",
@@ -7348,6 +7356,14 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
 
       const projection = yield* projectionStore.getThreadProjection(threadId);
       assert.deepEqual(projection.runs[0]?.delegatedCompletion, run.delegatedCompletion);
+      // The run keeps the workspace it ran in, in the store and in a command's in-memory projection.
+      const inMemory = [runUpdated, staleRunUpdated].reduce(
+        ProjectionStore.applyToProjection,
+        ProjectionStore.emptyProjection(threadCreated),
+      );
+      for (const kept of [projection.runs[0], inMemory.runs[0]]) {
+        assert.equal(kept?.workspaceCwd, run.workspaceCwd);
+      }
       assert.deepEqual(projection.subagents[0]?.completionDelivery, task.completionDelivery);
       assert.deepEqual(
         (yield* projectionStore.getThreadRecords(threadId, ["subagents"], {
