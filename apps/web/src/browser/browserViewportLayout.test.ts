@@ -2,7 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   resizeBrowserViewportFromRail,
+  resolveBrowserViewportLayout,
   resolveFittedBrowserViewport,
+  resolveHiddenBrowserViewportSize,
 } from "./browserViewportLayout";
 
 describe("resolveBrowserViewportLayout", () => {
@@ -41,5 +43,30 @@ describe("resolveBrowserViewportLayout", () => {
         "east",
       ),
     ).toEqual({ width: 460, height: 409 });
+  });
+
+  it("fits a hidden fixed viewport larger than the window inside the window", () => {
+    const setting = { _tag: "freeform", width: 1440, height: 1700 } as const;
+    const windowSize = { width: 1400, height: 1000 };
+    const hidden = resolveHiddenBrowserViewportSize({
+      setting,
+      zoomFactor: 1,
+      content: null,
+      lastRect: null,
+      windowSize,
+    });
+    expect(hidden).toEqual({ width: 1400, height: 1000 });
+    const layout = resolveBrowserViewportLayout(hidden, setting);
+    expect(layout.viewportHeight).toBeLessThanOrEqual(windowSize.height);
+    expect(layout.viewportScale).toBeCloseTo(1000 / 1700);
+    expect(
+      resolveHiddenBrowserViewportSize({
+        setting: { _tag: "freeform", width: 1280, height: 800 },
+        zoomFactor: 1,
+        content: null,
+        lastRect: null,
+        windowSize,
+      }),
+    ).toEqual({ width: 1280, height: 800 });
   });
 });
