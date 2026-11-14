@@ -2,8 +2,16 @@ import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceReg
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { createTerminalEnvironmentAtoms } from "../../../../packages/client-runtime/src/state/terminal.ts";
+import { EnvironmentRegistry } from "../../../../packages/client-runtime/src/connection/registry.ts";
+import { EnvironmentSupervisor } from "../../../../packages/client-runtime/src/connection/supervisor.ts";
+import type { RpcSession } from "../../../../packages/client-runtime/src/rpc/session.ts";
 import {
   DEFAULT_TERMINAL_ID,
+  EnvironmentId,
+  WS_METHODS,
+  type TerminalAttachInput,
+  type TerminalResizeInput,
   ProjectId,
   ThreadId,
   TerminalCwdNotFoundError,
@@ -36,6 +44,8 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as TestClock from "effect/testing/TestClock";
 import { expect, vi } from "vite-plus/test";
@@ -696,6 +706,91 @@ it.layer(
   );
 
   // Client retries resend the first attach's size, which a later resize may have replaced.
+  it.effect("gives the PTY back to a wider viewer once a client stops attaching", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const stopWide = yield* manager.attachStream(
+        openInput({ cols: 130, rows: 30 }),
+        () => Effect.void,
+        undefined,
+        "socket-wide:0",
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(stopWide));
+      // The production client attach atoms and session driver, bridged in-process to this manager.
+      const client = {
+        [WS_METHODS.terminalAttach]: (input: TerminalAttachInput) =>
+          manager.attachOutputStream(input, "socket-phone:0"),
+        [WS_METHODS.terminalResize]: (input: TerminalResizeInput) =>
+          manager.resize(input, "socket-phone:0"),
+      } as unknown as RpcSession["client"];
+      const environmentId = EnvironmentId.make("environment-phone");
+      const supervisor = EnvironmentSupervisor.of({
+        target: { environmentId },
+        session: yield* SubscriptionRef.make(Option.some({ client } as RpcSession)),
+      } as unknown as EnvironmentSupervisor["Service"]);
+      const environmentRegistry = EnvironmentRegistry.of({
+        run: (_id: EnvironmentId, effect: Effect.Effect<unknown>) =>
+          Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+        followStream: (_id: EnvironmentId, stream: Stream.Stream<unknown>) =>
+          Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+      } as unknown as EnvironmentRegistry["Service"]);
+      const atoms = createTerminalEnvironmentAtoms(
+        Atom.runtime(Layer.succeed(EnvironmentRegistry, environmentRegistry)),
+      );
+      const registry = AtomRegistry.make();
+      yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+      const input = openInput({ cols: 54, rows: 15 });
+      const detached = yield* Deferred.make<void>();
+      let wasLive = false;
+      const session = atoms.createSession({
+        target: {
+          environmentId,
+          threadId: ThreadId.make("thread-1"),
+          terminalId: DEFAULT_TERMINAL_ID,
+        },
+        gridSize: { cols: 54, rows: 15 },
+        canOperate: () => true,
+        onExit: () => {
+          throw new Error("running shell unexpectedly exited");
+        },
+        onLiveChange: (live) => {
+          if (live) wasLive = true;
+          else if (wasLive) Deferred.doneUnsafe(detached, Exit.void);
+        },
+      });
+      const closeDriver = registry.mount(session.driver({ kind: "attached", input }));
+      const ready = yield* Deferred.make<void>();
+      const closeViewer = registry.subscribe(
+        atoms.attach({ environmentId, input }),
+        (result) => {
+          if (AsyncResult.isSuccess(result) && result.value.version > 0) {
+            Deferred.doneUnsafe(ready, Exit.void);
+          }
+        },
+        { immediate: true },
+      );
+      yield* Deferred.await(ready);
+      yield* manager.resize(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID, cols: 54, rows: 15 },
+        "socket-phone:0",
+      );
+      const process = ptyAdapter.processes[0]!;
+      expect(process.resizeCalls.at(-1)).toEqual({ cols: 54, rows: 15 });
+
+      closeDriver();
+      closeViewer();
+      yield* Deferred.await(detached);
+      // Unused atoms are released on the registry's next scheduled task.
+      yield* Effect.callback<void>((resume) => {
+        registry.schedulerAsync.makeDispatcher().scheduleTask(() => resume(Effect.void), 0);
+      });
+      yield* manager.resize(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID, cols: 130, rows: 30 },
+        "socket-wide:0",
+      );
+      expect(process.resizeCalls.at(-1)).toEqual({ cols: 130, rows: 30 });
+    }),
+  );
   it.effect("keeps a viewer's resized grid when the same viewer attaches again", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
