@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   alignListPaneToHinge,
+  constrainPrimarySidebarWidth,
   deriveLayout,
   deriveThreadArrangementSizing,
   deriveThreadWorkLogSizing,
@@ -127,6 +128,36 @@ describe("width classes", () => {
     { width: 900, height: 599, variant: "compact" },
   ] as const)("classes a window without native columns by size: %j", ({ variant, ...size }) => {
     expect(deriveLayout(size).variant).toBe(variant);
+  });
+});
+
+describe("sidebar resizing", () => {
+  it.each([
+    { preferredWidth: 420, availableWidth: 1200, expected: 420 },
+    { preferredWidth: 100, availableWidth: 1200, expected: 280 },
+    { preferredWidth: 1000, availableWidth: 1200, expected: 880 },
+    { preferredWidth: 420, availableWidth: 648, expected: 328 },
+    { preferredWidth: 800, availableWidth: 1304, auxiliaryPaneWidth: 260, expected: 484 },
+    {
+      preferredWidth: 2000,
+      availableWidth: 1634.6666666666667,
+      auxiliaryPaneWidth: 260,
+      expected: 814,
+    },
+  ])("keeps room for both panes: %j", ({ expected, ...input }) => {
+    const listPaneWidth = constrainPrimarySidebarWidth(input);
+    expect(listPaneWidth).toBe(expected);
+    if (input.auxiliaryPaneWidth !== undefined) {
+      const panes = deriveWorkspacePaneLayout({
+        layout: { variant: "expanded", usesSplitView: true, listPaneWidth, shellPadding: 0 },
+        viewportWidth: input.availableWidth,
+        primarySidebarPreferredVisible: true,
+        auxiliaryPanePreferredVisible: true,
+        auxiliaryPanePreferredWidth: input.auxiliaryPaneWidth,
+      });
+      expect(panes.primarySidebarVisible).toBe(true);
+      expect(panes.auxiliaryPaneVisible).toBe(true);
+    }
   });
 });
 

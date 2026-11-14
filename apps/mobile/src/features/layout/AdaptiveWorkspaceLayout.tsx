@@ -46,6 +46,7 @@ import { AsyncResult } from "effect/reactivity";
 import {
   deriveFileInspectorPaneLayout,
   alignListPaneToHinge,
+  constrainPrimarySidebarWidth,
   deriveLayout,
   type VerticalHinge,
   deriveWorkspacePaneLayout,
@@ -91,6 +92,7 @@ import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderE
 import { PaneContext } from "../../components/ui/Pane";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspaceInspectorPane } from "./workspace-inspector-pane";
+import { WorkspacePaneDivider } from "./workspace-pane-divider";
 import { WorkspaceInspectorSheet } from "./workspace-inspector-sheet";
 import type { InspectorContent } from "./inspector-panes";
 import {
@@ -273,6 +275,10 @@ function AdaptiveWorkspaceLayoutContent(
     Platform.OS === "android" && (androidSettingsOpen || workspace?.state.selectedTab === "usage");
   const navigation = useNavigation();
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
+  const [primarySidebarPreferredWidth, setPrimarySidebarPreferredWidth] = useState<number | null>(
+    null,
+  );
+  const sidebarResizeStartWidth = useRef(0);
   const [fileInspectorPreferredVisible, setFileInspectorPreferredVisible] = useState(true);
   const [nativeInspectorWidthFraction, setNativeInspectorWidthFraction] = useState(0.4);
   const horizontalSafeArea =
@@ -283,6 +289,12 @@ function AdaptiveWorkspaceLayoutContent(
   const [fileInspectorPreferredWidth, setFileInspectorPreferredWidth] = useState<number | null>(
     null,
   );
+  const [workspaceInspector, setWorkspaceInspector] = useState<{
+    readonly content: InspectorContent;
+    readonly active: boolean;
+    readonly routeKey: string | undefined;
+  } | null>(null);
+  const inspectorActive = workspaceInspector?.active ?? false;
   const [primarySidebarSearchQuery, setPrimarySidebarSearchQuery] = useState("");
   const [railOverlay, setRailOverlay] = useState(false);
   // The compiler can't memoize these derivations: they stay live across later hook calls. Fresh
@@ -341,8 +353,27 @@ function AdaptiveWorkspaceLayoutContent(
     setWindowHinge(nextWindow);
   };
   const layout = useMemo(() => {
+    const preferredLayout =
+      baseLayout.listPaneWidth !== null && primarySidebarPreferredWidth !== null
+        ? {
+            ...baseLayout,
+            listPaneWidth: constrainPrimarySidebarWidth({
+              preferredWidth: primarySidebarPreferredWidth,
+              availableWidth: viewportWidth - navigationRailWidth,
+              auxiliaryPaneWidth:
+                !sidebarFloats && !workspacePage && inspectorActive && fileInspectorPreferredVisible
+                  ? (deriveFileInspectorPaneLayout({
+                      layout: baseLayout,
+                      viewportWidth: viewportWidth - navigationRailWidth,
+                      preferredWidth: fileInspectorPreferredWidth ?? undefined,
+                      reservedLeadingWidth: primarySidebarPreferredWidth,
+                    }).width ?? undefined)
+                  : undefined,
+            }),
+          }
+        : baseLayout;
     const aligned = alignListPaneToHinge({
-      layout: baseLayout,
+      layout: preferredLayout,
       hinge,
       viewportWidth,
       leadingWidth: navigationRailWidth,
@@ -364,6 +395,12 @@ function AdaptiveWorkspaceLayoutContent(
     viewportWidth,
     floatingTabs.row,
     floatingTabsEnabled,
+    primarySidebarPreferredWidth,
+    sidebarFloats,
+    workspacePage,
+    inspectorActive,
+    fileInspectorPreferredVisible,
+    fileInspectorPreferredWidth,
   ]);
   // The rail keeps its room even while the sidebar floats; only the list pane overlays the page.
   const width = viewportWidth - navigationRailWidth;
@@ -389,11 +426,6 @@ function AdaptiveWorkspaceLayoutContent(
       width,
     ],
   );
-  const [workspaceInspector, setWorkspaceInspector] = useState<{
-    readonly content: InspectorContent;
-    readonly active: boolean;
-    readonly routeKey: string | undefined;
-  } | null>(null);
   // Without a column the inspector is a sheet, opened only on request for the route on top, and
   // shown again when that route returns to the top.
   const [inspectorSheetRoute, setInspectorSheetRoute] = useState<string | null>(null);
@@ -403,7 +435,6 @@ function AdaptiveWorkspaceLayoutContent(
     inspectorSheetRoute !== null &&
     workspaceInspector?.active === true &&
     workspaceInspector.routeKey === inspectorSheetRoute;
-  const inspectorActive = workspaceInspector?.active ?? false;
   const panes = useMemo(
     () =>
       deriveWorkspacePaneLayout({
@@ -433,6 +464,21 @@ function AdaptiveWorkspaceLayoutContent(
       workspacePage,
     ],
   );
+  const current = { layout, panes, fileInspector };
+  // Workspace readers keep the panes a sidebar drag started from until it ends, so the drag
+  // re-renders only these columns instead of every screen.
+  const [sidebarDragStart, setSidebarDragStart] = useState<typeof current | null>(null);
+  const resizableSidebarWidth =
+    Platform.OS === "android" &&
+    !workspacePage &&
+    panes.primarySidebarVisible &&
+    layout.listPaneGap === undefined
+      ? layout.listPaneWidth
+      : null;
+  // A divider removed mid-drag may never report the drag's end.
+  if (sidebarDragStart !== null && resizableSidebarWidth === null) setSidebarDragStart(null);
+  const resizingPrimarySidebar = sidebarDragStart !== null;
+  const published = sidebarDragStart ?? current;
   // Routes still on the stack remember their reveal, so going back to one keeps the user's choice.
   const revealedInspectors = useRef<ReadonlyMap<string, string>>(new Map());
   const workspaceInspectorOwner = useRef<symbol | null>(null);
@@ -656,8 +702,7 @@ function AdaptiveWorkspaceLayoutContent(
     : 0;
   // Android's split content is a rounded card: keep it off the screen edge like the list card.
   const contentEndGap = Platform.OS === "android" && layout.usesSplitView ? 4 : 0;
-  // Android's split is one strip: a sidebar slot of fixed width, then the detail pane. The
-  // sidebar never resizes; both slide by one offset, so together they always fill the width.
+  // Toggling Android's sidebar slides one strip without reflowing either pane during the slide.
   const stripSidebar =
     Platform.OS === "android" &&
     layout.usesSplitView &&
@@ -704,10 +749,11 @@ function AdaptiveWorkspaceLayoutContent(
       listPaneSizing.sidebarVisible !== panes.primarySidebarVisible ||
       listPaneSizing.listPaneTarget !== layout.listPaneWidth)
   ) {
-    // A book-posture hinge resizes the visible list pane instead of revealing it.
+    // Hinge changes animate the visible list; a drag takes its width immediately.
     const resizingSidebar =
       listPaneSizing.viewportWidth === viewportWidth &&
       listPaneSizing.workspacePage === workspacePage &&
+      !resizingPrimarySidebar &&
       listPaneSizing.sidebarVisible &&
       panes.primarySidebarVisible &&
       listPaneSizing.listPaneTarget !== layout.listPaneWidth;
@@ -791,7 +837,7 @@ function AdaptiveWorkspaceLayoutContent(
       leavingWorkspacePage.current = true;
       return;
     }
-    const snap = leavingWorkspacePage.current;
+    const snap = leavingWorkspacePage.current || resizingPrimarySidebar;
     leavingWorkspacePage.current = false;
     const targetWidth = panes.primarySidebarVisible
       ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
@@ -818,6 +864,7 @@ function AdaptiveWorkspaceLayoutContent(
     listPaneCeiling,
     listPaneRevision,
     workspacePage,
+    resizingPrimarySidebar,
   ]);
   const railAnimatedStyle = useAnimatedStyle(() => ({ width: renderedRailWidth.value }));
   const floatingSidebarAnimatedStyle = useAnimatedStyle(() => ({
@@ -950,19 +997,25 @@ function AdaptiveWorkspaceLayoutContent(
       setNativeInspectorWidthFraction(inspectorWidthFor(width / viewportWidth) / viewportWidth),
   });
   const contextValue = useMemo(
-    () => ({ ...actions, layout, nativeInspectorWidth, workspacePageWidth }),
-    [actions, layout, nativeInspectorWidth, workspacePageWidth],
+    () => ({ ...actions, layout: published.layout, nativeInspectorWidth, workspacePageWidth }),
+    [actions, published.layout, nativeInspectorWidth, workspacePageWidth],
   );
   const sidebarToggleable = layout.usesSplitView && !primarySidebarPinned && !workspacePage;
   const paneState = useMemo(
     () => ({
-      panes,
-      fileInspector,
+      panes: published.panes,
+      fileInspector: published.fileInspector,
       primarySidebarSearchQuery,
       sidebarToggleable,
       sidebarByOrientation,
     }),
-    [panes, fileInspector, primarySidebarSearchQuery, sidebarToggleable, sidebarByOrientation],
+    [
+      published.panes,
+      published.fileInspector,
+      primarySidebarSearchQuery,
+      sidebarToggleable,
+      sidebarByOrientation,
+    ],
   );
 
   const inspectorSheet = (
@@ -1050,6 +1103,40 @@ function AdaptiveWorkspaceLayoutContent(
             ) : null}
           </Animated.View>
         </Animated.View>
+      ) : null}
+      {resizableSidebarWidth !== null ? (
+        <WorkspacePaneDivider
+          accessibilityLabel="Resize sidebar"
+          currentWidth={resizableSidebarWidth}
+          resizeDirection={1}
+          onResizeStart={() => {
+            sidebarResizeStartWidth.current = resizableSidebarWidth;
+            setSidebarDragStart(current);
+          }}
+          onResizeBy={(delta) =>
+            setPrimarySidebarPreferredWidth(
+              constrainPrimarySidebarWidth({
+                preferredWidth: sidebarResizeStartWidth.current + delta,
+                availableWidth: viewportWidth - navigationRailWidth,
+                auxiliaryPaneWidth: panes.auxiliaryPaneVisible
+                  ? (panes.auxiliaryPaneWidth ?? undefined)
+                  : undefined,
+              }),
+            )
+          }
+          onResizeEnd={() => setSidebarDragStart(null)}
+          style={
+            sidebarFloats
+              ? {
+                  position: "absolute",
+                  top: 0,
+                  bottom: 0,
+                  left: navigationRailWidth + resizableSidebarWidth,
+                  elevation: 8,
+                }
+              : undefined
+          }
+        />
       ) : null}
       <Animated.View
         className={
