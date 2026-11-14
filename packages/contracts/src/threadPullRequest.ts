@@ -90,8 +90,8 @@ export const ThreadPullRequestWatch = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   /**
-   * Marks one wake owed once every check has finished: the checks still pending when the required
-   * ones passed early, or the failed ones while a failure keeps the required ones from passing.
+   * Marks one wake owed once every check finishes: pending work after required checks pass,
+   * including late Actions jobs and retries, or failed checks while a failure holds the gate.
    */
   owedChecks: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   /** Approval holds keyed by workflow run URL, or check name when no run URL is known. */
