@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Digest is effectful; desktop credential checks hash synchronously.
+import * as NodeCrypto from "node:crypto";
 import {
   AuthStandardClientScopes,
   type AuthClientMetadata,
@@ -25,7 +27,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -308,21 +309,6 @@ export class PairingGrantStore extends Context.Service<
   }
 >()("t3/auth/PairingGrantStore") {}
 
-interface StoredBootstrapGrant extends BootstrapGrant {
-  readonly remainingUses: number | "unbounded";
-}
-
-type ConsumeResult =
-  | {
-      readonly _tag: "error";
-      readonly reason: "not-found" | "expired" | "scope-not-granted";
-      readonly error: BootstrapCredentialError;
-    }
-  | {
-      readonly _tag: "success";
-      readonly grant: BootstrapGrant;
-    };
-
 const DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES = Duration.minutes(5);
 
 const toPairingLink = (row: AuthPairingLinks.AuthPairingLinkRecord): AuthPairingLink => ({
@@ -341,7 +327,6 @@ const toPairingLink = (row: AuthPairingLinks.AuthPairingLinkRecord): AuthPairing
       }
     : {}),
 });
-const DESKTOP_BOOTSTRAP_TTL_HOURS = Duration.hours(24);
 const DEV_STARTUP_TTL_HOURS = Duration.hours(24);
 const PAIRING_TOKEN_REJECTION_LIMIT =
   Math.floor(256 / PAIRING_CODE_ALPHABET.length) * PAIRING_CODE_ALPHABET.length;
@@ -356,7 +341,9 @@ const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const pairingLinks = yield* AuthPairingLinks.AuthPairingLinkRepository;
   const connectDevices = yield* AuthConnectDevices.AuthConnectDeviceRepository;
-  const seededGrantsRef = yield* Ref.make(new Map<string, StoredBootstrapGrant>());
+  const desktopTokenHash = config.desktopBootstrapToken
+    ? NodeCrypto.createHash("sha256").update(config.desktopBootstrapToken).digest()
+    : undefined;
   const changesPubSub = yield* PubSub.unbounded<BootstrapCredentialChange>();
   const generatePairingToken = Effect.gen(function* () {
     let credential = "";
@@ -382,13 +369,6 @@ const make = Effect.gen(function* () {
     return credential;
   });
 
-  const seedGrant = (credential: string, grant: StoredBootstrapGrant) =>
-    Ref.update(seededGrantsRef, (current) => {
-      const next = new Map(current);
-      next.set(credential, grant);
-      return next;
-    });
-
   const emitUpsert = (pairingLink: AuthPairingLink) =>
     PubSub.publish(changesPubSub, {
       type: "pairingLinkUpserted",
@@ -401,29 +381,7 @@ const make = Effect.gen(function* () {
       id,
     }).pipe(Effect.asVoid);
 
-  // Accept tokens derived from the rotating desktop secret; older desktops send only a token.
-  const desktopBootstrapSecret = config.desktopBootstrapSecret;
   const mac = yield* Mac.Mac;
-  const consumeRotatingDesktopToken = (credential: string, nowMs: number) =>
-    desktopBootstrapSecret === undefined
-      ? Effect.succeed(false)
-      : isValidDesktopBootstrapToken(desktopBootstrapSecret, credential, nowMs).pipe(
-          Effect.provideService(Mac.Mac, mac),
-        );
-
-  if (config.desktopBootstrapToken && desktopBootstrapSecret === undefined) {
-    const now = yield* DateTime.now;
-    yield* seedGrant(config.desktopBootstrapToken, {
-      method: "desktop-bootstrap",
-      scopes: AuthStandardClientScopes,
-      subject: "desktop-bootstrap",
-      expiresAt: DateTime.add(now, {
-        milliseconds: Duration.toMillis(DESKTOP_BOOTSTRAP_TTL_HOURS),
-      }),
-      // Reloads and expired bearer sessions must be able to re-exchange the desktop seed.
-      remainingUses: "unbounded",
-    });
-  }
 
   const listActive: PairingGrantStore["Service"]["listActive"] = Effect.fn(
     "PairingGrantStore.listActive",
@@ -533,7 +491,31 @@ const make = Effect.gen(function* () {
   const consume: PairingGrantStore["Service"]["consume"] = Effect.fn("PairingGrantStore.consume")(
     function* (credential, input) {
       const now = yield* DateTime.now;
-      if (yield* consumeRotatingDesktopToken(credential, now.epochMilliseconds)) {
+      // The configured desktop credential must remain exchangeable after a long suspend.
+      const secret = config.desktopBootstrapSecret;
+      const isDesktopCredential =
+        secret !== undefined
+          ? yield* isValidDesktopBootstrapToken(secret, credential, now.epochMilliseconds).pipe(
+              Effect.provideService(Mac.Mac, mac),
+            )
+          : desktopTokenHash !== undefined &&
+            Mac.timingSafeEqual(
+              desktopTokenHash,
+              NodeCrypto.createHash("sha256").update(credential).digest(),
+            );
+      if (isDesktopCredential) {
+        if (
+          (input?.requestedScopes !== undefined &&
+            !input.requestedScopes.some((scope) =>
+              AuthStandardClientScopes.some((granted) => granted === scope),
+            )) ||
+          (input?.requiredScopes !== undefined &&
+            !input.requiredScopes.every((scope) =>
+              AuthStandardClientScopes.some((granted) => granted === scope),
+            ))
+        ) {
+          return yield* new BootstrapCredentialScopeNotGrantedError({});
+        }
         return {
           method: "desktop-bootstrap",
           scopes: AuthStandardClientScopes,
@@ -543,99 +525,6 @@ const make = Effect.gen(function* () {
           }),
         } satisfies BootstrapGrant;
       }
-      const seededResult: ConsumeResult = yield* Ref.modify(
-        seededGrantsRef,
-        (current): readonly [ConsumeResult, Map<string, StoredBootstrapGrant>] => {
-          const grant = current.get(credential);
-          if (!grant) {
-            return [
-              {
-                _tag: "error",
-                reason: "not-found",
-                error: new UnknownBootstrapCredentialError({}),
-              },
-              current,
-            ];
-          }
-
-          const next = new Map(current);
-          if (DateTime.isGreaterThanOrEqualTo(now, grant.expiresAt)) {
-            next.delete(credential);
-            return [
-              {
-                _tag: "error",
-                reason: "expired",
-                error: new ExpiredBootstrapCredentialError({}),
-              },
-              next,
-            ];
-          }
-
-          if (grant.proofKeyThumbprint && grant.proofKeyThumbprint !== input?.proofKeyThumbprint) {
-            return [
-              {
-                _tag: "error",
-                reason: "not-found",
-                error: new BootstrapCredentialProofKeyMismatchError({}),
-              },
-              next,
-            ];
-          }
-
-          if (
-            (input?.requestedScopes !== undefined &&
-              !input.requestedScopes.some((scope) => grant.scopes.includes(scope))) ||
-            (input?.requiredScopes !== undefined &&
-              !input.requiredScopes.every((scope) => grant.scopes.includes(scope)))
-          ) {
-            return [
-              {
-                _tag: "error",
-                reason: "scope-not-granted",
-                error: new BootstrapCredentialScopeNotGrantedError({}),
-              },
-              current,
-            ];
-          }
-
-          const remainingUses = grant.remainingUses;
-          if (typeof remainingUses === "number") {
-            if (remainingUses <= 1) {
-              next.delete(credential);
-            } else {
-              next.set(credential, {
-                ...grant,
-                remainingUses: remainingUses - 1,
-              });
-            }
-          }
-
-          return [
-            {
-              _tag: "success",
-              grant: {
-                method: grant.method,
-                scopes: grant.scopes,
-                subject: grant.subject,
-                ...(grant.label ? { label: grant.label } : {}),
-                ...(grant.proofKeyThumbprint
-                  ? { proofKeyThumbprint: grant.proofKeyThumbprint }
-                  : {}),
-                expiresAt: grant.expiresAt,
-              } satisfies BootstrapGrant,
-            },
-            next,
-          ];
-        },
-      );
-
-      if (seededResult._tag === "success") {
-        return seededResult.grant;
-      }
-      if (seededResult.reason !== "not-found") {
-        return yield* seededResult.error;
-      }
-
       // Only credentials in the issued pairing-code formats are case-insensitive.
       const pairingCredential = PAIRING_TOKEN_PATTERN.test(credential)
         ? credential.toUpperCase()
