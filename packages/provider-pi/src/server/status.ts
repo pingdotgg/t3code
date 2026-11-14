@@ -431,7 +431,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
         status: "error",
         auth: { status: "unknown" },
         message: isCommandMissingCause(error)
-          ? "Pi CLI (`pi`) is not installed or not on PATH. Install with `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`."
+          ? "Pi CLI (`pi`) is not installed or not on PATH. Install with `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`, or set Settings → Providers → Pi → Binary path to an existing executable. If that install keeps its profile in a custom agent directory, set `PI_CODING_AGENT_DIR` under Environment."
           : "Failed to execute Pi CLI health check.",
       },
     });
