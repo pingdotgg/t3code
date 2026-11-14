@@ -218,10 +218,22 @@ export const layer = Layer.effect(
       function* (failure: DesktopBackendManager.BackendStartupFailure) {
         const config = yield* primary.currentConfig;
         const runningOnWsl = Option.exists(config, (value) => value.runningDistro !== undefined);
-        // A live server that missed readiness may still be booting; only a crash loop falls back.
-        const stillRunning = Option.isSome((yield* primary.snapshot).activePid);
-        if (!runningOnWsl || stillRunning || !(yield* appSettings.get).wslOnly) {
+        if (!runningOnWsl || !(yield* appSettings.get).wslOnly) {
           return yield* SubscriptionRef.set(primaryBackendStartup, { _tag: "Failing", ...failure });
+        }
+        // A live server that missed readiness may still be booting: keep probing, and let
+        // the recovery window offer Windows. Forked into the pool scope because stop closes this run.
+        if (Option.isSome((yield* primary.snapshot).activePid)) {
+          return yield* SubscriptionRef.set(primaryBackendStartup, {
+            _tag: "Failing",
+            ...failure,
+            useWindows: appSettings.applyWslWindowsFallbackInMemory.pipe(
+              Effect.andThen(
+                Effect.forkIn(primary.stop().pipe(Effect.andThen(primary.start)), layerScope),
+              ),
+              Effect.asVoid,
+            ),
+          });
         }
         yield* logBackendPoolWarning(
           "primary WSL backend failed to start; using Windows for this launch",

@@ -568,7 +568,7 @@ describe("DesktopBackendPool", () => {
     }),
   );
 
-  it.effect("keeps a live WSL primary that misses readiness on the recovery path", () =>
+  it.effect("offers Windows from recovery when a live WSL primary misses readiness", () =>
     Effect.gen(function* () {
       const spawned = yield* Queue.unbounded<string>();
       const errors = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -593,10 +593,15 @@ describe("DesktopBackendPool", () => {
         const startup = yield* SubscriptionRef.get(
           (yield* DesktopState.DesktopState).primaryBackendStartup,
         );
-        assert.equal(startup._tag, "Failing");
         assert.deepEqual(yield* Queue.takeAll(spawned), ["wsl.exe"]);
-        assert.deepEqual(yield* Ref.get(errors), []);
         assert.isTrue((yield* (yield* DesktopAppSettings.DesktopAppSettings).get).wslOnly);
+        assert.isTrue(startup._tag === "Failing" && startup.useWindows !== undefined);
+
+        // Chosen from the recovery window: the live WSL server is replaced by Windows.
+        if (startup._tag === "Failing" && startup.useWindows) yield* startup.useWindows;
+        assert.equal(yield* Queue.take(spawned), "/electron");
+        assert.isFalse((yield* (yield* DesktopAppSettings.DesktopAppSettings).get).wslOnly);
+        assert.deepEqual(yield* Ref.get(errors), []);
       }).pipe(Effect.provide(layer));
     }),
   );
