@@ -76,9 +76,9 @@ export function parseDelimitedPreview(
 }
 
 export function csvPreviewDelimiter(text: string) {
-  // Semicolons win only when the next record has as many, so a header cell like "notes;more" stays comma CSV.
+  // Semicolons win only when they are consistent across the first two records and commas are not.
+  const commas = [0, 0];
   const semicolons = [0, 0];
-  let commas = 0;
   let record = 0;
   let second = false;
   let quoted = false;
@@ -96,11 +96,13 @@ export function csvPreviewDelimiter(text: string) {
       record = 1;
       fieldStart = true;
       continue;
-    } else if (char === ",") commas += record === 0 ? 1 : 0;
+    } else if (char === ",") commas[record]!++;
     else if (char === ";") semicolons[record]!++;
     second ||= record === 1;
     fieldStart = char === "," || char === ";";
   }
-  if (semicolons[0]! <= commas) return ",";
-  return second && semicolons[1] !== semicolons[0] ? "," : ";";
+  if (semicolons[0]! <= commas[0]!) return ",";
+  if (!second) return ";";
+  const consistentCommas = commas[0]! > 0 && commas[1] === commas[0];
+  return semicolons[1] === semicolons[0] && !consistentCommas ? ";" : ",";
 }

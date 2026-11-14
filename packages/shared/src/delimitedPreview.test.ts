@@ -40,6 +40,14 @@ describe("delimited file previews", () => {
       ["1", "plain"],
       ["2", "ordinary"],
     ]);
+    expect(
+      parseDelimitedPreview("id,notes;more;extra\n1,plain;other;last\n2,ordinary;next;end", ",")
+        .rows,
+    ).toEqual([
+      ["id", "notes;more;extra"],
+      ["1", "plain;other;last"],
+      ["2", "ordinary;next;end"],
+    ]);
     expect(parseDelimitedPreview('12",name\n24",a;b;c', ",").rows).toEqual([
       ['12"', "name"],
       ['24"', "a;b;c"],
