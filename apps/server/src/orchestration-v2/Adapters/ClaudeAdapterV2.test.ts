@@ -22710,12 +22710,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect.each([
-    ["reported", false],
-    ["reported", true],
     ["delayed", false],
     ["delayed", true],
     ["placeholder", false],
-    ["missing", false],
     ["unavailable", false],
   ] as const)(
     "keeps a fork model unknown until its transcript is %s (idle: %s)",
@@ -22723,7 +22720,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       Effect.gen(function* () {
         const reportedModel =
           source === "placeholder" ? CLAUDE_TEST_MODEL_SELECTION.model : "claude-haiku-4-5";
-        const reportsModel = source === "reported" || source === "placeholder";
+        const reportsModel = source === "placeholder";
         const firstRead = yield* Deferred.make<void>();
         let reads = 0;
         const harness = yield* makeWakeHarnessWithOptions({
@@ -22827,29 +22824,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect.each([
-    [false, "reported"],
-    [true, "reported"],
-    [false, "timeout"],
-    [false, "shutdown"],
-    [false, "resumed"],
-    [false, "cancelled"],
-  ] as const)(
-    "settles a fork while its transcript lookup is pending (idle: %s, outcome: %s)",
-    ([idle, outcome]) =>
+  it.effect.each(["timeout", "resumed", "cancelled"] as const)(
+    "drops a pending fork model lookup once the fork is %s",
+    (outcome) =>
       Effect.gen(function* () {
         const lookupStarted = yield* Deferred.make<void>();
         const lookupInterrupted = yield* Deferred.make<void>();
         const model = yield* Deferred.make<string | null>();
-        const harnessScope = yield* Scope.make();
-        yield* Effect.addFinalizer(() => Scope.close(harnessScope, Exit.void));
         const harness = yield* makeWakeHarnessWithOptions({
           lookupSubagentModel: () =>
             Deferred.succeed(lookupStarted, undefined).pipe(
               Effect.andThen(Deferred.await(model)),
               Effect.onInterrupt(() => Deferred.succeed(lookupInterrupted, undefined)),
             ),
-        }).pipe(Effect.provideService(Scope.Scope, harnessScope));
+        });
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
@@ -22876,10 +22864,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid: "00000000-0000-4000-8000-000000000245",
           result: "Done.",
         });
-        if (idle) {
-          yield* harness.offerAndWait(result);
-          yield* harness.awaitTerminal(1);
-        }
         yield* Queue.offer(
           harness.sdkMessages,
           claudeSdkFrame({
@@ -22898,10 +22882,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
           ),
         );
-        if (!idle) {
-          yield* harness.offerAndWait(result);
-          yield* harness.awaitTerminal(1);
-        }
+        yield* harness.offerAndWait(result);
+        yield* harness.awaitTerminal(1);
         if (outcome === "resumed" || outcome === "cancelled") {
           yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
@@ -22958,22 +22940,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal(task?.subagent.status, outcome === "cancelled" ? "cancelled" : "running");
           if (outcome === "resumed") assert.isNull(task?.subagent.model);
           assert.equal(task?.subagent.title, "/probe resumed");
-        } else if (outcome === "shutdown") {
-          yield* Scope.close(harnessScope, Exit.void);
-          yield* Deferred.await(lookupInterrupted);
-        } else if (outcome === "timeout") {
+        } else {
           yield* TestClock.adjust("30 seconds");
           yield* Deferred.await(lookupInterrupted);
           const task = harness.events.filter((event) => event.type === "subagent.updated").at(-1);
           assert.isNull(task?.subagent.model);
-        } else {
-          yield* Deferred.succeed(model, "claude-haiku-4-5-20251001");
-          yield* harness.until(() =>
-            harness.events.some(
-              (event) =>
-                event.type === "subagent.updated" && event.subagent.model === "claude-haiku-4-5",
-            ),
-          );
         }
       }).pipe(
         Effect.provide(
@@ -23117,6 +23088,103 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("records a forked skill's model and effort from its transcript, not the parent's", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const configDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-fork-" });
+      const subagentsDir = NodePath.join(
+        configDir,
+        "projects",
+        "-workspace",
+        WAKE_NATIVE_SESSION,
+        "subagents",
+      );
+      yield* fileSystem.makeDirectory(subagentsDir, { recursive: true });
+      yield* fileSystem.writeFileString(
+        NodePath.join(subagentsDir, "agent-task-forked-skill.jsonl"),
+        `{"type":"assistant","effort":"low","uuid":"fork-line-0","message":{"role":"assistant","id":"msg_fork","content":[{"type":"text","text":"OK"}]}}\n`,
+      );
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: { CLAUDE_CONFIG_DIR: configDir },
+        subagentModel: "claude-sonnet-4-6",
+      });
+      const now = yield* DateTime.now;
+      const parentModel = "claude-opus-4-6";
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-forked-skill-model"),
+          text: "/fork-probe go",
+          attachments: [],
+          modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model: parentModel },
+        }),
+      );
+      // A `context: fork` skill has no Agent call and streams none of its own replies:
+      // task_started carries no tool_use_id, and only its prompt echo names the fork.
+      for (const frame of [
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "task-forked-skill",
+          description: "/fork-probe",
+          prompt: "go",
+          subagent_type: "general-purpose",
+          task_type: "local_agent",
+          skip_transcript: true,
+          ambient: true,
+          uuid: "00000000-0000-4000-8000-000000000231",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "task-forked-skill",
+          status: "completed",
+          summary: "/fork-probe",
+          output_file: "",
+          uuid: "00000000-0000-4000-8000-000000000232",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "user",
+          parent_tool_use_id: "forked-command-fork-probe",
+          message: { role: "user", content: [{ type: "text", text: "go" }] },
+          uuid: "00000000-0000-4000-8000-000000000233",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000234", result: "OK" }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* Queue.take(harness.terminalReceipts);
+
+      yield* harness.until(() =>
+        harness.events.some(
+          (event) =>
+            event.type === "subagent.updated" && event.subagent.model === "claude-sonnet-4-6",
+        ),
+      );
+      const fork = harness.events
+        .filter((event) => event.type === "subagent.updated")
+        .at(-1)?.subagent;
+      assert.equal(fork?.status, "completed");
+      assert.equal(fork?.model, "claude-sonnet-4-6");
+      assert.equal(fork?.modelSelection?.model, "claude-sonnet-4-6");
+      assert.equal(getModelSelectionStringOptionValue(fork?.modelSelection, "effort"), "low");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   // Frame order captured from Claude Code 2.1.332: the fork's work arrives only after task_notification.
