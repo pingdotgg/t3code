@@ -12,7 +12,7 @@ monorepo at `conn.pin`.
 | Area | State |
 | --- | --- |
 | `server.discoverSourceControl` | Served: `git`, `jj` (from `conn-vcs`) and all 7 hosts (see "Discovery") |
-| `sourceControl.*` (9) | Not served |
+| `sourceControl.*` (9) | 6 served: `signInStart`, `signInWait`, `signInCancel`, `appAccess` (as a T3 server without `T3CODE_GITHUB_APP_CLIENT_ID`), `starred`, `star` (GitHub REST, any other host `false`). Not served: `lookupRepository`, `cloneRepository`, `publishRepository` (they need each host's clone URLs and repository creation) |
 | `git.*` (3) | Not served |
 | `pr` in VCS status | Not served (always `null`) |
 | `pullRequests.*` (35) | Not served |
@@ -28,6 +28,23 @@ monorepo at `conn.pin`.
 | `settings.rs` | A host's saved fields (`hosts`, `tokens`, Bitbucket's and GitCafe's), secret references |
 | `discovery.rs` | The generic CLI probe (`probeSourceControlProvider`), the auth text helpers, a stub executable for tests |
 | `hosts/<host>.rs` | One module per host: its discovery today; its repository and pull request operations later |
+
+## Sign-in and stars
+
+The GitHub App sign-in is not built, so these answer as a T3 server started without
+`T3CODE_GITHUB_APP_CLIENT_ID` answers (`SourceControlSignIn.ts`, `GitHubAppSignIn.ts`,
+`GitHubAppAccess.ts`): `signInStart` refuses (`unsupported`), `signInWait` has nothing pending
+(`not-started`), `signInCancel` succeeds for GitHub, every other host refuses all three, and
+`appAccess` is `signed-out`. Discovery never offers `appSignIn`, so the client does not ask.
+
+`starred` and `star` send GitHub's `GET`/`PUT user/starred/{owner}/{name}` (true only on 204)
+with the credential `GitHubCredentials.get` picks: the token saved in Settings, else
+`GH_TOKEN`/`GITHUB_TOKEN` (`GH_ENTERPRISE_TOKEN` for `GH_HOST`), else
+`gh auth token --hostname <host> [--user <account>]` (env `GH_DEBUG=`, `GH_PROMPT_DISABLED=1`,
+10 s; retried without `--user` when that account is signed out). A host turned off in
+Settings, a host that is not a plain host name, or an invalid repository asks nothing. Tests:
+`GitHubCredentials.test.ts` and `driver.test.ts`, with `gh` as a stub and the request on a
+fake server. T3 keeps `gh`'s token 5 minutes; this server asks `gh` on each call.
 
 ## Discovery
 

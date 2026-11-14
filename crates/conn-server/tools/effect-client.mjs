@@ -285,6 +285,15 @@ const decodeEach = (client) =>
     yield* call("panels.requests", {});
     // Source control: every host probed, with no login or token of this machine (sealedEnv).
     yield* call("server.discoverSourceControl", {});
+    // As a T3 server without an app client id: typed refusals, signed-out, not starred.
+    const signIn = { provider: "github", host: "github.com" };
+    yield* call("sourceControl.signInStart", signIn);
+    yield* call("sourceControl.signInWait", signIn);
+    yield* call("sourceControl.signInCancel", signIn);
+    const repository = { ...signIn, repository: "pingdotgg/t3code" };
+    yield* call("sourceControl.appAccess", repository);
+    yield* call("sourceControl.starred", repository);
+    yield* call("sourceControl.star", { ...repository, provider: "gitlab" });
   });
 
 const result = await Effect.runPromiseExit(program);
