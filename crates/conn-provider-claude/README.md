@@ -54,7 +54,9 @@ result equal, byte for byte.
   `MCP_CONNECTION_NONBLOCKING=0` on resume, `T3CODE_THREAD_ID`. The SDK adds its own.
 - **Bypass downgrade:** when bypass is asked, the SDK's `resolveSettings` plus the home's and
   remote settings decide; settings that forbid bypass give `auto` (or `default`), as T3.
-- **MCP servers:** `setMcpServers` after `initializationResult`, as the query runner does.
+- **MCP servers:** taken at open (`OpenSessionInput::mcp_servers`) and registered with
+  `setMcpServers` after `initializationResult`, as the query runner does;
+  `Session::set_mcp_servers` changes them on a live query.
 - **Runtime policy:** `permissionModeForClaudeRuntimePolicy` and
   `claudeRuntimeQueryPolicyForRuntimePolicy` over the runtime mode, interaction mode,
   `approvalPolicy` and `sandboxPolicy` kind: a read-only sandbox gives the tools

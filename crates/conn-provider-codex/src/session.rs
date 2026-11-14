@@ -97,6 +97,7 @@ impl CodexSession {
         events: mpsc::Sender<ProviderEvent>,
         config: &crate::CodexConfig,
         open: (Option<String>, Option<String>),
+        mcp_servers: Vec<McpServer>,
     ) -> Self {
         let (inbox, rx) = mpsc::channel(EVENT_CAPACITY);
         server.add_session(id.as_str(), inbox.clone());
@@ -114,7 +115,8 @@ impl CodexSession {
                 events: Some(events),
                 thread: None,
                 app_thread_id: None,
-                mcp_servers: Vec::new(),
+                // Codex reads them from each thread's config (`thread/start`, resume, fork).
+                mcp_servers,
                 closed: false,
                 logged: HashSet::new(),
             }),
@@ -1091,6 +1093,8 @@ done
                     .unwrap(),
                 runtime_policy: policy(),
                 resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
             })
             .await
             .unwrap();
@@ -1152,6 +1156,8 @@ done
                     .unwrap(),
                 runtime_policy: policy(),
                 resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
             })
             .await
             .unwrap();
@@ -1255,6 +1261,8 @@ done
                     .unwrap(),
                 runtime_policy: policy(),
                 resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
             })
             .await
             .unwrap();
@@ -1330,6 +1338,8 @@ done
                     .unwrap(),
                 runtime_policy: policy(),
                 resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
             })
             .await
             .unwrap();
@@ -1395,6 +1405,8 @@ done
                     .unwrap(),
                 runtime_policy: policy(),
                 resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
             })
             .await
             .unwrap();

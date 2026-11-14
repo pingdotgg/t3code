@@ -229,25 +229,25 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                         model_selection: json(&input["modelSelection"])?,
                         runtime_policy: json(&input["runtimePolicy"])?,
                         resume_from_session: None,
+                        // What the engine passes when the thread has T3's MCP session; the
+                        // TS side gets the same endpoint and token from its McpProviderSessions.
+                        mcp_servers: if scenario["mcp"] == true {
+                            vec![McpServer {
+                                name: "t3-code".into(),
+                                url: "http://127.0.0.1:3773/mcp".into(),
+                                headers: vec![(
+                                    "Authorization".into(),
+                                    "Bearer conformance-token".into(),
+                                )],
+                            }]
+                        } else {
+                            vec![]
+                        },
+                        host: None,
                     })
                     .await
                     .map_err(|e| e.to_string())?;
                 pump(&run, events);
-                if scenario["mcp"] == true {
-                    // What the engine passes when the thread has T3's MCP session; the TS
-                    // side gets the same endpoint and token from its McpProviderSessions.
-                    opened
-                        .set_mcp_servers(vec![McpServer {
-                            name: "t3-code".into(),
-                            url: "http://127.0.0.1:3773/mcp".into(),
-                            headers: vec![(
-                                "Authorization".into(),
-                                "Bearer conformance-token".into(),
-                            )],
-                        }])
-                        .await
-                        .map_err(|e| e.to_string())?;
-                }
                 session = Some(opened);
             }
             "ensureThread" => {
@@ -307,6 +307,8 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                             model_selection: json(&input["modelSelection"])?,
                             runtime_policy: json(&input["runtimePolicy"])?,
                             resume_from_session: None,
+                            mcp_servers: vec![],
+                            host: None,
                         })
                         .await
                         .map_err(|e| e.to_string())?;

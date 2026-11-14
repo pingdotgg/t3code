@@ -164,6 +164,7 @@ impl Provider for CodexProvider {
                     Some(launch::selection_model(&input.model_selection)),
                     input.runtime_policy.cwd.clone(),
                 ),
+                input.mcp_servers,
             );
             Ok(OpenedSession {
                 session: Box::new(session),

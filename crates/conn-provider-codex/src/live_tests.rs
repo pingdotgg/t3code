@@ -98,6 +98,8 @@ async fn open(
             model_selection: selection(),
             runtime_policy: policy(mode, cwd),
             resume_from_session: None,
+            mcp_servers: vec![],
+            host: None,
         })
         .await
         .expect("session opens");

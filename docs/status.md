@@ -146,8 +146,9 @@ remembering: an own server brings its own defects.
    `Drop` on `CodexSession`, and the find offset in `reads.rs`, each with a test. Next stages
    (bool parameters, `clone_on_ref_ptr`, print lints with `tracing`, pedantic; then the cast
    lints) are in `CRATES.md`, "Lint set".
-2. **Provider interface.** MCP servers at session open; a host handle for agents that ask the
-   server for files and terminals; a selection-transition hook; Claude's background roster
+2. **Provider interface.** A selection-transition hook; the server side of the host handle
+   (`ProviderHost`: only the trait and a rooted file host exist; no terminals, and the
+   server passes none); Claude's background roster
    (`background_work.updated`, `stopTask`, `awaitBackgroundTasks`: in the trait, not built in
    the provider). Move the Rust side of the
    SDK host (`helper.rs`) into `conn-provider-support` before a second SDK driver.

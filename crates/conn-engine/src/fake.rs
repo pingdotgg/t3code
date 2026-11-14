@@ -38,7 +38,7 @@ pub struct FakeProvider {
     id: ProviderInstanceId,
     /// Sessions opened so far.
     pub sessions: Arc<AtomicUsize>,
-    /// The MCP servers the newest session was given.
+    /// The MCP servers the newest session was given (at open or later).
     pub mcp_servers: Arc<Mutex<Vec<McpServer>>>,
     /// Sessions closed so far.
     pub closed: Arc<AtomicUsize>,
@@ -124,6 +124,7 @@ impl Provider for FakeProvider {
     ) -> BoxFuture<'_, ProviderResult<OpenedSession>> {
         Box::pin(async move {
             self.sessions.fetch_add(1, Ordering::SeqCst);
+            *crate::lock(&self.mcp_servers) = input.mcp_servers.clone();
             let (tx, rx) = mpsc::channel(64);
             Ok(OpenedSession {
                 session: Box::new(FakeSession {

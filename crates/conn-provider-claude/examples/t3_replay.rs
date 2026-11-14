@@ -98,6 +98,8 @@ async fn run(
             model_selection: from_json(model.clone()).unwrap_or_else(|e| panic!("{e}")),
             runtime_policy: from_json(policy.clone()).unwrap_or_else(|e| panic!("{e}")),
             resume_from_session: None,
+            mcp_servers: vec![],
+            host: None,
         })
         .await
     else {

@@ -119,6 +119,8 @@ async fn open(
             model_selection: from_json(model()).unwrap(),
             runtime_policy: from_json(policy(mode, cwd)).unwrap(),
             resume_from_session: None,
+            mcp_servers: vec![],
+            host: None,
         })
         .await
         .unwrap();
@@ -313,6 +315,7 @@ async fn live_interrupt_then_continue() {
         config,
         helper,
         tx,
+        vec![],
     );
     let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
     session
@@ -464,6 +467,7 @@ fn concrete(config: ClaudeConfig) -> (ClaudeSession, crate::Helper, mpsc::Receiv
             config,
             helper.clone(),
             tx,
+            vec![],
         ),
         helper,
         events,

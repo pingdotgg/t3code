@@ -307,6 +307,18 @@ impl Inner {
                         model_selection: model_selection.clone(),
                         runtime_policy: runtime_policy.clone(),
                         resume_from_session: None,
+                        mcp_servers: tools
+                            .as_ref()
+                            .map(|tools| tools.servers.clone())
+                            .unwrap_or_default(),
+                        host: self.host.as_ref().and_then(|host| {
+                            host.provider_host(crate::AgentSession {
+                                thread_id: thread_id.to_owned(),
+                                provider_instance_id: provider.instance_id().as_str().to_owned(),
+                                subagent: context.thread["lineage"]["relationshipToParent"]
+                                    == "subagent",
+                            })
+                        }),
                     })
                     .await
                     .map_err(|e| {
@@ -314,12 +326,7 @@ impl Inner {
                         e.to_string()
                     })?;
                 let session: Arc<dyn Session> = Arc::from(opened.session);
-                if let Some(tools) = &tools
-                    && let Err(e) = session.set_mcp_servers(tools.servers.clone()).await
-                {
-                    eprintln!("conn-engine: the provider takes no MCP servers: {e}");
-                }
-                // `open_session` and `set_mcp_servers` must not yield before the session is in
+                // `open_session` must not yield before the session is in
                 // `live`: on the one runtime thread, nothing else can then open a session for
                 // this thread or begin shutdown in between. Check again anyway, so a provider
                 // that does yield never leaks a session or overwrites one.

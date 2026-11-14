@@ -163,6 +163,8 @@ async fn run() {
             model_selection: from_json(model.clone()).expect("model"),
             runtime_policy: from_json(policy.clone()).expect("policy"),
             resume_from_session: None,
+            mcp_servers: vec![],
+            host: None,
         })
         .await
         .expect("session");

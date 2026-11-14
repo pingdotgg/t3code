@@ -120,6 +120,16 @@ async fn open(
     run: &Run,
     mcp: bool,
 ) -> (Box<dyn Session>, mpsc::Receiver<ProviderEvent>) {
+    // The MCP servers go in at open, as the engine passes them.
+    let mcp_servers = if mcp {
+        vec![McpServer {
+            name: "t3-code".into(),
+            url: MCP_URL.into(),
+            headers: vec![("Authorization".into(), MCP_AUTHORIZATION.into())],
+        }]
+    } else {
+        vec![]
+    };
     let OpenedSession { session, events } = provider
         .open_session(OpenSessionInput {
             thread_id: THREAD.into(),
@@ -127,19 +137,11 @@ async fn open(
             model_selection: from_json(run.model_selection(None)).unwrap_or_else(|e| panic!("{e}")),
             runtime_policy: from_json(run.policy()).unwrap_or_else(|e| panic!("{e}")),
             resume_from_session: None,
+            mcp_servers,
+            host: None,
         })
         .await
         .unwrap_or_else(|e| panic!("open_session: {e}"));
-    if mcp {
-        session
-            .set_mcp_servers(vec![McpServer {
-                name: "t3-code".into(),
-                url: MCP_URL.into(),
-                headers: vec![("Authorization".into(), MCP_AUTHORIZATION.into())],
-            }])
-            .await
-            .unwrap_or_else(|e| panic!("set_mcp_servers: {e}"));
-    }
     (session, events)
 }
 

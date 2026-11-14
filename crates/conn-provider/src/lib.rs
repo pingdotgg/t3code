@@ -319,7 +319,9 @@ pub struct RuntimePolicy {
     pub sandbox_policy: Option<serde_json::Value>,
 }
 
-/// `ProviderAdapterV2OpenSessionInput`.
+/// `ProviderAdapterV2OpenSessionInput`, plus what this server hands a session at open: its
+/// MCP servers (ACP declares them in `session/new`, load, resume and fork; vendor SDKs take
+/// them at open) and the host handle for agents that call back for files and terminals.
 #[derive(Clone, Debug)]
 pub struct OpenSessionInput {
     pub thread_id: ThreadId,
@@ -327,6 +329,132 @@ pub struct OpenSessionInput {
     pub model_selection: ModelSelection,
     pub runtime_policy: RuntimePolicy,
     pub resume_from_session: Option<ProviderSession>,
+    /// The MCP servers the session starts with. [`Session::set_mcp_servers`] changes them on
+    /// a live session.
+    pub mcp_servers: Vec<McpServer>,
+    /// The server's side of an agent's client callbacks; `None` when the server offers none.
+    pub host: Option<HostHandle>,
+}
+
+/// A shared [`ProviderHost`].
+#[derive(Clone)]
+pub struct HostHandle(pub std::sync::Arc<dyn ProviderHost>);
+
+impl std::fmt::Debug for HostHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HostHandle")
+    }
+}
+
+/// What an agent may ask of the server through its provider: read and write files and run
+/// terminals, as ACP clients serve them (`fs/read_text_file`, `fs/write_text_file`,
+/// `terminal/*`; T3: `AntigravityClientFiles.ts`, `clientTerminals.ts`). The server decides
+/// which roots a session may touch; a request outside them is [`HostError::InvalidParams`].
+///
+/// Only the trait and a file host for tests exist; no provider calls it yet.
+pub trait ProviderHost: Send + Sync {
+    /// `fs/read_text_file`: UTF-8 text; `line` (1-based) and `limit` (lines) cut it.
+    fn read_text_file(&self, request: ReadTextFile) -> BoxFuture<'_, HostResult<String>>;
+    /// `fs/write_text_file`: replaces the file's content.
+    fn write_text_file(&self, request: WriteTextFile) -> BoxFuture<'_, HostResult<()>>;
+    /// `terminal/create`: starts a command; returns the terminal id.
+    fn create_terminal(&self, _request: CreateTerminal) -> BoxFuture<'_, HostResult<String>> {
+        host_unsupported()
+    }
+    /// `terminal/output`: the output so far (truncated from the start at the byte limit).
+    fn terminal_output(&self, _terminal_id: String) -> BoxFuture<'_, HostResult<TerminalOutput>> {
+        host_unsupported()
+    }
+    /// `terminal/wait_for_exit`.
+    fn wait_for_terminal_exit(
+        &self,
+        _terminal_id: String,
+    ) -> BoxFuture<'_, HostResult<TerminalExitStatus>> {
+        host_unsupported()
+    }
+    /// `terminal/kill`: stops the command; the terminal stays readable.
+    fn kill_terminal(&self, _terminal_id: String) -> BoxFuture<'_, HostResult<()>> {
+        host_unsupported()
+    }
+    /// `terminal/release`: kills the command if it runs and frees the terminal.
+    fn release_terminal(&self, _terminal_id: String) -> BoxFuture<'_, HostResult<()>> {
+        host_unsupported()
+    }
+}
+
+fn host_unsupported<T: Send + 'static>() -> BoxFuture<'static, HostResult<T>> {
+    Box::pin(async { Err(HostError::MethodNotFound) })
+}
+
+pub type HostResult<T> = Result<T, HostError>;
+
+/// A host callback failure, as the ACP error a provider answers the agent with.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum HostError {
+    /// JSON-RPC -32601: the server does not offer this callback.
+    #[error("method not found")]
+    MethodNotFound,
+    /// -32602: a path outside the session's roots, not a text file, too large.
+    #[error("{0}")]
+    InvalidParams(String),
+    /// ACP -32002: the file does not exist.
+    #[error("{0}")]
+    ResourceNotFound(String),
+    /// -32603.
+    #[error("{0}")]
+    Internal(String),
+}
+
+impl HostError {
+    /// The JSON-RPC error code.
+    pub fn code(&self) -> i64 {
+        match self {
+            Self::MethodNotFound => -32601,
+            Self::InvalidParams(_) => -32602,
+            Self::ResourceNotFound(_) => -32002,
+            Self::Internal(_) => -32603,
+        }
+    }
+}
+
+/// `ReadTextFileRequest`.
+#[derive(Clone, Debug)]
+pub struct ReadTextFile {
+    pub path: std::path::PathBuf,
+    pub line: Option<u32>,
+    pub limit: Option<u32>,
+}
+
+/// `WriteTextFileRequest`.
+#[derive(Clone, Debug)]
+pub struct WriteTextFile {
+    pub path: std::path::PathBuf,
+    pub content: String,
+}
+
+/// `CreateTerminalRequest`.
+#[derive(Clone, Debug)]
+pub struct CreateTerminal {
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    pub cwd: Option<std::path::PathBuf>,
+    pub output_byte_limit: Option<u64>,
+}
+
+/// `TerminalOutputResponse`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalOutput {
+    pub output: String,
+    pub truncated: bool,
+    pub exit_status: Option<TerminalExitStatus>,
+}
+
+/// `TerminalExitStatus`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalExitStatus {
+    pub exit_code: Option<i32>,
+    pub signal: Option<String>,
 }
 
 /// `ProviderAdapterV2EnsureThreadInput`.
@@ -684,6 +812,8 @@ mod tests {
                 model_selection: model.clone(),
                 runtime_policy: policy(),
                 resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
             })
             .await
             .unwrap();

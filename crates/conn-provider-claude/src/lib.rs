@@ -141,6 +141,7 @@ impl Provider for ClaudeProvider {
                 self.config.clone(),
                 self.helper.clone(),
                 tx,
+                input.mcp_servers,
             );
             Ok(OpenedSession {
                 session: Box::new(session),

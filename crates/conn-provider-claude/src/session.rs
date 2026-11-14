@@ -123,6 +123,7 @@ impl ClaudeSession {
         config: ClaudeConfig,
         helper: Helper,
         events: mpsc::Sender<ProviderEvent>,
+        mcp_servers: Vec<McpServer>,
     ) -> Self {
         let mapper = Mapper::new(SystemEnv, id.as_str());
         let inner = Arc::new(Inner {
@@ -135,7 +136,9 @@ impl ClaudeSession {
                 live: None,
                 generation: 0,
                 resumable: HashSet::new(),
-                mcp_servers: Vec::new(),
+                // Registered with `setMcpServers` once the first query is initialized, as
+                // T3's query runner does, so taking them at open sends the same.
+                mcp_servers,
                 attachment_bytes: 0,
                 turn_prompt_effort: None,
                 bypass_cache: None,
