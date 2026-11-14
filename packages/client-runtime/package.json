@@ -247,6 +247,10 @@
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"
     },
+    "./state/connectedEnvironmentHttp": {
+      "types": "./src/state/connectedEnvironmentHttp.ts",
+      "default": "./src/state/connectedEnvironmentHttp.ts"
+    },
     "./state/environmentHttpAuth": {
       "types": "./src/state/environmentHttpAuth.ts",
       "default": "./src/state/environmentHttpAuth.ts"

@@ -23,7 +23,7 @@ import {
 import { EnvironmentRegistry, EnvironmentSupervisor } from "@t3tools/client-runtime/connection";
 import { request, runStream } from "@t3tools/client-runtime/rpc";
 import { ManagedRelay, relayRequestFailureDetail } from "@t3tools/client-runtime/relay";
-import { executeConnectedEnvironmentHttpRequest } from "@t3tools/client-runtime/state/environmentHttpAuth";
+import { executeConnectedEnvironmentHttpRequest } from "@t3tools/client-runtime/state/connectedEnvironmentHttp";
 
 import { resolveCloudPublicConfig } from "./publicConfig";
 import {

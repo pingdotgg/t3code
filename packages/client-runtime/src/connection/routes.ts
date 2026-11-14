@@ -4,7 +4,12 @@ import {
   isSharedAddressSpaceHost,
   isTailnetHost,
 } from "@t3tools/shared/hostClassification";
-import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
+import {
+  AuthGrantScope,
+  type DesktopSshEnvironmentTarget,
+  type SessionGrantInput,
+  sessionGrantsScope,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import {
@@ -152,6 +157,56 @@ export function insertRoute(
   return index === -1
     ? [...routes, route]
     : [...routes.slice(0, index), route, ...routes.slice(index)];
+}
+
+/** The current scopes a route's credential grants, as the host reports them. */
+export type RouteGrant = ReadonlySet<AuthGrantScope>;
+
+// `scopes` is a legacy subset and `permissions` the full grant, so each scope
+// goes through sessionGrantsScope; the retired review:write is not counted.
+export function routeGrantFromSession(session: SessionGrantInput): Option.Option<RouteGrant> {
+  if (!session.authenticated) return Option.none();
+  return Option.some(
+    new Set(AuthGrantScope.literals.filter((scope) => sessionGrantsScope(session, scope))),
+  );
+}
+
+export function grantsEveryScope(grant: RouteGrant): boolean {
+  return grant.size === AuthGrantScope.literals.length;
+}
+
+function grantCovers(grant: RouteGrant, other: RouteGrant): boolean {
+  return [...other].every((scope) => grant.has(scope));
+}
+
+export function grantIsBroader(grant: RouteGrant, than: RouteGrant): boolean {
+  return grant.size > than.size && grantCovers(grant, than);
+}
+
+/**
+ * Moves each route ahead of every route whose known grant it strictly exceeds,
+ * keeping the saved order otherwise. A route may pass an incomparable one on
+ * the way: keeping every saved pair can leave no stable choice, and the
+ * supervisor would switch routes in a loop.
+ */
+export function orderRoutesByGrant(
+  routes: ReadonlyArray<ConnectionRoute>,
+  grants: ReadonlyMap<string, RouteGrant>,
+): ReadonlyArray<ConnectionRoute> {
+  const ordered: Array<ConnectionRoute> = [];
+  for (const route of routes) {
+    const grant = grants.get(connectionRouteId(route.target));
+    const index =
+      grant === undefined
+        ? -1
+        : ordered.findIndex((placed) => {
+            const placedGrant = grants.get(connectionRouteId(placed.target));
+            return placedGrant !== undefined && grantIsBroader(grant, placedGrant);
+          });
+    if (index === -1) ordered.push(route);
+    else ordered.splice(index, 0, route);
+  }
+  return ordered;
 }
 
 export function upsertRoute(

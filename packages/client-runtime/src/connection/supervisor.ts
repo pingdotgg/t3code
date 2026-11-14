@@ -36,8 +36,12 @@ import {
   connectionRoutes,
   type ConnectionRouteKind,
   entryWithRoutes,
+  grantIsBroader,
+  grantsEveryScope,
   insertRoute,
+  orderRoutesByGrant,
   type ReportedEndpoint,
+  type RouteGrant,
 } from "./routes.ts";
 
 const RETRY_BASE_DELAY_MS = 1_000;
@@ -88,7 +92,11 @@ type SupervisorSignal =
   | { readonly _tag: "RetryRequested" }
   | { readonly _tag: "NetworkChanged"; readonly network: NetworkStatus }
   | { readonly _tag: "Wakeup"; readonly reason: ConnectionWakeups.ConnectionWakeup }
-  | { readonly _tag: "BetterRouteAvailable"; readonly routeId: string };
+  | {
+      readonly _tag: "BetterRouteAvailable";
+      readonly routeId: string;
+      readonly generation: number;
+    };
 
 interface PendingRetryTrace {
   readonly previousAttempt: Tracer.Span;
@@ -100,6 +108,16 @@ interface PendingRetryTrace {
 type ConnectedLease = ConnectionDriver.EnvironmentConnectionLease & {
   readonly activeRoute: ConnectionRoute | undefined;
 };
+
+interface BetterRouteCheck {
+  readonly lease: ConnectedLease;
+  /** Skips the routes ahead, which keep their usual first check a minute in. */
+  readonly onlyForGrant: boolean;
+}
+
+// Only these routes carry a credential the host can describe without side effects.
+const hasGrant = (target: ConnectionTarget) =>
+  target._tag === "BearerConnectionTarget" || target._tag === "RelayConnectionTarget";
 
 interface TracedAttemptFailure {
   readonly error: ConnectionAttemptError;
@@ -331,22 +349,55 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     generation: 0,
     routes: new Map<string, SilentRoute>() as ReadonlyMap<string, SilentRoute>,
   });
-  const forgetSilentRoutes = Ref.update(silentRoutes, ({ generation }) => ({
-    generation: generation + 1,
-    routes: new Map(),
-  }));
+  // Grants the host reported for each route's credential. A route whose grant
+  // is strictly broader goes ahead of the saved network order, so an old
+  // narrow pairing on the LAN cannot hide a T3 Connect route that grants more.
+  const routeGrants = yield* Ref.make<ReadonlyMap<string, RouteGrant>>(new Map());
+  // The live session's grant is asked for once per session and again after a
+  // reset. An unanswered ask is retried, backing off like a silent route.
+  const activeGrantCheck = yield* Ref.make<{
+    readonly session: RpcSession.RpcSession | undefined;
+    readonly retry: SilentRoute | undefined;
+  }>({ session: undefined, retry: undefined });
+  // A reset asks every route again, since grants can change, but keeps the
+  // active route's until it answers so a failed ask cannot downgrade it.
+  const forgetSilentRoutes = Effect.gen(function* () {
+    yield* Ref.update(silentRoutes, ({ generation }) => ({
+      generation: generation + 1,
+      routes: new Map(),
+    }));
+    yield* Ref.set(activeGrantCheck, { session: undefined, retry: undefined });
+    const active = yield* SubscriptionRef.get(prepared);
+    yield* Ref.update(routeGrants, (grants) => {
+      if (Option.isNone(active)) return new Map();
+      const activeId = connectionRouteId(active.value.target);
+      const kept = grants.get(activeId);
+      return kept === undefined ? new Map() : new Map([[activeId, kept]]);
+    });
+  });
+  // An answer asked for before a reset could repopulate what the reset cleared.
+  const recordGrant = Effect.fn("EnvironmentSupervisor.recordGrant")(function* (
+    generation: number,
+    routeId: string,
+    grant: RouteGrant,
+  ) {
+    if ((yield* Ref.get(silentRoutes)).generation !== generation) return;
+    yield* Ref.update(routeGrants, (grants) => new Map(grants).set(routeId, grant));
+  });
 
   const attemptEntry = Effect.gen(function* () {
     const latest = yield* Ref.get(currentEntry);
-    const routes = connectionRoutes(latest);
+    const saved = connectionRoutes(latest);
+    const routes = orderRoutesByGrant(saved, yield* Ref.get(routeGrants));
     const preferred = yield* Ref.getAndSet(preferredRouteId, Option.none());
-    if (Option.isNone(preferred)) return latest;
-    const route = routes.find(
-      (candidate) => connectionRouteId(candidate.target) === preferred.value,
-    );
-    return route === undefined
+    const route = Option.isNone(preferred)
+      ? undefined
+      : routes.find((candidate) => connectionRouteId(candidate.target) === preferred.value);
+    const ordered =
+      route === undefined ? routes : [route, ...routes.filter((candidate) => candidate !== route)];
+    return ordered.every((candidate, index) => candidate === saved[index])
       ? latest
-      : entryWithRoutes(latest, [route, ...routes.filter((candidate) => candidate !== route)]);
+      : entryWithRoutes(latest, ordered);
   });
 
   const learnRoutesFrom = Effect.fnUntraced(function* (
@@ -373,37 +424,82 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
-  const routeIndex = (lease: ConnectedLease) =>
-    currentRoutes.pipe(
-      Effect.map((routes) => {
-        const activeId = connectionRouteId(lease.prepared.target);
-        const index = routes.findIndex((route) => connectionRouteId(route.target) === activeId);
-        return index === -1 && lease.activeRoute !== undefined
-          ? insertRoute(routes, lease.activeRoute).findIndex(
-              (route) => connectionRouteId(route.target) === activeId,
-            )
-          : index;
-      }),
-    );
-
-  const checkBetterRoutes = Effect.fnUntraced(function* (lease: ConnectedLease) {
+  // Routes ahead of the active one may be better, unless their known grant is
+  // strictly narrower than the active one's. With a known active grant that is
+  // not already everything, routes behind it whose grant is unknown may be too.
+  const betterRouteCandidates = Effect.fn("EnvironmentSupervisor.betterRouteCandidates")(function* (
+    lease: ConnectedLease,
+  ) {
     const latest = yield* Ref.get(currentEntry);
-    const current = yield* routeIndex(lease);
-    if (current <= 0) return;
+    const grants = yield* Ref.get(routeGrants);
+    const saved = connectionRoutes(latest);
+    const activeId = connectionRouteId(lease.prepared.target);
+    const known = saved.some((route) => connectionRouteId(route.target) === activeId);
+    const routes = orderRoutesByGrant(
+      known || lease.activeRoute === undefined ? saved : insertRoute(saved, lease.activeRoute),
+      grants,
+    );
+    const current = routes.findIndex((route) => connectionRouteId(route.target) === activeId);
+    const activeGrant = grants.get(activeId);
+    const unknown =
+      current === -1 || activeGrant === undefined || grantsEveryScope(activeGrant)
+        ? []
+        : routes
+            .slice(current + 1)
+            .filter(
+              (route) => hasGrant(route.target) && !grants.has(connectionRouteId(route.target)),
+            );
+    const ahead = (current <= 0 ? [] : routes.slice(0, current)).filter((route) => {
+      const grant = grants.get(connectionRouteId(route.target));
+      return (
+        activeGrant === undefined || grant === undefined || !grantIsBroader(activeGrant, grant)
+      );
+    });
+    return { latest, activeGrant, ahead, unknown };
+  });
+
+  const checkBetterRoutes = Effect.fnUntraced(function* ({
+    lease,
+    onlyForGrant,
+  }: BetterRouteCheck) {
+    yield* checkActiveGrant(lease);
+    const candidates = yield* betterRouteCandidates(lease);
+    const { latest, activeGrant, unknown } = candidates;
+    const ahead = onlyForGrant ? [] : candidates.ahead;
+    if (ahead.length === 0 && unknown.length === 0) return;
     const now = yield* Clock.monotonicTimeNanos;
     const cooldowns = yield* Ref.get(routeCooldowns);
     const silent = yield* Ref.get(silentRoutes);
-    const better = connectionRoutes(latest)
-      .slice(0, current)
-      .filter((route) => {
-        const id = connectionRouteId(route.target);
-        return (cooldowns.get(id) ?? 0n) <= now && (silent.routes.get(id)?.until ?? 0n) <= now;
-      });
+    const better = [...ahead, ...unknown].filter((route) => {
+      const id = connectionRouteId(route.target);
+      return (cooldowns.get(id) ?? 0n) <= now && (silent.routes.get(id)?.until ?? 0n) <= now;
+    });
+    // Against a known active grant, a route's own grant decides, so the host
+    // is asked for it over the route: a route behind must grant more, and one
+    // ahead must not grant strictly less. T3 Connect has no address to check.
+    const checkGrant = (route: ConnectionRoute, wins: (grant: RouteGrant) => boolean) =>
+      driver.routeGrant(latest, route).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.succeed<ConnectionDriver.RoutePreflight>("silent"),
+            onSome: (grant) =>
+              recordGrant(silent.generation, connectionRouteId(route.target), grant).pipe(
+                Effect.as<ConnectionDriver.RoutePreflight>(wins(grant) ? "ready" : "unprepared"),
+              ),
+          }),
+        ),
+      );
     const results = yield* Effect.forEach(
       better,
-      (route: ConnectionRoute) => driver.preflight(latest, route),
+      (route: ConnectionRoute) =>
+        activeGrant === undefined || !hasGrant(route.target)
+          ? driver.preflight(latest, route)
+          : unknown.includes(route)
+            ? checkGrant(route, (grant) => grantIsBroader(grant, activeGrant))
+            : checkGrant(route, (grant) => !grantIsBroader(activeGrant, grant)),
       { concurrency: "unbounded" },
     );
+    if ((yield* Ref.get(silentRoutes)).generation !== silent.generation) return;
     yield* Ref.update(silentRoutes, (previous) => {
       if (previous.generation !== silent.generation) return previous;
       const routes = new Map(previous.routes);
@@ -421,16 +517,53 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     yield* signal({
       _tag: "BetterRouteAvailable",
       routeId: connectionRouteId(better[index]!.target),
+      generation: silent.generation,
     });
   });
 
-  const betterRouteChecks = yield* Queue.dropping<ConnectedLease>(1);
-  const requestBetterRouteCheck = (lease: ConnectedLease) =>
-    routeIndex(lease).pipe(
-      Effect.flatMap((index) =>
-        index > 0 ? Queue.offer(betterRouteChecks, lease).pipe(Effect.asVoid) : Effect.void,
+  // The newest request wins, so a connection's grant-only check cannot swallow
+  // a network change's full check that arrives before it runs.
+  const betterRouteChecks = yield* Queue.sliding<BetterRouteCheck>(1);
+  const requestBetterRouteCheck = (lease: ConnectedLease, { onlyForGrant = false } = {}) =>
+    Effect.all([betterRouteCandidates(lease), activeGrantDue(lease)]).pipe(
+      Effect.flatMap(([{ ahead, unknown }, grantDue]) =>
+        grantDue || unknown.length > 0 || (!onlyForGrant && ahead.length > 0)
+          ? Queue.offer(betterRouteChecks, { lease, onlyForGrant }).pipe(Effect.asVoid)
+          : Effect.void,
       ),
     );
+
+  // Only while another route could beat the session.
+  const activeGrantDue = Effect.fn("EnvironmentSupervisor.activeGrantDue")(function* (
+    lease: ConnectedLease,
+  ) {
+    if (!hasGrant(lease.prepared.target) || (yield* currentRoutes).length < 2) return false;
+    const check = yield* Ref.get(activeGrantCheck);
+    if (check.session !== lease.session) return true;
+    return check.retry !== undefined && check.retry.until <= (yield* Clock.monotonicTimeNanos);
+  });
+
+  const checkActiveGrant = Effect.fn("EnvironmentSupervisor.checkActiveGrant")(function* (
+    lease: ConnectedLease,
+  ) {
+    const live = yield* SubscriptionRef.get(session);
+    if (Option.isNone(live) || live.value !== lease.session) return;
+    if (!(yield* activeGrantDue(lease))) return;
+    const now = yield* Clock.monotonicTimeNanos;
+    // Marked unanswered first, so a reset during the ask replaces this exact
+    // value and the answer cannot mark the reset's ask done.
+    const asked = yield* Ref.updateAndGet(activeGrantCheck, (check) => ({
+      session: lease.session,
+      retry: backOffSilentRoute(check.session === lease.session ? check.retry : undefined, now),
+    }));
+    const { generation } = yield* Ref.get(silentRoutes);
+    const grant = yield* driver.sessionGrant(lease.prepared);
+    if (Option.isNone(grant)) return;
+    yield* recordGrant(generation, connectionRouteId(lease.prepared.target), grant.value);
+    yield* Ref.update(activeGrantCheck, (check) =>
+      check === asked ? { session: lease.session, retry: undefined } : check,
+    );
+  });
 
   const clearLease = Effect.all(
     [SubscriptionRef.set(session, Option.none()), SubscriptionRef.set(prepared, Option.none())],
@@ -632,6 +765,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       return "end" as const;
     }
     if (next._tag === "BetterRouteAvailable") {
+      if ((yield* Ref.get(silentRoutes)).generation !== next.generation) return;
       yield* Ref.set(preferredRouteId, Option.some(next.routeId));
       return "reset" as const;
     }
@@ -1032,6 +1166,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     if (options?.learnRoutes !== undefined) {
       yield* learnRoutesFrom(options.learnRoutes, connectedLease).pipe(Effect.forkScoped);
     }
+    yield* requestBetterRouteCheck(connectedLease, { onlyForGrant: true });
     yield* setState({
       desired: true,
       network: currentIntent.network,
