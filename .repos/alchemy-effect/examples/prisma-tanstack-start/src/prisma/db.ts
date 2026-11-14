@@ -1,4 +1,4 @@
-import postgres, { type PostgresClient } from "@prisma-next/postgres/runtime";
+import postgres, { type PostgresClient } from "@prisma/orm-postgres/runtime";
 import { Pool } from "pg";
 import type { Contract } from "./contract.d";
 import contractJson from "./contract.json" with { type: "json" };
@@ -11,7 +11,7 @@ export function getDb(): Db {
   if (!cached) {
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) {
-      throw new Error("DATABASE_URL is required for Prisma Next queries.");
+      throw new Error("DATABASE_URL is required for Prisma ORM queries.");
     }
 
     const poolMax = process.env.PRISMA_TANSTACK_PG_POOL_MAX;

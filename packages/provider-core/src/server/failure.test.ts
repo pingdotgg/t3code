@@ -170,6 +170,23 @@ it("keeps unrecognized reasons and provider text out of category messages", () =
   );
 });
 
+it("names a managed Codex policy that refuses the thread's access mode", () => {
+  const message = makeProviderFailure({
+    cause: {
+      _tag: "ProviderAdapterTurnStartError",
+      cause: {
+        _tag: "CodexAppServerRequestError",
+        method: "turn/start",
+        code: -32600,
+        message:
+          "invalid thread settings override: invalid value for `sandbox_mode`: `DangerFullAccess` is not in the allowed set [ReadOnly, WorkspaceWrite] (set by /etc/codex/requirements.toml)",
+      },
+    },
+  }).message;
+  assert.notInclude(message, "Retry the turn");
+  assert.match(message, /requirements|policy/iu);
+});
+
 it("uses the innermost category without carrying an outer reason into it", () => {
   assert.equal(
     makeProviderFailure({
@@ -184,6 +201,23 @@ it("uses the innermost category without carrying an outer reason into it", () =>
     }).message,
     "The provider session could not be opened. Check that the provider is installed and signed in, then retry the turn.",
   );
+});
+
+it("explains a native thread another client is writing to", () => {
+  const inUse = new ProviderAdapter.ProviderAdapterThreadInUseError({
+    driver: ProviderDriverKind.make("codex"),
+    providerThreadId: ProviderThreadId.make("provider-thread:in-use"),
+    detail: "This conversation is open in another Codex client.",
+    cause: new Error("thread provider-thread:in-use already has an active writer"),
+  });
+  const cause = new ProviderAdapter.ProviderAdapterTurnStartError({
+    driver: ProviderDriverKind.make("codex"),
+    threadId: ThreadId.make("thread:in-use"),
+    providerThreadId: ProviderThreadId.make("provider-thread:in-use"),
+    runId: RunId.make("run:in-use"),
+    cause: inUse,
+  });
+  assert.equal(makeProviderFailure({ cause: Cause.fail(cause) }).message, inUse.message);
 });
 
 it("does not expose defect text nested inside a known error category", () => {
