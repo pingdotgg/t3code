@@ -17,7 +17,7 @@ import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandE
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
+import { liveThreadShell, runsWithoutModes } from "../../McpToolAccess.testkit.ts";
 import * as ThemeHandlers from "./handlers.ts";
 import { ThemeToolkit } from "./tools.ts";
 
@@ -49,6 +49,7 @@ it.effect("applies the theme through the service and reports a refusal as an inv
       }),
       Layer.mock(ThreadManagement.ThreadManagementService)({
         getThreadShell: () => Effect.succeed(liveThreadShell(threadId)),
+        getThreadRecords: runsWithoutModes,
       }),
       Layer.mock(EnvironmentThemeService)({
         apply: (input) =>
