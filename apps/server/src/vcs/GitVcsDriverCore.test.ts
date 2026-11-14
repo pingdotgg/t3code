@@ -5538,7 +5538,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const defaultBranch = yield* driver.resolveDefaultBranchName(cwd, "origin");
 
         assert.notEqual(defaultBranch, "development");
-        assert.isNull(yield* driver.resolveWorktreeBaseRemote({ cwd, refName: "origin/HEAD" }));
+        for (const refName of ["origin/HEAD", "HEAD~1", "main^", "@{-1}", "-", ":/fix"])
+          assert.isNull(yield* driver.resolveWorktreeBaseRemote({ cwd, refName }));
+        assert.deepEqual(
+          yield* driver.resolveWorktreeBaseRemote({ cwd, refName: "feature/a\u00a0b" }),
+          { remoteName: "origin", branchName: "feature/a\u00a0b" },
+        );
       }),
     );
 
