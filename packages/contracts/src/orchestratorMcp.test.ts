@@ -5,6 +5,7 @@ import {
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpThreadWaitResult,
+  OrchestratorMcpThreadRun,
 } from "./orchestratorMcp.ts";
 
 const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
@@ -12,6 +13,25 @@ const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegat
 const decodeThreadWaitResult = Schema.decodeUnknownSync(OrchestratorMcpThreadWaitResult);
 
 describe("orchestrator MCP contracts", () => {
+  it("reads cancelled runs from peers with and without promotion information", () => {
+    const run = {
+      runId: "run:queued",
+      ordinal: 2,
+      status: "cancelled",
+      providerInstanceId: "codex",
+      model: "test-model",
+      requestedAt: "2026-11-14T00:00:00.000Z",
+      startedAt: null,
+      completedAt: "2026-11-14T00:00:00.000Z",
+    };
+    const decode = Schema.decodeUnknownSync(OrchestratorMcpThreadRun);
+    expect(decode(run)).toEqual(run);
+    expect(decode({ ...run, promotedToRunId: "run:active" })).toEqual({
+      ...run,
+      promotedToRunId: "run:active",
+    });
+  });
+
   it("decodes cross-provider delegated task requests and durable results", () => {
     const request = decodeDelegateTaskInput({
       task: "Inspect the workspace and report the result.",

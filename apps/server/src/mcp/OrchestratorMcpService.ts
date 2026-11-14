@@ -3230,10 +3230,25 @@ const make = Effect.gen(function* () {
           input.beforePosition === undefined &&
           input.itemId === undefined,
       );
-      const recentRuns = target.runs
+      const visibleRuns = target.runs
         .toSorted((left, right) => right.ordinal - left.ordinal)
-        .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
-        .map((run) => threadRun(target, run));
+        .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT);
+      const cancelledMessageIds = visibleRuns
+        .filter((run) => run.status === "cancelled" && run.startedAt === null)
+        .map((run) => run.userMessageId);
+      const cancelledMessages =
+        cancelledMessageIds.length === 0
+          ? undefined
+          : yield* threadManagement
+              .getMessagesById(input.threadId, cancelledMessageIds)
+              .pipe(Effect.mapError(threadManagementFailure));
+      const recentRuns = visibleRuns.map((run) => {
+        const promotedToRunId = cancelledMessages?.get(run.userMessageId)?.runId;
+        return {
+          ...threadRun(target, run),
+          ...(promotedToRunId == null || promotedToRunId === run.id ? {} : { promotedToRunId }),
+        };
+      });
       const { items, start } = timelineItemsWithinBudget(
         { thread, recentRuns, nextPosition: null, hasMore: false, earlierPosition: null },
         timeline.items.map((row) => ({

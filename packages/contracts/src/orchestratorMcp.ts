@@ -495,6 +495,7 @@ export type OrchestratorMcpThreadDetail = typeof OrchestratorMcpThreadDetail.Typ
 
 export const OrchestratorMcpThreadRun = Schema.Struct({
   runId: RunId,
+  promotedToRunId: Schema.optional(RunId),
   ordinal: PositiveInt,
   status: OrchestrationV2RunStatus,
   providerInstanceId: ProviderInstanceId,

@@ -111,8 +111,8 @@ export class RemoteDelegation extends Context.Service<
     /**
      * Stops the task's work there, then completes it here as cancelled: a
      * queued run alone, else its thread. A task that already has its result
-     * keeps it; its thread there is still stopped, as cancelling a local task
-     * stops follow-up work on its child.
+     * keeps it; a run that ended unstarted needs no Stop unless promoted into
+     * another run. Started or promoted work stops its thread, including follow-up work.
      */
     readonly cancel: (
       scope: ThreadScope,
@@ -600,7 +600,7 @@ const make = Effect.gen(function* () {
 
   /**
    * Stops the task's own work there: a queued run alone, since other tasks may share the thread,
-   * nothing for one that ended unstarted, else the thread as its Stop button does. `key` names
+   * nothing for one that ended unstarted without promotion, else its thread. `key` names
    * the stop (the follower sends one, each cancel its own); each is recorded there once.
    */
   const stopThere = Effect.fn("RemoteDelegation.stopThere")(function* (
@@ -610,17 +610,39 @@ const make = Effect.gen(function* () {
     reason?: string,
   ) {
     const run = yield* runThere(scope, remote);
-    if (run !== undefined && run.startedAt === null && isTerminal(run.status)) return;
-    if (run?.status === "queued") {
+    if (
+      run !== undefined &&
+      run.startedAt === null &&
+      run.promotedToRunId === undefined &&
+      isTerminal(run.status)
+    )
+      return;
+    if (remote.runId !== undefined && (run === undefined || run.status === "queued")) {
       const cancelled = yield* forwarding
         .cancelQueuedRun(scope, remote.environmentId, {
           threadId: remote.threadId,
-          queuedRunId: run.runId,
+          queuedRunId: remote.runId,
         })
         .pipe(
           Effect.as(true),
-          // It started since, so it is stopped as a running task is.
-          Effect.orElseSucceed(() => false),
+          Effect.catch((error) =>
+            Effect.gen(function* () {
+              const current = yield* runThere(scope, remote);
+              if (
+                current !== undefined &&
+                current.startedAt === null &&
+                current.promotedToRunId === undefined &&
+                isTerminal(current.status)
+              ) {
+                return true;
+              }
+              // A lost reply or refusal does not prove that this queued run started.
+              if (current === undefined || current.status === "queued") {
+                return yield* error;
+              }
+              return false;
+            }),
+          ),
         );
       if (cancelled) return;
     }

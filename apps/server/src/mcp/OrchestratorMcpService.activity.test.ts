@@ -190,6 +190,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getMessagesById: () => Effect.succeed(new Map()),
           getTimelinePage: () =>
             Effect.succeed({ items: [], totalItems: 0, hasMore: false, hasEarlier: false }),
           getThreadRecords: (threadId) =>
