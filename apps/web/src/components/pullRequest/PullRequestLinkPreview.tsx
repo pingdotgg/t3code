@@ -25,6 +25,7 @@ import {
   PullRequestReviewOutcomeBadge,
   resolvePullRequestState,
 } from "./pullRequestPresentation";
+import { textDirection } from "~/textDirection";
 
 interface PullRequestLinkPreviewTarget {
   readonly environmentId: EnvironmentId;
@@ -161,7 +162,10 @@ export function PullRequestLinkPreview({
                 ) : subject?.kind === "commit" ? (
                   <LinkedCommit commit={subject.commit} />
                 ) : (
-                  <p className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty">
+                  <p
+                    className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty"
+                    dir={textDirection(card.title)}
+                  >
                     {card.title}
                   </p>
                 )}

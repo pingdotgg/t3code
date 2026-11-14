@@ -36,6 +36,7 @@ import {
   pullRequestChecksStatePresentation,
   resolvePullRequestState,
 } from "./pullRequestPresentation";
+import { textDirection } from "~/textDirection";
 
 function GhostBar({ className }: { className?: string | undefined }) {
   return <span aria-hidden className={cn("block h-3 rounded bg-muted-foreground/15", className)} />;
@@ -195,7 +196,12 @@ export function PullRequestDetailGhost({
               title={
                 <PullRequestDetailTitleRow>
                   {seed ? (
-                    <h1 className="truncate text-base font-semibold leading-snug">{seed.title}</h1>
+                    <h1
+                      className="truncate text-base font-semibold leading-snug"
+                      dir={textDirection(seed.title)}
+                    >
+                      {seed.title}
+                    </h1>
                   ) : (
                     <GhostBar className="h-5 w-4/5 max-w-md" />
                   )}

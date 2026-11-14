@@ -18,6 +18,7 @@ import {
   usePendingReviewComments,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
+import { textDirection } from "~/textDirection";
 import {
   PullRequestMarkdownTextarea,
   type PullRequestCompletionScope,
@@ -161,6 +162,7 @@ export function PullRequestReviewForm({
         rows={3}
         readOnly={speech.freezesEditor}
         value={body}
+        dir={textDirection(body)}
         placeholder={placeholder}
         aria-label="Review summary"
         onValueChange={(next) => setSummary(reviewKey, next)}

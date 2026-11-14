@@ -28,6 +28,7 @@ import * as Result from "effect/Result";
 import { CheckIcon, LinkIcon, MinusIcon, XIcon } from "lucide-react";
 import { useId, useRef, useState } from "react";
 
+import { markdownProseDirection } from "~/textDirection";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { mintPairingCodeOn } from "../../state/peerPairingCode";
 import { peerLinkEnvironment, useLinkableMachines } from "../../state/peerLinks";
@@ -41,6 +42,7 @@ import { Dialog } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Radio, RadioGroup } from "../ui/radio-group";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
+import { BidiMarkdownText } from "./BidiMarkdownText";
 import { WorkLogRow } from "./WorkLog";
 
 const accessLabel = (access: AuthMcpClientAccess) => accessConfig[access].label;
@@ -123,7 +125,11 @@ function PendingLinkRequest(props: {
             ? "Link a machine to this environment"
             : `Link ${target} to this environment`}
         </p>
-        {item.reason.trim() ? <p className="text-sm text-muted-foreground">{item.reason}</p> : null}
+        {item.reason.trim() ? (
+          <p className="text-sm text-muted-foreground" dir={markdownProseDirection(item.reason)}>
+            <BidiMarkdownText text={item.reason} />
+          </p>
+        ) : null}
       </div>
       {error !== null ? (
         <p role="alert" className="text-xs text-destructive">

@@ -1,6 +1,7 @@
 import { PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES } from "@t3tools/client-runtime/text-paste";
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import { composerParagraphDirections } from "@t3tools/shared/textDirection";
 import { composerContextEditorTokens, composerSkillLabels } from "../lib/composerContext";
 import { useComposerModelTokens } from "./useComposerModelTokens";
 import { requireNativeView } from "expo";
@@ -182,10 +183,18 @@ export function ComposerEditor({
 
   const skillLabels = useMemo(() => composerSkillLabels(skills), [skills]);
   const { modelsBySource, modelTokens } = useComposerModelTokens(props.value, models);
+  const editorTokens = useMemo(
+    () => composerContextEditorTokens(props.value, tokens, skillLabels, modelTokens),
+    [props.value, tokens, skillLabels, modelTokens],
+  );
+  const paragraphDirections = useMemo(
+    () => composerParagraphDirections(props.value, editorTokens),
+    [props.value, editorTokens],
+  );
   const chipTextColor = createNativeComposerTheme(theme).text;
   const tokensJson = useMemo(() => {
     return JSON.stringify(
-      composerContextEditorTokens(props.value, tokens, skillLabels, modelTokens).map((token) => {
+      editorTokens.map((token) => {
         const model = token.type === "model" ? modelsBySource.get(token.source) : undefined;
         const record =
           token.type === "context"
@@ -223,16 +232,7 @@ export function ComposerEditor({
         };
       }),
     );
-  }, [
-    props.value,
-    tokens,
-    props.context,
-    skillLabels,
-    modelsBySource,
-    modelTokens,
-    theme,
-    chipTextColor,
-  ]);
+  }, [editorTokens, props.context, skillLabels, modelsBySource, theme, chipTextColor]);
   // Every render resolves against the snapshot history, so a render whose
   // (value, selection) lags the acknowledged native state is stamped behind
   // the native revision and rejected by the editor instead of re-applying a
@@ -262,6 +262,7 @@ export function ComposerEditor({
     value: props.value,
     selection: isNativeEcho ? null : (selection ?? null),
     tokensJson,
+    paragraphDirections,
     mostRecentEventCount: controlledEventCount,
     isNativeEcho,
     resetGeneration,

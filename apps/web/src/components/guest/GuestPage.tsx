@@ -70,6 +70,7 @@ import {
   unplacedGuestMessages,
 } from "./guestStream.logic";
 import { guestTurnItemSource } from "./guestTurnItemSource";
+import { textDirection } from "~/textDirection";
 
 interface GuestEntry {
   /** Unspent invite from the URL hash, if this load came from a link. */
@@ -763,6 +764,7 @@ function GuestComposer({
         rows={2}
         maxLength={GUEST_MESSAGE_MAX_LENGTH}
         value={text}
+        dir={textDirection(text)}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={onKeyDown}
         onPaste={onPaste}

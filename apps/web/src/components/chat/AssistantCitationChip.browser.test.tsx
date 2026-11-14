@@ -218,3 +218,27 @@ describe("citation comment popup position", () => {
     expect(rect.right).toBeLessThanOrEqual(window.innerWidth);
   });
 });
+
+describe("citation bidi ordering", () => {
+  it("keeps mixed Hebrew comments readable", async () => {
+    const comment = "סבבה לזה אפשר לעשות defer לאחר כך, מה חוץ מזה?";
+    await using screen = await render(
+      <div dir="ltr">
+        <AssistantCitationChip citation={{ ...citation, comment }} />
+      </div>,
+    );
+    const label = screen.container.querySelector('[data-slot="context-chip-label"]')!;
+    const text = label.firstChild!;
+    const left = (word: string) => {
+      const start = comment.indexOf(word);
+      const range = document.createRange();
+      range.setStart(text, start);
+      range.setEnd(text, start + word.length);
+      return range.getBoundingClientRect().left;
+    };
+    expect(label.textContent).toBe(comment);
+    expect(left("סבבה")).toBeGreaterThan(left("defer"));
+    expect(left("defer")).toBeGreaterThan(left("מזה"));
+    expect(left("?")).toBeLessThan(left("מזה"));
+  });
+});

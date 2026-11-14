@@ -65,6 +65,7 @@ export function ContextChipPopover(props: {
   kind: ContextChipKind;
   icon: ReactNode;
   label: string;
+  labelDir?: ComponentProps<typeof ContextChipLabel>["dir"];
   copyMarkdown?: string | undefined;
   accessibleLabel: string;
   /** Overrides the kind's accent color. */
@@ -89,7 +90,7 @@ export function ContextChipPopover(props: {
         }
       >
         {props.icon}
-        <ContextChipLabel>{props.label}</ContextChipLabel>
+        <ContextChipLabel dir={props.labelDir}>{props.label}</ContextChipLabel>
       </PopoverTrigger>
       <PopoverPopup side="top" width="lg" padding="compact">
         <PopoverTitle className="sr-only">{props.accessibleLabel}</PopoverTitle>

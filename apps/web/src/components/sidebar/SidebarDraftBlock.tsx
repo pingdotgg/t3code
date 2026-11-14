@@ -22,6 +22,8 @@ import {
   type DraftSessionState,
 } from "../../composerDraftStore";
 import { draftPenClassName, draftSurfaceClassName } from "./SidebarThreadRow";
+import { markdownProseDirection } from "~/textDirection";
+import { BidiMarkdownText } from "../chat/BidiMarkdownText";
 
 const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   draftId: DraftId;
@@ -126,7 +128,12 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               </Tooltip>
             </span>
           </div>
-          <div className="mt-0.5 truncate text-sm font-medium text-foreground/90">{preview}</div>
+          <div
+            className="mt-0.5 truncate text-sm font-medium text-foreground/90"
+            dir={markdownProseDirection(preview)}
+          >
+            <BidiMarkdownText text={preview} />
+          </div>
         </div>
       </div>
     </li>

@@ -16,6 +16,7 @@ import {
 } from "./PullRequestMarkdownTextarea";
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
+import { textDirection } from "~/textDirection";
 
 export function PullRequestCommentForm({
   environmentId,
@@ -118,6 +119,7 @@ export function PullRequestCommentForm({
         disabled={locked}
         readOnly={speech.freezesEditor}
         value={body}
+        dir={textDirection(body)}
         rows={3}
         placeholder="Leave a comment"
         aria-label={`Comment on this ${sourceControlClients.get(detail.provider).changeRequest.singular}`}

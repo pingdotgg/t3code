@@ -10,13 +10,17 @@ import {
 import { MOBILE_TEXT_CLASSES } from "../../lib/typography";
 
 import { cn } from "../../lib/cn";
+import { directionalText } from "../../lib/directionalText";
+import { textDirection } from "@t3tools/shared/textDirection";
 
 export type AppTextProps = RNTextProps & {
   readonly className?: string;
   readonly textRole?: keyof typeof MOBILE_TEXT_CLASSES;
 };
 
-export function AppText({ className, textRole, ...props }: AppTextProps) {
+export function AppText({ className, textRole, style, children, ...props }: AppTextProps) {
+  // Plain-string text takes its own reading direction, so Hebrew and Arabic read right to left anywhere.
+  const direction = typeof children === "string" ? textDirection(children) : undefined;
   return (
     <RNText
       className={cn(
@@ -25,8 +29,11 @@ export function AppText({ className, textRole, ...props }: AppTextProps) {
         className,
       )}
       selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
+      style={direction ? [{ writingDirection: direction }, style] : style}
       {...props}
-    />
+    >
+      {typeof children === "string" ? directionalText(children) : children}
+    </RNText>
   );
 }
 

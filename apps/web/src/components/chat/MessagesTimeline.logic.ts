@@ -6,6 +6,7 @@ import {
   waitingOnSubagentsLabel,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as Equal from "effect/Equal";
+import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
 import { shallow } from "zustand/vanilla/shallow";
 import { claudeResumeCompactionAge } from "@t3tools/shared/claudeCompaction";
 import {
@@ -2842,6 +2843,21 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       );
     }
   }
+}
+
+// Each part stops at the delimiter that could begin another match, so a run of `[`, `](` or `](<` stays linear.
+const MARKDOWN_LINK = /!?\[([^[\]\n]*)\]\((?:<[^<>\n]*>|[^\s()<]*)\)/g;
+
+export function visibleUserMessageText(text: string): string {
+  const linkLabels = (segment: string) => segment.replace(MARKDOWN_LINK, "$1");
+  let visible = "";
+  let cursor = 0;
+  for (const match of collectAssistantCitations(text)) {
+    visible += linkLabels(text.slice(cursor, match.start));
+    visible += "\n" + (match.citation.comment ?? "") + "\n";
+    cursor = match.end;
+  }
+  return visible + linkLabels(text.slice(cursor));
 }
 
 export function handoffRunsSignature(runs: ReadonlyArray<HandoffTimelineRun>): string {

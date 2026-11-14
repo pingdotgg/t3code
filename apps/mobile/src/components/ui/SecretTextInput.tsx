@@ -14,6 +14,14 @@ export function SecretTextInput(props: SecretTextInputProps) {
         className="pr-12"
         accessibilityLabel={props.accessibilityLabel}
         placeholder={props.placeholder}
+        style={
+          props.textDirection
+            ? {
+                writingDirection: props.textDirection,
+                textAlign: props.textDirection === "rtl" ? "right" : "left",
+              }
+            : undefined
+        }
         value={props.value}
         onChangeText={props.onChangeText}
         editable={props.editable}
