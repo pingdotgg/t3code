@@ -1879,6 +1879,53 @@ it.effect("cancels a slow submodule checkout without reporting best-effort succe
   ),
 );
 
+// regression: #18537 the fetch before creating a worktree outgrew the 30s default
+it.effect.each(["healthy", "hung"] as const)("bounds a %s remote fetch at five minutes", (fetch) =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const finished = yield* Deferred.make<void>();
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.succeed(
+        ChildProcess.isStandardCommand(command) && command.args[0] === "fetch"
+          ? ChildProcessSpawner.makeHandle({
+              ...makeSuccessfulHandle(""),
+              exitCode: Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Deferred.await(finished)),
+                Effect.as(ChildProcessSpawner.ExitCode(0)),
+              ),
+            })
+          : makeNonRepositoryHandle(),
+      ),
+    );
+    const driver = yield* makeGitVcsDriverCore().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+    const fetching = yield* driver
+      .fetchRemote({ cwd: yield* makeTmpDir(), remoteName: "origin" })
+      .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(started);
+    yield* TestClock.adjust("31 seconds");
+    if (fetch === "healthy") yield* Deferred.succeed(finished, undefined);
+    else {
+      yield* TestClock.adjust("268 seconds");
+      assert.isUndefined(fetching.pollUnsafe());
+      yield* TestClock.adjust("1 second");
+    }
+
+    const result = yield* Fiber.join(fetching);
+    assert.equal(
+      Result.isFailure(result) ? result.failure.detail : "fetched",
+      fetch === "healthy" ? "fetched" : "Git command timed out.",
+    );
+  }).pipe(
+    Effect.provide(
+      layerServerConfig.pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);
+
 describe("rejected git refs", () => {
   const remoteUrl = "https://user:token-123@git.example.invalid/org/secret-repo.git";
   const failedPush = `error: failed to push some refs to '${remoteUrl}'`;
