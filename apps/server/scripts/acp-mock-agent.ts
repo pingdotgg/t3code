@@ -14,9 +14,12 @@ import * as AcpError from "effect-acp/errors";
 import * as AcpSchema from "effect-acp/schema";
 import type * as AcpCompat from "effect-acp/compat";
 
+import { startDetachedCommand } from "./acpMockDetachedCommand.ts";
+
 import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
+const detachedReceipt = process.env.T3_ACP_DETACHED_COMMAND_RECEIPT;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
 // GitHub Copilot CLI advertises URL-shaped session mode ids.
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
@@ -839,6 +842,21 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
+      if (detachedReceipt !== undefined) {
+        yield* Effect.promise(() => startDetachedCommand(detachedReceipt));
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "watcher",
+            title: "Running run_command",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { CommandLine: "sleep 53" },
+          },
+        });
+        return yield* finishPrompt(requestedSessionId, "end_turn");
+      }
       if (idleError === "grok-background" && promptCount === 1) {
         // The structured completion lands before the prompt settles, so it is buffered.
         const taskId = "call-idle-error-background";

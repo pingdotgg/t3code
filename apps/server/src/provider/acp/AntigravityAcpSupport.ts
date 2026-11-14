@@ -132,6 +132,7 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       ...input,
       // Stop tears down the agent's process group to end commands session/cancel leaves running.
       ownDetachedProcessGroup: true,
+      ownDescendantProcessGroups: processGroupPlatform === "linux",
       processGroupPlatform,
       authMethodId: input.authMethod ?? "oauth-personal",
       authenticateEagerly: true,
