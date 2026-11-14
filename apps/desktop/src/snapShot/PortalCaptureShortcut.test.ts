@@ -14,6 +14,14 @@ const chord = {
 };
 const root = "/org/freedesktop/portal/desktop";
 const portal = "org.freedesktop.portal.GlobalShortcuts";
+const gnome = "org.gnome.Shell.Extensions.T3SnapShot";
+const gnomePath = "/org/gnome/Shell/Extensions/T3SnapShot";
+const gnomeOwner = ":1.3";
+const missingInterface = () =>
+  new DBusError(
+    "org.freedesktop.DBus.Error.InvalidArgs",
+    "No such interface “org.freedesktop.portal.GlobalShortcuts”",
+  );
 const clients: PortalCaptureShortcut[] = [];
 type Shortcut = [string, { description?: Variant<string>; trigger_description?: Variant<string> }];
 
@@ -23,6 +31,8 @@ class FakeBus extends NodeEvents.EventEmitter {
   disconnect = vi.fn();
   registryError: Error | undefined;
   version = 2;
+  versionError: Error | undefined;
+  extensionError: Error | undefined;
   autoBind = true;
   actualLabel = "Ctrl+Shift+2";
   bindStatus = 0;
@@ -88,8 +98,17 @@ class FakeBus extends NodeEvents.EventEmitter {
       if (this.registryError) throw this.registryError;
       return reply();
     }
-    if (message.member === "GetNameOwner") return reply([this.owner]);
-    if (message.member === "Get") return reply([new Variant("u", this.version)]);
+    if (message.member === "GetNameOwner")
+      return reply([message.body[0] === gnome ? gnomeOwner : this.owner]);
+    if (message.member === "Get") {
+      if (this.versionError) throw this.versionError;
+      return reply([new Variant("u", this.version)]);
+    }
+    if (message.member === "RequestName") return reply([1]);
+    if (message.member === "BindShortcut") {
+      if (this.extensionError) throw this.extensionError;
+      return reply();
+    }
     if (message.member === "AddMatch" || message.member === "ConfigureShortcuts") return reply();
     const options = message.body.at(-1) as Record<string, Variant<string>>;
     const path = `${root}/request/1_23/${options.handle_token!.value}`;
@@ -111,7 +130,12 @@ class FakeBus extends NodeEvents.EventEmitter {
   }
 }
 
-function start(bus = new FakeBus(), shortcut = chord, managedByHyprland = false) {
+function start(
+  bus = new FakeBus(),
+  shortcut = chord,
+  managedByHyprland = false,
+  gnomeSession = false,
+) {
   const capture = vi.fn();
   const changed = vi.fn();
   const client = new PortalCaptureShortcut(
@@ -121,6 +145,7 @@ function start(bus = new FakeBus(), shortcut = chord, managedByHyprland = false)
     changed,
     bus as unknown as MessageBus,
     managedByHyprland,
+    gnomeSession,
   );
   clients.push(client);
   return { bus, client, capture, changed };
@@ -389,4 +414,72 @@ it("rejects a foreign session without trying to close someone else's session", a
   await client.ready;
   expect(client.state.shortcutRegistered).toBe(false);
   expect(bus.sends.some((message) => message.path.includes("9_9"))).toBe(false);
+});
+
+it("binds through the GNOME extension when the portal has no GlobalShortcuts", async () => {
+  const bus = new FakeBus();
+  bus.versionError = missingInterface();
+  const { client, capture } = start(bus, chord, false, true);
+  await client.ready;
+  expect(client.state).toMatchObject({ shortcutRegistered: true, shortcutPending: false });
+  expect(bus.calls.find((call) => call.member === "BindShortcut")?.body).toEqual([
+    "com.t3tools.T3Code.SnapShot.Shortcut",
+    "<Control><Shift>2",
+  ]);
+  expect(bus.calls.some((call) => call.member === "CreateSession")).toBe(false);
+  bus.signal(gnome, "ShortcutActivated", gnomePath, [], ":1.99");
+  expect(capture).not.toHaveBeenCalled();
+  bus.signal(gnome, "ShortcutActivated", gnomePath, [], gnomeOwner);
+  expect(capture).toHaveBeenCalledOnce();
+});
+
+it("rebinds through the GNOME extension after the screen lock disables it", async () => {
+  const bus = new FakeBus();
+  bus.versionError = missingInterface();
+  const { client, capture, changed } = start(bus, chord, false, true);
+  await client.ready;
+  const ownerChanged = (from: string, to: string) =>
+    bus.signal(
+      "org.freedesktop.DBus",
+      "NameOwnerChanged",
+      "/org/freedesktop/DBus",
+      [gnome, from, to],
+      "org.freedesktop.DBus",
+    );
+  ownerChanged(gnomeOwner, "");
+  expect(client.state).toMatchObject({ shortcutRegistered: false, shortcutPending: true });
+  bus.signal(gnome, "ShortcutActivated", gnomePath, [], gnomeOwner);
+  expect(capture).not.toHaveBeenCalled();
+  const rebound = new Promise((resolve) => changed.mockImplementationOnce(resolve));
+  ownerChanged("", ":1.4");
+  await rebound;
+  expect(client.state).toMatchObject({ shortcutRegistered: true, shortcutPending: false });
+  expect(bus.calls.filter((call) => call.member === "BindShortcut").at(-1)?.destination).toBe(
+    ":1.4",
+  );
+  expect(bus.disconnect).not.toHaveBeenCalled();
+  bus.signal(gnome, "ShortcutActivated", gnomePath, [], ":1.4");
+  expect(capture).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ["a non-GNOME desktop", false, missingInterface()],
+  ["a denied portal", true, new DBusError("org.freedesktop.DBus.Error.AccessDenied", "Denied")],
+])("does not bypass the portal on %s", async (_case, gnomeSession, error) => {
+  const bus = new FakeBus();
+  bus.versionError = error;
+  const { client } = start(bus, chord, false, gnomeSession);
+  await client.ready;
+  expect(client.state.shortcutRegistered).toBe(false);
+  expect(bus.calls.some((call) => call.member === "BindShortcut")).toBe(false);
+});
+
+it("asks for an extension update when the installed one cannot bind shortcuts", async () => {
+  const bus = new FakeBus();
+  bus.versionError = missingInterface();
+  bus.extensionError = new DBusError("org.freedesktop.DBus.Error.UnknownMethod", "No method");
+  const { client } = start(bus, chord, false, true);
+  await client.ready;
+  expect(client.state).toMatchObject({ shortcutRegistered: false, shortcutCanRetry: true });
+  expect(client.state.shortcutMessage).toContain("Update the GNOME extension");
 });

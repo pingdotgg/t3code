@@ -104,5 +104,10 @@ inside the extension with coordinates relative to T3's content area. Electron 44
 path can skip rebinding and leave callbacks behind on unregister, which is why
 `PortalCaptureShortcut` owns its own portal session instead of using Electron's global-shortcut API.
 
+GNOME's portal backend implements GlobalShortcuts only from GNOME 48. When the portal lacks the
+interface (GDBus reports `InvalidArgs`), the extension grabs the chord for the lifetime of the app's
+connection, which owns `<app-id>.SnapShot.Shortcut`. That name is separate from the short-lived
+capture name so a held shortcut never blocks capture. Portal denials never select this fallback.
+
 GNOME 50 removed `Meta.is_wayland_compositor`. Shell internals change across majors; verify each
 version before adding it to `metadata.json`.
