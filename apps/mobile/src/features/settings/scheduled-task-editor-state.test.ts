@@ -83,17 +83,20 @@ describe("new scheduled task link", () => {
     expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)).toBeNull();
   });
 
-  it("keeps unsaved changes until the editor's removal guard discards them", () => {
-    startScheduledTaskEditor(editing);
-    const edited = { ...editing, draft: { ...editing.draft, prompt: "unsaved" } };
-    updateScheduledTaskEditor(edited, null);
+  it.each([{ prompt: "unsaved" }, { interactionMode: "plan" as const }])(
+    "keeps unsaved %j changes until the editor's removal guard discards them",
+    (patch) => {
+      startScheduledTaskEditor(editing);
+      const edited = { ...editing, draft: { ...editing.draft, ...patch } };
+      updateScheduledTaskEditor(edited, null);
 
-    takeScheduledTaskNewLink(newTaskLink);
-    expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current).toBe(edited);
+      takeScheduledTaskNewLink(newTaskLink);
+      expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current).toBe(edited);
 
-    discardScheduledTaskEditor();
-    expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)).toBeNull();
-  });
+      discardScheduledTaskEditor();
+      expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)).toBeNull();
+    },
+  );
 
   it("starts the new-task screen fresh after the edited task was saved", () => {
     startScheduledTaskEditor(editing);

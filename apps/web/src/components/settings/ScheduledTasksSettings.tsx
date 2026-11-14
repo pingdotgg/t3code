@@ -13,6 +13,7 @@ import {
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
+import { createModelSelection } from "@t3tools/shared/model";
 import { type ReactNode, useRef, useState } from "react";
 import type {
   EnvironmentId,
@@ -116,6 +117,12 @@ import {
 import { Label } from "../ui/label";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/menu";
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
+import {
+  resolveCompatibleRuntimeMode,
+  runtimeModeConfig,
+  runtimeModeOptions,
+} from "../chat/runtimeModeConfig";
+import { TraitsPicker } from "../chat/TraitsPicker";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Badge } from "../ui/badge";
@@ -1413,20 +1420,51 @@ function ScheduledTaskEditorForm({
 
   const firstInstance = instanceEntries[0];
   const draftSelection = draft.modelKey ? splitModelKey(draft.modelKey) : null;
+  // Provider options (reasoning, speed) live on the stored selection; the
+  // compact modelKey round-trips them through baseModelSelection.
+  const draftSelectionWithOptions =
+    draftSelection !== null &&
+    draft.baseModelSelection !== null &&
+    draft.baseModelSelection.instanceId === draftSelection.instanceId &&
+    draft.baseModelSelection.model === draftSelection.model
+      ? draft.baseModelSelection
+      : draftSelection;
   const activeSelection =
-    draftSelection &&
-    instanceEntries.some((entry) => entry.instanceId === draftSelection.instanceId && entry.enabled)
-      ? draftSelection
+    draftSelectionWithOptions &&
+    instanceEntries.some(
+      (entry) => entry.instanceId === draftSelectionWithOptions.instanceId && entry.enabled,
+    )
+      ? draftSelectionWithOptions
       : scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries);
   const activeInstanceId =
     activeSelection?.instanceId ?? firstInstance?.instanceId ?? ("" as ProviderInstanceId);
   const activeModel = activeSelection?.model ?? "";
+  const activeEntry =
+    instanceEntries.find((entry) => entry.instanceId === activeInstanceId) ?? null;
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     providers,
     activeInstanceId,
     activeModel,
   );
+  const { modes: compatibleRuntimeModes, mode: providerRuntimeMode } = resolveCompatibleRuntimeMode(
+    draft.runtimeMode,
+    activeEntry?.snapshot.supportedRuntimeModes,
+  );
+  const compatibleRuntimeModeOptions = runtimeModeOptions.filter((mode) =>
+    compatibleRuntimeModes.includes(mode),
+  );
+  const planModeUiEnabled = activeEntry?.snapshot.showInteractionModeToggle !== false;
+  const compatibleInteractionMode = planModeUiEnabled ? draft.interactionMode : "default";
+
+  const runtimeMode =
+    clampManagedRuntimeMode(
+      environment?.serverConfig?.managedPolicy,
+      providerRuntimeMode,
+      compatibleRuntimeModes,
+    ) ?? providerRuntimeMode;
+  const boundToThread = draft.threadId !== "";
+  const interactionMode = planModeUiEnabled ? compatibleInteractionMode : "default";
 
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
@@ -1523,11 +1561,8 @@ function ScheduledTaskEditorForm({
       ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
       workspaceStrategy,
       modelSelection,
-      // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
-      runtimeMode:
-        clampManagedRuntimeMode(environment?.serverConfig?.managedPolicy, draft.runtimeMode) ??
-        draft.runtimeMode,
-      interactionMode: draft.interactionMode,
+      runtimeMode: boundToThread ? draft.runtimeMode : runtimeMode,
+      interactionMode: boundToThread ? draft.interactionMode : interactionMode,
       creationSource: "web",
     };
     // Lock before React renders, and keep successful creates locked until the form closes.
@@ -1767,7 +1802,7 @@ function ScheduledTaskEditorForm({
           </Field>
 
           <Field label="Model">
-            <div>
+            <div className="flex flex-wrap items-center gap-1.5">
               <ProviderModelPicker
                 environmentId={environmentId}
                 disabled={saving || !connected}
@@ -1782,8 +1817,96 @@ function ScheduledTaskEditorForm({
                   setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
                 }
               />
+              {activeSelection && activeEntry ? (
+                <TraitsPicker
+                  provider={activeEntry.driverKind}
+                  instanceId={activeSelection.instanceId}
+                  models={activeEntry.models}
+                  model={activeSelection.model}
+                  modelOptions={activeSelection.options ?? []}
+                  allowPromptInjectedEffort={false}
+                  disabled={saving || !connected}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onModelOptionsChange={(options) =>
+                    setDraft((current) => ({
+                      ...current,
+                      modelKey: `${activeSelection.instanceId}:${activeSelection.model}`,
+                      baseModelSelection: createModelSelection(
+                        activeSelection.instanceId,
+                        activeSelection.model,
+                        options,
+                      ),
+                    }))
+                  }
+                />
+              ) : null}
             </div>
           </Field>
+
+          {boundToThread ? (
+            <p className="text-sm text-muted-foreground">
+              Runs use the destination thread's workspace, permissions, and mode.
+            </p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Permissions" htmlFor="scheduled-task-runtime-mode">
+                <Select
+                  value={runtimeMode}
+                  disabled={saving || !connected}
+                  onValueChange={(value) =>
+                    setDraft((current) => ({
+                      ...current,
+                      runtimeMode: (value ?? "full-access") as DraftState["runtimeMode"],
+                    }))
+                  }
+                >
+                  <SelectTrigger size="sm" id="scheduled-task-runtime-mode">
+                    <SelectValue>{runtimeModeConfig[runtimeMode].label}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {compatibleRuntimeModeOptions.map((mode) => {
+                      const option = runtimeModeConfig[mode];
+                      return (
+                        <SelectItem key={mode} value={mode} label={option.label}>
+                          <span className="block truncate">{option.label}</span>
+                          <span className="block max-w-72 truncate text-xs text-muted-foreground">
+                            {option.description}
+                          </span>
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectPopup>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {runtimeModeConfig[runtimeMode].description}
+                </p>
+              </Field>
+
+              <Field label="Mode" htmlFor="scheduled-task-interaction-mode">
+                <ToggleGroup
+                  aria-label="Interaction mode"
+                  value={[interactionMode]}
+                  onValueChange={(values) => {
+                    const mode = values[0] as DraftState["interactionMode"] | undefined;
+                    if (mode === "default" || mode === "plan")
+                      setDraft((current) => ({ ...current, interactionMode: mode }));
+                  }}
+                >
+                  <Toggle value="default" disabled={saving || !connected || !planModeUiEnabled}>
+                    Build
+                  </Toggle>
+                  <Toggle value="plan" disabled={saving || !connected || !planModeUiEnabled}>
+                    Plan
+                  </Toggle>
+                </ToggleGroup>
+                <p className="text-xs text-muted-foreground">
+                  {planModeUiEnabled
+                    ? "Plan drafts a proposal before acting."
+                    : "Plan is unavailable for this provider."}
+                </p>
+              </Field>
+            </div>
+          )}
 
           <div className="space-y-3">
             {task?.schedule.type === "interval" &&
