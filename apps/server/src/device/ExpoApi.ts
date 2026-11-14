@@ -1,5 +1,5 @@
 /**
- * Expo's GraphQL API for EAS Simulator sessions. The operations in
+ * Expo's GraphQL API for Expo Simulators sessions. The operations in
  * `ExpoApi.graphql` are the ones eas-cli's `simulator:*` commands send; their
  * client is generated from `schema/expo.graphql` (`vp run generate`).
  */
@@ -313,7 +313,7 @@ export const makeExpoApi = (http: HttpClient.HttpClient, credential: ExpoCredent
       ),
     ),
     availability: (appId: string) =>
-      call("check EAS Simulator access", (expo) =>
+      call("check Expo Simulators access", (expo) =>
         expo.T3EasSimulatorAvailability({ appId, filter: [DEVICE_RUN_SESSIONS_GATE] }),
       ).pipe(
         Effect.map(({ app }) => {
