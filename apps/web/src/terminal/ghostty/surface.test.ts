@@ -427,6 +427,125 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(harness.onData).not.toHaveBeenCalled();
   });
 
+  it("lets the macOS Vietnamese Telex input source rewrite the letters before the caret", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    const telex = new Map([
+      ["tie|e", "tiê"],
+      ["tiêng|s", "tiếng"],
+      ["vie|e", "viê"],
+      ["viê|j", "việ"],
+    ]);
+    const insert = (value: string, data: string) => {
+      surface.input.value = value;
+      surface.input.dispatchEvent(
+        Object.assign(new Event("input"), { inputType: "insertText", data, isComposing: false }),
+      );
+    };
+
+    for (const char of "tieengs vieejt") {
+      const code = char === " " ? "Space" : `Key${char.toUpperCase()}`;
+      const keyCode = char.toUpperCase().charCodeAt(0);
+      // The input source reads the word before the caret and commits its rewrite with
+      // insertText:replacementRange:, which Chromium applies before forwarding the
+      // keydown with its real keyCode and no char event, so the key inserts nothing.
+      const word = /\S*$/.exec(surface.input.value)?.[0] ?? "";
+      const rewrite = telex.get(`${word}|${char}`);
+      if (rewrite !== undefined) {
+        insert(surface.input.value.slice(0, -word.length) + rewrite, rewrite);
+        key(surface, char, code, { keyCode });
+        continue;
+      }
+      if (!key(surface, char, code, { keyCode }).defaultPrevented) {
+        insert(surface.input.value + char, char);
+      }
+    }
+
+    const line: string[] = [];
+    for (const [data] of harness.onData.mock.calls) {
+      for (const point of data) {
+        if (point === "\x7f") line.pop();
+        else line.push(point);
+      }
+    }
+    expect(line.join("")).toBe("tiếng việt");
+  });
+
+  it("drops the typed word when a host shortcut edits the line, so a later rewrite cannot reach it", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const harness = createHarness();
+    const surface = await harness.create({
+      beforeKey: (event) => {
+        if (!(event.metaKey && event.key === "Backspace")) return true;
+        // The thread drawer sends Ctrl+U for Cmd+Backspace itself.
+        event.preventDefault();
+        return false;
+      },
+    });
+
+    for (const char of "tie") {
+      if (!key(surface, char, `Key${char.toUpperCase()}`).defaultPrevented) {
+        surface.input.value += char;
+        surface.input.dispatchEvent(Object.assign(new Event("input"), { isComposing: false }));
+      }
+    }
+    key(surface, "Backspace", "Backspace", { metaKey: true });
+    expect(surface.input.value).toBe("");
+
+    for (const char of "vi") {
+      if (!key(surface, char, `Key${char.toUpperCase()}`).defaultPrevented) {
+        surface.input.value += char;
+        surface.input.dispatchEvent(Object.assign(new Event("input"), { isComposing: false }));
+      }
+    }
+    // A restart elsewhere resets this view onto a fresh PTY.
+    surface.resetAndWrite("$ ");
+    expect(surface.input.value).toBe("");
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["t", "i", "e", "v", "i"]);
+  });
+
+  it("keeps an active composition when a paste is sent", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+
+    surface.input.dispatchEvent(new Event("compositionstart"));
+    surface.input.value = "にほ";
+    surface.input.dispatchEvent(Object.assign(new Event("input"), { isComposing: true }));
+    paste(surface, "x");
+
+    expect(surface.input.value).toBe("にほ");
+  });
+
+  it("commits a composition typed after plain text once, then drops that text at Enter", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    const input = (value: string, isComposing = false) => {
+      surface.input.value = value;
+      surface.input.dispatchEvent(Object.assign(new Event("input"), { isComposing }));
+    };
+
+    for (const char of "ls ") {
+      if (
+        !key(surface, char, char === " " ? "Space" : `Key${char.toUpperCase()}`).defaultPrevented
+      ) {
+        input(surface.input.value + char);
+      }
+    }
+    surface.input.dispatchEvent(new Event("compositionstart"));
+    input("ls にほん", true);
+    input("ls 日本", true);
+    surface.input.dispatchEvent(new Event("compositionend"));
+    // WebKit fires the commit's input after compositionend.
+    input("ls 日本");
+    key(surface, "Enter", "Enter");
+
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["l", "s", " ", "日本", "\r"]);
+    expect(surface.input.value).toBe("");
+  });
+
   function paste(surface: GhosttyTerminalSurface, text: string) {
     surface.input.dispatchEvent(
       Object.assign(new Event("paste", { cancelable: true }), {

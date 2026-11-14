@@ -36,6 +36,7 @@ const DEFAULT_TERMINAL_FONT_FAMILY =
 const CONTENT_PADDING = 4;
 const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 const CURSOR_BLINK_INTERVAL_MS = 500;
+const MAX_INPUT_CONTEXT_LENGTH = 64;
 const TERMINAL_LINK_HOVER_DELAY_MS = 250;
 /** End an unterminated synchronized update instead of freezing the last frame. */
 const SYNCHRONIZED_OUTPUT_RENDER_TIMEOUT_MS = 500;
@@ -372,12 +373,17 @@ function isMiddleClickPastePlatform(): boolean {
   return /linux|bsd/i.test(navigator.platform);
 }
 
-function isTerminalCompositionCommitInput(event: Pick<InputEvent, "inputType">): boolean {
-  return (
-    event.inputType === "" ||
-    event.inputType === "insertCompositionText" ||
-    event.inputType === "insertFromComposition"
-  );
+// IMEs such as macOS Telex rewrite text before the caret; send that as DELs plus new text.
+function terminalTextareaEditData(previous: string, next: string): string {
+  const limit = Math.min(previous.length, next.length);
+  let common = 0;
+  while (common < limit && previous.charCodeAt(common) === next.charCodeAt(common)) common += 1;
+  if (common > 0 && isHighSurrogate(previous.charCodeAt(common - 1))) common -= 1;
+  return Array.from(previous.slice(common), () => "\x7f").join("") + next.slice(common);
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
 }
 
 export function isTerminalCompositionKey(
@@ -563,8 +569,8 @@ export class GhosttyTerminalSurface {
   private frame = 0;
   private synchronizedRenderTimer: number | null = null;
   private cursorTimer: number | null = null;
-  private compositionInputToSuppress: string | null = null;
-  private compositionSuppressionTimer: number | null = null;
+  // Textarea text already sent to the PTY, kept so IMEs can read the word before the caret.
+  private inputContext = "";
   private cursorOn = true;
   private renderedCursorY: number | null = null;
   private forceFullRender = true;
@@ -693,6 +699,7 @@ export class GhosttyTerminalSurface {
     input.autocapitalize = "off";
     input.autocomplete = "off";
     input.spellcheck = false;
+    input.setAttribute("autocorrect", "off");
     input.style.cssText =
       "position:absolute;left:4px;top:4px;width:1px;height:1px;opacity:0;padding:0;border:0;resize:none;pointer-events:none;";
 
@@ -781,6 +788,8 @@ export class GhosttyTerminalSurface {
     if (this.disposed) return;
     this.cancelSynchronizedRenderTimer();
     this.lastMouseMotionData = "";
+    // A fresh PTY has none of the typed text an IME could rewrite.
+    if (!this.composing) this.resetInputContext();
     this.core.resetAndWrite(data);
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;
@@ -982,7 +991,7 @@ export class GhosttyTerminalSurface {
     this.pasteShortcutToken += 1;
     if (text.length === 0) return;
     const encoded = this.core.encodePaste(text);
-    if (encoded.length > 0) this.options.onData(encoded);
+    if (encoded.length > 0) this.sendInput(encoded);
   }
 
   // The terminal selection is the only browser-readable PRIMARY-like buffer.
@@ -1072,9 +1081,6 @@ export class GhosttyTerminalSurface {
       this.options.onResize(this.measuredCols, this.measuredRows);
     }
     this.cancelRender();
-    if (this.compositionSuppressionTimer !== null) {
-      window.clearTimeout(this.compositionSuppressionTimer);
-    }
     this.removeEvents();
     this.core.dispose();
     if (
@@ -1091,7 +1097,12 @@ export class GhosttyTerminalSurface {
   private readonly onKeyDown = (event: KeyboardEvent) => {
     // A consumed repeat still owes the original encoded press a release.
     if (!event.repeat) this.encodedKeyCodes.delete(event.code);
-    if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) return;
+    if (isTerminalAltGraphText(event)) return;
+    if (!this.options.beforeKey(event)) {
+      // A host shortcut that handled the key may have edited the PTY line itself.
+      if (event.defaultPrevented && !this.composing) this.resetInputContext();
+      return;
+    }
     // IME candidates belong to the textarea, even if the key also resembles
     // a local shortcut. Safari signals the initial composition with code 229.
     if (isTerminalCompositionKey(event, this.composing)) {
@@ -1185,7 +1196,7 @@ export class GhosttyTerminalSurface {
             this.pasteShortcutToken += 1;
             if (text.length === 0) return;
             if (this.pasteShortcutGesture === gesture) gesture.readText = text;
-            this.options.onData(this.core.encodePaste(text));
+            this.sendInput(this.core.encodePaste(text));
           },
           () => {},
         );
@@ -1195,10 +1206,20 @@ export class GhosttyTerminalSurface {
     this.clearPrimedCopy();
     const data = this.core.encodeKey(event);
     if (data.length === 0) return;
+    event.stopPropagation();
+    if (
+      data === event.key &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      this.core.encodeKey(event, "release").length === 0
+    ) {
+      // The textarea inserts plain text itself and onInput sends it.
+      return;
+    }
     this.encodedKeyCodes.add(event.code);
     event.preventDefault();
-    event.stopPropagation();
-    this.options.onData(data);
+    this.sendInput(data);
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
@@ -1262,6 +1283,7 @@ export class GhosttyTerminalSurface {
 
   private primeCopy(selection: string): void {
     this.primedCopySelection = selection;
+    this.inputContext = "";
     primeTerminalCopyInput(this.input, selection);
   }
 
@@ -1271,9 +1293,9 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onCopyEvent = (event: ClipboardEvent) => {
-    const selection = this.hasSelection() ? this.getSelection() : this.input.value;
+    const selection = this.hasSelection() ? this.getSelection() : this.primedCopySelection;
     // Menu Copy skips keydown; prime the textarea even without clipboardData for the native action.
-    this.primeCopy(selection);
+    if (selection.length > 0) this.primeCopy(selection);
     const result = applyTerminalCopyEvent(selection, event.clipboardData);
     if (result.preventDefault) event.preventDefault();
     if (result.claimWriteFallback) {
@@ -1299,47 +1321,46 @@ export class GhosttyTerminalSurface {
     // The native paste won the race with actual text; a pending clipboard read
     // must not double. An empty native paste leaves the read as the only path.
     this.pasteShortcutToken += 1;
-    this.options.onData(this.core.encodePaste(data));
+    this.sendInput(this.core.encodePaste(data));
   };
 
   private readonly onCompositionStart = () => {
     this.clearPrimedCopy();
-    this.clearCompositionInputSuppression();
     this.composing = true;
   };
 
-  private readonly onCompositionEnd = (event: CompositionEvent) => {
+  private readonly onCompositionEnd = () => {
     this.composing = false;
-    const data = this.input.value || event.data;
-    if (data.length > 0) this.options.onData(data);
-    this.input.value = "";
-    this.compositionInputToSuppress = data;
-    this.compositionSuppressionTimer = window.setTimeout(() => {
-      this.compositionInputToSuppress = null;
-      this.compositionSuppressionTimer = null;
-    }, 100);
+    this.sendTextareaEdit();
   };
 
   private readonly onInput = (event: Event) => {
-    const inputEvent = event as InputEvent;
-    if (this.composing || inputEvent.isComposing) return;
-    const data = this.input.value || inputEvent.data || "";
-    if (data === this.compositionInputToSuppress && isTerminalCompositionCommitInput(inputEvent)) {
-      this.clearCompositionInputSuppression();
-      this.input.value = "";
-      return;
-    }
-    this.clearCompositionInputSuppression();
-    if (data.length > 0) this.options.onData(data);
-    this.input.value = "";
+    if (this.composing || (event as InputEvent).isComposing) return;
+    this.sendTextareaEdit();
   };
 
-  private clearCompositionInputSuppression(): void {
-    if (this.compositionSuppressionTimer !== null) {
-      window.clearTimeout(this.compositionSuppressionTimer);
-      this.compositionSuppressionTimer = null;
+  private sendTextareaEdit(): void {
+    let value = this.input.value;
+    const data = terminalTextareaEditData(this.inputContext, value);
+    if (value.length > MAX_INPUT_CONTEXT_LENGTH) {
+      let start = value.length - MAX_INPUT_CONTEXT_LENGTH / 2;
+      if (isHighSurrogate(value.charCodeAt(start - 1))) start += 1;
+      value = value.slice(start);
+      this.input.value = value;
     }
-    this.compositionInputToSuppress = null;
+    this.inputContext = value;
+    if (data.length > 0) this.options.onData(data);
+  }
+
+  // Input the textarea did not produce leaves its text out of step with the PTY line.
+  private sendInput(data: string): void {
+    if (!this.composing) this.resetInputContext();
+    this.options.onData(data);
+  }
+
+  private resetInputContext(): void {
+    this.input.value = "";
+    this.inputContext = "";
   }
 
   private readonly onPointerDown = (event: PointerEvent) => {
@@ -1754,7 +1775,7 @@ export class GhosttyTerminalSurface {
     }
     if (this.core.isAlternateScreen()) {
       // Alternate screens have no scrollback; send arrow keys like xterm.
-      this.options.onData(terminalWheelArrowData(rows, this.core.isApplicationCursorKeys()));
+      this.sendInput(terminalWheelArrowData(rows, this.core.isApplicationCursorKeys()));
       return;
     }
     this.scrollViewport(rows);
@@ -2257,7 +2278,10 @@ export class GhosttyTerminalSurface {
     });
     const resolution = resolveTerminalMouseData(action, data, this.lastMouseMotionData);
     this.lastMouseMotionData = resolution.nextMotionData;
-    if (resolution.send) this.options.onData(data);
+    if (!resolution.send) return;
+    // A click can move the application's insertion point away from the typed word.
+    if (action === "press" && !this.composing) this.resetInputContext();
+    this.options.onData(data);
   }
 
   private synchronizeMouseTrackingState(): boolean {
