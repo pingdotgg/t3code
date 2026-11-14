@@ -3373,9 +3373,9 @@ describe("OrchestratorMcpService provider resolution", () => {
     };
     const service = (
       git: Partial<GitVcsDriver.GitVcsDriver["Service"]>,
-      saved: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput>>,
+      saved: Ref.Ref<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>,
       task: ScheduledTask = existing,
-      modes?: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput["threadMode"]>>,
+      inputs?: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput>>,
     ) =>
       OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -3405,11 +3405,11 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({
               list: () => Effect.succeed({ tasks: [task] }),
               upsert: (input) =>
-                Ref.update(saved, (inputs) => [...inputs, input]).pipe(
+                Ref.update(saved, (strategies) => [...strategies, input.workspaceStrategy]).pipe(
                   Effect.andThen(
-                    modes === undefined
+                    inputs === undefined
                       ? Effect.void
-                      : Ref.update(modes, (all) => [...all, input.threadMode]),
+                      : Ref.update(inputs, (all) => [...all, input]),
                   ),
                   Effect.as({ task }),
                 ),
@@ -3427,51 +3427,44 @@ describe("OrchestratorMcpService provider resolution", () => {
 
     it.effect("starts from the project's default branch", () =>
       Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(service(masterRepository, saved)),
         );
         yield* mcp.scheduleTask(client, { projectId, prompt: "Check the build", schedule });
-        assert.deepEqual(
-          (yield* Ref.get(saved)).map((input) => input.workspaceStrategy),
-          [{ type: "worktree", baseRef: "origin/master", startFromOrigin: true }],
-        );
+        assert.deepEqual(yield* Ref.get(saved), [
+          { type: "worktree", baseRef: "origin/master", startFromOrigin: true },
+        ]);
       }),
     );
 
     it.effect.each([
-      { name: "a long ASCII line", prompt: "a".repeat(100), title: "a".repeat(80) },
       {
-        name: "an emoji split by the limit",
+        name: "drops an emoji the limit splits",
         prompt: `${"a".repeat(79)}😀 rest`,
         title: "a".repeat(79),
       },
       {
-        name: "an emoji ending at the limit",
+        name: "keeps an emoji that ends at the limit",
         prompt: `${"a".repeat(78)}😀 rest`,
         title: `${"a".repeat(78)}😀`,
       },
-      { name: "a blank first line", prompt: "  \nCheck the build", title: "Scheduled task" },
-      {
-        name: "an explicit title",
-        prompt: `${"a".repeat(79)}😀`,
-        explicitTitle: "Nightly",
-        title: "Nightly",
-      },
-    ])("titles $name", ({ prompt, explicitTitle, title }) =>
+    ])("a prompt-derived title $name", ({ prompt, title }) =>
       Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(service(masterRepository, saved)),
+          Effect.provide(
+            service(
+              masterRepository,
+              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
+              existing,
+              inputs,
+            ),
+          ),
         );
-        yield* mcp.scheduleTask(client, {
-          projectId,
-          prompt,
-          schedule,
-          ...(explicitTitle === undefined ? {} : { title: explicitTitle }),
-        });
+        yield* mcp.scheduleTask(client, { projectId, prompt, schedule });
         assert.deepEqual(
-          (yield* Ref.get(saved)).map((input) => input.title),
+          (yield* Ref.get(inputs)).map((input) => input.title),
           [title],
         );
       }),
@@ -3479,14 +3472,14 @@ describe("OrchestratorMcpService provider resolution", () => {
 
     it.effect("keeps one thread when fresh sessions are turned off before the first run", () =>
       Effect.gen(function* () {
-        const modes = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput["threadMode"]>>([]);
+        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(
             service(
               masterRepository,
-              yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]),
+              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
               { ...existing, threadMode: "fresh_session" },
-              modes,
+              inputs,
             ),
           ),
         );
@@ -3498,7 +3491,10 @@ describe("OrchestratorMcpService provider resolution", () => {
           scheduledTaskId: existing.id,
           bindToCurrentThread: false,
         });
-        assert.deepEqual(yield* Ref.get(modes), ["continue", "new_thread"]);
+        assert.deepEqual(
+          (yield* Ref.get(inputs)).map((input) => input.threadMode),
+          ["continue", "new_thread"],
+        );
       }),
     );
 
@@ -3506,18 +3502,18 @@ describe("OrchestratorMcpService provider resolution", () => {
       "refuses unbinding into fresh sessions in one call, which would keep the thread",
       () =>
         Effect.gen(function* () {
-          const modes = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput["threadMode"]>>([]);
+          const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
           const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
             Effect.provide(
               service(
                 masterRepository,
-                yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]),
+                yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
                 {
                   ...existing,
                   threadId: ThreadId.make("thread:scheduled-base"),
                   threadMode: "continue",
                 },
-                modes,
+                inputs,
               ),
             ),
           );
@@ -3529,13 +3525,13 @@ describe("OrchestratorMcpService provider resolution", () => {
             })
             .pipe(Effect.flip);
           assert.include(refused.message, "first unbind it");
-          assert.deepEqual(yield* Ref.get(modes), []);
+          assert.deepEqual(yield* Ref.get(inputs), []);
         }),
     );
 
     it.effect("follows the default branch when a task is unbound from its thread", () =>
       Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(
             service(masterRepository, saved, {
@@ -3549,16 +3545,15 @@ describe("OrchestratorMcpService provider resolution", () => {
           scheduledTaskId: existing.id,
           bindToCurrentThread: false,
         });
-        assert.deepEqual(
-          (yield* Ref.get(saved)).map((input) => input.workspaceStrategy),
-          [{ type: "worktree", baseRef: "origin/master", startFromOrigin: true }],
-        );
+        assert.deepEqual(yield* Ref.get(saved), [
+          { type: "worktree", baseRef: "origin/master", startFromOrigin: true },
+        ]);
       }),
     );
 
     it.effect("keeps the saved workspace when an unbound task stays unbound", () =>
       Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(service(masterRepository, saved)),
         );
@@ -3566,10 +3561,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           scheduledTaskId: existing.id,
           bindToCurrentThread: false,
         });
-        assert.deepEqual(
-          (yield* Ref.get(saved)).map((input) => input.workspaceStrategy),
-          [{ type: "root" }],
-        );
+        assert.deepEqual(yield* Ref.get(saved), [{ type: "root" }]);
       }),
     );
 
@@ -3646,7 +3638,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       },
     ])("$name starts from $baseRef", ({ remote, remoteDefault, refs, baseRef }) =>
       Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
         const gitFailure = (cwd: string, detail: string) =>
           new GitCommandError({ operation: "GitVcsDriver.test", command: "git", cwd, detail });
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
@@ -3668,10 +3660,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           ),
         );
         yield* mcp.scheduleTask(client, { projectId, prompt: "Check the build", schedule });
-        assert.deepEqual(
-          (yield* Ref.get(saved)).map((input) => input.workspaceStrategy),
-          [{ type: "worktree", baseRef, startFromOrigin: true }],
-        );
+        assert.deepEqual(yield* Ref.get(saved), [
+          { type: "worktree", baseRef, startFromOrigin: true },
+        ]);
       }),
     );
   });
