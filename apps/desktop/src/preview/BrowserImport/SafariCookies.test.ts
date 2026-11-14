@@ -240,7 +240,7 @@ describe("safariAccessDenied", () => {
       yield* fileSystem.writeFile(jar, new Uint8Array([0x63, 0x6f, 0x6f, 0x6b]));
       assert.isFalse(yield* safariAccessDenied(jar));
       assert.isFalse(yield* safariAccessDenied(`${directory}/absent.binarycookies`));
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 

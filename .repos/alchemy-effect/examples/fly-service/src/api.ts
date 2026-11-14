@@ -1,4 +1,4 @@
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
@@ -25,9 +25,7 @@ export default class Api extends Fly.Service<Api>()(
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;
         const url = new URL(request.url, "http://service");
-        const value = yield* Config.String(SECRET_NAME).pipe(
-          Effect.orElseSucceed(() => ""),
-        );
+        const value = yield* Config.String(SECRET_NAME).pipe(Effect.orElseSucceed(() => ""));
         const body = {
           ok: value.length > 0,
           name: SECRET_NAME,

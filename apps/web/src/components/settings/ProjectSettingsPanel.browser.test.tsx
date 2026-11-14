@@ -39,7 +39,7 @@ const state = vi.hoisted(() => ({
       (request: {
         environmentId: EnvironmentId;
         input: UpdateProjectInput;
-      }) => Promise<AsyncResult.Success<void>>
+      }) => Promise<AsyncResult.Success<void> | AsyncResult.Failure<void, Error>>
     >(),
   delete:
     vi.fn<
@@ -132,12 +132,15 @@ vi.mock(import("../files/projectFilesQueryState"), async (original) => ({
   getProjectFileQueryAtom: () => missingProjectFile,
 }));
 
-import { useComposerDraftStore } from "../../composerDraftStore";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { assetEnvironment } from "../../state/assets";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { ProjectsSettings } from "./ProjectsSettings";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
+import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { validateSettingsScopeSearch, type SettingsScopeSearch } from "./settingsScope";
 import { retainSettingsScope, validateSettingsRouteSearch } from "./settingsScopeNavigation";
 
@@ -416,6 +419,37 @@ describe("project settings permissions", () => {
     expect(screen.router.state.location.href).toBe(initialHref);
   });
 
+  it("moves a draft on the removed checkout to a remaining checkout of the group", async () => {
+    setup();
+    const draftId = DraftId.make("draft-handed-off");
+    const [primaryProject, remoteProject] = state.projects;
+    const drafts = useComposerDraftStore.getState();
+    drafts.setLogicalProjectDraftThreadId(
+      "github.com/example/shared-repo",
+      scopeProjectRef(primaryId, primaryProject!.id),
+      draftId,
+    );
+    // "Add to another machine" hands the open draft to the new checkout this way.
+    drafts.setDraftThreadContext(draftId, {
+      projectRef: scopeProjectRef(remoteId, remoteProject!.id),
+      environmentSelection: "manual",
+      loadBalancedEnvironmentId: null,
+    });
+    drafts.setPrompt(draftId, "keep this prompt");
+    await using screen = await mountPanel();
+
+    await userEvent.click(removeCheckout(screen, "/work/remote"));
+    await vi.waitFor(() => expect(state.releaseUploads).toHaveBeenCalledOnce());
+
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)).toMatchObject({
+      environmentId: primaryId,
+      projectId: primaryProject!.id,
+    });
+    expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
+      "keep this prompt",
+    );
+  });
+
   it("rechecks every removal target after confirmation before deleting or clearing drafts", async () => {
     setup();
     const confirmed = deferred<boolean>();
@@ -531,6 +565,82 @@ describe("project identity reset", () => {
       },
     ]);
   });
+
+  it("refreshes a saved checkout's icon when a later checkout update fails", async () => {
+    setup();
+    state.projects = state.projects.map((project) => ({ ...project, faviconPath: "logo.png" }));
+    let iconExists = false;
+    const iconUrl = Atom.make(() =>
+      AsyncResult.success({
+        expiresAt: 4_000_000_000_000,
+        relativeUrl: iconExists ? "/restored-icon.svg" : "/project-favicon-missing",
+      }),
+    );
+    using _mount = { [Symbol.dispose]: appAtomRegistry.mount(iconUrl) };
+    const createUrl = assetEnvironment.createUrl;
+    using _createUrl = vi
+      .spyOn(assetEnvironment, "createUrl")
+      .mockImplementation((target) =>
+        target.environmentId === primaryId ? iconUrl : createUrl(target),
+      );
+    state.update
+      .mockResolvedValueOnce(AsyncResult.success(undefined))
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Save failed"))));
+    await using screen = await mountPanel();
+    expect(appAtomRegistry.get(iconUrl).value.relativeUrl).toBe("/project-favicon-missing");
+
+    iconExists = true;
+    await userEvent.click(resetButton(screen, "project icon")!);
+
+    await vi.waitFor(() =>
+      expect(appAtomRegistry.get(iconUrl).value.relativeUrl).toBe("/restored-icon.svg"),
+    );
+    expect(state.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Failed to update project icon on remote" }),
+    );
+  });
+});
+
+it("opens the fallback search target across all environments from a checkout", async () => {
+  setup();
+  const root = createRootRoute();
+  const settings = createRoute({
+    getParentRoute: () => root,
+    path: "settings",
+    validateSearch: validateSettingsRouteSearch,
+    search: { middlewares: [retainSettingsScope] },
+  });
+  const threads = createRoute({
+    getParentRoute: () => settings,
+    path: "threads",
+    component: () => (
+      <SettingsScopeProvider search={settings.useSearch()} onChange={() => {}}>
+        <SettingsScopeNotice target="all" targetId="fallback-model">
+          Choose all environments to edit the fallback model.
+        </SettingsScopeNotice>
+      </SettingsScopeProvider>
+    ),
+  });
+  const query = new URLSearchParams({
+    project: projectKey(),
+    machine: primaryId,
+    checkout: "primary:/work/primary",
+  });
+  const router = createRouter({
+    routeTree: root.addChildren([settings.addChildren([threads])]),
+    history: createMemoryHistory({ initialEntries: [`/settings/threads?${query}#fallback-model`] }),
+  });
+  await router.load();
+  // This route needs the real scope-retention middleware used by settings search.
+  await using _screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <RouterProvider router={router} />
+    </RegistryContext.Provider>,
+    { router: false },
+  );
+  await userEvent.click(page.getByRole("button", { name: "Open all environments" }));
+  await vi.waitFor(() => expect(router.state.location.search).toEqual({}));
+  expect(router.state.location.hash).toBe("fallback-model");
 });
 
 describe("project settings scope", () => {
@@ -557,6 +667,36 @@ describe("project settings scope", () => {
     await userEvent.click(environmentMenu());
     await expect.element(primaryOption()).toBeVisible();
     await expect.element(remoteOption()).not.toBeInTheDocument();
+  });
+
+  it("reaches each checkout on one environment and returns to all of them", async () => {
+    setup();
+    const [first] = state.projects;
+    state.projects = [
+      { ...first!, id: ProjectId.make("clone-a"), workspaceRoot: "/work/clone-a" },
+      { ...first!, id: ProjectId.make("clone-b"), workspaceRoot: "/work/clone-b" },
+    ];
+    const key = projectKey();
+    await using screen = await mountSettings({ project: key, machine: primaryId });
+
+    await userEvent.click(page.getByRole("button", { name: "Checkout scope: All checkouts" }));
+    await userEvent.click(page.getByRole("menuitemradio", { name: /clone-b/ }));
+
+    await expect
+      .element(page.getByRole("button", { name: "Checkout scope: clone-b" }))
+      .toBeVisible();
+    expect(screen.router.state.location.search).toMatchObject({
+      project: key,
+      machine: primaryId,
+      checkout: expect.stringContaining("clone-b"),
+    });
+
+    await userEvent.click(page.getByRole("button", { name: "Checkout scope: clone-b" }));
+    await userEvent.click(page.getByRole("menuitemradio", { name: "All checkouts" }));
+
+    await vi.waitFor(() =>
+      expect(screen.router.state.location.search).toEqual({ project: key, machine: primaryId }),
+    );
   });
 
   it("keeps an unknown project recoverable from any environment", async () => {
@@ -626,5 +766,38 @@ it("returns to the project overview after removal, clearing the selection but ke
   await vi.waitFor(() => {
     expect(screen.router.state.location.pathname).toBe("/settings/projects");
     expect(screen.router.state.location.search).toEqual({ machine: remoteId });
+  });
+});
+
+describe("project name composition", () => {
+  it.each([
+    { isComposing: true, keyCode: 13 },
+    { isComposing: false, keyCode: 229 },
+  ])("does not save a partial name for $isComposing/$keyCode", async (composition) => {
+    setup();
+    await using screen = await mountPanel();
+    const input = nameInput(screen);
+    await userEvent.fill(input, "日本");
+    await act(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, ...composition }),
+      );
+    });
+    expect(state.update).not.toHaveBeenCalled();
+    await expect.element(input).toHaveFocus();
+
+    await userEvent.type(input, "語");
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(state.update).toHaveBeenCalledTimes(2));
+    expect(state.projects.map((project) => project.title)).toEqual(["日本語", "日本語"]);
+    await expect.element(nameInput(screen)).toHaveValue("日本語");
+
+    await userEvent.fill(nameInput(screen), "日本語の名前");
+    await userEvent.keyboard("{Tab}");
+    await vi.waitFor(() => expect(state.update).toHaveBeenCalledTimes(4));
+    expect(state.projects.map((project) => project.title)).toEqual([
+      "日本語の名前",
+      "日本語の名前",
+    ]);
   });
 });

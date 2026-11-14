@@ -1,0 +1,46 @@
+import type * as location from "@distilled.cloud/aws/location";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { Tracker } from "./Tracker.ts";
+
+/**
+ * `GetDevicePosition` request with `TrackerName` injected from the bound
+ * resource.
+ */
+export interface GetDevicePositionRequest extends Omit<
+  location.GetDevicePositionRequest,
+  "TrackerName"
+> {}
+
+/**
+ * Retrieves a device's most recent position reported to the tracker.
+ *
+ * Runtime binding for the `GetDevicePosition` operation (IAM action
+ * `geo:GetDevicePosition`), scoped to one {@link Tracker}. Provide the implementation with
+ * `Effect.provide(AWS.Location.GetDevicePositionHttp)`.
+ *
+ * ### Reading Device Positions
+ * **Example:** Read a Device's Latest Position
+ * ```typescript
+ * const getPosition = yield* Location.GetDevicePosition(tracker);
+ *
+ * const latest = yield* getPosition({ DeviceId: "vehicle-1" });
+ * // latest.Position → [longitude, latitude]
+ * ```
+ *
+ * @binding
+ */
+export interface GetDevicePosition extends Binding.Service<
+  GetDevicePosition,
+  "AWS.Location.GetDevicePosition",
+  (
+    tracker: Tracker,
+  ) => Effect.Effect<
+    (
+      request: GetDevicePositionRequest,
+    ) => Effect.Effect<location.GetDevicePositionResponse, location.GetDevicePositionError>
+  >
+> {}
+export const GetDevicePosition = Binding.Service<GetDevicePosition>(
+  "AWS.Location.GetDevicePosition",
+);
