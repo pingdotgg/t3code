@@ -102,7 +102,7 @@ import {
   responseContextReference,
 } from "../../lib/composerContextRecords";
 import { environmentServerConfigsAtom } from "../../state/server";
-import { threadEnvironment } from "../../state/threads";
+import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { runMobileComposerTransition } from "./draftHeroTransition";
 import { useClientSettingsHydrated } from "../../hooks/useSettings";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -1426,9 +1426,15 @@ export function useComposerSend(input: ComposerSendInput) {
 
     if (failure !== null) {
       const failureError = squashAtomCommandFailure(failure);
-      // An unanswered launch may still create the thread, so the draft stays promoted to it.
       if (isLocalDraftThread && draftId && draftThread) {
-        if (!isThreadLaunchUnanswered(failureError)) {
+        // An unanswered launch whose thread already arrived keeps the draft promoted to it; one
+        // that has not arrived restores the draft, which promotes again if the thread lands.
+        const launchedThreadArrived =
+          isThreadLaunchUnanswered(failureError) &&
+          appAtomRegistry.get(
+            environmentThreadShells.threadShellAtom(scopeThreadRef(environmentId, threadIdForSend)),
+          ) !== null;
+        if (!launchedThreadArrived) {
           restoreFailedDraftThread(
             draftId,
             draftThread,
