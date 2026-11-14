@@ -77,6 +77,7 @@ monorepo_checks=(
   "gen-tools --check"
   "gen-keybindings --check"
   "gen-upstream --check"
+  "gen-graphql --check"
   "check-copies"
   "effect-client (conn-server)"
   "effect-client (ack window)"
@@ -107,6 +108,8 @@ else
   run "gen-tools --check" node crates/conn-mcp/tools/gen-tools.mjs --check
   run "gen-keybindings --check" node crates/conn-server/tools/gen-keybindings.mjs --check
   run "gen-upstream --check" node tools/gen-upstream.mjs --check
+  # GitHub's GraphQL operation texts, printed from T3's generated modules by effect/graphql.
+  run "gen-graphql --check" node crates/conn-source-control/tools/gen-graphql.mjs --check
   run "check-copies" node tools/check-copies.mjs
   decoded="$scratch/decoded-tags"
   : >"$decoded"

@@ -17,6 +17,7 @@ pub mod forgejo_cli;
 pub mod gitcafe;
 pub mod gitcafe_api;
 pub mod github;
+pub mod github_graphql;
 pub mod gitlab;
 pub mod repositories;
 
