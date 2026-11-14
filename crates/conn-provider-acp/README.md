@@ -82,7 +82,9 @@ write is built from `ordered::J`, which keeps T3's key order.
 - **Stop (Grok):** the turn ends as interrupted, then SIGTERM to the process group, SIGKILL
   after 1 s; the next turn starts a new agent and loads the session (`session/load`).
 - **Close:** `session/close` when the agent offers it, then SIGKILL to the process group at
-  once (T3's scope finalizer for an owned detached group). No end of input first.
+  once (T3's scope finalizer for an owned detached group), after the end of input: T3's ACP
+  writer stream completes and ends stdin just before the kill, so ours ends input first
+  (waiting at most 200 ms for the pipe to close).
 
 ## Server entry (proven equal to T3's for Grok, see "Proofs")
 
@@ -286,8 +288,13 @@ CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/capture-ts-event
   scenario: the bridge entry and the prompt's T3 tool notes) (every fixture and both compaction
   scenarios). The stub holds a gated frame across processes (`gates` in its config): T3's
   side bridges its fixture gate and finish hook to it, ours releases it once the run ended.
-  It found three differences, fixed: ids from 2^30, the trace context after the id, and
-  kill-on-close.
+  It found four differences, fixed: ids from 2^30, the trace context after the id,
+  kill-on-close, and the end of input before the kill at close. The stub records from a
+  worker in its own process group, which the client's signals do not reach, so every end of
+  input is recorded however soon the kill follows; the check waits for each worker's exit
+  record before it compares (green in 14 of 14 runs beside release builds on a loaded
+  machine, 2026-11-14). The probe check's stub still records inside the killed group and
+  keeps its normalisation of a last "stdin-closed".
 - **Bounded state:** `state_stays_bounded_over_many_turns` runs 200 turns with text, a tool
   call and an approval each; no turn, request or reply is left behind.
 - **Fixture replay (`crates/conn-engine/tools/t3-fixture-replay`, in `tools/check.sh`):** the
