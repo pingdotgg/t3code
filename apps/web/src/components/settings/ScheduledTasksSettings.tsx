@@ -145,6 +145,7 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { searchableSetting } from "./settingsSearch";
 import {
   SettingsPageContainer,
   SettingsRow,
@@ -435,7 +436,7 @@ export function ScheduledTasksSettings(target: {
   return (
     <SettingsPageContainer>
       <SettingsSection
-        title="Scheduled tasks"
+        {...searchableSetting("scheduled-tasks")}
         variant="plain"
         headerAction={
           <Button
@@ -752,6 +753,13 @@ function ScheduledTaskRow({
   });
   const act = async (action: "toggle" | "run" | "delete") => {
     if (busy || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
+    if (action === "delete") {
+      const message = `Delete "${task.title}"?\nThis cannot be undone.`;
+      const confirmed =
+        (await requestConfirmDialog(message, { variant: "destructive" })) ??
+        window.confirm(message);
+      if (!confirmed) return;
+    }
     setBusy(true);
     const result =
       action === "toggle"

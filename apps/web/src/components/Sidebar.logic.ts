@@ -40,6 +40,7 @@ import {
 import type { SidebarThreadSummary, Thread } from "../types";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
+import { THREAD_STATUS_TEXT } from "@t3tools/client-runtime/state/thread-activity-announcement";
 import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore, type ClockStore } from "@t3tools/client-runtime/clock";
 import { useDeadlinePassed } from "../hooks/useDeadline";
@@ -161,6 +162,13 @@ export function useSnoozeWakeClock(
     return nextClockMs;
   }
   return clockMs;
+}
+
+// Live status that says the cwd is not a repository means the checkout was removed.
+export function withoutRemovedCheckout<
+  T extends { readonly branch: string | null; readonly worktreePath: string | null },
+>(thread: T, gitStatus: { readonly isRepo?: boolean | undefined } | null): T {
+  return gitStatus?.isRepo === false ? { ...thread, branch: null, worktreePath: null } : thread;
 }
 
 export function useRetainedValue<T>(key: string | null, value: T | null): T | null {
@@ -981,6 +989,25 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
   return "ready";
+}
+
+/** What the window title says the open thread is doing, in the words its announcer uses. */
+export function resolveWindowTitleThreadStatus(thread: SidebarThreadStatusInput): string | null {
+  // A guest waiting doesn't hide that the agent is still working.
+  switch (resolveSidebarThreadStatus({ ...thread, pendingGuestMessageCount: 0 })) {
+    case "approval":
+      return THREAD_STATUS_TEXT.approval;
+    case "input":
+      return THREAD_STATUS_TEXT.input;
+    case "preparing":
+    case "working":
+      return THREAD_STATUS_TEXT.working;
+    case "waiting":
+      // Waiting on a child thread is still this turn, so it must not read as finished.
+      return thread.runtime?.status === "running" ? THREAD_STATUS_TEXT.working : null;
+    default:
+      return null;
+  }
 }
 
 /**

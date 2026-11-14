@@ -154,7 +154,7 @@ describe("DesktopWslBackend", () => {
       assert.equal(startCount, 1);
       assert.deepEqual(yield* backend.lastPreflightError, refusal);
 
-      yield* clearFailure(new URL("http://127.0.0.1:41773"));
+      yield* clearFailure(new URL("http://127.0.0.1:41773"), 123);
       assert.deepEqual(yield* backend.lastPreflightError, Option.none());
       yield* recordOwnershipFailure();
       const settings = yield* DesktopAppSettings.DesktopAppSettings;

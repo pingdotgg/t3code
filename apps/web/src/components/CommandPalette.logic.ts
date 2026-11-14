@@ -213,6 +213,8 @@ export interface CommandPaletteActionItem extends CommandPaletteItem {
   readonly run: () => Promise<void>;
   /** A pin toggle on the row, also reached with the pin shortcut while the row is highlighted. */
   readonly pin?: CommandPaletteItemPin;
+  /** Set on toggle rows; exposed to assistive technology as `aria-checked`. */
+  readonly checked?: boolean;
 }
 
 export interface CommandPaletteItemPin {

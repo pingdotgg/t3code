@@ -9,6 +9,8 @@ export interface CdpRelayTarget {
     owner?: string,
   ) => Promise<unknown>;
   readonly sessionDetached?: (owner: string) => void;
+  /** Whether a page session, by owner as `send` names it, gets the page's screencast frames. */
+  readonly receivesScreencast: (owner: string | undefined) => boolean;
   /** The page's own CDP target id; Playwright keys the main frame by it. */
   readonly targetId: () => Promise<string>;
   readonly url: () => string;
@@ -188,6 +190,8 @@ export function createCdpRelayConnection(
     }
   };
 
+  let runtimeReset: Promise<unknown> | undefined;
+
   const pageCommand = (command: CdpCommand): Promise<unknown> => {
     const child = sessions.get(command.sessionId!) === "page" ? undefined : command.sessionId;
     const owner =
@@ -198,6 +202,14 @@ export function createCdpRelayConnection(
     }
     // Playwright asks for this on every page; the host emulates focus only while it is in use.
     if (command.method === "Emulation.setFocusEmulationEnabled") return Promise.resolve({});
+    // The shared debugger keeps Runtime enabled after an earlier connection, and a repeated
+    // enable reports no existing contexts; Playwright waits for them, so reset once per connection.
+    if (command.method === "Runtime.enable" && child === undefined) {
+      runtimeReset ??= target.send("Runtime.disable", {}, undefined, owner).catch(() => undefined);
+      return runtimeReset.then(() =>
+        target.send(command.method, command.params ?? {}, undefined, owner),
+      );
+    }
     return target.send(command.method, command.params ?? {}, child, owner);
   };
 
@@ -250,8 +262,15 @@ export function createCdpRelayConnection(
         send({ method, params, sessionId });
         return;
       }
-      for (const [id, kind] of sessions)
-        if (kind === "page") send({ method, params, sessionId: id });
+      for (const [id, kind] of sessions) {
+        if (kind !== "page") continue;
+        if (
+          method === "Page.screencastFrame" &&
+          !target.receivesScreencast(id === PAGE_SESSION_ID ? undefined : id)
+        )
+          continue;
+        send({ method, params, sessionId: id });
+      }
     },
   };
 }

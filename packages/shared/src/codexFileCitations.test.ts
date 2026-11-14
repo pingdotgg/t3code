@@ -64,7 +64,7 @@ describe("codexFileCitationMarkdown", () => {
       path: "reports/*draft*_[copy]`<&.txt",
     });
     expect(citation && codexFileCitationMarkdown(citation)).toBe(
-      "[\\*draft\\*\\_\\[copy\\]\\`\\<\\&.txt](<reports/*draft*_[copy]`%3C&.txt>)",
+      "[\\*draft\\*\\_\\[copy\\]\\`\\<\\&.txt](<reports/*draft*_[copy]`%3C%26.txt>)",
     );
   });
 });

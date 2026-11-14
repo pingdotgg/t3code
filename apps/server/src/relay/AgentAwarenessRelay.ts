@@ -16,7 +16,8 @@ import {
 import {
   type SubagentRequestAwareness,
   projectThreadAwarenessV2,
-  subagentAwaitsApproval,
+  subagentAwaitsUser,
+  turnItemCanChangeUserWait,
 } from "@t3tools/shared/agentAwareness";
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -116,6 +117,7 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.active-reordered":
     case "thread.tags-updated":
     case "thread.visited":
+    case "thread.visit-recorded":
     case "thread.marked-unread":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
@@ -128,7 +130,11 @@ function shouldPublishAgentAwarenessEvent(
     case "provider-session.detached":
     case "provider-turn.updated":
     case "turn-item.updated":
-      return isTurnItemPayload(event.payload) && turnItemUpdateCanEndBackgroundWork(event.payload);
+      return (
+        isTurnItemPayload(event.payload) &&
+        (turnItemUpdateCanEndBackgroundWork(event.payload) ||
+          turnItemCanChangeUserWait(event.payload))
+      );
     case "message.updated":
     case "plan.updated":
     case "checkpoint-scope.created":
@@ -308,7 +314,7 @@ interface SubagentAlert {
 }
 
 const waitingApprovalId = (thread: AgentAwarenessThread | null) =>
-  thread !== null && thread.archivedAt === null && subagentAwaitsApproval(thread)
+  thread !== null && thread.archivedAt === null && subagentAwaitsUser(thread)
     ? thread.pendingRuntimeRequest?.id
     : undefined;
 
@@ -377,7 +383,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   return input.threads
     .filter((thread) => {
       // Publishing a waiting subagent republishes its top-level thread.
-      if (subagentAwaitsApproval(thread)) return true;
+      if (subagentAwaitsUser(thread)) return true;
       const project = projectById.get(thread.projectId);
       if (!project) {
         return false;
@@ -758,7 +764,11 @@ export const make = Effect.gen(function* () {
       if (requestId !== entry.requestId) subagentRequests.set(childId, { ...entry, requestId });
       // The newest wait is the one to announce.
       if (pending === null || DateTime.isGreaterThan(child.updatedAt, pending.updatedAt)) {
-        pending = { requestId, updatedAt: child.updatedAt };
+        pending = {
+          requestId,
+          updatedAt: child.updatedAt,
+          waitsForInput: child.pendingRuntimeRequest?.kind === "user_input",
+        };
       }
     }
     return pending;

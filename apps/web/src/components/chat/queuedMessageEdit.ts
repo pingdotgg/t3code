@@ -27,10 +27,9 @@ export function recoverQueuedMessageEdit(input: {
       !composerDraftHasUserContent(store.getComposerDraft(input.threadTarget)),
   });
   if (recovery === "kept") {
-    store.moveComposerPromptAndImages(input.editTarget, input.threadTarget);
-  } else {
-    store.clearComposerContent(input.editTarget);
+    store.moveComposerContent(input.editTarget, input.threadTarget);
   }
+  store.clearComposerContent(input.editTarget);
   return recovery;
 }
 
