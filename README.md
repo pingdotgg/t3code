@@ -479,7 +479,7 @@ What a real Conn session hits that this server does not do:
 - **`/mcp` serves 20 of 87 T3 tools** (`crates/conn-mcp/README.md`).
 - **Worktree launch:** the worktree is made before the thread exists; `prepared-run.*` stays
   refused and no project setup script runs.
-- **Providers:** Claude, Codex and Grok (Grok without background work or subagents). Their gaps are in each crate's README.
+- **Providers:** Claude, Codex and Grok (Grok with `/compact`, without background work or subagents). Their gaps are in each crate's README.
 - **Auth:** bearer and ticket only. No cookie sessions, DPoP or relay (`DROP-IN.md` §4).
 - **Desktop-local backend:** the `--bootstrap-fd` start works; the desktop itself still
   spawns the T3 server (`DROP-IN.md` §2).

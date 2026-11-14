@@ -18,5 +18,10 @@ serde_json.workspace = true
 rustix = { workspace = true, features = ["process"] }
 tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros"] }
 
+[dev-dependencies]
+# examples/idle_memory.rs: live heap bytes of one idle session (the version conn-engine's
+# memory_load example uses). Dev only; not in the server binary.
+stats_alloc = "0.1"
+
 [lints]
 workspace = true

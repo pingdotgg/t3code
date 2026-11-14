@@ -229,6 +229,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "stats_alloc",
  "tokio",
 ]
 
