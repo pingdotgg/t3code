@@ -256,6 +256,19 @@ export function subagentResultForRun(
   };
 }
 
+export function subagentHoldsCompletion(
+  task: Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">,
+): boolean {
+  return (
+    isOrchestrationV2WorkActive(task.status) ||
+    // Publishing a child's result precedes scheduling its parent's wake.
+    // The parent still owes that follow-up even between those transactions.
+    (task.status !== "idle" &&
+      (task.completionDelivery?.state === "pending" ||
+        task.completionDelivery?.state === "claimed"))
+  );
+}
+
 export function delegatedTaskProgress(projection: {
   readonly runs: OrchestrationV2ThreadProjection["runs"];
   readonly messages: ReadonlyArray<
@@ -282,15 +295,7 @@ export function delegatedTaskProgress(projection: {
     (run) => !terminal(run.status) && !(run.status === "queued" && run.queueHeld === true),
   );
   const children =
-    projection.subagents.some(
-      (task) =>
-        isOrchestrationV2WorkActive(task.status) ||
-        // Publishing a child's result precedes scheduling its parent's wake.
-        // The parent still owes that follow-up even between those transactions.
-        (task.status !== "idle" &&
-          (task.completionDelivery?.state === "pending" ||
-            task.completionDelivery?.state === "claimed")),
-    ) ||
+    projection.subagents.some(subagentHoldsCompletion) ||
     projection.providerThreads.some((thread) =>
       backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []),
     );

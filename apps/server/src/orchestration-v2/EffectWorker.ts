@@ -127,7 +127,24 @@ export const layerExecutor: Layer.Layer<
               cause,
             ).pipe(
               Effect.andThen(
-                providerTurnStart.failStartingRun({ threadId: effect.threadId, runId }),
+                Effect.suspend(() => {
+                  const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
+                  // A failed read cannot identify the attempt. Keep retry ownership
+                  // rather than settling whichever attempt happens to be current.
+                  if (
+                    !ProviderTurnStartService.isProviderTurnStartError(failure) ||
+                    failure.attemptId === undefined ||
+                    failure.rootNodeId === undefined
+                  ) {
+                    return Effect.failCause(cause);
+                  }
+                  return providerTurnStart.failStartingRun({
+                    threadId: effect.threadId,
+                    runId,
+                    attemptId: failure.attemptId,
+                    rootNodeId: failure.rootNodeId,
+                  });
+                }),
               ),
             ),
         ),

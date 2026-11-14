@@ -42,8 +42,16 @@ import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
-import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import {
+  withCheckpointRestoreReservation,
+  withWorkspaceLease,
+} from "../workspace/workspaceLease.ts";
+
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import {
+  layerThreadWorktreeRestore,
+  ThreadWorktreeRestore,
+} from "../workspace/restoreMissingWorktree.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -284,6 +292,101 @@ it.each([
   const harness = startWithMissingWorktree(input.worktreePath, input.realPaths);
   await harness.start;
   expect(harness.createWorktree).toHaveBeenCalledTimes(input.recreated ? 1 : 0);
+});
+
+const restoreLeaseExists = vi.fn(() => Effect.succeed(false));
+const restoreLeaseCreateWorktree = vi.fn(() => Effect.succeed({} as never));
+const layerRestoreLeaseTest = layerThreadWorktreeRestore.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.succeed(FileSystem.FileSystem, {
+        exists: restoreLeaseExists,
+        realPath: (target: string) => Effect.succeed(normalize(target)),
+      } as never),
+      layerWorktreeLocation(),
+      Layer.mock(GitWorkflow.GitWorkflowService)({
+        pruneWorktrees: () => Effect.void,
+        createWorktree: restoreLeaseCreateWorktree,
+        listLocalBranchNames: () => Effect.succeed(["feature/restore"]),
+      }),
+      Layer.mock(ProjectService.ProjectService)({
+        getById: () =>
+          Effect.succeedSome({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
+      }),
+    ),
+  ),
+);
+
+effectIt.effect("restores a missing worktree before a send only under the workspace lease", () =>
+  Effect.gen(function* () {
+    const worktreePath = `${managedWorktreesDir}/project/feature-restore`;
+    const { restore } = yield* ThreadWorktreeRestore;
+    yield* withWorkspaceLease(
+      worktreePath,
+      Effect.gen(function* () {
+        const restoring = yield* restore({
+          id: ThreadId.make("thread_send_restore_lease"),
+          projectId: ProjectId.make("project_send_restore_lease"),
+          worktreePath,
+          branch: "feature/restore",
+        }).pipe(Effect.forkChild({ startImmediately: true }));
+        expect(restoreLeaseExists).not.toHaveBeenCalled();
+        return restoring;
+      }),
+    ).pipe(Effect.flatMap(Fiber.join));
+    expect(restoreLeaseCreateWorktree).toHaveBeenCalledTimes(1);
+  }).pipe(Effect.provide(layerRestoreLeaseTest)),
+);
+
+it.each([
+  { label: "directly in the scratch root", folder: "/tmp/t3-home/scratch/notes", recreated: true },
+  { label: "below another folder", folder: "/tmp/t3-home/scratch/notes/deep", recreated: false },
+  {
+    label: "in another project",
+    folder: "/tmp/elsewhere/notes",
+    workspaceRoot: "/tmp/elsewhere",
+    recreated: false,
+  },
+])("recreates a pruned No project folder only $label", async (input) => {
+  const makeDirectory = vi.fn(() => Effect.void);
+  await Effect.gen(function* () {
+    const { restore } = yield* ThreadWorktreeRestore;
+    yield* restore({
+      id: ThreadId.make("thread_scratch_restore"),
+      projectId: ProjectId.make("project_scratch_restore"),
+      worktreePath: input.folder,
+      branch: null,
+    });
+  }).pipe(
+    Effect.provide(
+      layerThreadWorktreeRestore.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(FileSystem.FileSystem, {
+              exists: () => Effect.succeed(false),
+              realPath: (target: string) => Effect.succeed(target),
+              makeDirectory,
+            } as never),
+            Path.layer,
+            Layer.mock(ServerConfig.ServerConfig)({
+              baseDir: "/tmp/t3-home",
+              worktreesDir: managedWorktreesDir,
+            } as ServerConfig.ServerConfig["Service"]),
+            ServerSettings.layerTest(),
+            Layer.mock(GitWorkflow.GitWorkflowService)({}),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: () =>
+                Effect.succeedSome({
+                  workspaceRoot: input.workspaceRoot ?? "/tmp/t3-home/scratch",
+                } as never),
+            }),
+          ),
+        ),
+      ),
+    ),
+    Effect.runPromise,
+  );
+  expect(makeDirectory).toHaveBeenCalledTimes(input.recreated ? 1 : 0);
 });
 
 function makeLocalCommandHarness(input: {
@@ -1047,7 +1150,10 @@ function makeLocalCommandHarness(input: {
             ),
         }),
         Layer.mock(ProviderAuthService.ProviderAuthService)({ tryHandlePromptCommand }),
-        Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
+        Layer.mock(RunExecutionService.RunExecutionServiceV2)({
+          startRootRun,
+          forkBaseline: () => Effect.succeed(Effect.void),
+        }),
         Layer.succeed(ProviderUsageAnalytics.ProviderTurnAnalytics, {
           runStarted: () => Effect.void,
           turnCompleted: () => Effect.void,
@@ -1331,6 +1437,45 @@ effectIt.effect.each(["Stop", "a replacement attempt"] as const)(
   },
 );
 
+effectIt.effect("preserves a replacement committed after the final pre-running start read", () => {
+  const harness = makeLocalCommandHarness({ text: "Continue", missingProviderSession: true });
+  const read = harness.getTurnStartContext.getMockImplementation()!;
+  let reads = 0;
+  let replacement: OrchestrationV2ThreadProjection;
+  harness.getTurnStartContext.mockImplementation(() =>
+    Effect.suspend(() => {
+      const snapshot = read();
+      reads++;
+      if (reads === 2) {
+        const projection = harness.projection();
+        const attemptId = RunAttemptId.make("replacement-before-fallback");
+        const rootNodeId = NodeId.make("replacement-root-before-fallback");
+        replacement = {
+          ...projection,
+          runs: projection.runs.map((run) => ({ ...run, activeAttemptId: attemptId, rootNodeId })),
+          attempts: [
+            ...projection.attempts,
+            { ...projection.attempts[0]!, id: attemptId, rootNodeId },
+          ],
+          nodes: [...projection.nodes, { ...projection.nodes[0]!, id: rootNodeId }],
+        };
+        harness.setProjection(replacement);
+      }
+      return snapshot;
+    }),
+  );
+  return Effect.gen(function* () {
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    const { storedEffect } = yield* enqueueStart(harness.projection());
+    yield* worker.drain();
+    yield* TestClock.adjust("100 millis");
+    expect(yield* worker.drain()).toBe(1);
+    expect(harness.projection()).toEqual(replacement!);
+    expect(harness.events).toEqual([]);
+    expect(yield* storedEffect).toMatchObject({ status: "succeeded", attemptCount: 2 });
+  }).pipe(Effect.provide(layerStartEffectWorker(harness)));
+});
+
 effectIt.effect("preserves a replacement committed before exhausted start settlement reads", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({ text: "Continue", failReadsAfterRunning: true });
@@ -1568,6 +1713,8 @@ effectIt.effect(
 
       const expectedTips = {
         retained: { tip: threadTip, file: "thread.txt", upstream: null, base: "" },
+        // A failed removal can leave the folder behind with only dependencies inside.
+        leftover: { tip: threadTip, file: "thread.txt", upstream: null, base: "" },
         deleted: { tip: projectTip, file: "project.txt", upstream: null, base: "project-current" },
         pushed: {
           tip: threadTip,
@@ -1579,6 +1726,12 @@ effectIt.effect(
           tip: threadTip,
           file: "thread.txt",
           upstream: "refs/remotes/origin/feature/restore",
+          base: "",
+        },
+        "pushed-sole-remote": {
+          tip: threadTip,
+          file: "thread.txt",
+          upstream: "refs/remotes/upstream/feature/restore",
           base: "",
         },
         detached: { tip: baseTip, file: null, upstream: null, base: "main" },
@@ -1595,14 +1748,23 @@ effectIt.effect(
           yield* git(workspaceRoot, ["switch", "--detach"]);
           expect(yield* git(workspaceRoot, ["branch", "--show-current"])).toBe("");
         }
+        if (scenario === "pushed-sole-remote") {
+          yield* git(workspaceRoot, ["remote", "rename", "origin", "upstream"]);
+        }
         if (scenario === "detached") {
+          yield* git(workspaceRoot, ["remote", "rename", "upstream", "origin"]);
           yield* git(workspaceRoot, ["push", "origin", "--delete", "feature/restore"]);
         }
         if (scenario === "detached-no-remote") {
           yield* git(workspaceRoot, ["remote", "remove", "origin"]);
         }
         yield* fileSystem.remove(worktreePath, { recursive: true });
-        if (scenario !== "retained") {
+        if (scenario === "leftover") {
+          yield* fileSystem.makeDirectory(path.join(worktreePath, "node_modules"), {
+            recursive: true,
+          });
+        }
+        if (scenario !== "retained" && scenario !== "leftover") {
           yield* git(workspaceRoot, ["worktree", "prune"]);
           yield* git(workspaceRoot, ["branch", "-D", "feature/restore"]);
         }
@@ -1649,6 +1811,27 @@ effectIt.effect(
         expect(harness.projection().runs.at(-1)?.status).toBe("running");
       }
     }).pipe(Effect.scoped, Effect.provide(layerRealGit)),
+);
+
+effectIt.effect("leaves a managed worktree folder without .git that holds user files", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const worktreesDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-leftover-" });
+    const worktreePath = path.join(worktreesDir, "project", "restore");
+    yield* fileSystem.makeDirectory(path.join(worktreePath, "node_modules"), { recursive: true });
+    yield* fileSystem.writeFileString(path.join(worktreePath, "notes.md"), "keep me");
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      worktreePath,
+      worktreesDir,
+      fileSystem,
+      failReadsAfterRunning: true,
+    });
+    yield* harness.start;
+    expect(harness.createWorktree).not.toHaveBeenCalled();
+    expect(yield* fileSystem.readFileString(path.join(worktreePath, "notes.md"))).toBe("keep me");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 effectIt.effect(
@@ -1853,6 +2036,50 @@ effectIt.effect.each([
   }),
 );
 
+effectIt.effect("leaves delegated children to their own runs when the parent starts a turn", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+    });
+    const projection = harness.projection();
+    const completedChild = (origin: "provider_native" | "app_owned") => ({
+      id: NodeId.make(`node:${origin}`),
+      threadId: projection.thread.id,
+      runId: projection.runs[0]!.id,
+      parentNodeId: NodeId.make(`node:${origin}:parent`),
+      origin,
+      createdBy: "agent" as const,
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerThreadId: ProviderThreadId.make(`provider-thread:${origin}`),
+      childThreadId: ThreadId.make(`thread:${origin}`),
+      nativeTaskRef: null,
+      prompt: "work",
+      title: null,
+      model: null,
+      status: "completed" as const,
+      result: "done",
+      startedAt: null,
+      completedAt: null,
+      updatedAt: projection.updatedAt,
+    });
+    harness.setProjection({
+      ...projection,
+      subagents: [completedChild("provider_native"), completedChild("app_owned")],
+    });
+
+    yield* harness.start;
+
+    // A delegated child thread has its own run on the shared session; a parent run that also
+    // owns it ingests every one of the child's later items a second time.
+    expect(harness.startRootRun.mock.calls[0]?.[0]).toMatchObject({
+      relatedThreadIds: [ThreadId.make("thread:provider_native")],
+      relatedProviderThreadIds: [ProviderThreadId.make("provider-thread:provider_native")],
+    });
+  }),
+);
+
 effectIt.effect("does not start another turn when abandoned-turn cleanup fails", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
@@ -1997,6 +2224,92 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
         }),
       );
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+// regression: #12341 a turn start overlapping a checkpoint restore wrote into the checkout
+// The filesystem is synchronous so the turn start either reaches the provider or parks on the
+// lease before the restore is released; realPath models the symlink alias and missing worktrees.
+effectIt.effect.each([
+  {
+    overlap: "a project-root thread during a restore of the project checkout",
+    restorePath: "/tmp/native-account-project",
+    worktreePath: undefined,
+    realPaths: {},
+    missing: [],
+  },
+  {
+    overlap: "a symlink alias of the restoring checkout",
+    restorePath: "/tmp/restore-overlap/link",
+    worktreePath: "/tmp/restore-overlap/checkout",
+    realPaths: { "/tmp/restore-overlap/link": "/tmp/restore-overlap/checkout" },
+    missing: [],
+  },
+  {
+    overlap: "a directory inside the restoring checkout",
+    restorePath: "/tmp/restore-overlap/checkout",
+    worktreePath: "/tmp/restore-overlap/checkout/packages/app",
+    realPaths: {},
+    missing: [],
+  },
+  {
+    overlap: "a not-yet-recreated worktree under a symlink alias of the restoring one",
+    restorePath: "/tmp/restore-overlap/link/missing-child",
+    worktreePath: "/tmp/restore-overlap/checkout/missing-child",
+    realPaths: { "/tmp/restore-overlap/link": "/tmp/restore-overlap/checkout" },
+    missing: [
+      "/tmp/restore-overlap/link/missing-child",
+      "/tmp/restore-overlap/checkout/missing-child",
+    ],
+  },
+] as const)(
+  "does not start provider work in $overlap until the restore finishes",
+  ({ restorePath, worktreePath, realPaths, missing }) =>
+    Effect.gen(function* () {
+      const order: Array<string> = [];
+      const releaseRestore = yield* Deferred.make<void>();
+      const restoreEntered = yield* Deferred.make<void>();
+      const fileSystem = FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        realPath: (candidate) =>
+          (missing as ReadonlyArray<string>).includes(candidate)
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "FileSystem",
+                  method: "realPath",
+                  pathOrDescriptor: candidate,
+                }),
+              )
+            : Effect.succeed((realPaths as Record<string, string>)[candidate] ?? candidate),
+      });
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        ...(worktreePath === undefined ? {} : { worktreePath }),
+        fileSystem,
+        failReadsAfterRunning: true,
+      });
+      const open = harness.open.getMockImplementation()!;
+      harness.open.mockImplementation(() =>
+        Effect.sync(() => order.push("provider session opened")).pipe(Effect.andThen(open())),
+      );
+      // The reservation CheckpointRollbackServiceV2.execute holds around its
+      // isolation check, provider rollback, and git restore of `restorePath`.
+      const restore = yield* withCheckpointRestoreReservation(
+        fileSystem,
+        yield* Path.Path,
+        restorePath,
+        Deferred.succeed(restoreEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseRestore)),
+          Effect.andThen(Effect.sync(() => order.push("checkpoint files restored"))),
+        ),
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(restoreEntered);
+      const startup = yield* harness.start.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(releaseRestore, undefined);
+      yield* Fiber.join(restore);
+      yield* Fiber.join(startup);
+      expect(order).toEqual(["checkpoint files restored", "provider session opened"]);
+    }).pipe(Effect.provide(Path.layer)),
 );
 
 effectIt.effect("reads current startup state after waiting for the workspace lease", () =>

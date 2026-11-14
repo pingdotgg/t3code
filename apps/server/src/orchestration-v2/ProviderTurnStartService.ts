@@ -13,6 +13,8 @@ import {
   isCompactionCommandMessage,
   parseGoalCommand,
   RunId,
+  RunAttemptId,
+  NodeId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -31,7 +33,7 @@ import {
   CLAUDE_PROVIDER,
   CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL,
 } from "./Adapters/ClaudeAdapterV2.ts";
-import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import { withTurnStartReservation, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
@@ -75,10 +77,12 @@ export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStart
   {
     runId: RunId,
     cause: Schema.optional(Schema.Defect()),
+    attemptId: Schema.optional(RunAttemptId),
+    rootNodeId: Schema.optional(NodeId),
   },
 ) {}
 
-const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
+export const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
 const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
 const isProviderAdapterOpenSessionError = Schema.is(
   ProviderAdapter.ProviderAdapterOpenSessionError,
@@ -141,6 +145,8 @@ export interface ProviderTurnStartServiceV2Shape {
   readonly failStartingRun: (input: {
     readonly threadId: ThreadId;
     readonly runId: RunId;
+    readonly attemptId: RunAttemptId;
+    readonly rootNodeId: NodeId;
   }) => Effect.Effect<void, ProviderTurnStartError | ProviderTurnStartRunStateMissingError>;
 }
 
@@ -174,7 +180,9 @@ export const layer: Layer.Layer<
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const projects = yield* ProjectService.ProjectService;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
@@ -387,11 +395,14 @@ export const layer: Layer.Layer<
       },
     );
 
-    const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (input: {
-      readonly threadId: ThreadId;
-      readonly runId: RunId;
-      readonly willRetry?: boolean;
-    }) {
+    const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (
+      input: {
+        readonly threadId: ThreadId;
+        readonly runId: RunId;
+        readonly willRetry?: boolean;
+      },
+      captureStartingRun: (run: OrchestrationV2Run) => void,
+    ) {
       const { runId } = input;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
       const run = projection.runs.find((candidate) => candidate.id === runId);
@@ -401,6 +412,7 @@ export const layer: Layer.Layer<
       if (run.status !== "starting") {
         return;
       }
+      captureStartingRun(run);
       const rootNode = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
       const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
       const providerThread = projection.providerThreads.find(
@@ -724,6 +736,12 @@ export const layer: Layer.Layer<
         });
         if (!repaired.committed) return;
       }
+      // Opening a session does not prompt the provider, so the workspace is still unchanged.
+      const baseline = yield* runExecution.forkBaseline({
+        appThread: projection.thread,
+        run,
+        checkpointScope,
+      });
       const sessionResult = yield* Effect.result(
         providerSessions.open({
           threadId: projection.thread.id,
@@ -1613,8 +1631,11 @@ export const layer: Layer.Layer<
       if (!runningWrite.committed) {
         return;
       }
-      const routableSubagents = projection.subagents.filter((subagent) =>
-        RunExecutionService.canRouteRelatedSubagent(subagent.status),
+      // Delegated (app_owned) children run their own runs; routing them here ingests their items twice.
+      const routableSubagents = projection.subagents.filter(
+        (subagent) =>
+          subagent.origin === "provider_native" &&
+          RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
       const persistHandoff = Effect.fn("ProviderTurnStartService.persist")(function* (
         handoff: OrchestrationV2ContextHandoff,
@@ -1666,12 +1687,11 @@ export const layer: Layer.Layer<
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
+          const text = goalCommand ? userText : withInlineContext(context, userText);
           yield* start({
             ...(noteContinuation ? promptedInput : turnInput),
-            message: {
-              ...turnInput.message,
-              text: goalCommand ? userText : withInlineContext(context, userText),
-            },
+            message: { ...turnInput.message, text },
+            ...(text === userText ? {} : { inlineContextLength: text.length - userText.length }),
           }).pipe(
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.
             Effect.tapError((error) =>
@@ -1744,6 +1764,7 @@ export const layer: Layer.Layer<
         providerThread: runningProviderThread,
         attempt: runningAttempt,
         attemptId: attempt.id,
+        baseline,
         loadInheritedBackgroundTurnItems: runControls.loadInheritedBackgroundTurnItems,
         relatedThreadIds: routableSubagents.flatMap((subagent) =>
           subagent.childThreadId === null ? [] : [subagent.childThreadId],
@@ -1789,27 +1810,65 @@ export const layer: Layer.Layer<
     return ProviderTurnStartServiceV2.of({
       start: Effect.fn("ProviderTurnStartService.start")(
         function* (input) {
-          // Storage cleanup removes worktrees under the same lease. Only startup
-          // holds it; the provider turn runs after it is released.
-          const { thread } = yield* projectionStore.getThreadRecords(input.threadId, []);
-          const providerTurn = yield* thread.worktreePath === null
-            ? start(input)
-            : withWorkspaceLease(path.resolve(thread.worktreePath), start(input));
-          if (providerTurn !== undefined) {
-            // Run execution owns finalization after the running write. A later
-            // failure must not settle a replacement attempt committed by steering.
-            yield* providerTurn.pipe(
-              Effect.catchCauseIf(
-                (cause) => !Cause.hasInterruptsOnly(cause),
-                (cause) =>
-                  Effect.logWarning(
-                    "Run execution failed after starting",
-                    { runId: input.runId },
-                    cause,
-                  ),
-              ),
-            );
-          }
+          let startingRun: OrchestrationV2Run | undefined;
+          const captureStartingRun = (run: OrchestrationV2Run) => {
+            startingRun = run;
+          };
+          return yield* Effect.gen(function* () {
+            // Storage cleanup removes worktrees under the same lease. Only startup
+            // holds it; the provider turn runs after it is released.
+            const { thread } = yield* projectionStore.getThreadRecords(input.threadId, []);
+            const cwd =
+              thread.worktreePath ??
+              (yield* projects
+                .getById(thread.projectId, { includeDeleted: true })
+                .pipe(Effect.map((project) => Option.getOrUndefined(project)?.workspaceRoot)));
+            const providerTurn = yield* cwd === undefined
+              ? start(input, captureStartingRun)
+              : withTurnStartReservation(
+                  fileSystem,
+                  path,
+                  path.resolve(cwd),
+                  thread.worktreePath === null
+                    ? start(input, captureStartingRun)
+                    : withWorkspaceLease(
+                        path.resolve(thread.worktreePath),
+                        start(input, captureStartingRun),
+                      ),
+                );
+            if (providerTurn !== undefined) {
+              // Run execution owns finalization after the running write. A later
+              // failure must not settle a replacement attempt committed by steering.
+              yield* providerTurn.pipe(
+                Effect.catchCauseIf(
+                  (cause) => !Cause.hasInterruptsOnly(cause),
+                  (cause) =>
+                    Effect.logWarning(
+                      "Run execution failed after starting",
+                      { runId: input.runId },
+                      cause,
+                    ),
+                ),
+              );
+            }
+          }).pipe(
+            Effect.catchCauseIf(
+              (cause) => !Cause.hasInterruptsOnly(cause),
+              (cause) =>
+                Effect.fail(
+                  new ProviderTurnStartError({
+                    runId: input.runId,
+                    cause: Cause.squash(cause),
+                    ...(startingRun?.activeAttemptId == null || startingRun.rootNodeId == null
+                      ? {}
+                      : {
+                          attemptId: startingRun.activeAttemptId,
+                          rootNodeId: startingRun.rootNodeId,
+                        }),
+                  }),
+                ),
+            ),
+          );
         },
         (effect, input) =>
           effect.pipe(
@@ -1821,10 +1880,16 @@ export const layer: Layer.Layer<
           ),
       ),
       failStartingRun: Effect.fn("ProviderTurnStartService.failStartingRun")(
-        function* ({ threadId, runId }) {
+        function* ({ threadId, runId, attemptId, rootNodeId }) {
           const projection = yield* projectionStore.getTurnStartContext(threadId, runId);
           const run = projection.runs.find((candidate) => candidate.id === runId);
-          if (run === undefined || run.status !== "starting") return;
+          if (
+            run === undefined ||
+            run.status !== "starting" ||
+            run.activeAttemptId !== attemptId ||
+            run.rootNodeId !== rootNodeId
+          )
+            return;
           const rootNode = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
           const attempt = projection.attempts.find(
             (candidate) => candidate.id === run.activeAttemptId,

@@ -9,6 +9,7 @@ import {
   extractDevinSubagentUpdate,
 } from "./devinAcp.ts";
 import { extractDroidElicitationForm } from "./droidAcp.ts";
+import { extractOmpElicitationForm } from "./ompAcp.ts";
 import { extractOpenCodeElicitationForm } from "./opencodeAcp.ts";
 import {
   copilotClientCapabilitiesMeta,
@@ -188,6 +189,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const startupKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
   const isDevin = registryAgentId === "devin";
+  const isOmp =
+    options.settings.source === "local" &&
+    /^omp(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
   const isOpenCode =
     registryAgentId === "opencode" ||
     registryAgentId === "opencode-v2" ||
@@ -231,9 +235,11 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
     ...(registryAgentId === "factory-droid"
       ? { extractElicitationForm: extractDroidElicitationForm }
-      : isOpenCode
-        ? { extractElicitationForm: extractOpenCodeElicitationForm }
-        : {}),
+      : isOmp
+        ? { extractElicitationForm: extractOmpElicitationForm }
+        : isOpenCode
+          ? { extractElicitationForm: extractOpenCodeElicitationForm }
+          : {}),
     // glm-acp-agent is the one agent whose per-turn usage a live probe has verified.
     ...(registryAgentId === "glm-acp-agent" ? { reportsPerTurnPromptUsage: true } : {}),
     ...(registryAgentId === "mistral-vibe"
