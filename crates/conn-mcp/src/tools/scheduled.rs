@@ -279,14 +279,23 @@ async fn load_task(
         )
     })?;
     let mut modes = vec![(to_json(&task.runtime_mode), to_json(&task.interaction_mode))];
-    if let Some(thread) = &task.thread_id
-        && let Ok(projection) = cx.projection(thread).await
-    {
-        let bound = &projection["thread"];
-        modes.push((
-            bound["runtimeMode"].clone(),
-            bound["interactionMode"].clone(),
-        ));
+    // `scheduledTaskRunModes`: a missing or deleted thread adds no modes; a failed read fails.
+    if let Some(thread) = &task.thread_id {
+        match cx
+            .engine()
+            .get_thread_projection(conn_contract::ThreadId::from(thread.as_str()))
+            .await
+        {
+            Ok(projection) if projection["thread"]["deletedAt"].is_null() => {
+                let bound = &projection["thread"];
+                modes.push((
+                    bound["runtimeMode"].clone(),
+                    bound["interactionMode"].clone(),
+                ));
+            }
+            Ok(_) | Err(conn_engine::EngineError::Rejected(_)) => {}
+            Err(conn_engine::EngineError::Internal(message)) => return Err(internal(message)),
+        }
     }
     for (runtime, interaction) in modes {
         resolve_runtime_mode(&limits.runtime_mode, runtime.as_str())?;

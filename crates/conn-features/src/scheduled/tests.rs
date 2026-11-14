@@ -1357,3 +1357,190 @@ async fn the_store_survives_a_restart_and_runs_use_t3_ids() {
     let decoded: Vec<ScheduledTask> = from_json(stored["tasks"].clone()).expect("contract rows");
     assert_eq!(decoded.len(), 1);
 }
+
+/// Finding 3: a due bound task whose thread holds a queued copy, while the store cannot be
+/// written. `reschedule_missed` cannot save, so the row stays due; the timer then waits
+/// `STALLED_RETRY` (T3's poll interval) instead of looping with a zero wait.
+#[tokio::test(start_paused = true)]
+async fn the_timer_waits_when_a_due_task_cannot_be_saved() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let env = Env::new("stalled-timer", "2026-07-01T09:00:00.000Z");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = calls.clone();
+    let fake = Fake {
+        queued: Box::new(move |_, _| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            true
+        }),
+        shell: Box::new(|_| shell("project-spin")),
+        ..Fake::default()
+    };
+    let service = env.start(fake, "UTC", true).await;
+    upsert(
+        &service,
+        json!({"id": "task:spin", "projectId": "project-spin", "threadId": "thread:spin"}),
+    )
+    .await;
+    std::fs::set_permissions(&env.dir, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    async fn spin(millis: u64) {
+        let real = std::time::Instant::now();
+        while real.elapsed() < Duration::from_millis(millis) {
+            tokio::task::yield_now().await;
+        }
+    }
+    tokio::time::advance(Duration::from_secs(61)).await;
+    spin(300).await;
+    let at_once = calls.load(Ordering::SeqCst);
+    for _ in 0..12 {
+        tokio::time::advance(Duration::from_secs(5)).await;
+        spin(30).await;
+    }
+    let after_a_minute = calls.load(Ordering::SeqCst);
+    std::fs::set_permissions(&env.dir, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    assert_eq!(at_once, 1, "one pass while no time passes");
+    assert!(
+        (12..=14).contains(&after_a_minute),
+        "one pass every 5 s: {after_a_minute}"
+    );
+    drop(service);
+}
+
+/// Finding 3: a scheduled run whose row cannot be marked running leaves the pass stalled and
+/// reports the cause; the timer's log says so once, not on every pass.
+#[tokio::test(start_paused = true)]
+async fn a_failed_scheduled_save_is_logged_once_per_state() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = Env::new("stalled-log", "2026-07-01T09:00:00.000Z");
+    let service = env.start(Fake::default(), "UTC", false).await;
+    upsert(
+        &service,
+        json!({"id": "task:log", "projectId": "project:test", "threadId": null,
+               "threadMode": "new_thread"}),
+    )
+    .await;
+    std::fs::set_permissions(&env.dir, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    tokio::time::advance(Duration::from_secs(61)).await;
+    let mut log = super::TimerLog::default();
+    let first = service.run_due().await;
+    let second = service.run_due().await;
+    std::fs::set_permissions(&env.dir, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    assert!(first.stalled, "the row is still due");
+    assert_eq!(first, second);
+    let [failure] = first.failures.as_slice() else {
+        panic!("one failure: {first:?}");
+    };
+    assert!(
+        failure.starts_with("Could not mark schedule task as running. "),
+        "{failure}"
+    );
+    assert_eq!(log.report(&first).len(), 2, "the failure and the stall");
+    assert!(log.report(&second).is_empty(), "nothing new");
+    let third = service.run_due().await;
+    assert!(
+        !third.stalled,
+        "the row moves once the store can be written"
+    );
+    assert_eq!(log.report(&third), ["due tasks move on again"]);
+    drop(service);
+}
+
+/// Finding 4: `runNow` 1 is interrupted while its launch waits, and `runNow` 2 arrives in
+/// the same read of the socket. The session aborts call 1 and spawns call 2 before either is
+/// polled, as `session.rs` does for `Interrupt` then `Request`. As in T3, run 1's reservation
+/// holds until its release has recorded it, so run 2 is refused as already running; a run
+/// after that records its own end.
+#[tokio::test(start_paused = true)]
+async fn an_interrupted_run_now_is_released_before_the_next_run() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let env = Env::new("run-now-race", "2026-07-01T09:00:00.000Z");
+    let launches = Arc::new(AtomicUsize::new(0));
+    let counted = launches.clone();
+    let fake = Fake {
+        launch: Box::new(move |_| {
+            let n = counted.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                if n == 0 {
+                    std::future::pending::<()>().await;
+                }
+                Ok("thread:next".to_owned())
+            })
+        }),
+        ..Fake::default()
+    };
+    let service = env.start(fake, "UTC", false).await;
+    let task = upsert(
+        &service,
+        json!({"id": "task:race", "projectId": "project:test", "threadId": null,
+               "threadMode": "new_thread"}),
+    )
+    .await;
+    let first = {
+        let service = service.clone();
+        let id = task.id.clone();
+        tokio::spawn(async move { service.run_now(&id).await })
+    };
+    while launches.load(Ordering::SeqCst) == 0 {
+        tokio::task::yield_now().await;
+    }
+    first.abort();
+    let second = {
+        let service = service.clone();
+        let id = task.id.clone();
+        tokio::spawn(async move { service.run_now(&id).await })
+    };
+    let refused = second
+        .await
+        .expect("join")
+        .expect_err("run 1 still holds the task");
+    assert_eq!(refused.message, "Schedule task is already running.");
+    for _ in 0..50 {
+        tokio::task::yield_now().await;
+    }
+    let row = tasks(&service).await.into_iter().next().expect("row");
+    assert_eq!(row.last_run_status, ScheduledTaskRunStatus::Failed);
+    assert_eq!(row.last_run_error.as_deref(), Some(super::INTERRUPTED_RUN));
+    assert_eq!(row.run_count, 1);
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let third = service.run_now(&task.id).await.expect("run 3");
+    assert_eq!(third.thread_id.as_deref(), Some("thread:next"));
+    let row = tasks(&service).await.into_iter().next().expect("row");
+    assert_eq!(
+        (
+            row.last_run_status,
+            row.last_run_error.as_deref(),
+            row.run_count
+        ),
+        (ScheduledTaskRunStatus::Succeeded, None, 2)
+    );
+}
+
+/// Finding 4: a release for an earlier run leaves a row a later run marked running.
+#[tokio::test(start_paused = true)]
+async fn a_release_only_ends_its_own_run() {
+    let env = Env::new("release-own-run", "2026-07-01T09:00:00.000Z");
+    let service = env.start(Fake::default(), "UTC", false).await;
+    let task = upsert(
+        &service,
+        json!({"id": "task:own", "projectId": "project:test", "threadId": null,
+               "threadMode": "new_thread"}),
+    )
+    .await;
+    let later = format_iso(ms("2026-07-01T09:00:05.000Z"));
+    service
+        .mark_running(&task.id, &later, super::Trigger::Manual)
+        .await
+        .expect("mark");
+    service
+        .release_stuck_run(&task.id, "2026-07-01T09:00:00.000Z", super::INTERRUPTED_RUN)
+        .await;
+    let row = tasks(&service).await.into_iter().next().expect("row");
+    assert_eq!(row.last_run_status, ScheduledTaskRunStatus::Running);
+    assert_eq!(row.run_count, 0);
+    service
+        .release_stuck_run(&task.id, &later, super::INTERRUPTED_RUN)
+        .await;
+    let row = tasks(&service).await.into_iter().next().expect("row");
+    assert_eq!(row.last_run_status, ScheduledTaskRunStatus::Failed);
+}

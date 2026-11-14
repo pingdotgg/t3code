@@ -40,6 +40,9 @@ apps/server/src/provider/acp
 apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts
 apps/server/scripts/acp-replay-agent.ts
 packages/provider-core/src/server/runtimeInstructions.ts
+packages/provider-core/src/server/pathExpansion.ts
+packages/provider-core/src/server/snapshotProbe.ts
+packages/provider-core/src/server/instanceEnvironment.ts
 packages/shared/src/toolActivity.ts
 
 [crates/conn-provider-support]

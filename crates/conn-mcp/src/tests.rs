@@ -1878,6 +1878,43 @@ async fn an_agent_schedules_edits_and_a_client_runs_and_deletes_a_task() {
     );
 }
 
+/// Own finding A: a task bound to a thread whose read fails is refused, as T3's
+/// `scheduledTaskRunModes` fails on a read error; only a missing or deleted thread is skipped.
+#[tokio::test(flavor = "current_thread")]
+async fn a_task_whose_bound_thread_cannot_be_read_is_refused() {
+    let f = fixture_with_tasks("scheduled-broken-thread").await;
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let bound = launch_as_swamp(&mut swamp, "Bound", "hang", "full-access", "default").await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &bound)).await;
+    let created = agent
+        .ok(
+            "schedule_task",
+            json!({"prompt": "Check", "schedule": {"type": "interval", "everyMs": 3_600_000}}),
+        )
+        .await;
+    let id = created["scheduledTaskId"].as_str().unwrap().to_owned();
+    assert_eq!(created["boundThreadId"], json!(bound));
+    rusqlite::Connection::open(f.dir.join("engine.sqlite"))
+        .unwrap()
+        .execute(
+            "UPDATE threads SET thread = '{not json' WHERE id = ?1",
+            [&bound],
+        )
+        .unwrap();
+    assert_eq!(
+        swamp
+            .failure(
+                "schedule_task",
+                json!({"scheduledTaskId": id, "enabled": false})
+            )
+            .await,
+        (
+            "orchestration_error".to_owned(),
+            "T3 Code could not complete this request.".to_owned()
+        )
+    );
+}
+
 fn annotation(id: &str, comment: &str) -> conn_contract::AnnotationCapture {
     conn_contract::from_json(json!({"id": id, "comment": comment})).unwrap()
 }

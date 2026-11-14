@@ -19,18 +19,29 @@ with its state and what it needs from outside the server.
   `_deleted.json`. Each call reads the project's folder under the project's lock on a
   blocking thread and writes what changed (atomic writes). Nothing stays in memory between
   calls but one lock and one change counter per project used. At most 1,000 annotations per
-  project (the T3 server has no limit); a 1,001st is refused as invalid.
+  project (the T3 server has no limit); a 1,001st is refused as invalid. A screenshot is
+  decoded on a blocking thread and may be at most 8 MiB decoded (the T3 server has no cap): a
+  larger one is refused as invalid ("The screenshot is larger than 8 MB.") before it is
+  decoded. `_deleted.json` keeps the newest 10,000 removed ids per project, oldest dropped
+  first (the T3 server keeps all); a longer file the T3 server wrote loads whole, and the next
+  removal here trims it.
 - **Rules from `AnnotationStore.ts`:** numbers per project are never reused; an edit keeps the
   number, status and times; a removed id can never come back; claim by id only from `todo`,
   otherwise the oldest todo that is not a question; complete and release are idempotent from
   their end state; removal records the ids first, so a stopped removal finishes on the next
   read. Ids name files, so an id outside `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,199}$` never reaches a
   path (a defect over RPC, `-32602` over `/mcp`, as the schema refuses it).
+- **Deliberate difference from the T3 server:** a project id made only of dots (`.`, `..`)
+  gets the folder `%2E` or `%2E%2E`, not the annotations root or the state folder, and every
+  folder must be one child of the annotations root. The T3 server's `directoryFor` keeps the
+  dots, so there `..` writes into the state folder (`docs/status.md`, "Faults found in the T3
+  server"). Folders the T3 server wrote for every other id load under the same name. The lock
+  is per folder, so two ids that map to one folder share it.
 - **`/mcp`:** the caller thread's project. Failures reach the agent as their plain message:
   Effect's `McpServer` renders a declared `Error` with a message that way
   (`declaredFailureResult`), and `parity.mjs` shows the T3 server does so for this toolkit.
-- **Proofs:** 11 unit tests (the 8 cases of `AnnotationStore.test.ts`, the id rule, and files
-  the T3 server wrote); the 2 cases of `McpAnnotationsToolkit.test.ts` plus the refusals;
+- **Proofs:** 11 unit tests (the 8 cases of `AnnotationStore.test.ts`, the id rule, files
+  the T3 server wrote, and 3 for hostile project ids); the 2 cases of `McpAnnotationsToolkit.test.ts` plus the refusals;
   the 3 methods decode with the real client's decoders; 7 `parity.mjs` steps, no differences.
 - **Not done:** no client reducer check: the web client keeps the stream's latest list as it
   is, so the decode check is what it needs.
@@ -45,7 +56,9 @@ with its state and what it needs from outside the server.
   running, or until a change wakes it. It never polls. It sleeps at most 10 minutes before it
   reads the wall clock again, so a clock change or a host that slept is seen (the T3 server's
   due hint ages out after the same). Due tasks run one after another, oldest first, as T3's
-  `runDueTasks`.
+  `runDueTasks`. After a pass that left a due task as it was (its row could not be
+  saved, for example on a full disk), the timer waits at least 5 s, the T3 server's poll
+  interval, and logs the failure once while it repeats.
 - **Idle cost:** with no tasks, the timer waits on a `Notify` and never wakes. With tasks, it
   wakes at each due time and at most every 10 minutes. Memory: the task list (about 1 KiB a
   task) and one parked task. Not measured as process memory.
@@ -61,7 +74,9 @@ with its state and what it needs from outside the server.
   thread and follow it when it moves to another project. The run's end is recorded only on the
   row it marked running. `runNow` runs in the caller's future, as in T3: a caller that stops
   waiting stops the run, which is recorded as failed with T3's interrupt text ("All fibers
-  interrupted without error"), counted and planned again (`releaseStuckRun`). A follower watches the run up to 24 hours and records a provider
+  interrupted without error"), counted and planned again (`releaseStuckRun`). As in T3, the
+  task stays reserved until that release is written, and a release only ends the run it
+  belongs to (the row's start time must match). A follower watches the run up to 24 hours and records a provider
   failure after an accepted message (`recordRunFailure`); one follower per task.
 - **Restarts:** rows left `running` are recorded as failed ("Run was interrupted by a server
   restart.") and planned again; a one-time run counts from its start.

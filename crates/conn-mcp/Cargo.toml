@@ -28,6 +28,8 @@ sha2.workspace = true
 jiff.workspace = true
 conn-engine = { workspace = true, features = ["fake-provider"] }
 tokio = { workspace = true, features = ["test-util"] }
+# Already in the tree (conn-engine): a test breaks a stored thread row to fail a read.
+rusqlite.workspace = true
 
 [lints]
 workspace = true

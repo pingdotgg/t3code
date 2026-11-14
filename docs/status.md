@@ -618,6 +618,18 @@ T3 Code.
   filesystem write outside the scope (traced in the code, not run). Our fix: the method needs
   `source-control:write` and `filesystem:write` (`STRICTER` in
   `crates/conn-server/src/scopes.rs`).
+- **A project id of `..` puts the annotation folder at the state folder.** In
+  `apps/server/src/annotations/AnnotationStore.ts:141`, `directoryFor` keeps dots, so
+  `annotations/..` is the state folder, and `ProjectId` takes any non-empty text. Input: a client
+  with `orchestration:operate` and `preview:operate` creates a project with id `..`, then calls
+  `annotations.create` with id `settings`. Effect in the T3 server: `<userdata>/settings.json`
+  is replaced by the annotation JSON, and `annotations.remove` deletes it; the same holds for
+  `keybindings.json` and any other `<id>.json` or `<id>.png|jpg|webp` there. Auth lives in
+  `statev2.sqlite`, which no annotation name reaches. Here the same call could also replace or
+  delete `auth.json`. Our fix: a folder name made only of dots is escaped (each `.` becomes
+  `%2E`), the folder must be one child of the annotations root, the per-project lock is keyed
+  by the folder name, and `project.create` refuses `.` and `..`.
+
 
 ## What is left, in the planned order
 
