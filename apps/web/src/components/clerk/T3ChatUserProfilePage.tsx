@@ -1,95 +1,43 @@
-import { findErrorTraceId } from "@t3tools/client-runtime/errors";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
 import { T3CHAT_PLAN_TUNNEL_LIMITS, type RelayT3ChatLink } from "@t3tools/contracts/relay";
 import { MessageSquareIcon } from "lucide-react";
-import { useState } from "react";
+import type { ReactNode } from "react";
 
-import {
-  createManagedRelayT3ChatLinkRequestCommand,
-  unlinkManagedRelayT3ChatCommand,
-  useManagedRelayT3ChatLink,
-} from "../../cloud/managedRelayState";
-import { readLocalApi } from "../../localApi";
-import { useAtomCommand } from "../../state/use-atom-command";
+import { useManagedTunnelUsage } from "../../cloud/managedRelayState";
+import { T3CHAT_SUBSCRIPTION_URL, TunnelUsageMeter } from "../cloud/TunnelUsage";
 import { Button } from "../ui/button";
-import { toastManager } from "../ui/toast";
 import {
   ClerkUserProfilePage,
   ClerkUserProfileRefreshButton,
   ClerkUserProfileRow,
 } from "./ClerkUserProfilePage";
+import { useT3ChatLink } from "./useT3ChatLink";
 
-function planLabel(link: RelayT3ChatLink): string {
+const upgradeLink = (
+  <a className="underline" href={T3CHAT_SUBSCRIPTION_URL} target="_blank" rel="noopener noreferrer">
+    Upgrade on T3 Chat
+  </a>
+);
+
+function planLabel(link: RelayT3ChatLink): ReactNode {
   switch (link.plan) {
     case "premier":
       return `Premier · up to ${T3CHAT_PLAN_TUNNEL_LIMITS.premier} tunnels`;
     case "pro":
-      return `Pro · up to ${T3CHAT_PLAN_TUNNEL_LIMITS.pro} tunnels, or ${T3CHAT_PLAN_TUNNEL_LIMITS.premier} with Premier`;
+      return (
+        <>
+          Pro · up to {T3CHAT_PLAN_TUNNEL_LIMITS.pro} tunnels. {upgradeLink} to Premier for{" "}
+          {T3CHAT_PLAN_TUNNEL_LIMITS.premier}.
+        </>
+      );
     case "free":
-      return "Upgrade on T3 Chat for more tunnels";
+      return <>{upgradeLink} for more tunnels</>;
   }
-}
-
-function reportFailure(title: string, cause: unknown) {
-  const traceId = findErrorTraceId(cause);
-  toastManager.add({
-    type: "error",
-    title,
-    description: cause instanceof Error ? cause.message : "Try again.",
-    data: traceId
-      ? {
-          secondaryActionProps: {
-            children: "Copy trace ID",
-            onClick: () => void navigator.clipboard?.writeText(traceId),
-          },
-        }
-      : undefined,
-  });
 }
 
 /** Links a T3 Chat account so paid subscribers get more tunnels. */
 export function T3ChatUserProfilePage() {
-  const linkState = useManagedRelayT3ChatLink();
-  const createLinkRequest = useAtomCommand(createManagedRelayT3ChatLinkRequestCommand, {
-    reportFailure: false,
-  });
-  const unlink = useAtomCommand(unlinkManagedRelayT3ChatCommand, { reportFailure: false });
-  const [pending, setPending] = useState<"link" | "unlink" | null>(null);
-  // Kept so a blocked popup still leaves the user a link to open.
-  const [linkUrl, setLinkUrl] = useState<string | null>(null);
-
-  const handleLink = async () => {
-    const accountId = linkState.accountId;
-    if (!accountId || pending) return;
-    setPending("link");
-    const result = await createLinkRequest({ accountId });
-    if (result._tag === "Success") {
-      setLinkUrl(result.value);
-      await readLocalApi()
-        ?.shell.openExternal(result.value)
-        .catch(() => undefined);
-    } else if (!isAtomCommandInterrupted(result)) {
-      reportFailure("Could not start linking", squashAtomCommandFailure(result));
-    }
-    setPending(null);
-  };
-
-  const handleUnlink = async () => {
-    const accountId = linkState.accountId;
-    if (!accountId || pending) return;
-    setPending("unlink");
-    const result = await unlink({ accountId });
-    if (result._tag === "Success") {
-      setLinkUrl(null);
-      linkState.refresh();
-    } else if (!isAtomCommandInterrupted(result)) {
-      reportFailure("Could not unlink T3 Chat", squashAtomCommandFailure(result));
-    }
-    setPending(null);
-  };
+  const { linkState, pending, linkUrl, link: handleLink, unlink: handleUnlink } = useT3ChatLink();
+  const usage = useManagedTunnelUsage();
 
   const data = linkState.data;
   const link = data?.link ?? null;
@@ -102,7 +50,7 @@ export function T3ChatUserProfilePage() {
         <ClerkUserProfileRefreshButton
           disabled={pending !== null}
           isPending={linkState.isPending}
-          onClick={linkState.refresh}
+          onClick={usage.refresh}
         />
       }
     >
@@ -160,6 +108,11 @@ export function T3ChatUserProfilePage() {
               )}
             </div>
           </ClerkUserProfileRow>
+          {usage.used !== null && usage.limit !== null ? (
+            <li className="border-t py-4">
+              <TunnelUsageMeter used={usage.used} limit={usage.limit} />
+            </li>
+          ) : null}
         </ul>
       )}
     </ClerkUserProfilePage>
