@@ -43,6 +43,7 @@ const stopEarlierBackgroundWork = ({
   backgroundWorkAfterStop,
   stalledRun,
   workflowMember = false,
+  probeOnly = false,
 }: {
   readonly wakeAfterStop?: boolean;
   readonly failedStart?: boolean;
@@ -50,6 +51,7 @@ const stopEarlierBackgroundWork = ({
   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
   readonly olderStart?: boolean;
   readonly workflowMember?: boolean;
+  readonly probeOnly?: boolean;
   readonly stalledRun?: "missing-session-terminal" | "returned-interrupt" | "superseded-attempt";
 }) =>
   Effect.gen(function* () {
@@ -98,7 +100,12 @@ const stopEarlierBackgroundWork = ({
                       return backgroundWorkAfterStop === "running";
                     }),
                 }
-              : {}),
+              : probeOnly
+                ? {
+                    hasPendingBackgroundWorkForThread: () =>
+                      Effect.succeed(interrupts.length === 0),
+                  }
+                : {}),
             ensureThread: ({ threadId }) =>
               Effect.succeed({
                 id: ProviderThreadId.make(`provider-thread:codex:${threadId}`),
@@ -246,33 +253,35 @@ const stopEarlierBackgroundWork = ({
       const devServerId = TurnItemId.make("turn-item:dev-server");
       const now = yield* DateTime.now;
       yield* sink.write({
-        events: [
-          {
-            id: EventId.make("dev-server"),
-            type: "turn-item.updated",
-            threadId,
-            runId: first.runId,
-            occurredAt: now,
-            payload: {
-              id: devServerId,
-              threadId,
-              runId: first.runId,
-              nodeId: first.rootNodeId,
-              providerThreadId: codexTurn.providerThreadId,
-              providerTurnId: codexTurn.id,
-              nativeItemRef: null,
-              parentItemId: null,
-              ordinal: 100,
-              status: "running",
-              title: null,
-              startedAt: now,
-              completedAt: null,
-              updatedAt: now,
-              type: "command_execution",
-              input: "vp run dev --share",
-            },
-          },
-        ],
+        events: probeOnly
+          ? []
+          : [
+              {
+                id: EventId.make("dev-server"),
+                type: "turn-item.updated",
+                threadId,
+                runId: first.runId,
+                occurredAt: now,
+                payload: {
+                  id: devServerId,
+                  threadId,
+                  runId: first.runId,
+                  nodeId: first.rootNodeId,
+                  providerThreadId: codexTurn.providerThreadId,
+                  providerTurnId: codexTurn.id,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 100,
+                  status: "running",
+                  title: null,
+                  startedAt: now,
+                  completedAt: null,
+                  updatedAt: now,
+                  type: "command_execution",
+                  input: "vp run dev --share",
+                },
+              },
+            ],
       });
       if (stalledRun !== undefined) {
         const before = yield* orchestrator.getThreadProjection(threadId);
@@ -470,6 +479,20 @@ const stopEarlierBackgroundWork = ({
         threadDisposition: "reusable",
       });
       yield* Fiber.join(settled);
+      if (probeOnly) {
+        // Checkpoint capture has not run, so the run is still waiting on a completed turn.
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("stop-waiting-run"),
+          threadId,
+        });
+        yield* worker.drain();
+        assert.deepEqual(
+          interrupts.map((input) => [input.providerTurnId, input.requestRuntimeRestart]),
+          [[codexTurn.id, true]],
+        );
+        return;
+      }
       yield* worker.drain();
 
       const codexProviderThread = (yield* orchestrator.getThreadProjection(threadId))
@@ -1056,6 +1079,10 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
 it.effect.each(["missing-session-terminal", "returned-interrupt", "superseded-attempt"] as const)(
   "Stop recovers a stalled run after %s without changing a newer attempt",
   (stalledRun) => stopEarlierBackgroundWork({ stalledRun }),
+);
+
+it.effect("Stop reaches work only the provider sees while the settled run waits", () =>
+  stopEarlierBackgroundWork({ probeOnly: true }),
 );
 
 it.effect("Stop holds a provider wake that queues before the stopped turn ends", () =>

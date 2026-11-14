@@ -12913,7 +12913,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         runs: projection.runs,
       }).length > 0 ||
         (run !== undefined &&
-          !isActiveRun(run) &&
+          run.status !== "preparing" &&
+          run.status !== "starting" &&
+          run.status !== "running" &&
           (yield* runHasLiveBackgroundWork(run, projection))));
     // A failed start has no provider turn. Background work still belongs
     // to the provider thread, so Stop reaches its latest accepted turn.
