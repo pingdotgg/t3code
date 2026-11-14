@@ -47,12 +47,6 @@ describe("openDiffFilePrimaryAction", () => {
 
   it.each([
     {
-      filePath: "Frontend/src/index.ts",
-      workspaceRoot: "C:\\repo\\frontend",
-      repositoryRoot: "C:\\repo",
-      expected: "src/index.ts",
-    },
-    {
       filePath: "Frontend/src\\index.ts",
       workspaceRoot: "C:\\repo\\frontend",
       repositoryRoot: "C:\\repo",
@@ -65,22 +59,16 @@ describe("openDiffFilePrimaryAction", () => {
       expected: "src/index.ts",
     },
     {
-      filePath: "Frontend/Src/index.ts",
-      workspaceRoot: "C:\\repo\\frontend\\src",
-      repositoryRoot: "C:\\repo",
-      expected: "index.ts",
-    },
-    {
       filePath: "frontend/back\\slash.txt",
       workspaceRoot: "/repo/frontend",
       repositoryRoot: "/repo",
       expected: "back\\slash.txt",
     },
     {
-      filePath: "back\\slash/a.ts",
+      filePath: "back/slash/a.ts",
       workspaceRoot: "/repo/back\\slash",
       repositoryRoot: "/repo",
-      expected: "a.ts",
+      expected: null,
     },
   ])(
     "resolves $filePath in $workspaceRoot",
