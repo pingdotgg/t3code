@@ -210,6 +210,126 @@ it("opens an idle child from Lineage when its shell has not been loaded", async 
   );
 });
 
+it("keeps status order across forks and collapsed previous agents", async () => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  state.projection = {
+    ...projection,
+    subagents: (["running", "idle", "completed", "failed"] as const).map((status) => ({
+      id: NodeId.make(`${status}-agent`),
+      threadId: projection.thread.id,
+      runId: null,
+      parentNodeId: NodeId.make("parent"),
+      origin: "app_owned",
+      createdBy: "agent",
+      driver: "codex",
+      providerInstanceId: projection.thread.providerInstanceId,
+      providerThreadId: null,
+      childThreadId: ThreadId.make(`${status}-child`),
+      nativeTaskRef: null,
+      prompt: "Inspect the change",
+      title: `${status} child`,
+      model: null,
+      status,
+      result: null,
+      startedAt: projection.thread.updatedAt,
+      completedAt: null,
+      updatedAt: projection.thread.updatedAt,
+    })),
+  };
+  state.relatedShells = [
+    {
+      ...projection.thread,
+      id: ThreadId.make("finished-fork"),
+      title: "Finished fork",
+      status: "completed",
+      lineage: { parentThreadId: projection.thread.id, relationshipToParent: "fork" },
+    },
+  ];
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={EnvironmentId.make("local")}
+      threadId={projection.thread.id}
+      showLineage
+      showSideChats={false}
+    />,
+  );
+
+  await expect.element(screen.getByText("Finished fork")).toBeVisible();
+  const titles = () =>
+    [...document.querySelectorAll("[data-thread-relationships-panel] li")].map(
+      (row) => row.textContent,
+    );
+  await vi.waitFor(() =>
+    expect(titles()).toEqual([
+      expect.stringContaining("running child"),
+      expect.stringContaining("Finished fork"),
+    ]),
+  );
+
+  const previous = screen.getByRole("button", { name: /Previous agents/ });
+  await previous.click();
+  await vi.waitFor(() =>
+    expect(titles()).toEqual([
+      expect.stringContaining("running child"),
+      expect.stringContaining("idle child"),
+      expect.stringContaining("Finished fork"),
+      expect.stringContaining("completed child"),
+      expect.stringContaining("failed child"),
+    ]),
+  );
+
+  await previous.click();
+  await vi.waitFor(() =>
+    expect(titles()).toEqual([
+      expect.stringContaining("running child"),
+      expect.stringContaining("Finished fork"),
+    ]),
+  );
+});
+
+it("reveals previous agents even when working rows fill the first page", async () => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  const statuses = [...Array.from({ length: 6 }, () => "running" as const), "completed" as const];
+  state.projection = {
+    ...projection,
+    subagents: statuses.map((status, index) => ({
+      id: NodeId.make(`agent-${index}`),
+      threadId: projection.thread.id,
+      runId: null,
+      parentNodeId: NodeId.make("parent"),
+      origin: "app_owned",
+      createdBy: "agent",
+      driver: "codex",
+      providerInstanceId: projection.thread.providerInstanceId,
+      providerThreadId: null,
+      childThreadId: ThreadId.make(`child-${index}`),
+      nativeTaskRef: null,
+      prompt: "Inspect the change",
+      title: `${status} child ${index}`,
+      model: null,
+      status,
+      result: null,
+      startedAt: projection.thread.updatedAt,
+      completedAt: null,
+      updatedAt: projection.thread.updatedAt,
+    })),
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={EnvironmentId.make("local")}
+      threadId={projection.thread.id}
+      showLineage
+      showSideChats={false}
+    />,
+  );
+
+  await screen.getByRole("button", { name: /Previous agents/ }).click();
+  await expect.element(screen.getByText("completed child 6")).toBeVisible();
+  expect(document.querySelectorAll("[data-thread-relationships-panel] li")).toHaveLength(7);
+});
+
 it("shows a lineage thread's full title in its tooltip", async () => {
   setup();
   const longTitle = "Compare the lineage tooltip against a title that the row truncates";
