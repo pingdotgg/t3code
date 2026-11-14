@@ -19,6 +19,9 @@ describe("linkReferenceAutolinks", () => {
     const text =
       "`#123 @person abc1234`\n\n```\n#123\n```\n\n[#123](https://example.com) ![#123](image.png) https://example.com/#123 user@example.com \\#123 1234567\n\n[ref]: https://example.com/#123";
     expect(linkReferenceAutolinks(text, github)).toBe(text);
+    for (const html of ["<!DOCTYPE html>", "<?xml version='1.0'?>", "<![CDATA[@reader]]>"]) {
+      expect(linkReferenceAutolinks(html, github)).toBe(html);
+    }
   });
 
   it.each([

@@ -38,8 +38,8 @@ export function linkReferenceAutolinks(
 ): string {
   if (autolinks === null) return markdown;
   const edits: { start: number; end: number; value: string }[] = [];
-  // `base` is where the parsed source starts in `markdown`.
-  const visit = (node: MarkdownNode, base: number) => {
+  // `base` is where the parsed source starts in `markdown`; `inHtml` marks text between HTML tags.
+  const visit = (node: MarkdownNode, base: number, inHtml = false) => {
     if (UNLINKED_TYPES.has(node.type)) return;
     if (node.type === "text") {
       const start = node.position?.start.offset;
@@ -56,9 +56,11 @@ export function linkReferenceAutolinks(
       let protectedHtmlDepth = 0;
       for (const child of node.children) {
         if (child.type !== "html") {
-          if (protectedHtmlDepth === 0) visit(child, base);
+          if (protectedHtmlDepth === 0) visit(child, base, inHtml);
           continue;
         }
+        // Text between tags holds no tag this pattern matches, so expanding it again would recurse forever.
+        if (inHtml) continue;
         const start = child.position?.start.offset;
         const end = child.position?.end.offset;
         if (start === undefined || end === undefined) continue;
@@ -66,7 +68,7 @@ export function linkReferenceAutolinks(
         let from = base + start;
         const linkHtmlText = (to: number) => {
           if (protectedHtmlDepth === 0 && from < to) {
-            visit(parser.parse(markdown.slice(from, to)), from);
+            visit(parser.parse(markdown.slice(from, to)), from, true);
           }
         };
         for (const tag of markdown.slice(base + start, base + end).matchAll(HTML_TAG)) {
