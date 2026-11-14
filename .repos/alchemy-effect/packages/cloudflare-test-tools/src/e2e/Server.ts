@@ -31,16 +31,8 @@ declare namespace Instance {
 export class Server extends Context.Service<
   Server,
   {
-    readonly live: () => Effect.Effect<
-      Instance.Raw,
-      FrameworkError,
-      Scope.Scope
-    >;
-    readonly dev: () => Effect.Effect<
-      Instance.Raw,
-      FrameworkError,
-      Scope.Scope
-    >;
+    readonly live: () => Effect.Effect<Instance.Raw, FrameworkError, Scope.Scope>;
+    readonly dev: () => Effect.Effect<Instance.Raw, FrameworkError, Scope.Scope>;
   }
 >()("@alchemy.run/cloudflare-test-tools/e2e/Server") {}
 
@@ -71,18 +63,14 @@ export const buildAndPersist: Effect.Effect<
   const cwd = yield* Cwd;
   const options = yield* Options.load().pipe(
     Effect.mapError(
-      (cause) =>
-        new FrameworkError({ message: "Failed to load e2e.config.ts", cause }),
+      (cause) => new FrameworkError({ message: "Failed to load e2e.config.ts", cause }),
     ),
   );
   const root = yield* Options.resolveRoot(options);
-  const output = yield* framework.build(
-    root !== undefined ? { root } : undefined,
-  );
+  const output = yield* framework.build(root !== undefined ? { root } : undefined);
   yield* writeBuildOutput(path.resolve(cwd, BUILD_OUTPUT_FILE), output).pipe(
     Effect.mapError(
-      (cause) =>
-        new FrameworkError({ message: "Failed to write build.json", cause }),
+      (cause) => new FrameworkError({ message: "Failed to write build.json", cause }),
     ),
   );
   return output;
@@ -92,8 +80,7 @@ export const buildAndPersist: Effect.Effect<
 const toInstance = (server: DeployTargetServer): Instance.Raw => {
   const url = new URL(server.url);
   const baseFetch =
-    server.fetch ??
-    ((path: string, init?: RequestInit) => fetch(new URL(path, url), init));
+    server.fetch ?? ((path: string, init?: RequestInit) => fetch(new URL(path, url), init));
   return {
     url,
     fetch: baseFetch,
@@ -115,9 +102,7 @@ export const layer = Layer.effect(
     // The deploy target for this fixture. Only the cloudflare target exists
     // today; `Options.TargetOptions` is where another platform would be
     // selected.
-    const target = makeCloudflareTarget(
-      Options.resolveCloudflareOptions(options),
-    );
+    const target = makeCloudflareTarget(Options.resolveCloudflareOptions(options));
     // The fixture's project root (Options.root resolved against the harness
     // cwd) — threaded into Framework.dev; buildAndPersist resolves it itself.
     const root = yield* Options.resolveRoot(options);
@@ -150,9 +135,7 @@ export const layer = Layer.effect(
       );
 
     const dev = () =>
-      framework
-        .dev(root !== undefined ? { root } : undefined)
-        .pipe(Effect.map(toInstance));
+      framework.dev(root !== undefined ? { root } : undefined).pipe(Effect.map(toInstance));
 
     return Server.of({
       live,

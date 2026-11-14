@@ -17,7 +17,7 @@ the PR, not a console click.
 serializes it to the document the CloudWatch API expects:
 
 ```typescript
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 
 const dashboard = yield* AWS.CloudWatch.Dashboard("ApiHealth", {
   DashboardBody: {

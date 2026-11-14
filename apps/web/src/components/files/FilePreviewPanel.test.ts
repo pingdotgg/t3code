@@ -10,7 +10,6 @@ import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
   resolveFilePreviewPath,
-  setMarkdownTaskChecked,
   shouldShowFileExplorer,
   workspaceAssetResource,
 } from "./filePreviewMode";
@@ -73,21 +72,6 @@ describe("isMarkdownPreviewFile", () => {
     expect(isMarkdownPreviewFile("docs/guide.MARKDOWN")).toBe(true);
     expect(isMarkdownPreviewFile("docs/guide.mdown")).toBe(true);
     expect(isMarkdownPreviewFile("docs/guide.mkd")).toBe(true);
-  });
-});
-
-describe("setMarkdownTaskChecked", () => {
-  const markdown = "- [ ] First\n- [x] Second\n";
-
-  it("checks and unchecks the task marker at the supplied offset", () => {
-    expect(setMarkdownTaskChecked(markdown, 2, true)).toBe("- [x] First\n- [x] Second\n");
-    expect(setMarkdownTaskChecked(markdown, 14, false)).toBe("- [ ] First\n- [ ] Second\n");
-    expect(setMarkdownTaskChecked("1. [X] Ordered\n", 3, false)).toBe("1. [ ] Ordered\n");
-  });
-
-  it("leaves the document unchanged for a stale or invalid marker offset", () => {
-    expect(setMarkdownTaskChecked(markdown, 0, true)).toBe(markdown);
-    expect(setMarkdownTaskChecked(markdown, 200, true)).toBe(markdown);
   });
 });
 
@@ -187,6 +171,24 @@ describe("document preview contents", () => {
     expect(html.replaceAll(/<[^>]*>/g, "")).toBe("Hello boldUnicode: αvisible");
     expect(html).toContain("<strong>");
     expect(html).not.toContain("https:");
+  });
+
+  it("treats a backslash before a line break as a paragraph break, as TextEdit writes them", () => {
+    const html = (rtf: string) => {
+      const result = openRtf(bytes(rtf));
+      if (result.type !== "document") throw new Error("Expected document");
+      return result.pages.map((page) => page.html);
+    };
+    const textEdit = String.raw`{\rtf1\ansi{\fonttbl\f0\fswiss Helvetica;}
+\pard\f0\fs24 \cf0 First\
+Second\
+\
+Third}`;
+    const expected = html(
+      String.raw`{\rtf1\ansi{\fonttbl\f0\fswiss Helvetica;}\pard\f0\fs24 \cf0 First\par Second\par \par Third}`,
+    );
+    expect(html(textEdit)).toEqual(expected);
+    expect(html(textEdit.replaceAll("\n", "\r\n"))).toEqual(expected);
   });
 
   it("preserves rich text page breaks and formatting without splitting hidden destinations", () => {
@@ -294,6 +296,64 @@ describe("document preview contents", () => {
         },
       ],
     });
+    // IPython traceback frames can omit trailing newlines or place ANSI resets after them.
+    const failed = openNotebook(
+      bytes(
+        JSON.stringify({
+          nbformat: 4,
+          cells: [
+            {
+              cell_type: "code",
+              source: "fail()",
+              outputs: [
+                {
+                  output_type: "error",
+                  traceback: [
+                    "-----",
+                    "ValueError    Traceback (most recent call last)",
+                    "Cell In[1], line 4\n----> 4 fail()\n",
+                    "Cell In[1], line 2, in fail()\n----> 2     raise ValueError()\n",
+                    "ValueError: preview proof",
+                  ],
+                },
+                {
+                  output_type: "error",
+                  traceback: [
+                    "Traceback (most recent call last):\n",
+                    "  Cell In[2], line 5\n    fail()\n",
+                    "ValueError: preview proof\n",
+                  ],
+                },
+                {
+                  output_type: "error",
+                  traceback: [
+                    "\u001b[31mTraceback (most recent call last):\n\u001b[0m",
+                    "\u001b[32mCell In[3], line 1\n----> 1 fail()\n\u001b[0m\u001b[39m",
+                    "\u001b[31mValueError: preview proof\u001b[0m",
+                    "final entry",
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    if (failed.type !== "notebook") throw new Error("Expected notebook");
+    expect(failed.cells[0]!.outputs).toEqual([
+      {
+        kind: "text",
+        text: "-----\nValueError    Traceback (most recent call last)\nCell In[1], line 4\n----> 4 fail()\nCell In[1], line 2, in fail()\n----> 2     raise ValueError()\nValueError: preview proof",
+      },
+      {
+        kind: "text",
+        text: "Traceback (most recent call last):\n  Cell In[2], line 5\n    fail()\nValueError: preview proof\n",
+      },
+      {
+        kind: "text",
+        text: "\u001b[31mTraceback (most recent call last):\n\u001b[0m\u001b[32mCell In[3], line 1\n----> 1 fail()\n\u001b[0m\u001b[39m\u001b[31mValueError: preview proof\u001b[0m\nfinal entry",
+      },
+    ]);
     expect(() => openNotebook(bytes('{"nbformat":3,"cells":[]}'))).toThrow("version 4");
     expect(() =>
       openNotebook(

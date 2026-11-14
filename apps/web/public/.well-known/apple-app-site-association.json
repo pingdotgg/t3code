@@ -1,0 +1,14 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": [
+          "ARK85ZXQ4Z.com.t3tools.t3code",
+          "ARK85ZXQ4Z.com.t3tools.t3code.preview",
+          "ARK85ZXQ4Z.com.t3tools.t3code.dev"
+        ],
+        "components": [{ "/": "/threads/*" }]
+      }
+    ]
+  }
+}
