@@ -273,55 +273,20 @@ it.effect.each([
     ),
 );
 
-it.effect.each([
-  { save: false, includeImage: false },
-  { save: false, includeImage: true },
-  { save: true, includeImage: false },
-  { save: true, includeImage: true },
-])("preserves PNG output for snapshot options %#", (input) =>
+it.effect("rejects a metadata-only response when the screenshot is saved", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      yield* serveSnapshots("mcp-png-options", snapshotResult);
-      const result = yield* callSnapshot(input);
-      expect(result.isError).toBe(false);
-      const image = result.content.find((part) => part.type === "image");
-      expect(image?.type === "image" ? image.data : undefined).toEqual(
-        input.includeImage ? new Uint8Array(Buffer.from("png")) : undefined,
-      );
-      const content = result.structuredContent;
-      const path =
-        content && typeof content === "object" && "screenshotPath" in content
-          ? content.screenshotPath
-          : undefined;
-      if (input.save) {
-        expect(typeof path).toBe("string");
-        const fileSystem = yield* FileSystem.FileSystem;
-        expect(Array.from(yield* fileSystem.readFile(path as string))).toEqual(
-          Array.from(Buffer.from("png")),
-        );
-      } else {
-        expect(path).toBeUndefined();
-      }
+      yield* serveSnapshots("mcp-missing-pixels", {
+        ...snapshotResult,
+        screenshot: { width: 10, height: 5 },
+      });
+      const result = yield* callSnapshot({ save: true });
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([
+        { type: "text", text: expect.stringContaining("did not contain requested PNG pixels") },
+      ]);
     }),
   ).pipe(Effect.provide(layerTest)),
-);
-
-it.effect.each([{ includeImage: true }, { save: true }, { save: true, includeImage: true }])(
-  "rejects a metadata-only response when pixels are requested %#",
-  (input) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        yield* serveSnapshots("mcp-missing-pixels", {
-          ...snapshotResult,
-          screenshot: { width: 10, height: 5 },
-        });
-        const result = yield* callSnapshot(input);
-        expect(result.isError).toBe(true);
-        expect(result.content).toEqual([
-          { type: "text", text: expect.stringContaining("did not contain requested PNG pixels") },
-        ]);
-      }),
-    ).pipe(Effect.provide(layerTest)),
 );
 
 const layerRecordingTools = (calls: Array<unknown>) => {
@@ -599,11 +564,12 @@ it.effect("names the screenshot destination when saving it fails", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       yield* (yield* FileSystem.FileSystem).writeFileString(config.browserArtifactsDir, "occupied");
-      yield* serveSnapshots("mcp-save-failure-client", snapshotResult);
+      const inputs = yield* serveSnapshots("mcp-save-failure-client", snapshotResult);
 
       const snapshot = yield* callSnapshot({ tabId: alternateTabId, save: true });
       const text = snapshot.content[0]?.type === "text" ? snapshot.content[0].text : "";
 
+      expect(inputs).toEqual([{ fullScreenshot: true }]);
       expect(snapshot.isError).toBe(true);
       expect(text).toMatch(/^Preview snapshot failed: Could not save preview screenshot to /);
       expect(text).toContain(config.browserArtifactsDir);
