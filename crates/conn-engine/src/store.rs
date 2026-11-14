@@ -431,6 +431,9 @@ impl Store {
                 }))
             })
             .collect();
+        if let Some(Value::Array(messages)) = projection.get_mut("messages") {
+            sort_messages_by_turn_items(messages, &items);
+        }
         if omitted {
             items.drain(..shown.len());
         }
@@ -1153,6 +1156,45 @@ fn thread(conn: &Connection, thread_id: &str) -> StoreResult<Option<Value>> {
     .transpose()
 }
 
+/// `sortMessagesByTurnItemOrder` in T3's `ProjectionStore`: a projection lists messages in
+/// the order of the lowest turn item ordinal that shows each (a user or assistant message
+/// item), then by `createdAt`, then by id. So a queued message sits after the answer before
+/// it, whatever the clock stamped.
+fn sort_messages_by_turn_items(messages: &mut [Value], items: &[Value]) {
+    let mut ordinals: std::collections::HashMap<&str, i64> = std::collections::HashMap::new();
+    for item in items {
+        if !matches!(
+            item["type"].as_str(),
+            Some("user_message" | "assistant_message")
+        ) {
+            continue;
+        }
+        let (Some(id), Some(ordinal)) = (item["messageId"].as_str(), item["ordinal"].as_i64())
+        else {
+            continue;
+        };
+        let lowest = ordinals.entry(id).or_insert(ordinal);
+        *lowest = (*lowest).min(ordinal);
+    }
+    let key = |message: &Value| {
+        (
+            message["id"]
+                .as_str()
+                .and_then(|id| ordinals.get(id).copied())
+                .unwrap_or(i64::MAX),
+            message["createdAt"]
+                .as_str()
+                .and_then(conn_support::time::millis_from_iso)
+                .unwrap_or(0),
+        )
+    };
+    messages.sort_by(|left, right| {
+        key(left)
+            .cmp(&key(right))
+            .then_with(|| left["id"].as_str().cmp(&right["id"].as_str()))
+    });
+}
+
 fn entities(conn: &Connection, thread_id: &str, kind: &str) -> StoreResult<Vec<Value>> {
     let mut stmt = conn
         .prepare("SELECT body FROM entities WHERE thread_id = ?1 AND kind = ?2 ORDER BY first_seq")
@@ -1167,6 +1209,31 @@ fn entities(conn: &Connection, thread_id: &str, kind: &str) -> StoreResult<Vec<V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T3's `sortMessagesByTurnItemOrder`: item ordinal first, so a queued message stamped
+    /// before the first answer still follows it; no item sorts last; then time, then id.
+    #[test]
+    fn messages_follow_their_turn_items() {
+        let message = |id: &str, at: &str| json!({"id": id, "createdAt": at});
+        let item = |kind: &str, message: &str, ordinal: i64| json!({"type": kind, "messageId": message, "ordinal": ordinal});
+        let mut messages = vec![
+            message("u1", "1970-01-01T00:00:00.001Z"),
+            message("u2", "1970-01-01T00:00:00.002Z"),
+            message("wake", "1970-01-01T00:00:00.000Z"),
+            message("a1", "2026-09-25T00:18:14.383Z"),
+            message("a2", "2026-09-25T00:18:16.292Z"),
+        ];
+        let items = [
+            item("user_message", "u1", 100),
+            item("assistant_message", "a1", 101),
+            item("user_message", "u2", 200),
+            item("assistant_message", "a2", 201),
+            item("notification", "wake", 0),
+        ];
+        sort_messages_by_turn_items(&mut messages, &items);
+        let order: Vec<&str> = messages.iter().filter_map(|m| m["id"].as_str()).collect();
+        assert_eq!(order, ["u1", "a1", "u2", "a2", "wake"]);
+    }
 
     /// A row the engine cannot read fails the read; it never turns into `null` or vanishes.
     #[test]

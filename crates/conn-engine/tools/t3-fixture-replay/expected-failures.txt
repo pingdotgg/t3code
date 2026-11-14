@@ -25,7 +25,7 @@ todo_list/grok                       engine: buffered delivery stores streaming 
 plan_questions/grok                  engine: buffered delivery stores streaming assistant rows
 grok_prompt_error/grok               engine: buffered delivery stores streaming assistant rows
 grok_auto_blocked_command/grok       engine: buffered delivery stores streaming assistant rows
-queued_turn/grok                     engine: buffered delivery stores streaming assistant rows; then clock: as queued_turn/codex
+queued_turn/grok                     engine: buffered delivery stores streaming assistant rows
 grok_subagent_lineage/grok           provider: Grok subagents are not built (crates/conn-provider-acp README)
 grok_background_bash/grok            driver: finish_held_run (no replay gate in acp-stub.mjs); provider: Grok background tasks are not built
 grok_background_bash_fast_wake/grok  driver: finish_held_run; provider: Grok background tasks are not built
@@ -44,7 +44,3 @@ claude_compact_after_peer_turn/claudeAgent           provider: Claude background
 # --- Claude provider, past the replay gate ---
 claude_background_task_after_root/claudeAgent provider: Claude background wakes are not built (the task's pending row ends before its wake run)
 claude_background_task_wake/claudeAgent       provider: Claude background wakes are not built (the wake's message text differs)
-
-# --- Test clock: T3's expected order comes from ties on its TestClock ---
-queued_turn/codex         clock: T3 orders messages by createdAt then id; on its TestClock the queued message and the first answer tie and the id decides. Our providers stamp with the system clock (no clock seam in the providers)
-queued_turn/claudeAgent   clock: as queued_turn/codex

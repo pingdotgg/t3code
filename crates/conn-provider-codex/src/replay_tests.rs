@@ -499,7 +499,11 @@ fn mapper_state_stays_bounded_over_many_turns() {
         assert!(*size <= 65, "{name} holds {size} entries");
     }
     let subagents = sizes[1].iter().find(|(name, _)| *name == "subagents");
-    assert_eq!(subagents.map(|(_, n)| *n), Some(64), "settled subagents are forgotten at 64");
+    assert_eq!(
+        subagents.map(|(_, n)| *n),
+        Some(64),
+        "settled subagents are forgotten at 64"
+    );
 }
 
 #[test]

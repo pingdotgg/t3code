@@ -1800,7 +1800,7 @@ async fn a_delegated_task_runs_as_a_child_thread_and_wakes_its_parent() {
         .map(|m| m["text"].as_str().unwrap().to_owned())
         .collect();
     assert_eq!(texts.len(), 2);
-    assert!(texts[1].contains("echo: look around"));
+    assert!(texts.iter().any(|t| t.contains("echo: look around")));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -2187,7 +2187,14 @@ async fn a_continuation_request_runs_a_provider_turn_after_the_run() {
             ("run:t1:2".into(), "completed".into())
         ]
     );
-    let wake = &p["messages"][2];
+    // T3 lists messages by the turn item that shows them; the wake has a notification item,
+    // so it is found by its source, not by its place.
+    let wake = p["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["creationSource"] == "provider" && m["role"] == "user")
+        .unwrap();
     assert_eq!(wake["createdBy"], "agent");
     assert_eq!(wake["creationSource"], "provider");
     assert_eq!(wake["text"], "Background task completed.");
@@ -2221,7 +2228,14 @@ async fn a_continuation_request_runs_a_provider_turn_after_the_run() {
         item.get("messageId").is_none(),
         "a notice names no message: {item}"
     );
-    assert_eq!(p["messages"][3]["text"], "continued");
+    // The wake run's answer has a message item, so it comes before the notice.
+    assert!(
+        p["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["text"] == "continued" && m["role"] == "assistant")
+    );
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]

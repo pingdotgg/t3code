@@ -366,7 +366,9 @@ impl Run {
                 if blocking(|path| std::fs::write(path, b"").is_ok(), release).await {
                     Ok(())
                 } else {
-                    Err(format!("release_replay_gate:{label}: cannot write the release file"))
+                    Err(format!(
+                        "release_replay_gate:{label}: cannot write the release file"
+                    ))
                 }
             }
             other => Err(format!("{other}: not run by this replay driver")),
