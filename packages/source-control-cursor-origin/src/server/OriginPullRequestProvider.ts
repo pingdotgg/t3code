@@ -136,11 +136,12 @@ function toThreads(
   for (const comment of comments) {
     const thread = comment.thread;
     if (!thread?.path) continue;
-    const line = thread.endLine ?? thread.startLine ?? null;
+    // Origin sends endLine 0 for a single-line thread.
+    const line = [thread.endLine, thread.startLine].find((value) => value != null && value > 0);
     const existing = threads.get(thread.id) ?? {
       id: thread.id,
       path: thread.path,
-      line: line !== null && line > 0 ? line : null,
+      line: line ?? null,
       side: thread.side === "left" ? ("left" as const) : ("right" as const),
       isResolved: Boolean(thread.resolvedAt),
       // Origin anchors a thread to the version it was left on and does not move it forward.
