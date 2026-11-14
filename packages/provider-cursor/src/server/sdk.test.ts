@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const fixture = vi.hoisted(() => {
+  // @effect-diagnostics-next-line extendsNativeError:off - stands in for the Cursor SDK's native Error classes.
   class SdkError extends Error {}
   const sdk = {
     CursorSdkError: SdkError,

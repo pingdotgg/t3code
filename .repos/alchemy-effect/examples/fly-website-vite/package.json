@@ -19,6 +19,8 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/drizzle": "workspace:*",
+    "@alchemy.run/fly": "workspace:*",
     "@alchemy.run/frontend-frameworks": "workspace:*",
     "@distilled.cloud/fly-io": "workspace:*",
     "@effect/platform-node": "catalog:",
@@ -26,13 +28,12 @@
     "alchemy": "workspace:*",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",
-    "pg": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:"
   },
   "devDependencies": {
+    "@alchemy.run/test": "workspace:*",
     "@tailwindcss/vite": "catalog:",
-    "@types/pg": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
