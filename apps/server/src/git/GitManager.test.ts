@@ -915,6 +915,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const status = yield* manager.status({ cwd: repoDir });
 
       expect(status.pr).toEqual({
+        localRefName: status.refName,
         number: 15,
         title: "Valid PR title",
         url: "https://github.com/pingdotgg/codething-mvp/pull/15",
@@ -965,6 +966,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const status = yield* manager.status({ cwd: repoDir });
 
       expect(status.pr).toEqual({
+        localRefName: status.refName,
         number: 17,
         title: "Merged PR",
         url: "https://github.com/pingdotgg/codething-mvp/pull/17",
@@ -1877,6 +1879,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       expect(status.hasUpstream).toBe(false);
       expect(status.pr).toEqual({
+        localRefName: status.refName,
         number: 215,
         title: "Merged branch was deleted",
         url: "https://github.com/pingdotgg/t3code/pull/215",
@@ -2385,6 +2388,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const status = yield* manager.status({ cwd: repoDir });
       expect(status.refName).toBe("t3code/pr-488/statemachine");
       expect(status.pr).toEqual({
+        localRefName: status.refName,
         number: 488,
         title: "Rebase this PR on latest main",
         url: "https://github.com/pingdotgg/codething-mvp/pull/488",
@@ -2446,6 +2450,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const status = yield* manager.status({ cwd: repoDir });
       expect(status.refName).toBe("t3code/pr-777/main");
       expect(status.pr).toEqual({
+        localRefName: status.refName,
         number: 777,
         title: "Fork PR from main",
         url: "https://github.com/pingdotgg/codething-mvp/pull/777",
@@ -2527,6 +2532,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const status = yield* manager.status({ cwd: repoDir });
         expect(status.refName).toBe("upstream/effect-atom");
         expect(status.pr).toEqual({
+          localRefName: status.refName,
           number: 1618,
           title: "Correct PR",
           url: "https://github.com/pingdotgg/t3code/pull/1618",
@@ -2923,6 +2929,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const status = yield* manager.status({ cwd: repoDir });
       expect(status.refName).toBe("feature/status-open-over-merged");
       expect(status.pr).toEqual({
+        localRefName: status.refName,
         number: 46,
         title: "Open PR",
         url: "https://github.com/pingdotgg/codething-mvp/pull/46",
