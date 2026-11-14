@@ -1,6 +1,8 @@
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
+// Initializes the i18next instance; this component tree does not reach ./i18n on its own.
+import "../../i18n";
 import { render } from "../../../test/render";
 import { AnchoredToastProvider } from "../ui/toast";
 import { MessageCopyButton } from "./MessageCopyButton";

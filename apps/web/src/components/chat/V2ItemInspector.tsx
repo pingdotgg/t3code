@@ -12,6 +12,7 @@ import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { ExternalLinkIcon } from "lucide-react";
 import { memo, type ReactNode, Suspense, use } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useRenderedAppearance } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
@@ -98,6 +99,7 @@ function useFetchedTurnItem(
   source: TurnItemSource | undefined,
   skip = false,
 ) {
+  const { t } = useTranslation("chat");
   const wireItem = projectedItem.item;
   const fetches = !skip && turnItemNeedsDetailFetch(wireItem);
   const detail = useTurnItemDetail(
@@ -124,7 +126,7 @@ function useFetchedTurnItem(
         item !== wireItem
           ? null
           : detail.data?.item === null
-            ? "Output is no longer available."
+            ? t("inspector.outputUnavailable")
             : detail.error,
       empty: fetches && item !== wireItem,
     },
@@ -142,12 +144,13 @@ interface ToolOutputState {
 }
 
 function ToolOutputImages(props: ToolOutputState) {
+  const { t } = useTranslation("chat");
   return props.images.map((resource) => (
     <ChatMarkdownAssetImage
       key={resource.index}
       environmentId={props.environmentId}
       resource={resource}
-      alt="Tool output image"
+      alt={t("inspector.toolOutputImage")}
       maxHeightRem={16}
       onImageExpand={props.onImageExpand}
     />
@@ -155,14 +158,17 @@ function ToolOutputImages(props: ToolOutputState) {
 }
 
 function ToolOutput(props: ToolOutputState) {
+  const { t } = useTranslation("chat");
   return props.output ? (
     <StructuredValue value={props.output} highlightJson />
   ) : props.pending ? (
-    <div className="text-muted-foreground italic">Loading output…</div>
+    <div className="text-muted-foreground italic">{t("inspector.loadingOutput")}</div>
   ) : props.error ? (
-    <div className="text-destructive">Couldn&apos;t load output: {props.error}</div>
+    <div className="text-destructive">
+      {t("inspector.couldNotLoadOutput", { error: props.error })}
+    </div>
   ) : props.empty && props.images.length === 0 ? (
-    <div className="text-muted-foreground italic">No output.</div>
+    <div className="text-muted-foreground italic">{t("inspector.noOutput")}</div>
   ) : null;
 }
 
@@ -237,6 +243,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   );
   const item = fetched.item;
   const outputState = fetched.output;
+  const { t } = useTranslation("chat");
   return (
     <div className="space-y-2 text-xs" data-v2-item-inspector={item.type}>
       {item.type === "reasoning" && item.text ? (
@@ -296,7 +303,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
                   })
                 }
               >
-                Open diff
+                {t("inspector.openDiff")}
               </Button>
             ) : null}
           </div>
@@ -362,7 +369,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
                   </a>
                 ) : (
                   <p className="font-medium text-foreground">
-                    {result.title ?? result.url ?? "Search result"}
+                    {result.title ?? result.url ?? t("inspector.searchResult")}
                   </p>
                 )}
                 {result.snippet ? <p className="text-muted-foreground">{result.snippet}</p> : null}

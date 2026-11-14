@@ -1,5 +1,7 @@
+import enChat from "../locales/en/chat.json";
 import enPalette from "../locales/en/palette.json";
 import enSettings from "../locales/en/settings.json";
+import zhHansChat from "../locales/zh-Hans/chat.json";
 import zhHansPalette from "../locales/zh-Hans/palette.json";
 import zhHansSettings from "../locales/zh-Hans/settings.json";
 import enSidebar from "../locales/en/sidebar.json";
@@ -18,6 +20,7 @@ declare module "i18next" {
       settings: typeof enSettings;
       sidebar: typeof enSidebar;
       palette: typeof enPalette;
+      chat: typeof enChat;
     };
   }
 }
@@ -40,10 +43,15 @@ if (!i18next.isInitialized) {
     lng: "en",
     fallbackLng: "en",
     defaultNS: "settings",
-    ns: ["settings", "sidebar", "palette"],
+    ns: ["settings", "sidebar", "palette", "chat"],
     resources: {
-      en: { settings: enSettings, sidebar: enSidebar, palette: enPalette },
-      "zh-Hans": { settings: zhHansSettings, sidebar: zhHansSidebar, palette: zhHansPalette },
+      en: { settings: enSettings, sidebar: enSidebar, palette: enPalette, chat: enChat },
+      "zh-Hans": {
+        settings: zhHansSettings,
+        sidebar: zhHansSidebar,
+        palette: zhHansPalette,
+        chat: zhHansChat,
+      },
     },
     // Locale files are bundled per language, so nothing is fetched at runtime.
     // resolveUiLanguage only ever yields exact codes, so no non-explicit matching.
