@@ -41,6 +41,7 @@ import {
   isAntigravitySignInRequiredError,
   prepareAntigravityProfile,
   resolveAntigravityInstanceDirectories,
+  serveAntigravityAuthorizationUrlSink,
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
 import {
@@ -267,6 +268,18 @@ export const AntigravityDriver: ProviderDriver<
               ),
             ),
       );
+      const authorizationUrlSink =
+        input.onAuthorizationUrl === undefined
+          ? undefined
+          : yield* serveAntigravityAuthorizationUrlSink(input.onAuthorizationUrl).pipe(
+              Effect.provideService(SecureRandom.SecureRandom, random),
+              // The helper still reports the URL on stderr, which reaches T3 outside Windows.
+              Effect.catch((error) =>
+                Effect.logWarning("The Antigravity sign-in URL listener could not start.", {
+                  error,
+                }).pipe(Effect.as(undefined)),
+              ),
+            );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...input,
         runtimeVersion: executable.version,
@@ -279,6 +292,7 @@ export const AntigravityDriver: ProviderDriver<
           baseEnv: processEnvironment,
           auth,
           runtimeTempDirectory,
+          ...(authorizationUrlSink === undefined ? {} : { authorizationUrlSink }),
         }),
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       return {

@@ -16,6 +16,7 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as Ndjson from "effect/encoding/Ndjson";
 import * as AcpErrors from "effect-acp/errors";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -33,6 +34,7 @@ import {
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
   resolveAntigravityInstanceDirectories,
+  serveAntigravityAuthorizationUrlSink,
 } from "./antigravityAuthSupport.ts";
 
 const authorizationUrl =
@@ -74,6 +76,7 @@ describe("Antigravity process environment", () => {
       ANTIGRAVITY_HARNESS_PATH: "/wrong-version/harness",
       BROWSER: "open-real-browser",
       browser: "another-real-browser",
+      t3_antigravity_auth_sink: "http://127.0.0.1:1/stale-sign-in",
       PYTHONUNBUFFERED: "0",
       ELECTRON_RUN_AS_NODE: "0",
       CHROME_CRASHPAD_PIPE_NAME: "\\\\.\\pipe\\crashpad_50144_ZUJNJELFHHXPBIRT",
@@ -472,7 +475,9 @@ describe("Antigravity stderr compatibility", () => {
   );
 });
 
-it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
+const profilePreparationLayer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer);
+
+it.layer(profilePreparationLayer)("Antigravity profile preparation", (it) => {
   const prepareSpawn = Effect.fn(function* (
     bundles: ReadonlyArray<string>,
     baseEnv: NodeJS.ProcessEnv = {},
@@ -681,6 +686,75 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       expect(decodeJson(yield* fs.readFileString(settingsPath))).toEqual({
         auth: { type: "oauth-personal" },
       });
+    }),
+  );
+
+  const runBrowserHelper = Effect.fn("runBrowserHelper")(function* (env: Record<string, string>) {
+    const fs = yield* FileSystem.FileSystem;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    let helper: ChildProcess.StandardCommand | undefined;
+    yield* prepareAntigravityProfile({
+      profileDirectory: yield* fs.makeTempDirectoryScoped(),
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          if (ChildProcess.isStandardCommand(command)) helper = command;
+          return spawner.spawn(command);
+        }),
+      ),
+    );
+    if (!helper) return yield* Effect.die("The browser helper preflight did not run.");
+    const child = yield* spawner.spawn(
+      ChildProcess.make(helper.command, [...helper.args.slice(0, -1), authorizationUrl], {
+        env: { ...helper.options.env, ...env },
+        extendEnv: false,
+      }),
+    );
+    const [stderr, exitCode] = yield* Effect.all(
+      [child.stderr.pipe(Stream.decodeText(), Stream.mkString), child.exitCode],
+      { concurrency: "unbounded" },
+    );
+    return { stderr, exitCode: Number(exitCode) };
+  });
+
+  it.effect("falls back to stderr when the sign-in listener rejects the URL or is gone", () =>
+    Effect.gen(function* () {
+      const rejecting = yield* serveAntigravityAuthorizationUrlSink(() =>
+        Effect.fail(AcpErrors.AcpRequestError.internalError("The flow stopped.")),
+      );
+      const closed = yield* serveAntigravityAuthorizationUrlSink(() => Effect.void).pipe(
+        Effect.scoped,
+      );
+      for (const sink of [rejecting, closed]) {
+        expect(yield* runBrowserHelper({ T3_ANTIGRAVITY_AUTH_SINK: sink })).toEqual({
+          exitCode: 0,
+          stderr: `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeUnknownJson(authorizationUrl)}\n`,
+        });
+      }
+    }),
+  );
+
+  it.effect("posts the sign-in URL to the listener directly when an environment proxy is set", () =>
+    Effect.gen(function* () {
+      const received: string[] = [];
+      const sink = yield* serveAntigravityAuthorizationUrlSink((url) =>
+        Effect.sync(() => {
+          received.push(url);
+        }),
+      );
+      const unreachableProxy = new URL(
+        yield* serveAntigravityAuthorizationUrlSink(() => Effect.void).pipe(Effect.scoped),
+      ).origin;
+      expect(
+        yield* runBrowserHelper({
+          T3_ANTIGRAVITY_AUTH_SINK: sink,
+          NODE_USE_ENV_PROXY: "1",
+          HTTP_PROXY: unreachableProxy,
+          http_proxy: unreachableProxy,
+        }),
+      ).toEqual({ exitCode: 0, stderr: "" });
+      expect(received).toEqual([authorizationUrl]);
     }),
   );
 
