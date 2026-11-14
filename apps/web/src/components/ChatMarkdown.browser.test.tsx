@@ -530,11 +530,27 @@ describe("ChatMarkdown workspace file opens", () => {
         threadRef={threadRef}
       />,
     );
+    // The row ran in another folder: its link is looked up there, and a miss opens it as written.
     const recorded = container.querySelector("a")!;
-    const exact = "/school/old/physics/notes/a.md";
-    expect(recorded.getAttribute("href")).toBe(exact);
+    const literal = "/school/old/physics/notes/a.md";
+    expect(recorded.getAttribute("href")).toBe(literal);
     await act(async () => recorded.click());
-    expect(openFile).toHaveBeenLastCalledWith(threadRef, exact, undefined);
+    expect(workspaceSearch).toHaveBeenLastCalledWith(
+      expect.objectContaining({ input: expect.objectContaining({ cwd: "/school/old" }) }),
+    );
+    expect(openFile).toHaveBeenLastCalledWith(threadRef, literal, undefined);
+    workspaceSearch.mockResolvedValue(
+      AsyncResult.success({
+        entries: [{ path: "term-1/physics/notes/a.md", kind: "file" }],
+        truncated: false,
+      }),
+    );
+    await act(async () => recorded.click());
+    expect(openFile).toHaveBeenLastCalledWith(
+      threadRef,
+      "/school/old/term-1/physics/notes/a.md",
+      undefined,
+    );
     using _read = vi.spyOn(projectEnvironment, "readFile").mockImplementation(
       ({ input }) =>
         Atom.make(
@@ -553,7 +569,7 @@ describe("ChatMarkdown workspace file opens", () => {
         environmentId={threadRef.environmentId}
         cwd="/school/physics"
         projectName="physics"
-        relativePath={exact}
+        relativePath={literal}
         threadRef={threadRef}
         composerDraftTarget={threadRef}
         keybindings={[]}
@@ -574,7 +590,6 @@ describe("ChatMarkdown workspace file opens", () => {
       .toHaveTextContent(
         "The file could not be accessed or read. It may be missing or inaccessible.Attempted path/school/old/physics/notes/a.md",
       );
-    expect([openFile, workspaceSearch].map((spy) => spy.mock.calls.length)).toEqual([3, 2]);
   });
 });
 
