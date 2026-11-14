@@ -5,6 +5,7 @@ import {
   EventId,
   MessageId,
   NodeId,
+  OrchestrationV2ThreadArtifactId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Run,
   ProjectId,
@@ -1688,4 +1689,38 @@ it.effect("startup ends the provider turn of a native child root it cancels", ()
       "a root startup recovery cancelled left its provider turn running",
     );
   }).pipe(Effect.provide(layerRecoveryTest)),
+);
+
+it.effect("marks threads with corrupt artifact payloads unreadable", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const threadId = yield* createThread("artifact-corrupt");
+
+    yield* projections.apply({
+      id: EventId.make("event:artifact-corrupt:updated"),
+      type: "artifact.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: OrchestrationV2ThreadArtifactId.make("artifact:recovery:1"),
+        kind: "file",
+        title: "Artifact",
+        description: null,
+        payload: { path: "/tmp/out.txt" },
+        runId: null,
+        messageId: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+
+    assert.deepEqual(yield* projections.getUnreadableThreadIds(), []);
+    yield* sql`
+      UPDATE orchestration_v2_projection_artifacts SET payload_json = '{}'
+      WHERE artifact_id = ${"artifact:recovery:1"}
+    `;
+    assert.deepEqual(yield* projections.getUnreadableThreadIds(), [threadId]);
+  }).pipe(Effect.provide(layerTest)),
 );

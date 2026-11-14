@@ -584,6 +584,7 @@ function makeLocalCommandHarness(input: {
     runtimeRequests: [],
     subagents: [],
     plans: [],
+    artifacts: [],
     checkpoints: [],
     updatedAt: now,
   };

@@ -214,7 +214,121 @@ describe("IdleCompactionService", () => {
         projectDisabled: false,
         ...scenario,
       } as const;
-      return Effect.gen(function* () {
+      return Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(NOW_MS);
+          const selectedInstance = ProviderInstanceId.make(
+            "instance" in test ? test.instance : "claudeAgent",
+          );
+          const driver = ProviderDriverKind.make("driver" in test ? test.driver : "claudeAgent");
+          const base = records({ cacheExpiresInMs: 2 * MINUTE_MS });
+          const data: OrchestrationV2ThreadProjection = {
+            ...base,
+            thread: {
+              ...base.thread,
+              providerInstanceId: selectedInstance,
+              modelSelection: { ...base.thread.modelSelection, instanceId: selectedInstance },
+            },
+            runs: base.runs.map((run) => ({
+              ...run,
+              providerInstanceId: selectedInstance,
+              modelSelection: { ...run.modelSelection, instanceId: selectedInstance },
+            })),
+            providerThreads: base.providerThreads.map((thread) => ({
+              ...thread,
+              driver,
+              providerInstanceId: selectedInstance,
+            })),
+            attempts: [],
+            nodes: [],
+            subagents: [],
+            providerSessions: [],
+            plans: [],
+            artifacts: [],
+            checkpointScopes: [],
+            checkpoints: [],
+            contextHandoffs: [],
+            visibleTurnItems: [],
+            updatedAt: at(),
+          };
+          let historyReads = 0;
+          let dispatches = 0;
+          const done = yield* Deferred.make<void>();
+          const tracer = Tracer.make({
+            span(options) {
+              const span = new Tracer.NativeSpan(options);
+              const end = span.end.bind(span);
+              span.end = (...args) => {
+                end(...args);
+                if (span.name === "IdleCompactionService.compactWhenDue")
+                  Deferred.doneUnsafe(done, Effect.void);
+              };
+              return span;
+            },
+          });
+          const dependencies = Layer.mergeAll(
+            Layer.mock(Orchestrator.OrchestratorV2)({
+              streamDomainEvents: Stream.make({
+                id: EventId.make("idle-completed"),
+                type: "run.updated",
+                threadId,
+                runId,
+                occurredAt: at(),
+                payload: data.runs[0]!,
+              }),
+              dispatch: () =>
+                Effect.sync(() => {
+                  dispatches++;
+                  return { sequence: 1, storedEvents: [] };
+                }),
+            }),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThread: () => Effect.succeed(data.thread),
+              getThreadRecords: () =>
+                Effect.sync(() => {
+                  historyReads++;
+                  return data;
+                }),
+            }),
+            Layer.mock(ServerSettings.ServerSettingsService)({
+              getSettings: Effect.succeed({
+                ...DEFAULT_SERVER_SETTINGS,
+                idleCompaction: test.mode,
+                providerInstances:
+                  "unconfigured" in test
+                    ? {}
+                    : {
+                        [selectedInstance]: {
+                          driver,
+                          enabled: test.enabled,
+                          config: { idleCompaction: test.override },
+                        },
+                      },
+                projectSettingsOverrides: test.projectDisabled
+                  ? {
+                      [data.thread.projectId]: {
+                        providerInstances: { [selectedInstance]: { enabled: false } },
+                      },
+                    }
+                  : {},
+              }),
+            }),
+          );
+          yield* Effect.gen(function* () {
+            const service = yield* IdleCompactionService.make;
+            yield* service.start();
+            yield* Deferred.await(done);
+          }).pipe(Effect.provide(dependencies), Effect.withTracer(tracer));
+          expect(historyReads).toBe(test.reads);
+          expect(dispatches).toBe(test.reads);
+        }),
+      );
+    },
+  );
+
+  it.effect("keeps the latest run's compaction when an earlier run reports completed again", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
         yield* TestClock.setTime(NOW_MS);
         const selectedInstance = ProviderInstanceId.make(
           "instance" in test ? test.instance : "claudeAgent",
@@ -243,6 +357,7 @@ describe("IdleCompactionService", () => {
           subagents: [],
           providerSessions: [],
           plans: [],
+          artifacts: [],
           checkpointScopes: [],
           checkpoints: [],
           contextHandoffs: [],

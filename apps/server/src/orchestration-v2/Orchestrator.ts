@@ -1725,6 +1725,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...records,
           checkpoints: [],
           plans: [],
+          artifacts: [],
           contextHandoffs: [],
           visibleTurnItems: [],
           updatedAt: records.thread.updatedAt,

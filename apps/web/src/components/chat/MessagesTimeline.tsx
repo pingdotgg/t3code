@@ -13,6 +13,7 @@ import {
   type AssistantCitation,
   type EnvironmentId,
   type MessageId,
+  type OrchestrationV2ThreadArtifact,
   type OrchestrationV2TurnItem,
   type RunAttemptId,
   type ServerProviderSkill,
@@ -142,6 +143,54 @@ import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
 import { useStableHandoffRuns, useIncrementalTimelineRows, useStableRows } from "./useTimelineRows";
 import { useClientSettings } from "../../hooks/useSettings";
 
+const EMPTY_ARTIFACTS: ReadonlyArray<OrchestrationV2ThreadArtifact> = [];
+
+function formatArtifactPayloadSummary(artifact: OrchestrationV2ThreadArtifact): string | null {
+  const payload = artifact.payload;
+  if (!payload || typeof payload !== "object") return null;
+  const record = payload as Record<string, unknown>;
+  if (typeof record.path === "string" && record.path.trim().length > 0) return record.path;
+  if (typeof record.url === "string" && record.url.trim().length > 0) return record.url;
+  if (typeof record.attachmentId === "string" && record.attachmentId.trim().length > 0) {
+    return `attachment ${record.attachmentId}`;
+  }
+  return null;
+}
+
+function ThreadArtifactsSection({
+  artifacts,
+}: {
+  readonly artifacts: ReadonlyArray<OrchestrationV2ThreadArtifact>;
+}) {
+  if (artifacts.length === 0) return null;
+  return (
+    <section aria-label="Artifacts" className="mx-auto mb-2 w-full max-w-3xl px-3 sm:px-4">
+      <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
+        <div className="mb-1 text-xs font-medium text-muted-foreground">Artifacts</div>
+        <ul className="space-y-1">
+          {artifacts.map((artifact) => {
+            const summary = formatArtifactPayloadSummary(artifact);
+            return (
+              <li key={artifact.id} className="min-w-0 text-sm">
+                <span className="font-medium text-foreground">{artifact.title}</span>
+                <span className="ml-1.5 text-xs text-muted-foreground">{artifact.kind}</span>
+                {artifact.description ? (
+                  <div className="truncate text-xs text-muted-foreground">
+                    {artifact.description}
+                  </div>
+                ) : null}
+                {summary ? (
+                  <div className="truncate text-xs text-muted-foreground/90">{summary}</div>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
 function timelineListStateFor(identity: string): {
   readonly identity: string;
   readonly rememberedPosition: RememberedTimelinePosition | undefined;
@@ -258,6 +307,7 @@ interface MessagesTimelineProps {
   detailBehindShell?: boolean;
   runningRunId?: RunId | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
+  artifacts?: ReadonlyArray<OrchestrationV2ThreadArtifact>;
   routeThreadKey: string;
   displayThreadKey?: string;
   /** Off where another region already speaks the thread's status, like a subagent's bar. */
@@ -377,6 +427,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   detailBehindShell = false,
   runningRunId = null,
   turnDiffSummaries,
+  artifacts = EMPTY_ARTIFACTS,
   routeThreadKey,
   displayThreadKey,
   announceTurnStatus = true,
@@ -779,6 +830,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined;
   const showsEmptyState =
     rows.length === 0 &&
+    artifacts.length === 0 &&
     unmatchedPendingApprovals.length === 0 &&
     !isWorking &&
     parentThreadLink === null &&
@@ -1369,6 +1421,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment}
       onGrow={onFooterGrow}
     >
+      <ThreadArtifactsSection artifacts={artifacts} />
       {footer}
       {unmatchedPendingApprovals.length > 0 ? (
         <TimelineRowCtx value={sharedState}>
