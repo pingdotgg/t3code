@@ -450,6 +450,8 @@ export interface LimitPoolWindow {
     readonly member: LimitPoolMember;
     readonly at: number;
     readonly restoresPercent: number;
+    /** Unrounded share used when combining simultaneous refills. */
+    readonly poolSharePercent: number;
   }>;
 }
 
@@ -643,17 +645,16 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     const resets = members
       .flatMap((member) => {
         const at = resetMillis(member.window);
-        return at === null
-          ? []
-          : [
-              {
-                member,
-                at,
-                restoresPercent: Math.round(
-                  (member.refillPercent * weightOf.get(member)!) / totalWeight,
-                ),
-              },
-            ];
+        if (at === null) return [];
+        const poolSharePercent = (member.refillPercent * weightOf.get(member)!) / totalWeight;
+        return [
+          {
+            member,
+            at,
+            restoresPercent: Math.round(poolSharePercent),
+            poolSharePercent,
+          },
+        ];
       })
       .sort((left, right) => left.at - right.at);
     return {
@@ -678,13 +679,14 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
  * The first positive reset alone would understate how much quota becomes usable.
  */
 export function nextPoolRefillPercent(pool: LimitPoolWindow): number | null {
-  const first = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const first = pool.resets.find((reset) => reset.poolSharePercent > 0);
   if (!first) return null;
   const oneMinuteLater = first.at + 60_000;
-  return pool.resets.reduce(
-    (total, reset) => (reset.at < oneMinuteLater ? total + reset.restoresPercent : total),
+  const refill = pool.resets.reduce(
+    (total, reset) => (reset.at < oneMinuteLater ? total + reset.poolSharePercent : total),
     0,
   );
+  return Math.round(refill);
 }
 
 export function limitsNotice(limits: ServerProviderUsageLimits): string | null {

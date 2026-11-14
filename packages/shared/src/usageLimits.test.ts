@@ -1245,6 +1245,31 @@ describe("pooled account columns", () => {
     expect(pool!.windows[1]!.resets.map((reset) => reset.restoresPercent)).toEqual([40, 20]);
   });
 
+  it("rounds simultaneous pooled refills after combining fractional shares", () => {
+    const exhausted = collectLimitPools(
+      Array.from({ length: 6 }, (_, index) =>
+        account(`account-${index}`, [
+          { ...window, usedPercent: 100, resetsAt: "2026-09-03T13:00:00.000Z" },
+        ]),
+      ),
+      now,
+    )[0]!.windows[0]!;
+    expect(exhausted.resets.map(({ restoresPercent }) => restoresPercent)).toEqual(
+      Array(6).fill(17),
+    );
+    expect(nextPoolRefillPercent(exhausted)).toBe(100);
+
+    const fractional = collectLimitPools(
+      [
+        account("a", [{ ...window, usedPercent: 13 }]),
+        account("b", [{ ...window, usedPercent: 13 }]),
+      ],
+      now,
+    )[0]!.windows[0]!;
+    expect(fractional.resets.map(({ restoresPercent }) => restoresPercent)).toEqual([7, 7]);
+    expect(nextPoolRefillPercent(fractional)).toBe(13);
+  });
+
   it("counts all accounts refilling within the next minute, not just the first", () => {
     const [pool] = collectLimitPools(
       [
