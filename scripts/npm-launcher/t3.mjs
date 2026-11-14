@@ -219,7 +219,9 @@ async function main() {
 function killTree(child) {
   const pids = [child.pid];
   if (process.platform !== "win32") {
-    const table = spawnSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8" }).stdout || "";
+    const table =
+      spawnSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8", timeout: 2_000 }).stdout ||
+      "";
     const rows = table
       .trim()
       .split("\n")
