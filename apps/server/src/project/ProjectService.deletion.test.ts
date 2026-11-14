@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -8,27 +9,39 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
+import * as GitManager from "../git/GitManager.ts";
+import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import { OrchestrationEffectRequestV2 } from "../orchestration-v2/EffectOutbox.ts";
+import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ProjectionReplay from "../orchestration-v2/testkit/ProjectionReplay.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { ServerActivation } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as StorageCleanup from "../storageCleanup.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
@@ -75,14 +88,17 @@ const decodeEffectRequest = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationEffectRequestV2),
 );
 
-const seedProject = Effect.fn("ProjectDeletionTest.seedProject")(function* (projectId: ProjectId) {
+const seedProject = Effect.fn("ProjectDeletionTest.seedProject")(function* (
+  projectId: ProjectId,
+  workspaceRoot = `/work/${projectId}`,
+) {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`
     INSERT INTO projection_projects (
       project_id, title, workspace_root, default_model_selection_json,
       scripts_json, created_at, updated_at, deleted_at
     ) VALUES (
-      ${projectId}, 'Deletion test', ${`/work/${projectId}`}, NULL,
+      ${projectId}, 'Deletion test', ${workspaceRoot}, NULL,
       '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL
     )
   `;
@@ -501,9 +517,12 @@ it.effect("deletes a project without force once its imported threads were delete
   }).pipe(Effect.provide(layerDatabase)),
 );
 
-it.effect(
-  "clears a deleted project's settings overrides so a machine-disabled instance cannot stay alive",
-  () =>
+it.effect.each([
+  { policy: "no", worktreeCleanup: undefined },
+  { policy: "its off", worktreeCleanup: { mode: "off" } as const },
+])(
+  "clears a deleted project's settings overrides, keeping $policy worktree cleanup policy, so a machine-disabled instance cannot stay alive",
+  ({ worktreeCleanup }) =>
     Effect.gen(function* () {
       const projectId = ProjectId.make("project:overrides-cleanup");
       const instanceId = ProviderInstanceId.make("codex_work");
@@ -514,7 +533,11 @@ it.effect(
         const serverSettings = yield* ServerSettings.ServerSettingsService;
         yield* serverSettings.updateSettings({
           projectSettingsOverrides: {
-            [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+            [projectId]: {
+              providerInstances: { [instanceId]: { enabled: true } },
+              defaultAutoPull: true,
+              ...(worktreeCleanup === undefined ? {} : { worktreeCleanup }),
+            },
           },
         });
 
@@ -523,8 +546,129 @@ it.effect(
           projectId,
         });
 
-        const settingsAfterDelete = yield* serverSettings.getSettings;
-        assert.isUndefined(settingsAfterDelete.projectSettingsOverrides[projectId]);
+        const entry = (yield* serverSettings.getSettings).projectSettingsOverrides[projectId];
+        assert.deepStrictEqual(
+          {
+            enabled: entry?.providerInstances?.[instanceId]?.enabled,
+            defaultAutoPull: entry?.defaultAutoPull,
+            worktreeCleanup: entry?.worktreeCleanup,
+          },
+          { enabled: undefined, defaultAutoPull: undefined, worktreeCleanup },
+        );
       }).pipe(Effect.provide(layerServices));
     }).pipe(Effect.provide(layerDatabase)),
+);
+
+it.live.each([
+  {
+    storageCleanup: { worktreeOnDelete: true },
+    override: { mode: "off" },
+    removed: false,
+  },
+  {
+    storageCleanup: { worktreeOnDelete: false },
+    override: {
+      mode: "custom",
+      rules: {
+        worktreeKeepWhen: "uncommitted-changes",
+        worktreeAfterDays: null,
+        worktreeSettledAfterDays: null,
+        worktreeOnMerge: false,
+        worktreeOnDelete: true,
+        worktreeUnchanged: false,
+      },
+    },
+    removed: true,
+  },
+] as const)(
+  "storage cleanup follows a deleted project's $override.mode worktree cleanup policy",
+  ({ storageCleanup, override, removed }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      const projectId = ProjectId.make("project:worktree-cleanup-policy");
+      const threadId = ThreadId.make("thread:worktree-cleanup-policy");
+      const repo = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-repo-" }),
+      );
+      const worktree = `${config.worktreesDir}/feature`;
+      const command = (cwd: string, args: string[]) =>
+        git.execute({ operation: "cleanup-policy-test", cwd, args });
+      yield* command(repo, ["init", "-b", "main"]);
+      yield* command(repo, [
+        "-c",
+        "user.email=t@example.test",
+        "-c",
+        "user.name=T",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "initial",
+      ]);
+      yield* command(repo, ["worktree", "add", "-b", "feature", worktree]);
+      yield* seedProject(projectId, repo);
+
+      yield* Effect.gen(function* () {
+        const service = yield* ProjectService.make;
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const created = nativeThreadCreated(projectId, threadId);
+        yield* eventSink.write({
+          events: [
+            {
+              ...created,
+              payload: { ...created.payload, branch: "feature", worktreePath: worktree },
+            },
+          ],
+        });
+        yield* serverSettings.updateSettings({
+          storageCleanup: { ...storageCleanup, worktreeAfterDays: null },
+          projectSettingsOverrides: { [projectId]: { worktreeCleanup: override } },
+        });
+        yield* service.delete({
+          commandId: CommandId.make("command:worktree-cleanup-policy:delete"),
+          projectId,
+          force: true,
+        });
+
+        const cleanup = Context.get(
+          yield* Layer.build(StorageCleanup.layer).pipe(
+            Effect.provideService(ProviderSessionManager.ProviderSessionManagerV2, {
+              isLive: () => Effect.succeed(false),
+            } as unknown as ProviderSessionManager.ProviderSessionManagerV2["Service"]),
+            Effect.provideService(Orchestrator.OrchestratorV2, {
+              streamDomainEvents: Stream.empty,
+            } as unknown as Orchestrator.OrchestratorV2["Service"]),
+            Effect.provideService(GitManager.GitManager, {
+              invalidateStatus: () => Effect.void,
+            } as unknown as GitManager.GitManager["Service"]),
+            Effect.provideService(TerminalManager.TerminalManager, {
+              subscribeMetadata: () => Effect.succeed(() => {}),
+            } as unknown as TerminalManager.TerminalManager["Service"]),
+            Effect.provideService(ServerActivation, Effect.never),
+          ),
+          StorageCleanup.StorageCleanup,
+        );
+        // Thread deletion's own cleanup effects must settle before storage cleanup may act.
+        yield* EffectWorker.OrchestrationEffectWorkerV2.use((worker) => worker.drain()).pipe(
+          Effect.provide(
+            EffectWorker.layerWithOptions().pipe(
+              Layer.provide(EffectOutbox.layer),
+              Layer.provide(
+                Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2, {
+                  execute: () => Effect.void,
+                }),
+              ),
+            ),
+          ),
+        );
+        yield* cleanup.runNow;
+        assert.strictEqual(yield* fs.exists(worktree), !removed);
+      }).pipe(Effect.provide(layerServices));
+    }).pipe(
+      Effect.provide(
+        GitVcsDriver.layer.pipe(Layer.provide(NodeCrypto.layer), Layer.provideMerge(layerDatabase)),
+      ),
+    ),
 );
