@@ -402,10 +402,6 @@ function ProjectDetail({
         projectRef,
         memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
       );
-      closeLayoutProject(
-        projectRef,
-        memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
-      );
       const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
       if (projectDraftThread && remainingMember) {
         draftStore.setDraftThreadContext(projectDraftThread.draftId, {
@@ -416,6 +412,10 @@ function ProjectDetail({
       } else if (projectDraftThread) {
         draftStore.clearDraftThread(projectDraftThread.draftId);
       }
+      closeLayoutProject(
+        projectRef,
+        memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
+      );
       draftStore.clearProjectDraftThreadId(projectRef);
     }
 
