@@ -4,6 +4,7 @@ import { Atom, AsyncResult } from "effect/reactivity";
 import { Image } from "expo-image";
 import { useIsFocused } from "@react-navigation/native";
 import type { VideoThumbnail } from "expo-video";
+import { useState } from "react";
 import { StyleSheet } from "react-native";
 
 import type { DraftComposerFileAttachment } from "../lib/composerImages";
@@ -49,13 +50,17 @@ export function VideoThumbnailImage(props: {
   const thumbnail =
     (loaded._tag === "Success" ? loaded.value : null) ?? cachedVideoThumbnail(cacheKey);
 
-  return thumbnail ? (
+  // iOS draws a frame object as soon as it is set, with whatever contentFit the view already
+  // has, so the view lays out first and receives the frame in a later update.
+  const [laidOut, setLaidOut] = useState(false);
+  return (
     <Image
-      source={thumbnail}
+      onLayout={() => setLaidOut(true)}
+      source={laidOut ? thumbnail : null}
       style={StyleSheet.absoluteFill}
       contentFit={props.contentFit ?? "cover"}
       recyclingKey={cacheKey}
       accessible={false}
     />
-  ) : null;
+  );
 }
