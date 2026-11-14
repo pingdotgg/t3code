@@ -28,14 +28,14 @@ pub const READ_FILE_MAX_BYTES: u64 = 1024 * 1024;
 
 #[cfg(target_os = "linux")]
 mod flags {
-    pub const O_NONBLOCK: i32 = 0o4000;
-    pub const O_NOFOLLOW: i32 = 0o400000;
+    pub(super) const O_NONBLOCK: i32 = 0o4000;
+    pub(super) const O_NOFOLLOW: i32 = 0o400000;
 }
 #[cfg(not(target_os = "linux"))]
 mod flags {
     // macOS and the BSDs.
-    pub const O_NONBLOCK: i32 = 0x0004;
-    pub const O_NOFOLLOW: i32 = 0x0100;
+    pub(super) const O_NONBLOCK: i32 = 0x0004;
+    pub(super) const O_NOFOLLOW: i32 = 0x0100;
 }
 
 /// Opens for reading without blocking on a FIFO swapped in after a check.
@@ -485,7 +485,7 @@ pub fn browse(
     };
     let ends_with_separator = partial.ends_with('/') || partial.ends_with('\\') || partial == "~";
     let (parent, prefix) = if ends_with_separator {
-        (resolved.clone(), String::new())
+        (resolved, String::new())
     } else {
         (
             resolved.parent().map_or(resolved.clone(), Path::to_owned),

@@ -3,7 +3,7 @@
 /// The tail of a terminal's output: at most `cap` bytes (cut at a code point boundary) and
 /// about `max_lines` lines.
 #[derive(Debug, Default)]
-pub struct History {
+pub(crate) struct History {
     text: String,
     cap: usize,
     max_lines: usize,
@@ -11,7 +11,7 @@ pub struct History {
 }
 
 impl History {
-    pub fn new(cap: usize, max_lines: usize) -> Self {
+    pub(crate) fn new(cap: usize, max_lines: usize) -> Self {
         Self {
             text: String::new(),
             cap,
@@ -20,7 +20,7 @@ impl History {
         }
     }
 
-    pub fn push(&mut self, data: &str) {
+    pub(crate) fn push(&mut self, data: &str) {
         self.text.push_str(data);
         self.newlines += count_newlines(data);
         // Trim with slack so a busy terminal copies the buffer once per quarter of the cap,
@@ -50,13 +50,13 @@ impl History {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.text = String::new();
         self.newlines = 0;
     }
 
     /// The last `max` bytes (all of it when `max` is `None`), at most `cap`.
-    pub fn tail(&self, max: Option<usize>) -> &str {
+    pub(crate) fn tail(&self, max: Option<usize>) -> &str {
         let max = max.unwrap_or(usize::MAX).min(self.cap);
         &self.text[tail_start(&self.text, max)..]
     }
@@ -67,7 +67,7 @@ fn count_newlines(text: &str) -> usize {
 }
 
 /// Where the last `max` bytes of `text` start, moved forward to a char boundary.
-pub fn tail_start(text: &str, max: usize) -> usize {
+pub(crate) fn tail_start(text: &str, max: usize) -> usize {
     if text.len() <= max {
         return 0;
     }
@@ -81,12 +81,12 @@ pub fn tail_start(text: &str, max: usize) -> usize {
 /// Decodes a byte stream as UTF-8 across reads: a code point split between two reads is held
 /// back until its rest arrives; invalid bytes become U+FFFD.
 #[derive(Debug, Default)]
-pub struct Utf8Stream {
+pub(crate) struct Utf8Stream {
     pending: Vec<u8>,
 }
 
 impl Utf8Stream {
-    pub fn decode(&mut self, bytes: &[u8]) -> String {
+    pub(crate) fn decode(&mut self, bytes: &[u8]) -> String {
         let joined;
         let input: &[u8] = if self.pending.is_empty() {
             bytes
@@ -102,7 +102,7 @@ impl Utf8Stream {
     }
 
     /// What is left when the stream ends.
-    pub fn finish(&mut self) -> String {
+    pub(crate) fn finish(&mut self) -> String {
         let rest = std::mem::take(&mut self.pending);
         String::from_utf8_lossy(&rest).into_owned()
     }

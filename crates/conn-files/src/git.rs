@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub struct Output {
+pub(crate) struct Output {
     pub code: Option<i32>,
     pub stdout: Vec<u8>,
     /// Stdout went past `max_output` and git was stopped.
@@ -30,7 +30,7 @@ fn command(cwd: &Path, args: &[&str], stdin: bool) -> std::io::Result<Child> {
 }
 
 /// Runs git and collects stdout, up to `max_output` bytes.
-pub fn run(
+pub(crate) fn run(
     cwd: &Path,
     args: &[&str],
     stdin: Option<Vec<u8>>,

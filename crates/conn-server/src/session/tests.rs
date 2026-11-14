@@ -199,7 +199,10 @@ async fn bad_json_and_bad_payloads_do_not_end_the_connection() {
     let mut table = MethodTable::new();
     #[derive(serde::Deserialize)]
     struct Input {
-        #[allow(dead_code)]
+        #[expect(
+            dead_code,
+            reason = "only decoded, to test a payload that does not fit"
+        )]
         name: String,
     }
     table.unary("server.getConfig", |_, _: Input| async { Ok(json!(1)) });
@@ -494,4 +497,49 @@ async fn idle_connections_close() {
     );
     tokio::time::sleep(Duration::from_secs(20)).await;
     assert_eq!(client.drain().await, vec![Sent::Close(CLOSE_GOING_AWAY)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_byte_windowed_chunk_holds_at_most_the_window_of_events() {
+    // Five output events of 20 KiB wait in the stream before the session reads it. JSON
+    // escapes make each line longer on the wire, but T3 charges the event's own bytes.
+    let event = json!({
+        "type": "output", "threadId": "t", "terminalId": "x", "sequence": 1,
+        "data": "0123456789abcdef\r\n".repeat(20 * 1024 / 18),
+    });
+    let mut table = MethodTable::new();
+    let queued = event.clone();
+    table.stream("terminal.attach", move |_, _: Value| {
+        let event = queued.clone();
+        async move {
+            let (tx, rx) = mpsc::channel(8);
+            for _ in 0..5 {
+                let _ = tx.try_send(Ok(event.clone()));
+            }
+            Ok(rx)
+        }
+    });
+    let mut client = Client::connect(table, options());
+    client.request(1, "terminal.attach", json!({}));
+    let frames = client.frames().await;
+    let sizes: Vec<usize> = chunks(&frames, 1)
+        .iter()
+        .map(|chunk| ack_window::chunk_size(chunk["values"].as_array().unwrap()))
+        .collect();
+    // Three events fit the window (3 x 20 KiB); the next two go in a second chunk.
+    assert_eq!(
+        chunks(&frames, 1)
+            .iter()
+            .map(|chunk| chunk["values"].as_array().unwrap().len())
+            .collect::<Vec<_>>(),
+        vec![3, 2],
+        "chunk sizes {sizes:?}"
+    );
+    assert!(
+        sizes
+            .iter()
+            .all(|&size| size <= ack_window::MAX_PENDING_BYTES + ack_window::VALUE_OVERHEAD_BYTES),
+        "chunk sizes {sizes:?}"
+    );
+    assert_eq!(values(&frames, 1).len(), 5);
 }

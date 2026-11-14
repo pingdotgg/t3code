@@ -21,7 +21,7 @@ const DEFAULT_ITEM_MAX_CHARS: usize = 500;
 /// text runs near one token per character (`THREAD_READ_RESULT_MAX_BYTES`).
 const READ_RESULT_MAX_BYTES: usize = 30_000;
 const DEFAULT_WAIT_MS: u64 = 10 * 60 * 1000;
-pub const MAX_WAIT_MS: u64 = 60 * 60 * 1000;
+pub(super) const MAX_WAIT_MS: u64 = 60 * 60 * 1000;
 const MESSAGE_VIEW_TYPES: [&str; 3] = ["user_message", "assistant_message", "proposed_plan"];
 
 fn thread_id(args: &Args) -> &str {
@@ -40,7 +40,7 @@ fn target_id<'a>(cx: &'a Cx<'_>, args: &'a Args) -> Result<&'a str, ToolError> {
         })
 }
 
-pub async fn list(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn list(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let all = bool_arg(args, "allProjects") == Some(true);
     let own = cx.caller_projection().await?;
     let project_id: Option<String> = if all {
@@ -110,7 +110,7 @@ pub async fn list(cx: &Cx<'_>, args: &Args) -> ToolResult {
     }))
 }
 
-pub async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let id = thread_id(args);
     let projection = cx.projection(id).await?;
     let view_name = str_arg(args, "view").unwrap_or("messages");
@@ -268,30 +268,38 @@ fn items_within_budget(
     }
 }
 
-const SNIPPET_CHARS: usize = 240;
-
-/// Title, branch, project title, then message text, in active non-subagent threads.
-pub async fn search(cx: &Cx<'_>, args: &Args) -> ToolResult {
+/// `searchThreads` (`ThreadSearch.ts`): title hits first, then message hits from the
+/// engine's index (one per thread, outside the title hits), with a fifth of the slots kept
+/// for messages. Candidates are the project's active, listed threads.
+pub(super) async fn search(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let query = str_arg(args, "query")
         .unwrap_or_default()
         .trim()
         .to_lowercase();
-    if query.chars().count() < 2 {
+    // `OrchestrationSearchThreadsInput.query`: trimmed, 2 to 200 UTF-16 units.
+    let length = query.encode_utf16().count();
+    if length < 2 {
         return Err(ToolError::InvalidParams(
             "Expected a value with a length of at least 2\n  at [\"query\"]".into(),
         ));
     }
-    let limit = u64_arg(args, "limit").unwrap_or(10) as usize;
+    if length > SEARCH_QUERY_MAX_LENGTH {
+        return Err(ToolError::InvalidParams(format!(
+            "Expected a value with a length of at most {SEARCH_QUERY_MAX_LENGTH}\n  at [\"query\"]"
+        )));
+    }
+    let limit = u64_arg(args, "limit").map_or(SEARCH_DEFAULT_LIMIT, |l| l as usize);
     let own = cx.caller_projection().await?;
     let project_id = str_arg(args, "projectId").map(str::to_owned).or_else(|| {
         own.as_ref()
             .and_then(|p| p["thread"]["projectId"].as_str().map(str::to_owned))
     });
     let shell = cx.shell().await?;
-    let project_titles: Vec<(&Value, String)> = shell["projects"]
+    let live_projects: Vec<(&Value, String)> = shell["projects"]
         .as_array()
         .into_iter()
         .flatten()
+        .filter(|p| p["deletedAt"].is_null())
         .map(|p| {
             (
                 &p["id"],
@@ -299,67 +307,83 @@ pub async fn search(cx: &Cx<'_>, args: &Args) -> ToolResult {
             )
         })
         .collect();
-    let threads: Vec<&Value> = shell["threads"]
+    // `titleCandidates`: not deleted or archived, not a subagent or side chat, in a live project.
+    let mut candidates: Vec<&Value> = shell["threads"]
         .as_array()
         .into_iter()
         .flatten()
+        .filter(|t| t["deletedAt"].is_null() && t["archivedAt"].is_null())
         .filter(|t| t["lineage"]["relationshipToParent"] != "subagent")
+        .filter(|t| t["lineage"]["sideChat"] != true)
+        .filter(|t| live_projects.iter().any(|(id, _)| *id == &t["projectId"]))
         .filter(|t| project_id.as_deref().is_none_or(|id| t["projectId"] == id))
         .collect();
-    let mut matches = Vec::new();
-    let mut pending = Vec::new();
-    for thread in &threads {
-        let lower = |key: &str| thread[key].as_str().unwrap_or_default().to_lowercase();
-        let project_hit = project_titles
-            .iter()
-            .any(|(id, title)| *id == &thread["projectId"] && title.contains(&query));
-        if lower("title").contains(&query) || lower("branch").contains(&query) || project_hit {
-            matches.push(search_match(cx, thread, "title", None, None));
-        } else {
-            pending.push(*thread);
-        }
+    // Like the clients: what the user last wrote, else when the thread began, newest first.
+    let activity = |t: &Value| {
+        t["latestUserMessageAt"]
+            .as_str()
+            .or(t["createdAt"].as_str())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    candidates.sort_by_cached_key(|t| std::cmp::Reverse(activity(t)));
+    let title_hits: Vec<&Value> = candidates
+        .iter()
+        .copied()
+        .filter(|thread| {
+            let lower = |key: &str| thread[key].as_str().unwrap_or_default().to_lowercase();
+            let project_hit = live_projects
+                .iter()
+                .any(|(id, title)| *id == &thread["projectId"] && title.contains(&query));
+            lower("title").contains(&query) || lower("branch").contains(&query) || project_hit
+        })
+        .take(limit)
+        .collect();
+    let shown: Vec<&Value> = title_hits.iter().map(|t| &t["id"]).collect();
+    let mut input = json!({
+        "query": query,
+        "limit": SEARCH_MESSAGE_LIMIT,
+        "excludedThreadIds": shown,
+    });
+    if let Some(id) = &project_id {
+        input["projectId"] = json!(id);
     }
-    // Message text costs a projection read per thread; stop once the page is full.
-    for thread in pending {
-        if matches.len() >= limit {
-            break;
-        }
-        let Ok(projection) = cx
-            .projection(thread["id"].as_str().unwrap_or_default())
-            .await
-        else {
-            continue;
-        };
-        let hit = projection["messages"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .rev()
-            .find(|m| {
-                m["text"]
-                    .as_str()
-                    .is_some_and(|text| text.to_lowercase().contains(&query))
-            });
-        if let Some(message) = hit {
-            let source = if message["role"] == "user" {
-                "user"
-            } else {
-                "assistant"
-            };
-            let text = message["text"].as_str().unwrap_or_default();
-            let snippet: String = text.chars().take(SNIPPET_CHARS).collect();
-            matches.push(search_match(
+    let found = cx
+        .engine()
+        .call("orchestration.searchThreads", input)
+        .await
+        .map_err(|error| internal(format!("{error:?}")))?;
+    let message_hits: Vec<Value> = found["matches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|hit| {
+            let thread = candidates.iter().find(|t| t["id"] == hit["threadId"])?;
+            Some(search_match(
                 cx,
                 thread,
-                source,
-                Some(snippet),
-                Some(message["createdAt"].clone()),
-            ));
-        }
-    }
+                hit["source"].as_str().unwrap_or("assistant"),
+                hit["snippet"].as_str().map(str::to_owned),
+                Some(hit["messageCreatedAt"].clone()),
+            ))
+        })
+        .collect();
+    let message_slots = message_hits.len().min(limit / 5);
+    let mut matches: Vec<Value> = title_hits
+        .iter()
+        .take(limit.saturating_sub(message_slots))
+        .map(|thread| search_match(cx, thread, "title", None, None))
+        .collect();
+    matches.extend(message_hits);
     matches.truncate(limit);
     Ok(json!({ "currentThreadId": cx.caller_thread_id(), "matches": matches }))
 }
+
+/// The tool's `limit` default, and the message hits `searchThreads` asks the index for.
+const SEARCH_DEFAULT_LIMIT: usize = 50;
+const SEARCH_MESSAGE_LIMIT: usize = 50;
+/// `THREAD_SEARCH_QUERY_MAX_LENGTH`.
+const SEARCH_QUERY_MAX_LENGTH: usize = 200;
 
 fn search_match(
     cx: &Cx<'_>,
@@ -402,7 +426,10 @@ fn resolve_mode(
     Ok(resolved.to_owned())
 }
 
-pub fn resolve_runtime_mode(limit: &str, requested: Option<&str>) -> Result<String, ToolError> {
+pub(super) fn resolve_runtime_mode(
+    limit: &str,
+    requested: Option<&str>,
+) -> Result<String, ToolError> {
     resolve_mode(
         limit,
         requested,
@@ -412,7 +439,10 @@ pub fn resolve_runtime_mode(limit: &str, requested: Option<&str>) -> Result<Stri
     )
 }
 
-pub fn resolve_interaction_mode(limit: &str, requested: Option<&str>) -> Result<String, ToolError> {
+pub(super) fn resolve_interaction_mode(
+    limit: &str,
+    requested: Option<&str>,
+) -> Result<String, ToolError> {
     resolve_mode(
         limit,
         requested,
@@ -423,7 +453,7 @@ pub fn resolve_interaction_mode(limit: &str, requested: Option<&str>) -> Result<
 }
 
 /// Starts a thread through the engine's `launchThread`; returns its projection.
-pub async fn launch_thread(cx: &Cx<'_>, input: Value) -> ToolResult {
+pub(super) async fn launch_thread(cx: &Cx<'_>, input: Value) -> ToolResult {
     match cx.engine().launch_thread(input).await {
         Ok(result) => Ok(result["projection"].clone()),
         Err(EngineError::Rejected(error)) => Err(fail(
@@ -437,7 +467,7 @@ pub async fn launch_thread(cx: &Cx<'_>, input: Value) -> ToolResult {
     }
 }
 
-pub async fn launch(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn launch(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let limits = cx.writing_caller().await?;
     let own = cx.caller_projection().await?;
     if bool_arg(args, "scratch") == Some(true) {
@@ -472,7 +502,7 @@ pub async fn launch(cx: &Cx<'_>, args: &Args) -> ToolResult {
     // and the key, and the engine replays a command it already accepted.
     let command_id = match str_arg(args, "clientRequestId") {
         Some(key) => cx.hashed_id("mcp:launch:", key),
-        None => format!("mcp:launch:{}", crate::uuid_v4()),
+        None => format!("mcp:launch:{}", conn_support::uuid_v4()),
     };
     let model_selection = args
         .get("modelSelection")
@@ -542,7 +572,7 @@ pub async fn launch(cx: &Cx<'_>, args: &Args) -> ToolResult {
 }
 
 /// `{instanceId, model, options?}`; `provider` names the instance in older clients.
-fn normalize_selection(mut selection: Value) -> Value {
+pub(super) fn normalize_selection(mut selection: Value) -> Value {
     if selection["instanceId"].is_null()
         && let Some(provider) = selection.get("provider").cloned()
     {
@@ -555,7 +585,7 @@ fn normalize_selection(mut selection: Value) -> Value {
     selection
 }
 
-pub async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let id = thread_id(args);
     cx.writes_threads(&[str_arg(args, "threadId")]).await?;
     let projection = cx.projection(id).await?;
@@ -641,7 +671,7 @@ pub async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
 /// Waits until a run ends or waits on a question or approval (a person must answer). No
 /// `run_id`: the thread's latest run. Returns the run, `None` for a thread with no run, and
 /// whether the wait timed out.
-pub async fn wait_for_run(
+pub(super) async fn wait_for_run(
     cx: &Cx<'_>,
     thread: &str,
     run_id: Option<&str>,
@@ -697,7 +727,7 @@ pub async fn wait_for_run(
     }
 }
 
-pub async fn wait(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn wait(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let id = thread_id(args);
     cx.projection(id).await?;
     let timeout = args
@@ -719,7 +749,7 @@ pub async fn wait(cx: &Cx<'_>, args: &Args) -> ToolResult {
     }))
 }
 
-pub async fn interrupt(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn interrupt(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let id = thread_id(args);
     cx.writes_threads(&[str_arg(args, "threadId")]).await?;
     let projection = cx.projection(id).await?;
@@ -766,7 +796,7 @@ pub async fn interrupt(cx: &Cx<'_>, args: &Args) -> ToolResult {
     Ok(json!({"threadId": id, "runId": run["id"], "status": "interrupt_requested"}))
 }
 
-pub async fn update(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn update(cx: &Cx<'_>, args: &Args) -> ToolResult {
     cx.writes_threads(&[str_arg(args, "threadId")]).await?;
     let id = target_id(cx, args)?.to_owned();
     let action = str_arg(args, "action").unwrap_or_default();
@@ -806,7 +836,7 @@ pub async fn update(cx: &Cx<'_>, args: &Args) -> ToolResult {
 }
 
 /// Questions an agent asked (`user_input` requests); approvals are not listed or answered.
-pub async fn pending_request(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn pending_request(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let action = str_arg(args, "action").unwrap_or_default();
     if action == "respond" {
         cx.writes_threads(&[str_arg(args, "threadId")]).await?;
@@ -867,7 +897,7 @@ pub async fn pending_request(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let sequence = cx
         .dispatch(json!({
             "type": "runtime-request.respond",
-            "commandId": format!("command:mcp:{}", crate::uuid_v4()),
+            "commandId": format!("command:mcp:{}", conn_support::uuid_v4()),
             "threadId": id,
             "requestId": request_id,
             "answers": answers,

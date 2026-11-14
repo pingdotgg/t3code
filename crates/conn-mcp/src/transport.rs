@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{Caller, McpService, catalog, sessions::Lookup, tools};
 
-pub const PROTOCOL_VERSION: &str = "2025-06-18";
+pub(crate) const PROTOCOL_VERSION: &str = "2025-06-18";
 const SESSION_HEADER: &str = "mcp-session-id";
 const PROTOCOL_HEADER: &str = "mcp-protocol-version";
 
@@ -74,7 +74,7 @@ fn rpc_error(id: &Value, code: i64, message: &str) -> String {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}}).to_string()
 }
 
-pub async fn handle(
+pub(crate) async fn handle(
     service: &Arc<McpService>,
     caller: Caller,
     method: &Method,
@@ -210,7 +210,9 @@ async fn call(service: &Arc<McpService>, caller: &Caller, id: &Value, mut params
     let Some((tool, order)) = catalog::tool(name) else {
         return rpc_error(id, -32602, &format!("Tool '{name}' not found"));
     };
-    if let Err(problem) = catalog::check_arguments(&tool["inputSchema"], &order, &mut arguments) {
+    if let Err(problem) =
+        catalog::check_arguments(name, &tool["inputSchema"], &order, &mut arguments)
+    {
         return rpc_error(
             id,
             -32602,

@@ -1004,3 +1004,571 @@ async fn launch_prepares_a_worktree() {
     .await;
     assert_eq!(host.requests.lock().unwrap().len(), 1);
 }
+
+/// The JSON-RPC error of a call the arguments check refused.
+async fn rpc_error(c: &mut Client<'_>, tool: &str, args: Value) -> (i64, String) {
+    let reply = c
+        .request("tools/call", json!({"name": tool, "arguments": args}))
+        .await;
+    (
+        reply["error"]["code"].as_i64().unwrap_or_default(),
+        reply["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+    )
+}
+
+/// `send_to_user` (`toolkits/message`): `actsAsCaller`, so only a live thread caller; the
+/// message is 1 to 4,000 UTF-16 units; the result echoes it as `sentMessage`.
+#[tokio::test(flavor = "current_thread")]
+async fn send_to_user_echoes_the_message_to_a_live_thread_caller() {
+    let f = fixture("send-to-user");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let (code, _) = swamp
+        .failure("send_to_user", json!({"message": "hi"}))
+        .await;
+    assert_eq!(code, "thread_credential_required");
+    let mut reader = Client::open(&f.service, client(false)).await;
+    let (code, _) = reader
+        .failure("send_to_user", json!({"message": "hi"}))
+        .await;
+    assert_eq!(code, "thread_credential_required");
+
+    let live = launch_as_swamp(&mut swamp, "Live", "hang", "approval-required", "plan").await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &live)).await;
+    let (code, message) = rpc_error(&mut agent, "send_to_user", json!({"message": ""})).await;
+    assert_eq!(code, -32602, "{message}");
+    // 4,000 UTF-16 units pass; one more fails. A CJK character is one unit, an emoji two.
+    let long = "漢".repeat(4_000);
+    let sent = agent.ok("send_to_user", json!({"message": long})).await;
+    assert_eq!(sent["sentMessage"], long.as_str());
+    let (code, _) = rpc_error(
+        &mut agent,
+        "send_to_user",
+        json!({"message": "😀".repeat(2_001)}),
+    )
+    .await;
+    assert_eq!(code, -32602);
+    // Plan mode and the narrowest runtime mode may still use it: it touches only this thread.
+    let sent = agent
+        .ok(
+            "send_to_user",
+            json!({"message": "**Draft**\n\n```\ncode\n```"}),
+        )
+        .await;
+    assert_eq!(
+        sent,
+        json!({"sentMessage": "**Draft**\n\n```\ncode\n```", "message": "Shown to the user. Don't repeat it."})
+    );
+
+    dispatch(
+        &f,
+        json!({"type": "thread.archive", "commandId": "archive-live", "threadId": live}),
+    )
+    .await;
+    let (code, _) = agent
+        .failure("send_to_user", json!({"message": "late"}))
+        .await;
+    assert_eq!(code, "parent_not_active");
+}
+
+async fn thread_field(f: &Fixture, thread_id: &str, field: &str) -> Value {
+    f.service
+        .config
+        .engine
+        .get_thread_projection(thread_id.into())
+        .await
+        .unwrap()["thread"][field]
+        .clone()
+}
+
+/// Polls until `field` of the thread equals `want`, for at most two seconds.
+async fn until_field(f: &Fixture, thread_id: &str, field: &str, want: &Value) -> bool {
+    for _ in 0..200 {
+        if &thread_field(f, thread_id, field).await == want {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    false
+}
+
+/// `t3_thread_organize` (`toolkits/thread/handlers.ts`): `writesThreads([threadId])`, one
+/// engine command per action, and the own agent's settle deferred to the end of its turn.
+#[tokio::test(flavor = "current_thread")]
+async fn organize_writes_as_the_typescript_server() {
+    let f = fixture("organize");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let full = launch_as_swamp(&mut swamp, "Full", "hang", "full-access", "default").await;
+    let narrow = launch_as_swamp(&mut swamp, "Narrow", "hang", "approval-required", "plan").await;
+
+    // Refusals first: a read-only client, a caller below the target's modes, a dead caller.
+    let mut reader = Client::open(&f.service, client(false)).await;
+    let (code, _) = reader
+        .failure(
+            "t3_thread_organize",
+            json!({"threadId": full, "action": "pin"}),
+        )
+        .await;
+    assert_eq!(code, "capability_denied");
+    let mut agent = Client::open(&f.service, agent_of(&f, &narrow)).await;
+    for action in ["pin", "archive", "settle", "mark_unread"] {
+        let (code, _) = agent
+            .failure(
+                "t3_thread_organize",
+                json!({"threadId": full, "action": action}),
+            )
+            .await;
+        assert_eq!(code, "runtime_mode_escalation_denied", "{action}");
+    }
+    let (code, message) = agent
+        .failure("t3_thread_organize", json!({"action": "snooze"}))
+        .await;
+    assert_eq!(
+        (code.as_str(), message.as_str()),
+        ("invalid_request", "snooze requires snoozedUntil.")
+    );
+    let (code, _) = swamp
+        .failure("t3_thread_organize", json!({"action": "pin"}))
+        .await;
+    assert_eq!(code, "target_required");
+
+    // Normal cases from outside: pin, unpin, archive, unarchive, snooze, unsnooze.
+    let pinned = swamp
+        .ok(
+            "t3_thread_organize",
+            json!({"threadId": full, "action": "pin"}),
+        )
+        .await;
+    assert!(pinned["sequence"].as_u64().unwrap() > 0);
+    assert!(thread_field(&f, &full, "pinnedAt").await.is_string());
+    swamp
+        .ok(
+            "t3_thread_organize",
+            json!({"threadId": full, "action": "unpin"}),
+        )
+        .await;
+    assert!(thread_field(&f, &full, "pinnedAt").await.is_null());
+    swamp
+        .ok(
+            "t3_thread_organize",
+            json!({"threadId": full, "action": "snooze", "snoozedUntil": "2099-01-01T00:00:00.000Z"}),
+        )
+        .await;
+    assert!(thread_field(&f, &full, "snoozedUntil").await.is_string());
+    swamp
+        .ok(
+            "t3_thread_organize",
+            json!({"threadId": full, "action": "unsnooze"}),
+        )
+        .await;
+    assert!(thread_field(&f, &full, "snoozedUntil").await.is_null());
+    // A running thread cannot settle from outside: the engine refuses.
+    let (code, _) = swamp
+        .failure(
+            "t3_thread_organize",
+            json!({"threadId": full, "action": "settle"}),
+        )
+        .await;
+    assert_eq!(code, "orchestration_error");
+
+    // The own agent settles mid-turn: the answer says when, and the thread settles once the
+    // turn completes (a steer completes the fake turn).
+    let mut own = Client::open(&f.service, agent_of(&f, &narrow)).await;
+    let deferred = own
+        .ok("t3_thread_organize", json!({"action": "settle"}))
+        .await;
+    assert_eq!(deferred, json!({"settlesWhenTurnEnds": true}));
+    // A second request while one waits adds no second waiter.
+    own.ok("t3_thread_organize", json!({"action": "settle"}))
+        .await;
+    assert_eq!(crate::lock(&f.service.settling).len(), 1);
+    assert!(thread_field(&f, &narrow, "settledAt").await.is_null());
+    swamp
+        .ok(
+            "t3_thread_send",
+            json!({"threadId": narrow, "message": "finish", "mode": "steer"}),
+        )
+        .await;
+    assert!(until_field(&f, &narrow, "settledOverride", &json!("settled")).await);
+    assert!(thread_field(&f, &narrow, "settledAt").await.is_string());
+    for _ in 0..100 {
+        if crate::lock(&f.service.settling).is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(crate::lock(&f.service.settling).is_empty());
+
+    // An interrupted turn does not settle.
+    let other = launch_as_swamp(&mut swamp, "Other", "hang", "auto", "default").await;
+    let mut other_agent = Client::open(&f.service, agent_of(&f, &other)).await;
+    other_agent
+        .ok("t3_thread_organize", json!({"action": "settle"}))
+        .await;
+    swamp
+        .ok("t3_thread_interrupt", json!({"threadId": other}))
+        .await;
+    for _ in 0..100 {
+        if crate::lock(&f.service.settling).is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(crate::lock(&f.service.settling).is_empty());
+    assert_ne!(thread_field(&f, &other, "settledOverride").await, "settled");
+
+    // Archived: the caller is no longer live.
+    dispatch(
+        &f,
+        json!({"type": "thread.archive", "commandId": "archive-other", "threadId": other}),
+    )
+    .await;
+    let (code, _) = other_agent
+        .failure("t3_thread_organize", json!({"action": "unarchive"}))
+        .await;
+    assert_eq!(code, "parent_not_active");
+}
+
+/// `t3_queue` and `t3_thread_configure` (`toolkits/thread/handlers.ts`): reads are open, writes
+/// take `writesThreads([threadId])`; queue writes are the engine's queued-run commands.
+#[tokio::test(flavor = "current_thread")]
+async fn queue_and_configure_follow_the_typescript_server() {
+    let f = fixture("queue");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let full = launch_as_swamp(&mut swamp, "Full", "hang", "full-access", "default").await;
+    let narrow = launch_as_swamp(&mut swamp, "Narrow", "hang", "approval-required", "plan").await;
+    let mut queued = Vec::new();
+    for text in ["first", "second", &"x".repeat(1_200)] {
+        let sent = swamp
+            .ok(
+                "t3_thread_send",
+                json!({"threadId": full, "message": text, "mode": "queue"}),
+            )
+            .await;
+        queued.push(sent["runId"].as_str().unwrap().to_owned());
+    }
+
+    // Refusals first: a read-only client and a narrower agent may read but not write.
+    let mut reader = Client::open(&f.service, client(false)).await;
+    reader
+        .ok("t3_queue", json!({"threadId": full, "action": "list"}))
+        .await;
+    let (code, _) = reader
+        .failure(
+            "t3_queue",
+            json!({"threadId": full, "action": "cancel", "queuedRunId": queued[0]}),
+        )
+        .await;
+    assert_eq!(code, "capability_denied");
+    let mut agent = Client::open(&f.service, agent_of(&f, &narrow)).await;
+    let read = agent
+        .ok("t3_thread_configure", json!({"threadId": full}))
+        .await;
+    assert_eq!(read["runtimeMode"], "full-access");
+    for (tool, args) in [
+        (
+            "t3_queue",
+            json!({"threadId": full, "action": "cancel", "queuedRunId": queued[0]}),
+        ),
+        (
+            "t3_thread_configure",
+            json!({"threadId": full, "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"}}),
+        ),
+    ] {
+        let (code, _) = agent.failure(tool, args).await;
+        assert_eq!(code, "runtime_mode_escalation_denied", "{tool}");
+    }
+    let (code, message) = swamp
+        .failure(
+            "t3_queue",
+            json!({"threadId": full, "action": "edit", "queuedRunId": queued[0]}),
+        )
+        .await;
+    assert_eq!(
+        (code.as_str(), message.as_str()),
+        ("invalid_request", "This action needs `text`.")
+    );
+
+    // Reads: send order, paging, the 1,000-character list cut and the 16,000 read cut.
+    let list = swamp
+        .ok(
+            "t3_queue",
+            json!({"threadId": full, "action": "list", "limit": 2}),
+        )
+        .await;
+    let ids: Vec<&str> = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["queuedRunId"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, [queued[0].as_str(), queued[1].as_str()]);
+    assert_eq!(list["nextCursor"], 2);
+    let rest = swamp
+        .ok(
+            "t3_queue",
+            json!({"threadId": full, "action": "list", "cursor": 2}),
+        )
+        .await;
+    assert_eq!(rest["items"][0]["text"].as_str().unwrap().len(), 1_000);
+    assert_eq!(rest["items"][0]["truncated"], true);
+    assert_eq!(rest["nextCursor"], Value::Null);
+    let one = swamp
+        .ok(
+            "t3_queue",
+            json!({"threadId": full, "action": "read", "queuedRunId": queued[2]}),
+        )
+        .await;
+    assert_eq!(
+        (one["text"].as_str().unwrap().len(), &one["truncated"]),
+        (1_200, &json!(false))
+    );
+
+    // Writes: edit, reorder to the end with null, cancel; each answers its sequence.
+    swamp
+        .ok(
+            "t3_queue",
+            json!({"threadId": full, "action": "edit", "queuedRunId": queued[0], "text": "edited"}),
+        )
+        .await;
+    let edited = swamp
+        .ok(
+            "t3_queue",
+            json!({"threadId": full, "action": "read", "queuedRunId": queued[0]}),
+        )
+        .await;
+    assert_eq!(edited["text"], "edited");
+    let moved = swamp
+        .ok(
+            "t3_queue",
+            json!({"threadId": full, "action": "reorder", "queuedRunId": queued[0], "beforeRunId": null}),
+        )
+        .await;
+    assert!(moved["sequence"].as_u64().unwrap() > 0);
+    let order = swamp
+        .ok("t3_queue", json!({"threadId": full, "action": "list"}))
+        .await;
+    assert_eq!(order["items"][2]["queuedRunId"], queued[0].as_str());
+    swamp
+        .ok(
+            "t3_queue",
+            json!({"threadId": full, "action": "cancel", "queuedRunId": queued[1]}),
+        )
+        .await;
+    let (code, _) = swamp
+        .failure(
+            "t3_queue",
+            json!({"threadId": full, "action": "cancel", "queuedRunId": queued[1]}),
+        )
+        .await;
+    assert_eq!(code, "orchestration_error");
+    let left = swamp
+        .ok("t3_queue", json!({"threadId": full, "action": "list"}))
+        .await;
+    assert_eq!(left["items"].as_array().unwrap().len(), 2);
+
+    // configure: the same provider instance sets the model.
+    swamp
+        .ok(
+            "t3_thread_configure",
+            json!({"threadId": full, "modelSelection": {"instanceId": "claudeAgent", "model": "claude-sonnet-5-5"}}),
+        )
+        .await;
+    let read = swamp
+        .ok("t3_thread_configure", json!({"threadId": full}))
+        .await;
+    assert_eq!(read["modelSelection"]["model"], "claude-sonnet-5-5");
+}
+
+/// `t3_thread_search` on the engine's message index (`searchThreads` in `ThreadSearch.ts`):
+/// title hits first, then one message hit per other thread, with a fifth of the slots kept
+/// for message hits; subagent and archived threads stay out.
+#[tokio::test(flavor = "current_thread")]
+async fn search_puts_titles_first_and_keeps_slots_for_messages() {
+    let f = fixture("search");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let mut by_title = Vec::new();
+    for i in 0..6 {
+        by_title.push(
+            launch_as_swamp(
+                &mut swamp,
+                &format!("Zebra plan {i}"),
+                "hello",
+                "full-access",
+                "default",
+            )
+            .await,
+        );
+    }
+    let by_message = launch_as_swamp(
+        &mut swamp,
+        "Other",
+        "zebra stripes today",
+        "full-access",
+        "default",
+    )
+    .await;
+    let archived = launch_as_swamp(
+        &mut swamp,
+        "Gone",
+        "zebra in an archived thread",
+        "full-access",
+        "default",
+    )
+    .await;
+    for thread in by_title.iter().chain([&by_message, &archived]) {
+        swamp
+            .ok(
+                "t3_thread_wait",
+                json!({"threadId": thread, "timeoutMs": 10_000}),
+            )
+            .await;
+    }
+    dispatch(
+        &f,
+        json!({"type": "thread.archive", "commandId": "archive-gone", "threadId": archived}),
+    )
+    .await;
+
+    let found = swamp
+        .ok(
+            "t3_thread_search",
+            json!({"query": "zebra", "projectId": project_id()}),
+        )
+        .await;
+    let rows: Vec<(&str, &str)> = found["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| {
+            (
+                m["threadId"].as_str().unwrap(),
+                m["source"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(rows.len(), 7, "{found}");
+    assert!(rows[..6].iter().all(|(_, source)| *source == "title"));
+    // The message hit comes from the index, with a snippet and the time. The engine takes
+    // each thread's newest hit (the fake's echo); T3 ranks by match quality and then prefers
+    // the user's words (`compareHits`): a known gap in the engine's search, not in this tool.
+    assert_eq!(rows[6], (by_message.as_str(), "assistant"));
+    let hit = &found["matches"][6];
+    assert_eq!(hit["snippet"], "echo: zebra stripes today");
+    assert!(hit["messageCreatedAt"].is_string());
+    assert_eq!(hit["title"], "Other");
+    // limit 5: one slot of five stays for the message hit.
+    let found = swamp
+        .ok(
+            "t3_thread_search",
+            json!({"query": "zebra", "limit": 5, "projectId": project_id()}),
+        )
+        .await;
+    let sources: Vec<&str> = found["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["source"].as_str().unwrap())
+        .collect();
+    assert_eq!(sources, ["title", "title", "title", "title", "assistant"]);
+    // limit 4: no slot (4 / 5 = 0), titles only.
+    let found = swamp
+        .ok("t3_thread_search", json!({"query": "zebra", "limit": 4}))
+        .await;
+    assert!(
+        found["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["source"] == "title")
+    );
+    // Another project's scope finds nothing.
+    let found = swamp
+        .ok(
+            "t3_thread_search",
+            json!({"query": "zebra", "projectId": "project:other"}),
+        )
+        .await;
+    assert_eq!(found["matches"], json!([]));
+}
+
+/// Tools that a text we send to an agent names and that this server does not serve. An agent
+/// told to call one finds no such tool. Serve one, and this test makes you strike it here.
+/// `preview_*` in the orchestration text also names all 13 preview tools.
+const NAMED_NOT_SERVED: [&str; 17] = [
+    "create_threads",
+    "device_list",
+    "device_open",
+    "device_screenshot",
+    "html_preview",
+    "html_render",
+    "link_pull_request",
+    "link_pull_requests",
+    "preview_open",
+    "preview_status",
+    "request_secret",
+    "schedule_task",
+    "t3_background_wait",
+    "t3_environment_link",
+    "t3_environment_links",
+    "unwatch_pull_request",
+    "watch_pull_request",
+];
+
+/// Every text we send to an agent that can name a tool: the orchestration text and Claude's
+/// texts (`conn-mcp`), the `next` text of a running task, the Codex additional context
+/// (`conn-provider-codex`), the pull request text (`conn-provider-claude`), and the served
+/// tools' own descriptions.
+fn agent_texts() -> Vec<&'static str> {
+    vec![
+        crate::AGENT_INSTRUCTIONS,
+        crate::CLAUDE_INSTRUCTIONS,
+        include_str!("running-task-next.txt"),
+        include_str!("../../conn-provider-codex/src/instructions.rs"),
+        include_str!("../../conn-provider-claude/src/launch.rs"),
+        include_str!("catalog.jsonl"),
+    ]
+}
+
+fn names_word(text: &str, name: &str) -> bool {
+    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    text.match_indices(name).any(|(at, _)| {
+        let before = text.get(..at).and_then(|s| s.chars().last());
+        let after = text.get(at + name.len()..).and_then(|s| s.chars().next());
+        !before.is_some_and(word) && !after.is_some_and(word)
+    })
+}
+
+#[test]
+fn agent_texts_name_only_known_unserved_tools() {
+    let dump: Value = serde_json::from_str(include_str!("../fixtures/ts-tools-list.json")).unwrap();
+    // The live dump is an outside caller's list: the link tools and `tool_search` are hidden.
+    let mut all: Vec<String> = dump["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_owned())
+        .collect();
+    for hidden in [
+        "t3_environment_link",
+        "t3_environment_links",
+        "t3_environment_unlink",
+        "tool_search",
+    ] {
+        all.push(hidden.to_owned());
+    }
+    let served: Vec<&str> = catalog::names().collect();
+    let texts = agent_texts();
+    let mut named: Vec<&str> = all
+        .iter()
+        .map(String::as_str)
+        .filter(|name| !served.contains(name))
+        .filter(|name| texts.iter().any(|text| names_word(text, name)))
+        .collect();
+    named.sort_unstable();
+    let mut expected: Vec<&str> = NAMED_NOT_SERVED.to_vec();
+    expected.sort_unstable();
+    assert_eq!(named, expected);
+}

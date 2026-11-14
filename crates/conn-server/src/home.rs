@@ -11,7 +11,10 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::auth::{iso8601, now_ms, write_atomic};
+use conn_support::{
+    fs::write_atomic,
+    time::{iso_from_ms, now_ms},
+};
 
 /// `SERVER_EXIT_CODE_STATE_DIR_OWNED`: Conn desktop stops restarting a backend that exits so.
 pub const EXIT_STATE_DIR_OWNED: i32 = 78;
@@ -60,10 +63,18 @@ pub struct Ownership {
     _lock: rusqlite::Connection,
 }
 
-#[derive(Debug)]
+impl std::fmt::Debug for Ownership {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ownership").finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum OwnershipError {
     /// Another server (this one or the TypeScript one) runs on this state directory.
+    #[error("another server is running on this state directory")]
     Owned,
+    #[error("{0}")]
     Io(String),
 }
 
@@ -123,7 +134,7 @@ impl RuntimeState {
             host: Some(host.to_owned()),
             port,
             origin: format!("http://{reach}:{port}"),
-            started_at: iso8601(now_ms()),
+            started_at: iso_from_ms(now_ms()),
             server_version: Some(crate::environment::CONTRACT_SERVER_VERSION.into()),
         }
     }
@@ -149,18 +160,20 @@ pub fn read_runtime_state(state_dir: &Path) -> Option<RuntimeState> {
     process_alive(state.pid).then_some(state)
 }
 
+/// `kill -0`: whether a process with this id exists. EPERM means it exists but belongs to
+/// another user, as a server another account started: alive.
 #[cfg(unix)]
 fn process_alive(pid: u32) -> bool {
-    // `kill -0` without libc: /proc on Linux, `ps` elsewhere.
-    if Path::new("/proc/self").exists() {
-        return Path::new(&format!("/proc/{pid}")).exists();
+    let Some(pid) = i32::try_from(pid)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    else {
+        return false;
+    };
+    match rustix::process::test_kill_process(pid) {
+        Ok(()) => true,
+        Err(error) => error == rustix::io::Errno::PERM,
     }
-    std::process::Command::new("ps")
-        .args(["-p", &pid.to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
 }
 
 #[cfg(not(unix))]
@@ -242,6 +255,16 @@ mod tests {
         drop(first);
         assert!(acquire_ownership(&dir).is_ok());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_process_of_another_user_is_alive() {
+        assert!(process_alive(std::process::id()), "this process");
+        // pid 1 (init or launchd) belongs to root: `kill -0` fails with EPERM.
+        assert!(process_alive(1), "another user's process");
+        assert!(!process_alive(999_999_999), "no such process");
+        assert!(!process_alive(0), "not a process id");
+        assert!(!process_alive(u32::MAX), "out of range");
     }
 
     #[test]

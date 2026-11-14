@@ -25,3 +25,9 @@ pub fn method_table(deps: &methods::Deps) -> MethodTable {
     methods::register_all(&mut table, deps);
     table
 }
+
+/// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
+/// With `panic = "abort"` a release build stops at the panic itself.
+pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().expect("conn-server lock poisoned")
+}

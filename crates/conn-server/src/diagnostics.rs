@@ -7,7 +7,7 @@ use std::process::Command;
 
 use serde_json::{Value, json};
 
-use crate::auth::{iso8601, now_ms};
+use conn_support::time::{iso_from_ms, now_ms};
 
 /// `HostResourcesSnapshot`. `cpuUtilization` is left null: it needs two samples over time.
 pub fn host_resources() -> Value {
@@ -181,7 +181,7 @@ pub fn process_diagnostics() -> Value {
         .collect();
     json!({
         "serverPid": server_pid,
-        "readAt": iso8601(now),
+        "readAt": iso_from_ms(now),
         "processCount": entries.len(),
         "totalRssBytes": processes.iter().map(|(r, _, _)| r.rss_bytes).sum::<i64>(),
         "totalCpuPercent": processes.iter().map(|(r, _, _)| r.cpu).sum::<f64>(),

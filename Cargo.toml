@@ -21,6 +21,7 @@ conn-mcp = { path = "crates/conn-mcp" }
 conn-vcs = { path = "crates/conn-vcs" }
 conn-files = { path = "crates/conn-files" }
 conn-terminal = { path = "crates/conn-terminal" }
+conn-support = { path = "crates/conn-support" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -33,6 +34,23 @@ tokio = { version = "1", default-features = false, features = [
   "time",
   "macros",
 ] }
+# Third-party crates that more than one crate uses: one version for the workspace.
+# HMAC-SHA256 for signed URLs and tokens, diff hashes; shares `digest` with tungstenite's sha1.
+sha2 = { version = "0.10", default-features = false }
+# Tokens, keys and random ids from the OS random source; already in the tree through tungstenite.
+getrandom = "0.3"
+# Process groups, signals and terminal calls through safe wrappers; no `unsafe` in our code.
+# Each crate adds the features it needs.
+rustix = { version = "1", default-features = false, features = ["std"] }
+# Bundled SQLite with JSON1 (built in since 3.38). No statement cache, no extra features.
+rusqlite = { version = "0.37", default-features = false, features = ["bundled"] }
+# Display and std::error::Error for the error types at crate boundaries. Already in the tree
+# through tungstenite; a proc macro, so no run-time code beyond the impls it writes.
+thiserror = "2"
+# v4 ids: the version and variant bits and the text form, in place of four hand-written copies.
+# Without its `v4` feature, which would bring getrandom 0.4 next to the 0.3 already in the
+# tree; conn-support fills the bytes from getrandom 0.3.
+uuid = { version = "1.29", default-features = false, features = ["std"] }
 axum = { version = "0.8", default-features = false, features = [
   "http1",
   "json",
@@ -41,8 +59,28 @@ axum = { version = "0.8", default-features = false, features = [
   "query",
 ] }
 
+# BeautifulRust's lint set (lints/beautiful-rust/lints.toml), stage 1, plus `large_futures`.
+# CRATES.md ("Lint set") lists the stages that follow and the [lib] lints that stay off.
 [workspace.lints.rust]
 unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "allow"
+panic_in_result_fn = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+todo = "warn"
+wildcard_imports = "warn"
+string_add = "warn"
+missing_assert_message = "warn"
+redundant_clone = "warn"
+rc_buffer = "warn"
+large_futures = "warn"
 
 [profile.release]
 # Smaller than opt-level 3 on every measure (README, "Memory"): binary, RSS and footprint.

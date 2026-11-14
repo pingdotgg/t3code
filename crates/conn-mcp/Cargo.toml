@@ -5,17 +5,20 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 
 [dependencies]
+conn-support.workspace = true
 conn-contract.workspace = true
 conn-engine.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
 # Already in the tree through axum: request and response types without a framework.
 http = "1"
 # Already in the tree (conn-server): agent tokens from the OS random source, hashed at rest.
-getrandom = "0.3"
-sha2 = { version = "0.10", default-features = false }
+getrandom.workspace = true
+sha2.workspace = true
 [dev-dependencies]
 conn-engine = { workspace = true, features = ["fake-provider"] }
 tokio = { workspace = true, features = ["test-util"] }

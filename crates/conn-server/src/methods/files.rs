@@ -159,7 +159,7 @@ struct ListIgnoredInput {
     query: Option<String>,
 }
 
-pub fn register(table: &mut MethodTable, deps: &Deps) {
+pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
     let Some(files) = deps.files.clone() else {
         return;
     };

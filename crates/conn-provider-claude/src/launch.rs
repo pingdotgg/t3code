@@ -617,13 +617,7 @@ mod tests {
         // The SDK, not T3, decides about NODE_OPTIONS.
         assert_eq!(env["NODE_OPTIONS"], "--x");
         assert!(env.get("CLAUDECODE").is_none());
-        let fresh = query_env(
-            &config,
-            "thread-1",
-            false,
-            host.clone(),
-            Some("custom".into()),
-        );
+        let fresh = query_env(&config, "thread-1", false, host, Some("custom".into()));
         assert!(fresh.get("MCP_CONNECTION_NONBLOCKING").is_none());
         assert_eq!(fresh["CLAUDE_CODE_ENTRYPOINT"], "custom");
     }

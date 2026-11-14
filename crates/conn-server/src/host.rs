@@ -32,6 +32,14 @@ pub struct Host {
     pub environment: Arc<Environment>,
 }
 
+impl std::fmt::Debug for Host {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Host")
+            .field("environment", &self.environment)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Where new managed worktrees go: `worktreesDirectory` from the settings, else
 /// `<state-dir>/worktrees`. Read on each use, so a settings change applies to the next
 /// worktree. Thread launch and `vcs.createWorktree` both use this one function.

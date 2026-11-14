@@ -139,7 +139,7 @@ pub fn prompt_content(
         *budget_used += cost;
         blocks.push(json!({
             "type": "image",
-            "source": {"type": "base64", "media_type": mime, "data": base64(&bytes)},
+            "source": {"type": "base64", "media_type": mime, "data": conn_support::base64::encode(&bytes)},
         }));
     }
     if !prompt.is_empty() {
@@ -147,40 +147,10 @@ pub fn prompt_content(
     }
     Value::Array(blocks)
 }
-
-/// Standard base64 with padding. Small enough not to need a dependency.
-pub fn base64(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let n = match chunk.len() {
-            3 => u32::from(chunk[0]) << 16 | u32::from(chunk[1]) << 8 | u32::from(chunk[2]),
-            2 => u32::from(chunk[0]) << 16 | u32::from(chunk[1]) << 8,
-            _ => u32::from(chunk[0]) << 16,
-        };
-        for i in 0..4 {
-            if i <= chunk.len() {
-                out.push(TABLE[(n >> (18 - 6 * i) & 63) as usize] as char);
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use conn_contract::from_json;
-
-    #[test]
-    fn base64_matches_the_standard() {
-        assert_eq!(base64(b""), "");
-        assert_eq!(base64(b"f"), "Zg==");
-        assert_eq!(base64(b"fo"), "Zm8=");
-        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
-    }
 
     #[test]
     fn paths_follow_the_attachment_store() {

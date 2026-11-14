@@ -33,6 +33,15 @@ pub struct Deps {
     pub files: Option<Arc<conn_files::Files>>,
 }
 
+impl std::fmt::Debug for Deps {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Deps")
+            .field("providers", &self.providers.len())
+            .field("environment", &self.environment)
+            .finish_non_exhaustive()
+    }
+}
+
 pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     server::register(table, deps);
     orchestration::register(table, deps);

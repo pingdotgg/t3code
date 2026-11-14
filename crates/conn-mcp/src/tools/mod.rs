@@ -11,23 +11,27 @@ use sha2::{Digest, Sha256};
 
 use crate::{Caller, McpConfig, McpService};
 
+mod manage;
+mod message;
 mod projects;
 mod tasks;
 mod threads;
 
-pub type Args = Map<String, Value>;
+pub(crate) type Args = Map<String, Value>;
 
-#[derive(Debug)]
-pub enum ToolError {
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ToolError {
     /// `OrchestratorMcpFailure`: a tool result with `isError: true`.
+    #[error("{code}: {message}")]
     Failure { code: &'static str, message: String },
     /// Arguments the schema allows but the call cannot use: JSON-RPC -32602, as TS decoding.
+    #[error("invalid params: {0}")]
     InvalidParams(String),
 }
 
-pub type ToolResult = Result<Value, ToolError>;
+pub(crate) type ToolResult = Result<Value, ToolError>;
 
-pub fn fail(code: &'static str, message: impl Into<String>) -> ToolError {
+pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError {
     ToolError::Failure {
         code,
         message: message.into(),
@@ -36,7 +40,11 @@ pub fn fail(code: &'static str, message: impl Into<String>) -> ToolError {
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub const HANDLED: [&str; 16] = [
+pub(crate) const HANDLED: [&str; 20] = [
+    "t3_queue",
+    "t3_thread_configure",
+    "t3_thread_organize",
+    "send_to_user",
     "orchestrator_capabilities",
     "delegate_task",
     "task_status",
@@ -55,7 +63,7 @@ pub const HANDLED: [&str; 16] = [
     "t3_environment_read",
 ];
 
-pub async fn call(
+pub(crate) async fn call(
     service: &Arc<McpService>,
     caller: &Caller,
     name: &str,
@@ -85,6 +93,10 @@ pub async fn call(
         "t3_thread_interrupt" => threads::interrupt(&cx, &args).await,
         "t3_thread_update" => threads::update(&cx, &args).await,
         "t3_pending_request" => threads::pending_request(&cx, &args).await,
+        "t3_queue" => manage::queue(&cx, &args).await,
+        "t3_thread_configure" => manage::configure(&cx, &args).await,
+        "t3_thread_organize" => manage::organize(&cx, &args).await,
+        "send_to_user" => message::send_to_user(&cx, &args).await,
         "delegate_task" => tasks::delegate(&cx, &args).await,
         "task_status" => tasks::status(&cx, &args).await,
         "task_cancel" => tasks::cancel(&cx, &args).await,
@@ -96,28 +108,28 @@ pub async fn call(
 }
 
 /// One call's context.
-pub struct Cx<'a> {
+pub(crate) struct Cx<'a> {
     service: &'a Arc<McpService>,
     caller: &'a Caller,
 }
 
-pub const RUNTIME_MODES: [&str; 4] = [
+pub(crate) const RUNTIME_MODES: [&str; 4] = [
     "approval-required",
     "auto-accept-edits",
     "auto",
     "full-access",
 ];
 
-pub fn runtime_rank(mode: &str) -> usize {
+pub(crate) fn runtime_rank(mode: &str) -> usize {
     RUNTIME_MODES.iter().position(|m| *m == mode).unwrap_or(0)
 }
 
-pub fn interaction_rank(mode: &str) -> usize {
+pub(crate) fn interaction_rank(mode: &str) -> usize {
     usize::from(mode != "plan")
 }
 
 /// The broadest modes the caller may start or drive threads in.
-pub struct Limits {
+pub(crate) struct Limits {
     pub runtime_mode: String,
     pub interaction_mode: String,
 }
@@ -166,7 +178,7 @@ impl Cx<'_> {
         }
     }
 
-    pub async fn projection(&self, thread_id: &str) -> ToolResult {
+    pub(crate) async fn projection(&self, thread_id: &str) -> ToolResult {
         match self
             .engine()
             .get_thread_projection(ThreadId::from(thread_id))
@@ -335,7 +347,7 @@ impl Cx<'_> {
     fn request_key(args: &Args) -> String {
         args.get("clientRequestId")
             .and_then(Value::as_str)
-            .map_or_else(crate::uuid_v4, str::to_owned)
+            .map_or_else(conn_support::uuid_v4, str::to_owned)
     }
 
     /// TS `stableCommandId`: `command:mcp:<namespace>:<operation>:<key>`, each part encoded.
@@ -352,7 +364,7 @@ impl Cx<'_> {
     fn hashed_id(&self, prefix: &str, key: &str) -> String {
         let pair = json!([self.caller.namespace(), key]).to_string();
         let digest = Sha256::digest(pair.as_bytes());
-        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        let hex = conn_support::hex::hex(&digest);
         format!("{prefix}{hex}")
     }
 }
@@ -362,7 +374,7 @@ const ACTIVE_RUN_STATUSES: [&str; 4] = ["preparing", "starting", "running", "wai
 
 /// The thread shell's `activeRunId`, from a projection: the latest run that started (queued
 /// runs and runs cancelled before they started do not count), if it is still active.
-fn has_active_run(projection: &Value) -> bool {
+pub(crate) fn has_active_run(projection: &Value) -> bool {
     let Some(runs) = projection["runs"].as_array() else {
         return false;
     };

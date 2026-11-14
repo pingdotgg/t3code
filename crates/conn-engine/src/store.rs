@@ -215,7 +215,8 @@ impl Store {
         Ok(Tx {
             generates_titles,
             tx: self.conn.transaction().map_err(err)?,
-            next_seq: &mut self.next_seq,
+            store_seq: &mut self.next_seq,
+            next_seq: start,
             start,
             now: now_iso(),
             touched: Vec::new(),
@@ -458,7 +459,11 @@ impl Store {
 /// One atomic write. Reads inside it see its own appends.
 pub(crate) struct Tx<'a> {
     tx: Transaction<'a>,
-    next_seq: &'a mut u64,
+    /// The store's counter. Written only after the commit succeeds, so a failed or dropped
+    /// write gives back the sequences it took.
+    store_seq: &'a mut u64,
+    /// The next sequence inside this write.
+    next_seq: u64,
     start: u64,
     now: String,
     /// Threads whose shell row may have changed, with the last sequence that touched them.
@@ -472,8 +477,8 @@ impl Tx<'_> {
     }
 
     fn alloc(&mut self) -> u64 {
-        let seq = *self.next_seq;
-        *self.next_seq += 1;
+        let seq = self.next_seq;
+        self.next_seq += 1;
         seq
     }
 
@@ -864,7 +869,7 @@ impl Tx<'_> {
                 )
                 .map_err(err)?;
         }
-        let high = *self.next_seq - 1;
+        let high = self.next_seq - 1;
         if let Some((command_id, command_type)) = receipt {
             self.tx
                 .execute(
@@ -877,13 +882,13 @@ impl Tx<'_> {
             prune(&self.tx)?;
         }
         self.tx.commit().map_err(err)?;
+        *self.store_seq = self.next_seq;
         Ok(high)
     }
 
-    /// Ends the write without committing. Sequences it took are given back.
-    pub(crate) fn rollback(self) {
-        *self.next_seq = self.start;
-    }
+    /// Ends the write without committing. Sequences it took are given back: the store's
+    /// counter only moves on a commit.
+    pub(crate) fn rollback(self) {}
 
     // Raw access for the shell derivation in `shell.rs`.
     pub(crate) fn conn(&self) -> &Connection {
@@ -1097,6 +1102,98 @@ mod tests {
         assert_eq!(tx.entity("t1", "runs", "r1").unwrap().unwrap()["id"], "r1");
         tx.rollback();
         assert!(store.query_json("SELECT body FROM entities", []).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A commit that fails gives back the sequences its write took, as a rollback does, so the
+    /// next write does not leave a gap.
+    #[test]
+    fn a_failed_commit_gives_its_sequences_back() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-engine-{}-failed-commit", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = Store::open(&dir.join("engine.sqlite")).unwrap();
+        let before = store.high_water();
+        store
+            .conn
+            .execute_batch(
+                "CREATE TRIGGER fail_receipts BEFORE INSERT ON receipts
+                 BEGIN SELECT RAISE(ABORT, 'test: no receipts'); END;",
+            )
+            .unwrap();
+        let mut tx = store.tx().unwrap();
+        tx.append(Draft::new("t1", "thread.activity-updated", json!({})))
+            .unwrap();
+        tx.append(Draft::new("t1", "thread.activity-updated", json!({})))
+            .unwrap();
+        assert!(
+            tx.commit(Some(("c1", "test"))).is_err(),
+            "the trigger fails it"
+        );
+        assert_eq!(
+            store.high_water(),
+            before,
+            "the failed write took no sequence"
+        );
+
+        store
+            .conn
+            .execute_batch("DROP TRIGGER fail_receipts")
+            .unwrap();
+        let mut tx = store.tx().unwrap();
+        let seq = tx
+            .append(Draft::new("t1", "thread.activity-updated", json!({})))
+            .unwrap();
+        assert_eq!(seq, before + 1, "the next write continues without a gap");
+        assert_eq!(tx.commit(Some(("c2", "test"))).unwrap(), before + 1);
+        assert_eq!(store.high_water(), before + 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// In-thread find takes the client's `offset` from the current match. Any `i64` lands on a
+    /// match: it never overflows (a panic in debug builds, a wrong index in release).
+    #[test]
+    fn an_extreme_find_offset_still_lands_on_a_match() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-engine-{}-find-offset", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(&dir.join("engine.sqlite")).unwrap();
+        store
+            .conn
+            .execute_batch(
+                r#"INSERT INTO entities (thread_id, kind, id, first_seq, seq, ordinal, body) VALUES
+                 ('t1', 'turnItems', 'i1', 1, 1, 1,
+                  '{"type":"user_message","status":"completed","text":"one fox, two fox","messageId":"m1","runId":"r1"}'),
+                 ('t1', 'turnItems', 'i2', 2, 2, 2,
+                  '{"type":"assistant_message","status":"completed","text":"three fox","messageId":"m2","runId":"r1"}');"#,
+            )
+            .unwrap();
+        let find = |start: &str, offset: i64| {
+            let found = store
+                .search_thread(&json!({
+                    "threadId": "t1",
+                    "query": "fox",
+                    "start": {"entryId": start, "occurrence": 0},
+                    "offset": offset,
+                }))
+                .unwrap();
+            assert_eq!(found["totalMatches"], 3, "{found}");
+            found["activeIndex"].as_u64().unwrap()
+        };
+        assert_eq!(find("m1", 1), 1);
+        assert_eq!(
+            find("m1", -1),
+            2,
+            "back from the first match wraps to the last"
+        );
+        // From match 2 (the start of m2): i64::MAX is 1 more than a multiple of 3.
+        assert_eq!(find("m2", 1), 0);
+        assert_eq!(find("m2", i64::MAX), 0);
+        // i64::MIN is 1 more than a multiple of 3 as well.
+        assert_eq!(find("m1", i64::MIN), 1);
+        assert_eq!(find("m2", i64::MIN), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

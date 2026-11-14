@@ -75,6 +75,14 @@ pub struct Mapper<E: Env> {
     policy_asks: Option<bool>,
 }
 
+impl<E: Env> std::fmt::Debug for Mapper<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Mapper")
+            .field("provider_session_id", &self.provider_session_id)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum StreamKind {
     Text,
@@ -1019,7 +1027,7 @@ impl<E: Env> Mapper<E> {
         let mut retry = None;
         if let Some(state) = turn.retry.take() {
             if status == TurnStatus::Failed {
-                retry = from_json(state.retry.clone()).ok();
+                retry = from_json(state.retry).ok();
             } else {
                 out.push(turn_item(notices::retry_item(
                     &turn,
@@ -1252,7 +1260,7 @@ impl<E: Env> Mapper<E> {
             "mcp-elicitation",
             None,
             RequestBody::Approval {
-                prompt: req.message.clone(),
+                prompt: req.message,
                 options: Some(options),
                 app_name: Some(app_name),
             },
@@ -1304,7 +1312,7 @@ impl<E: Env> Mapper<E> {
             ],
             "multiSelect": false,
         }]);
-        let native_id = req.tool_use_id.clone().unwrap_or(cli_id.clone());
+        let native_id = req.tool_use_id.unwrap_or(cli_id.clone());
         let root = turn.root_node_id.clone();
         let thread_id = turn.thread_id.clone();
         let artifacts = self.request_artifacts(
@@ -2058,7 +2066,7 @@ fn tool_output(tool_name: &str, structured: Option<&Value>, content: &Value) -> 
                 {
                     format!("{stdout}\n{stderr}")
                 } else {
-                    stdout + &stderr
+                    format!("{stdout}{stderr}")
                 };
                 if !joined.is_empty() {
                     return Some(json!(joined));

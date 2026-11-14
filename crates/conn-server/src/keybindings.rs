@@ -18,7 +18,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
-use crate::auth::write_atomic;
+use conn_support::fs::write_atomic;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, serde::Serialize)]
 pub struct Rule {
@@ -69,6 +69,14 @@ pub struct KeybindingsStore {
     path: PathBuf,
     snapshot: Mutex<Snapshot>,
     revision: watch::Sender<u64>,
+}
+
+impl std::fmt::Debug for KeybindingsStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeybindingsStore")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
 }
 
 impl KeybindingsStore {
@@ -158,9 +166,7 @@ impl KeybindingsStore {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Snapshot> {
-        self.snapshot
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        crate::lock(&self.snapshot)
     }
 }
 

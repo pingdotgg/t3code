@@ -12,10 +12,12 @@ use std::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use conn_support::time::iso_from_ms;
+
 use crate::{
     auth::{
         self, AuthStore, PAIRING_CODE_TTL_MS, PairingRequest, SESSION_TTL_MS, STANDARD_SCOPES,
-        SessionRequest, iso8601,
+        SessionRequest,
     },
     home,
 };
@@ -432,7 +434,7 @@ fn free_port(host: &str, start: u16) -> u16 {
 }
 
 /// `DesktopBackendBootstrap`: the JSON line Conn desktop writes to `--bootstrap-fd`.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopBootstrapEnvelope {
     pub mode: Option<String>,
@@ -441,6 +443,26 @@ pub struct DesktopBootstrapEnvelope {
     pub t3_home: Option<String>,
     pub desktop_bootstrap_token: Option<String>,
     pub desktop_bootstrap_secret: Option<String>,
+}
+
+impl std::fmt::Debug for DesktopBootstrapEnvelope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted = |value: &Option<String>| value.as_ref().map(|_| "<redacted>");
+        f.debug_struct("DesktopBootstrapEnvelope")
+            .field("mode", &self.mode)
+            .field("port", &self.port)
+            .field("host", &self.host)
+            .field("t3_home", &self.t3_home)
+            .field(
+                "desktop_bootstrap_token",
+                &redacted(&self.desktop_bootstrap_token),
+            )
+            .field(
+                "desktop_bootstrap_secret",
+                &redacted(&self.desktop_bootstrap_secret),
+            )
+            .finish()
+    }
 }
 
 /// How long the desktop has to write its bootstrap line, as in `bootstrap.ts`.
@@ -681,7 +703,7 @@ fn run_inner(command: Command) -> Result<(), String> {
                 "Pairing with {label} ({origin}).\n\nPairing URL: {url}\nToken: {code}\nExpires: {expires}\n",
                 origin = runtime.origin,
                 code = issued.code,
-                expires = iso8601(issued.expires_at_ms),
+                expires = iso_from_ms(issued.expires_at_ms),
             ));
         }
         Command::PairingCreate {
@@ -707,7 +729,7 @@ fn run_inner(command: Command) -> Result<(), String> {
                     body["label"] = json!(label);
                 }
                 body["scopes"] = json!(issued.scopes);
-                body["expiresAt"] = json!(iso8601(issued.expires_at_ms));
+                body["expiresAt"] = json!(iso_from_ms(issued.expires_at_ms));
                 if let Some(url) = &pair_url {
                     body["pairUrl"] = json!(url);
                 }
@@ -720,7 +742,7 @@ fn run_inner(command: Command) -> Result<(), String> {
                 if let Some(url) = pair_url {
                     lines.push(format!("Pair URL: {url}"));
                 }
-                lines.push(format!("Expires at: {}", iso8601(issued.expires_at_ms)));
+                lines.push(format!("Expires at: {}", iso_from_ms(issued.expires_at_ms)));
                 print(format!("{}\n", lines.join("\n")));
             }
         }
@@ -728,11 +750,18 @@ fn run_inner(command: Command) -> Result<(), String> {
             let links = open_auth(&state_dir)?.pairing_links();
             let scopes_of = |l: &conn_contract::AuthPairingLink| -> Vec<Value> {
                 match &l.permissions {
-                    Some(p) => p.iter().map(|s| serde_json::to_value(s).unwrap()).collect(),
+                    Some(p) => p
+                        .iter()
+                        .map(|s| {
+                            serde_json::to_value(s).expect("a scope literal always serializes")
+                        })
+                        .collect(),
                     None => l
                         .scopes
                         .iter()
-                        .map(|s| serde_json::to_value(s).unwrap())
+                        .map(|s| {
+                            serde_json::to_value(s).expect("a scope literal always serializes")
+                        })
                         .collect(),
                 }
             };
@@ -813,7 +842,7 @@ fn run_inner(command: Command) -> Result<(), String> {
                     "scopes": p.scopes,
                     "subject": p.subject,
                     "client": client,
-                    "expiresAt": iso8601(p.expires_at_ms),
+                    "expiresAt": iso_from_ms(p.expires_at_ms),
                 })));
             } else {
                 print(format!(
@@ -823,7 +852,7 @@ fn run_inner(command: Command) -> Result<(), String> {
                     issued.token,
                     p.subject,
                     client_text(&client),
-                    iso8601(p.expires_at_ms)
+                    iso_from_ms(p.expires_at_ms)
                 ));
             }
         }
@@ -944,7 +973,7 @@ fn add_to_running_server(
         .map_err(|e| e.to_string())?;
     let body = json!({
         "type": "project.create",
-        "commandId": auth::random_uuid(),
+        "commandId": conn_support::uuid_v4(),
         "projectId": project_id,
         "title": title,
         "workspaceRoot": root,

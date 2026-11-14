@@ -10,18 +10,23 @@
 
 use std::{
     collections::HashMap,
-    fs,
-    io::{self, Write},
+    fs, io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
+    time::SystemTime,
 };
 
 use conn_contract::{
     AuthClientMetadata, AuthClientMetadataDeviceType, AuthClientSession, AuthEnvironmentScope,
     AuthPairingLink, from_json,
 };
-use conn_files::signer::{constant_time_eq, hmac_sha256};
+use conn_support::{
+    fs::write_private,
+    hex::hex,
+    hmac::{constant_time_eq, hmac_sha256},
+    time::{iso_from_ms, now_ms},
+    uuid_v4,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
@@ -112,13 +117,24 @@ fn descriptor_for(policy: &str, bootstrap_methods: &[&str]) -> serde_json::Value
 /// The credential Conn desktop hands its local backend (`DesktopBackendBootstrap`). With a
 /// secret, valid tokens rotate every 12 hours (`desktopBootstrapToken.ts`); without one, the
 /// token itself works for 24 hours. Either may be exchanged any number of times.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DesktopBootstrap {
     pub token: String,
     pub secret: Option<String>,
     pub expires_at_ms: u64,
     /// Bound to a non-loopback host: one-time codes work too (`remote-reachable`).
     pub remote_reachable: bool,
+}
+
+impl std::fmt::Debug for DesktopBootstrap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DesktopBootstrap")
+            .field("token", &"<redacted>")
+            .field("secret", &self.secret.as_ref().map(|_| "<redacted>"))
+            .field("expires_at_ms", &self.expires_at_ms)
+            .field("remote_reachable", &self.remote_reachable)
+            .finish()
+    }
 }
 
 const DESKTOP_TOKEN_WINDOW_MS: u64 = 12 * 60 * MINUTE_MS;
@@ -301,7 +317,7 @@ fn browser_from_user_agent(ua: &str) -> Option<&'static str> {
     .map(|(_, browser)| browser)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct IssuedPairingCode {
     pub id: String,
     pub code: String,
@@ -311,11 +327,33 @@ pub struct IssuedPairingCode {
     pub expires_at_ms: u64,
 }
 
-#[derive(Debug)]
+impl std::fmt::Debug for IssuedPairingCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IssuedPairingCode")
+            .field("id", &self.id)
+            .field("code", &"<redacted>")
+            .field("label", &self.label)
+            .field("scopes", &self.scopes)
+            .field("created_at_ms", &self.created_at_ms)
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
+}
+
 pub struct IssuedSession {
     pub token: String,
     pub principal: Principal,
     pub client: ClientInfo,
+}
+
+impl std::fmt::Debug for IssuedSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IssuedSession")
+            .field("token", &"<redacted>")
+            .field("principal", &self.principal)
+            .field("client", &self.client)
+            .finish()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -473,6 +511,15 @@ pub struct AuthStore {
     changes: broadcast::Sender<AccessChange>,
 }
 
+impl std::fmt::Debug for AuthStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The state holds token hashes and pairing codes.
+        f.debug_struct("AuthStore")
+            .field("file", &self.file)
+            .finish_non_exhaustive()
+    }
+}
+
 impl AuthStore {
     pub fn in_memory() -> Arc<Self> {
         Arc::new(Self::new(None))
@@ -499,12 +546,12 @@ impl AuthStore {
 
     /// Accept Conn desktop's bootstrap credential from now on.
     pub fn set_desktop_bootstrap(&self, bootstrap: DesktopBootstrap) {
-        *self.desktop.lock().unwrap_or_else(|p| p.into_inner()) = Some(bootstrap);
+        *crate::lock(&self.desktop) = Some(bootstrap);
     }
 
     /// `ServerAuthDescriptor`, as `EnvironmentAuthPolicy` resolves it for how this server started.
     pub fn descriptor(&self) -> serde_json::Value {
-        match &*self.desktop.lock().unwrap_or_else(|p| p.into_inner()) {
+        match &*crate::lock(&self.desktop) {
             Some(desktop) if desktop.remote_reachable => {
                 descriptor_for("remote-reachable", &["desktop-bootstrap", "one-time-token"])
             }
@@ -514,9 +561,7 @@ impl AuthStore {
     }
 
     fn desktop_accepts(&self, credential: &str) -> bool {
-        self.desktop
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
+        crate::lock(&self.desktop)
             .as_ref()
             .is_some_and(|d| d.accepts(credential, now_ms()))
     }
@@ -540,7 +585,7 @@ impl AuthStore {
         let code = pairing_code();
         let now = now_ms();
         let link = StoredPairing {
-            id: random_uuid(),
+            id: uuid_v4(),
             code_hash: hex(&hash(&code)),
             scopes: request.scopes,
             subject: SUBJECT_ONE_TIME_TOKEN.into(),
@@ -882,9 +927,7 @@ impl AuthStore {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        crate::lock(&self.state)
     }
 
     /// Reloads the file when another process changed it, and announces what moved.
@@ -1000,6 +1043,12 @@ pub struct ConnectionGuard {
     session_id: String,
 }
 
+impl std::fmt::Debug for ConnectionGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionGuard").finish_non_exhaustive()
+    }
+}
+
 impl Drop for ConnectionGuard {
     fn drop(&mut self) {
         self.store.disconnect(&self.session_id);
@@ -1015,7 +1064,7 @@ fn new_session(
     let now = now_ms();
     let token = random_hex(32);
     let session = StoredSession {
-        id: random_uuid(),
+        id: uuid_v4(),
         token_hash: hex(&hash(&token)),
         subject,
         scopes,
@@ -1083,8 +1132,8 @@ fn pairing_to_contract(link: &StoredPairing) -> AuthPairingLink {
         permissions: permissions(&link.scopes),
         subject: link.subject.clone(),
         label: link.label.clone(),
-        created_at: iso8601(link.created_at_ms),
-        expires_at: iso8601(link.expires_at_ms),
+        created_at: iso_from_ms(link.created_at_ms),
+        expires_at: iso_from_ms(link.expires_at_ms),
         // Only a T3 Connect device's request makes a link with one; this server refuses
         // DPoP, so it serves no T3 Connect device.
         connect_device_request: None,
@@ -1109,9 +1158,9 @@ fn session_to_contract(
         method: from_json(serde_json::Value::String(session.method.clone()))
             .unwrap_or(conn_contract::ServerAuthSessionMethod::BearerAccessToken),
         client: session.client.to_contract(),
-        issued_at: iso8601(session.issued_at_ms),
-        expires_at: iso8601(session.expires_at_ms),
-        last_connected_at: last_connected_at_ms.map(iso8601),
+        issued_at: iso_from_ms(session.issued_at_ms),
+        expires_at: iso_from_ms(session.expires_at_ms),
+        last_connected_at: last_connected_at_ms.map(iso_from_ms),
         connected: state.connections.get(&session.id).is_some_and(|n| *n > 0),
         current: current == Some(session.id.as_str()),
     }
@@ -1139,35 +1188,6 @@ fn lock_file(path: &Path) -> io::Result<fs::File> {
     Ok(file)
 }
 
-/// Writes through a temp file and a rename, readable by the owner only.
-pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    write_atomic(path, bytes, 0o600)
-}
-
-/// Writes through a temp file and a rename, so readers never see half a file.
-pub fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode);
-    #[cfg(not(unix))]
-    let _ = mode;
-    let mut file = options.open(&tmp)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    fs::rename(tmp, path)
-}
-
-pub fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as u64)
-}
-
 fn hash(secret: &str) -> Hash {
     Sha256::digest(secret.as_bytes()).into()
 }
@@ -1188,22 +1208,6 @@ pub fn random_hex(bytes: usize) -> String {
     hex(&out)
 }
 
-/// A random version 4 UUID, as `crypto.randomUUID` makes them.
-pub fn random_uuid() -> String {
-    let mut b = random_bytes::<16>();
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    let h = hex(&b);
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[0..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..32]
-    )
-}
-
 /// A pairing code as `PairingGrantStore` makes them: rejection-sampled, no modulo bias.
 fn pairing_code() -> String {
     let limit = 256 / PAIRING_CODE_ALPHABET.len() * PAIRING_CODE_ALPHABET.len();
@@ -1220,16 +1224,6 @@ fn pairing_code() -> String {
     code
 }
 
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(DIGITS[(byte >> 4) as usize] as char);
-        out.push(DIGITS[(byte & 15) as usize] as char);
-    }
-    out
-}
-
 fn decode_hex(text: &str) -> Option<Hash> {
     let mut out = [0u8; 32];
     if text.len() != 64 {
@@ -1240,30 +1234,6 @@ fn decode_hex(text: &str) -> Option<Hash> {
         out[i] = u8::from_str_radix(pair, 16).ok()?;
     }
     Some(out)
-}
-
-/// RFC 3339 UTC with milliseconds, as `DateTimeUtc` encodes.
-pub fn iso8601(ms: u64) -> String {
-    let secs = ms / 1000;
-    let days = (secs / 86_400) as i64;
-    let rem = secs % 86_400;
-    // Howard Hinnant's civil_from_days.
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
-        rem / 3600,
-        rem % 3600 / 60,
-        rem % 60,
-        ms % 1000
-    )
 }
 
 /// Parses a TTL as the TypeScript CLI takes it: `90s`, `5m`, `1h`, `30d`, `15 minutes`.
@@ -1313,13 +1283,6 @@ mod tests {
     }
 
     #[test]
-    fn formats_dates_like_effect() {
-        assert_eq!(iso8601(0), "1970-01-01T00:00:00.000Z");
-        assert_eq!(iso8601(1_794_528_000_123), "2026-11-13T00:00:00.123Z");
-        assert_eq!(iso8601(951_782_400_000), "2000-02-29T00:00:00.000Z");
-    }
-
-    #[test]
     fn parses_ttls_and_scopes_like_the_cli() {
         assert_eq!(parse_ttl_ms("5m"), Some(5 * MINUTE_MS));
         assert_eq!(parse_ttl_ms("15 minutes"), Some(15 * MINUTE_MS));
@@ -1334,14 +1297,6 @@ mod tests {
         );
         assert!(parse_scopes("review:write").is_err());
         assert!(parse_scopes("").is_err());
-    }
-
-    #[test]
-    fn uuids_have_the_v4_shape() {
-        let id = random_uuid();
-        assert_eq!(id.len(), 36);
-        assert_eq!(&id[14..15], "4");
-        assert!(matches!(&id[19..20], "8" | "9" | "a" | "b"));
     }
 
     #[test]
@@ -1537,7 +1492,7 @@ mod tests {
                 ClientInfo::default(),
             )
             .unwrap();
-        let id = session.principal.session_id.clone();
+        let id = session.principal.session_id;
         let guard = store.connect(&id);
         let listed = store.client_session(&id, None).unwrap();
         assert!(listed.connected);
@@ -1563,7 +1518,7 @@ mod tests {
             )
             .unwrap();
         let saved = fs::read_to_string(&file).unwrap();
-        let id = session.principal.session_id.clone();
+        let id = session.principal.session_id;
         let mut changes = store.subscribe();
         let guard = store.connect(&id);
         assert_eq!(fs::read_to_string(&file).unwrap(), saved);
@@ -1658,7 +1613,7 @@ mod tests {
         let server = AuthStore::open(file.clone()).unwrap();
         let mut changes = server.subscribe();
         // What `auth session issue` does in its own process while the server runs.
-        let cli = AuthStore::open(file.clone()).unwrap();
+        let cli = AuthStore::open(file).unwrap();
         let issued = cli
             .issue_session(SessionRequest {
                 scopes: vec!["access:read".into(), "access:write".into()],
@@ -1681,14 +1636,6 @@ mod tests {
             .unwrap();
         assert!(cli.authenticate_bearer(&issued.token).is_some());
         fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn hmac_matches_rfc_4231() {
-        assert_eq!(
-            hex(&hmac_sha256(b"Jefe", b"what do ya want for nothing?")),
-            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
-        );
     }
 
     #[test]

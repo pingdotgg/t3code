@@ -263,6 +263,39 @@ pub mod ack_window {
     /// T3 charges each value this much on top of its size, so tiny values still count.
     pub const VALUE_OVERHEAD_BYTES: usize = 128;
 
+    /// What T3 charges for one terminal event (`queuedSize` in `OutputProtocol.ts`): the
+    /// overhead plus the UTF-8 bytes of every variable-size field the event can carry.
+    pub fn queued_size(value: &serde_json::Value) -> usize {
+        let bytes = |v: &serde_json::Value, key: &str| {
+            v.get(key).and_then(|s| s.as_str()).map_or(0, str::len)
+        };
+        let ids = bytes(value, "threadId") + bytes(value, "terminalId");
+        let fields = match value.get("type").and_then(|t| t.as_str()) {
+            Some("output") => bytes(value, "data"),
+            Some("error") => bytes(value, "message"),
+            Some("activity") => bytes(value, "label"),
+            _ => value.get("snapshot").map_or(0, |s| {
+                [
+                    "threadId",
+                    "terminalId",
+                    "history",
+                    "cwd",
+                    "worktreePath",
+                    "label",
+                ]
+                .iter()
+                .map(|key| bytes(s, key))
+                .sum()
+            }),
+        };
+        VALUE_OVERHEAD_BYTES + ids + fields
+    }
+
+    /// What T3 charges a byte-windowed chunk (`chunkSize` in `OutputProtocol.ts`).
+    pub fn chunk_size(values: &[serde_json::Value]) -> usize {
+        values.iter().map(queued_size).sum::<usize>() + VALUE_OVERHEAD_BYTES
+    }
+
     /// How many chunks of a stream may be unacked at once.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Window {
@@ -397,7 +430,7 @@ mod tests {
             (
                 FromServer::ClientProtocolError {
                     error: json!({"_tag":"RpcClientError"}),
-                    request_ids: Some(vec![id.clone()]),
+                    request_ids: Some(vec![id]),
                 },
                 json!({"_tag":"ClientProtocolError","error":{"_tag":"RpcClientError"},"requestIds":[4]}),
             ),

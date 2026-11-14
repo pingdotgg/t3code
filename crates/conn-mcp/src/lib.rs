@@ -44,6 +44,18 @@ pub struct McpConfig {
     pub hosted_app_url: String,
 }
 
+impl std::fmt::Debug for McpConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpConfig")
+            .field("environment_id", &self.environment_id)
+            .field("label", &self.label)
+            .field("server_version", &self.server_version)
+            .field("platform", &self.platform)
+            .field("hosted_app_url", &self.hosted_app_url)
+            .finish_non_exhaustive()
+    }
+}
+
 pub const DEFAULT_HOSTED_APP_URL: &str = "https://app.t3.codes";
 
 /// Who calls. The route authenticates; the service only reads this.
@@ -82,13 +94,24 @@ impl Caller {
 }
 
 /// The `t3-code` MCP server entry a provider passes to its CLI for one thread.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct McpServerEntry {
     pub thread_id: String,
     pub provider_session_id: String,
     pub url: String,
     /// The full header value: `Bearer <token>`.
     pub authorization: String,
+}
+
+impl std::fmt::Debug for McpServerEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpServerEntry")
+            .field("thread_id", &self.thread_id)
+            .field("provider_session_id", &self.provider_session_id)
+            .field("url", &self.url)
+            .field("authorization", &"<redacted>")
+            .finish()
+    }
 }
 
 /// T3 waits can block for an hour; providers' own MCP timeouts must stay above that.
@@ -126,7 +149,19 @@ pub struct McpService {
     config: McpConfig,
     credentials: Mutex<credentials::Credentials>,
     sessions: Mutex<sessions::Sessions>,
+    /// Threads whose own agent asked to settle them when the active run completes.
+    settling: Mutex<std::collections::HashSet<String>>,
     endpoint: OnceLock<String>,
+}
+
+impl std::fmt::Debug for McpService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The credentials and sessions hold agent tokens.
+        f.debug_struct("McpService")
+            .field("config", &self.config)
+            .field("endpoint", &self.endpoint)
+            .finish_non_exhaustive()
+    }
 }
 
 impl McpService {
@@ -135,6 +170,7 @@ impl McpService {
             config,
             credentials: Mutex::new(credentials::Credentials::default()),
             sessions: Mutex::new(sessions::Sessions::default()),
+            settling: Mutex::new(std::collections::HashSet::new()),
             endpoint: OnceLock::new(),
         })
     }
@@ -202,11 +238,11 @@ impl McpService {
     }
 
     fn lock_credentials(&self) -> std::sync::MutexGuard<'_, credentials::Credentials> {
-        self.credentials.lock().unwrap_or_else(|e| e.into_inner())
+        crate::lock(&self.credentials)
     }
 
     fn lock_sessions(&self) -> std::sync::MutexGuard<'_, sessions::Sessions> {
-        self.sessions.lock().unwrap_or_else(|e| e.into_inner())
+        crate::lock(&self.sessions)
     }
 }
 
@@ -214,24 +250,12 @@ impl McpService {
 fn random_hex(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
     getrandom::fill(&mut buf).expect("OS random source");
-    buf.iter().map(|b| format!("{b:02x}")).collect()
+    conn_support::hex::hex(&buf)
 }
-
-/// A random RFC 4122 v4 id, as TS `uuidV4` makes for provider sessions and request keys.
-fn uuid_v4() -> String {
-    let mut b = [0u8; 16];
-    getrandom::fill(&mut b).expect("OS random source");
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[0..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..32]
-    )
+/// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
+/// With `panic = "abort"` a release build stops at the panic itself.
+pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().expect("conn-mcp lock poisoned")
 }
 
 #[cfg(test)]

@@ -56,6 +56,20 @@ pub struct EngineConfig {
     pub turn_observer: Option<Arc<dyn crate::TurnObserver>>,
 }
 
+impl std::fmt::Debug for EngineConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EngineConfig")
+            .field("database", &self.database)
+            .field("home", &self.home)
+            .field("projects", &self.projects)
+            .field("providers", &self.providers.len())
+            .field("stream_flush", &self.stream_flush)
+            .field("idle_session", &self.idle_session)
+            .field("idle_max_hold", &self.idle_max_hold)
+            .finish_non_exhaustive()
+    }
+}
+
 impl EngineConfig {
     pub fn new(database: impl Into<PathBuf>) -> Self {
         Self {
@@ -75,6 +89,12 @@ impl EngineConfig {
 
 pub struct SqliteEngine {
     inner: Arc<Inner>,
+}
+
+impl std::fmt::Debug for SqliteEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SqliteEngine").finish_non_exhaustive()
+    }
 }
 
 pub(crate) struct Inner {
@@ -195,9 +215,7 @@ impl Inner {
     ) -> T {
         let store = self.store.clone();
         tokio::task::spawn_blocking(move || {
-            let mut guard = store
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut guard = crate::lock(&store);
             f(&mut guard)
         })
         .await
@@ -678,7 +696,7 @@ impl Engine for SqliteEngine {
 #[cfg(test)]
 impl Inner {
     pub(crate) fn live_count(&self) -> usize {
-        self.live.lock().map_or(0, |live| live.len())
+        crate::lock(&self.live).len()
     }
 }
 

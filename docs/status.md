@@ -50,14 +50,14 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 24 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
+`main` is in a working state. `tools/check.sh` passes 25 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
 
 | Part | State |
 | --- | --- |
 | RPC methods | 81 of 236 served; 80 have a run that the real client's decoders accept |
 | Engine commands | 41 of 56 |
 | HTTP routes | 13 of 57 |
-| `/mcp` tools | 16 of 87 |
+| `/mcp` tools | 20 of 87 |
 | Providers | Claude and Codex, of the 10 the T3 server has without Pi |
 
 Proven:
@@ -77,26 +77,49 @@ Proven:
 - Memory on macOS arm64: the server about 3 to 5 MB private; the SDK host about 45 MB while a
   Claude session is open, and no Node process when none is open.
 
+- **On Linux** (Beast, Ubuntu, x86_64, kernel 7.0; 2026-11-13 and 2026-11-14). The whole
+  workspace test suite passed 20 times on the gnu target and 5 times on the musl target with
+  no failure, after four fixes from this pass: a busy terminal chunk now holds at most the
+  64 KiB window by T3's charge, as T3's `takeBatch` (it sent 70 KB chunks before; 2 failures
+  in 40 runs on 2 CPUs before the fix, 0 in 100 after); shells start with default signals, as
+  node-pty starts them (a server started with SIGINT ignored gave shells whose commands
+  ignored Ctrl-C: the exact symptom of the first pass's one Ctrl-C test failure, which
+  otherwise did not come back in 1,050 runs under load); the terminal label follows the
+  foreground command's name, as in T3; and the SDK host build installs esbuild from a
+  lockfile only. Also proven: the process group kill reaches grandchildren; `--bootstrap-fd`
+  reads a socket pair as Electron passes it; the musl binary is static (15.7 MB) and starts;
+  the CI command for the recordings decode passes with `--locked`; the SDK host builds as a
+  Node 26.12.1 single executable (152 MB) and exits after the last session; 10 of the 11
+  live Claude tests pass on Haiku through that executable (before the 2026-11-14 pin bump;
+  after it, the provider's 42 tests and the memory run pass through the rebuilt executable). Memory (the table in
+  `README.md`): the server holds 4.3 MiB `Pss_Anon` after 20 turns in 3 threads on the fake
+  provider, against about 301 MiB for each of five container T3 servers at the same moments.
+
 Not proven:
 
-- **Linux, in part.** A Linux pass on Beast (Ubuntu, x86_64) was stopped half way on 2026-11-13. Proven there: all tests pass on the gnu and musl targets after two
-  fixes that are on `main` (a terminal test that assumed the macOS shell, and a clippy 1.99
-  finding); the process group kill reaches grandchildren; `--bootstrap-fd` reads a socket
-  pair as Electron passes it; the musl binary is static, 14.5 MB, and starts; the SDK host
-  builds as a Node 26.12.1 single executable (152 MB) and the provider's 42 tests pass
-  through it. **Two terminal tests fail now and then on Linux, and neither cause is found.**
-  `conn-terminal` `clears_and_reports_the_foreground_command` failed once in about 90 runs
-  on Beast (no idle event within 15 s after Ctrl-C). `conn-server`
-  `methods::terminal::tests::a_busy_terminal_stays_within_the_byte_window` failed in one of
-  two CI runs of the same code on 2026-11-13: one output chunk was 70,887 bytes, and the
-  test allows 64 KiB plus 4,096 (69,632). So a busy terminal can send a chunk slightly above
-  the byte window on Linux; whether that is a fault in the output feed or a test limit that
-  is too tight is not decided. CI on Linux is therefore not reliably green. Partial memory figures on Linux (musl,
-  `smaps_rollup`, MiB): the server 1.3 `Pss_Anon` just started, 1.9 connected, 2.8 after 4
-  turns on the fake provider; the SDK host with a stub CLI 32 `Pss_Anon` (76 Rss) in a
-  session and after 10 turns, and gone after the last session closed. Not done on Linux:
-  the full memory run, the live Claude tests, the `README.md` memory table (it still holds
-  the spike's figures), and CI changes.
+- **Linux, in part.** Two passes on Beast (Ubuntu, x86_64, kernel 7.0), on 2026-11-13 and
+  2026-11-14, proved what is listed under "On Linux" above. Not proven on Linux: the agent
+  systemd scope (not built; see below); the live permission test (it runs Claude with an
+  isolated config folder that carries only `apiKeyHelper`, and on Beast that folder cannot
+  sign in, so the turn ends without an approval); a live Codex turn; CI itself (the workflow
+  changes ran only as the same commands on Beast); Orbit in a real container; the cause of
+  the one `clears_and_reports_the_foreground_command` failure of the first pass (see above).
+- **The agent systemd scope on Linux.** The T3 server (`apps/server/src/process/agentScope.ts`,
+  `packages/shared/src/AgentScope.ts`) wraps `claude` (a native binary given as
+  `pathToClaudeCodeExecutable`), `codex app-server` (shared, `OOMPolicy=continue`) and every
+  terminal shell (`app-t3code-agents.slice`, as it survives restarts) in
+  `systemd-run --user --scope` units, when `XDG_RUNTIME_DIR`, `systemd-run` and `systemctl`
+  are there and a probe scope starts. Before the first scope it stops a populated
+  `app-t3code-agents-<sha256(stateDir)[:12]>.slice` and runs `systemctl --user set-property
+  --runtime` on `app-t3code-agents.slice` (`MemoryHigh`, `MemoryMax` from RAM) and
+  `app-t3code.slice` (`CPUWeight=10 IOWeight=10 TasksMax=25%`). It stops a scope after its
+  agent exits, kills a thread's scope through `cgroup.kill`, and reports an OOM kill. Without
+  systemd it still runs each agent through `/bin/sh -c` with `oom_score_adj` 800. None of
+  this is built here. It cannot be tested on Beast: Beast's user manager also runs the
+  owner's host T3 server, and the probe and `set-property` change the same slices that
+  server uses. A test needs a Linux host or VM whose user manager runs no T3 server; then
+  port both files, compare the wrapped argv for `claude` and `codex` with the T3 server's on
+  Linux (the conformance stub records argv), and test OOM and kill there.
 - Conn desktop and mobile against this server.
 - Orbit's flow in a real container.
 - Codex on CLI 0.166 or 0.167 (the recordings are from 0.156).
@@ -111,21 +134,28 @@ write tools without a caller check; settings secrets sent to clients; a scope ho
 Each of these was our own difference from the T3 server, not a T3 behaviour. That is worth
 remembering: an own server brings its own defects.
 
+## `/mcp` tools, batch 1 (2026-11-14)
+
+`/mcp` serves 20 of 87 tools, up from 16: `send_to_user`, `t3_thread_organize` (with T3's
+settle at the end of the agent's own turn), `t3_queue` and `t3_thread_configure`, each with
+a unit test and parity steps. `t3_thread_search` now reads the engine's message index with
+T3's slot rule; its ranking is not ported. The argument check now answers type, length,
+range and literal failures in Effect's words and keeps `null` where the schema takes it
+(generated). `crates/conn-mcp/README.md` has a table of all 87 tools with what each unserved
+one needs. 17 tools that a text we send to an agent names are still not served; a test holds
+that list.
+
 ## What is left, in the planned order
 
-1. **Rust hygiene, step 1.** The lint set of BeautifulRust (`lints/beautiful-rust/`), stage 1:
-   `unwrap_used`, `panic_in_result_fn`, `allow_attributes`, `allow_attributes_without_reason`,
-   `dbg_macro`, `todo`, `wildcard_imports`, `string_add`, `missing_assert_message`,
-   `redundant_clone`, `rc_buffer`, `missing_debug_implementations`, `unreachable_pub`,
-   `rust_2018_idioms`, plus `large_futures`. Measured with clippy 0.1.95: 533 warnings, most
-   fixed by `cargo clippy --fix`, 162 by hand. Stage 2: the `bool` parameter lints (56 hits at
-   BeautifulRust's limit of zero), `clone_on_ref_ptr` (110), the print lints with a `tracing`
-   switch, `clippy::all` and `clippy::pedantic`. Stage 3: the cast lints (about 295 places).
-   The `[lib]` lints stay off. Also in step 1: typed construction at the 7 places that build a
-   contract error with `from_json(json!(..)).expect(..)`; `thiserror` on eight boundary error
-   types; a `conn-support` crate for the time, hex, HMAC and base64 helpers that exist 2 to 6
-   times; the `uuid` crate; the store's sequence counter that is not restored when a commit
-   fails; a `Drop` on `CodexSession`; an unchecked offset in `reads.rs`; a pinned toolchain.
+1. **Rust hygiene, step 1: done (2026-11-14).** The toolchain is pinned to 1.99.1; BeautifulRust's
+   stage-1 lints and `large_futures` are on, and the workspace is clean under clippy with
+   `--all-features`. Also done: typed contract errors in `conn-vcs` and `conn-server`; start-up
+   errors exit with status 1; one lock helper per crate; `thiserror` on eight boundary error
+   types; `crates/conn-support` for the shared time, hex, base64, HMAC, atomic-write and v4-id
+   helpers (`uuid` crate); `rustix` for the liveness check; the store's sequence counter, a
+   `Drop` on `CodexSession`, and the find offset in `reads.rs`, each with a test. Next stages
+   (bool parameters, `clone_on_ref_ptr`, print lints with `tracing`, pedantic; then the cast
+   lints) are in `CRATES.md`, "Lint set".
 2. **Provider interface.** A sandbox and approval policy (closes Claude's read-only sandbox and
    `dontAsk`, and 3 failing transcripts); MCP servers at session open; a host handle for
    agents that ask the server for files and terminals; `background_work.updated`; a
@@ -147,13 +177,12 @@ remembering: an own server brings its own defects.
    old snippet rule).
 6. **Features.** `pullRequests.*` (34), `sourceControl.*` and `git.*`; the Conn-only methods
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest
-   share); 71 more `/mcp` tools; Codex subagents and MCP elicitation; worktree setup scripts
+   share); 67 more `/mcp` tools (11 need nothing new: `crates/conn-mcp/README.md`, "All 87 tools"); Codex subagents and MCP elicitation; worktree setup scripts
    the T3 way (typed into a thread terminal, with a completion marker).
-7. **Small leftovers.** `helpers/sdk-host/.npmrc` omits optional packages, so esbuild fetches
-   its binary in an install script, outside the lockfile; limits on terminal environment
-   variables; string caps on
+7. **Small leftovers.** Limits on terminal environment variables; string caps on
    `assets.createUrl`; finished `git` children stay unreaped while the server runs;
-   `t3_thread_search` on the engine's search; the Linux systemd scope for provider processes;
+   T3's search ranking (`scoreThreadSearch`, `rankMessageMatches`) for `t3_thread_search` and
+   `orchestration.searchThreads`; the Linux systemd scope for provider processes;
    a cap on the blocking pool or one store thread (measure first: each store call takes its
    own blocking thread).
 8. **Proofs.** The recorder with the real web client and a live model; live Codex; the Linux
@@ -198,12 +227,8 @@ The check is the one to trust; several review findings did not hold.
 
 ## Branches
 
-- `main`: verified. All checks pass on macOS.
-- `parked/rust-hygiene-step-1`: one finished commit (the generator writes one reasoned `allow`
-  at the top of the generated file) and one commit marked `WIP (not proven)`.
-- `parked/linux-pass`: the Linux pass. Its four proven commits are merged into `main`. One
-  more commit, marked `WIP (not proven)`, adds `memory-flow.mjs`, a small client for memory
-  runs on Linux.
+- `main`: verified. All 24 checks pass on macOS, and all tests pass on Linux (20 runs on the
+  gnu target and 5 on musl, on 2026-11-14).
 - In the Conn repository there are local branches only (`rust/*`, `spike/rust-*`,
   `split/conn-server*`), with the same history under `native/conn-server`. They were never
   pushed. They change nothing under `apps/` or `packages/`.
@@ -217,7 +242,10 @@ The check is the one to trust; several review findings did not hold.
 4. Move the pin with `tools/bump-conn.sh <commit> --capture` and read "What to do" at the
    top of its report (`docs/upkeep.md`).
 
-CI: on 2026-11-13 the test step passed on Linux in one run and failed in the next on the
-terminal test named above. `cargo-deny` and the musl release build pass. The nightly schedule
-is switched off until the job with the Conn checkout can run: it needs the repository secret
-`CONN_READ_TOKEN` (read access to `nckrtl/conn`).
+CI: on 2026-11-14 the rust job passed on Linux for the first time, with every step green:
+format, clippy, the tests of all crates (with the SDK host installed, Node 26.12.1), and the
+recordings decode step. That is one run; on 2026-11-13 the test step passed in one run and
+failed in the next on the terminal byte-window test, which is fixed since. `cargo-deny` and
+the musl release build pass. The job with the Conn checkout fails: it needs the repository
+secret `CONN_READ_TOKEN` (read access to `nckrtl/conn`). The nightly schedule is switched off
+until that job can run.

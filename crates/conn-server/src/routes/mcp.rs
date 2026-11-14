@@ -49,7 +49,7 @@ pub fn service(deps: &Deps) -> Option<Arc<McpService>> {
             };
             crate::methods::provider::server_providers(
                 &deps,
-                &crate::auth::iso8601(crate::auth::now_ms()),
+                &conn_support::time::iso_from_ms(conn_support::time::now_ms()),
             )
         }),
         hosted_app_url: conn_mcp::DEFAULT_HOSTED_APP_URL.to_owned(),

@@ -5,9 +5,10 @@ use serde_json::{Value, json};
 
 use crate::{Caller, McpConfig, links::thread_link};
 
-pub const LIVE_RUN_STATUSES: [&str; 5] = ["preparing", "queued", "starting", "running", "waiting"];
+pub(crate) const LIVE_RUN_STATUSES: [&str; 5] =
+    ["preparing", "queued", "starting", "running", "waiting"];
 
-pub fn is_live(run: &Value) -> bool {
+pub(crate) fn is_live(run: &Value) -> bool {
     LIVE_RUN_STATUSES.contains(&run["status"].as_str().unwrap_or(""))
 }
 
@@ -20,15 +21,15 @@ fn runs(projection: &Value) -> Vec<&Value> {
     runs
 }
 
-pub fn latest_run(projection: &Value) -> Option<&Value> {
+pub(crate) fn latest_run(projection: &Value) -> Option<&Value> {
     runs(projection).pop()
 }
 
-pub fn active_run(projection: &Value) -> Option<&Value> {
+pub(crate) fn active_run(projection: &Value) -> Option<&Value> {
     runs(projection).into_iter().rev().find(|run| is_live(run))
 }
 
-pub fn run_by_id<'a>(projection: &'a Value, run_id: &str) -> Option<&'a Value> {
+pub(crate) fn run_by_id<'a>(projection: &'a Value, run_id: &str) -> Option<&'a Value> {
     projection["runs"]
         .as_array()?
         .iter()
@@ -52,16 +53,16 @@ fn snoozed(thread: &Value, now: &str) -> (bool, Value) {
     }
 }
 
-pub fn is_snoozed(thread: &Value, now: &str) -> bool {
+pub(crate) fn is_snoozed(thread: &Value, now: &str) -> bool {
     snoozed(thread, now).0
 }
 
-pub fn is_settled(thread: &Value) -> bool {
+pub(crate) fn is_settled(thread: &Value) -> bool {
     settled(thread).0
 }
 
 /// `OrchestratorMcpThreadListItem` from a shell row.
-pub fn list_item(config: &McpConfig, caller: &Caller, shell: &Value, now: &str) -> Value {
+pub(crate) fn list_item(config: &McpConfig, caller: &Caller, shell: &Value, now: &str) -> Value {
     let id = shell["id"].as_str().unwrap_or_default();
     let title = shell["title"].as_str().unwrap_or_default();
     let (settled, settled_at) = settled(shell);
@@ -97,7 +98,7 @@ pub fn list_item(config: &McpConfig, caller: &Caller, shell: &Value, now: &str) 
 }
 
 /// The status a list shows: the live run's, else the latest run's (TS `listedThreadStatus`).
-pub fn listed_status(shell: &Value) -> Value {
+pub(crate) fn listed_status(shell: &Value) -> Value {
     if shell["activityRunStatus"].is_string() {
         shell["activityRunStatus"].clone()
     } else {
@@ -107,13 +108,13 @@ pub fn listed_status(shell: &Value) -> Value {
 
 /// Whether a thread read is the first page, which alone lists the thread's pull requests.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Page {
+pub(crate) enum Page {
     First,
     Later,
 }
 
 /// `OrchestratorMcpThreadDetail` from a projection.
-pub fn thread_detail(
+pub(crate) fn thread_detail(
     config: &McpConfig,
     caller: &Caller,
     projection: &Value,
@@ -258,7 +259,7 @@ fn title_regeneration(running: &Value) -> Value {
 }
 
 /// The model the provider reported for the run's attempt, if any.
-pub fn executed_model(projection: &Value, run: &Value) -> Value {
+pub(crate) fn executed_model(projection: &Value, run: &Value) -> Value {
     let attempt = &run["activeAttemptId"];
     if attempt.is_null() {
         return Value::Null;
@@ -275,7 +276,7 @@ pub fn executed_model(projection: &Value, run: &Value) -> Value {
 }
 
 /// `OrchestratorMcpThreadRun`.
-pub fn thread_run(projection: &Value, run: &Value) -> Value {
+pub(crate) fn thread_run(projection: &Value, run: &Value) -> Value {
     json!({
         "runId": run["id"],
         "ordinal": run["ordinal"],
@@ -307,7 +308,7 @@ fn text(value: &Value) -> Option<String> {
 }
 
 /// The text a turn item shows an agent (TS `turnItemText`).
-pub fn turn_item_text(item: &Value) -> Option<String> {
+pub(crate) fn turn_item_text(item: &Value) -> Option<String> {
     let kind = item["type"].as_str().unwrap_or_default();
     Some(match kind {
         "notification" => join(&[text(&item["summary"]), text(&item["detail"])]),
@@ -397,7 +398,12 @@ fn utf16_slice(units: &[u16], start: usize, end: usize) -> String {
 
 /// `OrchestratorMcpThreadTimelineItem` for one visible row, its text cut to a page of
 /// `max_chars` UTF-16 units from `offset` (the T3 server's `text.slice`).
-pub fn timeline_item(row: &Value, messages: &[Value], max_chars: usize, offset: usize) -> Value {
+pub(crate) fn timeline_item(
+    row: &Value,
+    messages: &[Value],
+    max_chars: usize,
+    offset: usize,
+) -> Value {
     let item = &row["item"];
     let units: Option<Vec<u16>> = turn_item_text(item).map(|t| t.encode_utf16().collect());
     let (page, truncated, next) = match &units {
@@ -447,7 +453,7 @@ pub fn timeline_item(row: &Value, messages: &[Value], max_chars: usize, offset: 
 
 /// The size a value has on the wire: bytes of its compact JSON, as the T3 server measures
 /// (`jsonBytes`).
-pub fn json_bytes(value: &Value) -> usize {
+pub(crate) fn json_bytes(value: &Value) -> usize {
     value.to_string().len()
 }
 
@@ -469,7 +475,7 @@ fn longest_fitting(low: i64, high: i64, fits: impl Fn(i64) -> bool) -> i64 {
 
 /// `timelineItemWithin`: the item with its text cut, and an oversized title too, until its
 /// JSON fits `max_bytes`.
-pub fn timeline_item_within(
+pub(crate) fn timeline_item_within(
     row: &Value,
     messages: &[Value],
     max_chars: usize,
@@ -513,7 +519,7 @@ pub fn timeline_item_within(
 }
 
 /// The last assistant answer of a run, or its failure (TS `subagentResultForRun`).
-pub fn run_result_text(projection: &Value, run_id: &str) -> Option<String> {
+pub(crate) fn run_result_text(projection: &Value, run_id: &str) -> Option<String> {
     let items = projection["turnItems"].as_array()?;
     items
         .iter()

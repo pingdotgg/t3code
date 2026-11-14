@@ -4,16 +4,11 @@
 
 use serde_json::{Value, json};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[error("{message} ({code})")]
 pub struct RpcError {
     pub code: i64,
     pub message: String,
-}
-
-impl std::fmt::Display for RpcError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ({})", self.message, self.code)
-    }
 }
 
 /// One frame from the app-server.

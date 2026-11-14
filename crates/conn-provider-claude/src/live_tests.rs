@@ -592,7 +592,7 @@ mod mcp {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
 
-    pub struct Server {
+    pub(super) struct Server {
         pub url: String,
         pub calls: Arc<Mutex<Vec<String>>>,
         pub auth: Arc<Mutex<Vec<String>>>,
@@ -605,7 +605,7 @@ mod mcp {
         }
     }
 
-    pub async fn start() -> Server {
+    pub(super) async fn start() -> Server {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/mcp", listener.local_addr().unwrap());
         let calls = Arc::new(Mutex::new(Vec::new()));
@@ -961,7 +961,7 @@ async fn live_image_turn() {
                 .and_then(|b| b["source"]["data"].as_str().map(str::to_string))
         })
         .unwrap();
-    let bytes = base64_decode(&png);
+    let bytes = conn_support::base64::decode(&png).unwrap();
     std::fs::write(attachments.join("attach-1.png"), &bytes).unwrap();
     let config = ClaudeConfig {
         attachments_dir: Some(attachments),
@@ -986,27 +986,4 @@ async fn live_image_turn() {
     eprintln!("image answer: {text}");
     assert!(text.contains("red"));
     session.close().await;
-}
-
-fn base64_decode(text: &str) -> Vec<u8> {
-    let value = |c: u8| match c {
-        b'A'..=b'Z' => c - b'A',
-        b'a'..=b'z' => c - b'a' + 26,
-        b'0'..=b'9' => c - b'0' + 52,
-        b'+' => 62,
-        _ => 63,
-    };
-    let clean: Vec<u8> = text
-        .bytes()
-        .filter(|c| *c != b'=' && !c.is_ascii_whitespace())
-        .collect();
-    let mut out = Vec::new();
-    for chunk in clean.chunks(4) {
-        let v: Vec<u32> = chunk.iter().map(|c| u32::from(value(*c))).collect();
-        let n = v.iter().fold(0u32, |acc, x| (acc << 6) | x) << (6 * (4 - v.len() as u32));
-        for i in 0..v.len().saturating_sub(1) {
-            out.push((n >> (16 - 8 * i)) as u8);
-        }
-    }
-    out
 }

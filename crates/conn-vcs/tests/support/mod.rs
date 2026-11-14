@@ -1,6 +1,9 @@
 //! Throwaway git repositories for the tests. Each is removed on drop.
 
-#![allow(dead_code)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "test helpers: a failure should fail the test"
+)]
 
 use std::{
     path::{Path, PathBuf},
@@ -8,10 +11,10 @@ use std::{
     sync::atomic::{AtomicU32, Ordering},
 };
 
-pub struct TempDir(pub PathBuf);
+pub(crate) struct TempDir(pub PathBuf);
 
 impl TempDir {
-    pub fn new(label: &str) -> Self {
+    pub(crate) fn new(label: &str) -> Self {
         static N: AtomicU32 = AtomicU32::new(0);
         let dir = std::env::temp_dir().join(format!(
             "conn-vcs-{label}-{}-{}",
@@ -24,7 +27,7 @@ impl TempDir {
         Self(std::fs::canonicalize(&dir).unwrap())
     }
 
-    pub fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.0
     }
 }
@@ -36,7 +39,7 @@ impl Drop for TempDir {
 }
 
 /// Runs git in `cwd` with a fixed identity and no signing; panics on failure.
-pub fn git(cwd: &Path, args: &[&str]) -> String {
+pub(crate) fn git(cwd: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .args([
             "-c",
@@ -62,27 +65,27 @@ pub fn git(cwd: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-pub fn write(dir: &Path, path: &str, text: &str) {
+pub(crate) fn write(dir: &Path, path: &str, text: &str) {
     let file = dir.join(path);
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     std::fs::write(file, text).unwrap();
 }
 
-pub fn commit_all(dir: &Path, message: &str) -> String {
+pub(crate) fn commit_all(dir: &Path, message: &str) -> String {
     git(dir, &["add", "-A"]);
     git(dir, &["commit", "-qm", message]);
     git(dir, &["rev-parse", "HEAD"]).trim().to_owned()
 }
 
 /// `root/origin.git` (bare), and `root/work`, a clone of it on `main` with one commit pushed.
-pub struct Fixture {
+pub(crate) struct Fixture {
     pub root: TempDir,
     pub origin: PathBuf,
     pub work: PathBuf,
 }
 
 impl Fixture {
-    pub fn new(label: &str) -> Self {
+    pub(crate) fn new(label: &str) -> Self {
         let root = TempDir::new(label);
         let origin = root.path().join("origin.git");
         let work = root.path().join("work");
@@ -116,7 +119,7 @@ impl Fixture {
     }
 
     /// A second clone, for pushing changes the first one has not seen.
-    pub fn other_clone(&self) -> PathBuf {
+    pub(crate) fn other_clone(&self) -> PathBuf {
         let other = self.root.path().join("other");
         if !other.exists() {
             git(
@@ -132,7 +135,7 @@ impl Fixture {
         other
     }
 
-    pub fn cwd(&self) -> String {
+    pub(crate) fn cwd(&self) -> String {
         self.work.to_string_lossy().into_owned()
     }
 }

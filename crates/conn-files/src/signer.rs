@@ -5,8 +5,11 @@
 
 use std::{fs, io, path::Path};
 
+use conn_support::{
+    base64::{url_decode as base64url_decode, url_encode as base64url_encode},
+    hmac::{constant_time_eq, hmac_sha256},
+};
 use serde::{Serialize, de::DeserializeOwned};
-use sha2::{Digest, Sha256};
 
 pub struct Signer {
     key: [u8; 32],
@@ -39,7 +42,7 @@ impl Signer {
         }
         fs::create_dir_all(secrets_dir)?;
         let key = random_bytes::<32>();
-        write_private(&file, &key)?;
+        create_private(&file, &key)?;
         Ok(Self { key })
     }
 
@@ -72,129 +75,15 @@ impl Signer {
     }
 }
 
-/// HMAC-SHA256 (RFC 2104) with a key of any length.
-pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
-    let mut block = [0u8; 64];
-    let hashed: [u8; 32];
-    let key = if key.len() > block.len() {
-        hashed = Sha256::digest(key).into();
-        &hashed[..]
-    } else {
-        key
-    };
-    for (slot, byte) in block.iter_mut().zip(key) {
-        *slot = *byte;
-    }
-    let pad = |byte: u8| block.map(|b| b ^ byte);
-    let inner = Sha256::new()
-        .chain_update(pad(0x36))
-        .chain_update(message)
-        .finalize();
-    Sha256::new()
-        .chain_update(pad(0x5c))
-        .chain_update(inner)
-        .finalize()
-        .into()
-}
-
-/// Compares two secrets in time that depends only on their length. `black_box` keeps the
-/// compiler from ending the loop at the first difference.
-pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len()
-        && std::hint::black_box(
-            a.iter()
-                .zip(b)
-                .fold(0u8, |acc, (x, y)| std::hint::black_box(acc | (x ^ y))),
-        ) == 0
-}
-
 pub fn random_bytes<const N: usize>() -> [u8; N] {
     let mut bytes = [0u8; N];
     getrandom::fill(&mut bytes).expect("OS random source");
     bytes
 }
 
-/// A random v4 UUID, lowercase.
-pub fn uuid_v4() -> String {
-    let mut b = random_bytes::<16>();
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    let hex = hex(&b);
-    format!(
-        "{}-{}-{}-{}-{}",
-        &hex[..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..]
-    )
-}
-
-pub fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-pub fn base64url_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let n = (u32::from(chunk[0]) << 16)
-            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
-            | u32::from(*chunk.get(2).unwrap_or(&0));
-        for i in 0..=chunk.len() {
-            out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
-        }
-    }
-    out
-}
-
-pub fn base64url_decode(text: &str) -> Option<Vec<u8>> {
-    decode_with(text.trim_end_matches('='), |c| match c {
-        b'A'..=b'Z' => Some(c - b'A'),
-        b'a'..=b'z' => Some(c - b'a' + 26),
-        b'0'..=b'9' => Some(c - b'0' + 52),
-        b'-' => Some(62),
-        b'_' => Some(63),
-        _ => None,
-    })
-}
-
-/// Standard base64 with padding, as in `data:` URLs.
-pub fn base64_decode(text: &str) -> Option<Vec<u8>> {
-    if !text.len().is_multiple_of(4) {
-        return None;
-    }
-    decode_with(text.trim_end_matches('='), |c| match c {
-        b'A'..=b'Z' => Some(c - b'A'),
-        b'a'..=b'z' => Some(c - b'a' + 26),
-        b'0'..=b'9' => Some(c - b'0' + 52),
-        b'+' => Some(62),
-        b'/' => Some(63),
-        _ => None,
-    })
-}
-
-fn decode_with(text: &str, value: impl Fn(u8) -> Option<u8>) -> Option<Vec<u8>> {
-    if text.len() % 4 == 1 {
-        return None;
-    }
-    let mut out = Vec::with_capacity(text.len() * 3 / 4);
-    let mut buffer = 0u32;
-    let mut bits = 0;
-    for c in text.bytes() {
-        buffer = (buffer << 6) | u32::from(value(c)?);
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buffer >> bits) as u8);
-        }
-    }
-    Some(out)
-}
-
-/// Writes a file only the owner can read.
-pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+/// Creates a file only the owner can read; fails when it exists, so two servers starting at
+/// once cannot both write a key.
+pub fn create_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write;
     #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
@@ -208,32 +97,6 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn hmac_takes_keys_of_any_length() {
-        // RFC 4231 case 6: a 131-byte key, longer than the block.
-        assert_eq!(
-            hex(&hmac_sha256(
-                &[0xaa; 131],
-                b"Test Using Larger Than Block-Size Key - Hash Key First"
-            )),
-            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
-        );
-        assert!(constant_time_eq(b"abc", b"abc"));
-        assert!(!constant_time_eq(b"abc", b"abd"));
-        assert!(!constant_time_eq(b"abc", b"ab"));
-    }
-
-    #[test]
-    fn hmac_matches_rfc_4231_shape() {
-        // RFC 4231 case 2 uses a short key; a 32-byte zero-padded key gives the same HMAC.
-        let mut key = [0u8; 32];
-        key[..4].copy_from_slice(b"Jefe");
-        assert_eq!(
-            hex(&hmac_sha256(&key, b"what do ya want for nothing?")),
-            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
-        );
-    }
 
     #[test]
     fn signs_and_rejects_tampering() {
@@ -258,16 +121,5 @@ mod tests {
             signer.verify::<serde_json::Value>(&format!("{token}.x")),
             None
         );
-    }
-
-    #[test]
-    fn base64_round_trips() {
-        for len in 0..10 {
-            let bytes: Vec<u8> = (0..len).map(|i| (i * 37 + 250) as u8).collect();
-            assert_eq!(base64url_decode(&base64url_encode(&bytes)), Some(bytes));
-        }
-        assert_eq!(base64_decode("aGk="), Some(b"hi".to_vec()));
-        assert_eq!(base64_decode("aGk"), None);
-        assert_eq!(uuid_v4().len(), 36);
     }
 }

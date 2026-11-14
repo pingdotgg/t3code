@@ -17,7 +17,6 @@ mod history;
 mod pty;
 mod sanitize;
 mod store;
-mod time;
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
@@ -118,6 +117,12 @@ type Key = (String, String);
 #[derive(Clone)]
 pub struct TerminalManager {
     inner: Arc<Inner>,
+}
+
+impl std::fmt::Debug for TerminalManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TerminalManager").finish_non_exhaustive()
+    }
 }
 
 struct Inner {
@@ -536,7 +541,7 @@ impl TerminalManager {
 
 impl Inner {
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().expect("terminal state lock")
+        crate::lock(&self.state)
     }
 
     fn open_locked(
@@ -615,7 +620,7 @@ impl Inner {
                     filter: HistoryFilter::default(),
                     utf8: Utf8Stream::default(),
                     sequence: 0,
-                    updated_at: time::now_iso(),
+                    updated_at: conn_support::time::now_iso(),
                     touched,
                     cols,
                     rows,
@@ -843,10 +848,12 @@ impl Inner {
         });
     }
 
-    /// Checks each running terminal's foreground job and publishes `activity` when it
-    /// changes. Returns `false`, and stops polling, when no terminal runs.
+    /// Checks each running terminal's foreground job and its command name, and publishes
+    /// `activity` when either changes, as T3 does. The name is read again on every poll while
+    /// a job runs: a poll between the shell's `fork` and `exec` sees the shell's own name.
+    /// Returns `false`, and stops polling, when no terminal runs.
     async fn poll(&self) -> bool {
-        let changed: Vec<(Key, u64, Option<i32>)> = {
+        let checked: Vec<(Key, u64, Option<i32>)> = {
             let mut state = self.lock();
             let running = state.sessions.values().any(|s| s.proc.is_some());
             if !running {
@@ -859,24 +866,24 @@ impl Inner {
                 .filter_map(|(key, s)| {
                     let proc = s.proc.as_ref()?;
                     let job = pty::foreground_job(&proc.control, proc.pid);
-                    (job != s.job.as_ref().map(|(group, _)| *group))
-                        .then(|| (key.clone(), s.generation, job))
+                    (job.is_some() || s.job.is_some()).then(|| (key.clone(), s.generation, job))
                 })
                 .collect()
         };
-        for (key, generation, job) in changed {
+        for (key, generation, job) in checked {
             let label = match job {
                 Some(group) => Some(process_name(group).await.unwrap_or_default()),
                 None => None,
             };
+            let job = job.zip(label);
             let mut state = self.lock();
             let Some(session) = state.sessions.get_mut(&key) else {
                 continue;
             };
-            if session.generation != generation || session.proc.is_none() {
+            if session.generation != generation || session.proc.is_none() || session.job == job {
                 continue;
             }
-            session.job = job.zip(label);
+            session.job = job;
             session.advance();
             let event = TerminalAttachStreamEvent::Activity(TerminalAttachStreamEventActivity {
                 thread_id: key.0.clone(),
@@ -996,7 +1003,7 @@ impl Session {
     fn advance(&mut self) {
         self.sequence += 1;
         self.touched = tick();
-        self.updated_at = time::now_iso();
+        self.updated_at = conn_support::time::now_iso();
     }
 
     fn label(&self) -> String {
@@ -1067,7 +1074,7 @@ impl Session {
         self.cols = cols;
         self.rows = rows;
         self.sequence += 1;
-        self.updated_at = time::now_iso();
+        self.updated_at = conn_support::time::now_iso();
         Ok(Some(TerminalAttachStreamEvent::Activity(
             TerminalAttachStreamEventActivity {
                 thread_id: self.thread_id.clone(),
@@ -1144,6 +1151,15 @@ pub struct Subscription {
     ready: VecDeque<TerminalAttachStreamEvent>,
 }
 
+impl std::fmt::Debug for Subscription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Subscription")
+            .field("key", &self.key)
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Subscription {
     /// The next event. Never ends by itself: a closed terminal sends `closed`, and a terminal
     /// opened again under the same id sends a new snapshot.
@@ -1197,6 +1213,14 @@ pub struct MetadataSubscription {
     id: u64,
     feed: Arc<Feed<TerminalMetadataStreamEvent>>,
     ready: VecDeque<TerminalMetadataStreamEvent>,
+}
+
+impl std::fmt::Debug for MetadataSubscription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MetadataSubscription")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
 }
 
 impl MetadataSubscription {
@@ -1397,6 +1421,12 @@ async fn process_name(pid: i32) -> Option<String> {
         .trim_end_matches([')', ']'])
         .trim_start_matches('-');
     (!name.is_empty()).then(|| name.chars().take(MAX_LABEL_CHARS).collect())
+}
+
+/// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
+/// With `panic = "abort"` a release build stops at the panic itself.
+pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().expect("conn-terminal lock poisoned")
 }
 
 #[cfg(test)]

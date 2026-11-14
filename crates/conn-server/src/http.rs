@@ -16,10 +16,12 @@ use serde_json::{Value, json};
 
 use conn_engine::{Engine, EngineError};
 
+use conn_support::time::iso_from_ms;
+
 use crate::{
     auth::{
         self, AccessChange, AuthStore, ClientInfo, ExchangeError, PairingRequest, Principal,
-        iso8601, scope_response,
+        scope_response,
     },
     scopes,
     session::{self, SessionOptions},
@@ -42,6 +44,17 @@ pub struct AppState {
     pub engine: Option<Arc<dyn Engine>>,
     /// The services the method table was built from, for the routes in `routes/`.
     pub deps: crate::methods::Deps,
+}
+
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppState")
+            .field("table", &self.table)
+            .field("auth", &self.auth)
+            .field("descriptor", &self.descriptor)
+            .field("deps", &self.deps)
+            .finish_non_exhaustive()
+    }
 }
 
 pub fn router(state: AppState) -> Router {
@@ -125,7 +138,7 @@ async fn session_state(State(state): State<AppState>, headers: HeaderMap) -> Jso
     body["authenticated"] = json!(true);
     body["auth"] = state.auth.descriptor();
     body["sessionMethod"] = json!("bearer-access-token");
-    body["expiresAt"] = json!(iso8601(principal.expires_at_ms));
+    body["expiresAt"] = json!(iso_from_ms(principal.expires_at_ms));
     Json(body)
 }
 
@@ -212,7 +225,7 @@ fn exchange_token(
             "access_token": issued.token,
             "issued_token_type": ACCESS_TOKEN_TYPE,
             "token_type": "Bearer",
-            "expires_in": issued.principal.expires_at_ms.saturating_sub(auth::now_ms()) / 1000,
+            "expires_in": issued.principal.expires_at_ms.saturating_sub(conn_support::time::now_ms()) / 1000,
             "scope": issued.principal.scopes.join(" "),
         }))
         .into_response(),
@@ -254,7 +267,8 @@ fn issue_ticket(state: &AppState, headers: &HeaderMap, route: Option<&str>) -> R
     };
     match state.auth.issue_ticket(token, route) {
         Some((ticket, expires_at_ms)) => no_store(
-            Json(json!({ "ticket": ticket, "expiresAt": iso8601(expires_at_ms) })).into_response(),
+            Json(json!({ "ticket": ticket, "expiresAt": iso_from_ms(expires_at_ms) }))
+                .into_response(),
         ),
         None => auth_invalid("invalid_credential"),
     }
@@ -371,7 +385,7 @@ async fn pairing_token(
     let mut body = json!({
         "id": issued.id,
         "credential": issued.code,
-        "expiresAt": iso8601(issued.expires_at_ms),
+        "expiresAt": iso_from_ms(issued.expires_at_ms),
     });
     if let Some(label) = issued.label {
         body["label"] = json!(label);
@@ -633,7 +647,7 @@ async fn ws(
         },
     };
     let table = state.table.clone();
-    let auth = state.auth.clone();
+    let auth = state.auth;
     upgrade
         .max_message_size(MAX_MESSAGE_BYTES)
         .max_frame_size(MAX_MESSAGE_BYTES)

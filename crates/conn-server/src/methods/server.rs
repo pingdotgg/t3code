@@ -18,7 +18,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use super::Deps;
 use crate::{
-    auth::{self, AccessChange, iso8601},
+    auth::AccessChange,
     diagnostics,
     environment::Environment,
     table::{Failure, ItemStream, MethodTable},
@@ -172,7 +172,10 @@ async fn blocking<T: Send + 'static>(
 }
 
 fn current_providers(deps: &Deps) -> Vec<Value> {
-    super::provider::server_providers(deps, &iso8601(auth::now_ms()))
+    super::provider::server_providers(
+        deps,
+        &conn_support::time::iso_from_ms(conn_support::time::now_ms()),
+    )
 }
 
 /// `ServerConfig`, decoded into the contract type: a required field this server does not
@@ -207,7 +210,7 @@ pub fn server_config(environment: &Environment, providers: Vec<Value>) -> Result
     crate::environment::config_flags(&mut config);
     // The host's clock when the config is built, so clients count live times against it
     // (T3 `ws.ts`, 2d80cb6bc7). Only a subscription's first snapshot is fresh, as in T3.
-    config.server_time = Some(iso8601(auth::now_ms()));
+    config.server_time = Some(conn_support::time::iso_from_ms(conn_support::time::now_ms()));
     Ok(conn_contract::to_json(&config))
 }
 
@@ -327,7 +330,7 @@ fn lifecycle_events(environment: &Environment) -> Vec<Value> {
             "version": 1,
             "sequence": 1,
             "type": "ready",
-            "payload": { "at": iso8601(auth::now_ms()), "environment": environment.descriptor },
+            "payload": { "at": conn_support::time::iso_from_ms(conn_support::time::now_ms()), "environment": environment.descriptor },
         }),
     ]
 }
@@ -349,7 +352,8 @@ mod tests {
     use crate::auth::{ClientInfo, PAIRING_CODE_TTL_MS};
 
     fn environment() -> (Arc<Environment>, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("conn-server-cfg-{}", auth::random_hex(6)));
+        let dir =
+            std::env::temp_dir().join(format!("conn-server-cfg-{}", crate::auth::random_hex(6)));
         let env = Environment::load(&dir, Some("Test".into()), dir.clone()).unwrap();
         (Arc::new(env), dir)
     }
@@ -360,7 +364,7 @@ mod tests {
         let config = server_config(&env, Vec::new()).unwrap();
         assert!(config["keybindings"].as_array().unwrap().len() > 10);
         assert_eq!(config["auth"]["policy"], "remote-reachable");
-        let before = iso8601(auth::now_ms());
+        let before = conn_support::time::iso_from_ms(conn_support::time::now_ms());
         let server_time = config["serverTime"].as_str().unwrap();
         assert!(
             server_time.len() == 24 && server_time <= before.as_str(),

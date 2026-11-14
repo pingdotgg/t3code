@@ -40,24 +40,17 @@ pub enum SessionMsg {
     Exited(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum CallError {
     /// The app-server is not running, or died before it answered.
+    #[error("the Codex app-server stopped")]
     Stopped,
+    #[error(transparent)]
     Rpc(RpcError),
+    #[error("the Codex app-server did not answer in time")]
     Timeout,
+    #[error("could not start the Codex app-server: {0}")]
     Spawn(String),
-}
-
-impl std::fmt::Display for CallError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Stopped => f.write_str("the Codex app-server stopped"),
-            Self::Rpc(e) => write!(f, "{e}"),
-            Self::Timeout => f.write_str("the Codex app-server did not answer in time"),
-            Self::Spawn(e) => write!(f, "could not start the Codex app-server: {e}"),
-        }
-    }
 }
 
 struct Live {
@@ -93,6 +86,12 @@ pub struct AppServer {
     starting: tokio::sync::Mutex<()>,
 }
 
+impl std::fmt::Debug for AppServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppServer").finish_non_exhaustive()
+    }
+}
+
 impl AppServer {
     /// The T3 server sends a session's app-server nothing beyond `initialize` until a thread
     /// call (no `model/list`: its model catalog comes from a separate status probe).
@@ -111,7 +110,7 @@ impl AppServer {
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+        crate::lock(&self.state)
     }
 
     pub fn add_session(&self, session_id: &str, inbox: mpsc::Sender<SessionMsg>) {
@@ -120,19 +119,22 @@ impl AppServer {
 
     /// Forgets a session; stops the process when it was the last one.
     pub async fn remove_session(&self, session_id: &str) {
-        let live = {
-            let mut state = self.lock();
-            if let Some(inbox) = state.sessions.remove(session_id) {
-                state.routes.retain(|_, r| !r.same_channel(&inbox));
-            }
-            if state.sessions.is_empty() {
-                state.live.take()
-            } else {
-                None
-            }
-        };
-        if let Some(live) = live {
-            live.process.terminate(FORCE_KILL_AFTER).await;
+        if let Some(process) = self.detach_session(session_id) {
+            process.terminate(FORCE_KILL_AFTER).await;
+        }
+    }
+
+    /// Forgets a session without waiting: the sync half of [`Self::remove_session`]. Returns
+    /// the process to stop when no session is left.
+    pub(crate) fn detach_session(&self, session_id: &str) -> Option<Process> {
+        let mut state = self.lock();
+        if let Some(inbox) = state.sessions.remove(session_id) {
+            state.routes.retain(|_, r| !r.same_channel(&inbox));
+        }
+        if state.sessions.is_empty() {
+            state.live.take().map(|live| live.process)
+        } else {
+            None
         }
     }
 

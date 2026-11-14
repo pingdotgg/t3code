@@ -17,6 +17,7 @@ use tokio::sync::{mpsc, watch};
 
 use crate::EngineError;
 use crate::engine::Inner;
+use crate::lock;
 
 /// Frames carry at most the last 64 KiB of output, as the client panel shows a tail.
 const MAX_FRAME_BYTES: usize = 64 * 1024;
@@ -78,13 +79,6 @@ impl Default for CommandOutputHub {
             changed: watch::Sender::new(0),
         }
     }
-}
-
-/// A poisoned lock still holds consistent data: every critical section only edits a tail.
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl CommandOutputHub {

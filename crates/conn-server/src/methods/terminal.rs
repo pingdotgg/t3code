@@ -21,8 +21,8 @@ use crate::{
     table::{Failure, ItemStream, MethodTable},
 };
 
-/// Values a stream may have waiting for the session. With at most 16 KiB of output per value,
-/// a chunk the session batches from them stays near the 64 KiB ack window.
+/// Values a stream may have waiting for the session. The session puts at most 64 KiB of them
+/// (by T3's charge) in one chunk, as T3's `takeBatch` does.
 const STREAM_BUFFER: usize = 4;
 
 /// The manager terminals of this environment share; scrollback lives under the state folder.
@@ -310,9 +310,12 @@ mod tests {
         client.request(2, "terminal.write", write);
 
         // Ack until the flood arrives, then stop: the session sends at most the window.
-        let size = |text: &str, frame: &Value| {
-            let values = frame["values"].as_array().map_or(0, Vec::len);
-            text.len() + values * ack_window::VALUE_OVERHEAD_BYTES
+        // Sizes are what T3 charges a chunk (`chunkSize`), not the encoded text: JSON escapes
+        // make the text longer than the output it carries.
+        let size = |_: &str, frame: &Value| {
+            frame["values"]
+                .as_array()
+                .map_or(0, |values| ack_window::chunk_size(values))
         };
         let mut pending: Vec<usize> = Vec::new();
         while let Some((text, frame)) = client.next(Duration::from_secs(15)).await {
@@ -336,8 +339,9 @@ mod tests {
             pending.len() <= ack_window::MAX_PENDING_CHUNKS,
             "{pending:?}"
         );
+        // One chunk holds at most the window of events, plus T3's charge for the chunk itself.
         assert!(
-            largest <= ack_window::MAX_PENDING_BYTES + 4096,
+            largest <= ack_window::MAX_PENDING_BYTES + ack_window::VALUE_OVERHEAD_BYTES,
             "{pending:?}"
         );
         assert!(

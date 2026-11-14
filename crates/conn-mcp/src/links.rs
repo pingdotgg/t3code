@@ -3,7 +3,12 @@
 
 use crate::{Caller, McpConfig};
 
-pub fn thread_link(config: &McpConfig, caller: &Caller, thread_id: &str, title: &str) -> String {
+pub(crate) fn thread_link(
+    config: &McpConfig,
+    caller: &Caller,
+    thread_id: &str,
+    title: &str,
+) -> String {
     match caller {
         Caller::Thread(_) => {
             let href = format!("t3-thread://v2/{}/{thread_id}", config.environment_id);

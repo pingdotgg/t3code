@@ -28,7 +28,9 @@ const MESSAGE_TOKEN_MIN_LENGTH: usize = 3;
 
 /// The filters every search shares, after `hits(rowid)` names the candidate messages, newest
 /// first. `CROSS JOIN` keeps the hits first, so the planner never scans `entities` or
-/// `threads`. Deleted, archived, subagent and side-chat threads drop out before the limit.
+/// `threads`. Deleted, archived, subagent and side-chat threads drop out before the limit, and
+/// so do threads outside the project scope (`?6`) and threads the caller already lists (`?7`),
+/// as `searchMessages` in `ThreadSearch.ts` applies them.
 macro_rules! search_sql {
     ($hits:literal) => {
         concat!(
@@ -48,6 +50,8 @@ macro_rules! search_sql {
                AND json_extract(t.shell, '$.lineage.relationshipToParent') IS NOT 'subagent'
                AND json_extract(t.shell, '$.lineage.sideChat') IS NOT 1
                AND k.message_id NOT LIKE 'async-answer:%'
+               AND (?6 IS NULL OR json_extract(t.shell, '$.projectId') = ?6)
+               AND k.thread_id NOT IN (SELECT value FROM json_each(?7))
                AND NOT EXISTS (
                  SELECT 1 FROM json_each(?2) AS token
                  WHERE instr(lower(COALESCE(json_extract(e.body, '$.text'), '')), token.value) = 0
@@ -401,6 +405,13 @@ impl Store {
             None => SEARCH_SCAN_SQL,
         };
         let substrings = json!(search.substrings).to_string();
+        // `projectId` and `excludedThreadIds` are the server's own options (`/mcp` search);
+        // client calls carry neither.
+        let project_id = input["projectId"].as_str();
+        let excluded = match &input["excludedThreadIds"] {
+            Value::Array(ids) => Value::Array(ids.clone()).to_string(),
+            _ => "[]".to_owned(),
+        };
         let rows = self.query_rows(
             sql,
             params![
@@ -408,7 +419,9 @@ impl Store {
                 substrings,
                 SEARCH_CANDIDATE_LIMIT,
                 SEARCH_SCAN_LIMIT,
-                SEARCH_HIT_LIMIT
+                SEARCH_HIT_LIMIT,
+                project_id,
+                excluded
             ],
         )?;
         let mut seen: Vec<String> = Vec::new();
@@ -485,8 +498,11 @@ impl Store {
             }
         }
         let active = if input.get("index").is_none() && total > 0 {
+            // The offset comes from the client: add in i128, where no `i64` can overflow.
             let offset = input["offset"].as_i64().unwrap_or(0);
-            (requested as i64 + offset).rem_euclid(total as i64) as u64
+            let moved = (i128::from(requested) + i128::from(offset)).rem_euclid(i128::from(total));
+            // `rem_euclid` by a `u64` total leaves a value in `0..total`.
+            u64::try_from(moved).unwrap_or(0)
         } else {
             requested.min(total.saturating_sub(1))
         };
@@ -594,7 +610,9 @@ mod tests {
                 "[]",
                 SEARCH_CANDIDATE_LIMIT,
                 SEARCH_SCAN_LIMIT,
-                SEARCH_HIT_LIMIT
+                SEARCH_HIT_LIMIT,
+                Some("project"),
+                "[\"t\"]"
             ],
         );
         let _ = std::fs::remove_dir_all(&dir);

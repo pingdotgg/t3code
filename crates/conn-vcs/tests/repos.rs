@@ -1,6 +1,11 @@
 //! Every operation against real temporary repositories. Offline: the "remote" is a bare
 //! repository in the same temp folder.
 
+#![expect(
+    clippy::unwrap_used,
+    reason = "test helpers: a failure should fail the test"
+)]
+
 mod support;
 
 use std::path::PathBuf;

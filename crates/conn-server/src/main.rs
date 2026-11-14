@@ -35,10 +35,12 @@ fn main() {
     }
     // One thread: a container serves a handful of clients, and each worker thread costs
     // stack and allocator arenas.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime");
+    let runtime = conn_server::serve::or_exit(
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build(),
+        "cannot start the runtime",
+    );
     runtime.block_on(serve(options, providers));
     // Dropping the tasks drops provider children, which kills them (`kill_on_drop`).
     runtime.shutdown_timeout(std::time::Duration::from_secs(2));

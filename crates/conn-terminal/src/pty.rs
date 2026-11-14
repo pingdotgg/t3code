@@ -33,9 +33,9 @@ const DROPPED_ENV: &[&str] = &[
 const DROPPED_ENV_PREFIXES: &[&str] = &["T3CODE_", "VITE_", "CONN_SERVER_"];
 
 /// One read from the PTY. Larger output arrives as several events.
-pub const READ_BYTES: usize = 8 * 1024;
+pub(crate) const READ_BYTES: usize = 8 * 1024;
 
-pub struct Spawned {
+pub(crate) struct Spawned {
     pub reader: pty_process::OwnedReadPty,
     pub writer: pty_process::OwnedWritePty,
     /// A duplicate of the master for ioctls (resize, foreground group).
@@ -46,7 +46,10 @@ pub struct Spawned {
 
 /// The environment a shell gets: the server's, minus server-only variables, plus terminal
 /// settings, plus the client's `env` (with `~` and `$HOME` expanded).
-pub fn shell_env(runtime: &BTreeMap<String, String>, version: &str) -> Vec<(OsString, OsString)> {
+pub(crate) fn shell_env(
+    runtime: &BTreeMap<String, String>,
+    version: &str,
+) -> Vec<(OsString, OsString)> {
     let mut env: BTreeMap<OsString, OsString> = std::env::vars_os()
         .filter(|(key, _)| {
             let key = key.to_string_lossy();
@@ -127,7 +130,7 @@ fn shell_args(shell: &str) -> &'static [&'static str] {
 }
 
 /// Starts the first shell of `shells` that exists.
-pub fn spawn(
+pub(crate) fn spawn(
     shells: &[String],
     cwd: &str,
     env: &[(OsString, OsString)],
@@ -153,6 +156,46 @@ pub fn spawn(
     ))
 }
 
+/// Lets every later child start with the default action of a signal this process inherited
+/// as ignored. node-pty resets every signal to its default in the shell; `std` resets only
+/// `SIGPIPE`. A child inherits an ignored signal across `exec`, so a server started with
+/// `SIGINT` ignored (a background job of a shell without job control) gave shells whose
+/// commands ignore Ctrl-C, and `nohup` gave shells that ignore `terminal.close`'s SIGHUP.
+/// `exec` resets a handled signal to its default, so this process handles each such signal
+/// instead, and drops it, as ignoring did. Linux only: it reads `SigIgn` from `/proc`.
+#[cfg(target_os = "linux")]
+fn stop_passing_on_ignored_signals() {
+    use tokio::signal::unix::{SignalKind, signal};
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let ignored = std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|status| {
+                let mask = status.lines().find_map(|l| l.strip_prefix("SigIgn:"))?;
+                u64::from_str_radix(mask.trim(), 16).ok()
+            })
+            .unwrap_or(0);
+        let kinds = [
+            SignalKind::hangup(),
+            SignalKind::interrupt(),
+            SignalKind::quit(),
+            SignalKind::terminate(),
+            SignalKind::user_defined1(),
+            SignalKind::user_defined2(),
+            SignalKind::from_raw(Signal::TSTP.as_raw()),
+        ];
+        for kind in kinds {
+            let bit = u32::try_from(kind.as_raw_value() - 1)
+                .ok()
+                .and_then(|n| 1u64.checked_shl(n));
+            if bit.is_some_and(|bit| ignored & bit != 0) {
+                // The handler stays installed after the stream is dropped.
+                let _ = signal(kind);
+            }
+        }
+    });
+}
+
 fn spawn_one(
     shell: &str,
     cwd: &str,
@@ -160,6 +203,8 @@ fn spawn_one(
     cols: u16,
     rows: u16,
 ) -> io::Result<Spawned> {
+    #[cfg(target_os = "linux")]
+    stop_passing_on_ignored_signals();
     let (pty, pts) = pty_process::open().map_err(to_io)?;
     pty.resize(pty_process::Size::new(rows, cols))
         .map_err(to_io)?;
@@ -194,7 +239,7 @@ fn to_io(error: pty_process::Error) -> io::Error {
     }
 }
 
-pub fn resize(control: &OwnedFd, cols: u16, rows: u16) -> io::Result<()> {
+pub(crate) fn resize(control: &OwnedFd, cols: u16, rows: u16) -> io::Result<()> {
     let size = rustix::termios::Winsize {
         ws_row: rows,
         ws_col: cols,
@@ -205,7 +250,7 @@ pub fn resize(control: &OwnedFd, cols: u16, rows: u16) -> io::Result<()> {
 }
 
 /// The PTY's foreground process group, when it is not the shell's own: a command runs.
-pub fn foreground_job(control: &OwnedFd, shell_pid: i32) -> Option<i32> {
+pub(crate) fn foreground_job(control: &OwnedFd, shell_pid: i32) -> Option<i32> {
     let group = rustix::termios::tcgetpgrp(control)
         .ok()?
         .as_raw_nonzero()
@@ -215,26 +260,26 @@ pub fn foreground_job(control: &OwnedFd, shell_pid: i32) -> Option<i32> {
 
 /// What a finished shell reports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Exit {
+pub(crate) struct Exit {
     pub code: Option<i64>,
     pub signal: Option<i64>,
 }
 
 /// What the PTY task reports to its owner.
-pub enum Report {
+pub(crate) enum Report {
     Output(Vec<u8>),
     Exited(Exit),
 }
 
 /// How long the shell has to leave after SIGHUP before it gets SIGKILL.
-pub struct KillPolicy {
+pub(crate) struct KillPolicy {
     pub grace: Duration,
 }
 
 /// Reads output until the shell has exited and the PTY is drained, or until `kill` fires or
 /// its sender is dropped (then the shell gets `default_grace`). `report` runs synchronously
 /// for each read and for the exit; it decides nothing.
-pub async fn run(
+pub(crate) async fn run(
     mut reader: pty_process::OwnedReadPty,
     mut child: Child,
     control: std::sync::Arc<OwnedFd>,

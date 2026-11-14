@@ -15,8 +15,9 @@ use conn_contract::{
     ReviewDiffFileContentsInput, ReviewDiffPreviewInput, ReviewGetDiffPreviewError,
     VcsBranchStatus, VcsCreateRefInput, VcsCreateWorktreePayload, VcsCreateWorktreeResult,
     VcsCreateWorktreeResultWorktree, VcsInitInput, VcsListRefsInput, VcsPullError, VcsPullInput,
-    VcsRefreshBranchError, VcsRefreshStatusPayload, VcsRemoveWorktreeInput, VcsStatusStreamEvent,
-    VcsStatusSubscriptionInput, VcsSwitchRefInput, WorktreeSetupCancelResult, to_json,
+    VcsRefreshBranchError, VcsRefreshStatusPayload, VcsRemoveWorktreeInput,
+    VcsRepositoryDetectionError, VcsStatusStreamEvent, VcsStatusSubscriptionInput,
+    VcsSwitchRefInput, WorktreeSetupCancelResult, to_json,
 };
 use conn_vcs::{
     VcsError, VcsHub, WorktreeSetups, discovery,
@@ -35,6 +36,12 @@ use crate::table::{Failure, ItemStream, MethodTable};
 pub struct VcsShared {
     pub hub: VcsHub,
     pub setups: WorktreeSetups,
+}
+
+impl std::fmt::Debug for VcsShared {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VcsShared").finish_non_exhaustive()
+    }
 }
 
 /// Items a status or branch subscriber may fall behind by before updates are skipped. Each
@@ -101,15 +108,17 @@ impl Workspaces {
                 Err(error) => eprintln!("review: the shell snapshot does not decode: {error}"),
             }
         }
-        Err(Failure::fail(&ReviewGetDiffPreviewError::VcsRepositoryDetectionError(
-            conn_contract::from_json(serde_json::json!({
-                "_tag": "VcsRepositoryDetectionError",
-                "operation": operation,
-                "cwd": cwd,
-                "detail": format!("Review {what} cwd must stay within the configured workspace root."),
-            }))
-            .expect("valid VcsRepositoryDetectionError"),
-        )))
+        Err(Failure::fail(
+            &ReviewGetDiffPreviewError::VcsRepositoryDetectionError(VcsRepositoryDetectionError {
+                tag: conn_contract::lit::VcsRepositoryDetectionError,
+                operation: operation.into(),
+                cwd: cwd.into(),
+                detail: format!(
+                    "Review {what} cwd must stay within the configured workspace root."
+                ),
+                cause: None,
+            }),
+        ))
     }
 }
 
@@ -402,7 +411,7 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             }
         },
     );
-    let setups = shared.setups.clone();
+    let setups = shared.setups;
     table.unary(
         "worktreeSetup.cancel",
         move |_, input: OrchestrationV2GetThreadFamilyInput| {

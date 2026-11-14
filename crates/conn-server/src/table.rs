@@ -78,9 +78,26 @@ pub enum Handler {
     Stream(Arc<StreamFn>),
 }
 
+impl std::fmt::Debug for Handler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Unary(_) => "Handler::Unary",
+            Self::Stream(_) => "Handler::Stream",
+        })
+    }
+}
+
 #[derive(Default)]
 pub struct MethodTable {
     handlers: HashMap<&'static str, Handler>,
+}
+
+impl std::fmt::Debug for MethodTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MethodTable")
+            .field("handlers", &self.handlers.len())
+            .finish()
+    }
 }
 
 impl MethodTable {

@@ -131,21 +131,25 @@ pub struct ProcessContext {
     pub argument_count: usize,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum ProcessError {
+    #[error("{} failed to start in {}: {message}", .context.command, .context.operation)]
     Spawn {
         context: ProcessContext,
         message: String,
     },
+    #[error("{} timed out after {timeout_ms}ms in {}", .context.command, .context.operation)]
     Timeout {
         context: ProcessContext,
         timeout_ms: u64,
     },
+    #[error("{} produced more than {max_bytes} bytes in {}", .context.command, .context.operation)]
     OutputLimit {
         context: ProcessContext,
         max_bytes: usize,
         observed_bytes: usize,
     },
+    #[error("{} exited with {code} in {}: {}", .context.command, .context.operation, .stderr.trim())]
     Exit {
         context: ProcessContext,
         code: i32,
@@ -168,40 +172,6 @@ impl ProcessError {
         match self {
             ProcessError::Exit { stderr, .. } => stderr,
             _ => "",
-        }
-    }
-}
-
-impl std::fmt::Display for ProcessError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let c = self.context();
-        match self {
-            ProcessError::Spawn { message, .. } => {
-                write!(
-                    f,
-                    "{} failed to start in {}: {message}",
-                    c.command, c.operation
-                )
-            }
-            ProcessError::Timeout { timeout_ms, .. } => {
-                write!(
-                    f,
-                    "{} timed out after {timeout_ms}ms in {}",
-                    c.command, c.operation
-                )
-            }
-            ProcessError::OutputLimit { max_bytes, .. } => write!(
-                f,
-                "{} produced more than {max_bytes} bytes in {}",
-                c.command, c.operation
-            ),
-            ProcessError::Exit { code, stderr, .. } => write!(
-                f,
-                "{} exited with {code} in {}: {}",
-                c.command,
-                c.operation,
-                stderr.trim()
-            ),
         }
     }
 }
@@ -338,7 +308,9 @@ async fn read_bounded<R: AsyncRead + Unpin>(
     drain: bool,
 ) -> (Vec<u8>, Option<usize>) {
     let mut buffer = Vec::new();
-    let mut chunk = [0u8; 8192];
+    // On the heap: an 8 KiB array would sit in every git future (stdout and stderr each),
+    // which makes them about 18 KiB (clippy's `large_futures`).
+    let mut chunk = vec![0u8; 8192];
     let mut seen = 0usize;
     loop {
         let n = match reader.read(&mut chunk).await {
@@ -358,6 +330,57 @@ async fn read_bounded<R: AsyncRead + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_errors_read_as_before() {
+        let context = ProcessContext {
+            operation: "GitCore.status",
+            command: "git status".into(),
+            cwd: "/repo".into(),
+            argument_count: 1,
+        };
+        let cases = [
+            (
+                ProcessError::Spawn {
+                    context: context.clone(),
+                    message: "not found".into(),
+                },
+                "git status failed to start in GitCore.status: not found",
+            ),
+            (
+                ProcessError::Timeout {
+                    context: context.clone(),
+                    timeout_ms: 30_000,
+                },
+                "git status timed out after 30000ms in GitCore.status",
+            ),
+            (
+                ProcessError::OutputLimit {
+                    context: context.clone(),
+                    max_bytes: 10,
+                    observed_bytes: 11,
+                },
+                "git status produced more than 10 bytes in GitCore.status",
+            ),
+            (
+                ProcessError::Exit {
+                    context,
+                    code: 128,
+                    stderr: "fatal: not a git repository\n".into(),
+                    stderr_truncated: false,
+                },
+                "git status exited with 128 in GitCore.status: fatal: not a git repository",
+            ),
+        ];
+        for (error, text) in cases {
+            assert_eq!(error.to_string(), text);
+            assert_eq!(
+                crate::VcsError::from(error).to_string(),
+                text,
+                "VcsError is transparent"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn bounded_stdout_truncates_or_fails() {

@@ -2537,6 +2537,32 @@ async fn search_matches_words_and_skips_hidden_threads() {
     assert_eq!(search(&engine, "names zz").await, Vec::<String>::new());
     assert_eq!(search(&engine, "東京").await, ["t3"]);
     assert_eq!(search(&engine, "zebra").await.len(), 2);
+    // The server's own options: a project scope and threads to leave out, before the limit.
+    let scoped = |input: Value| async {
+        call(&engine, "orchestration.searchThreads", input)
+            .await
+            .unwrap()["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["threadId"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        scoped(json!({"query": "names", "excludedThreadIds": ["t1"]})).await,
+        ["t2"]
+    );
+    assert_eq!(
+        scoped(json!({"query": "names", "projectId": project_id()}))
+            .await
+            .len(),
+        2
+    );
+    assert!(
+        scoped(json!({"query": "names", "projectId": "project:other"}))
+            .await
+            .is_empty()
+    );
     dispatch(
         &engine,
         json!({"type": "thread.delete", "commandId": "t4:c3", "threadId": "t4"}),

@@ -1,6 +1,11 @@
 //! Offline tests on real folders: reads, writes, listings, search, attachments and assets,
 //! with every path escape (`..`, absolute paths, symlinks, `.git`, the server's own state).
 
+#![expect(
+    clippy::unwrap_used,
+    reason = "test helpers: a failure should fail the test"
+)]
+
 use std::{
     fs,
     os::unix::fs::symlink,
@@ -80,7 +85,7 @@ fn git(dir: &Path, args: &[&str]) {
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .status()
         .unwrap();
-    assert!(status.success());
+    assert!(status.success(), "git failed: {status}");
 }
 
 fn read(f: &Fixture, path: &str) -> Result<conn_contract::ProjectReadFileResult, Failure> {
@@ -457,8 +462,8 @@ fn upload(f: &Fixture, kind: Option<&str>, name: &str, mime: &str, bytes: &[u8])
         f.files
             .attachments
             .publish_upload(&part, &target, bytes.len() as u64, claims.size_bytes);
-    assert_eq!(outcome, UploadOutcome::Stored);
-    assert!(!part.exists());
+    assert_eq!(outcome, UploadOutcome::Stored, "the upload is published");
+    assert!(!part.exists(), "the part file is gone after publish");
     issued.attachment_id
 }
 
@@ -620,7 +625,7 @@ fn persists_data_url_images_with_stable_ids() {
         fs::read(f.files.attachments.resolve(&image.id).unwrap().path).unwrap(),
         b"hi"
     );
-    let mut bad = input.clone();
+    let mut bad = input;
     bad.attachments[0].size_bytes = 3;
     assert!(f.files.attachments.persist_data_urls(&bad).is_err());
     bad.attachments[0].data_url = "data:image/jpeg;base64,aGk=".into();
@@ -655,7 +660,7 @@ fn signs_asset_urls_and_rechecks_them_when_served() {
     d.write("src/code.rs", "fn x() {}");
     let root = Some(f.project.to_string_lossy().into_owned());
     let context = AssetContext {
-        workspace_root: root.clone(),
+        workspace_root: root,
         project_favicon_path: None,
     };
     let now = now_ms();
@@ -730,7 +735,7 @@ fn signs_asset_urls_and_rechecks_them_when_served() {
     let (token, name) = token_and_name(&media.relative_url);
     assert_eq!(
         served_path(f.files.resolve_asset(&token, &name, now)),
-        Some(clip.clone())
+        Some(clip)
     );
     let key = f.state.join("secrets/asset-signing-key");
     assert!(

@@ -6,6 +6,11 @@
 //! and a thread subscription open as a client would have. Prints the process RSS (from `ps`)
 //! every tenth of the run, then again after closing every provider session.
 
+#![expect(
+    clippy::unwrap_used,
+    reason = "a measurement example: a failure should stop it"
+)]
+
 use std::{alloc::System, sync::Arc, time::Duration};
 
 use stats_alloc::{INSTRUMENTED_SYSTEM, StatsAlloc};

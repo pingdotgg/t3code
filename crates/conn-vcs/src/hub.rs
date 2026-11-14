@@ -177,7 +177,7 @@ impl VcsHub {
     }
 
     fn with<R>(&self, f: impl FnOnce(&mut State) -> R) -> R {
-        f(&mut self.state.lock().expect("hub lock"))
+        f(&mut crate::lock(&self.state))
     }
 
     /// Number of folders with at least one subscriber.

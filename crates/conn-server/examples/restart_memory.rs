@@ -7,6 +7,11 @@
 //! cargo run -p conn-server --example restart_memory -- ask  /tmp/conn-restart
 //! ```
 
+#![expect(
+    clippy::unwrap_used,
+    reason = "a measurement example: a failure should stop it"
+)]
+
 use std::{sync::Arc, time::Duration};
 
 use conn_contract::{from_json, to_json};

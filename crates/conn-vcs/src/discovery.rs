@@ -83,7 +83,8 @@ async fn read_capped(pipe: Option<impl AsyncRead + Unpin>, cap: usize) -> Vec<u8
     let Some(mut pipe) = pipe else {
         return out;
     };
-    let mut buf = [0u8; 8192];
+    // On the heap: an 8 KiB array would sit in every probe future (clippy's `large_futures`).
+    let mut buf = vec![0u8; 8192];
     loop {
         match pipe.read(&mut buf).await {
             Ok(0) | Err(_) => return out,

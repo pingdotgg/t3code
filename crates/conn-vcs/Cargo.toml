@@ -5,17 +5,20 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 
 [dependencies]
+conn-support.workspace = true
 conn-contract.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = ["process", "io-util", "sync", "time", "rt", "macros"] }
 # Already in the tree through conn-server: diff hashes.
-sha2 = { version = "0.10", default-features = false }
+sha2.workspace = true
 # Already in the tree through conn-server and conn-terminal: kills a setup script's process
 # group without `unsafe`.
-rustix = { version = "1", default-features = false, features = ["std", "process"] }
+rustix = { workspace = true, features = ["process"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }

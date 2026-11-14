@@ -68,6 +68,14 @@ pub struct Process {
     stdin_closed: oneshot::Receiver<()>,
 }
 
+impl std::fmt::Debug for Process {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Process")
+            .field("pid", &self.pid)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Process {
     /// Starts the child in its own process group. Events arrive on `events` until
     /// [`ProcEvent::Exited`]. Stdout lines longer than `max_line_bytes` are dropped.
