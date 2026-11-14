@@ -92,7 +92,7 @@ import {
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
-import { TooltipScrollDismissArea } from "../ui/tooltip";
+import { TooltipProvider, TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
@@ -1414,7 +1414,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   }
 
   return (
-    <>
+    <TooltipProvider>
       {activityAnnouncer}
       <MarkdownFindContext value={findActive}>
         <TimelineRowActivityCtx value={activityState}>
@@ -1499,7 +1499,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
           </TooltipScrollDismissArea>
         </TimelineRowActivityCtx>
       </MarkdownFindContext>
-    </>
+    </TooltipProvider>
   );
 });
 
