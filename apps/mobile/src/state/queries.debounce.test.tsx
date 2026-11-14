@@ -8,7 +8,8 @@ import { expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   sessionAtom: {},
-  searchEntries: vi.fn(() => null),
+  searchEntriesAtom: {},
+  searchEntries: vi.fn((): unknown => mocks.searchEntriesAtom),
   listRefs: vi.fn(),
   refresh: vi.fn(),
 }));
@@ -35,7 +36,9 @@ vi.mock("./query", () => ({
     data:
       atom === mocks.sessionAtom
         ? { authenticated: true, scopes: [AuthFilesystemReadScope] }
-        : null,
+        : atom === mocks.searchEntriesAtom
+          ? { entries: [{ path: "src/only-in-original.ts", kind: "file" }] }
+          : null,
     error: null,
     isPending: false,
     refresh: () => {},
@@ -140,9 +143,11 @@ it.each([
   harness.render(target);
   act(() => vi.advanceTimersByTime(200));
   expect(harness.result?.isPending).toBe(false);
+  expect(harness.result?.entries).toHaveLength(1);
 
   harness.render(changed);
   expect(harness.result?.isPending).toBe(true);
+  expect(harness.result?.entries).toEqual([]);
 });
 
 it("keeps compiled branch results stable and resets pagination for a new target or refresh", () => {
