@@ -163,8 +163,10 @@ it.each(["thread", "session"] as const)(
     );
     const previousCompression = compression.prepare.getMockImplementation();
     using _compression = {
-      [Symbol.dispose]: () =>
-        compression.prepare.mockReset().mockImplementation(previousCompression),
+      [Symbol.dispose]: () => {
+        compression.prepare.mockReset();
+        if (previousCompression) compression.prepare.mockImplementation(previousCompression);
+      },
     };
     compression.prepare.mockReset().mockImplementation(real.prepareImageForAttachment);
     const decoding = deferred<void>();
