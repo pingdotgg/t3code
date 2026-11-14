@@ -13,6 +13,7 @@
 //! secret provider (`{provider, reference}`) cannot be read: this server runs no secret
 //! provider. The key exists only in the request's header ([`conn_source_control::Secret`]).
 
+pub mod citations;
 pub mod drivers;
 pub mod js;
 pub mod prompts;

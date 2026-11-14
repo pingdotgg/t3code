@@ -283,6 +283,13 @@ const contexts = [
   Array.from({ length: 40 }, (_, i) => (i % 3 === 2 ? { role: "assistant", text: `a${i} ${"x".repeat(3000)}` } : message(`u${i} ${"😀y".repeat(1500)}`, i % 5 ? [] : [png(`i${i}`, `i${i}.png`)]))),
   [message("u".repeat(10_000)), { role: "assistant", text: "a".repeat(10_000) }],
   [message("[User attached one or more files without additional text. Respond using the conversation context and the attached files.]", [png("only", "only.png")])],
+  // Assistant quotes become their text (assistantCitationsToPlainText); broken ones stay.
+  [
+    message(`About [Assistant quote](t3-citation://v1/env/thread-1/msg%201?text=Use+the+cache&start=3&end=17&prefix=a&suffix=b) please`),
+    { role: "assistant", text: "[Assistant quote](t3-citation://v1/e/t/m?text=x&start=1&end=2&prefix=&suffix=&comment=Why%3F%20%E2%82%AC) and [Assistant quote](t3-citation://v1/e/t/m?text=x&start=2&end=1&prefix=&suffix=)" },
+    message("[Assistant quote](t3-citation://v1/e/t?text=x&start=1&end=2&prefix=&suffix=) [Assistant quote](t3-citation://v1/e/t/%E0?text=x&start=1&end=2&prefix=&suffix=) [Assistant quote](t3-citation://v1/e/t/m?text=x&start=1&end=2&prefix=&suffix=&extra=1) [Assistant quote](t3-citation://v1/e/t/m?text=%20&start=1&end=2&prefix=&suffix=)"),
+    message("[Assistant quote](t3-citation://v1/e/t/m?text=x&start=1&end=2&prefix=&suffix=#frag) [Assistant quote](t3-citation://v1/e/t/m?text=x&start=1&end=99999999999999999&prefix=&suffix=) [Assistant quote](t3-citation://v1/e/t/m?text=x&text=y&start=1&end=2&prefix=&suffix=)"),
+  ],
 ].map((list) => list.map((m) => ({ attachments: [], ...m })));
 for (const messages of contexts) {
   const theirs = Context.formatThreadTitleContext(messages);

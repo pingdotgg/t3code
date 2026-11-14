@@ -1155,6 +1155,65 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    /// Source control host tokens the T3 server moved to its store reach the host code as
+    /// tokens, never as the marker (the review's finding 3): GitHub sends the stored token,
+    /// Bitbucket no longer drops it, and a marker whose file is gone reads as no token, so the
+    /// environment's token is tried (the `github.rs` discovery table covers both paths).
+    #[test]
+    fn host_tokens_the_t3_server_moved_reach_source_control() {
+        use conn_source_control::settings::{SecretSetting, Settings};
+        let dir = temp_state();
+        fs::write(
+            dir.join("settings.json"),
+            json!({
+                "sourceControlHosts": {
+                    "github": { "tokens": { "github.com": SECRET_REDACTED, "ghe.example.com": SECRET_REDACTED } },
+                    "bitbucket": { "accessToken": SECRET_REDACTED },
+                    "gitcafe": { "token": SECRET_REDACTED },
+                },
+            })
+            .to_string(),
+        )
+        .unwrap();
+        // `sourceControlHostSecretName`: kind, field and host, base64url.
+        for (name, value) in [
+            (
+                "source-control-Z2l0aHVi-dG9rZW5z-Z2l0aHViLmNvbQ",
+                "ghp-stored",
+            ),
+            ("source-control-Yml0YnVja2V0-YWNjZXNzVG9rZW4", "bb-stored"),
+        ] {
+            conn_support::secret_store::write(&dir.join("secrets"), name, value.as_bytes())
+                .unwrap();
+        }
+        let store = SettingsStore::open(dir.join("settings.json"));
+        // What `HostInputs::settings` builds for each call.
+        let settings = Settings::new(store.raw());
+        let literal = |setting: SecretSetting| match setting {
+            SecretSetting::Literal(secret) => Some(secret.expose().to_owned()),
+            _ => None,
+        };
+        assert_eq!(
+            literal(settings.host("github").keyed_secret("tokens", "github.com")).as_deref(),
+            Some("ghp-stored")
+        );
+        assert_eq!(
+            literal(settings.host("bitbucket").secret_field("accessToken")).as_deref(),
+            Some("bb-stored")
+        );
+        assert_eq!(
+            settings
+                .host("github")
+                .keyed_secret("tokens", "ghe.example.com"),
+            SecretSetting::Unset
+        );
+        assert_eq!(
+            settings.host("gitcafe").secret_field("token"),
+            SecretSetting::Unset
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn a_failed_settings_write_undoes_the_store_changes() {
         let dir = temp_state();

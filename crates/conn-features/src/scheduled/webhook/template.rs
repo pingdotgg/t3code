@@ -625,74 +625,7 @@ pub fn redact_query(query: &str) -> String {
         .join("&")
 }
 
-fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
-
-/// `decodeURIComponent`, or `None` where it throws: a `%` without two hex digits, or bytes
-/// that are not UTF-8.
-fn decode_uri_component(text: &str) -> Option<String> {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while let Some(&byte) = bytes.get(index) {
-        if byte == b'%' {
-            let high = hex_value(*bytes.get(index + 1)?)?;
-            let low = hex_value(*bytes.get(index + 2)?)?;
-            out.push(high << 4 | low);
-            index += 3;
-        } else {
-            out.push(byte);
-            index += 1;
-        }
-    }
-    String::from_utf8(out).ok()
-}
-
-/// `application/x-www-form-urlencoded` byte decoding: `+` is a space, `%XX` a byte, and any
-/// other `%` stays; then UTF-8 with U+FFFD for bad bytes.
-fn form_decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while let Some(&byte) = bytes.get(index) {
-        let escaped = (byte == b'%')
-            .then(|| {
-                let high = hex_value(*bytes.get(index + 1)?)?;
-                let low = hex_value(*bytes.get(index + 2)?)?;
-                Some(high << 4 | low)
-            })
-            .flatten();
-        match escaped {
-            Some(decoded) => {
-                out.push(decoded);
-                index += 3;
-            }
-            None => {
-                out.push(if byte == b'+' { b' ' } else { byte });
-                index += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// `new URLSearchParams(text)`: its name and value pairs, in order.
-fn search_params(text: &str) -> Vec<(String, String)> {
-    let text = text.strip_prefix('?').unwrap_or(text);
-    text.split('&')
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let (name, value) = part.split_once('=').unwrap_or((part, ""));
-            (form_decode(name), form_decode(value))
-        })
-        .collect()
-}
+use conn_support::url::{decode_uri_component, search_params};
 
 /// `Object.fromEntries(new URLSearchParams(text))`.
 fn search_params_object(text: &str) -> Json {
