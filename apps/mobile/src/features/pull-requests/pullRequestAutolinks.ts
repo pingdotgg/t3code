@@ -3,6 +3,8 @@ import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
+import { markdownHtmlTags } from "../../lib/markdownDocument";
+
 type MarkdownNode = {
   readonly type: string;
   readonly position?:
@@ -25,6 +27,7 @@ const UNLINKED_TYPES = new Set([
   "html",
   "definition",
 ]);
+const PROTECTED_TAG = /^<(\/)?(?:a|code|pre|script|style)(?=[\s>])/iu;
 
 /**
  * Rewrites the references `autolinks` finds in the markdown's prose as markdown links, because the
@@ -36,34 +39,53 @@ export function linkReferenceAutolinks(
 ): string {
   if (autolinks === null) return markdown;
   const edits: { start: number; end: number; value: string }[] = [];
-  const visit = (node: MarkdownNode) => {
+  // `base` is where the parsed source starts in `markdown`; `inHtml` marks text between HTML tags.
+  const visit = (node: MarkdownNode, base: number, inHtml = false) => {
     if (UNLINKED_TYPES.has(node.type)) return;
     if (node.type === "text") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
       if (start === undefined || end === undefined) return;
-      for (const link of autolinks(markdown.slice(start, end))) {
+      for (const link of autolinks(markdown.slice(base + start, base + end))) {
         edits.push({
-          start: start + link.index,
-          end: start + link.index + link.text.length,
+          start: base + start + link.index,
+          end: base + start + link.index + link.text.length,
           value: `[${link.label}](${link.url})`,
         });
       }
     } else if (node.children !== undefined) {
       let protectedHtmlDepth = 0;
       for (const child of node.children) {
-        if (child.type === "html") {
-          const start = child.position?.start.offset;
-          const end = child.position?.end.offset;
-          const tag = start === undefined || end === undefined ? "" : markdown.slice(start, end);
-          for (const match of tag.matchAll(/<(\/)?(?:a|code|pre|script|style)(?=[\s>])[^>]*>/giu)) {
-            protectedHtmlDepth = Math.max(0, protectedHtmlDepth + (match[1] ? -1 : 1));
+        if (child.type !== "html") {
+          if (protectedHtmlDepth === 0) visit(child, base, inHtml);
+          continue;
+        }
+        // Text between tags holds no tag the scan matches, so expanding it again would recurse forever.
+        if (inHtml) continue;
+        const start = child.position?.start.offset;
+        const end = child.position?.end.offset;
+        if (start === undefined || end === undefined) continue;
+        // The native renderer shows text between an HTML block's tags as markdown, so link its prose.
+        let from = base + start;
+        const linkHtmlText = (to: number) => {
+          if (protectedHtmlDepth === 0 && from < to) {
+            visit(parser.parse(markdown.slice(from, to)), from, true);
           }
-        } else if (protectedHtmlDepth === 0) visit(child);
+        };
+        // Skips tags inside code spans and fences, which stay code.
+        for (const tag of markdownHtmlTags(markdown.slice(base + start, base + end))) {
+          linkHtmlText(base + start + tag.index);
+          const protectedTag = PROTECTED_TAG.exec(tag[0]);
+          if (protectedTag) {
+            protectedHtmlDepth = Math.max(0, protectedHtmlDepth + (protectedTag[1] ? -1 : 1));
+          }
+          from = base + start + tag.index + tag[0].length;
+        }
+        linkHtmlText(base + end);
       }
     }
   };
-  visit(parser.parse(markdown));
+  visit(parser.parse(markdown), 0);
   let linked = markdown;
   for (let index = edits.length - 1; index >= 0; index--) {
     const edit = edits[index]!;
