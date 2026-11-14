@@ -378,6 +378,42 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
+  it.effect("becomes ready from the server ready line while HTTP probes stall", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const probeStarted = yield* Deferred.make<void>();
+        const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+        const readyLine = encodeDesktopTelemetryControl({ version: 1, type: "serverReady" });
+        const instance = yield* makeTestInstance({
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.succeed(
+                makeProcess({
+                  getOutputFd: (fd) =>
+                    fd === 5
+                      ? Stream.fromEffect(Deferred.await(probeStarted)).pipe(
+                          Stream.flatMap(() => Stream.encodeText(Stream.make(`${readyLine}\n`))),
+                        )
+                      : Stream.empty,
+                  exitCode: Deferred.await(exit),
+                  kill: () =>
+                    Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)).pipe(Effect.asVoid),
+                }),
+              ),
+            ),
+          ),
+          httpClientLayer: layerHttpClient(() =>
+            Deferred.succeed(probeStarted, undefined).pipe(Effect.andThen(Effect.never)),
+          ),
+        });
+
+        yield* instance.start;
+        assert.isTrue(yield* instance.waitForReady(Duration.seconds(15)));
+      }),
+    ),
+  );
+
   it.effect("continues routing desktop telemetry control messages after an invalid line", () =>
     Effect.gen(function* () {
       const handled = yield* Deferred.make<boolean>();
