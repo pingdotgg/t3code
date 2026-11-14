@@ -4,6 +4,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
   ProjectId,
+  RunId,
   ThreadId,
   type ClientSettings,
   type ReviewBranchCommitsResult,
@@ -35,6 +36,8 @@ const state = vi.hoisted(() => ({
   localRefs: null as unknown as ResultAtom<VcsListRefsResult>,
   remoteRefs: null as unknown as ResultAtom<VcsListRefsResult>,
   commits: null as unknown as ResultAtom<ReviewBranchCommitsResult>,
+  checkpoints: [] as unknown[],
+  checkpointDiff: null as { diff: string } | null,
 }));
 
 vi.mock("~/state/server", () => ({
@@ -59,7 +62,7 @@ vi.mock("~/state/vcs", () => ({
 vi.mock("~/state/entities", () => ({
   useQuietThreadShell: () => state.thread,
   useProject: () => ({ workspaceRoot: "/project", repositoryIdentity: null }),
-  useThreadCheckpointSummaries: () => [],
+  useThreadCheckpointSummaries: () => state.checkpoints,
   useQuietThreadVisibleTurnItems: () => [],
 }));
 vi.mock("~/state/filesystem", () => ({
@@ -77,7 +80,7 @@ vi.mock("~/hooks/useTheme", () => ({
   subscribeRenderedAppearance: () => () => {},
 }));
 vi.mock("~/state/queries", () => ({
-  useCheckpointDiff: () => ({ data: null, error: null, isPending: false }),
+  useCheckpointDiff: () => ({ data: state.checkpointDiff, error: null, isPending: false }),
   useTurnItemDetail: () => ({ data: null, error: null, isPending: false }),
   useDebouncedValue: <A,>(value: A) => value,
 }));
@@ -126,6 +129,8 @@ function setup(failedBaseRef: string | null) {
   };
   reset();
   state.diffFilesCollapsed = false;
+  state.checkpoints = [];
+  state.checkpointDiff = null;
   const patch = Atom.make<AsyncResult.AsyncResult<ReviewDiffPreviewSource, Error>>(
     AsyncResult.initial(),
   );
@@ -267,3 +272,67 @@ it.each([false, true])(
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
   },
 );
+
+it("says a turn diff cut off at the server's size limit is incomplete", async () => {
+  using context = setup("origin/orphan");
+  state.checkpoints = [
+    {
+      runId: "run",
+      checkpointTurnCount: 1,
+      checkpointRef: "ref",
+      status: "ready",
+      files: [],
+      assistantMessageId: null,
+      completedAt: "2026-01-01T00:00:00Z",
+    },
+  ];
+  state.checkpointDiff = {
+    diff: "diff --git a/first.txt b/first.txt\n--- a/first.txt\n+++ b/first.txt\n@@ -0,0 +1 @@\n+visible\n\n[truncated]",
+  };
+  useDiffPanelStore.getState().selectTurn(context.threadRef, RunId.make("run"));
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  await expect.element(screen.getByText("first.txt", { exact: true }).first()).toBeVisible();
+  await expect
+    .element(screen.getByText("This preview exceeds the size limit. Changes shown are incomplete."))
+    .toBeVisible();
+});
+
+// Paths as git's numstat reports them; the parsed patch trims the trailing space from its name.
+it.each([
+  { path: " leading.ts", name: " leading.ts" },
+  { path: "src/trailing.ts ", name: "src/trailing.ts" },
+])("reveals the turn file $path picked from the changed files", async ({ path, name }) => {
+  using context = setup("origin/orphan");
+  state.diffFilesCollapsed = true;
+  state.checkpoints = [
+    {
+      runId: "run",
+      checkpointTurnCount: 1,
+      checkpointRef: "ref",
+      status: "ready",
+      files: [],
+      assistantMessageId: null,
+      completedAt: "2026-01-01T00:00:00Z",
+    },
+  ];
+  state.checkpointDiff = {
+    diff: `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\t\n@@ -0,0 +1 @@\n+revealed\n`,
+  };
+  useDiffPanelStore.getState().selectTurn(context.threadRef, RunId.make("run"), path);
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  await expect
+    .element(screen.getByRole("button", { name: `Collapse ${name}`, exact: true }))
+    .toHaveAttribute("aria-expanded", "true");
+});

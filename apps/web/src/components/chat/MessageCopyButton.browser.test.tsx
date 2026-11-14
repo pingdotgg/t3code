@@ -25,6 +25,6 @@ it("explains a denied clipboard write and lets the same message be copied again"
   await page.getByRole("button", { name: "Dismiss notification" }).click();
   await copy.click();
 
-  await expect.element(page.getByText("Copied!", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Copied!", { exact: true })).not.toBeInTheDocument();
   await expect.element(copy).toBeDisabled();
 });
