@@ -10,7 +10,9 @@ import {
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
 import { isHeicImageFile } from "../../lib/imageCompression";
-import { isVideoAttachment } from "../../types";
+import { isVideoAttachment, videoMimeType } from "../../types";
+import { isSvgAttachment } from "@t3tools/shared/image";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 
 type ComposerAttachmentFileKind = "image" | "file" | "unsupported-image";
 
@@ -59,9 +61,53 @@ export function normalizeComposerImageFileMimeType(file: File): File {
   });
 }
 
+export function composerImageDedupKey(
+  image: Pick<ComposerImageAttachment, "mimeType" | "sizeBytes" | "name">,
+): string {
+  // Hydrated images get fresh lastModified values, so exclude it from dedupe.
+  return `${image.mimeType}\u0000${image.sizeBytes}\u0000${image.name}`;
+}
+
+// Compression changes an image's bytes, so a compressed image answers for the file it came from.
+const composerImageSourceKeys = new WeakMap<File, string>();
+
+/** The draft store's image dedupe key, taken from the file as pasted rather than as compressed. */
+export function composerImageSourceKey(file: File): string {
+  return (
+    composerImageSourceKeys.get(file) ??
+    composerImageDedupKey({ mimeType: file.type, sizeBytes: file.size, name: file.name || "image" })
+  );
+}
+
+export function rememberComposerImageSource(source: File, prepared: File): void {
+  if (prepared !== source) composerImageSourceKeys.set(prepared, composerImageSourceKey(source));
+}
+
+function isDngFile(file: Pick<File, "name" | "type">): boolean {
+  const mimeType = file.type.split(";", 1)[0]?.trim().toLowerCase();
+  return (
+    file.name.toLowerCase().endsWith(".dng") ||
+    mimeType === "image/dng" ||
+    mimeType === "image/x-dng" ||
+    mimeType === "image/x-adobe-dng"
+  );
+}
+
+export function composerFileAttachmentMimeType(file: Pick<File, "name" | "type">): string {
+  // Downstream image detection uses MIME, even for attachments staged as files.
+  if (isDngFile(file)) return "image/x-adobe-dng";
+  if (isSvgAttachment({ name: file.name, mimeType: file.type })) return "image/svg+xml";
+  return (
+    videoMimeType({ name: file.name, mimeType: file.type }) ??
+    (file.type || "application/octet-stream")
+  );
+}
+
 export function classifyComposerAttachmentFile(
   file: Pick<File, "name" | "type">,
 ): ComposerAttachmentFileKind {
+  if (isSvgAttachment({ name: file.name, mimeType: file.type })) return "file";
+  if (isDngFile(file)) return "file";
   if (isHeicImageFile(file)) {
     return "image";
   }
@@ -71,7 +117,9 @@ export function classifyComposerAttachmentFile(
   if (!file.type.toLowerCase().startsWith("image/")) {
     return "file";
   }
-  return isProviderSendTurnSupportedImageMimeType(file.type) ? "image" : "unsupported-image";
+  if (isProviderSendTurnSupportedImageMimeType(file.type)) return "image";
+  // These can be previewed as files, but providers must not receive them as images.
+  return isWorkspaceImagePreviewPath(file.name) ? "file" : "unsupported-image";
 }
 
 export function isPreviewableComposerVideo(
@@ -127,12 +175,7 @@ export function fileAttachmentCapabilityBlockReason(
   return null;
 }
 
-/**
- * When `capabilities.attachmentUploads` flips off (reconnect, version skew),
- * tear down only uploads that have not been persisted onto a draft file.
- * Once `uploadedAttachmentId` is stamped, the draft references that server
- * copy after reload even if its local `File` is still available in memory.
- */
+/** Release only unpersisted uploads; hydrated files still need their server copies. */
 export function attachmentsToReleaseOnUploadCapabilityLoss(
   attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>,
 ): Array<ComposerImageAttachment | ComposerFileAttachment> {
@@ -147,8 +190,13 @@ export function shouldHandleComposerAttachmentPaste(input: {
 }): boolean {
   if (
     input.files.some((file) => {
+      if (isDngFile(file)) return true;
       const classification = classifyComposerAttachmentFile(file);
-      return classification === "image" || classification === "unsupported-image";
+      return (
+        classification === "image" ||
+        classification === "unsupported-image" ||
+        isSvgAttachment({ name: file.name, mimeType: file.type })
+      );
     })
   ) {
     return true;

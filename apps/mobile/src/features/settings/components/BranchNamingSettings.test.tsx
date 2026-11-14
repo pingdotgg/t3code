@@ -23,7 +23,7 @@ vi.mock("../../../components/ui/AppText", () => ({
     return null;
   },
 }));
-vi.mock("./SettingsChoiceRow", () => ({ SettingsChoiceRow: () => null }));
+vi.mock("../../../components/ui/ListChoiceRow", () => ({ ListChoiceRow: () => null }));
 vi.mock("./SettingsSection", () => ({
   SettingsSection: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
@@ -47,15 +47,14 @@ function render(
         mode={mode}
         prefix={saved.prefix ?? "t3"}
         instructions={saved.instructions ?? "Use issue IDs."}
-        disabled={disabled}
+        disabled={{ mode: disabled, prefix: disabled, instructions: disabled }}
         onChange={onChange}
       />,
     ),
   );
 }
 
-// Android Back hides the keyboard but never ends editing, so leaving the
-// screen is just an unmount with the text still in the field.
+// Android Back hides the keyboard without ending editing; leaving then only unmounts.
 function leaveScreen() {
   act(() => root.unmount());
   root = createRoot(document.createElement("div"));

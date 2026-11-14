@@ -1,10 +1,122 @@
+import {
+  isCompactionCommandMessage,
+  type ThreadGuestMessage,
+  type ThreadGuestShare,
+} from "@t3tools/contracts";
 import type { ThreadFeedEntry } from "../../lib/threadActivity";
-import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
+import { scopedThreadKey } from "../../lib/scopedEntities";
+import { threadHasCaughtUpTo } from "@t3tools/client-runtime/state/threads";
+import { resolveUserMessageGrouping } from "@t3tools/client-runtime/user-message";
+import type {
+  AcknowledgedThreadMessage,
+  QueuedThreadMessage,
+} from "../../state/thread-outbox-model";
+
+/**
+ * A guest's message waiting for the owner's Send or Dismiss. It is a feed row, not the list
+ * footer, so the feed follows it arriving and leaving the way it follows any row.
+ */
+export interface GuestPendingFeedEntry {
+  readonly type: "guest-pending";
+  readonly id: string;
+  readonly createdAt: string;
+  readonly guestName: string;
+  readonly message: ThreadGuestMessage;
+}
 
 export type PendingThreadFeedEntry = ThreadFeedEntry & {
   readonly pendingMessage?: QueuedThreadMessage;
   readonly acknowledged?: boolean;
 };
+
+// An acknowledged row stops being pending once the thread catches up to it,
+// even when the feed hides that message (a rolled-back or cancelled run).
+export function selectPendingAcknowledgedMessages(
+  acknowledged: ReadonlyArray<AcknowledgedThreadMessage>,
+  thread: {
+    readonly threadKey: string | null;
+    readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
+    readonly sequence: number;
+    readonly projectedMessages: ReadonlyArray<{ readonly id: string }> | undefined;
+  },
+): ReadonlyArray<AcknowledgedThreadMessage> {
+  return acknowledged.filter(
+    (message) =>
+      scopedThreadKey(message.environmentId, message.threadId) === thread.threadKey &&
+      !thread.queuedMessages.some((queued) => queued.messageId === message.messageId) &&
+      !threadHasCaughtUpTo(message, {
+        sequence: thread.sequence,
+        messages: thread.projectedMessages,
+      }),
+  );
+}
+
+/** A row of the thread feed's list. */
+export type ThreadFeedRow = PendingThreadFeedEntry | GuestPendingFeedEntry;
+
+export type GroupedThreadFeedRow = ThreadFeedRow & {
+  readonly userMessageGrouping: ReturnType<typeof resolveUserMessageGrouping>;
+};
+
+export function createThreadFeedGrouping() {
+  const rows = new WeakMap<ThreadFeedRow, GroupedThreadFeedRow>();
+  const ungrouped = resolveUserMessageGrouping(undefined, undefined, undefined);
+  return (
+    feed: ReadonlyArray<ThreadFeedRow>,
+    options: { readonly workflowOpeningMessageId?: string; readonly setupAnchorIndex?: number },
+  ): ReadonlyArray<GroupedThreadFeedRow> => {
+    const groupingMessage = (index: number) => {
+      const entry = feed[index];
+      return entry?.type === "message" &&
+        entry.message.role === "user" &&
+        !isCompactionCommandFeedEntry(entry) &&
+        entry.message.id !== options.workflowOpeningMessageId
+        ? entry.message
+        : undefined;
+    };
+    return feed.map((entry, index) => {
+      const message = groupingMessage(index);
+      const grouping =
+        message === undefined
+          ? ungrouped
+          : resolveUserMessageGrouping(
+              message,
+              index - 1 === options.setupAnchorIndex ? undefined : groupingMessage(index - 1),
+              index === options.setupAnchorIndex ? undefined : groupingMessage(index + 1),
+            );
+      const previous = rows.get(entry);
+      if (
+        previous?.userMessageGrouping.groupedWithPrevious === grouping.groupedWithPrevious &&
+        previous.userMessageGrouping.groupedWithNext === grouping.groupedWithNext &&
+        previous.userMessageGrouping.continuesSteer === grouping.continuesSteer
+      )
+        return previous;
+      const row = { ...entry, userMessageGrouping: grouping };
+      rows.set(entry, row);
+      return row;
+    });
+  };
+}
+
+/** Waiting guest messages go after the transcript, oldest first. */
+export function appendGuestPendingMessages(
+  presentedFeed: ReadonlyArray<PendingThreadFeedEntry>,
+  share: ThreadGuestShare | null,
+): ReadonlyArray<ThreadFeedRow> {
+  const pending = share?.messages.filter((message) => message.status === "pending") ?? [];
+  if (share === null || pending.length === 0) return presentedFeed;
+  const guestName = share.guestName ?? "Guest";
+  return [
+    ...presentedFeed,
+    ...pending.map((message): GuestPendingFeedEntry => ({
+      type: "guest-pending",
+      id: `guest-pending:${message.id}`,
+      createdAt: message.submittedAt,
+      guestName,
+      message,
+    })),
+  ];
+}
 
 export function appendPendingThreadMessages(
   presentedFeed: ReadonlyArray<ThreadFeedEntry>,
@@ -44,4 +156,12 @@ export function appendPendingThreadMessages(
         },
       })),
   ];
+}
+
+export function isCompactionCommandFeedEntry(entry: PendingThreadFeedEntry): boolean {
+  return (
+    entry.type === "message" &&
+    entry.pendingMessage === undefined &&
+    isCompactionCommandMessage(entry.message)
+  );
 }
