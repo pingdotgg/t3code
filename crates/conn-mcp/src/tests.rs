@@ -1499,15 +1499,13 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 /// Tools that a text we send to an agent names and that this server does not serve. An agent
 /// told to call one finds no such tool. Serve one, and this test makes you strike it here.
 /// `preview_*` in the orchestration text also names all 13 preview tools.
-const NAMED_NOT_SERVED: [&str; 16] = [
+const NAMED_NOT_SERVED: [&str; 14] = [
     "create_threads",
     "device_list",
     "device_open",
     "device_screenshot",
     "html_preview",
     "html_render",
-    "link_pull_request",
-    "link_pull_requests",
     "preview_open",
     "preview_status",
     "request_secret",

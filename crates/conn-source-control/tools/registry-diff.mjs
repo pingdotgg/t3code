@@ -169,6 +169,10 @@ for (const value of [...literals, ...remotes.map((r) => registry.repositoryKeyFr
   cases.push({ op: "canonicalRepositoryKey", key: value });
   cases.push({ op: "findByRepositoryKey", key: value });
 }
+for (const host of HOSTS) {
+  cases.push({ op: "findByPublicHost", host });
+  cases.push({ op: "findByPublicHost", host: host.toUpperCase() });
+}
 for (let i = 0; i + 1 < urls.length; i += 7) {
   cases.push({ op: "isSameChangeRequest", left: urls[i], right: urls[i + 1] });
   cases.push({ op: "isSameChangeRequest", left: urls[i], right: urls[i].toUpperCase() });
@@ -232,6 +236,8 @@ function t3(c) {
       return registry.findByRepositoryKey(c.key)?.kind ?? null;
     case "repositoryKeyFromRemote":
       return registry.repositoryKeyFromRemote(c.remote);
+    case "findByPublicHost":
+      return registry.findByPublicHost(c.host)?.kind ?? null;
     case "repositorySelector":
       return registry.repositorySelector(c.identity);
     case "changeRequestHost":

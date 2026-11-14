@@ -198,6 +198,7 @@ dependencies = [
  "conn-contract",
  "conn-engine",
  "conn-features",
+ "conn-source-control",
  "conn-support",
  "getrandom 0.3.4",
  "http",

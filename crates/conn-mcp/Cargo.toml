@@ -13,6 +13,8 @@ conn-contract.workspace = true
 conn-engine.workspace = true
 # Scheduled tasks for `schedule_task` and its siblings.
 conn-features.workspace = true
+# The host definition registry: pull request keys, URLs and chains for the link tools.
+conn-source-control.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }

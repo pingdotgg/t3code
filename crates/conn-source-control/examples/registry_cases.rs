@@ -105,6 +105,9 @@ fn answer(case: &Value) -> Value {
         "findByRepositoryKey" => {
             registry::find_by_repository_key(&s("key")).map_or(Value::Null, |k| json!(k.as_str()))
         }
+        "findByPublicHost" => {
+            registry::find_by_public_host(&s("host")).map_or(Value::Null, |k| json!(k.as_str()))
+        }
         "repositoryKeyFromRemote" => json!(registry::repository_key_from_remote(&s("remote"))),
         "repositorySelector" => {
             let id = identity(case.get("identity").unwrap_or(&Value::Null));

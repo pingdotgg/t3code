@@ -866,6 +866,29 @@ pub fn change_request_host(identity: &ProjectIdentity, kind: Option<&str>) -> Op
     }
 }
 
+impl HostKind {
+    /// The definition's `publicHost`; Azure DevOps has none.
+    pub fn public_host(self) -> Option<&'static str> {
+        match self {
+            HostKind::GitHub => Some("github.com"),
+            HostKind::CursorOrigin => Some(CURSOR_ORIGIN_GIT_HOST),
+            HostKind::GitLab => Some("gitlab.com"),
+            HostKind::GitCafe => Some("git.cafe"),
+            HostKind::Forgejo => Some("codeberg.org"),
+            HostKind::Bitbucket => Some("bitbucket.org"),
+            HostKind::AzureDevOps => None,
+        }
+    }
+}
+
+/// `findByPublicHost`.
+pub fn find_by_public_host(hostname: &str) -> Option<HostKind> {
+    let host = hostname.to_lowercase();
+    HostKind::ALL
+        .into_iter()
+        .find(|k| k.public_host() == Some(host.as_str()))
+}
+
 /// `canonicalizeGitCafePullRequestUrl`: GitCafe's own spelling of one of its pull request URLs.
 pub fn canonicalize_gitcafe_pull_request_url(value: &str) -> String {
     let parsed = parse_url(value).filter(is_http).and_then(|url| {
