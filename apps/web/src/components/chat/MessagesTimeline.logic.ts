@@ -401,13 +401,18 @@ export function resolveTimelineMinimapVisibleRange(state: {
   return { start, end };
 }
 
-export function isTimelineMinimapRowVisible(
-  rowIndex: number,
+/** A turn spans its user message up to the next one, so a long reply keeps its strip lit. */
+export function isTimelineMinimapTurnVisible(
+  turnStartRowIndex: number,
+  nextTurnStartRowIndex: number | undefined,
   visibleStart: number | null | undefined,
   visibleEnd: number | null | undefined,
 ): boolean {
   return (
-    visibleStart != null && visibleEnd != null && rowIndex >= visibleStart && rowIndex <= visibleEnd
+    visibleStart != null &&
+    visibleEnd != null &&
+    turnStartRowIndex <= visibleEnd &&
+    (nextTurnStartRowIndex === undefined || nextTurnStartRowIndex > visibleStart)
   );
 }
 
