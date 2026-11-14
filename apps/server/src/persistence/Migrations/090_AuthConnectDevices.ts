@@ -13,6 +13,12 @@ export default Effect.gen(function* () {
       ADD COLUMN requires_connect_approval INTEGER NOT NULL DEFAULT 0
     `;
   }
+  if (!pairingLinkColumns.some((column) => column.name === "connect_denied")) {
+    yield* sql`
+      ALTER TABLE auth_pairing_links
+      ADD COLUMN connect_denied INTEGER NOT NULL DEFAULT 0
+    `;
+  }
   if (!pairingLinkColumns.some((column) => column.name === "requested_client_json")) {
     yield* sql`
       ALTER TABLE auth_pairing_links

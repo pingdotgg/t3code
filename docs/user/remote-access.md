@@ -52,7 +52,8 @@ device that is already connected, using the prompt or **Settings → Sharing &
 access**. Check that the code matches the one on the waiting device. On a
 headless host, run `t3 auth connect-device list` and then
 `t3 auth connect-device approve K7QM-2XFD`. A request expires after 10 minutes,
-and the device asks again when it retries.
+and the device asks again when it retries. Deny keeps that device out until its
+request expires.
 
 Each device is approved once. Revoke it from **T3 Connect devices** in the same
 settings page, or with `t3 auth connect-device revoke <code>`. With approval on,

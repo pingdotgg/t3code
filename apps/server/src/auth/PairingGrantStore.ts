@@ -258,7 +258,7 @@ export class PairingGrantStore extends Context.Service<
       /** Spendable only after someone trusts `proofKeyThumbprint` as a T3 Connect device. */
       readonly requiresConnectApproval?: boolean;
     }) => Effect.Effect<IssuedBootstrapCredential, BootstrapCredentialInternalError>;
-    /** A device's open approval request, reused so retries keep one request and one code. */
+    /** A device's open or denied request, reused so retries keep one request and one code. */
     readonly findPendingConnect: (
       proofKeyThumbprint: string,
     ) => Effect.Effect<Option.Option<IssuedBootstrapCredential>, BootstrapCredentialInternalError>;

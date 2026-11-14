@@ -151,7 +151,7 @@ export class AuthPairingLinkRepository extends Context.Service<
     readonly getActiveById: (
       input: GetActiveAuthPairingLinkByIdInput,
     ) => Effect.Effect<Option.Option<AuthPairingLinkRecord>, AuthPairingLinkRepositoryError>;
-    /** The unspent request a device already has open, so its retries do not stack up. */
+    /** The device's open or denied request, so its retries do not stack up or re-prompt. */
     readonly findPendingConnect: (
       input: FindPendingConnectPairingLinkInput,
     ) => Effect.Effect<Option.Option<AuthPairingLinkRecord>, AuthPairingLinkRepositoryError>;
@@ -322,7 +322,9 @@ export const make = Effect.gen(function* () {
     execute: ({ id, revokedAt }) =>
       sql`
         UPDATE auth_pairing_links
-        SET revoked_at = ${revokedAt}
+        SET revoked_at = ${revokedAt},
+          -- Revoking a waiting approval request is a denial; see findPendingConnect.
+          connect_denied = requires_connect_approval
         WHERE id = ${id}
           AND revoked_at IS NULL
           AND consumed_at IS NULL
@@ -401,7 +403,9 @@ export const make = Effect.gen(function* () {
         ${selectRow}
         WHERE proof_key_thumbprint = ${proofKeyThumbprint}
           AND requires_connect_approval = 1
-          AND revoked_at IS NULL
+          -- A denied request stays the device's answer until it expires, so retries get a
+          -- dead credential back instead of prompting the approver again.
+          AND (revoked_at IS NULL OR connect_denied = 1)
           AND consumed_at IS NULL
           AND expires_at > ${now}
         ORDER BY created_at DESC, id DESC
@@ -479,6 +483,7 @@ export const make = Effect.gen(function* () {
     Result: Schema.Struct({ id: Schema.String }),
     execute: ({ proofKeyThumbprint, keepProofKeyThumbprint, revokedAt }) =>
       sql`
+        -- Only T3 Connect mints bind a proof key, so these are that key's connect credentials.
         UPDATE auth_pairing_links
         SET revoked_at = ${revokedAt}
         WHERE proof_key_thumbprint IS NOT NULL

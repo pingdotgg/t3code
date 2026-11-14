@@ -394,6 +394,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           expect((yield* exchange(afterRevoke.credential).pipe(Effect.flip))._tag).toBe(
             "ServerAuthConnectApprovalPendingError",
           );
+          // Deny sticks: retries get the dead request back instead of a fresh prompt.
+          const [denied] = (yield* serverAuth.listPairingLinks()).filter(
+            (link) => link.connectDeviceRequest !== undefined,
+          );
+          expect(yield* serverAuth.revokePairingLink(denied!.id)).toBe(true);
+          const afterDeny = yield* serverAuth.issueConnectCredential({
+            proofKeyThumbprint: deviceKey,
+            requireApproval: true,
+          });
+          expect(afterDeny.credential).toBe(afterRevoke.credential);
+          expect((yield* exchange(afterDeny.credential).pipe(Effect.flip))._tag).toBe(
+            "ServerAuthInvalidCredentialError",
+          );
+          expect(
+            (yield* serverAuth.listPairingLinks()).some((link) => link.connectDeviceRequest),
+          ).toBe(false);
         }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 

@@ -474,6 +474,34 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("backs off a device nobody approved once its request has expired", () =>
+    Effect.gen(function* () {
+      const pending = new ConnectionTransientError({
+        reason: "approval-pending",
+        detail: "Approve this device on Mac mini. It shows code K7QM-2XFD.",
+      });
+      const harness = yield* makeHarness({ prepare: () => Effect.fail(pending) });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      const delays: number[] = [];
+      for (let attempt = 1; attempt <= 156; attempt++) {
+        const waiting = yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "backoff" && state.attempt === attempt,
+        );
+        const delay = (waiting.retryAt ?? 0) - (yield* Clock.currentTimeMillis);
+        delays.push(delay);
+        yield* TestClock.adjust(delay);
+      }
+      // Ten minutes of 4 s checks, then backoff that never polls faster than that.
+      expect(delays.slice(0, 150).every((delay) => delay === 4_000)).toBe(true);
+      expect(delays.slice(150).every((delay) => delay >= 4_000)).toBe(true);
+      expect(delays.at(-1)).toBeGreaterThanOrEqual(32_000);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("converts unexpected driver defects into retryable failures", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
