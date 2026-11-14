@@ -59,7 +59,12 @@ it("leaves the history a viewer was reading when operate is granted", () => {
 const environmentId = EnvironmentId.make("environment");
 const threadId = ThreadId.make("thread");
 
-function setup(options: { readonly initialInput?: string } = {}) {
+function setup(
+  options: {
+    readonly initialInput?: string;
+    readonly beforeCommand?: (name: string) => Promise<void>;
+  } = {},
+) {
   // Tests flush the registry's scheduled work to control when driver finalizers run.
   const scheduled: Array<() => void> = [];
   const registry = AtomRegistry.make({
@@ -83,6 +88,8 @@ function setup(options: { readonly initialInput?: string } = {}) {
     label: name,
     run: async (_registry: AtomRegistry.AtomRegistry, value: { readonly input: unknown }) => {
       calls.push({ command: name, input: value.input });
+      // Lets a test hold a command in flight or fail it after it was issued.
+      if (options.beforeCommand) await options.beforeCommand(name);
       return AsyncResult.success(undefined);
     },
   });
@@ -154,15 +161,62 @@ it("replays the measured grid on every new attachment generation", () => {
   ]);
 });
 
-it("writes the launch's initial input once the first snapshot lands", () => {
-  const { attached, emit, mount, calls, of } = setup({ initialInput: "pnpm dev\r" });
+it("writes the launch's initial input once, after the measured resize lands", async () => {
+  const resize = Promise.withResolvers<void>();
+  const written = Promise.withResolvers<void>();
+  let shellCols = 80;
+  const commandWidths: number[] = [];
+  const { session, attached, emit, mount, calls, of } = setup({
+    initialInput: "stty size\r",
+    beforeCommand: async (name) => {
+      if (name === "resize") {
+        await resize.promise;
+        shellCols = 100;
+      }
+      if (name === "write") {
+        commandWidths.push(shellCols);
+        written.resolve();
+      }
+    },
+  });
+  session.reportGridSize({ cols: 100, rows: 30 });
   mount(attached);
-  expect(of("write")).toEqual([]);
   emit({ status: "running", version: 1 });
   emit({ status: "running", version: 2 });
-  expect(of("write")).toEqual([{ threadId, terminalId: "term-1", data: "pnpm dev\r" }]);
-  // The shell gets the measured grid before the launched command runs.
+  resize.resolve();
+  await written.promise;
+  expect(commandWidths).toEqual([100]);
+  expect(of("write")).toEqual([{ threadId, terminalId: "term-1", data: "stty size\r" }]);
   expect(calls.map((call) => call.command)).toEqual(["resize", "write"]);
+});
+
+it("keeps initial input for the reattached shell when the first one detaches mid-resize", async () => {
+  const firstResize = Promise.withResolvers<void>();
+  const written = Promise.withResolvers<void>();
+  let resizes = 0;
+  const { attached, emit, detach, flush, mount, calls, of } = setup({
+    initialInput: "pnpm dev\r",
+    beforeCommand: async (name) => {
+      if (name === "resize" && ++resizes === 1) {
+        await firstResize.promise;
+        throw new Error("socket closed");
+      }
+      if (name === "write") written.resolve();
+    },
+  });
+  const unmount = mount(attached);
+  emit({ status: "running", version: 1 });
+  unmount();
+  flush();
+  detach();
+  firstResize.resolve();
+
+  mount(attached);
+  emit({ status: "running", version: 1, generation: 2 });
+  await written.promise;
+  // The detached shell's failed resize never released the input; the reattached one did.
+  expect(calls.map((call) => call.command)).toEqual(["resize", "resize", "write"]);
+  expect(of("write")).toEqual([{ threadId, terminalId: "term-1", data: "pnpm dev\r" }]);
 });
 
 it("closes and reports a shell that exits while attached", () => {

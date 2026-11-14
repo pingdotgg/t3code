@@ -226,7 +226,7 @@ export interface TerminalSessionOptions {
     readonly terminalId: string;
   };
   readonly gridSize: TerminalGridSize;
-  /** Written once, as soon as the first attachment snapshot lands. */
+  /** Written once, after the first attachment snapshot lands and the shell has the measured grid. */
   readonly initialInput?: string | undefined;
   /** Read right before every command, so revoking operate stops them at once. */
   readonly canOperate: () => boolean;
@@ -252,7 +252,7 @@ export interface TerminalSession {
  * Owns one shown terminal's lifecycle: it reopens an ended shell on an explicit
  * visit, closes and reports a shell that exits while attached, replays the
  * measured grid whenever the server starts a new output generation, and writes
- * the launch's initial input once.
+ * the launch's initial input once that grid has reached the shell.
  */
 export function createTerminalSession(
   atoms: TerminalSessionAtoms,
@@ -266,13 +266,39 @@ export function createTerminalSession(
   let initialInputPending = Boolean(options.initialInput);
   let lastStatus: TerminalBufferState["status"] | null = null;
   let loggedFirstOutput = false;
-  let resizeRegistry: AtomRegistry.AtomRegistry | null = null;
+  let commandRegistry: AtomRegistry.AtomRegistry | null = null;
+  let attachedVersion = 0;
+  // Bumped when the shell behind the session changes: a new generation or a detach.
+  let shellTurn = 0;
+  // Settles once the current generation has received the measured grid.
+  let shellResized: Promise<unknown> = Promise.resolve();
 
   const sendResize = () => {
-    if (generation === null || resizeRegistry === null || !options.canOperate()) return;
-    void runAtomCommand(resizeRegistry, atoms.resize, {
+    if (generation === null || commandRegistry === null || !options.canOperate()) return;
+    return runAtomCommand(commandRegistry, atoms.resize, {
       environmentId,
       input: { threadId, terminalId, cols: gridSize.cols, rows: gridSize.rows },
+    });
+  };
+
+  const writeInitialInput = () => {
+    const data = options.initialInput;
+    const registry = commandRegistry;
+    if (!initialInputPending || !data || attachedVersion === 0 || registry === null) return;
+    if (!options.canOperate()) return;
+    initialInputPending = false;
+    const turn = shellTurn;
+    void shellResized.then(() => {
+      if (turn === shellTurn && options.canOperate()) {
+        void runAtomCommand(registry, atoms.write, {
+          environmentId,
+          input: { threadId, terminalId, data },
+        });
+        return;
+      }
+      // The shell detached, restarted or lost operate meanwhile; retry against the current one.
+      initialInputPending = true;
+      writeInitialInput();
     });
   };
 
@@ -326,8 +352,9 @@ export function createTerminalSession(
     input: TerminalAttachInput,
     result: AsyncResult.AsyncResult<TerminalBufferState, unknown>,
   ) => {
-    resizeRegistry = registry;
+    commandRegistry = registry;
     const buffer = AsyncResult.getOrElse(result, () => EMPTY_TERMINAL_BUFFER_STATE);
+    attachedVersion = buffer.version;
     const status = result._tag === "Failure" ? "error" : buffer.status;
     if (status !== lastStatus) {
       lastStatus = status;
@@ -357,16 +384,11 @@ export function createTerminalSession(
       buffer.version > 0 && status === "running" ? buffer.output.generation : null;
     if (nextGeneration !== generation) {
       generation = nextGeneration;
-      sendResize();
+      shellTurn += 1;
+      shellResized = sendResize() ?? Promise.resolve();
     }
 
-    if (initialInputPending && buffer.version > 0 && options.initialInput && options.canOperate()) {
-      initialInputPending = false;
-      void runAtomCommand(registry, atoms.write, {
-        environmentId,
-        input: { threadId, terminalId, data: options.initialInput },
-      });
-    }
+    writeInitialInput();
 
     apply({ type: "status", status, version: buffer.version }, registry, input);
   };
@@ -391,6 +413,9 @@ export function createTerminalSession(
       const registry = get.registry;
       get.addFinalizer(() => {
         generation = null;
+        shellTurn += 1;
+        shellResized = Promise.resolve();
+        attachedVersion = 0;
         lastStatus = null;
         setLive(null);
         lifecycle = transitionTerminalLifecycle(lifecycle, {
