@@ -280,6 +280,15 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
                     errors.push(format!("interrupt: {e}"));
                 }
             }
+            // The engine's `abandon_turn_start` (a Stop before the agent took the turn).
+            "abandonTurnStart" => {
+                session
+                    .abandon_turn_start(conn_provider::AbandonTurnStartInput {
+                        thread_id: from_json(input["threadId"].clone()).unwrap(),
+                        run_id: from_json(input["runId"].clone()).unwrap(),
+                    })
+                    .await;
+            }
             "close" => session.close().await,
             "openSession" | "getModelContextWindow" => {}
             other => errors.push(format!("call {other} is not replayed")),
@@ -552,4 +561,63 @@ async fn state_stays_bounded_over_many_turns() {
         .filter(|e| e["type"] == "turn.terminal")
         .count();
     assert_eq!(terminals, rounds, "every turn ended");
+}
+
+/// Stop before the agent took the turn: the engine abandons the run's start, and the start
+/// fails without sending `session/prompt`, as T3's interrupted `startTurn` sends none. The
+/// session stays usable: the next run's turn runs.
+#[tokio::test(flavor = "current_thread")]
+async fn an_abandoned_start_sends_no_prompt() {
+    let golden = read_golden("grok", "tool_call_read_only_on_request");
+    let entries = golden["transcripts"][0].as_array().cloned().unwrap();
+    let prompt_at = entries
+        .iter()
+        .position(|e| e["frame"]["method"] == "session/prompt")
+        .unwrap();
+    let mut script: Vec<Value> = entries[..prompt_at].to_vec();
+    script.push(json!({"type": "expect_outbound", "frame": {"kind": "request", "method": "session/prompt", "params": "<any>"}}));
+    script.push(json!({"type": "emit_inbound", "frame": {"kind": "response", "method": "session/prompt", "result": {"stopReason": "end_turn"}}}));
+    let session = "00000000-0000-4000-8000-000000000001";
+    script.push(json!({"type": "expect_outbound", "frame": {"kind": "request", "method": "session/close", "params": {"sessionId": session}}}));
+    script.push(json!({"type": "emit_inbound", "frame": {"kind": "response", "method": "session/close", "result": {}}}));
+    let calls = golden["calls"].as_array().unwrap();
+    let find = |method: &str| {
+        calls
+            .iter()
+            .find(|c| c["method"] == method)
+            .unwrap()
+            .clone()
+    };
+    let start = find("startTurn");
+    let mut second = start.clone();
+    second["input"]["runId"] = json!("run-second");
+    second["input"]["runOrdinal"] = json!(2);
+    second["input"]["providerTurnOrdinal"] = json!(1);
+    let abandon = json!({"method": "abandonTurnStart", "input": {
+        "threadId": start["input"]["threadId"], "runId": start["input"]["runId"]}});
+    let golden = json!({
+        "calls": [find("openSession"), find("ensureThread"), abandon, start, second],
+        "transcripts": [script],
+        "events": [],
+    });
+    let run = replay(&crate::flavor::GROK, &golden).await;
+    assert_eq!(run.errors.len(), 1, "{:?}", run.errors);
+    assert!(
+        run.errors[0].starts_with("startTurn: ") && run.errors[0].contains("Stop ended the turn"),
+        "{:?}",
+        run.errors
+    );
+    let script = crate::lock(&run.script);
+    assert!(
+        script.complete(),
+        "stopped at {}: {:?}",
+        script.cursor,
+        script.failure
+    );
+    let terminals = run
+        .events
+        .iter()
+        .filter(|e| e["type"] == "turn.terminal")
+        .count();
+    assert_eq!(terminals, 1, "only the second run's turn ran");
 }

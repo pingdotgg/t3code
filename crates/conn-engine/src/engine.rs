@@ -708,6 +708,9 @@ impl Inner {
                 message_id,
             } => self.steer(thread_id, run_id, message_id).await,
             Effect::Interrupt { thread_id, run_id } => self.interrupt(thread_id, run_id).await,
+            Effect::AbandonStart { thread_id, run_id } => {
+                self.abandon_start(&thread_id, &run_id).await;
+            }
             Effect::StopBackgroundWork { thread_id, run_id } => {
                 self.stop_background_work(thread_id, run_id).await;
             }
@@ -1075,6 +1078,18 @@ impl Engine for SqliteEngine {
 
     fn shutdown(&self) -> BoxFuture<'_, ()> {
         Box::pin(self.inner.close_all_sessions())
+    }
+
+    fn await_background_tasks(
+        &self,
+        thread_id: ThreadId,
+        task_ids: Vec<String>,
+        awaited: bool,
+    ) -> BoxFuture<'_, Result<crate::BackgroundWait, crate::BackgroundWaitError>> {
+        Box::pin(
+            self.inner
+                .await_background_tasks(thread_id.0, task_ids, awaited),
+        )
     }
 
     fn methods(&self) -> &'static [&'static str] {

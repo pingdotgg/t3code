@@ -1,5 +1,6 @@
 // Compares what stub-claude recorded from the T3 server (`<out>/t3`) and from the Conn Server
-// (`<out>/rust`): per CLI start, argv, environment and every stdin line.
+// (`<out>/rust`): per CLI start, argv, environment, every stdin line, and how it ended (a
+// clean exit on end of stdin, SIGTERM, or neither: SIGKILL).
 //
 //   node compare.mjs <out> [scenario...]
 //
@@ -127,6 +128,12 @@ for (const name of scenarios) {
     if (JSON.stringify(argvA) !== JSON.stringify(argvB)) {
       same = false;
       lines.push(`  start ${i} argv differs:\n${lineDiff(argvA.join("\n"), argvB.join("\n"))}`);
+    }
+    // How the start ended: a clean exit when stdin closed, SIGTERM, or neither (SIGKILL).
+    const endOf = (r) => JSON.stringify({ exit: r.exit ?? null, signal: r.signal ?? null, held: r.held ?? null });
+    if (endOf(a) !== endOf(b)) {
+      same = false;
+      lines.push(`  start ${i} end: t3 ${endOf(a)}, conn ${endOf(b)}`);
     }
     if (nt.text(a.cwd) !== nr.text(b.cwd)) {
       same = false;

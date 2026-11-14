@@ -140,6 +140,28 @@ struct Inner {
     config: Config,
     spawner: Spawner,
     state: Mutex<State<DynEnv>>,
+    /// The run whose start Stop abandoned (`abandon_turn_start`). Outside `state`, which a
+    /// start holds across awaits; one is enough, as a stale id matches no later run.
+    abandoned_run: std::sync::Mutex<Option<String>>,
+}
+
+impl Inner {
+    /// Fails when Stop abandoned this run's start: the start sends nothing more.
+    fn check_abandoned(&self, run_id: &str) -> ProviderResult<()> {
+        let abandoned = self
+            .abandoned_run
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_deref()
+            == Some(run_id);
+        if abandoned {
+            return Err(ProviderError::Failed {
+                operation: "start_turn",
+                detail: "Stop ended the turn before the agent started it.".into(),
+            });
+        }
+        Ok(())
+    }
 }
 
 /// A boxed clock, so one session type serves real runs and replays.
@@ -215,6 +237,187 @@ pub(crate) fn initialize_params(
 }
 
 impl AcpSession {
+    async fn start_turn_checked(&self, input: TurnInput) -> ProviderResult<()> {
+        let inner = &self.inner;
+        let flavor = inner.config.flavor;
+        let run_id = input.run_id.as_str();
+        inner.check_abandoned(run_id)?;
+        if inner.state.lock().await.restart_required {
+            // A new agent loads the session (T3 `restartRuntimeAfterTeardownIfRequired`).
+            let connection = inner.start_runtime().await?;
+            let initialize = inner.initialize(&connection).await?;
+            let session_id = inner
+                .state
+                .lock()
+                .await
+                .session_id
+                .clone()
+                .unwrap_or_default();
+            let setup = connection
+                .call(
+                    "session/load",
+                    inner.session_setup_params(&initialize, Some(&session_id)),
+                )
+                .await
+                .map_err(|e| failed("session/load", &e))?;
+            let mut state = inner.state.lock().await;
+            state.initialize = initialize;
+            state.setup = setup;
+            state.restart_required = false;
+            state.active_model = None;
+        }
+        // The step it was in has ended; an abandoned start sends nothing more.
+        inner.check_abandoned(run_id)?;
+        let model = to_json(&input.model_selection)["model"]
+            .as_str()
+            .unwrap_or("")
+            .to_owned();
+        let attachments: Vec<Value> = input.message.attachments.iter().map(to_json).collect();
+        let image_blocks = inner.image_blocks(&attachments).await?;
+        inner.check_abandoned(run_id)?;
+        // `compactThread`: T3's orchestrator sends `/compact` in any case as exactly
+        // `/compact` to a flavor that compacts.
+        let user_text = if flavor.supports_compaction
+            && attachments.is_empty()
+            && input.message.text.trim().eq_ignore_ascii_case("/compact")
+        {
+            "/compact".to_owned()
+        } else {
+            input.message.text.clone()
+        };
+        // The attachment paths check the disk: off the runtime thread.
+        let message_text = {
+            let (text, attachments, dir) = (
+                user_text.clone(),
+                attachments.clone(),
+                inner.config.attachments_dir.clone(),
+            );
+            tokio::task::spawn_blocking(move || {
+                conn_provider_support::attachments::prompt_text(&text, &attachments, dir.as_deref())
+            })
+            .await
+            .map_err(|_| protocol_error("attachment paths"))?
+        };
+        let live = inner
+            .state
+            .lock()
+            .await
+            .runtime
+            .as_ref()
+            .map(|r| r.connection.clone());
+        if let Some(connection) = live {
+            let effort = crate::grok::selection_effort(&to_json(&input.model_selection));
+            inner
+                .configure(&connection, &model, effort.as_deref())
+                .await?;
+        }
+        inner.check_abandoned(run_id)?;
+        {
+            let mut state = inner.state.lock().await;
+            if state.closed {
+                return Err(ProviderError::SessionStopped);
+            }
+            inner.check_abandoned(run_id)?;
+            if state.mapper.has_turn() {
+                return Err(protocol_error(format!(
+                    "ACP provider turn {} is still active",
+                    state.mapper.current_provider_turn_id().unwrap_or("")
+                )));
+            }
+            state.policy = to_json(&input.runtime_policy);
+            state.runtime_mode = serde_json::to_value(input.runtime_policy.runtime_mode)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default();
+            let Some(runtime) = &state.runtime else {
+                return Err(ProviderError::SessionStopped);
+            };
+            let connection = runtime.connection.clone();
+            let generation = runtime.generation;
+            let session_id = state.session_id.clone().unwrap_or_default();
+            // A provider continuation sends no prompt: it replays the buffered wake turn.
+            if flavor.background.is_some() && input.message.is_provider_continuation() {
+                let outs = state
+                    .mapper
+                    .begin_turn(&input, &session_id, &input.message.text);
+                inner.deliver(&mut state, outs).await;
+                return Ok(());
+            }
+            let instruction_state = InstructionState {
+                plan_mode: serde_json::to_value(input.runtime_policy.interaction_mode)
+                    .ok()
+                    .is_some_and(|v| v == "plan"),
+                has_t3_mcp: inner.has_t3_mcp(),
+                has_device_tools: false,
+            };
+            // A compacted session gets T3's instructions and notes again.
+            let compaction_marker = state.mapper.compaction_marker();
+            let previous = if compaction_marker.is_some() {
+                None
+            } else {
+                state.instruction_state
+            };
+            let text = prompt::wrap(&message_text, instruction_state, previous);
+            let model = to_json(&input.model_selection)["model"]
+                .as_str()
+                .unwrap_or("")
+                .to_owned();
+            let notes = prompt::runtime_instructions(flavor.harness, &model);
+            let slash = user_text.trim_start().starts_with('/');
+            let send_notes = !slash
+                && (compaction_marker.is_some()
+                    || state.delivered_notes.as_deref() != Some(notes.as_str()));
+            let mut blocks = Vec::new();
+            if !text.is_empty() {
+                blocks.push(obj().with("type", "text").with("text", text.clone()));
+            }
+            if !image_blocks.is_empty()
+                && !flavor.supports_image_prompts
+                && state.initialize["agentCapabilities"]["promptCapabilities"]["image"] != true
+            {
+                return Err(protocol_error(
+                    "ACP driver did not negotiate image prompt support",
+                ));
+            }
+            blocks.extend(image_blocks);
+            if blocks.is_empty() {
+                return Err(protocol_error(
+                    "ACP turn requires non-empty text or attachments",
+                ));
+            }
+            if send_notes {
+                blocks.push(obj().with("type", "text").with("text", notes.clone()));
+            }
+            state.delivery = Some(Delivery {
+                instruction_state: (text != message_text).then_some(instruction_state),
+                notes: send_notes.then_some(notes),
+                compaction_marker,
+            });
+            let mut params = obj()
+                .with("sessionId", session_id.clone())
+                .with("prompt", J::Arr(blocks));
+            let prompt_id = if flavor.completion == Completion::XAiPromptComplete {
+                state.prompt_seq += 1;
+                let id = format!("t3-xai-prompt-{}", state.prompt_seq);
+                params = params.with(
+                    "_meta",
+                    obj()
+                        .with("promptId", id.clone())
+                        .with("requestId", id.clone()),
+                );
+                Some(id)
+            } else {
+                None
+            };
+            state.active_prompt = Some((generation, prompt_id.unwrap_or_default()));
+            let outs = state.mapper.begin_turn(&input, &session_id, &user_text);
+            inner.deliver(&mut state, outs).await;
+            // The reply comes back through the driver, in order with the turn's updates.
+            state.prompt_request = connection.send("session/prompt", params).await;
+        }
+        Ok(())
+    }
+
     /// Starts the agent, `initialize`, then `session/new` (T3's `openSession` start).
     pub(crate) async fn open(
         config: Config,
@@ -253,6 +456,7 @@ impl AcpSession {
                 active_model: None,
             }),
             config,
+            abandoned_run: std::sync::Mutex::new(None),
         });
         let connection = inner.start_runtime().await?;
         let initialize = inner.initialize(&connection).await?;
@@ -960,181 +1164,31 @@ impl Session for AcpSession {
 
     fn start_turn(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
-            let inner = &self.inner;
-            let flavor = inner.config.flavor;
-            if inner.state.lock().await.restart_required {
-                // A new agent loads the session (T3 `restartRuntimeAfterTeardownIfRequired`).
-                let connection = inner.start_runtime().await?;
-                let initialize = inner.initialize(&connection).await?;
-                let session_id = inner
-                    .state
-                    .lock()
-                    .await
-                    .session_id
-                    .clone()
-                    .unwrap_or_default();
-                let setup = connection
-                    .call(
-                        "session/load",
-                        inner.session_setup_params(&initialize, Some(&session_id)),
-                    )
-                    .await
-                    .map_err(|e| failed("session/load", &e))?;
-                let mut state = inner.state.lock().await;
-                state.initialize = initialize;
-                state.setup = setup;
-                state.restart_required = false;
-                state.active_model = None;
-            }
-            let model = to_json(&input.model_selection)["model"]
-                .as_str()
-                .unwrap_or("")
-                .to_owned();
-            let attachments: Vec<Value> = input.message.attachments.iter().map(to_json).collect();
-            let image_blocks = inner.image_blocks(&attachments).await?;
-            // `compactThread`: T3's orchestrator sends `/compact` in any case as exactly
-            // `/compact` to a flavor that compacts.
-            let user_text = if flavor.supports_compaction
-                && attachments.is_empty()
-                && input.message.text.trim().eq_ignore_ascii_case("/compact")
-            {
-                "/compact".to_owned()
-            } else {
-                input.message.text.clone()
-            };
-            // The attachment paths check the disk: off the runtime thread.
-            let message_text = {
-                let (text, attachments, dir) = (
-                    user_text.clone(),
-                    attachments.clone(),
-                    inner.config.attachments_dir.clone(),
-                );
-                tokio::task::spawn_blocking(move || {
-                    conn_provider_support::attachments::prompt_text(
-                        &text,
-                        &attachments,
-                        dir.as_deref(),
-                    )
-                })
-                .await
-                .map_err(|_| protocol_error("attachment paths"))?
-            };
-            let live = inner
-                .state
+            let run_id = input.run_id.as_str().to_owned();
+            let result = self.start_turn_checked(input).await;
+            let mut abandoned = self
+                .inner
+                .abandoned_run
                 .lock()
-                .await
-                .runtime
-                .as_ref()
-                .map(|r| r.connection.clone());
-            if let Some(connection) = live {
-                let effort = crate::grok::selection_effort(&to_json(&input.model_selection));
-                inner
-                    .configure(&connection, &model, effort.as_deref())
-                    .await?;
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if abandoned.as_deref() == Some(run_id.as_str()) {
+                *abandoned = None;
             }
-            {
-                let mut state = inner.state.lock().await;
-                if state.closed {
-                    return Err(ProviderError::SessionStopped);
-                }
-                if state.mapper.has_turn() {
-                    return Err(protocol_error(format!(
-                        "ACP provider turn {} is still active",
-                        state.mapper.current_provider_turn_id().unwrap_or("")
-                    )));
-                }
-                state.policy = to_json(&input.runtime_policy);
-                state.runtime_mode = serde_json::to_value(input.runtime_policy.runtime_mode)
-                    .ok()
-                    .and_then(|v| v.as_str().map(str::to_owned))
-                    .unwrap_or_default();
-                let Some(runtime) = &state.runtime else {
-                    return Err(ProviderError::SessionStopped);
-                };
-                let connection = runtime.connection.clone();
-                let generation = runtime.generation;
-                let session_id = state.session_id.clone().unwrap_or_default();
-                // A provider continuation sends no prompt: it replays the buffered wake turn.
-                if flavor.background.is_some() && input.message.is_provider_continuation() {
-                    let outs = state
-                        .mapper
-                        .begin_turn(&input, &session_id, &input.message.text);
-                    inner.deliver(&mut state, outs).await;
-                    return Ok(());
-                }
-                let instruction_state = InstructionState {
-                    plan_mode: serde_json::to_value(input.runtime_policy.interaction_mode)
-                        .ok()
-                        .is_some_and(|v| v == "plan"),
-                    has_t3_mcp: inner.has_t3_mcp(),
-                    has_device_tools: false,
-                };
-                // A compacted session gets T3's instructions and notes again.
-                let compaction_marker = state.mapper.compaction_marker();
-                let previous = if compaction_marker.is_some() {
-                    None
-                } else {
-                    state.instruction_state
-                };
-                let text = prompt::wrap(&message_text, instruction_state, previous);
-                let model = to_json(&input.model_selection)["model"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_owned();
-                let notes = prompt::runtime_instructions(flavor.harness, &model);
-                let slash = user_text.trim_start().starts_with('/');
-                let send_notes = !slash
-                    && (compaction_marker.is_some()
-                        || state.delivered_notes.as_deref() != Some(notes.as_str()));
-                let mut blocks = Vec::new();
-                if !text.is_empty() {
-                    blocks.push(obj().with("type", "text").with("text", text.clone()));
-                }
-                if !image_blocks.is_empty()
-                    && !flavor.supports_image_prompts
-                    && state.initialize["agentCapabilities"]["promptCapabilities"]["image"] != true
-                {
-                    return Err(protocol_error(
-                        "ACP driver did not negotiate image prompt support",
-                    ));
-                }
-                blocks.extend(image_blocks);
-                if blocks.is_empty() {
-                    return Err(protocol_error(
-                        "ACP turn requires non-empty text or attachments",
-                    ));
-                }
-                if send_notes {
-                    blocks.push(obj().with("type", "text").with("text", notes.clone()));
-                }
-                state.delivery = Some(Delivery {
-                    instruction_state: (text != message_text).then_some(instruction_state),
-                    notes: send_notes.then_some(notes),
-                    compaction_marker,
-                });
-                let mut params = obj()
-                    .with("sessionId", session_id.clone())
-                    .with("prompt", J::Arr(blocks));
-                let prompt_id = if flavor.completion == Completion::XAiPromptComplete {
-                    state.prompt_seq += 1;
-                    let id = format!("t3-xai-prompt-{}", state.prompt_seq);
-                    params = params.with(
-                        "_meta",
-                        obj()
-                            .with("promptId", id.clone())
-                            .with("requestId", id.clone()),
-                    );
-                    Some(id)
-                } else {
-                    None
-                };
-                state.active_prompt = Some((generation, prompt_id.unwrap_or_default()));
-                let outs = state.mapper.begin_turn(&input, &session_id, &user_text);
-                inner.deliver(&mut state, outs).await;
-                // The reply comes back through the driver, in order with the turn's updates.
-                state.prompt_request = connection.send("session/prompt", params).await;
-            }
-            Ok(())
+            result
+        })
+    }
+
+    /// Stop ended the run before the agent accepted the turn: the start finishes the step it
+    /// is in (an agent restart is not cut short, so no half-started process is left) and
+    /// sends nothing more, no prompt, as T3's interrupted `startTurn` sends none.
+    fn abandon_turn_start(&self, input: conn_provider::AbandonTurnStartInput) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            *self
+                .inner
+                .abandoned_run
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some(input.run_id.as_str().to_owned());
         })
     }
 

@@ -69,6 +69,8 @@ interface Step {
   readonly interrupt?: boolean;
   // Stop with no turn running: the latest turn settled while background work still runs.
   readonly stop?: boolean;
+  // Stop while the turn starts (the CLI holds a control request, see the scenario's `hold`).
+  readonly stopDuringStart?: boolean;
   readonly reopen?: boolean;
   readonly fork?: boolean;
   readonly model?: string;
@@ -168,6 +170,24 @@ const appThread = (
   lastVisitedAt: null,
   deletedAt: null,
 });
+
+/** Waits until a CLI start of the scenario got the request its `hold` file names. */
+const waitForHeld = (scenario: Scenario) =>
+  Effect.promise(async () => {
+    const records = NodePath.join(ROOT, scenario.name, "records");
+    for (let i = 0; i < 600; i++) {
+      const held = (NodeFS.existsSync(records) ? NodeFS.readdirSync(records) : []).some((f) => {
+        try {
+          return JSON.parse(NodeFS.readFileSync(NodePath.join(records, f), "utf8")).held !== undefined;
+        } catch {
+          return false;
+        }
+      });
+      if (held) return;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error(`${scenario.name}: the CLI never got the held request`);
+  });
 
 const runScenario = (scenario: Scenario) =>
   Effect.gen(function* () {
@@ -308,7 +328,7 @@ const runScenario = (scenario: Scenario) =>
               }),
             ]
           : [];
-      yield* session.runtime.startTurn({
+      const turnInput = {
         appThread: appThread(threadId, scenario.runtimeMode, model, now),
         threadId: ThreadId.make(threadId),
         runId: RunId.make(`run-${n}`),
@@ -326,7 +346,19 @@ const runScenario = (scenario: Scenario) =>
         },
         modelSelection: model,
         runtimePolicy,
-      });
+      } satisfies Parameters<typeof session.runtime.startTurn>[0];
+      if (step.stopDuringStart === true) {
+        // A Stop before the provider turn exists: T3's EffectWorker interrupts the running
+        // provider-turn.start (raceFirst with its cancellation), and waits for it to end.
+        const starting = yield* session.runtime
+          .startTurn(turnInput)
+          .pipe(Effect.forkIn(session.scope));
+        yield* waitForHeld(scenario);
+        yield* Fiber.interrupt(starting);
+        console.log(`${scenario.name}: turn ${n} abandoned`);
+        continue;
+      }
+      yield* session.runtime.startTurn(turnInput);
       const answers = [...(step.answers ?? [])];
       let interrupted = step.interrupt !== true;
       // The Stop runs as T3's EffectWorker runs it, beside the turn's events. The outbox runs a

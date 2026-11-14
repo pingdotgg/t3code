@@ -234,6 +234,14 @@ Normalized in the comparison:
   answers `resolveSettings` (T3 resolves it in-process and emits the turn right after
   `query()`). What the CLI gets is unchanged. A start that then fails ends the turn as failed
   (`claude_start_failed`), where T3 emits no provider turn. A steer waits for the start.
+- **Stop during the start** (`abandon_turn_start`, 2026-11-14): attachments are read before the
+  query opens, as T3. A Stop while they are read or while `resolveSettings` waits for the SDK
+  host opens nothing. A Stop while the CLI boots or registers MCP servers aborts the query
+  (host command `abort`: T3's teardown of an interrupted `openQuery`, prompt stream ended,
+  SIGKILL, up to 10 s for the exit, dispose); the early turn ends `interrupted`. A Stop once
+  the query is open lets the prompt go and the engine interrupts the turn, as T3 does for a
+  turn that starts after Stop. Proven by `an_abandoned_start_aborts_the_booting_query` and
+  the conformance scenarios `stop_during_boot` and `stop_during_mcp_registration`.
 - **Subagents:** no workflow subagents (`local_workflow`), no recovery of running subagents
   after a restart (`getSubagentMessages` is offered by the helper but not used), `stopSubagent`
   and `stop_task` / `background_tasks` not sent.

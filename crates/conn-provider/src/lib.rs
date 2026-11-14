@@ -192,6 +192,17 @@ pub trait Session: Send + Sync {
     /// Stops the running turn. Its `TurnTerminal` reports `interrupted`.
     fn interrupt_turn(&self, input: InterruptInput) -> BoxFuture<'_, ProviderResult<()>>;
 
+    /// Stop arrived before the provider accepted this run's turn: the engine already ended the
+    /// run, as T3's `dispatchRunInterrupt` does "before provider start", and T3's effect
+    /// worker interrupts the running `provider-turn.start`. A [`Session::start_turn`] for the
+    /// run that is in flight, or that begins after this call, should stop and close what it
+    /// opened as T3's interruption does, then return an error. It may be called while
+    /// `start_turn` runs, so it must not wait for it. The default changes nothing: the start
+    /// runs to its end, and the engine interrupts a turn the provider then reports.
+    fn abandon_turn_start(&self, _input: AbandonTurnStartInput) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
+
     /// `interruptTurn` with `requestRuntimeRestart` on a settled turn: Stop on a thread whose
     /// latest run ended while its background work still runs (`ProviderTurnControlService`
     /// calls it for settled turns too). A provider that holds such work ends it (Claude
@@ -669,6 +680,13 @@ pub struct SteerInput {
 pub struct InterruptInput {
     pub provider_thread: ProviderThread,
     pub provider_turn_id: ProviderTurnId,
+}
+
+/// The run whose turn start Stop abandoned ([`Session::abandon_turn_start`]).
+#[derive(Clone, Debug)]
+pub struct AbandonTurnStartInput {
+    pub thread_id: ThreadId,
+    pub run_id: RunId,
 }
 
 /// `ProviderAdapterV2RuntimeRequestResponseInput`.

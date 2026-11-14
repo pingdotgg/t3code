@@ -31,6 +31,14 @@ fn fixture(name: &str) -> Fixture {
 }
 
 fn fixture_with_host(name: &str, host: Option<Arc<dyn conn_engine::EngineHost>>) -> Fixture {
+    fixture_with(name, host, FakeProvider::new("claudeAgent"))
+}
+
+fn fixture_with(
+    name: &str,
+    host: Option<Arc<dyn conn_engine::EngineHost>>,
+    provider: FakeProvider,
+) -> Fixture {
     let dir = std::env::temp_dir().join(format!("conn-mcp-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -39,7 +47,7 @@ fn fixture_with_host(name: &str, host: Option<Arc<dyn conn_engine::EngineHost>>)
         title: "Project".into(),
         workspace_root: ROOT.into(),
     }];
-    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.providers = vec![Arc::new(provider)];
     config.host = host;
     let engine = Arc::new(SqliteEngine::open(config).unwrap());
     let service = McpService::new(McpConfig {
@@ -1074,6 +1082,128 @@ async fn send_to_user_echoes_the_message_to_a_live_thread_caller() {
     assert_eq!(code, "parent_not_active");
 }
 
+/// Waits until the thread's provider turn runs, so its session is live.
+async fn until_provider_turn(f: &Fixture, thread_id: &str) {
+    for _ in 0..200 {
+        let projection = f
+            .service
+            .config
+            .engine
+            .get_thread_projection(thread_id.into())
+            .await
+            .unwrap();
+        let running = projection["providerTurns"]
+            .as_array()
+            .is_some_and(|turns| turns.iter().any(|t| t["status"] == "running"));
+        if running && projection["thread"]["activeProviderThreadId"].is_string() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("no provider turn ran on {thread_id}");
+}
+
+/// `t3_background_wait` (`toolkits/orchestrator`): `actsAsCaller`; the calling thread's live
+/// session marks the ids it runs, the rest come back unmatched; T3's codes and messages.
+#[tokio::test(flavor = "current_thread")]
+async fn background_wait_marks_the_callers_tasks() {
+    let f = fixture("background-wait");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let mut reader = Client::open(&f.service, client(false)).await;
+    for c in [&mut swamp, &mut reader] {
+        let (code, message) = c
+            .failure("t3_background_wait", json!({"taskIds": ["bg-1"]}))
+            .await;
+        assert_eq!(code, "thread_credential_required", "{message}");
+        assert!(message.starts_with("This tool acts as the calling T3 thread"));
+    }
+
+    let live = launch_as_swamp(
+        &mut swamp,
+        "Live",
+        "background-task-hang",
+        "approval-required",
+        "plan",
+    )
+    .await;
+    until_provider_turn(&f, &live).await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &live)).await;
+    // The argument check: 1 to 20 ids, none blank.
+    let too_many: Vec<String> = (0..21).map(|i| format!("t{i}")).collect();
+    for args in [
+        json!({"taskIds": []}),
+        json!({"taskIds": too_many}),
+        json!({"taskIds": "bg-1"}),
+        json!({"taskIds": ["bg-1"], "waiting": "yes"}),
+    ] {
+        let (code, message) = rpc_error(&mut agent, "t3_background_wait", args.clone()).await;
+        assert_eq!(code, -32602, "{args}: {message}");
+    }
+    let (code, message) = rpc_error(
+        &mut agent,
+        "t3_background_wait",
+        json!({"taskIds": ["bg-1", " "]}),
+    )
+    .await;
+    assert_eq!(
+        (code, message.as_str()),
+        (
+            -32602,
+            "Invalid parameters for tool 't3_background_wait': Expected a non-blank string\n  at [\"taskIds\"][1]"
+        )
+    );
+
+    // Plan mode and the narrowest runtime mode may use it: it marks only this thread's work.
+    let marked = agent
+        .ok("t3_background_wait", json!({"taskIds": [" bg-1 ", "x"]}))
+        .await;
+    assert_eq!(marked, json!({"matched": ["bg-1"], "unmatched": ["x"]}));
+    let (code, message) = agent
+        .failure("t3_background_wait", json!({"taskIds": ["x"]}))
+        .await;
+    assert_eq!(code, "invalid_request");
+    assert!(message.starts_with("None of these IDs is running background work"));
+    let cleared = agent
+        .ok(
+            "t3_background_wait",
+            json!({"taskIds": ["x", "bg-1"], "waiting": false}),
+        )
+        .await;
+    assert_eq!(cleared, json!({"matched": ["bg-1"], "unmatched": ["x"]}));
+
+    dispatch(
+        &f,
+        json!({"type": "thread.archive", "commandId": "archive-live", "threadId": live}),
+    )
+    .await;
+    let (code, _) = agent
+        .failure("t3_background_wait", json!({"taskIds": ["bg-1"]}))
+        .await;
+    assert_eq!(code, "parent_not_active");
+}
+
+/// A provider without a background roster (Codex, Grok) answers `invalid_request`, as T3's
+/// `unsupported` reason.
+#[tokio::test(flavor = "current_thread")]
+async fn background_wait_on_a_provider_without_a_roster() {
+    let provider = FakeProvider::new("claudeAgent").without_background_wait();
+    let f = fixture_with("background-wait-unsupported", None, provider);
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let live = launch_as_swamp(&mut swamp, "Live", "hang", "full-access", "default").await;
+    until_provider_turn(&f, &live).await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &live)).await;
+    let refused = agent
+        .failure("t3_background_wait", json!({"taskIds": ["bg-1"]}))
+        .await;
+    assert_eq!(
+        refused,
+        (
+            "invalid_request".to_owned(),
+            "This provider cannot mark background work as awaited.".to_owned()
+        )
+    );
+}
+
 async fn thread_field(f: &Fixture, thread_id: &str, field: &str) -> Value {
     f.service
         .config
@@ -1498,7 +1628,7 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 /// Tools that a text we send to an agent names and that this server does not serve. An agent
 /// told to call one finds no such tool. Serve one, and this test makes you strike it here.
 /// `preview_*` in the orchestration text also names all 13 preview tools.
-const NAMED_NOT_SERVED: [&str; 14] = [
+const NAMED_NOT_SERVED: [&str; 13] = [
     "create_threads",
     "device_list",
     "device_open",
@@ -1508,7 +1638,6 @@ const NAMED_NOT_SERVED: [&str; 14] = [
     "preview_open",
     "preview_status",
     "request_secret",
-    "t3_background_wait",
     "t3_environment_link",
     "t3_environment_links",
     "unwatch_pull_request",
@@ -1517,8 +1646,8 @@ const NAMED_NOT_SERVED: [&str; 14] = [
 
 /// Every text we send to an agent that can name a tool: the orchestration text and Claude's
 /// texts (`conn-mcp`), the `next` text of a running task, the Codex additional context
-/// (`conn-provider-codex`), the pull request text (`conn-provider-claude`), and the served
-/// tools' own descriptions.
+/// (`conn-provider-codex`), the pull request text (`conn-provider-claude`), the ACP prompt
+/// prefixes (`conn-provider-acp`), and the served tools' own descriptions.
 fn agent_texts() -> Vec<&'static str> {
     vec![
         crate::AGENT_INSTRUCTIONS,
@@ -1526,6 +1655,7 @@ fn agent_texts() -> Vec<&'static str> {
         include_str!("running-task-next.txt"),
         include_str!("../../conn-provider-codex/src/instructions.rs"),
         include_str!("../../conn-provider-claude/src/launch.rs"),
+        include_str!("../../conn-provider-acp/src/instructions.rs"),
         include_str!("catalog.jsonl"),
     ]
 }

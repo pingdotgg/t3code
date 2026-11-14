@@ -96,7 +96,19 @@ const canned = (request) => {
   }
 };
 
-const write = (text) => process.stdout.write(`${text}\n`);
+// `hold-<n>` names a control request subtype this start never answers: from that request on it
+// writes nothing, as a CLI that is still booting.
+const hold = (() => {
+  try {
+    return fs.readFileSync(path.join(here, `hold-${index}`), "utf8").trim();
+  } catch {
+    return undefined;
+  }
+})();
+let holding = false;
+const write = (text) => {
+  if (!holding) process.stdout.write(`${text}\n`);
+};
 
 // Host lines not consumed yet.
 const inbox = [];
@@ -121,6 +133,11 @@ input.on("line", (line) => {
     msg = JSON.parse(line);
   } catch {
     return;
+  }
+  if (hold !== undefined && msg?.type === "control_request" && msg.request?.subtype === hold) {
+    holding = true;
+    record.held = hold;
+    save();
   }
   inbox.push(msg);
   const w = wake;
@@ -200,6 +217,8 @@ async function main() {
     if (msg === undefined) break;
     answerUnexpected(msg);
   }
+  // Absent when the start was killed (SIGKILL cannot be caught).
+  record.exit = "stdin closed";
   save();
   process.exit(0);
 }

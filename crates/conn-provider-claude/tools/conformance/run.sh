@@ -60,6 +60,8 @@ for (const s of JSON.parse(fs.readFileSync(scenarios, "utf8")).scenarios) {
   const source = (name) =>
     [path.join(cli, name + ".ndjson"), path.join(path.dirname(stub), "constructed", name + ".ndjson")].find((p) => fs.existsSync(p));
   s.scripts.forEach((name, i) => fs.copyFileSync(source(name), path.join(dir, "scripts", i + ".ndjson")));
+  // A start whose CLI never answers one control request (a CLI still booting).
+  for (const [i, subtype] of Object.entries(s.hold ?? {})) fs.writeFileSync(path.join(dir, `hold-${i}`), subtype);
 }' "$here/scenarios.json" "$OUT/$side" "$here/stub-claude" "$crate/testdata/cli"
 }
 prepare t3

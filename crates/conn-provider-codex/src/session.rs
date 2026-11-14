@@ -79,6 +79,8 @@ struct Inner {
     state: Mutex<State>,
     /// Signalled after every batch the driver delivers, so waiters can re-check the mapper.
     progressed: Notify,
+    /// Wakes a start the engine abandoned ([`State::abandoned_run`]).
+    abandon: Notify,
 }
 
 struct State {
@@ -90,10 +92,114 @@ struct State {
     /// Passed to each `thread/start` and `thread/resume` (`set_mcp_servers`).
     mcp_servers: Vec<McpServer>,
     closed: bool,
+    /// The run whose start Stop abandoned (`abandon_turn_start`); one is enough, as a stale id
+    /// matches no later run.
+    abandoned_run: Option<String>,
     logged: HashSet<String>,
 }
 
 impl CodexSession {
+    async fn start_turn_inner(&self, input: TurnInput) -> ProviderResult<()> {
+        let inner = &self.inner;
+        if inner.lock().closed {
+            return Err(ProviderError::SessionStopped);
+        }
+        if inner.start_abandoned(input.run_id.as_str()) {
+            return Err(failed(
+                "start_turn",
+                "Stop ended the turn before Codex started it.",
+            ));
+        }
+        let model = launch::selection_model(&input.model_selection);
+        if inner.lock().thread.is_none() {
+            let native = native_thread_id(&input.provider_thread)
+                .ok_or_else(|| failed("start_turn", "provider thread has no native Codex id"))?;
+            let mut state = inner.lock();
+            state.thread = Some((native, None));
+            state.app_thread_id = Some(input.thread_id.as_str().to_owned());
+        }
+        let run_id = input.run_id.as_str();
+        let native = inner
+            .unless_abandoned(
+                run_id,
+                inner.loaded_thread(Some(&input.runtime_policy), Some(&model)),
+            )
+            .await?;
+        inner.check_open()?;
+        if inner.lock().mapper.thread_busy(&native) {
+            return Err(failed("start_turn", "the previous turn is still running"));
+        }
+        let config = inner.server.request(
+            "config/read",
+            json!({"cwd": input.runtime_policy.cwd, "includeLayers": false}),
+        );
+        let summary = inner
+            .unless_abandoned(run_id, async { Ok(config.await) })
+            .await?
+            .ok()
+            .and_then(|r| {
+                r["config"]["model_reasoning_summary"]
+                    .as_str()
+                    .map(str::to_owned)
+            });
+        inner.check_open()?;
+        // A restart continuation starts the native turn without input: Codex resumes on
+        // its own (`startTurn`, `restartContinuationOfRunId`).
+        let codex_input = if input.restart_continuation_of_run_id.is_some() {
+            json!([])
+        } else {
+            launch::user_input(
+                &input.message.text,
+                &input.message.attachments,
+                inner.attachments_dir.as_deref(),
+            )
+            .map_err(|detail| ProviderError::Protocol { detail })?
+        };
+        // TS: `hasT3Mcp` when the thread has an MCP session; the engine passes it as the
+        // `t3-code` server. Browser tools on, device tools off: the session carries no
+        // finer answer (TS reads `browserToolsAvailable` and the `device` capability).
+        let t3_tools = inner
+            .lock()
+            .mcp_servers
+            .iter()
+            .any(|s| s.name == "t3-code")
+            .then(ToolAvailability::default);
+        let params = launch::turn_start_params(
+            &native,
+            codex_input,
+            &input.runtime_policy,
+            &input.model_selection,
+            summary.as_deref(),
+            t3_tools,
+            &input.app_context,
+        );
+        inner.lock().mapper.begin_turn(&native, &input);
+        let started = inner
+            .unless_abandoned(run_id, async {
+                Ok(inner.server.request("turn/start", params).await)
+            })
+            .await;
+        let started = match started {
+            Ok(started) => started,
+            Err(abandoned) => {
+                // T3 drops the pending turn; a later `turn/started` is no root turn.
+                inner.lock().mapper.abandon_turn(&native);
+                return Err(abandoned);
+            }
+        };
+        match started {
+            Ok(result) => {
+                let outs = inner.lock().mapper.turn_start_result(&native, &result);
+                inner.deliver(outs).await;
+                Ok(())
+            }
+            Err(e) => {
+                inner.lock().mapper.abandon_turn(&native);
+                Err(call_failed("start_turn")(e))
+            }
+        }
+    }
+
     pub(crate) fn open(
         id: ProviderSessionId,
         instance_id: &ProviderInstanceId,
@@ -122,9 +228,11 @@ impl CodexSession {
                 // Codex reads them from each thread's config (`thread/start`, resume, fork).
                 mcp_servers,
                 closed: false,
+                abandoned_run: None,
                 logged: HashSet::new(),
             }),
             progressed: Notify::new(),
+            abandon: Notify::new(),
         });
         tokio::spawn(drive(Arc::downgrade(&inner), rx));
         Self { id, inner }
@@ -134,6 +242,35 @@ impl CodexSession {
 impl Inner {
     fn lock(&self) -> MutexGuard<'_, State> {
         crate::lock(&self.state)
+    }
+
+    fn start_abandoned(&self, run_id: &str) -> bool {
+        self.lock().abandoned_run.as_deref() == Some(run_id)
+    }
+
+    /// Runs `work` unless the engine abandons `run_id`'s start first. Then `work` is dropped,
+    /// as T3's worker interrupts the start: a request already written is not awaited, and
+    /// nothing more is sent.
+    async fn unless_abandoned<T>(
+        &self,
+        run_id: &str,
+        work: impl std::future::Future<Output = ProviderResult<T>>,
+    ) -> ProviderResult<T> {
+        let abandoned = async {
+            loop {
+                let notified = self.abandon.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self.start_abandoned(run_id) {
+                    return;
+                }
+                notified.await;
+            }
+        };
+        tokio::select! {
+            result = work => result,
+            () = abandoned => Err(failed("start_turn", "Stop ended the turn before Codex started it.")),
+        }
     }
 
     /// Fails once the session closed; checked after each await of a multi-step call.
@@ -670,82 +807,23 @@ impl Session for CodexSession {
 
     fn start_turn(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
-            let inner = &self.inner;
-            if inner.lock().closed {
-                return Err(ProviderError::SessionStopped);
+            let run_id = input.run_id.as_str().to_owned();
+            let result = self.start_turn_inner(input).await;
+            let mut state = self.inner.lock();
+            if state.abandoned_run.as_deref() == Some(run_id.as_str()) {
+                state.abandoned_run = None;
             }
-            let model = launch::selection_model(&input.model_selection);
-            if inner.lock().thread.is_none() {
-                let native = native_thread_id(&input.provider_thread).ok_or_else(|| {
-                    failed("start_turn", "provider thread has no native Codex id")
-                })?;
-                let mut state = inner.lock();
-                state.thread = Some((native, None));
-                state.app_thread_id = Some(input.thread_id.as_str().to_owned());
-            }
-            let native = inner
-                .loaded_thread(Some(&input.runtime_policy), Some(&model))
-                .await?;
-            inner.check_open()?;
-            if inner.lock().mapper.thread_busy(&native) {
-                return Err(failed("start_turn", "the previous turn is still running"));
-            }
-            let summary = inner
-                .server
-                .request(
-                    "config/read",
-                    json!({"cwd": input.runtime_policy.cwd, "includeLayers": false}),
-                )
-                .await
-                .ok()
-                .and_then(|r| {
-                    r["config"]["model_reasoning_summary"]
-                        .as_str()
-                        .map(str::to_owned)
-                });
-            inner.check_open()?;
-            // A restart continuation starts the native turn without input: Codex resumes on
-            // its own (`startTurn`, `restartContinuationOfRunId`).
-            let codex_input = if input.restart_continuation_of_run_id.is_some() {
-                json!([])
-            } else {
-                launch::user_input(
-                    &input.message.text,
-                    &input.message.attachments,
-                    inner.attachments_dir.as_deref(),
-                )
-                .map_err(|detail| ProviderError::Protocol { detail })?
-            };
-            // TS: `hasT3Mcp` when the thread has an MCP session; the engine passes it as the
-            // `t3-code` server. Browser tools on, device tools off: the session carries no
-            // finer answer (TS reads `browserToolsAvailable` and the `device` capability).
-            let t3_tools = inner
-                .lock()
-                .mcp_servers
-                .iter()
-                .any(|s| s.name == "t3-code")
-                .then(ToolAvailability::default);
-            let params = launch::turn_start_params(
-                &native,
-                codex_input,
-                &input.runtime_policy,
-                &input.model_selection,
-                summary.as_deref(),
-                t3_tools,
-                &input.app_context,
-            );
-            inner.lock().mapper.begin_turn(&native, &input);
-            match inner.server.request("turn/start", params).await {
-                Ok(result) => {
-                    let outs = inner.lock().mapper.turn_start_result(&native, &result);
-                    inner.deliver(outs).await;
-                    Ok(())
-                }
-                Err(e) => {
-                    inner.lock().mapper.abandon_turn(&native);
-                    Err(call_failed("start_turn")(e))
-                }
-            }
+            result
+        })
+    }
+
+    /// Stop ended the run before Codex accepted the turn: the start stops at its next wait
+    /// (`thread/start` or `thread/resume`, `config/read`, `turn/start`) and sends nothing more,
+    /// as T3's interrupted `startTurn`. A `turn/start` already written is left to Codex.
+    fn abandon_turn_start(&self, input: conn_provider::AbandonTurnStartInput) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            self.inner.lock().abandoned_run = Some(input.run_id.as_str().to_owned());
+            self.inner.abandon.notify_waiters();
         })
     }
 

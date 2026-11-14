@@ -191,6 +191,7 @@ pub trait Session: Send + Sync {
     fn start_turn(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>>;
     fn steer_turn(&self, input: SteerInput) -> ...;                        // default: Unsupported
     fn interrupt_turn(&self, input: InterruptInput) -> BoxFuture<'_, ProviderResult<()>>;
+    fn abandon_turn_start(&self, input: AbandonTurnStartInput) -> BoxFuture<'_, ()>; // default: nothing
     fn apply_model_selection(&self, thread, selection) -> ...;            // default: Unsupported
     fn apply_runtime_policy(&self, thread, policy) -> ...;                // default: Unsupported
     fn respond_to_runtime_request(&self, input: RuntimeRequestResponse) -> BoxFuture<'_, ProviderResult<()>>;
@@ -202,7 +203,10 @@ pub trait Session: Send + Sync {
 `driver`): session, thread, turn, node, subagent, message, turn item, command output delta,
 runtime request (permission prompts and questions), plan, `turn.terminal`.
 `apply_runtime_policy` is new: it carries a permission mode change to a running Claude process
-(`setPermissionMode`). Left out until needed: compact, rollback, fork, thread snapshots, history
+(`setPermissionMode`). `abandon_turn_start` is new too: a Stop before the provider accepted the
+turn ends the run in the engine, and the provider stops the start in flight as T3's effect
+worker interrupts it (Claude aborts a booting CLI; Codex and ACP send nothing more). Left out
+until needed: compact, rollback, fork, thread snapshots, history
 injection, background tasks, subagent stop, MCP apps.
 
 Adding a provider: one new crate that implements both traits.

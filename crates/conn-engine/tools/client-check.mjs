@@ -266,6 +266,37 @@ check("stop: an unconfirmed Stop is unresponsive until Force stop", () => {
   assert.equal(presentRunStop(after.projection), null);
 });
 
+// 8b. A Stop during a slow start ends the run in the Stop's own commit, as T3's "before
+// provider start": the client never shows "Stopping", and the result says why.
+check("stop: a Stop before the provider started ends the run at once", () => {
+  const before = followThread(exported.coldStopItems.slice(0, exported.coldStopAt));
+  assert.deepEqual(before.projection.runs.map((run) => run.status), ["running"]);
+  const after = followThread(exported.coldStopItems);
+  assert.deepEqual(after.projection.runs.map((run) => run.status), ["interrupted"]);
+  assert.equal(presentRunStop(after.projection), null);
+  const items = after.projection.turnItems.filter((item) => item.type.startsWith("run_interrupt"));
+  assert.deepEqual(
+    items.map((item) => [item.type, item.status, item.message, item.providerTurnId]),
+    [
+      ["run_interrupt_request", "completed", "Stopped by user", null],
+      ["run_interrupt_result", "interrupted", "Run interrupted before provider start", null],
+    ],
+  );
+  assert.equal(items[1].parentItemId, items[0].id);
+  // Request, result, attempt, node and run arrive in that order, in one commit.
+  const stopped = exported.coldStopItems
+    .slice(exported.coldStopAt)
+    .filter((item) => item.kind === "event")
+    .map((item) => item.event.type);
+  assert.deepEqual(stopped.slice(0, 5), [
+    "turn-item.updated",
+    "turn-item.updated",
+    "run-attempt.updated",
+    "node.updated",
+    "run.updated",
+  ]);
+});
+
 // 9. Background work left running: the shell row's roster is what T3's own
 // derivePendingBackgroundWork makes of the same thread.
 check("background: the shell roster matches T3's derivePendingBackgroundWork", () => {
