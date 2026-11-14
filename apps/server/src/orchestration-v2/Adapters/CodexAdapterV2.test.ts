@@ -1887,7 +1887,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         prompt: "unused",
       })
         .slice(3, 5)
-        .map((entry) => withReplayRequestId(entry, 3));
+        .map((entry) => withReplayRequestId(entry, 3))
+        .map((entry) =>
+          entry.type === "expect_outbound" &&
+          Predicate.isObject(entry.frame) &&
+          Predicate.isObject(entry.frame["params"])
+            ? {
+                ...entry,
+                frame: {
+                  ...entry.frame,
+                  params: { ...entry.frame["params"], threadSource: "subagent" },
+                },
+              }
+            : entry,
+        );
       const threadSources: Array<unknown> = [];
       const harness = yield* makeCodexReplayHarness(
         makeCodexReplayTranscript({ scenario, entries: [...preamble, ...childStart] }),
