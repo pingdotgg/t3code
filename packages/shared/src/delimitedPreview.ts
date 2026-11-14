@@ -79,13 +79,18 @@ export function csvPreviewDelimiter(text: string) {
   let commas = 0;
   let semicolons = 0;
   let quoted = false;
-  for (let index = 0; index < text.length; index++) {
+  let fieldStart = true;
+  for (let index = text.charCodeAt(0) === 0xfeff ? 1 : 0; index < text.length; index++) {
     const char = text[index];
-    if (char === '"') quoted = !quoted;
-    else if (quoted) continue;
+    if (quoted) {
+      if (char !== '"') continue;
+      if (text[index + 1] === '"') index++;
+      else quoted = false;
+    } else if (char === '"' && fieldStart) quoted = true;
     else if (char === "\n" || char === "\r") break;
     else if (char === ",") commas++;
     else if (char === ";") semicolons++;
+    fieldStart = char === "," || char === ";";
   }
   return semicolons > commas ? ";" : ",";
 }

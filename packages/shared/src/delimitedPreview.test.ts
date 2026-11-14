@@ -35,6 +35,10 @@ describe("delimited file previews", () => {
       ["Alice", 'say "hi"\nagain'],
     ]);
     expect(parseDelimitedPreview("a,b;c", ",").rows).toEqual([["a", "b;c"]]);
+    expect(parseDelimitedPreview('12",name\n24",a;b;c', ",").rows).toEqual([
+      ['12"', "name"],
+      ['24"', "a;b;c"],
+    ]);
     expect(parseDelimitedPreview("a;b\tvalue", "\t").rows).toEqual([["a;b", "value"]]);
   });
   describe.each([",", "\t"] as const)("with delimiter %j", (delimiter) => {
