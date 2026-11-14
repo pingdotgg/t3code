@@ -36,6 +36,7 @@ import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
+  isThreadListV2EnvironmentDisconnected,
   layoutThreadListV2RowMenuActions,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SwipeActions,
@@ -208,6 +209,17 @@ describe("resolveThreadListV2Status", () => {
       expect(threadHasUnseenCompletion(thread)).toBe(true);
     },
   );
+});
+
+describe("isThreadListV2EnvironmentDisconnected", () => {
+  it.each([
+    ["connected", false],
+    ["connecting", false],
+    ["reconnecting", true],
+    ["offline", true],
+  ] as const)("treats %s as disconnected: %s", (connectionState, disconnected) => {
+    expect(isThreadListV2EnvironmentDisconnected(connectionState)).toBe(disconnected);
+  });
 });
 
 describe("resolveThreadListV2SwipeActions", () => {
@@ -1717,6 +1729,23 @@ describe("Working section beta", () => {
       tracker.observe(null);
       vi.useRealTimers();
     }
+  });
+
+  it("lists a working thread on a disconnected environment outside the shelf", () => {
+    const unreachableId = EnvironmentId.make("environment-unreachable");
+    const unreachable = makeThreadShellFixture({
+      environmentId: unreachableId,
+      id: ThreadId.make("unreachable"),
+      title: "unreachable",
+      runtime: running,
+    });
+    const layout = build({
+      threads: [...threads, unreachable],
+      disconnectedEnvironmentIds: new Set([unreachableId]),
+    });
+
+    expect(ids(layout)).toContain("unreachable");
+    expect(layout.workingCount).toBe(1);
   });
 
   it("orders the inbox by the latest return this device observed", () => {

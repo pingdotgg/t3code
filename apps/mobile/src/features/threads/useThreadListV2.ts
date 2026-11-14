@@ -1,14 +1,18 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { useMemo, useSyncExternalStore } from "react";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import { workspaceConnections } from "../../state/workspace";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
+  isThreadListV2EnvironmentDisconnected,
   threadListInboxReturns,
   threadListV2LayoutTime,
 } from "./threadListV2";
@@ -25,6 +29,14 @@ function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
     [newlineSeparatedKeys],
   );
 }
+
+const disconnectedEnvironmentIdsAtom = Atom.make((get) =>
+  get(workspaceConnections.environmentsAtom)
+    .filter((environment) => isThreadListV2EnvironmentDisconnected(environment.connectionState))
+    .map((environment) => environment.environmentId)
+    .sort()
+    .join("\n"),
+);
 
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
 
@@ -80,6 +92,7 @@ export function useThreadListV2(input: {
     () => observeInbox(workingShelfEnabled ? threads : null, inboxVersion),
     [threads, workingShelfEnabled, inboxVersion],
   );
+  const disconnectedEnvironmentIds = useKeySet(useAtomValue(disconnectedEnvironmentIdsAtom));
   // Compute move availability per section; per-row planning is quadratic.
   const moveAvailability = useMemo(() => {
     const sectionAvailability = (section: "pinned" | "active") =>
@@ -142,6 +155,7 @@ export function useThreadListV2(input: {
         matchedThreadKeys: new Set(input.searchMatches.keys()),
         settlementEnvironmentIds: input.settlementEnvironmentIds,
         snoozeEnvironmentIds: input.snoozeEnvironmentIds,
+        disconnectedEnvironmentIds,
         queuedThreadKeys: input.queuedThreadKeys,
         settledLimit: input.settledLimit,
         now: layoutTime,
@@ -175,6 +189,7 @@ export function useThreadListV2(input: {
       input.settlementEnvironmentIds,
       input.snoozeEnvironmentIds,
       input.queuedThreadKeys,
+      disconnectedEnvironmentIds,
       input.settledLimit,
       layoutTime,
       workingShelfEnabled,

@@ -29,6 +29,7 @@ import {
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { isListedThreadLineage, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -255,6 +256,13 @@ export function resolveThreadListV2WokeAt(
   return !Number.isNaN(wokeAtMs) && (Number.isNaN(lastVisitedAtMs) || lastVisitedAtMs < wokeAtMs)
     ? wokeAt
     : null;
+}
+
+// The first connection attempt keeps cached placement so threads do not jump shelves on launch.
+export function isThreadListV2EnvironmentDisconnected(
+  connectionState: EnvironmentConnectionPhase,
+): boolean {
+  return connectionState !== "connecting" && connectionState !== "connected";
 }
 
 export function resolveThreadListV2Status(
@@ -661,6 +669,7 @@ export function buildThreadListV2Items(input: {
   readonly matchedThreadKeys?: ReadonlySet<string>;
   readonly settlementEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
+  readonly disconnectedEnvironmentIds?: ReadonlySet<string>;
   readonly settledLimit?: number;
   readonly now: string;
   readonly workingShelfEnabled?: boolean;
@@ -702,6 +711,8 @@ export function buildThreadListV2Items(input: {
   const snoozed: EnvironmentThreadShell[] = [];
   let nextSnoozeWakeAt: string | null = null;
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
+  const isDisconnected = (thread: EnvironmentThreadShell) =>
+    input.disconnectedEnvironmentIds?.has(thread.environmentId) === true;
   const listedThreads = input.threads.filter(
     (thread) =>
       thread.archivedAt === null &&
@@ -752,7 +763,12 @@ export function buildThreadListV2Items(input: {
       settled.push(thread);
     } else if (thread.pinnedAt != null) {
       pinned.push(thread);
-    } else if (workingShelfEnabled && (input.isWorking ?? isThreadWorking)(thread)) {
+    } else if (
+      workingShelfEnabled &&
+      // A shelf the user collapsed must not hide a thread whose progress is unknown.
+      !isDisconnected(thread) &&
+      (input.isWorking ?? isThreadWorking)(thread)
+    ) {
       working.push(thread);
     } else {
       active.push(thread);
