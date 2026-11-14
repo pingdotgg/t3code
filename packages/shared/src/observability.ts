@@ -414,6 +414,11 @@ const URL_CREDENTIAL_PARAMS = /(^|[?&"\s])(wsTicket|dpop)=[^&#"\\\s]*/g;
 const redactUrlCredentials = (text: string) =>
   text.replace(URL_CREDENTIAL_PARAMS, "$1$2=<redacted>");
 
+// effect/ai Toolkit records raw tool arguments before it decodes them. Their values
+// and even their names come from the caller and can hold secrets, so keep only the count.
+const toolArgumentCount = (parameters: unknown) =>
+  typeof parameters === "object" && parameters !== null ? Object.keys(parameters).length : 0;
+
 export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: TraceSinkOptions) {
   const sink = yield* makeAsyncRotatingFileSink({
     filePath: options.filePath,
@@ -639,9 +644,11 @@ class LocalFileSpan implements Tracer.Span {
 
   attribute(key: string, value: unknown): void {
     const recorded =
-      (key === "url.full" || key === "url.query") && typeof value === "string"
-        ? redactUrlCredentials(value)
-        : value;
+      key === "parameters"
+        ? toolArgumentCount(value)
+        : (key === "url.full" || key === "url.query") && typeof value === "string"
+          ? redactUrlCredentials(value)
+          : value;
     this.attributes.set(key, recorded);
     this.delegate.attribute(key, recorded);
   }
