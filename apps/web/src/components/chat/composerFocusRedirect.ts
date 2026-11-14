@@ -110,6 +110,7 @@ export function pendingQuestionKeyTarget(event: KeyboardEvent): PendingQuestionK
   }
   if (event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return null;
   if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return null;
+  if (document.querySelector('[data-chat-column-maximized-away="true"]')) return null;
   if (eventPathContainsSelector(event, '[data-testid="composer-editor"]')) return "answer";
   if (eventPathContainsSelector(event, "[data-pending-user-input-option]")) return "option";
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return null;

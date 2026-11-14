@@ -74,6 +74,15 @@ it.each<{ focus: string; control: ReactNode; toggles: boolean }>([
     toggles: false,
   },
   {
+    focus: "a page button while the chat column is maximized away",
+    control: (
+      <div data-chat-column-maximized-away="true">
+        <button type="button" aria-label="Focused" />
+      </div>
+    ),
+    toggles: false,
+  },
+  {
     focus: "a closed select menu",
     control: (
       <Select>
