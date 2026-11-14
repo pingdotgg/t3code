@@ -73,6 +73,8 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       context.page.viewportSize.mockReturnValue(null);
       const browser = { close: vi.fn(async () => {}) };
       desktopConnections.push({ endpoint, context, browser });
+      desktopConnectionStarted?.resolve();
+      await desktopConnectionGate?.promise;
       return { browser, page: context.page as unknown as Page };
     }
     async close() {
@@ -396,6 +398,8 @@ let pageSetupFailure: Error | null = null;
 let initialNavigation: (() => Promise<void>) | null = null;
 let desktopRendersNext = false;
 let desktopPageUrl = "about:blank";
+let desktopConnectionGate: PromiseWithResolvers<void> | null = null;
+let desktopConnectionStarted: PromiseWithResolvers<void> | null = null;
 /** Replaces the answer to the desktop page's size reads. */
 let desktopSizeAnswer: (() => Promise<Record<string, unknown>>) | null = null;
 const desktopDetaches = new NodeEvents.EventEmitter();
@@ -587,6 +591,8 @@ beforeEach(() => {
   desktopAttachesLate = false;
   desktopAttachWaiting = Promise.withResolvers<void>();
   desktopPageUrl = "about:blank";
+  desktopConnectionGate = null;
+  desktopConnectionStarted = null;
   desktopSizeAnswer = null;
   desktopDetachReady = Promise.withResolvers<void>();
   desktopReleased = Promise.withResolvers<void>();
@@ -1733,6 +1739,66 @@ it.effect("closing a tab force-closes a page that never finishes unloading", () 
       expect(vi.getTimerCount()).toBe(0);
     }).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers()))),
   ).pipe(Effect.provide(layer)),
+);
+
+it.effect.each(["listen", "guard", "timeout"] as const)(
+  "closing a desktop tab during setup unloads its page before disconnecting (%s)",
+  (beforeUnload) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker } = yield* ready;
+        const manager = yield* Manager.PreviewManager;
+        desktopRendersNext = true;
+        const gate = (desktopConnectionGate = Promise.withResolvers<void>());
+        const started = (desktopConnectionStarted = Promise.withResolvers<void>());
+        yield* Effect.addFinalizer(() => Effect.sync(() => gate.resolve()));
+        const opening = yield* broker
+          .invoke<PreviewAutomationStatus>({
+            scope,
+            operation: "open",
+            input: { reuseExistingTab: false, open: false },
+          })
+          .pipe(Effect.result, Effect.forkScoped);
+        yield* Effect.promise(() => started.promise);
+        const { context, browser } = desktopConnections[0]!;
+        const page = context.page;
+        page.beforeUnload = beforeUnload === "timeout" ? "listen" : beforeUnload;
+        if (beforeUnload === "listen") page.unloadGate = Promise.withResolvers<void>();
+        if (beforeUnload === "timeout") {
+          vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+          yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+        }
+        const { sessions } = yield* manager.list({ threadId: testThread.threadId });
+        const session = sessions.find((candidate) => !candidate.headless)!;
+        const closing = yield* manager
+          .close({ threadId: testThread.threadId, tabId: session.tabId })
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        expect(page.isClosed()).toBe(false);
+        if (beforeUnload === "timeout") {
+          vi.advanceTimersByTime(5_000);
+          yield* Fiber.join(closing);
+        }
+        gate.resolve();
+        if (beforeUnload === "listen") {
+          yield* Effect.promise(() =>
+            Promise.race([page.pagehideWatched.promise, desktopReleased.promise]),
+          );
+          expect((yield* manager.list({ threadId: testThread.threadId })).sessions).toEqual(
+            expect.arrayContaining([expect.objectContaining({ tabId: session.tabId })]),
+          );
+          page.unloadGate!.resolve();
+        }
+        yield* Fiber.join(closing);
+        expect(yield* Fiber.join(opening)).toMatchObject({
+          _tag: "Failure",
+        });
+        yield* Effect.promise(() => desktopReleased.promise);
+        expect(page.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
+        expect(page.isClosed()).toBe(true);
+        expect(browser.close).toHaveBeenCalled();
+        if (beforeUnload === "timeout") expect(vi.getTimerCount()).toBe(0);
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.effect.each(["agent", "client", "all", "concurrent", "timeout"] as const)(

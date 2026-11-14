@@ -888,8 +888,18 @@ const make = Effect.gen(function* () {
     Effect.promise(async () => {
       await Promise.all(
         snapshots.map((snapshot) => {
-          const tab = tabs.get(tabKey(snapshot.threadId, snapshot.tabId));
-          if (!tab) return;
+          const key = tabKey(snapshot.threadId, snapshot.tabId);
+          const tab = tabs.get(key);
+          if (!tab) {
+            const opening = pendingTabs.get(key);
+            if (!opening) return;
+            closedPendingTabs.add(key);
+            if (!opening.promise) return;
+            const settled = Promise.withResolvers<void>();
+            const timeout = setTimeout(settled.resolve, PAGE_CLOSE_GRACE_MS);
+            void opening.promise.finally(settled.resolve).catch(constVoid);
+            return settled.promise.finally(() => clearTimeout(timeout));
+          }
           void tab.control.close().catch(constVoid);
           if (!tab.desktop || tab.dialog !== null) return;
           const pending = unloadingTabs.get(tab);
@@ -1249,6 +1259,10 @@ const make = Effect.gen(function* () {
     page.on("popup", (popup) => void adoptPopup(tab, popup));
     const key = tabKey(tab.threadId, tab.tabId);
     if (closedPendingTabs.delete(key)) {
+      if (desktop) {
+        tab.closing = true;
+        await unloadDesktopPage(page).catch(constVoid);
+      }
       await control.close().catch(constVoid);
       throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
     }
