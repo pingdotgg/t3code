@@ -1578,13 +1578,23 @@ describe("PreviewManager", () => {
     const detachListeners = new Set<() => void>();
     let chromiumDetaches = 0;
     let destroyed = false;
+    let devToolsOpened = false;
+    const openDevTools = vi.fn(() => {
+      devToolsOpened = true;
+    });
+    const closeDevTools = vi.fn(() => {
+      devToolsOpened = false;
+      listeners.get("devtools-closed")?.();
+    });
     const wc = {
       id,
       isDestroyed: () => destroyed,
       isDevToolsOpened: () => {
         if (destroyed) throw new TypeError("Object has been destroyed");
-        return false;
+        return devToolsOpened;
       },
+      openDevTools,
+      closeDevTools,
       getType: () => "webview",
       getURL: () => "http://localhost:5173/README.md",
       getTitle: () => "README.md",
@@ -1627,6 +1637,8 @@ describe("PreviewManager", () => {
       attach,
       detach,
       sendCommand,
+      openDevTools,
+      closeDevTools,
       chromiumDetach,
       destroy: () => {
         destroyed = true;
@@ -1649,6 +1661,32 @@ describe("PreviewManager", () => {
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
         expect(guest.attach).toHaveBeenCalledTimes(2);
+      }),
+    ),
+  );
+
+  effectIt.effect("closes open DevTools when DevTools is requested again", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const changes = makeChangeSignal();
+        const guest = makeAttachingGuest(49);
+        guest.attach.mockImplementation(() => changes.notify());
+        fromId.mockReturnValue(guest.wc);
+        yield* manager.createTab("tab_devtools");
+        yield* manager.registerWebview("tab_devtools", 49);
+        yield* changes.until(() => guest.attach.mock.calls.length === 1);
+
+        yield* manager.toggleDevTools("tab_devtools");
+        expect(guest.openDevTools).toHaveBeenCalledTimes(1);
+        expect(guest.detach).toHaveBeenCalledTimes(1);
+
+        yield* manager.toggleDevTools("tab_devtools");
+        expect(
+          guest.closeDevTools,
+          "a second request should close the open DevTools",
+        ).toHaveBeenCalledTimes(1);
+        expect(guest.openDevTools).toHaveBeenCalledTimes(1);
+        yield* changes.until(() => guest.attach.mock.calls.length === 2);
       }),
     ),
   );

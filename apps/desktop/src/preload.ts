@@ -414,8 +414,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.PREVIEW_STOP_FIND_IN_PAGE_CHANNEL, { tabId }),
     setShown: (tabId, shown) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_SHOWN_CHANNEL, { tabId, shown }),
-    openDevTools: (tabId) =>
-      ipcRenderer.invoke(IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL, { tabId }),
+    toggleDevTools: (tabId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_TOGGLE_DEVTOOLS_CHANNEL, { tabId }),
     listBrowserImportSources: () => ipcRenderer.invoke(IpcChannels.PREVIEW_IMPORT_SOURCES_CHANNEL),
     importBrowserCookies: (input) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_IMPORT_COOKIES_CHANNEL, input),

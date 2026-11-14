@@ -1287,7 +1287,7 @@ export interface DesktopPreviewBridge {
   stopFindInPage: (tabId: string) => Promise<void>;
   /** Tells the tab's server whether its webview is on screen. */
   setShown: (tabId: string, shown: boolean) => Promise<void>;
-  openDevTools: (tabId: string) => Promise<void>;
+  toggleDevTools: (tabId: string) => Promise<void>;
   clearCookies: (environmentId: EnvironmentId, profileId?: string) => Promise<void>;
   clearCache: (environmentId: EnvironmentId, profileId?: string) => Promise<void>;
   getPreviewConfig: (

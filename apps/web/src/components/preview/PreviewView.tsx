@@ -507,7 +507,7 @@ export function PreviewView({
         clearCache: () => void adjustServerTab({ clear: "cache" }),
         ...(nativeServerTab && previewBridge
           ? {
-              openDevTools: desktopCall(previewBridge.openDevTools),
+              toggleDevTools: desktopCall(previewBridge.toggleDevTools),
               toggleNativePictureInPicture: () => handleNativePictureInPicture(),
               ...(canFindInPage ? { find: handleFind } : {}),
             }
@@ -531,7 +531,7 @@ export function PreviewView({
             void previewBridge
               ?.clearCache(threadRef.environmentId, activeProfileId)
               .catch(() => undefined),
-          openDevTools: desktopCall(previewBridge.openDevTools),
+          toggleDevTools: desktopCall(previewBridge.toggleDevTools),
           toggleNativePictureInPicture: () => handleNativePictureInPicture(),
           ...(canFindInPage ? { find: handleFind } : {}),
         }
