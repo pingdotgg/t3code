@@ -16,7 +16,6 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2Subagent,
-  type OrchestrationV2StoredEvent,
   type OrchestrationV2TurnItem,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -1926,86 +1925,86 @@ it.effect("ends a nested native subagent and its thread when the root run is int
 );
 
 it.effect("drains queued child output after the root loses provider-thread ownership", () =>
-    Effect.gen(function* () {
-      const childEvents: Array<string> = [];
-      yield* runBackgroundItemScenario(
-        "queued-child-output",
-        (ids) => {
-          const childProviderThreadId = ProviderThreadId.make(
-            "provider-thread:queued-child-output:child",
-          );
-          const snapshot = (child: boolean, pendingBackgroundWork: boolean) => ({
-            type: "provider_thread.updated" as const,
+  Effect.gen(function* () {
+    const childEvents: Array<string> = [];
+    yield* runBackgroundItemScenario(
+      "queued-child-output",
+      (ids) => {
+        const childProviderThreadId = ProviderThreadId.make(
+          "provider-thread:queued-child-output:child",
+        );
+        const snapshot = (child: boolean, pendingBackgroundWork: boolean) => ({
+          type: "provider_thread.updated" as const,
+          driver,
+          providerThread: {
+            id: child ? childProviderThreadId : ids.providerThreadId,
             driver,
-            providerThread: {
-              id: child ? childProviderThreadId : ids.providerThreadId,
-              driver,
-              providerInstanceId: ProviderInstanceId.make("codex"),
-              providerSessionId: null,
-              appThreadId: child ? ids.childThreadId : ids.threadId,
-              ownerNodeId: null,
-              nativeThreadRef: null,
-              nativeConversationHeadRef: null,
-              status: "idle",
-              firstRunOrdinal: 1,
-              lastRunOrdinal: 1,
-              handoffIds: [],
-              forkedFrom: null,
-              pendingBackgroundTasks: [],
-              createdAt: DateTime.makeUnsafe(0),
-              updatedAt: DateTime.makeUnsafe(0),
-            } satisfies OrchestrationV2ProviderThread,
-            pendingBackgroundWork,
-          });
-          const childTurn = (status: "running" | "completed") => ({
-            type: "provider_turn.updated" as const,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            providerSessionId: null,
+            appThreadId: child ? ids.childThreadId : ids.threadId,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            forkedFrom: null,
+            pendingBackgroundTasks: [],
+            createdAt: DateTime.makeUnsafe(0),
+            updatedAt: DateTime.makeUnsafe(0),
+          } satisfies OrchestrationV2ProviderThread,
+          pendingBackgroundWork,
+        });
+        const childTurn = (status: "running" | "completed") => ({
+          type: "provider_turn.updated" as const,
+          driver,
+          threadId: ids.childThreadId,
+          providerTurn: {
+            id: ProviderTurnId.make("provider-turn:queued-child-output:child"),
+            providerThreadId: childProviderThreadId,
+            runAttemptId: null,
+            ordinal: 2,
+            status,
+          } as OrchestrationV2ProviderTurn,
+        });
+        const message = (text: string) =>
+          ({
+            type: "message.updated",
             driver,
-            threadId: ids.childThreadId,
-            providerTurn: {
-              id: ProviderTurnId.make("provider-turn:queued-child-output:child"),
-              providerThreadId: childProviderThreadId,
-              runAttemptId: null,
-              ordinal: 2,
-              status,
-            } as OrchestrationV2ProviderTurn,
-          });
-          const message = (text: string) =>
-            ({
-              type: "message.updated",
-              driver,
-              message: { threadId: ids.childThreadId, runId: null, text },
-            }) as ProviderAdapter.ProviderAdapterV2Event;
-          return [
-            childThreadCreatedEvent(ids),
-            snapshot(false, true),
-            snapshot(true, true),
-            subagentEvent(ids, "running"),
-            rootTerminalEvent(ids, "completed"),
-            snapshot(false, true),
-            subagentEvent(ids, "completed"),
-            childTurn("running"),
-            message("GRANDCHILD_OK"),
-            childTurn("completed"),
-            snapshot(true, false),
-            snapshot(false, false),
-            message("after-drain"),
-          ];
-        },
-        {
-          keepEventStreamOpen: true,
-          hasPendingBackgroundWorkForThread: () => Effect.succeed(false),
-          providerThreadOwnerLost: true,
-          onIngest: (event) =>
-            Effect.sync(() => {
-              if (event.type === "provider_turn.updated") {
-                childEvents.push(event.providerTurn.status);
-              }
-              if (event.type === "message.updated") childEvents.push(event.message.text);
-            }),
-        },
-      );
-      assert.deepEqual(childEvents, ["running", "GRANDCHILD_OK", "completed"]);
-    }),
+            message: { threadId: ids.childThreadId, runId: null, text },
+          }) as ProviderAdapter.ProviderAdapterV2Event;
+        return [
+          childThreadCreatedEvent(ids),
+          snapshot(false, true),
+          snapshot(true, true),
+          subagentEvent(ids, "running"),
+          rootTerminalEvent(ids, "completed"),
+          snapshot(false, true),
+          subagentEvent(ids, "completed"),
+          childTurn("running"),
+          message("GRANDCHILD_OK"),
+          childTurn("completed"),
+          snapshot(true, false),
+          snapshot(false, false),
+          message("after-drain"),
+        ];
+      },
+      {
+        keepEventStreamOpen: true,
+        hasPendingBackgroundWorkForThread: () => Effect.succeed(false),
+        providerThreadOwnerLost: true,
+        onIngest: (event) =>
+          Effect.sync(() => {
+            if (event.type === "provider_turn.updated") {
+              childEvents.push(event.providerTurn.status);
+            }
+            if (event.type === "message.updated") childEvents.push(event.message.text);
+          }),
+      },
+    );
+    assert.deepEqual(childEvents, ["running", "GRANDCHILD_OK", "completed"]);
+  }),
 );
 
 it.effect("keeps ingesting until queued background work clears after the probe goes idle", () =>
