@@ -22,7 +22,10 @@ const environmentId = EnvironmentId.make("environment-v2");
 const remoteEnvironmentId = EnvironmentId.make("remote-environment-v2");
 const otherProjectId = ProjectId.make("other-project");
 
-function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environmentId]) {
+function makeHarness(
+  environmentIds: ReadonlyArray<EnvironmentId> = [environmentId],
+  hiddenTags: ReadonlyArray<string> | null = null,
+) {
   const snapshotAtom = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make<OrchestrationV2ShellSnapshot | null>(v2ShellSnapshot),
   );
@@ -51,7 +54,7 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
     threads: createEnvironmentThreadShellAtoms({
       catalogValueAtom,
       snapshotAtom,
-      hiddenThreadTagsAtom: () => Atom.make(null),
+      hiddenThreadTagsAtom: () => Atom.make(hiddenTags),
     }),
   };
 }
@@ -675,6 +678,48 @@ describe("v2 thread shell lists", () => {
       expect(harness.registry.get(listAtom)[0]?.title).toBe("Renamed");
     } finally {
       dispose();
+      harness.registry.dispose();
+    }
+  });
+
+  it("delivers one quiet shell list per snapshot update that changes several threads", () => {
+    const harness = makeHarness([environmentId], ["private"]);
+    const snapshot: OrchestrationV2ShellSnapshot = {
+      ...v2ShellSnapshot,
+      threads: ["a", "b", "c", "d", "hidden"].map((id) => ({
+        ...v2ThreadShell,
+        id: ThreadId.make(id),
+        title: id,
+        tags: id === "hidden" ? ["private"] : [],
+      })),
+    };
+    harness.registry.set(harness.snapshotAtom(environmentId), snapshot);
+    const delivered: Array<ReadonlyArray<string>> = [];
+    const unsubscribe = harness.registry.subscribe(
+      harness.threads.quietThreadShellsAtom,
+      (list) => delivered.push(list.map((thread) => thread.title).toSorted()),
+      { immediate: true },
+    );
+    try {
+      expect(delivered).toEqual([["a", "b", "c", "d"]]);
+      delivered.length = 0;
+      const next = ["a", "b", "c"].reduce(
+        (current, id, index) =>
+          applyShellStreamEvent(current, {
+            kind: "thread.updated",
+            location: "active",
+            sequence: index + 1,
+            thread: {
+              ...current.threads.find((thread) => thread.id === id)!,
+              title: `${id} renamed`,
+            },
+          }),
+        snapshot,
+      );
+      harness.registry.set(harness.snapshotAtom(environmentId), next);
+      expect(delivered).toEqual([["a renamed", "b renamed", "c renamed", "d"]]);
+    } finally {
+      unsubscribe();
       harness.registry.dispose();
     }
   });
