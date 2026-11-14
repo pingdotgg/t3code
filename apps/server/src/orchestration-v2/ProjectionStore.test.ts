@@ -6430,7 +6430,80 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
 
       yield* applyProviderThread("first", goal, 0);
       assert.deepEqual(yield* shellGoal, goal);
-      yield* applyProviderThread("second", null, 1);
+      const message = (createdBy: "user" | "agent", seconds: number) => {
+        const at = DateTime.add(now, { seconds });
+        return projectionStore.apply({
+          id: EventId.make(`event:provider-goal:message:${seconds}`),
+          type: "message.updated",
+          threadId,
+          occurredAt: at,
+          payload: {
+            id: MessageId.make(`message:provider-goal:${seconds}`),
+            threadId,
+            runId: null,
+            nodeId: null,
+            role: "user",
+            text: "Continue the conversation",
+            attachments: [],
+            streaming: false,
+            createdBy,
+            creationSource: "web",
+            createdAt: at,
+            updatedAt: at,
+          },
+        });
+      };
+      const completed = { ...goal, status: "complete" as const };
+      yield* message("user", 1);
+      yield* applyProviderThread("first", completed, 2);
+      assert.deepEqual(yield* shellGoal, completed);
+      yield* message("agent", 3);
+      assert.deepEqual(yield* shellGoal, completed);
+      yield* message("user", 4);
+      assert.isNull(yield* shellGoal);
+      yield* applyProviderThread("first", { ...completed, tokensUsed: 20 }, 5);
+      assert.isNull(yield* shellGoal);
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      assert.isNull(ProjectionStore.threadShellFromProjection(projection).goal);
+      assert.equal(projection.providerThreads[0]?.goal?.status, "complete");
+      yield* applyProviderThread("first", goal, 6);
+      assert.deepEqual(yield* shellGoal, goal);
+      yield* applyProviderThread("first", completed, 7);
+      assert.deepEqual(yield* shellGoal, completed);
+      assert.deepEqual(
+        ProjectionStore.threadShellFromProjection(
+          yield* projectionStore.getThreadProjection(threadId),
+        ).goal,
+        completed,
+      );
+      yield* message("user", 8);
+      assert.isNull(yield* shellGoal);
+      for (const [index, status] of (
+        ["active", "paused", "blocked", "usage_limited", "budget_limited"] as const
+      ).entries()) {
+        yield* applyProviderThread("first", { ...goal, status }, 9 + index * 2);
+        yield* message("user", 10 + index * 2);
+        assert.equal((yield* shellGoal)?.status, status);
+      }
+      yield* applyProviderThread("first", completed, 20);
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE orchestration_v2_projection_provider_threads
+        SET payload_json = json_remove(payload_json, '$.goalCompletedAt')
+        WHERE thread_id = ${threadId}`;
+      assert.deepEqual(yield* shellGoal, completed);
+      yield* message("user", 21);
+      assert.isNull(yield* shellGoal);
+      yield* applyProviderThread("first", completed, 22);
+      assert.isNull(yield* shellGoal);
+      yield* applyProviderThread("first", null, 23);
+      assert.isNull(yield* shellGoal);
+      yield* applyProviderThread("first", completed, 24);
+      assert.deepEqual(yield* shellGoal, completed);
+      yield* message("user", 25);
+      const replacement = { ...completed, objective: "Verify the next fix" };
+      yield* applyProviderThread("first", replacement, 26);
+      assert.deepEqual(yield* shellGoal, replacement);
+      yield* applyProviderThread("second", null, 27);
       assert.isNull(yield* shellGoal);
     }),
   );

@@ -1156,6 +1156,8 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
   goal: Schema.optional(Schema.NullOr(OrchestrationV2ProviderGoal)).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Retained across provider refreshes so the next user message dismisses the completed goal. */
+  goalCompletedAt: Schema.optional(Schema.DateTimeUtc),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
 });
@@ -2518,6 +2520,7 @@ export type OrchestrationV2ProviderSessionDetachedJson =
 export const OrchestrationV2ProviderThreadJson = OrchestrationV2ProviderThread.mapFields(
   (fields) => ({
     ...fields,
+    goalCompletedAt: Schema.optional(Schema.DateTimeUtcFromString),
     createdAt: Schema.DateTimeUtcFromString,
     updatedAt: Schema.DateTimeUtcFromString,
   }),
