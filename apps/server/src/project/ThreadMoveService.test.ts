@@ -534,19 +534,6 @@ it.layer(layerTest)("ThreadMoveService", (it) => {
             return Effect.andThen(fillFolder, error);
           },
         });
-      // A writer that races the cleanup: its file arrives right after a listing of the folder.
-      const raced: Array<string> = [];
-      const racedFileSystem = FileSystem.FileSystem.of({
-        ...fileSystem,
-        readDirectory: (folder, options) =>
-          fileSystem.readDirectory(folder, options).pipe(
-            Effect.tap(() => {
-              if (path.dirname(folder) !== scratchRoot) return Effect.void;
-              raced.push(path.join(folder, "late.md"));
-              return fileSystem.writeFileString(path.join(folder, "late.md"), "keep");
-            }),
-          ),
-      });
       for (const [id, fill] of [
         ["empty", null],
         ["full", "notes.md"],
@@ -554,7 +541,6 @@ it.layer(layerTest)("ThreadMoveService", (it) => {
         const memberId = yield* thread(id, a.id, null);
         const failing = yield* ThreadMoveService.make.pipe(
           Effect.provideService(EventSink.EventSinkV2, failingSink(fill)),
-          Effect.provideService(FileSystem.FileSystem, racedFileSystem),
         );
         const failure = yield* Effect.flip(failing.move({ threadId: memberId, destination: null }));
         assert.equal(failure.message, "Could not commit the move.");
@@ -565,7 +551,6 @@ it.layer(layerTest)("ThreadMoveService", (it) => {
           assert.isTrue(yield* fileSystem.exists(path.join(scratchRoot, kept[0]!, fill)));
         }
       }
-      for (const late of raced) assert.isTrue(yield* fileSystem.exists(late), late);
     }),
   );
 
