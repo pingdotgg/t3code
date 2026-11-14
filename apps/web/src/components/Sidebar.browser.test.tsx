@@ -380,6 +380,7 @@ describe("sidebar settled pagination", () => {
     const viewport = moreButton.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
     viewport.style.height = "300px";
     viewport.style.maxHeight = "300px";
+    await userEvent.wheel(viewport, { delta: { y: 300 } });
     moreButton.scrollIntoView({ block: "nearest" });
     const before = viewport.scrollTop;
     expect(before).toBeGreaterThan(0);
