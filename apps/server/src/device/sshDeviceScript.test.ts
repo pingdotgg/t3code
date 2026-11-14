@@ -68,31 +68,17 @@ it("passes bootstrap code through the remote login shell without reinterpreting 
   expect(result.stdout).toBe(value);
 });
 
-it("preserves remote arguments and exact stdin, and reports failure through the login shell", () => {
-  const value = "quotes ' \" $HOME\nno trailing newline";
-  const input = `${value}\r\nCR\rNUL\0backslash \\ \\0015 %s`;
-  const code =
-    "process.stdout.write(JSON.stringify({args:process.argv.slice(1),input:require('node:fs').readFileSync(0,'utf8')}));process.exitCode=23";
-  const node = process.execPath.replaceAll("\\", "/");
-  const result = runThroughLoginShell(
-    remoteDeviceCommand(`exec ${[node, "-e", code, value].map(quoteRemoteArg).join(" ")}`, input),
-  );
-  expect(result.error).toBeUndefined();
-  expect(result.stderr).toBe("");
-  // PowerShell -Command normalizes a failing native command to exit code 1.
-  expect(result.status).toBe(windowsHost ? 1 : 23);
-  expect(JSON.parse(result.stdout)).toEqual({ args: [value], input });
-});
-
 const executable = async (file: string, body = "exit 0") => {
   await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
   await NodeFSP.writeFile(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
 };
 
-const completeSdk = async (sdk: string, adb = "echo Android Debug Bridge") => {
-  await executable(NodePath.join(sdk, "platform-tools/adb"), adb);
-  await executable(NodePath.join(sdk, "emulator/emulator"));
-  await executable(NodePath.join(sdk, "cmdline-tools/latest/bin/avdmanager"));
+const completeSdk = async (sdk: string, adb = "echo Android Debug Bridge", windows = false) => {
+  await executable(NodePath.join(sdk, `platform-tools/adb${windows ? ".exe" : ""}`), adb);
+  await executable(NodePath.join(sdk, `emulator/emulator${windows ? ".exe" : ""}`));
+  await executable(
+    NodePath.join(sdk, `cmdline-tools/latest/bin/avdmanager${windows ? ".bat" : ""}`),
+  );
 };
 
 /** Runs the probe through the SSH shell setup, then `after` in that same shell. */
@@ -203,7 +189,7 @@ it("runs Windows npm probe and installation through Node with paths containing s
       const npm = NodePath.join(NodePath.dirname(node), "node_modules/npm/bin/npm-cli.js");
       const calls = NodePath.join(home, "npm calls.jsonl");
       const sdk = NodePath.join(home, "sdk");
-      await completeSdk(sdk);
+      await completeSdk(sdk, undefined, true);
       await writeNpmPackage(NodePath.dirname(node), "11.0.0", "^20.17.0 || >=22.13.0");
       await writeNodeRuntime(NodePath.dirname(node));
       const npmFixture = `const fs = require('node:fs');
@@ -216,12 +202,10 @@ fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ node: process.execP
 if (args[0] === 'install') { console.error('fixture registry unavailable'); process.exitCode = 23; }
 else console.log(require('../package.json').version);`;
       await NodeFSP.writeFile(npm, npmFixture);
+      type NpmArgs = [path?: string, node?: string, key?: "PATH" | "Path", sibling?: string];
       const invoke = async (
         mode: "probe" | "start",
-        npmPath = "",
-        nodeVersion?: string,
-        pathKey: "PATH" | "Path" = "PATH",
-        siblingVersion?: string,
+        ...[npmPath = "", nodeVersion, pathKey = "PATH", siblingVersion]: NpmArgs
       ) => {
         const script = NodePath.join(home, `${mode}.cjs`);
         await NodeFSP.writeFile(
@@ -231,7 +215,7 @@ ${nodeVersion ? `Object.defineProperty(process.versions, 'node', { value: ${JSON
 require('node:os').homedir = () => ${JSON.stringify(home)};
 const childProcess = require('node:child_process');
 const originalSpawnSync = childProcess.spawnSync;
-childProcess.spawnSync = (command, args, options) => command.endsWith('adb')
+childProcess.spawnSync = (command, args, options) => command.endsWith('adb.exe')
   ? { status: 0, stdout: '', stderr: '' }
   ${siblingVersion ? `: args[0] === '-p' ? { status: 0, stdout: ${JSON.stringify(siblingVersion)}, stderr: '' }` : ""}
   : originalSpawnSync(command, args, options);
@@ -256,18 +240,16 @@ childProcess.spawnSync = (command, args, options) => command.endsWith('adb')
       };
       const rejects = (result: ReturnType<typeof invoke>, diagnostic: string) =>
         expect(result).rejects.toMatchObject({ stderr: expect.stringContaining(diagnostic) });
-      const checkNpm = async (
-        runtime: string,
-        npmPath = "",
-        nodeVersion?: string,
-        pathKey: "PATH" | "Path" = "PATH",
-        siblingVersion?: string,
-      ) => {
+      const checkNpm = async (runtime: string, ...args: NpmArgs) => {
         await NodeFSP.writeFile(calls, "");
-        const probe = await invoke("probe", npmPath, nodeVersion, pathKey, siblingVersion);
+        const probe = await invoke("probe", ...args);
         expect(JSON.parse(probe.stdout).nodePath).toBe(node);
+        expect(JSON.parse(probe.stdout).platforms).toContainEqual({
+          platform: "android",
+          available: true,
+        });
         await rejects(
-          invoke("start", npmPath, nodeVersion, pathKey, siblingVersion),
+          invoke("start", ...args),
           "Installing expo-device-hub: exit code 23: fixture registry unavailable",
         );
         const recent = (await NodeFSP.readFile(calls, "utf8"))
@@ -276,6 +258,7 @@ childProcess.spawnSync = (command, args, options) => command.endsWith('adb')
           .map((line) => JSON.parse(line));
         expect(recent).toEqual(
           [
+            ["--version"],
             ["--version"],
             [
               "install",
@@ -339,6 +322,7 @@ childProcess.spawnSync = (command, args, options) => command.endsWith('adb')
         ["package.json", "null"],
         ["package.json", "{}"],
         ["node_modules/semver", undefined],
+        ["bin/npm-cli.js", "throw Error('fixture damaged CLI');"],
       ] as const) {
         await writeNpmPackage(NodePath.dirname(node), "10.0.0", ">=22");
         const target = NodePath.resolve(NodePath.dirname(npm), "..", file);

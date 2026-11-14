@@ -151,15 +151,20 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     const owner = owners[0]!;
     yield* fs.makeDirectory(home + "/.t3/device/hosts/" + owner, { recursive: true });
     const value = "quotes ' \" $HOME \nno trailing newline";
-    const input = value + "\r\nCR\rNUL\0backslash \\";
+    const args = [value, "/sdcard", "/sdcard/DCIM"];
+    const input = value + "\r\nCR\rNUL\0backslash \\ \\0015 %s";
     const code =
-      "process.stdout.write(JSON.stringify({args:process.argv.slice(1),input:require('node:fs').readFileSync(0,'utf8'),cwd:process.cwd()}))";
-    const exact = yield* initial.run(process.execPath.replaceAll("\\", "/"), ["-e", code, value], {
-      stdin: input,
-    });
-    expect(exact.code).toBe(0);
+      "process.stdout.write(JSON.stringify({args:process.argv.slice(1),input:require('node:fs').readFileSync(0,'utf8'),cwd:process.cwd()}));process.exitCode=23";
+    const exact = yield* initial.run(
+      process.execPath.replaceAll("\\", "/"),
+      ["-e", code, ...args],
+      {
+        stdin: input,
+      },
+    );
+    expect(exact.code).toBe(platform === "win32" ? 1 : 23);
     const received = JSON.parse(exact.stdout);
-    expect(received.args).toEqual([value]);
+    expect(received.args).toEqual(args);
     expect(received.input).toBe(input);
     expect(received.cwd.replaceAll("\\", "/")).toBe(
       (yield* fs.realPath(home + "/.t3/device/hosts/" + owner)).replaceAll("\\", "/"),

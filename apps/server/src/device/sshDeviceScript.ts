@@ -32,7 +32,8 @@ export const remoteDeviceCommand = (
 
 export const remoteDeviceEnvironment = (
   options?: RemoteDeviceOptions,
-) => `export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
+) => `export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
+export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
 ${options?.nodeBootstrap ? `node -e 'process.exit(${nodeSupported}(process.versions.node) ? 0 : 1)' 2>/dev/null || export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"` : ""}
 if [ -z "$ANDROID_HOME" ]; then
   if [ -n "$ANDROID_SDK_ROOT" ]; then export ANDROID_HOME="$ANDROID_SDK_ROOT";
@@ -106,7 +107,10 @@ const runNpm = (args, options) => {
         failures.push('npm ' + npm.version + ' at ' + entry + ' requires Node ' + npm.engines.node + '; found ' + nodeVersion + ' at ' + node);
         continue;
       }
-      return run(node, [entry, ...args], { ...options, env: { ...env, PATH: path.dirname(node) + path.delimiter + inheritedPath } });
+      const pairedOptions = { ...options, env: { ...env, PATH: path.dirname(node) + path.delimiter + inheritedPath } };
+      const probe = run(node, [entry, '--version'], pairedOptions);
+      if (probe.error || probe.status !== 0) { failures.push('npm at ' + entry + ': npm probe failed: ' + commandFailure(probe)); continue; }
+      return args.length === 1 && args[0] === '--version' ? probe : run(node, [entry, ...args], pairedOptions);
     }
   }
   if (failures.length) throw Error('No compatible Node ${NODE_MINIMUM}+ and npm pair: ' + failures.join('; '));
@@ -214,9 +218,10 @@ async function install(name, version, entry) {
   const ios = process.platform === 'darwin' && run('xcrun', ['simctl', 'help']).status === 0;
   // The SSH shell setup chose ANDROID_HOME, so later commands use the SDK accepted here.
   const sdk = process.env.ANDROID_HOME;
+  const sdkTool = relative => path.join(sdk, relative + (process.platform === 'win32' ? (relative.endsWith('avdmanager') ? '.bat' : '.exe') : ''));
   const executable = (relative) => {
     try {
-      const file = path.join(sdk, relative);
+      const file = sdkTool(relative);
       fs.accessSync(file, fs.constants.X_OK);
       return fs.statSync(file).isFile();
     } catch {
@@ -227,7 +232,7 @@ async function install(name, version, entry) {
     : !executable('platform-tools/adb') ? 'Android SDK Platform-Tools are missing from ' + sdk + '. Install them in Android Studio SDK Manager.'
     : !executable('emulator/emulator') ? 'Android Emulator is missing from ' + sdk + '. Install it in Android Studio SDK Manager.'
     : !executable('cmdline-tools/latest/bin/avdmanager') ? 'Android SDK Command-line Tools (latest) are missing from ' + sdk + '. Install them in Android Studio SDK Manager.'
-    : run(path.join(sdk, 'platform-tools', 'adb'), ['version']).status !== 0 ? 'adb in ' + sdk + ' failed to run. Reinstall Android SDK Platform-Tools.'
+    : run(sdkTool('platform-tools/adb'), ['version']).status !== 0 ? 'adb in ' + sdk + ' failed to run. Reinstall Android SDK Platform-Tools.'
     : null;
   const android = androidReason === null;
   const platforms = [
@@ -277,8 +282,7 @@ async function install(name, version, entry) {
   // Only a Mac can list Apple simulators. Recording the filter replaces hubs started without it.
   const hubPlatform = process.platform === 'darwin' ? undefined : 'android';
   const cameraArgs = android ? ['front', 'back'].flatMap(facing => {
-    const emulator = process.env.ANDROID_HOME ? path.join(process.env.ANDROID_HOME, 'emulator', 'emulator') : 'emulator';
-    const help = run(emulator, ['-help-camera-' + facing], { timeout: 5000 });
+    const help = run(sdkTool('emulator/emulator'), ['-help-camera-' + facing], { timeout: 5000 });
     const text = (help.stdout || '') + '\n' + (help.stderr || '');
     // The hub's imagefile camera mode is not supported by every installed SDK emulator.
     return help.status === 0 && /\bemulated\b/.test(text) && !/\bimagefile\b/.test(text) ? ['-camera-' + facing, 'emulated'] : [];
