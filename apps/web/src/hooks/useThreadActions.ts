@@ -961,6 +961,8 @@ export function useThreadActions() {
             return unsnoozeThread(target);
           case "pin":
             return sendPin(target, step.orderKey === undefined ? {} : { orderKey: step.orderKey });
+          case "reorderActive":
+            return reorderActiveThread(target, step.orderKey);
           case "snooze":
             return snoozeThreadMutation({
               environmentId: target.environmentId,
