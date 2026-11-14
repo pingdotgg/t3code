@@ -389,7 +389,7 @@ to the socket.
 
 ## Status
 
-**Coverage:** 95 of 236 methods (20 of 33 streams), from the method table at startup. Every
+**Coverage:** 98 of 236 methods (20 of 33 streams), from the method table at startup. Every
 registered method checks the scope the T3 server requires (`src/scopes.rs`, its table
 generated). Every registered method but two has a run that decodes its answer with the real
 client (`tools/decode-coverage.mjs`; the rest are in `decode-coverage.pending`). The engine's
@@ -403,7 +403,7 @@ lists what it serves.
 | Agents          | `conn-provider-claude`, `conn-provider-codex`, `conn-provider-acp` (Grok); `/mcp` (`conn-mcp`, 20 tools) |
 | Workspace       | `conn-vcs` (status, refs, review, worktrees), `conn-files` (files, search, assets, uploads)     |
 | Terminals       | `conn-terminal`                                                                                 |
-| Source control  | `conn-source-control`: discovery of 7 hosts, `sourceControl.*` sign-in and stars (6 of 9)       |
+| Source control  | `conn-source-control`: discovery of 7 hosts, all 9 `sourceControl.*` (repositories on 5 hosts)  |
 
 The server joins them in `src/host.rs`: each provider session gets a `/mcp` credential, messages
 claim their uploads, a `worktree` launch provisions a worktree, archive and delete close the

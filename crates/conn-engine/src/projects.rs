@@ -298,6 +298,7 @@ fn make_project_folder(home: &Path, name: &str) -> ProjectResult<(PathBuf, Optio
         std::process::Command::new("git")
             .args(args)
             .current_dir(&folder)
+            .envs(conn_support::login_env::vars())
             .output()
     };
     let fail = |message: String| {

@@ -90,7 +90,9 @@ impl Process {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true);
+            .kill_on_drop(true)
+            // The login shell's PATH (`conn_support::login_env`); the spec's variables win.
+            .envs(conn_support::login_env::vars());
         #[cfg(unix)]
         command.process_group(0);
         if let Some(cwd) = &spec.cwd {

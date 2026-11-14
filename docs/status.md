@@ -54,7 +54,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 | Part | State |
 | --- | --- |
-| RPC methods | 95 of 236 served; 95 have a run that the real client's decoders accept |
+| RPC methods | 98 of 236 served; 98 have a run that the real client's decoders accept |
 | Engine commands | 43 of 56 |
 | HTTP routes | 13 of 57 |
 | `/mcp` tools | 28 of 87 |
@@ -166,6 +166,20 @@ Not built: webhook tasks and `fresh_session` tasks (refused on save). Annotation
 parity. `docs/conn-only-areas.md`
 maps the Conn-only areas and what each needs.
 
+## Repositories and the login-shell PATH (2026-11-14)
+
+`sourceControl.lookupRepository`, `cloneRepository` and `publishRepository` are served
+(`crates/conn-source-control/src/repository.rs`), with the host calls of GitHub, Cursor Origin,
+GitLab, Bitbucket and Azure DevOps. Proven by the cases of T3's
+`SourceControlRepositoryService.test.ts` on local bare repositories and a stub `git`, by each
+host's argv, paths and bodies against stub CLIs and a loopback server, and by the real client's
+decoders. Not built: Forgejo's and GitCafe's repository operations (they fail with T3's fixed
+text). The deviations are in the crate README, "Repositories".
+
+The login shell's `PATH` (with `__MISE_DIFF` and `JAVA_HOME`) now reaches every child process
+without `std::env::set_var`: `conn_support::login_env` reads it at start and before discovery
+(at most every 10 s), and every spawn site adds it.
+
 ## Provider interface, brought up to the T3 server's (2026-11-14)
 
 Closed, each with a test or a T3 recording: Claude's read-only sandbox and `dontAsk` (the
@@ -261,10 +275,12 @@ call the provider without a running turn).
    keeps its first message as title.
 6. **Features.** Pull requests and source control: `crates/conn-source-control/README.md` maps
    the area (48 methods, 7 engine commands, 9 `/mcp` tools, 7 hosts). Served (2026-11-14):
-   `server.discoverSourceControl` for all 7 hosts, and 6 of 9 `sourceControl.*` (sign-in as a
-   T3 server without an app client id; GitHub stars). Next: each host's repository operations
-   (`lookupRepository`, `cloneRepository`, `publishRepository`), then `git.*`, `pr` in VCS
-   status, `pullRequests.*` (35), the linked pull request commands and the `/mcp` tools.
+   `server.discoverSourceControl` for all 7 hosts, and all 9 `sourceControl.*` (sign-in as a
+   T3 server without an app client id; GitHub stars; `lookupRepository`, `cloneRepository`,
+   `publishRepository` on GitHub, Cursor Origin, GitLab, Bitbucket and Azure DevOps). Next:
+   repository operations for Forgejo and GitCafe, then `git.*` (each host's change request
+   reads and checkout first), `pr` in VCS status, `pullRequests.*` (35), the linked pull
+   request commands and the `/mcp` tools.
    Also: the Conn-only methods
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest
    share); 67 more `/mcp` tools (11 need nothing new: `crates/conn-mcp/README.md`, "All 87 tools"); Codex subagents and MCP elicitation; worktree setup scripts

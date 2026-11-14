@@ -240,6 +240,8 @@ async fn run(command: GitCommand, scan: Option<Scanner<'_>>) -> Result<GitOutput
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    // The login shell's PATH (`conn_support::login_env`); the caller's own variables win.
+    child.envs(conn_support::login_env::vars());
     for (key, value) in &command.env {
         child.env(key, value);
     }
@@ -349,7 +351,7 @@ async fn run(command: GitCommand, scan: Option<Scanner<'_>>) -> Result<GitOutput
 /// `explicitBareRepositoryEnv` in `VcsProcess.ts`: one more `GIT_CONFIG_KEY_<n>` /
 /// `GIT_CONFIG_VALUE_<n>` pair after the ones the server inherited, so a `git` that a host CLI
 /// starts opens a bare repository only when told to.
-fn explicit_bare_repository_env() -> Vec<(String, String)> {
+pub fn explicit_bare_repository_env() -> Vec<(String, String)> {
     git_config_env(std::env::var("GIT_CONFIG_COUNT").ok().as_deref())
 }
 
