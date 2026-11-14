@@ -658,36 +658,37 @@ const make = Effect.gen(function* () {
         });
       }
       // The token goes only to an address that still answers as this peer,
-      // so one that now answers as another machine never receives it.
-      let fenced = true;
-      let label = link.label;
-      const url = yield* Effect.findFirst(link.urls, (candidate) =>
-        answersAs(candidate, environmentId).pipe(
-          Effect.map((found) => {
-            if (Option.isNone(found)) return false;
-            fenced = linkLimitsHold(found.value);
-            label = found.value.label;
-            return true;
-          }),
-        ),
-      );
-      if (Option.isNone(url)) {
+      // so one that now answers as another machine never receives it. The
+      // addresses race, so a silent one never delays one that answers.
+      const answered =
+        link.urls.length === 0
+          ? Option.none()
+          : yield* Effect.raceAll(
+              link.urls.map((url) =>
+                answersAs(url, environmentId).pipe(
+                  Effect.flatMap(Effect.fromOption),
+                  Effect.map((peer) => ({ url, peer })),
+                ),
+              ),
+            ).pipe(Effect.option);
+      if (Option.isNone(answered)) {
         return yield* new PeerLinkError({
           reason: "unreachable",
           message: `${link.label} did not answer at ${link.urls.join(", ")}.`,
         });
       }
+      const { url, peer } = answered.value;
       // A link made before the peer had to fence linked work, or a peer moved
       // back to such a version, would carry work past those limits.
-      if (!fenced) {
+      if (!linkLimitsHold(peer)) {
         return yield* new PeerLinkError({
           reason: "incompatible",
           message: `${link.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
         });
       }
       return {
-        link: yield* withLabel(link, label),
-        url: url.value,
+        link: yield* withLabel(link, peer.label),
+        url,
         token: new TextDecoder().decode(stored.value),
       };
     },
