@@ -6,11 +6,7 @@ import {
   type ProviderOptionSelection,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import {
-  getComposerProviderState,
-  getComposerReasoningStep,
-  withImplicitFastModeDefault,
-} from "./composerProviderState";
+import { getComposerProviderState, getComposerReasoningStep } from "./composerProviderState";
 import { readPromptUltrathink } from "./TraitsPicker";
 
 const PROVIDER: ProviderDriverKind = ProviderDriverKind.make("codex");
@@ -72,7 +68,6 @@ describe("getComposerProviderState", () => {
         ]),
       ]),
       modelOptions: undefined,
-      planModeEnabled: true,
     });
 
     expect(state).toEqual({
@@ -91,7 +86,6 @@ describe("getComposerProviderState", () => {
         booleanDescriptor("fastMode"),
       ]),
       modelOptions: selections(["effort", "high"], ["fastMode", false]),
-      planModeEnabled: true,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(
@@ -105,7 +99,6 @@ describe("getComposerProviderState", () => {
       model: MODEL,
       models: modelWith([booleanDescriptor("thinking")]),
       modelOptions: selections(["effort", "max"], ["thinking", false]),
-      planModeEnabled: true,
     });
 
     expect(state).toEqual({
@@ -131,14 +124,14 @@ describe("getComposerProviderState", () => {
         ]),
       ]),
       modelOptions: selections(["agent", "plan"]),
-      planModeEnabled: true,
+      includePlanAgent: true,
     });
 
     expect(state.promptEffort).toBe("high");
     expect(state.modelOptionsForDispatch).toEqual(selections(["agent", "plan"]));
   });
 
-  it("drops the plan agent from dispatch when legacy plan mode is disabled", () => {
+  it("drops the plan agent from dispatch unless it is included", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,
       model: MODEL,
@@ -149,7 +142,6 @@ describe("getComposerProviderState", () => {
         ]),
       ]),
       modelOptions: selections(["agent", "plan"]),
-      planModeEnabled: false,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(selections(["agent", "build"]));
@@ -168,7 +160,6 @@ describe("getComposerProviderState", () => {
         },
       ],
       modelOptions: selections(["variant", "max"], ["agent", "build"]),
-      planModeEnabled: false,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(
@@ -197,7 +188,6 @@ describe("getComposerProviderState", () => {
         },
       ],
       modelOptions: selections(["effort", "low"], ["unknown", "value"]),
-      planModeEnabled: false,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(selections(["effort", "low"]));
@@ -209,33 +199,9 @@ describe("getComposerProviderState", () => {
       model: MODEL,
       models: modelWith([booleanDescriptor("fastMode", true)]),
       modelOptions: undefined,
-      planModeEnabled: true,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(selections(["fastMode", false]));
-  });
-});
-
-describe("withImplicitFastModeDefault", () => {
-  // regression: #2981 a remembered Fast mode choice must survive the implicit default on new chats
-  it("injects fastMode false only when the model exposes fastMode and no selection exists", () => {
-    expect(
-      withImplicitFastModeDefault(
-        {
-          optionDescriptors: [booleanDescriptor("fastMode", true)],
-        },
-        undefined,
-      ),
-    ).toEqual(selections(["fastMode", false]));
-
-    expect(
-      withImplicitFastModeDefault(
-        {
-          optionDescriptors: [booleanDescriptor("fastMode", true)],
-        },
-        selections(["fastMode", true]),
-      ),
-    ).toEqual(selections(["fastMode", true]));
   });
 });
 
@@ -280,7 +246,6 @@ describe("getComposerReasoningStep", () => {
       modelOptions: undefined,
       prompt: "Fix the bug",
       cursor: 0,
-      planModeEnabled: true,
       direction: 1,
       ...input,
     });

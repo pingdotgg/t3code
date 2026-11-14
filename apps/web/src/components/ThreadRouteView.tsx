@@ -1,4 +1,9 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { useAtomValue } from "@effect/atom-react";
+import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
+import { visibilityParentKey } from "@t3tools/client-runtime/state/threads";
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { Navigate, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
@@ -7,15 +12,38 @@ import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { SidebarInset } from "./ui/sidebar";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
-import { useEnvironmentThreadRefs, useQuietThreadShell } from "../state/entities";
+import {
+  useEnvironmentThreadRefs,
+  useAnyEnvironmentHiding,
+  useQuietThreadShell,
+} from "../state/entities";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironmentShellStatus } from "../state/shell";
-import { useEnvironmentThread } from "../state/threads";
+import { environmentThreadShells, threadFamilies, useEnvironmentThread } from "../state/threads";
 import {
   buildThreadRouteParams,
   isThreadRouteSnapshotAuthoritative,
   resolveThreadRouteRenderState,
   type ThreadRouteTarget,
 } from "../threadRoutes";
+
+/**
+ * Keeps the family of an open thread the shell leaves out (an older settled thread) in the shell
+ * rows until the route leaves it, so every reader of its shell row finds it.
+ */
+function useOpenThreadFamily(threadRef: ScopedThreadRef | null, missing: boolean) {
+  const key = threadRef === null ? null : scopedThreadKey(threadRef);
+  // Sticks to the route thread, so the row the family brings in does not release it.
+  const [mountedKey, setMountedKey] = useState<string | null>(null);
+  const nextKey = missing || mountedKey === key ? key : null;
+  if (nextKey !== mountedKey) setMountedKey(nextKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the open thread's family in the thread family registry until the route leaves it
+  useEffect(() => {
+    const ref = mountedKey === null ? null : parseScopedThreadKey(mountedKey);
+    if (ref === null) return;
+    return threadFamilies.mount(appAtomRegistry, ref.environmentId, ref.threadId);
+  }, [mountedKey]);
+}
 
 /**
  * Unkeyed so navigating between server threads reuses one ChatView. Rendered by the `_chat`
@@ -80,6 +108,29 @@ export function ThreadRouteView({
     unlistedThreadRef?.environmentId ?? null,
     unlistedThreadRef?.threadId ?? null,
   );
+  useOpenThreadFamily(serverThreadRef, bootstrapComplete && unlistedThreadRef !== null);
+  const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
+  const unlistedThread = Option.getOrNull(Option.map(unlistedThreadDetail.data, (p) => p.thread));
+  const unlistedParentKey =
+    unlistedThreadRef === null || unlistedThread === null
+      ? null
+      : visibilityParentKey(unlistedThreadRef.environmentId, unlistedThread);
+  const unlistedParentShell = useQuietThreadShell(
+    unlistedParentKey === null ? null : parseThreadKey(unlistedParentKey),
+  );
+  const hidingAnywhere = useAnyEnvironmentHiding();
+  const draftRedirectShell = useQuietThreadShell(draftRedirect ?? null);
+  const hiddenByTagFilter = serverThreadRef !== null && hiddenKeys.has(threadKey(serverThreadRef));
+  // Cached detail can predate a tag or an archive, so while hiding an off-shell thread opens only
+  // as the child of a loaded, visible parent (lineage never changes); anything else stays closed.
+  const offShellBlocked =
+    hidingAnywhere &&
+    unlistedThreadRef !== null &&
+    !(
+      unlistedParentKey !== null &&
+      unlistedParentShell !== null &&
+      !hiddenKeys.has(unlistedParentKey)
+    );
   const renderState = resolveThreadRouteRenderState({
     bootstrapComplete,
     serverThreadExists: serverThreadShell !== null,
@@ -106,7 +157,15 @@ export function ThreadRouteView({
   let view: React.ReactNode = null;
   let redirect: React.ReactNode = null;
   if (target.kind === "draft") {
-    if (draftSession) {
+    if (
+      draftSession &&
+      hiddenKeys.has(
+        threadKey({ environmentId: draftSession.environmentId, threadId: draftSession.threadId }),
+      )
+    ) {
+      // A draft whose thread is already live and hidden (mid-promotion): never mount it.
+      redirect = <Navigate to="/" replace />;
+    } else if (draftSession) {
       view = (
         <ChatView
           key={target.draftId}
@@ -115,6 +174,18 @@ export function ThreadRouteView({
           threadId={draftSession.threadId}
           routeKind="draft"
           forceExpandedMobileComposer
+        />
+      );
+    } else if (draftRedirect && hiddenKeys.has(threadKey(draftRedirect))) {
+      // Back to a promoted draft whose thread is now hidden: never mount it.
+      redirect = <Navigate to="/" replace />;
+    } else if (draftRedirect && hidingAnywhere && draftRedirectShell === null) {
+      // While hiding, a thread outside the live list is judged by the server route, unmounted here.
+      redirect = (
+        <Navigate
+          to="/$environmentId/$threadId"
+          params={buildThreadRouteParams(draftRedirect)}
+          replace
         />
       );
     } else if (draftRedirect) {
@@ -137,6 +208,11 @@ export function ThreadRouteView({
     } else {
       redirect = <Navigate to="/" replace />;
     }
+  } else if (hiddenByTagFilter) {
+    redirect = <Navigate to="/" replace />;
+  } else if (offShellBlocked) {
+    // Before the shell bootstraps, a listed visible thread can still look off-shell.
+    if (bootstrapComplete && unlistedThread !== null) redirect = <Navigate to="/" replace />;
   } else if (renderState === "ready" || (renderState === "loading" && serverThreadShell !== null)) {
     view = (
       <ChatView

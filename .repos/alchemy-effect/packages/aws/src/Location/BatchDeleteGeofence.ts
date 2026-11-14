@@ -1,0 +1,45 @@
+import type * as location from "@distilled.cloud/aws/location";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { GeofenceCollection } from "./GeofenceCollection.ts";
+
+/**
+ * `BatchDeleteGeofence` request with `CollectionName` injected from the bound
+ * resource.
+ */
+export interface BatchDeleteGeofenceRequest extends Omit<
+  location.BatchDeleteGeofenceRequest,
+  "CollectionName"
+> {}
+
+/**
+ * Deletes up to 10 geofences from the collection in one call.
+ *
+ * Runtime binding for the `BatchDeleteGeofence` operation (IAM action
+ * `geo:BatchDeleteGeofence`), scoped to one {@link GeofenceCollection}. Provide the implementation with
+ * `Effect.provide(AWS.Location.BatchDeleteGeofenceHttp)`.
+ *
+ * ### Managing Geofences
+ * **Example:** Delete Geofences
+ * ```typescript
+ * const batchDelete = yield* Location.BatchDeleteGeofence(collection);
+ *
+ * yield* batchDelete({ GeofenceIds: ["warehouse"] });
+ * ```
+ *
+ * @binding
+ */
+export interface BatchDeleteGeofence extends Binding.Service<
+  BatchDeleteGeofence,
+  "AWS.Location.BatchDeleteGeofence",
+  (
+    collection: GeofenceCollection,
+  ) => Effect.Effect<
+    (
+      request: BatchDeleteGeofenceRequest,
+    ) => Effect.Effect<location.BatchDeleteGeofenceResponse, location.BatchDeleteGeofenceError>
+  >
+> {}
+export const BatchDeleteGeofence = Binding.Service<BatchDeleteGeofence>(
+  "AWS.Location.BatchDeleteGeofence",
+);

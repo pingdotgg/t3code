@@ -91,6 +91,7 @@ export function ProjectActionsSettings() {
       runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
       waitForSetup: fileScript.runOnWorktreeCreate === true && fileScript.async === false,
       runOnSettle: fileScript.runOnSettle ?? false,
+      stopOnSettle: fileScript.stopOnSettle ?? false,
       keybinding: null,
       previewUrl: fileScript.previewUrl ?? null,
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
@@ -172,8 +173,8 @@ export function ProjectActionsSettings() {
       />
       {mixed ? (
         <SettingsRow
-          title="Different actions across environments"
-          description="Choose one environment to edit its list. Adding an action here adds it on every selected environment."
+          title="Different actions across checkouts"
+          description="Narrow the selection above to one checkout to edit its list. Adding an action here adds it to every selected checkout."
         />
       ) : (
         <ProjectActionsList

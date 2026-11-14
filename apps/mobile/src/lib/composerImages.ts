@@ -127,10 +127,8 @@ export async function persistComposerAttachmentFile(
   const { Directory, File, FileMode, Paths } = await import("expo-file-system");
   const directory = new Directory(Paths.document, COMPOSER_ATTACHMENT_DIRECTORY);
   directory.create({ idempotent: true, intermediates: true });
-  const safeName =
-    Array.from(name, (character) =>
-      character === "/" || character === "\\" || character.charCodeAt(0) < 32 ? "-" : character,
-    ).join("") || "file";
+  // Android's java.net.URI rejects characters expo-file-system leaves unencoded, such as `[` and `]`.
+  const safeName = name.replace(/[^\w. -]/g, "-") || "file";
   const destination = new File(directory, `${uuidv4()}-${safeName}`);
   const source = new File(uri);
   const sourceSize = source.size;
@@ -574,50 +572,79 @@ function isOwnedPastedImageUri(uri: string): boolean {
 export async function convertPastedImagesToAttachments(input: {
   readonly uris: ReadonlyArray<string>;
   readonly existingCount: number;
-}): Promise<ReadonlyArray<DraftComposerImageAttachment>> {
+}): Promise<{
+  readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
+  readonly error: string | null;
+}> {
   const { File } = await import("expo-file-system");
   const remainingSlots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
-  const results: DraftComposerImageAttachment[] = [];
+  const attachments: DraftComposerImageAttachment[] = [];
+  let error: string | null = null;
 
   for (const [index, uri] of input.uris.entries()) {
-    const ownedTemporaryFile = isOwnedPastedImageUri(uri);
+    const temporaryUris = isOwnedPastedImageUri(uri) ? [uri] : [];
     try {
       if (index >= Math.max(0, remainingSlots)) {
         continue;
       }
       const file = new File(uri);
-      const mimeType = mimeTypeFromUri(uri);
-      const pastedBase64 = await file.base64();
-      const fitted = await fitComposerImage({ uri, mimeType, base64: pastedBase64 });
-      const base64 = fitted?.base64 ?? pastedBase64;
+      const reportedMimeType = file.type;
+      const sourceMimeType = reportedMimeType?.startsWith("image/")
+        ? reportedMimeType
+        : mimeTypeFromUri(uri);
+      let mimeType = isProviderSendTurnSupportedImageMimeType(sourceMimeType)
+        ? sourceMimeType
+        : "image/jpeg";
+      const rendered = mimeType === sourceMimeType ? null : await renderPhoto(uri);
+      const pastedBase64 = rendered?.base64 ?? (await file.base64());
+      const fitted = rendered ?? (await fitComposerImage({ uri, mimeType, base64: pastedBase64 }));
+      if (fitted !== null) {
+        temporaryUris.push(fitted.uri);
+      }
+      let base64 = fitted?.base64 ?? pastedBase64;
+      if (
+        rendered === null &&
+        estimateBase64ByteSize(base64) > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
+      ) {
+        const jpeg = await renderPhoto(uri);
+        temporaryUris.push(jpeg.uri);
+        mimeType = "image/jpeg";
+        base64 = jpeg.base64;
+      }
       const sizeBytes = estimateBase64ByteSize(base64);
       if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+        error =
+          sizeBytes > 0
+            ? "A pasted image exceeds the 10 MB attachment limit."
+            : "Could not read a pasted image.";
         continue;
       }
-      results.push({
+      const dataUrl = `data:${mimeType};base64,${base64}`;
+      attachments.push({
         id: uuidv4(),
         type: "image",
         name: `pasted-image.${mimeType.split("/")[1] ?? "png"}`,
         mimeType,
         sizeBytes,
-        dataUrl: `data:${mimeType};base64,${base64}`,
-        previewUri: ownedTemporaryFile ? `data:${mimeType};base64,${base64}` : (fitted?.uri ?? uri),
+        dataUrl,
+        previewUri: dataUrl,
       });
-    } catch (error) {
-      console.warn("Failed to read pasted image", uri, error);
+    } catch (cause) {
+      console.warn("Failed to read pasted image", uri, cause);
+      error = "Could not read a pasted image.";
     } finally {
-      if (ownedTemporaryFile) {
+      for (const temporaryUri of temporaryUris) {
         try {
-          const file = new File(uri);
+          const file = new File(temporaryUri);
           if (file.exists) {
             file.delete();
           }
         } catch (error) {
-          console.warn("Failed to remove temporary pasted image", uri, error);
+          console.warn("Failed to remove temporary pasted image", temporaryUri, error);
         }
       }
     }
   }
 
-  return results;
+  return { attachments, error };
 }
