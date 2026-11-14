@@ -26,7 +26,9 @@ const AGENT_INPUT_COMMAND =
   /"method":"(?:Input\.|Page\.navigate"|Runtime\.(?:evaluate|callFunctionOn)")/;
 /** The same commands as above, by method, for the relay's sends. */
 const AGENT_INPUT_METHOD = /^(?:Input\.|Page\.navigate$|Runtime\.(?:evaluate|callFunctionOn)$)/;
-const AGENT_DOWNLOAD_WINDOW_MS = 5_000;
+const AGENT_INPUT_WINDOW_MS = 5_000;
+/** A viewer's pointer travelling over the stream activates nothing on the page. */
+const POINTER_TRAVEL = new Set<unknown>(["mouseMoved", "mouseWheel"]);
 const FOCUS_IDLE = "5 seconds";
 /** Well inside the server's 10 s DESKTOP_ATTACH_TIMEOUT, for a first page that never reports it is up. */
 const FIRST_PAGE_TIMEOUT = "5 seconds";
@@ -40,6 +42,8 @@ export interface DesktopBrowserTabKey {
 export interface DesktopBrowserTabDebugger {
   readonly webContents: Electron.WebContents;
   readonly debugger: Electron.Debugger;
+  /** Runs after the server clears the tab's cookies, so state kept beside them goes too. */
+  readonly cookiesCleared?: () => Promise<void>;
 }
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
@@ -58,6 +62,8 @@ interface AttachedTab {
   downloadDirectory: string | null;
   pendingDownloadGuid: string | null;
   agentInputAt: number;
+  /** When the agent last drove the page with no person's input through a viewer since. */
+  agentLedAt: number;
   focusEmulated: boolean;
   focusChange: Promise<void> | null;
   focusUses: number;
@@ -73,8 +79,8 @@ interface AttachedTab {
    */
   agentUsed: boolean;
   focusReleasing: boolean;
-  /** The sessions streaming the guest; one stopping leaves the others' screencasts running. */
-  readonly screencasts: Set<string | undefined>;
+  /** The sessions sharing the guest's one Chromium screencast; it stops with the last of them. */
+  readonly screencasts: Map<string | undefined, { started: boolean; pending: number }>;
   readonly onMessage: (
     event: Electron.Event,
     method: string,
@@ -96,6 +102,8 @@ export class DesktopBrowserHost extends Context.Service<
     readonly loadFailed: (key: DesktopBrowserTabKey, failure: PreviewAutomationLoadError) => void;
     readonly setShown: (key: DesktopBrowserTabKey, shown: boolean | undefined) => void;
     readonly humanStartedDownload: (source: Electron.WebContents) => boolean;
+    /** Whether what the page does now follows the agent's input, not a viewer's. */
+    readonly agentLedPage: (source: Electron.WebContents) => boolean;
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
     readonly pointers: Stream.Stream<{
       readonly key: DesktopBrowserTabKey;
@@ -287,9 +295,15 @@ export const make = Effect.gen(function* () {
     dropFocusHolds(tab);
   };
 
+  /** An owner that leaves without stopping would otherwise keep the screencast running unseen. */
+  const leaveScreencast = (tab: AttachedTab, owner: string | undefined) => {
+    if (!tab.screencasts.delete(owner) || tab.screencasts.size > 0) return;
+    void tab.debuggee.debugger.sendCommand("Page.stopScreencast").catch(() => {});
+  };
+
   /** A detached session, such as a closed viewer, waits on nothing it sent. */
   const dropSessionHolds = (tab: AttachedTab, owner: string) => {
-    tab.screencasts.delete(owner);
+    leaveScreencast(tab, owner);
     for (const [pending, holder] of tab.focusPending) {
       if (holder === owner) tab.focusPending.delete(pending);
     }
@@ -315,9 +329,12 @@ export const make = Effect.gen(function* () {
 
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
-    const { webContents, debugger: debuggee } = tab.debuggee;
-    const send = (method: string, params: Record<string, unknown>, sessionId?: string) =>
-      sendPageCommand(webContents, debuggee, method, params, sessionId);
+    const { webContents, debugger: debuggee, cookiesCleared } = tab.debuggee;
+    const send = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
+      const result = await sendPageCommand(webContents, debuggee, method, params, sessionId);
+      if (method === "Network.clearBrowserCookies") await cookiesCleared?.();
+      return result;
+    };
     const detachedOwners = new Set<string>();
     /** Viewers and recordings stream; the agent's own sessions never do. */
     const streamingOwners = new Set<string>();
@@ -325,20 +342,28 @@ export const make = Effect.gen(function* () {
       {
         send: (method, params, sessionId, owner) => {
           // A child session's screencast is not the page's, such as a late one on a detached session.
-          if (sessionId === undefined && method === "Page.startScreencast") {
-            tab.screencasts.add(owner);
+          const stream =
+            sessionId === undefined && method === "Page.startScreencast"
+              ? (tab.screencasts.get(owner) ?? { started: false, pending: 0 })
+              : undefined;
+          if (stream) {
+            stream.pending += 1;
+            tab.screencasts.set(owner, stream);
             if (owner !== undefined) streamingOwners.add(owner);
             syncPainting(tab);
           } else if (sessionId === undefined && method === "Page.stopScreencast") {
             tab.screencasts.delete(owner);
             syncPainting(tab);
+            if (tab.screencasts.size > 0) return Promise.resolve({});
           }
           // A person's input through a viewer, or Playwright's own housekeeping, is not the agent's.
-          if (
-            AGENT_INPUT_METHOD.test(method) &&
-            (owner === undefined || !streamingOwners.has(owner))
-          ) {
-            tab.agentUsed = true;
+          if (AGENT_INPUT_METHOD.test(method)) {
+            if (owner === undefined || !streamingOwners.has(owner)) {
+              tab.agentUsed = true;
+              tab.agentLedAt = performance.now();
+            } else if (method.startsWith("Input.") && !POINTER_TRAVEL.has(params["type"])) {
+              tab.agentLedAt = Number.NEGATIVE_INFINITY;
+            }
           }
           // Waits for focus emulation; insertText and other non-CDP input would not queue behind it.
           const forward = (current?: () => boolean) => {
@@ -360,19 +385,46 @@ export const make = Effect.gen(function* () {
                   held ? holdFocus(tab, owner, () => forward(current)) : forward(current),
               )
             : method === "Page.startScreencast"
-              ? holdFocus(tab, owner, forward).catch((cause: unknown) => {
-                  // A viewer can outlive a refused stream; nothing is streaming for it.
-                  if (sessionId === undefined && tab.relay === relay) tab.screencasts.delete(owner);
-                  releaseFocusWhenIdle(tab);
-                  syncPainting(tab);
-                  throw cause;
-                })
+              ? holdFocus(tab, owner, forward).then(
+                  (result) => {
+                    if (stream) {
+                      stream.pending -= 1;
+                      stream.started = true;
+                      // A detach's stop can overtake a start still waiting on focus; nobody owns it now.
+                      if (tab.screencasts.get(owner) !== stream && tab.screencasts.size === 0) {
+                        void debuggee.sendCommand("Page.stopScreencast").catch(() => {});
+                      }
+                    }
+                    return result;
+                  },
+                  (cause: unknown) => {
+                    if (stream) stream.pending -= 1;
+                    // A viewer can outlive a refused start; its running or pending stream still holds it.
+                    if (
+                      stream &&
+                      !stream.started &&
+                      stream.pending === 0 &&
+                      tab.relay === relay &&
+                      tab.screencasts.get(owner) === stream
+                    ) {
+                      leaveScreencast(tab, owner);
+                    }
+                    releaseFocusWhenIdle(tab);
+                    syncPainting(tab);
+                    throw cause;
+                  },
+                )
               : holdFocus(tab, owner, forward);
         },
         sessionDetached: (owner) => {
           detachedOwners.add(owner);
           dropSessionHolds(tab, owner);
         },
+        receivesScreencast: (owner) => tab.screencasts.has(owner),
+        ackScreencastFrame: (frameId) =>
+          void debuggee
+            .sendCommand("Page.screencastFrameAck", { sessionId: frameId })
+            .catch(() => {}),
         targetId: () =>
           debuggee
             .sendCommand("Target.getTargetInfo")
@@ -450,6 +502,7 @@ export const make = Effect.gen(function* () {
       downloadDirectory: null,
       pendingDownloadGuid: null,
       agentInputAt: Number.NEGATIVE_INFINITY,
+      agentLedAt: Number.NEGATIVE_INFINITY,
       focusEmulated: false,
       focusChange: null,
       focusUses: 0,
@@ -458,7 +511,7 @@ export const make = Effect.gen(function* () {
       painting: false,
       agentUsed: false,
       focusReleasing: false,
-      screencasts: new Set(),
+      screencasts: new Map(),
       onMessage: (_event, method, params, sessionId) => {
         if (method === "Page.downloadWillBegin") {
           const guid = (params as { guid?: unknown } | undefined)?.guid;
@@ -564,7 +617,12 @@ export const make = Effect.gen(function* () {
 
   const humanStartedDownload = (source: Electron.WebContents) => {
     const tab = [...tabs.values()].find((candidate) => candidate.debuggee.webContents === source);
-    return tab !== undefined && performance.now() - tab.agentInputAt > AGENT_DOWNLOAD_WINDOW_MS;
+    return tab !== undefined && performance.now() - tab.agentInputAt > AGENT_INPUT_WINDOW_MS;
+  };
+
+  const agentLedPage = (source: Electron.WebContents) => {
+    const tab = [...tabs.values()].find((candidate) => candidate.debuggee.webContents === source);
+    return tab !== undefined && performance.now() - tab.agentLedAt <= AGENT_INPUT_WINDOW_MS;
   };
 
   const announceAll = Effect.suspend(() => {
@@ -607,6 +665,7 @@ export const make = Effect.gen(function* () {
     setShown,
     placeDownload,
     humanStartedDownload,
+    agentLedPage,
   });
 });
 
