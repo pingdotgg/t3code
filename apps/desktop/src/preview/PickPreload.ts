@@ -39,7 +39,7 @@ import {
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
-  MOUSE_NAVIGATE_CHANNEL,
+  POINTER_DOWN_HOST_CHANNEL,
   PAGE_UNHANDLED_SHORTCUT_CHANNEL,
   RECORDING_CURSOR_CHANNEL,
   RECORDING_POINTER_CHANNEL,
@@ -47,6 +47,7 @@ import {
   RECORDING_INPUT_CHANNEL,
   RECORDING_CONTROLLER_CHANNEL,
   START_PICK_CHANNEL,
+  THUMB_PRESS_CHANNEL,
 } from "./GuestProtocol.ts";
 const OVERLAY_ATTRIBUTE = "data-t3code-annotation-ui";
 const INPUT_LAYER_ATTRIBUTE = "data-t3code-annotation-input";
@@ -193,6 +194,9 @@ const applyAnnotationTheme = (
 
 const reportHumanPointerInput = (event: PointerEvent): void => {
   if (!event.isTrusted) return;
+  // The guest does not always take focus on a click, so the host's webview
+  // `focus` event can't be relied on to dismiss open menus and popovers.
+  ipcRenderer.sendToHost(POINTER_DOWN_HOST_CHANNEL);
   ipcRenderer.send(HUMAN_INPUT_CHANNEL, {
     kind: "pointer",
     x: event.clientX,
@@ -245,34 +249,28 @@ const isolateOverlayKey = (event: KeyboardEvent): void => {
 for (const type of ["keydown", "keypress", "keyup"] as const)
   window.addEventListener(type, isolateOverlayKey, true);
 
-const MOUSE_BUTTON_BACK = 3;
-const MOUSE_BUTTON_FORWARD = 4;
-
-const navigationDirectionForButton = (button: number): "back" | "forward" | null => {
-  if (button === MOUSE_BUTTON_BACK) return "back";
-  if (button === MOUSE_BUTTON_FORWARD) return "forward";
-  return null;
-};
-
-// Chromium routes thumb-button navigation to the focused WebContents; navigate this hovered guest explicitly.
-const suppressNavigationButton = (event: MouseEvent): void => {
-  if (!event.isTrusted || navigationDirectionForButton(event.button) === null) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-};
-
-const requestNavigationForButton = (event: MouseEvent): void => {
-  if (!event.isTrusted) return;
-  const direction = navigationDirectionForButton(event.button);
-  if (direction === null) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  ipcRenderer.send(MOUSE_NAVIGATE_CHANNEL, { direction });
-};
-
-window.addEventListener("mousedown", suppressNavigationButton, true);
-window.addEventListener("mouseup", requestNavigationForButton, true);
-window.addEventListener("auxclick", suppressNavigationButton, true);
+let replayedThumbPress: { readonly x: number; readonly y: number } | null = null;
+ipcRenderer.on(
+  THUMB_PRESS_CHANNEL,
+  (_event, phase: unknown, x: unknown, y: unknown, button: unknown) => {
+    if (phase !== "down" && phase !== "up") return;
+    if (typeof x !== "number" || typeof y !== "number" || typeof button !== "number") return;
+    // Main reports presses inside a frame in that frame's coordinates.
+    const inFrame = document.querySelector("iframe:hover, frame:hover, object:hover, embed:hover");
+    if (phase === "up") {
+      const pressed = replayedThumbPress;
+      replayedThumbPress = null;
+      // A replayed press is always released, at its own point if the release lands in a frame.
+      if (pressed) recordingCursor?.press(inFrame ? pressed : { x, y }, "up");
+      return;
+    }
+    if (inFrame) return;
+    replayedThumbPress = { x, y };
+    ipcRenderer.sendToHost(POINTER_DOWN_HOST_CHANNEL);
+    ipcRenderer.send(HUMAN_INPUT_CHANNEL, { kind: "pointer", x, y, button });
+    recordingCursor?.press({ x, y }, "down");
+  },
+);
 
 const nextId = createAnnotationIdSource();
 

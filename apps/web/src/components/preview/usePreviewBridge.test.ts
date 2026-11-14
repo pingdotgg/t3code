@@ -1,9 +1,9 @@
-import type { DesktopPreviewTabState } from "@t3tools/contracts";
+import { ThreadId, type DesktopPreviewTabState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 
-import { createCaptureActivity, projectDesktopState } from "./usePreviewBridge";
+import { buildReportInput, createCaptureActivity, projectDesktopState } from "./usePreviewBridge";
 
 const favicon = {
   dataUrl: "data:image/png;base64,AAAA",
@@ -30,7 +30,62 @@ function state(navStatus: DesktopPreviewTabState["navStatus"]): DesktopPreviewTa
   };
 }
 
+describe("buildReportInput", () => {
+  it("reports title changes at the same URL without repeating unrelated desktop updates", () => {
+    const threadId = ThreadId.make("thread-1");
+    const tabId = "tab-1";
+    const url = "http://localhost:3000/app";
+    let lastReport = {
+      lastReportedUrl: null as string | null,
+      lastReportedKind: null as DesktopPreviewTabState["navStatus"]["kind"] | null,
+      lastReportedTitle: null as string | null,
+    };
+    const report = (nextState: DesktopPreviewTabState) => {
+      const result = buildReportInput({ threadId, tabId, state: nextState, ...lastReport });
+      if (result) {
+        lastReport = result;
+      }
+      return result?.input.navStatus ?? null;
+    };
+
+    const loaded = state({ kind: "Success", url, title: "Original title" });
+    expect(report(loaded)).toEqual({ _tag: "Success", url, title: "Original title" });
+    expect(report(loaded)).toBeNull();
+
+    const retitled = state({ kind: "Success", url, title: "Updated title" });
+    expect(report(retitled)).toEqual({ _tag: "Success", url, title: "Updated title" });
+    expect(
+      report({
+        ...retitled,
+        audible: true,
+        controller: "human",
+        updatedAt: "2026-08-09T00:00:01.000Z",
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("projectDesktopState", () => {
+  it("keeps the native load failure details for the panel", () => {
+    expect(
+      projectDesktopState(
+        state({
+          kind: "LoadFailed",
+          url: "https://example.com/",
+          title: "",
+          code: -105,
+          description: "failed",
+        }),
+      ).navStatus,
+    ).toEqual({
+      _tag: "LoadFailed",
+      url: "https://example.com/",
+      title: "",
+      code: -105,
+      description: "failed",
+    });
+  });
+
   it("shows a retained icon only while the current document has the captured origin", () => {
     expect(
       projectDesktopState(

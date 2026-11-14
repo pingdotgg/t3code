@@ -272,8 +272,14 @@ function resolveHeadRepositoryNameWithOwner(pullRequest: PullRequestHeadRemoteIn
   return normalizeOptionalString(pullRequest.headRepositoryNameWithOwner);
 }
 
+// Both names `resolvePullRequestWorktreeLocalBranchName` gives a fork pull request's branch.
+function isPullRequestWorktreeLocalBranchName(branch: string): boolean {
+  return /^t3code[/-]pr-\d+[/-]/u.test(branch);
+}
+
 function resolvePullRequestWorktreeLocalBranchName(
   pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+  localBranches: ReadonlySet<string>,
 ): string {
   if (!pullRequest.isCrossRepository) {
     return pullRequest.headBranch;
@@ -281,7 +287,24 @@ function resolvePullRequestWorktreeLocalBranchName(
 
   const sanitizedHeadBranch = sanitizeBranchFragment(pullRequest.headBranch).trim();
   const suffix = sanitizedHeadBranch.length > 0 ? sanitizedHeadBranch : "head";
-  return `t3code/pr-${pullRequest.number}/${suffix}`;
+  // Git cannot create a ref whose path is a parent or child of an existing one (`t3code` blocks `t3code/...`).
+  const isCreatable = (name: string) =>
+    !name
+      .split("/")
+      .slice(0, -1)
+      .some((_, index, segments) => localBranches.has(segments.slice(0, index + 1).join("/"))) &&
+    ![...localBranches].some((branch) => branch.startsWith(`${name}/`));
+  const preferred = `t3code/pr-${pullRequest.number}/${suffix}`;
+  if (isCreatable(preferred)) {
+    return preferred;
+  }
+  const flat = `t3code-pr-${pullRequest.number}-${suffix.replaceAll("/", "-")}`;
+  for (let attempt = 1; ; attempt++) {
+    const candidate = attempt === 1 ? flat : `${flat}-${attempt}`;
+    if (isCreatable(candidate)) {
+      return candidate;
+    }
+  }
 }
 
 export function parseRepositoryNameWithOwnerFromRemoteUrl(
@@ -1830,7 +1853,12 @@ export const make = Effect.gen(function* () {
         };
       }
     }
-    if (headContext.headBranch === details.branch || headContext.isCrossRepository) {
+    // A fork's default branch can be a PR head. When that fork is origin it is also where new
+    // branches start, so only a branch made for a pull request takes it as its head.
+    const tracksForkHead =
+      headContext.isCrossRepository &&
+      (headContext.remoteName !== "origin" || isPullRequestWorktreeLocalBranchName(details.branch));
+    if (headContext.headBranch === details.branch || tracksForkHead) {
       return { headContext, lookup: true };
     }
     const upstreamHeadIsBase =
@@ -2348,6 +2376,7 @@ export const make = Effect.gen(function* () {
     fallbackBranch: string | null,
     threadId: ThreadId | undefined,
     emit: GitActionProgressEmitter,
+    pushRemoteRef?: { readonly remoteName: string; readonly upstreamRef: string },
   ) {
     const provider = yield* sourceControlProvider(cwd);
     const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
@@ -2368,10 +2397,12 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const headContext = yield* resolveBranchHeadContext(cwd, {
-      branch,
-      upstreamRef: details.upstreamRef,
-    });
+    // A configured push remote receives the commits while the branch keeps
+    // tracking its upstream, so the PR head is the push remote's branch.
+    const headContext = yield* resolveBranchHeadContext(
+      cwd,
+      pushRemoteRef ? { branch, ...pushRemoteRef } : { branch, upstreamRef: details.upstreamRef },
+    );
 
     const existing = yield* findOpenPr(cwd, headContext);
     if (existing) {
@@ -2446,6 +2477,16 @@ export const make = Effect.gen(function* () {
         cwd,
         baseRefName: baseBranch,
         headSelector: headContext.preferredHeadSelector,
+        ...(provider.kind === "gitlab" &&
+        headContext.isCrossRepository &&
+        headContext.headRepositoryNameWithOwner
+          ? {
+              source: {
+                repository: headContext.headRepositoryNameWithOwner,
+                refName: headContext.headBranch,
+              },
+            }
+          : {}),
         title: generated.title,
         bodyFile,
       })
@@ -2988,8 +3029,22 @@ export const make = Effect.gen(function* () {
         ...pullRequest,
         ...toPullRequestHeadRemoteInfo(pullRequestSummary),
       } as const;
-      const localPullRequestBranch =
-        resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
+      const localBranches = pullRequestWithRemoteInfo.isCrossRepository
+        ? new Set(
+            (yield* gitCore.execute({
+              operation: "GitManager.preparePullRequestThread.localBranches",
+              cwd: input.cwd,
+              args: ["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads"],
+              timeoutMs: 5_000,
+            })).stdout
+              .split("\n")
+              .filter((name) => name.length > 0),
+          )
+        : new Set<string>();
+      const localPullRequestBranch = resolvePullRequestWorktreeLocalBranchName(
+        pullRequestWithRemoteInfo,
+        localBranches,
+      );
 
       // Git refuses to move checked-out branches; advance reused checkouts from inside their worktree.
       const reuseExistingWorktree = Effect.fn("reuseExistingWorktree")(function* (
@@ -3360,12 +3415,26 @@ export const make = Effect.gen(function* () {
       > {
         const initialStatus = yield* gitCore.statusDetails(input.cwd);
         const wantsCommit = isCommitAction(input.action);
+        const upToDateBranch =
+          input.action === "create_pr" &&
+          initialStatus.hasUpstream &&
+          initialStatus.aheadCount === 0
+            ? initialStatus.branch
+            : null;
+        // A current upstream says nothing about a separate push remote, which may lack HEAD.
+        const pushTarget = upToDateBranch
+          ? yield* gitCore
+              .resolvePushTarget(input.cwd, { branch: upToDateBranch, hasUpstream: true })
+              .pipe(Effect.orElseSucceed(() => null))
+          : null;
         const wantsPush =
           input.action === "push" ||
           input.action === "commit_push" ||
           input.action === "commit_push_pr" ||
           (input.action === "create_pr" &&
-            (!initialStatus.hasUpstream || initialStatus.aheadCount > 0));
+            (!initialStatus.hasUpstream ||
+              initialStatus.aheadCount > 0 ||
+              pushTarget?.viaPushRemote === true));
         const wantsPr = input.action === "create_pr" || input.action === "commit_push_pr";
 
         if (input.featureBranch && !wantsCommit) {
@@ -3518,6 +3587,9 @@ export const make = Effect.gen(function* () {
                     currentBranch,
                     input.threadId,
                     progress.emit,
+                    "pushRemote" in push && push.pushRemote && push.upstreamBranch
+                      ? { remoteName: push.pushRemote, upstreamRef: push.upstreamBranch }
+                      : undefined,
                   ),
                 ),
               )

@@ -11,7 +11,7 @@ import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
-const make = Effect.gen(function* () {
+export const makeReconcile = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const git = yield* GitWorkflowService.GitWorkflowService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -70,7 +70,7 @@ const make = Effect.gen(function* () {
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
-    const reconcile = yield* make;
+    const reconcile = yield* makeReconcile;
     yield* forkParked(
       Stream.runForEach(broadcaster.streamBranchChanges, (input) =>
         reconcile(input).pipe(
