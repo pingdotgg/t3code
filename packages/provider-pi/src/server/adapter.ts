@@ -3785,11 +3785,14 @@ function piQuestion(
           }))
       : [];
   // The title is the question; an input's placeholder is only a hint that the card cannot show.
+  // initialAnswer makes clients send the text literally, so an empty answer stays submittable.
   return {
     id: questionId,
     header: "Question",
     question: title.trim() ? title : "Question",
-    ...(method === "editor" ? { initialAnswer: recordString(event, "prefill") ?? "" } : {}),
+    ...(method === "select"
+      ? {}
+      : { initialAnswer: method === "editor" ? (recordString(event, "prefill") ?? "") : "" }),
     options,
   };
 }

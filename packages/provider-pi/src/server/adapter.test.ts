@@ -4277,12 +4277,15 @@ describe("PiAdapterV2", () => {
         const question = decodeUserInputQuestions(event.turnItem.questions)[0]!;
         assert.deepEqual(question.options, []);
         if (title.trim()) assert.equal(question.question, title);
+        // Clients accept an empty answer only for questions with an initialAnswer.
+        assert.equal(question.initialAnswer, "");
         yield* runtime.respondToRuntimeRequest({
           requestId: event.turnItem.requestId,
-          answers: { "ui-input-placeholder": "1,3" },
+          answers: { "ui-input-placeholder": "" },
         });
         const response = yield* fake.takeRequest("extension_ui_response");
-        assert.equal(response["value"], "1,3");
+        assert.equal(response["value"], "");
+        assert.isUndefined(response["cancelled"]);
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
