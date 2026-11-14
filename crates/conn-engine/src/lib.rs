@@ -21,6 +21,7 @@ use std::{future::Future, pin::Pin};
 mod background;
 mod calls;
 mod checkpoint;
+mod clock;
 mod commands;
 mod engine;
 
@@ -36,6 +37,7 @@ mod engine_tests;
 pub mod fake;
 mod families;
 mod fork;
+mod fresh;
 mod output;
 mod projects;
 mod reads;
@@ -47,8 +49,13 @@ mod store;
 mod streams;
 mod time;
 mod titles;
+mod visibility;
 
-pub use engine::{DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, SqliteEngine};
+pub use clock::{Clock, ManualClock, SystemClock};
+pub use engine::{
+    CommandOutputTap, DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, RuntimePolicyOverride,
+    SqliteEngine,
+};
 
 /// What a [`TitleGenerator`] titles: the first message of a new thread, or a whole thread whose
 /// title the user asked to regenerate.

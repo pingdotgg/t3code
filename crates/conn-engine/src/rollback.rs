@@ -484,7 +484,7 @@ impl Inner {
             context.provider_thread.clone()
         } else {
             let live = self.rollback_session(&context).await?;
-            live.touch();
+            live.touch(self.clock.now_millis());
             let snapshot = live
                 .session()
                 .rollback_thread(RollbackThreadInput {

@@ -1,6 +1,6 @@
 //! Cases from `apps/server/src/scheduledTasks/ScheduledTaskService.test.ts`,
 //! `.schedule.test.ts` and `.interval.test.ts`, on a paused tokio clock. Each test names the
-//! T3 case it ports. Cases about webhooks, managed policy and `fresh_session` are not here:
+//! T3 case it ports. Cases about webhooks and managed policy are not here:
 //! this server refuses those saves (tested below).
 
 use std::{
@@ -9,7 +9,9 @@ use std::{
     time::Duration,
 };
 
-use conn_contract::{ScheduledTask, ScheduledTaskRunStatus, from_json, to_json};
+use conn_contract::{
+    ScheduledTask, ScheduledTaskRunStatus, ScheduledTaskThreadMode, from_json, to_json,
+};
 use conn_engine::BoxFuture;
 use jiff::tz::TimeZone;
 use serde_json::{Value, json};
@@ -1158,9 +1160,102 @@ async fn a_caller_that_stops_waiting_does_not_block_the_next_run() {
     assert_eq!(*launches.lock().expect("lock"), 2);
 }
 
-/// What this server refuses that the T3 server stores: webhook and fresh-session tasks.
+/// `a fresh-session task launches one thread, then starts each later run fresh in it`.
 #[tokio::test(start_paused = true)]
-async fn webhook_and_fresh_session_tasks_are_refused() {
+async fn a_fresh_session_task_launches_one_thread_then_starts_each_later_run_fresh_in_it() {
+    let env = Env::new("fresh-session", "2026-07-01T09:00:00.000Z");
+    let launches = Arc::new(StdMutex::new(0));
+    let sends: Arc<StdMutex<Vec<(String, bool)>>> = Arc::default();
+    let (counted, sent) = (launches.clone(), sends.clone());
+    let fake = Fake {
+        launch: Box::new(move |_| {
+            if let Ok(mut n) = counted.lock() {
+                *n += 1;
+            }
+            Box::pin(async { Ok("thread:fresh-session-task".to_owned()) })
+        }),
+        send: Box::new(move |request| {
+            if let Ok(mut all) = sent.lock() {
+                all.push((request.thread_id.clone(), request.fresh_context));
+            }
+            Box::pin(async { Ok(()) })
+        }),
+        shell: Box::new(|_| {
+            Some(ThreadShell {
+                project_id: "project:test".into(),
+                deleted: false,
+                archived: false,
+            })
+        }),
+        ..Fake::default()
+    };
+    let service = env.start(fake, "UTC", false).await;
+    let base = json!({"id": "task:fresh-session", "title": "Triage",
+        "prompt": "Triage new issues", "projectId": "project:test"});
+    let with = |extra: Value| {
+        let mut all = base.clone();
+        if let (Some(all), Some(extra)) = (all.as_object_mut(), extra.as_object()) {
+            all.extend(extra.clone());
+        }
+        all
+    };
+    upsert(&service, with(json!({"threadMode": "fresh_session"}))).await;
+    let first = service
+        .run_now("task:fresh-session")
+        .await
+        .expect("first run");
+    assert_eq!(
+        first.thread_id.as_deref(),
+        Some("thread:fresh-session-task")
+    );
+    // A form opened before the first run saves no thread; the binding stays.
+    let task = upsert(
+        &service,
+        with(json!({"threadId": null, "threadMode": "fresh_session"})),
+    )
+    .await;
+    assert_eq!(task.thread_id.as_deref(), Some("thread:fresh-session-task"));
+    assert_eq!(
+        task.thread_mode,
+        Some(ScheduledTaskThreadMode::FreshSession)
+    );
+    // A client that predates thread modes sends neither; both stay.
+    let legacy = upsert(&service, with(json!({"threadId": null}))).await;
+    assert_eq!(
+        legacy.thread_id.as_deref(),
+        Some("thread:fresh-session-task")
+    );
+    assert_eq!(
+        legacy.thread_mode,
+        Some(ScheduledTaskThreadMode::FreshSession)
+    );
+    service
+        .run_now("task:fresh-session")
+        .await
+        .expect("second run");
+    assert_eq!(*launches.lock().expect("lock"), 1);
+    assert_eq!(
+        *sends.lock().expect("lock"),
+        [("thread:fresh-session-task".to_owned(), true)]
+    );
+    // Its thread stays in the old project, so moving the task leaves it for a new one.
+    let moved = upsert(
+        &service,
+        with(json!({"projectId": "project:moved", "threadId": "thread:fresh-session-task"})),
+    )
+    .await;
+    assert_eq!(moved.thread_id, None);
+    assert_eq!(
+        moved.thread_mode,
+        Some(ScheduledTaskThreadMode::FreshSession)
+    );
+    let unbound = upsert(&service, with(json!({"threadMode": "new_thread"}))).await;
+    assert_eq!(unbound.thread_id, None);
+}
+
+/// What this server refuses that the T3 server stores: webhook tasks.
+#[tokio::test(start_paused = true)]
+async fn webhook_tasks_are_refused() {
     let env = Env::new("refused", "2026-07-01T09:00:00.000Z");
     let service = env.start(Fake::default(), "UTC", false).await;
     assert_eq!(
@@ -1170,10 +1265,6 @@ async fn webhook_and_fresh_session_tasks_are_refused() {
         )
         .await,
         "This server does not run webhook tasks yet."
-    );
-    assert_eq!(
-        failure(&service, json!({"threadMode": "fresh_session"})).await,
-        "This server cannot start a fresh provider session for each run yet."
     );
     assert!(matches!(
         service

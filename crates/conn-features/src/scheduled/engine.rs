@@ -180,6 +180,10 @@ impl TaskRunner for EngineRunner {
                 "createdBy": request.created_by,
                 "creationSource": request.creation_source,
             });
+            let mut command = command;
+            if request.fresh_context {
+                command["freshContext"] = json!(true);
+            }
             let command: Command =
                 from_json(command).map_err(|e| SendError::Other(format!("bad command: {e}")))?;
             match self.engine.dispatch(command).await {

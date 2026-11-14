@@ -14,7 +14,6 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
 use crate::shell;
-use crate::time::now_iso;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS events (
@@ -159,6 +158,8 @@ fn keyed_rows(
 pub(crate) struct Store {
     conn: Connection,
     next_seq: u64,
+    /// Every transaction's `now` (`EngineConfig::clock`).
+    clock: std::sync::Arc<dyn crate::clock::Clock>,
     /// A title generator is configured, so commands may ask for titles.
     pub(crate) generates_titles: bool,
 }
@@ -188,6 +189,7 @@ impl Store {
         Ok(Self {
             conn,
             next_seq: high as u64 + 1,
+            clock: std::sync::Arc::new(crate::clock::SystemClock),
             generates_titles: false,
         })
     }
@@ -204,6 +206,15 @@ impl Store {
             .unwrap_or_default()
     }
 
+    pub(crate) fn set_clock(&mut self, clock: std::sync::Arc<dyn crate::clock::Clock>) {
+        self.clock = clock;
+    }
+
+    /// Now, by the engine's clock, in milliseconds since the epoch.
+    pub(crate) fn now_millis(&self) -> u64 {
+        self.clock.now_millis()
+    }
+
     /// The sequence of the last committed change.
     pub(crate) fn high_water(&self) -> u64 {
         self.next_seq - 1
@@ -218,7 +229,7 @@ impl Store {
             store_seq: &mut self.next_seq,
             next_seq: start,
             start,
-            now: now_iso(),
+            now: conn_support::time::iso_from_ms(self.clock.now_millis()),
             touched: Vec::new(),
         })
     }
@@ -306,17 +317,21 @@ impl Store {
 
     /// `OrchestrationV2ThreadProjection`, or `None` for an unknown or deleted thread.
     pub(crate) fn thread_projection(&self, thread_id: &str) -> StoreResult<Option<Value>> {
-        self.thread_projection_with(thread_id, false)
+        Ok(self
+            .thread_projection_with(thread_id, false)?
+            .map(|(projection, _)| projection))
     }
 
-    /// The projection, built with one copy of each turn item: it lives in `visibleTurnItems`,
-    /// and `turnItems` holds the same values unless `omit_local_items` (the client restores
-    /// them from `visibleTurnItems` when the snapshot says `turnItemsOmitLocalVisible`).
+    /// The projection, built with one copy of each turn item where it can: when the visible
+    /// local rows are exactly the first turn items, `omit_local_items` leaves them out of
+    /// `turnItems` (the client restores them from `visibleTurnItems` when the snapshot says
+    /// `turnItemsOmitLocalVisible`) and the flag is `true`. Otherwise `turnItems` is whole, as
+    /// T3's `omitLocalVisibleTurnItems` returns nothing then.
     pub(crate) fn thread_projection_with(
         &self,
         thread_id: &str,
         omit_local_items: bool,
-    ) -> StoreResult<Option<Value>> {
+    ) -> StoreResult<Option<(Value, bool)>> {
         let row = self
             .conn
             .query_row(
@@ -346,30 +361,39 @@ impl Store {
             projection.insert(kind.into(), Value::Array(rows));
         }
         // Turn items in timeline order, read once and moved into their rows.
-        let items = self.query_json(
+        let mut items = self.query_json(
             "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'
              ORDER BY ordinal, id",
             [thread_id],
         )?;
-        if !omit_local_items {
-            projection.insert("turnItems".into(), Value::Array(items.clone()));
-        }
-        let visible: Vec<Value> = items
-            .into_iter()
+        let shown = crate::visibility::visible_items(
+            projection["runs"].as_array().map_or(&[], Vec::as_slice),
+            projection["attempts"].as_array().map_or(&[], Vec::as_slice),
+            &items,
+        );
+        let prefix = shown.iter().enumerate().all(|(at, shown)| at == *shown);
+        let omitted = omit_local_items && prefix && !shown.is_empty();
+        let visible: Vec<Value> = shown
+            .iter()
             .enumerate()
-            .map(|(position, item)| {
-                json!({
+            .filter_map(|(position, at)| {
+                let item = items.get(*at)?;
+                Some(json!({
                     "position": position,
                     "visibility": "local",
                     "sourceThreadId": thread_id,
                     "sourceItemId": item["id"].clone(),
                     "item": item,
-                })
+                }))
             })
             .collect();
+        if omitted {
+            items.drain(..shown.len());
+        }
+        projection.insert("turnItems".into(), Value::Array(items));
         projection.insert("visibleTurnItems".into(), Value::Array(visible));
         projection.insert("updatedAt".into(), Value::String(activity_at));
-        Ok(Some(Value::Object(projection)))
+        Ok(Some((Value::Object(projection), omitted)))
     }
 
     /// Stored events of one thread after `after`, at most `limit`, as `(sequence, event)`.
@@ -393,6 +417,32 @@ impl Store {
             .map(|row| {
                 let (seq, text) = row.map_err(err)?;
                 Ok((seq, parse(text)?))
+            })
+            .collect::<StoreResult<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// One page of the whole event log after `after`, oldest first, as
+    /// `OrchestrationV2StoredEvent` rows (`sequence`, `commandId`, `event`).
+    pub(crate) fn stored_events_after(&self, after: u64, limit: usize) -> StoreResult<Vec<Value>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT seq, command_id, event FROM events WHERE seq > ?1 ORDER BY seq LIMIT ?2",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map(params![after as i64, limit as i64], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(err)?
+            .map(|row| {
+                let (seq, command_id, text) = row.map_err(err)?;
+                Ok(json!({"sequence": seq, "commandId": command_id, "event": parse(text)?}))
             })
             .collect::<StoreResult<Vec<_>>>()?;
         Ok(rows)

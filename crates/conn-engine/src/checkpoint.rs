@@ -434,7 +434,7 @@ impl Inner {
                 &requested_at,
             ));
         }
-        let now = json!(conn_support::time::now_iso());
+        let now = json!(conn_support::time::iso_from_ms(self.clock.now_millis()));
         let reference = git::checkpoint_ref(&scope_id, ordinal);
         let status = match folder {
             Probe::Repository => match git::capture(&path, &reference).await {

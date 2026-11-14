@@ -91,6 +91,7 @@ monorepo_checks=(
   "claude catalog --check"
   "claude conformance"
   "claude t3-replay"
+  "t3 fixture replay"
   "acp instructions --check"
   "acp conformance"
   "grok probe conformance"
@@ -141,6 +142,9 @@ else
   fi
   # Exactly the scenarios in expected-failures.txt may fail; any other change fails the check.
   run "claude t3-replay" node crates/conn-provider-claude/tools/t3-replay/check.mjs
+  # T3's testkit fixtures through this engine and our providers, judged by T3's own
+  # assertions; exactly the variants in its expected-failures.txt may fail (about 10 min).
+  run "t3 fixture replay" node crates/conn-engine/tools/t3-fixture-replay/check.mjs
   # The T3 Grok adapter and conn-provider-acp against one stub agent (no agent, no model).
   run "acp instructions --check" node crates/conn-provider-acp/tools/gen-instructions.mjs --check
   run "acp conformance" node crates/conn-provider-acp/tools/conformance.mjs

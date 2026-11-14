@@ -57,6 +57,41 @@ pub struct EngineConfig {
     /// Captures a git checkpoint of the thread's workspace at each turn, as the T3 server
     /// does (`checkpoint.rs`). Off by default; the server turns it on.
     pub checkpoints: bool,
+    /// Laid over every turn's runtime policy, as T3's `RuntimePolicy.layerWithOverride`. The
+    /// server sets none; the T3 fixture replay sets the fixture's policy.
+    pub runtime_policy_override: Option<RuntimePolicyOverride>,
+    /// Sees every live command output chunk as `(turn item id, chunk)`, as T3's test kit taps
+    /// `CommandOutputHub.append`. The server sets none.
+    pub command_output_tap: Option<CommandOutputTap>,
+    /// Every stored timestamp and the idle release read it. Default: the system clock. A
+    /// replay sets a [`crate::ManualClock`], as T3's tests run on Effect's `TestClock`.
+    pub clock: Arc<dyn crate::Clock>,
+}
+
+/// See [`EngineConfig::command_output_tap`].
+pub type CommandOutputTap = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
+/// `RuntimePolicyV2Override` in T3's `RuntimePolicy.ts`: fields that replace the policy the
+/// engine derives from the thread.
+#[derive(Clone, Debug, Default)]
+pub struct RuntimePolicyOverride {
+    pub cwd: Option<String>,
+    pub approval_policy: Option<Value>,
+    pub sandbox_policy: Option<Value>,
+}
+
+impl RuntimePolicyOverride {
+    pub(crate) fn apply(&self, policy: &mut conn_provider::RuntimePolicy) {
+        if let Some(cwd) = &self.cwd {
+            policy.cwd = Some(cwd.clone());
+        }
+        if let Some(approval) = &self.approval_policy {
+            policy.approval_policy = Some(approval.clone());
+        }
+        if let Some(sandbox) = &self.sandbox_policy {
+            policy.sandbox_policy = Some(sandbox.clone());
+        }
+    }
 }
 
 impl std::fmt::Debug for EngineConfig {
@@ -87,6 +122,9 @@ impl EngineConfig {
             title_generator: None,
             turn_observer: None,
             checkpoints: false,
+            runtime_policy_override: None,
+            command_output_tap: None,
+            clock: Arc::new(crate::SystemClock),
         }
     }
 }
@@ -120,6 +158,18 @@ pub(crate) struct Inner {
     pub(crate) shutting_down: std::sync::atomic::AtomicBool,
     /// Git checkpoints per turn (`checkpoint.rs`); `None` when off.
     pub(crate) checkpoints: Option<crate::checkpoint::Checkpoints>,
+    /// [`EngineConfig::runtime_policy_override`].
+    pub(crate) policy_override: Option<RuntimePolicyOverride>,
+    /// [`EngineConfig::command_output_tap`].
+    pub(crate) output_tap: Option<CommandOutputTap>,
+    /// [`EngineConfig::clock`].
+    pub(crate) clock: Arc<dyn crate::Clock>,
+    /// [`EngineConfig::idle_session`].
+    pub(crate) idle_session: Option<Duration>,
+    /// Threads with a rollback in flight, each with a gate the rollback holds until it ends.
+    /// A turn start on the thread waits at the gate, as T3's effect outbox runs a thread's
+    /// rollback before the turn start a later command queued. One entry per running rollback.
+    pub(crate) rollback_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 /// Stable project id for a folder, so a fresh database gives clients the same ids.
@@ -144,6 +194,7 @@ impl SqliteEngine {
                 .unwrap_or_default()
         });
         let mut store = Store::open(&config.database)?;
+        store.set_clock(config.clock.clone());
         store.generates_titles = config.title_generator.is_some();
         let unfinished = store.unfinished_runs()?;
         let mut tx = store.tx()?;
@@ -180,6 +231,11 @@ impl SqliteEngine {
                 checkpoints: config
                     .checkpoints
                     .then(crate::checkpoint::Checkpoints::default),
+                policy_override: config.runtime_policy_override.clone(),
+                output_tap: config.command_output_tap.clone(),
+                clock: config.clock.clone(),
+                idle_session: config.idle_session,
+                rollback_gates: Mutex::new(HashMap::new()),
             }),
         };
         // Continuations and the reaper start on the caller's runtime; `open` never blocks.
@@ -245,6 +301,26 @@ impl SqliteEngine {
     /// The project id the engine gives a configured folder.
     pub fn project_id_for(workspace_root: &str) -> String {
         project_id(workspace_root)
+    }
+
+    /// Closes the provider sessions that are idle now, by the engine's clock. The server's
+    /// reaper does this on its own every half `idle_session`; a replay on a
+    /// [`crate::ManualClock`] calls it after it moves the clock, as T3's `TestClock.adjust`
+    /// wakes T3's idle release.
+    pub async fn release_idle_sessions(&self) {
+        if let Some(idle) = self.inner.idle_session {
+            self.inner.reap_idle(idle).await;
+        }
+    }
+
+    /// One page of the whole event log after `after`, oldest first, as
+    /// `OrchestrationV2StoredEvent` rows. The log is never pruned: every event since the store
+    /// was made is there. For tools that check the log against T3's own assertions (the
+    /// `t3_fixture_replay` example); clients read the streams.
+    pub async fn stored_events(&self, after: u64, limit: usize) -> Result<Vec<Value>, String> {
+        self.inner
+            .db(move |store| store.stored_events_after(after, limit))
+            .await
     }
 }
 
@@ -455,7 +531,43 @@ impl Inner {
 
     pub(crate) fn spawn_effect(self: &Arc<Self>, effect: Effect) {
         let inner = self.clone();
-        tokio::spawn(async move { inner.run_effect(effect).await });
+        // The gate closes now, before any later command's effect can start a turn.
+        let gate = match &effect {
+            Effect::Rollback(request) => Some(self.close_rollback_gate(&request.thread_id)),
+            _ => None,
+        };
+        tokio::spawn(async move {
+            inner.clone().run_effect(effect).await;
+            if let Some((thread_id, gate, guard)) = gate {
+                drop(guard);
+                let mut gates = crate::lock(&inner.rollback_gates);
+                if gates.get(&thread_id).is_some_and(|g| Arc::ptr_eq(g, &gate)) {
+                    gates.remove(&thread_id);
+                }
+            }
+        });
+    }
+
+    fn close_rollback_gate(
+        &self,
+        thread_id: &str,
+    ) -> (
+        String,
+        Arc<tokio::sync::Mutex<()>>,
+        Option<tokio::sync::OwnedMutexGuard<()>>,
+    ) {
+        let gate = Arc::new(tokio::sync::Mutex::new(()));
+        let guard = gate.clone().try_lock_owned().ok();
+        crate::lock(&self.rollback_gates).insert(thread_id.to_owned(), gate.clone());
+        (thread_id.to_owned(), gate, guard)
+    }
+
+    /// Waits until no rollback of the thread is in flight.
+    pub(crate) async fn after_rollback(&self, thread_id: &str) {
+        let gate = crate::lock(&self.rollback_gates).get(thread_id).cloned();
+        if let Some(gate) = gate {
+            drop(gate.lock().await);
+        }
     }
 
     async fn run_effect(self: Arc<Self>, effect: Effect) {

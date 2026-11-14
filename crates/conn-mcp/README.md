@@ -89,7 +89,7 @@ a unit test and `parity.mjs` steps.
 Where they differ, because the engine does not do it yet:
 
 - `t3_thread_send` maps its modes as `ThreadManagementService` does (`auto` steers a running
-  turn, else starts; `queue`, `steer`, `restart`). `freshContext` is refused.
+  turn, else starts; `queue`, `steer`, `restart`). `freshContext` starts a new provider session and never steers.
 - `t3_thread_launch`: `root`, `existing_worktree` and `worktree` (the engine makes the worktree
   through the server's host before the thread exists; `parity.mjs` compares the result). No
   `scratch`, no attachments (`t3_attachment_prepare_upload` is not served). The thread

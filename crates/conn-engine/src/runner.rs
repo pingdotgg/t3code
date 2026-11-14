@@ -34,12 +34,13 @@ pub(crate) struct LiveThread {
     instance: String,
     state: Mutex<LiveState>,
     /// When the session last did anything; the idle reaper closes it after `idle_session`.
-    last_used: Mutex<Instant>,
+    /// Milliseconds by the engine's clock.
+    last_used: Mutex<u64>,
     /// Ends the event pump. The pump holds this thread, whose session may hold the event
     /// sender, so a closed channel alone would never end it.
     closed: tokio::sync::Notify,
     /// Since when background work has kept this idle session open.
-    held_since: Mutex<Option<Instant>>,
+    held_since: Mutex<Option<u64>>,
     /// The provider session's id, for its provider threads.
     provider_session_id: String,
     /// `backgroundTasksEndWithProcess`: releasing the session clears its threads' rosters.
@@ -69,8 +70,8 @@ struct ActiveRun {
 }
 
 impl LiveThread {
-    pub(crate) fn touch(&self) {
-        *lock(&self.last_used) = Instant::now();
+    pub(crate) fn touch(&self, now: u64) {
+        *lock(&self.last_used) = now;
     }
 
     pub(crate) fn session(&self) -> &Arc<dyn Session> {
@@ -88,8 +89,9 @@ impl LiveThread {
 
     /// Idle: no run and no provider event for `idle`, and no background work, which holds the
     /// session at most `max_hold` past that (T3's idle pin).
-    pub(crate) fn idle_for(&self, idle: Duration, max_hold: Duration) -> bool {
-        if lock(&self.state).active.is_some() || lock(&self.last_used).elapsed() < idle {
+    pub(crate) fn idle_for(&self, now: u64, idle: Duration, max_hold: Duration) -> bool {
+        let elapsed = |since: u64| Duration::from_millis(now.saturating_sub(since));
+        if lock(&self.state).active.is_some() || elapsed(*lock(&self.last_used)) < idle {
             return false;
         }
         let mut held = lock(&self.held_since);
@@ -98,7 +100,7 @@ impl LiveThread {
             *held = None;
             return true;
         }
-        held.get_or_insert_with(Instant::now).elapsed() >= max_hold
+        elapsed(*held.get_or_insert(now)) >= max_hold
     }
 
     fn active(&self) -> Option<ActiveRun> {
@@ -118,6 +120,11 @@ struct TurnContext {
     provider_thread: Option<Value>,
     /// The source to fork natively, on a fork's first turn.
     fork: Option<crate::fork::NativeFork>,
+    /// The run starts a new provider conversation (`freshContext`).
+    fresh: bool,
+    /// The run goes back to the thread's own conversation past a scheduled fresh run's, so
+    /// the session that holds the schedule's conversation is released first.
+    leaves_side_conversation: bool,
 }
 
 enum StartError {
@@ -143,6 +150,7 @@ fn status_name(status: TurnStatus) -> &'static str {
 
 impl Inner {
     pub(crate) async fn start_turn(self: Arc<Self>, thread_id: String, run_id: String) {
+        self.after_rollback(&thread_id).await;
         match self.try_start_turn(&thread_id, &run_id).await {
             Ok(()) | Err(StartError::Abandoned) => {}
             Err(StartError::Failed(message)) => {
@@ -294,7 +302,7 @@ impl Inner {
                 session,
                 instance: instance.to_owned(),
                 state: Mutex::new(LiveState::default()),
-                last_used: Mutex::new(Instant::now()),
+                last_used: Mutex::new(self.clock.now_millis()),
                 closed: tokio::sync::Notify::new(),
                 held_since: Mutex::new(None),
                 provider_session_id: provider_session["id"]
@@ -354,13 +362,28 @@ impl Inner {
                         |pt: &Value| pt["providerInstanceId"].as_str() == Some(instance);
                     // Never resume a provider thread of another instance. Without an active one
                     // of this instance, take its newest root thread (`rootProviderThreadsForProvider`).
+                    let fresh = run["freshContext"] == true;
                     let active = match thread["activeProviderThreadId"].as_str() {
                         Some(id) => tx
                             .entity(&tid, "providerThreads", id)?
                             .filter(|pt| same_instance(pt)),
                         None => None,
                     };
+                    // A wake acts on the active session; a message continues the conversation,
+                    // past a scheduled fresh run's side conversation (`dispatchProviderThread`).
+                    let wake = message["notification"].is_object()
+                        || message["delegatedCompletion"].is_object();
+                    let active_id = thread["activeProviderThreadId"].clone();
+                    let active = match active {
+                        Some(pt) if !wake => {
+                            Some(crate::fresh::conversation_thread(&tx, &tid, pt)?)
+                        }
+                        other => other,
+                    };
+                    let leaves_side_conversation =
+                        !fresh && active.as_ref().is_some_and(|pt| pt["id"] != active_id);
                     let provider_thread = match active {
+                        _ if fresh => None,
                         Some(pt) => Some(pt),
                         None => tx
                             .entities_where(
@@ -383,6 +406,7 @@ impl Inner {
                     };
                     let fork = match provider_thread {
                         Some(_) => None,
+                        None if fresh => None,
                         None => crate::fork::native_fork_input(&tx, &tid)?,
                     };
                     Ok(Some(TurnContext {
@@ -392,6 +416,8 @@ impl Inner {
                         cwd,
                         provider_thread,
                         fork,
+                        fresh,
+                        leaves_side_conversation,
                     }))
                 })();
                 tx.rollback();
@@ -401,25 +427,33 @@ impl Inner {
         let Some(mut context) = context else {
             return Err(StartError::Abandoned);
         };
+        if let Some(cwd) = self.policy_override.as_ref().and_then(|p| p.cwd.clone()) {
+            context.cwd = Some(cwd);
+        }
         if context.run["status"] != "starting" {
             return Err(StartError::Abandoned);
         }
 
         let model_selection: conn_contract::ModelSelection =
             from_json(context.run["modelSelection"].clone()).map_err(|e| e.to_string())?;
-        let runtime_policy: RuntimePolicy = from_json(json!({
+        let mut runtime_policy: RuntimePolicy = from_json(json!({
             "runtimeMode": context.thread["runtimeMode"],
             "interactionMode": context.thread["interactionMode"],
             "cwd": context.cwd,
         }))
         .map_err(|e| e.to_string())?;
+        if let Some(policy) = &self.policy_override {
+            policy.apply(&mut runtime_policy);
+        }
 
         let instance = context.run["providerInstanceId"]
             .as_str()
             .unwrap_or_default();
         // A live session of another instance closes; the run opens one on its own instance.
+        // A fresh run releases the session too: each holds one native conversation
+        // (`sessionsReleasedByFreshContext`).
         if let Some(live) = self.live_thread(thread_id)
-            && live.instance != instance
+            && (live.instance != instance || context.fresh || context.leaves_side_conversation)
         {
             self.close_session(thread_id).await;
         }
@@ -445,7 +479,7 @@ impl Inner {
             }
         };
 
-        live.touch();
+        live.touch(self.clock.now_millis());
         let known = lock(&live.state).provider_thread.clone();
         let provider_thread =
             match (known, context.provider_thread) {
@@ -490,6 +524,29 @@ impl Inner {
             .as_str()
             .unwrap_or_default()
             .to_owned();
+        let attempt_id = format!("{run_id}:attempt:1");
+        let mut provider_thread_json = to_json(&provider_thread);
+        if provider_thread_json.is_object() {
+            provider_thread_json["providerInstanceId"] = json!(instance);
+            // `runningProviderThread` in T3's `ProviderTurnStartService`.
+            let ordinal = context.run["ordinal"].clone();
+            if provider_thread_json["firstRunOrdinal"].is_null() {
+                provider_thread_json["firstRunOrdinal"] = ordinal.clone();
+            }
+            provider_thread_json["lastRunOrdinal"] = ordinal;
+            // T3 also marks it `active` here and its adapters mark it `idle` at the turn's
+            // end. Our Codex provider sends no thread updates, so the status stays the
+            // provider's own.
+        }
+        if provider_thread_json
+            .get("appThreadId")
+            .is_none_or(Value::is_null)
+        {
+            provider_thread_json["appThreadId"] = json!(thread_id);
+        }
+        // The provider gets the running row and echoes it, as T3's `startTurn` input.
+        let provider_thread: ProviderThread =
+            from_json(provider_thread_json.clone()).unwrap_or(provider_thread);
         {
             let mut state = lock(&live.state);
             state.provider_thread = Some(provider_thread.clone());
@@ -498,18 +555,6 @@ impl Inner {
                 root_node_id: root.clone(),
                 provider_turn_id: None,
             });
-        }
-
-        let attempt_id = format!("{run_id}:attempt:1");
-        let mut provider_thread_json = to_json(&provider_thread);
-        if provider_thread_json.is_object() {
-            provider_thread_json["providerInstanceId"] = json!(instance);
-        }
-        if provider_thread_json
-            .get("appThreadId")
-            .is_none_or(Value::is_null)
-        {
-            provider_thread_json["appThreadId"] = json!(thread_id);
         }
         let (tid, rid, aid, root_id) = (
             thread_id.to_owned(),
@@ -696,7 +741,7 @@ impl Inner {
                 },
             };
             let Some(event) = event else { break };
-            live.touch();
+            live.touch(self.clock.now_millis());
             // Live command output goes to the hub, not the store.
             if let ProviderEvent::CommandOutputDelta {
                 thread_id: output_thread,
@@ -706,6 +751,9 @@ impl Inner {
             {
                 self.command_output
                     .append(output_thread.as_str(), item_id.as_str(), chunk);
+                if let Some(tap) = &self.output_tap {
+                    tap(item_id.as_str(), chunk);
+                }
                 continue;
             }
             // Not persisted (`ProviderEventIngestor`); it holds the idle session while any
@@ -1289,7 +1337,7 @@ impl Inner {
     pub(crate) async fn reap_idle(&self, idle: Duration) {
         let idle_threads: Vec<String> = lock(&self.live)
             .iter()
-            .filter(|(_, live)| live.idle_for(idle, self.idle_max_hold))
+            .filter(|(_, live)| live.idle_for(self.clock.now_millis(), idle, self.idle_max_hold))
             .map(|(id, _)| id.clone())
             .collect();
         for thread_id in idle_threads {
@@ -1334,10 +1382,49 @@ impl Inner {
             live.session.close().await;
             // `notify_one` keeps a permit, so a pump not yet waiting still sees it.
             live.closed.notify_one();
+            if !self.shutting_down() {
+                self.record_release(thread_id, &live.provider_session_id)
+                    .await;
+            }
             if live.background_tasks_end_with_process && !self.shutting_down() {
                 self.clear_released_rosters(thread_id, &live.provider_session_id)
                     .await;
             }
+        }
+    }
+
+    /// `writeReleasedSessionEvents` and `writeReleasedRuntimeRequestEvents` in T3's
+    /// `ProviderSessionManager.ts`: the session's row says `stopped`, and the requests it
+    /// alone could answer (`responseCapability.type: live`) are `expired`.
+    async fn record_release(&self, thread_id: &str, provider_session_id: &str) {
+        let (tid, sid) = (thread_id.to_owned(), provider_session_id.to_owned());
+        let written = self
+            .write(move |tx| {
+                let now = tx.now().to_owned();
+                if let Some(mut session) = tx.entity(&tid, "providerSessions", &sid)?
+                    && !matches!(session["status"].as_str(), Some("stopped" | "error"))
+                {
+                    session["status"] = json!("stopped");
+                    if session.get("extensionStatuses").is_some() {
+                        session["extensionStatuses"] = json!([]);
+                    }
+                    session["updatedAt"] = json!(now);
+                    session["lastError"] = Value::Null;
+                    tx.append(Draft::new(&tid, "provider-session.updated", session))?;
+                }
+                for mut request in tx.entities(&tid, "runtimeRequests")? {
+                    let live = request["responseCapability"]["type"] == "live"
+                        && request["responseCapability"]["providerSessionId"] == sid.as_str();
+                    if request["status"] == "pending" && live {
+                        request["status"] = json!("expired");
+                        tx.append(Draft::new(&tid, "runtime-request.updated", request))?;
+                    }
+                }
+                Ok(())
+            })
+            .await;
+        if let Err(e) = written {
+            eprintln!("conn-engine: could not record a released session: {e}");
         }
     }
 
