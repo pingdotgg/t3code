@@ -89,6 +89,16 @@ export function resolveServerSelfUpdateCapability(
   return serverConfig?.environment.capabilities.serverSelfUpdate ?? null;
 }
 
+/** A desktop app started this server over SSH and restarts it on its own version when it reconnects. */
+export function isDesktopSshLaunched(
+  serverConfig: Pick<ServerConfig, "environment"> | null | undefined,
+): boolean {
+  return serverConfig?.environment.capabilities.desktopSshLaunch === true;
+}
+
+export const DESKTOP_SSH_LAUNCH_UPDATE_NOTE =
+  "The desktop app that launched this server over SSH updates it to its own version when it reconnects.";
+
 export function supportsDesktopAppUpdate(
   serverConfig: Pick<ServerConfig, "environment"> | null | undefined,
 ): boolean {

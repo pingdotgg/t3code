@@ -201,6 +201,9 @@ export const make = Effect.gen(function* () {
     launcherManaged: launcher.managed,
   });
   const serverInstallation = serverSelfUpdate === null ? yield* resolveServerInstallation : null;
+  const desktopSshLaunch =
+    serverSelfUpdate === null &&
+    (yield* HostProcess.Environment)["T3CODE_DESKTOP_SSH_LAUNCH"] === "1";
   // The desktop reports whether it can install updates; requests travel over its control fd.
   const desktopAppUpdate =
     serverSelfUpdate === "desktop-managed" &&
@@ -284,6 +287,7 @@ export const make = Effect.gen(function* () {
       cloudVoiceTranscription: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),
+      ...(desktopSshLaunch ? { desktopSshLaunch: true } : {}),
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
         ? { serverSelfUpdateProgress: true }
         : {}),

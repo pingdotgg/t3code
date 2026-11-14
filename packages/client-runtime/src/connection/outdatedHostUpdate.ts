@@ -108,7 +108,10 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
     ) {
       return yield* new OutdatedHostUpdateError({
         environmentId,
-        message: `Update T3 Code on ${descriptor.label} manually; it cannot update itself.`,
+        message:
+          capabilities.desktopSshLaunch === true
+            ? `The desktop app that launched ${descriptor.label} over SSH updates it to its own version when it reconnects.`
+            : `Update T3 Code on ${descriptor.label} manually; it cannot update itself.`,
       });
     }
 
