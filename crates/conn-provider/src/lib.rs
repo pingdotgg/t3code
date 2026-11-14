@@ -8,8 +8,8 @@
 //! Kept from the TS interface: plan a selection transition; open session (with its MCP
 //! servers and a host handle, returning the session row); ensure/resume/fork/roll back a
 //! thread; start/steer/interrupt a turn; apply a model selection; stop and await background
-//! tasks; respond to runtime requests; the event stream; 8 of the 19 error tags that change
-//! what the engine does (as condensed variants). Added: [`Session::apply_runtime_policy`], so
+//! tasks; respond to runtime requests; the event stream; the error tags that change what
+//! the engine does, condensed into [`ProviderError`]. Added: [`Session::apply_runtime_policy`], so
 //! a permission mode change reaches a running process (Claude `setPermissionMode`); TS passes
 //! the policy per turn only; [`ProviderEvent::ContinuationRequested`], where TS uses a
 //! separate service. Left out until needed: compact, thread unload, subagent stop, MCP apps,
