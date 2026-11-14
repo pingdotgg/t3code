@@ -1905,6 +1905,15 @@ describe("cached pull request detail", () => {
     expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
     expect(readPullRequestDetailSnapshot(undefined, "env-1", reference)).toBeNull();
     const hosted = { ...reference, host: "github.com" };
+    const ported = detail({
+      provider: SourceControlProviderKind.make("github"),
+      url: "https://github.com:8443/acme/web/pull/7",
+    });
+    writePullRequestDetailSnapshot(storage, "env-1", hosted, ported);
+    expect(
+      readPullRequestDetailSnapshot(storage, "env-1", { ...reference, host: "github.com:8443" })
+        ?.title,
+    ).toBe(ported.title);
     writePullRequestDetailSnapshot(storage, "env-1", hosted, detail({ url: "invalid url" }));
     expect(readPullRequestDetailSnapshot(storage, "env-1", hosted)).toBeNull();
   });

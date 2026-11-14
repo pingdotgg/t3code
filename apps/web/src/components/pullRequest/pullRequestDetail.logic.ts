@@ -1552,7 +1552,13 @@ export function readPullRequestDetailSnapshot(
     for (const candidate of candidates) {
       const raw = storage?.getItem(pullRequestDetailSnapshotKey(environmentId, candidate));
       if (!raw) continue;
-      const decoded = decodeDetailSnapshot(JSON.parse(raw));
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      const decoded = decodeDetailSnapshot(parsed);
       if (decoded._tag !== "Some") continue;
       const detail = resolveDisplayedPullRequestDetail({
         live: null,
