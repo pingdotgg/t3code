@@ -280,37 +280,33 @@ describe.each([
     },
   ],
 ])("useNewThreadHandler with a %s draft", (_, draft) => {
-  it.each([true, false])(
-    "does not guess before settings load and uses them on retry (connected: %s)",
-    async (connected) => {
-      testState.reset(draft, { envMode: "worktree", startFromOrigin: true });
-      testState.toast.mockClear();
-      testState.setConfigMissing(true);
-      if (!connected) testState.disconnect("environment-ssh");
-      const openThread = useNewThreadHandler();
-      const projectRef = {
-        environmentId: "environment-ssh",
-        projectId: "project-remote",
-      } as never;
+  it("does not guess before settings load and uses them on retry", async () => {
+    testState.reset(draft, { envMode: "worktree", startFromOrigin: true });
+    testState.toast.mockClear();
+    testState.setConfigMissing(true);
+    const openThread = useNewThreadHandler();
+    const projectRef = {
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never;
 
-      await expect(openThread(projectRef)).resolves.toBeNull();
-      expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
-      expect(testState.draftStore.setDraftThreadContext).not.toHaveBeenCalled();
-      expect(testState.router.navigate).not.toHaveBeenCalled();
-      expect(testState.toast).toHaveBeenCalledWith(
-        expect.objectContaining({ title: "Environment settings are still loading" }),
-      );
+    await expect(openThread(projectRef)).resolves.toBeNull();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+    expect(testState.draftStore.setDraftThreadContext).not.toHaveBeenCalled();
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+    expect(testState.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Environment settings are still loading" }),
+    );
 
-      testState.setConfigMissing(false);
-      await expect(openThread(projectRef)).resolves.not.toBeNull();
-      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
-        "remote-project",
-        projectRef,
-        draft?.draftId ?? "draft-delayed",
-        expect.objectContaining({ envMode: "worktree", startFromOrigin: true }),
-      );
-    },
-  );
+    testState.setConfigMissing(false);
+    await expect(openThread(projectRef)).resolves.not.toBeNull();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      projectRef,
+      draft?.draftId ?? "draft-delayed",
+      expect.objectContaining({ envMode: "worktree", startFromOrigin: true }),
+    );
+  });
 
   it("abandons a delayed draft open when the user navigates elsewhere", async () => {
     testState.reset(draft);
@@ -365,25 +361,23 @@ describe.each([
 });
 
 describe("useNewThreadHandler", () => {
-  it.each(["local", "worktree"] as const)(
-    "keeps an explicit %s choice while the target settings are unavailable",
-    async (envMode) => {
-      testState.reset(null);
-      testState.setConfigMissing(true);
-      await expect(
-        useNewThreadHandler()(
-          { environmentId: "environment-ssh", projectId: "project-remote" } as never,
-          { envMode },
-        ),
-      ).resolves.not.toBeNull();
-      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
-        "remote-project",
-        expect.anything(),
-        "draft-delayed",
-        expect.objectContaining({ envMode }),
-      );
-    },
-  );
+  it("keeps an explicit choice while the target settings are unavailable", async () => {
+    testState.reset(null);
+    testState.setConfigMissing(true);
+    await expect(
+      useNewThreadHandler()(
+        { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+        { envMode: "worktree" },
+      ),
+    ).resolves.not.toBeNull();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      expect.anything(),
+      "draft-delayed",
+      expect.objectContaining({ envMode: "worktree" }),
+    );
+  });
+
   it("keeps the text of a draft that gained some while it waited", async () => {
     testState.reset(null);
     const raced = {

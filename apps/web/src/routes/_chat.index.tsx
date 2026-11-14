@@ -1,6 +1,7 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { useAtomValue } from "@effect/atom-react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
@@ -20,6 +21,7 @@ import {
   useVisibleThreadShells,
 } from "../state/entities";
 import { useEnvironments } from "../state/environments";
+import { environmentServerConfigsAtom } from "../state/server";
 
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
@@ -38,6 +40,7 @@ function IndexDraftLanding() {
   const threads = useVisibleThreadShells();
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const handleNewThread = useNewThreadHandler();
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const router = useRouter();
   // Read at effect time; this page can stay mounted while the router is already navigating away.
   const isStillOnIndex = useEffectEvent(() => router.state.location.pathname === "/");
@@ -51,11 +54,19 @@ function IndexDraftLanding() {
       "updated_at",
     )[0] ?? null;
   const attempt = startState.retryRequest;
+  // Cached projects show before their environment connects; the handler refuses to guess until it does.
+  const configLoaded =
+    mostRecentProject !== null && serverConfigs.has(mostRecentProject.environmentId);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts a draft thread in the most recent project and navigates to it while still on the index
   useEffect(() => {
     // Starting a draft after the user has left would replace the page they picked.
-    if (mostRecentProject === null || startedAttemptRef.current === attempt || !isStillOnIndex()) {
+    if (
+      mostRecentProject === null ||
+      !configLoaded ||
+      startedAttemptRef.current === attempt ||
+      !isStillOnIndex()
+    ) {
       return;
     }
     const projectRef = scopeProjectRef(mostRecentProject.environmentId, mostRecentProject.id);
@@ -72,7 +83,7 @@ function IndexDraftLanding() {
       .catch(() => {
         setStartState((state) => ({ ...state, failed: true }));
       });
-  }, [attempt, handleNewThread, mostRecentProject]);
+  }, [attempt, configLoaded, handleNewThread, mostRecentProject]);
 
   if (mostRecentProject !== null) {
     return startState.failed ? (
