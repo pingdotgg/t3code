@@ -403,6 +403,8 @@ it.effect.each(["failure", "interrupt"] as const)(
 it.effect.each([
   { stop: "complete", gate: null, index: "head", file: "unstaged\n" },
   { stop: "interrupt before restore", gate: "ls-files", index: "staged", file: "later\n" },
+  { stop: "interrupt during config", gate: "config", index: "staged", file: "later\n" },
+  { stop: "interrupt before execute", gate: "restore", index: "staged", file: "later\n" },
   { stop: "interrupt after restore", gate: "clean", index: "head", file: "unstaged\n" },
 ] as const)("checkpoint restore $stop leaves the $index index", ({ gate, index, file }) =>
   Effect.gen(function* () {

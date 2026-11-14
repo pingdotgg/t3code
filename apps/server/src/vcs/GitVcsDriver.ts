@@ -570,6 +570,7 @@ const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
     args: ReadonlyArray<string>,
     options?: {
       readonly stdin?: string;
+      readonly onSpawn?: () => void;
       readonly env?: NodeJS.ProcessEnv;
       readonly allowNonZeroExit?: boolean;
       readonly timeoutMs?: number;
@@ -585,6 +586,7 @@ const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
       cwd,
       spawnCwd: globalThis.process.cwd(),
       ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
+      ...(options?.onSpawn !== undefined ? { onSpawn: options.onSpawn } : {}),
       ...(options?.env !== undefined ? { env: options.env } : {}),
       ...(options?.allowNonZeroExit !== undefined
         ? { allowNonZeroExit: options.allowNonZeroExit }
@@ -1726,6 +1728,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         cwd: input.cwd,
         args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", "."],
       });
+      const sparseConfig =
+        tracked.stdout.length > 0
+          ? yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["config", "--bool", "core.sparseCheckout"],
+              allowNonZeroExit: true,
+            })
+          : null;
+      const sparseCheckout = sparseConfig?.stdout.trim() === "true";
       // Restoring away the last tracked file can remove a nested workspace directory.
       const recreateWorkspace = fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
         Effect.mapError(
@@ -1748,27 +1760,26 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           args: [...longPaths, "reset", "--quiet", "--", "."],
         });
       });
-      // From here restore stages checkpoint contents; an interrupted restore must still unstage them.
+      let mutationStarted = false;
+      const onSpawn = () => {
+        mutationStarted = true;
+      };
+      // Queued commands preserve user staging; spawned children stop before this scope resets it.
       yield* Effect.addFinalizer((exit) =>
-        Exit.hasInterrupts(exit) ? resetIndex.pipe(Effect.ignore) : Effect.void,
+        mutationStarted && Exit.hasInterrupts(exit) ? resetIndex.pipe(Effect.ignore) : Effect.void,
       );
       // An empty index and checkpoint have nothing for git restore's pathspec to match.
       if (tracked.stdout.length > 0) {
-        const sparseConfig = yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: ["config", "--bool", "core.sparseCheckout"],
-          allowNonZeroExit: true,
-        });
-        const sparseCheckout = sparseConfig.stdout.trim() === "true";
         const restore = [...longPaths, "restore", "--source", commitOid, "--worktree", "--staged"];
         // restore leaves skip-worktree paths alone. Outside a sparse checkout every such bit was
         // set by hand and capture recorded the file, so override them all.
-        yield* execute({
+        yield* gitCommand(
+          vcsProcess,
           operation,
-          cwd: input.cwd,
-          args: [...restore, ...(sparseCheckout ? [] : ["--ignore-skip-worktree-bits"]), "--", "."],
-        });
+          input.cwd,
+          [...restore, ...(sparseCheckout ? [] : ["--ignore-skip-worktree-bits"]), "--", "."],
+          { onSpawn },
+        );
         if (sparseCheckout) {
           // Sparse exclusions stay excluded; only skip-worktree paths the rules select are manual.
           const manual = yield* Effect.gen(function* () {
@@ -1840,13 +1851,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         }
       }
       yield* recreateWorkspace;
-      const clean = execute({
+      const clean = gitCommand(
+        vcsProcess,
         operation,
-        cwd: input.cwd,
-        args: [...longPaths, "clean", "-fd", "--", "."],
-        env: { LC_ALL: "C" },
-        allowNonZeroExit: true,
-      });
+        input.cwd,
+        [...longPaths, "clean", "-fd", "--", "."],
+        { env: { LC_ALL: "C" }, allowNonZeroExit: true, onSpawn },
+      );
       let cleaned = yield* clean;
       // Removing a new .gitignore exposes the files it hid; clean again until nothing is left.
       for (
