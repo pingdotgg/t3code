@@ -1599,6 +1599,19 @@ it.effect("fills the watching panel without changing viewport on control handoff
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("returns to the default fill size when no viewer has reported one", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const resize = (input: Record<string, unknown>) =>
+        broker.invoke({ scope, tabId, operation: "resize", input });
+      yield* resize({ mode: "freeform", width: 390, height: 844 });
+      yield* resize({ mode: "fill" });
+      expect(contexts[0]!.page.viewportSize()).toEqual({ width: 1280, height: 800 });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("keeps one fill-size viewer until control or connection changes", () =>
   Effect.scoped(
     Effect.gen(function* () {

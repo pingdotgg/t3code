@@ -834,10 +834,7 @@ const make = Effect.gen(function* () {
 
     if (tab.desktop) return;
     const size =
-      fixedViewportSize(setting) ??
-      tab.sizeViewer?.requestedSize ??
-      tab.page.viewportSize() ??
-      UNATTACHED_FILL_VIEWPORT;
+      fixedViewportSize(setting) ?? tab.sizeViewer?.requestedSize ?? UNATTACHED_FILL_VIEWPORT;
     await tab.page.setViewportSize({ width: size.width, height: size.height });
     await applyZoom(tab);
     await broadcastViewport(tab);

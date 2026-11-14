@@ -207,11 +207,14 @@ export function start(configuration: PreviewStreamConfiguration) {
           post({ type: "control", ...nextControl });
           if (nextControl.controller === "you") agentCursor.style.opacity = "0";
           if (nextControl.controller !== "you") clearInput();
-          else {
-            input.disabled = !interactive;
-            if (interactive && size && previous?.controller !== "you")
-              next.send({ type: "resize", ...size });
-          }
+          else input.disabled = !interactive;
+          if (
+            interactive &&
+            size &&
+            (previous === null ||
+              (nextControl.controller === "you" && previous.controller !== "you"))
+          )
+            next.send({ type: "resize", ...size });
         },
         onConnectedChange: (connected) => {
           if (!connected) {
