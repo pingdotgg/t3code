@@ -343,9 +343,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const threadSearch = useThreadSearch(
     searchEnvironmentIds,
     props.searchQuery,
-    v2ScopedProjectGroup === null
-      ? {}
-      : { projectIds: v2ScopedProjectGroup.projectRefs.map((ref) => ref.projectId) },
+    v2ScopedProjectGroup === null ? {} : { projectRefs: v2ScopedProjectGroup.projectRefs },
   );
   const threadSearchMatchByKey = useThreadListSearchMatches(props.threads, threadSearch);
   const v2ProjectTitleByProjectKey = new Map(
