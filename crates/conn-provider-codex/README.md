@@ -66,7 +66,8 @@ notices, command / file-change / permission / legacy approvals with session allo
 structured questions, steering, interrupt (with background terminals stopped; a Stop not
 confirmed in 10 s reports an interrupt timeout), usage-limit and provider failures (redacted, `conn_provider_support::redact`),
 thread resume after a restart, rollback (`CodexThreadRevert.ts`), fork (native, inclusive
-`lastTurnId`, or reverted to the boundary), requests Codex resolved itself
+`lastTurnId`, or reverted to the boundary; the fork's own model and cwd, as
+`codexThreadRuntimeParams`), requests Codex resolved itself
 (`serverRequest/resolved`).
 
 ## Not implemented
@@ -76,8 +77,6 @@ thread resume after a restart, rollback (`CodexThreadRevert.ts`), fork (native, 
   four `subagent_v2*` recordings.
 - **Thread operations:** snapshots, compaction requests, history injection, goals, archive,
   feedback upload; the `additionalContext` restore after compaction (`thread/inject_items`).
-- **Fork input:** the trait's `ForkThreadInput` has no model or policy; the fork uses the
-  session's own (TS passes the fork's when the orchestrator gives them).
 - **Retries:** `error` with `willRetry: true` makes no retry row; the turn keeps running.
 - **Rate limits:** `account/rateLimits/*` is ignored, so usage-limit failures have no `resetAt`.
 - **T3 context details:** browser tools are assumed on and device tools off (TS reads both

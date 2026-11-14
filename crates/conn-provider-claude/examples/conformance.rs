@@ -216,6 +216,8 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
                     provider_turn_id: None,
                     target_thread_id: "thread-conformance-fork".into(),
                     owner_node_id: None,
+                    model_selection: None,
+                    runtime_policy: None,
                 })
                 .await
                 .unwrap_or_else(|e| panic!("fork_thread: {e}"));

@@ -854,10 +854,13 @@ impl Session for CodexSession {
                 }
             };
             let mcp = inner.lock().mcp_servers.clone();
+            // `codexThreadRuntimeParams`: the fork's own model and cwd, left out when absent.
+            let model = input.model_selection.as_ref().map(launch::selection_model);
+            let cwd = input.runtime_policy.as_ref().and_then(|p| p.cwd.clone());
             let mut params = launch::thread_params(
                 Some(input.target_thread_id.as_str()),
-                inner.open_cwd.as_deref(),
-                inner.open_model.as_deref(),
+                cwd.as_deref(),
+                model.as_deref(),
                 &mcp,
             );
             params["threadId"] = json!(native);
@@ -970,6 +973,7 @@ mod tests {
     const FAKE: &str = r#"
 emit() { printf '%s\n' "$1"; }
 while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$0.stdin"
   id=$(printf '%s' "$line" | sed -n 's/^{"id":\([0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*) emit "{\"id\":$id,\"result\":{\"userAgent\":\"t3code_desktop/0.167.0 (x)\"}}" ;;
@@ -995,6 +999,7 @@ while IFS= read -r line; do
       emit "{\"id\":$id,\"result\":{}}"
       emit '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu2","status":"interrupted","completedAt":3}}}' ;;
     *'"method":"thread/unsubscribe"'*) emit "{\"id\":$id,\"result\":{}}" ;;
+    *'"method":"thread/fork"'*) emit "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"th9\",\"createdAt\":1,\"updatedAt\":2}}}" ;;
   esac
 done
 "#;
@@ -1287,5 +1292,83 @@ done
         session.close().await;
         let ended = until(&mut events, "turn.terminal").await;
         assert_eq!(ended.last().unwrap()["status"], "interrupted");
+    }
+
+    /// `forkThread` sends the fork's own model and cwd (`codexThreadRuntimeParams`), and
+    /// leaves both out when the input has none, as T3 does.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_fork_sends_its_own_model_and_cwd() {
+        let dir = std::env::temp_dir().join(format!("conn-codex-fork-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("codex");
+        std::fs::write(&script, format!("#!/bin/sh\n{FAKE}")).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let log = dir.join("codex.stdin");
+        let _ = std::fs::remove_file(&log);
+        let provider = CodexProvider::new(
+            "codex".into(),
+            CodexConfig {
+                binary: script,
+                home_path: Some(dir.clone()),
+                ..CodexConfig::default()
+            },
+        );
+        let OpenedSession { session, .. } = provider
+            .open_session(OpenSessionInput {
+                thread_id: "t1".into(),
+                provider_session_id: "s1".into(),
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                resume_from_session: None,
+            })
+            .await
+            .unwrap();
+        let thread = session
+            .ensure_thread(EnsureThreadInput {
+                thread_id: "t1".into(),
+                title: None,
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                existing_provider_thread: None,
+            })
+            .await
+            .unwrap();
+        let fork = |selection: Option<Value>, cwd: Option<&str>| ForkThreadInput {
+            source_provider_thread: thread.clone(),
+            source_provider_turns: vec![],
+            provider_turn_id: None,
+            target_thread_id: "t2".into(),
+            owner_node_id: None,
+            model_selection: selection.map(|s| from_json(s).unwrap()),
+            runtime_policy: cwd.map(|cwd| {
+                from_json(json!({"runtimeMode": "full-access", "interactionMode": "default", "cwd": cwd}))
+                    .unwrap()
+            }),
+        };
+        session
+            .fork_thread(fork(
+                Some(json!({"instanceId": "codex", "model": "gpt-6-astra"})),
+                Some("/work/fork"),
+            ))
+            .await
+            .unwrap();
+        session.fork_thread(fork(None, None)).await.unwrap();
+        session.close().await;
+        let forks: Vec<Value> = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|f| f["method"] == "thread/fork")
+            .map(|f| f["params"].clone())
+            .collect();
+        assert_eq!(forks.len(), 2, "{forks:?}");
+        assert_eq!(forks[0]["model"], "gpt-6-astra");
+        assert_eq!(forks[0]["cwd"], "/work/fork");
+        assert!(forks[1].get("model").is_none(), "{:?}", forks[1]);
+        assert!(forks[1].get("cwd").is_none(), "{:?}", forks[1]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

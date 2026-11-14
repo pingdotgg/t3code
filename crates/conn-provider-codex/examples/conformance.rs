@@ -436,6 +436,8 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                         provider_turn_id: input["providerTurnId"].as_str().map(Into::into),
                         target_thread_id: input["targetThreadId"].as_str().unwrap_or("t").into(),
                         owner_node_id: input["ownerNodeId"].as_str().map(Into::into),
+                        model_selection: json(&input["modelSelection"])?,
+                        runtime_policy: json(&input["runtimePolicy"])?,
                     })
                     .await
                     .map_err(|e| e.to_string())?;

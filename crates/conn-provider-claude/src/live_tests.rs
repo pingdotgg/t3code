@@ -810,6 +810,8 @@ async fn live_fork_from_a_turn() {
             provider_turn_id: Some(turns[0]["id"].as_str().unwrap().into()),
             target_thread_id: "thread-fork".into(),
             owner_node_id: None,
+            model_selection: None,
+            runtime_policy: None,
         })
         .await
         .unwrap();

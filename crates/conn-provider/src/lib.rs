@@ -226,6 +226,10 @@ pub struct ForkThreadInput {
     pub provider_turn_id: Option<ProviderTurnId>,
     pub target_thread_id: ThreadId,
     pub owner_node_id: Option<NodeId>,
+    /// The fork's run selection (T3 passes `run.modelSelection`). Codex sends its model.
+    pub model_selection: Option<ModelSelection>,
+    /// The fork's resolved runtime policy. Codex sends its `cwd`.
+    pub runtime_policy: Option<RuntimePolicy>,
 }
 
 /// `ProviderAdapterV2ThreadSnapshot`.
