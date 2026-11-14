@@ -3316,10 +3316,19 @@ describe("OrchestratorMcpService provider resolution", () => {
         } as Project;
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(
-            layerOrchestratorService.pipe(
+            OrchestratorMcpService.layer.pipe(
+              Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+              Layer.provide(
+                Layer.mock(GitVcsDriver.GitVcsDriver)({
+                  resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+                  resolveDefaultBranchName: () => Effect.succeed("main"),
+                  resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
+                }),
+              ),
               Layer.provide(
                 Layer.mergeAll(
                   NodeServices.layer,
+                  NodeCrypto.layer,
                   Layer.mock(ThreadManagementService.ThreadManagementService)({
                     getThreadShell: () => Effect.succeed(null),
                   }),
