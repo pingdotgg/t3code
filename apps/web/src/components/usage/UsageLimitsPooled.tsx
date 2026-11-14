@@ -591,10 +591,10 @@ function PoolWindowCard({
           )}
         >
           <span className="flex items-baseline gap-1.5 whitespace-nowrap">
-            <span className="text-xl font-semibold text-foreground tabular-nums">
+            <span className="text-3xl font-semibold text-foreground tabular-nums">
               {pool.remainingPercent}%
             </span>
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
               <span>left</span>
               {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
             </span>
