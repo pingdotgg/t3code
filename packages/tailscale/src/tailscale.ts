@@ -309,6 +309,7 @@ export const readTailscaleStatus = readTailscaleOutput("status", ["status", "--j
 );
 
 const TailscaleExitNodeJson = Schema.Struct({
+  BackendState: Schema.optional(Schema.Unknown),
   ExitNodeStatus: Schema.optional(Schema.Struct({ Online: Schema.optional(Schema.Unknown) })),
   Peer: Schema.optional(
     Schema.Record(
@@ -332,8 +333,9 @@ export interface TailscaleExitNode {
 }
 
 /**
- * `ExitNodeStatus` is present only while an exit node is in use, but it has no
- * name. The name comes from the peer marked `ExitNode: true`.
+ * `ExitNodeStatus` is present while an exit node is selected, even after
+ * `tailscale down`, so it is in use only while the backend is running. It has
+ * no name; the name comes from the peer marked `ExitNode: true`.
  */
 export const parseTailscaleExitNode = (
   rawStatusJson: string,
@@ -342,6 +344,7 @@ export const parseTailscaleExitNode = (
     Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
     Effect.map((parsed) => {
       if (parsed.ExitNodeStatus === undefined) return null;
+      if (parsed.BackendState !== undefined && parsed.BackendState !== "Running") return null;
       const peer = Object.values(parsed.Peer ?? {}).find(
         (candidate) => candidate.ExitNode === true,
       );
