@@ -21,6 +21,7 @@ fn command(cwd: &Path, args: &[&str], stdin: bool) -> std::io::Result<Child> {
         .args(["-c", "core.fsmonitor=false", "-c", "core.quotePath=false"])
         .args(args)
         .current_dir(cwd)
+        .envs(conn_support::login_env::vars())
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .stdin(if stdin { Stdio::piped() } else { Stdio::null() })

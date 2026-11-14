@@ -515,6 +515,7 @@ async fn run_clone(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    command.envs(conn_support::login_env::vars());
     for (key, value) in ctx.child_env {
         command.env(key, value);
     }

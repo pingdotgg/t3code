@@ -596,6 +596,7 @@ async fn run_setup_script(
         .arg("-c")
         .arg(&script.command)
         .current_dir(worktree)
+        .envs(conn_support::login_env::vars())
         .env("T3CODE_PROJECT_ROOT", project_root)
         .env("T3CODE_WORKTREE_PATH", worktree)
         .env("COLORTERM", "")

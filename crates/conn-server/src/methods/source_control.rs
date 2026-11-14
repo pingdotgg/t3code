@@ -69,6 +69,7 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
         let host = host.clone();
         let settings = host.settings();
         async move {
+            refresh_login_path().await;
             let result = discover(
                 &host.cwd,
                 host.home.as_deref(),
@@ -239,6 +240,23 @@ fn register_repositories(table: &mut MethodTable, inputs: &HostInputs, deps: &De
             }
         },
     );
+}
+
+/// `refreshPathFromLoginShell` before discovery, at most every 10 s, so a CLI installed since
+/// the start is found here and by every later child (`conn_support::login_env`).
+async fn refresh_login_path() {
+    use conn_support::login_env;
+    if !(cfg!(target_os = "macos") || cfg!(target_os = "linux")) {
+        return;
+    }
+    if !login_env::claim_refresh(std::time::Instant::now()) {
+        return;
+    }
+    let Some(shell) = login_env::login_shell(std::env::var_os("SHELL").as_deref(), None) else {
+        return;
+    };
+    let _ =
+        tokio::task::spawn_blocking(move || login_env::refresh(&shell, login_env::TIMEOUT)).await;
 }
 
 /// `SourceControlProviderKind` and `TrimmedNonEmptyString` decode by trimming.

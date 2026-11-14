@@ -39,6 +39,7 @@ async fn probe(cwd: &Path, exe: &str, args: &[&str]) -> Result<Probe, ProbeError
     let mut child = tokio::process::Command::new(exe)
         .args(args)
         .current_dir(cwd)
+        .envs(conn_support::login_env::vars())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

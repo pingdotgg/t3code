@@ -240,6 +240,8 @@ async fn run(command: GitCommand, scan: Option<Scanner<'_>>) -> Result<GitOutput
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    // The login shell's PATH (`conn_support::login_env`); the caller's own variables win.
+    child.envs(conn_support::login_env::vars());
     for (key, value) in &command.env {
         child.env(key, value);
     }

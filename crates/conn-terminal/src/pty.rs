@@ -58,6 +58,10 @@ pub(crate) fn shell_env(
                 && !DROPPED_ENV_PREFIXES.iter().any(|p| upper.starts_with(p))
         })
         .collect();
+    // The login shell's PATH, as T3's `process.env` carries it (`conn_support::login_env`).
+    for (key, value) in conn_support::login_env::vars() {
+        env.insert(key.into(), value);
+    }
     let had_colorterm = env.contains_key(&OsString::from("COLORTERM"));
     env.insert("TERM".into(), "xterm-256color".into());
     env.insert("TERM_PROGRAM".into(), "t3code".into());

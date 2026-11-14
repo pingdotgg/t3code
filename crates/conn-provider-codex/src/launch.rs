@@ -64,7 +64,10 @@ impl Default for CodexConfig {
 impl CodexConfig {
     /// The configured binary when it exists: a path is checked as is, a bare name on `PATH`.
     pub fn find_binary(&self) -> Option<PathBuf> {
-        find_executable(&self.binary, std::env::var_os("PATH").as_deref())
+        find_executable(
+            &self.binary,
+            conn_support::login_env::var_os("PATH").as_deref(),
+        )
     }
 
     /// `CODEX_HOME` as the CLI will see it: the setting, the inherited variable, `~/.codex`.

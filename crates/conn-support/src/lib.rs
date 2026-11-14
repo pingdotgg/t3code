@@ -1,11 +1,12 @@
 //! Small helpers that several Conn Server crates share. Std only (plus `sha2`, `uuid` and `getrandom`), no async, no
-//! state. See `README.md`.
+//! state except `login_env`'s three values. See `README.md`.
 
 pub mod base64;
 pub mod fs;
 pub mod hex;
 pub mod hmac;
 pub mod ids;
+pub mod login_env;
 pub mod time;
 
 /// A random version 4 UUID from the OS random source, lowercase and hyphenated, as

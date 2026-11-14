@@ -116,6 +116,8 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
             std::process::exit(1);
         }
     };
+    // `fixPath`: the login shell's PATH for every child, read before any provider starts.
+    let _ = tokio::task::spawn_blocking(conn_support::login_env::hydrate).await;
     for (root, title) in home::read_projects(&state_dir) {
         if !projects.iter().any(|(r, _)| *r == root) {
             projects.push((root, Some(title)));
