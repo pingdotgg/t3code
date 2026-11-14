@@ -7619,6 +7619,44 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         },
       },
       {
+        type: "expect_outbound",
+        label: "mcpServerStatus/list",
+        frame: {
+          id: 4,
+          method: "mcpServerStatus/list",
+          params: {
+            threadId: MCP_APP_NATIVE_THREAD,
+            serverName: "weather",
+            detail: "toolsAndAuthOnly",
+          },
+        },
+      },
+      {
+        type: "emit_inbound",
+        label: "mcpServerStatus/list",
+        frame: {
+          id: 4,
+          result: {
+            data: [
+              {
+                name: "weather",
+                authStatus: "unsupported",
+                httpOrigin: "https://mcp.weather.test",
+                serverInfo: {
+                  name: "weather",
+                  version: "1.0.0",
+                  icons: [{ src: "https://weather.test/icon.svg", mimeType: "image/svg+xml" }],
+                },
+                tools: { get_weather: { name: "get_weather", inputSchema: { type: "object" } } },
+                resources: [],
+                resourceTemplates: [],
+              },
+            ],
+            nextCursor: null,
+          },
+        },
+      },
+      {
         type: "emit_inbound",
         label: "item/completed/app-tool",
         frame: {
@@ -7646,7 +7684,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         type: "expect_outbound",
         label: "mcpServer/resource/read",
         frame: {
-          id: 4,
+          id: 5,
           method: "mcpServer/resource/read",
           params: { threadId: MCP_APP_NATIVE_THREAD, server: "weather", uri: MCP_APP_RESOURCE },
         },
@@ -7655,7 +7693,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         type: "emit_inbound",
         label: "mcpServer/resource/read",
         frame: {
-          id: 4,
+          id: 5,
           result: {
             contents: [
               {
@@ -7720,6 +7758,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         content: [{ type: "text", text: "Sunny" }],
         structuredContent: { temp: 21 },
       });
+      const serverIcon = { _tag: "themed-logo", logoUrl: "https://weather.test/icon.svg" } as const;
+      assert.deepEqual(
+        item.type === "dynamic_tool" ? item.toolSource?.icon : undefined,
+        serverIcon,
+      );
+      assert.deepEqual(item.type === "dynamic_tool" ? item.toolIcon : undefined, serverIcon);
 
       const fileSystem = yield* FileSystem.FileSystem;
       const stored = yield* fileSystem.readFileString(
@@ -7797,6 +7841,158 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const output = item.type === "dynamic_tool" ? (item.output as Record<string, unknown>) : {};
       assert.equal(readMcpAppReference(output[MCP_APP_OUTPUT_KEY])?.resourceUri, MCP_APP_RESOURCE);
       assert.deepEqual(output.result, { ...MCP_APP_DEFERRED_RESULT, isError: true });
+      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  const mcpToolItem = (status: "inProgress" | "completed") => {
+    const { mcpAppResourceUri: _resourceUri, ...item } = mcpAppToolItem(status);
+    return item;
+  };
+  const lateStatusEntries = mcpAppTranscript.entries.filter(
+    (entry) => entry.type === "runtime_exit" || entry.label !== "mcpServer/resource/read",
+  );
+  const lateStatusResponse = lateStatusEntries.find(
+    (entry) => entry.type === "emit_inbound" && entry.label === "mcpServerStatus/list",
+  )!;
+  const lateStatusTranscript = makeCodexReplayTranscript({
+    scenario: "codex-mcp-late-server-status",
+    entries: lateStatusEntries.flatMap((entry) => {
+      if (entry === lateStatusResponse) return [];
+      if (entry.type !== "emit_inbound" || !entry.label?.endsWith("/app-tool")) return [entry];
+      const frame = entry.frame as { readonly params: Record<string, unknown> };
+      const completed = entry.label === "item/completed/app-tool";
+      const toolEntry = {
+        ...entry,
+        frame: {
+          ...frame,
+          params: { ...frame.params, item: mcpToolItem(completed ? "completed" : "inProgress") },
+        },
+      };
+      return completed ? [toolEntry, lateStatusResponse] : [toolEntry];
+    }),
+  });
+
+  it.effect(
+    "gives a completed MCP tool row its server icon when the status read lands after it",
+    () =>
+      Effect.gen(function* () {
+        const completedRow = yield* Deferred.make<OrchestrationV2TurnItem>();
+        const harness = yield* makeCodexReplayHarness(lateStatusTranscript, (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "dynamic_tool" &&
+          event.turnItem.status === "completed"
+            ? Deferred.succeed(completedRow, event.turnItem)
+            : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-mcp-late-status"),
+            text: MCP_APP_PROMPT,
+          }),
+        );
+        const item = yield* Deferred.await(completedRow);
+        assert.deepEqual(item.type === "dynamic_tool" ? item.toolSource?.icon : undefined, {
+          _tag: "themed-logo",
+          logoUrl: "https://weather.test/icon.svg",
+        });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  const pendingStatusEntries = mcpAppTranscript.entries.slice(
+    0,
+    mcpAppTranscript.entries.findIndex(
+      (entry) => entry.type === "emit_inbound" && entry.label === "mcpServerStatus/list",
+    ),
+  );
+  const pendingStatusTranscript = makeCodexReplayTranscript({
+    scenario: "codex-mcp-app-stopped-during-status-read",
+    entries: [
+      ...pendingStatusEntries,
+      ...mcpAppTranscript.entries.filter(
+        (entry) => entry.type === "emit_inbound" && entry.label === "item/completed/app-tool",
+      ),
+      {
+        type: "expect_outbound",
+        label: "turn/interrupt",
+        frame: {
+          id: 5,
+          method: "turn/interrupt",
+          params: { threadId: MCP_APP_NATIVE_THREAD, turnId: MCP_APP_NATIVE_TURN },
+        },
+      },
+      { type: "emit_inbound", label: "turn/interrupt", frame: { id: 5, result: {} } },
+      {
+        type: "emit_inbound",
+        label: "turn/completed",
+        frame: {
+          method: "turn/completed",
+          params: {
+            threadId: MCP_APP_NATIVE_THREAD,
+            turn: makeCodexReplayTurn({ id: MCP_APP_NATIVE_TURN, status: "interrupted" }),
+          },
+        },
+      },
+    ],
+  });
+
+  it.effect("writes no app snapshot when the turn stops during its server status read", () =>
+    Effect.gen(function* () {
+      const toolStarted = yield* Deferred.make<void>();
+      const requests: Array<string> = [];
+      const harness = yield* makeCodexReplayHarness(
+        pendingStatusTranscript,
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+            ? Deferred.succeed(toolStarted, undefined)
+            : Effect.void,
+        (method) => Effect.sync(() => void requests.push(method)),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-codex-mcp-app-stopped"),
+          text: MCP_APP_PROMPT,
+        }),
+      );
+      yield* Deferred.await(toolStarted);
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+          nativeTurnId: MCP_APP_NATIVE_TURN,
+        }),
+      });
+      yield* harness.firstTerminal;
+      assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
+      assert.notInclude(requests, "mcpServer/resource/read");
+      const stored = yield* (yield* FileSystem.FileSystem)
+        .readDirectory(harness.serverConfig.attachmentsDir)
+        .pipe(Effect.orElseSucceed(() => []));
+      assert.deepEqual(stored, []);
       assert.isFalse(yield* harness.hasPendingBackgroundWork);
     }).pipe(
       Effect.provide(

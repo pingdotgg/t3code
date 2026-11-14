@@ -24,6 +24,7 @@ import {
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
   toolGroupAction,
+  toolGroupSourceIcons,
   toolGroupSummaryKind,
   contextCompactionTokenCounts,
   workEntriesViewedImagePaths,
@@ -552,6 +553,8 @@ type MessagesTimelineRowContent =
       summaryKind: ToolGroupSummaryKind;
       toolSurface?: WorkLogEntry["toolSurface"];
       toolIcon?: WorkLogEntry["toolIcon"];
+      /** Set when the group used two or more sources with logos; they replace the row icon. */
+      sourceIcons?: ReadonlyArray<NonNullable<WorkLogEntry["toolIcon"]>>;
       hasFailure: boolean;
     }
   | {
@@ -2093,6 +2096,7 @@ export function deriveMessagesTimelineRows(input: {
           const groupToolIcon =
             primarySourceIcon ??
             visibleGroupedEntries.findLast((entry) => entry.toolIcon !== undefined)?.toolIcon;
+          const sourceIcons = toolGroupSourceIcons(visibleGroupedEntries);
           const latestToolEntry = visibleGroupedEntries.findLast(workLogEntryIsToolLike);
           const singleEntry =
             visibleGroupedEntries.length === 1 ? (visibleGroupedEntries[0] ?? null) : null;
@@ -2110,7 +2114,11 @@ export function deriveMessagesTimelineRows(input: {
                 : summarizeToolGroup(visibleGroupedEntries).summary,
             summaryKind,
             ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
-            ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
+            ...(sourceIcons.length > 1
+              ? { sourceIcons }
+              : groupToolIcon
+                ? { toolIcon: groupToolIcon }
+                : {}),
             hasFailure:
               latestToolEntry !== undefined &&
               workEntryDisplayIndicatesToolFailure(latestToolEntry),
@@ -2821,6 +2829,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.summaryKind === bw.summaryKind &&
         a.toolSurface === bw.toolSurface &&
         Equal.equals(a.toolIcon, bw.toolIcon) &&
+        Equal.equals(a.sourceIcons, bw.sourceIcons) &&
         a.hasFailure === bw.hasFailure
       );
     }

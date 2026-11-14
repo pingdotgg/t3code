@@ -45,9 +45,11 @@ export function assertClaudeMcpToolPresentationOutput(
 
   assert.equal(map?.status, "completed");
   assert.equal(map?.title, "firecrawl map");
+  assert.deepEqual(map?.toolIcon, map?.toolSource?.icon);
   assert.deepEqual(map?.toolSource, {
     key: "mcp:firecrawl",
     name: "Firecrawl",
     kind: "integration",
+    icon: { _tag: "website", pageUrl: "https://firecrawl.dev" },
   });
 }

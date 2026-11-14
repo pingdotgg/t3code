@@ -60,8 +60,8 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
     >
       <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
         {icon ? (
-          <span className="relative w-6 shrink-0 leading-0">
-            <span className="inline-block size-6 overflow-hidden align-[calc(0.5cap_-_0.75rem)]">
+          <span className="relative min-w-6 shrink-0 leading-0">
+            <span className="inline-block h-6 min-w-6 overflow-hidden align-[calc(0.5cap_-_0.75rem)]">
               <span className="flex size-full items-center justify-center">{icon}</span>
             </span>
           </span>

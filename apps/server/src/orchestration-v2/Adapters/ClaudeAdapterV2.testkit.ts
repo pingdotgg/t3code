@@ -3,6 +3,7 @@ import {
   forkSession,
   query,
   type CanUseTool,
+  type McpServerStatus,
   type PermissionResult,
   type SDKAssistantMessage,
   type SDKMessage,
@@ -245,9 +246,15 @@ interface ClaudeSubagentFoundFrame {
   readonly toolUseId: string | null;
 }
 
+interface ClaudeMcpServerStatusFrame {
+  readonly type: "mcp_server_status";
+  readonly statuses: ReadonlyArray<McpServerStatus>;
+}
+
 type ClaudeOutboundFrame =
   | { readonly type: "query.stop_task"; readonly taskId: string }
   | { readonly type: "query.background_tasks"; readonly toolUseId: string }
+  | { readonly type: "query.mcp_server_status" }
   | ClaudeQueryOpenFrame
   | ClaudePromptOfferFrame
   | ClaudeQuerySetModelFrame
@@ -755,7 +762,9 @@ function makeReplayQueryRunner(
     advance();
   };
 
-  const assertNextReplyFrame = <Frame extends ClaudeSessionForkedFrame | ClaudeSubagentFoundFrame>(
+  const assertNextReplyFrame = <
+    Frame extends ClaudeSessionForkedFrame | ClaudeSubagentFoundFrame | ClaudeMcpServerStatusFrame,
+  >(
     type: Frame["type"],
     isValid: (frame: object) => boolean,
   ): Frame => {
@@ -846,8 +855,16 @@ function makeReplayQueryRunner(
           replayEffect(() => {
             assertNextOutboundFrame({ type: "query.background_tasks", toolUseId });
           }).pipe(Effect.as(true)),
+        mcpServerStatus: Effect.try({
+          try: () => {
+            assertNextOutboundFrame({ type: "query.mcp_server_status" });
+            return assertNextReplyFrame<ClaudeMcpServerStatusFrame>("mcp_server_status", (frame) =>
+              Array.isArray(Reflect.get(frame, "statuses")),
+            ).statuses;
+          },
+          catch: (cause) => replayQueryRunnerError(transcript, cause),
+        }),
         // Recorded CLIs predate MCP Apps capabilities, so replays never reach these.
-        mcpServerStatus: Effect.die("unexpected MCP server status in replay"),
         readMcpResource: () => Effect.die("unexpected MCP resource read in replay"),
         callMcpTool: () => Effect.die("unexpected MCP tool call in replay"),
         listPermissionRules: Effect.die("unexpected permission rules read in replay"),
@@ -1290,10 +1307,29 @@ class RecordingPromptQueue implements AsyncIterable<SDKUserMessage> {
   }
 }
 
+/** Keeps what replays read; drops headers, env, URL paths and queries, and error text. */
+function mcpServerStatusForReplay(status: McpServerStatus): McpServerStatus {
+  const { config, error: _error, ...rest } = status;
+  if (config === undefined || !("url" in config) || !URL.canParse(config.url)) return rest;
+  const url = new URL(config.url).origin;
+  switch (config.type) {
+    case "http":
+    case "sse":
+      return { ...rest, config: { type: config.type, url } };
+    case "claudeai-proxy":
+      return { ...rest, config: { type: config.type, url, id: config.id } };
+  }
+}
+
 async function recordMessagesUntilTurnResult(input: {
   readonly iterator: AsyncIterator<SDKMessage>;
   readonly entries: Array<ProviderReplayEntry>;
   readonly scenario: string;
+  /** Records the status reads the adapter makes for MCP tool icons, once per tool name. */
+  readonly mcpServerStatus?: {
+    readonly read: () => Promise<ReadonlyArray<McpServerStatus>>;
+    readonly readToolNames: Set<string>;
+  };
 }): Promise<boolean> {
   while (true) {
     const next = await input.iterator.next();
@@ -1309,6 +1345,26 @@ async function recordMessagesUntilTurnResult(input: {
       label: replayMessage.type,
       frame: replayMessage,
     });
+    const status = input.mcpServerStatus;
+    const unread = ClaudeAdapterV2.claudeMcpServerStatusToolNames(next.value).filter(
+      (toolName) => status !== undefined && !status.readToolNames.has(toolName),
+    );
+    if (status !== undefined && unread.length > 0) {
+      input.entries.push({
+        type: "expect_outbound",
+        label: "query.mcp_server_status",
+        frame: { type: "query.mcp_server_status" },
+      });
+      input.entries.push({
+        type: "emit_inbound",
+        label: "mcp_server_status",
+        frame: {
+          type: "mcp_server_status",
+          statuses: (await status.read()).map(mcpServerStatusForReplay),
+        },
+      });
+      for (const toolName of unread) status.readToolNames.add(toolName);
+    }
     if (replayMessage.type === "result") {
       return true;
     }
@@ -1591,12 +1647,17 @@ async function recordClaudeStreamingQuery(input: {
     options,
   });
   const iterator = new RecordingMessageReader(queryRuntime[Symbol.asyncIterator]());
+  const mcpServerStatus = {
+    read: () => queryRuntime.mcpServerStatus(),
+    readToolNames: new Set<string>(),
+  };
   let wakeNumber = 0;
   const recordTurn = async (promptNumber: number): Promise<"prompt" | "wake"> => {
     const completed = await recordMessagesUntilTurnResult({
       iterator,
       entries: input.entries,
       scenario: input.scenario,
+      mcpServerStatus,
     });
     if (!completed) {
       throw new Error(
