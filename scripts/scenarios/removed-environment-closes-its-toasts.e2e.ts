@@ -13,11 +13,8 @@ import { makeState, runPromise, test, WEB } from "./t3.ts";
 
 const SECOND_HOME = `${T3_HOME}-second-environment`;
 
-/**
- * A disposable second server on its own T3 home, for the web client to pair with. `devUrl` is
- * the web app's origin: it lets that origin through CORS and registers the replay agent. It runs
- * until the fiber is interrupted; `paired` receives what the Add environment dialog asks for.
- */
+/** A second server on its own T3 home, running until interrupted. `--dev-url` admits the web
+ * origin through CORS and registers the replay agent; `paired` gets the Add environment input. */
 const runSecondServer = Effect.fn("scenario.secondServer")(function* (
   devUrl: string,
   paired: (target: { readonly host: string; readonly token: string }) => void,

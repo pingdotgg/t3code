@@ -419,7 +419,7 @@ it.each([false, true])(
   },
 );
 
-it("opening a thread closes only its in-app toasts, and disabling notifications closes the rest", async () => {
+it("opening a thread or removing its environment closes only its in-app toasts, and disabling notifications closes the rest", async () => {
   await using app = setup();
   state.inApp = true;
   focused = true;
@@ -445,28 +445,11 @@ it("opening a thread closes only its in-app toasts, and disabling notifications 
   app.openThread("one", "thread");
   expect(state.closeToast.mock.calls).toEqual([["one-completed"], ["one-approval"]]);
 
+  app.setEnvironmentIds(["one"]);
+  expect(state.closeToast.mock.calls.slice(2)).toEqual([["two-completed"]]);
+
   state.mode = "off";
   state.inApp = false;
   app.changeSettings();
-  expect(state.closeToast.mock.calls.slice(2).flat().toSorted()).toEqual([
-    "one-other",
-    "two-completed",
-  ]);
-});
-
-it("removing an environment closes its in-app notifications and preserves other environments", async () => {
-  await using app = setup();
-  state.inApp = true;
-  focused = true;
-  state.toast.mockReturnValueOnce("one-completed").mockReturnValueOnce("two-completed");
-  app.start();
-  const completed = {
-    latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:01:00Z" },
-  };
-  state.shells.set("one", shell(completed));
-  state.shells.set("two", shell(completed));
-  expect(state.toast).toHaveBeenCalledTimes(2);
-
-  app.setEnvironmentIds(["two"]);
-  expect(state.closeToast.mock.calls).toEqual([["one-completed"]]);
+  expect(state.closeToast.mock.calls.slice(3)).toEqual([["one-other"]]);
 });
