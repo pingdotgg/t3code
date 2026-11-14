@@ -223,6 +223,9 @@ for (const name of implemented) {
   report(`tools/list ${name}`, ts !== undefined && JSON.stringify(ts) === JSON.stringify(rust));
 }
 
+/** What a search found, in order: ids differ between servers, titles and sources do not. */
+const searchOrder = (value) => value.matches.map((match) => [match.title, match.source]);
+
 // Per-server state the calls refer to: project and thread ids differ.
 const context = [{}, {}];
 const steps = [
@@ -373,6 +376,11 @@ const steps = [
   ],
   ["t3_thread_read", (c) => ({ threadId: c.threadId })],
   ["t3_thread_search", () => ({ query: "Parity renamed" })],
+  ...[{ query: "Parity worktree" }, { query: "parity", limit: 1 }, { query: "nothing matches this" }].map(
+    (input) => ["t3_thread_search", () => input, undefined, { same: searchOrder }],
+  ),
+  ["t3_thread_search", () => ({ query: " a " })],
+  ["t3_thread_search", () => ({ query: "q".repeat(201) })],
   ["t3_thread_read", () => ({ threadId: "thread:none" })],
   ["t3_thread_list", () => ({ bogus: 1 })],
   ["delegate_task", () => ({ task: "x" })],
@@ -391,7 +399,7 @@ const run = noModel
   ? steps.filter(([tool, input, , options]) => !onLaunchedThread(tool, input, options))
   : steps;
 if (noModel) console.log(`no model: skipped ${steps.length - run.length} steps on a launched thread`);
-for (const [tool, input, after] of run) {
+for (const [tool, input, after, options] of run) {
   const results = await Promise.all(
     sessions.map(async (session, i) => {
       const reply = await session.callTool(tool, input(context[i]));
@@ -421,6 +429,10 @@ for (const [tool, input, after] of run) {
     continue;
   }
   const diff = differences(shape(rust.value), shape(ts.value)).filter((d) => !ACCEPTED.has(d));
+  if (options?.same !== undefined) {
+    const [a, b] = [options.same(ts.value), options.same(rust.value)].map((v) => JSON.stringify(v));
+    if (a !== b) diff.push(`values differ: T3 ${a} / Conn ${b}`);
+  }
   report(
     `${label}${diff.length === 0 ? "" : `\n       ${diff.join("\n       ")}`}`,
     diff.length === 0,

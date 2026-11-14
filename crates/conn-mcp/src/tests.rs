@@ -1381,3 +1381,115 @@ async fn queue_and_configure_follow_the_typescript_server() {
         .await;
     assert_eq!(read["modelSelection"]["model"], "claude-sonnet-5-5");
 }
+
+/// `t3_thread_search` on the engine's message index (`searchThreads` in `ThreadSearch.ts`):
+/// title hits first, then one message hit per other thread, with a fifth of the slots kept
+/// for message hits; subagent and archived threads stay out.
+#[tokio::test(flavor = "current_thread")]
+async fn search_puts_titles_first_and_keeps_slots_for_messages() {
+    let f = fixture("search");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let mut by_title = Vec::new();
+    for i in 0..6 {
+        by_title.push(
+            launch_as_swamp(
+                &mut swamp,
+                &format!("Zebra plan {i}"),
+                "hello",
+                "full-access",
+                "default",
+            )
+            .await,
+        );
+    }
+    let by_message = launch_as_swamp(
+        &mut swamp,
+        "Other",
+        "zebra stripes today",
+        "full-access",
+        "default",
+    )
+    .await;
+    let archived = launch_as_swamp(
+        &mut swamp,
+        "Gone",
+        "zebra in an archived thread",
+        "full-access",
+        "default",
+    )
+    .await;
+    for thread in by_title.iter().chain([&by_message, &archived]) {
+        swamp
+            .ok(
+                "t3_thread_wait",
+                json!({"threadId": thread, "timeoutMs": 10_000}),
+            )
+            .await;
+    }
+    dispatch(
+        &f,
+        json!({"type": "thread.archive", "commandId": "archive-gone", "threadId": archived}),
+    )
+    .await;
+
+    let found = swamp
+        .ok(
+            "t3_thread_search",
+            json!({"query": "zebra", "projectId": project_id()}),
+        )
+        .await;
+    let rows: Vec<(&str, &str)> = found["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| {
+            (
+                m["threadId"].as_str().unwrap(),
+                m["source"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(rows.len(), 7, "{found}");
+    assert!(rows[..6].iter().all(|(_, source)| *source == "title"));
+    // The message hit comes from the index, with a snippet and the time. The engine takes
+    // each thread's newest hit (the fake's echo); T3 ranks by match quality and then prefers
+    // the user's words (`compareHits`): a known gap in the engine's search, not in this tool.
+    assert_eq!(rows[6], (by_message.as_str(), "assistant"));
+    let hit = &found["matches"][6];
+    assert_eq!(hit["snippet"], "echo: zebra stripes today");
+    assert!(hit["messageCreatedAt"].is_string());
+    assert_eq!(hit["title"], "Other");
+    // limit 5: one slot of five stays for the message hit.
+    let found = swamp
+        .ok(
+            "t3_thread_search",
+            json!({"query": "zebra", "limit": 5, "projectId": project_id()}),
+        )
+        .await;
+    let sources: Vec<&str> = found["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["source"].as_str().unwrap())
+        .collect();
+    assert_eq!(sources, ["title", "title", "title", "title", "assistant"]);
+    // limit 4: no slot (4 / 5 = 0), titles only.
+    let found = swamp
+        .ok("t3_thread_search", json!({"query": "zebra", "limit": 4}))
+        .await;
+    assert!(
+        found["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["source"] == "title")
+    );
+    // Another project's scope finds nothing.
+    let found = swamp
+        .ok(
+            "t3_thread_search",
+            json!({"query": "zebra", "projectId": "project:other"}),
+        )
+        .await;
+    assert_eq!(found["matches"], json!([]));
+}
