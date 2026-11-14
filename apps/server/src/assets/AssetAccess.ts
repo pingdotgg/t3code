@@ -58,6 +58,7 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { toWslDrivePath } from "../workspace/wslDrivePath.ts";
 import * as ModelPreviews from "./ModelPreviews.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
@@ -595,7 +596,10 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
 
   switch (input.resource._tag) {
     case "media-file": {
-      let requestedPath = expandHomePath(input.resource.path, yield* HostProcess.HomeDirectory);
+      let requestedPath = expandHomePath(
+        yield* toWslDrivePath(input.resource.path),
+        yield* HostProcess.HomeDirectory,
+      );
       if (!path.isAbsolute(requestedPath)) {
         if (!input.workspaceRoot) {
           return yield* new AssetWorkspaceContextNotFoundError({ resource: input.resource });
@@ -652,7 +656,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       const draftWorkspaceRoot = input.workspaceRoot ?? input.resource.cwd;
       const hostPath = input.resource.path.startsWith("~/")
         ? expandHomePath(input.resource.path, yield* HostProcess.HomeDirectory)
-        : input.resource.path;
+        : yield* toWslDrivePath(input.resource.path);
       if (path.isAbsolute(hostPath)) {
         const finalized = yield* finalizeAbsoluteMediaFileAsset({
           requestedPath: hostPath,

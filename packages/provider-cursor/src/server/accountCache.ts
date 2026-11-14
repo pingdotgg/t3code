@@ -82,8 +82,8 @@ export function mergeCursorFetch(
 }
 
 /** Versioned files isolate caches for different server versions sharing a state directory. */
-export const CURSOR_ACCOUNT_CACHE_FILE_NAME = "usage-cursor-account-cache-v1.json";
-const CURSOR_ACCOUNT_CACHE_VERSION = 1;
+export const CURSOR_ACCOUNT_CACHE_FILE_NAME = "usage-cursor-account-cache-v2.json";
+const CURSOR_ACCOUNT_CACHE_VERSION = 2;
 
 type SerializedRecord = readonly [
   timestampMs: number,
