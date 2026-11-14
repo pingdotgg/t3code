@@ -5,25 +5,44 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AuthStandardClientScopes, ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
+import {
+  AuthStandardClientScopes,
+  EnvironmentHttpApi,
+  ExecutionEnvironmentDescriptor,
+  ORCHESTRATION_PROTOCOL_VERSION,
+} from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient } from "effect/http";
+import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command, CliError } from "effect/cli";
 
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as AuthHttp from "../auth/http.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import { cli } from "../binCli.ts";
+import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
@@ -34,6 +53,7 @@ import {
   persistServerRuntimeState,
   type PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
+import { resolveCliAuthConfig } from "./config.ts";
 import { resolveHostCliCommand } from "./invocation.ts";
 import {
   DevServerNotProxiableError,
@@ -54,6 +74,9 @@ const baseState = {
   origin: "http://127.0.0.1:3773",
   startedAt: "2026-06-20T00:00:00.000Z",
 } as const satisfies PersistedServerRuntimeState;
+
+// Revoke tests record this test process as the running server.
+const testProcessStartedAt = DateTime.formatIso(DateTime.makeUnsafe(performance.timeOrigin));
 
 describe("pair tailscale local target", () => {
   it("proxies the dev web port for dev servers", () => {
@@ -102,17 +125,29 @@ const testDescriptor = {
   capabilities: { repositoryIdentity: true },
 };
 
+interface RecordedRequest {
+  readonly url: string | undefined;
+  readonly authorization: string | undefined;
+}
+
 const withDescriptorServer = <A, E, R>(
-  run: (origin: string) => Effect.Effect<A, E, R>,
+  run: (origin: string, requests: ReadonlyArray<RecordedRequest>) => Effect.Effect<A, E, R>,
   host = "127.0.0.1",
   descriptor: object = testDescriptor,
-) =>
-  Effect.acquireUseRelease(
+) => {
+  const requests: Array<RecordedRequest> = [];
+  return Effect.acquireUseRelease(
     Effect.callback<NodeHttp.Server>((resume) => {
       const server = NodeHttp.createServer((request, response) => {
+        requests.push({ url: request.url, authorization: request.headers.authorization });
         if (request.url === "/.well-known/t3/environment") {
           response.writeHead(200, { "content-type": "application/json" });
           response.end(JSON.stringify(descriptor));
+          return;
+        }
+        if (request.url === "/api/auth/clients/revoke") {
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify({ revoked: true }));
           return;
         }
         response.writeHead(404);
@@ -125,10 +160,11 @@ const withDescriptorServer = <A, E, R>(
       if (address === null || typeof address === "string") {
         return Effect.die(new Error("Expected a TCP address"));
       }
-      return run(`http://${host === "::1" ? "[::1]" : host}:${String(address.port)}`);
+      return run(`http://${host === "::1" ? "[::1]" : host}:${String(address.port)}`, requests);
     },
     (server) => Effect.sync(() => server.close()),
   );
+};
 
 describe("t3 pair", () => {
   it.effect("publishes an IPv6-only server through Tailscale Serve when pairing", () =>
@@ -692,6 +728,203 @@ describe("auth scope options", () => {
       assert.equal(scopeError.option, "scope");
       assert.equal(scopeError.value, "admin");
     }),
+  );
+});
+
+class AuthRoutesApi extends HttpApi.make("environment")
+  .add(EnvironmentHttpApi.groups.metadata)
+  .add(EnvironmentHttpApi.groups.auth) {}
+
+const decodeEnvironmentDescriptor = Schema.decodeUnknownEffect(ExecutionEnvironmentDescriptor);
+
+const layerHomeDescriptor = HttpApiBuilder.group(
+  AuthRoutesApi,
+  "metadata",
+  Effect.fnUntraced(function* (handlers) {
+    const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
+    const descriptor = yield* decodeEnvironmentDescriptor({
+      ...testDescriptor,
+      environmentId: yield* identity.getEnvironmentId,
+    });
+    return handlers.handle("descriptor", () => Effect.succeed(descriptor));
+  }),
+);
+
+// A separate store must receive the removal event; a database read alone cannot wake open sockets.
+const serveAuthRoutesWithWatchedSession = (baseDir: string) =>
+  Effect.gen(function* () {
+    const config = yield* resolveCliAuthConfig({ baseDir: Option.some(baseDir) }, Option.none());
+    const services = yield* Layer.build(
+      HttpRouter.serve(
+        HttpApiBuilder.layer(AuthRoutesApi).pipe(
+          Layer.provide(layerHomeDescriptor),
+          Layer.provide(AuthHttp.layer),
+          Layer.provide(AuthHttp.layerAuthenticatedAuth),
+        ),
+        { disableListenLog: true, disableLogger: true },
+      ).pipe(
+        Layer.provideMerge(EnvironmentAuth.layerRuntime),
+        Layer.provideMerge(ServerConfig.layer(config)),
+        Layer.provideMerge(NodeHttpServer.layerTest),
+      ),
+    );
+    const origin = HttpServer.formatAddress(Context.get(services, HttpServer.HttpServer).address);
+    const sessions = Context.get(services, SessionStore.SessionStore);
+    const session = yield* sessions.issue({
+      subject: "cli-issued-session",
+      client: { label: "revoke-test", deviceType: "bot" },
+    });
+    const removed = yield* Deferred.make<void>();
+    yield* sessions.streamChanges.pipe(
+      Stream.filter(
+        (change) => change.type === "clientRemoved" && change.sessionId === session.sessionId,
+      ),
+      Stream.runHead,
+      Effect.andThen(Deferred.succeed(removed, undefined)),
+      Effect.forkScoped({ startImmediately: true }),
+    );
+    const persistRunningServer = Effect.gen(function* () {
+      yield* persistServerRuntimeState({
+        path: config.serverRuntimeStatePath,
+        state: {
+          ...(yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: Number(new URL(origin).port),
+          })),
+          startedAt: testProcessStartedAt,
+        },
+      });
+    });
+    return { config, session, removed, persistRunningServer };
+  });
+
+// The recorded server process is alive at `origin`; returns what the revoke printed to stderr.
+const revokeWithRecordedServer = (
+  origin: string,
+  {
+    homeEnvironmentId,
+    startedAt = testProcessStartedAt,
+  }: { readonly homeEnvironmentId?: string; readonly startedAt?: string } = {},
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-auth-revoke-local-test-" });
+    const config = yield* resolveCliAuthConfig({ baseDir: Option.some(baseDir) }, Option.none());
+    if (homeEnvironmentId !== undefined) {
+      yield* fs.makeDirectory(config.stateDir, { recursive: true });
+      yield* fs.writeFileString(config.environmentIdPath, homeEnvironmentId);
+    }
+    yield* persistServerRuntimeState({
+      path: config.serverRuntimeStatePath,
+      state: { ...baseState, pid: process.pid, origin, startedAt },
+    });
+
+    const issued = JSON.parse(
+      yield* captureStdout(runCli(["auth", "session", "issue", "--base-dir", baseDir, "--json"])),
+    ) as { readonly sessionId: string };
+
+    const stderr = yield* provideCliTestLayers(
+      Effect.gen(function* () {
+        yield* runCli(["auth", "session", "revoke", issued.sessionId, "--base-dir", baseDir]);
+        return yield* TestConsole.errorLines;
+      }),
+    );
+    const listed = JSON.parse(
+      yield* captureStdout(runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"])),
+    ) as ReadonlyArray<{ readonly sessionId: string }>;
+
+    assert.notInclude(
+      listed.map((entry) => entry.sessionId),
+      issued.sessionId,
+    );
+    return stderr;
+  }).pipe(Effect.scoped, Effect.provide(layerCliRuntime));
+
+// The revoke stays in this T3 home's database and warns that open connections stay open.
+const expectDatabaseOnlyRevoke = (
+  origin: string,
+  options?: Parameters<typeof revokeWithRecordedServer>[1],
+) =>
+  revokeWithRecordedServer(origin, options).pipe(
+    Effect.map((stderr) =>
+      expect(stderr).toContain(
+        `Could not reach the T3 Code server at ${origin}. Connections already open with this session stay open until they close.`,
+      ),
+    ),
+  );
+
+describe("auth session revoke", () => {
+  it.effect("signals the running server and cleans up its helper session", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-auth-revoke-test-" });
+      const server = yield* serveAuthRoutesWithWatchedSession(baseDir);
+      yield* server.persistRunningServer;
+
+      const output = yield* captureStdout(
+        runCli(["auth", "session", "revoke", server.session.sessionId, "--base-dir", baseDir]),
+      );
+
+      assert.include(output, `Revoked session ${server.session.sessionId}.`);
+      yield* Deferred.await(server.removed);
+      const listed = yield* captureStdout(
+        runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"]),
+      );
+      assert.deepEqual(JSON.parse(listed), []);
+    }).pipe(Effect.scoped, Effect.provide(layerCliRuntime)),
+  );
+
+  it.effect("signals the running server when retried after a database-only revoke", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-cli-auth-revoke-retry-test-",
+      });
+      const server = yield* serveAuthRoutesWithWatchedSession(baseDir);
+      const revoke = provideCliTestLayers(
+        runCli(["auth", "session", "revoke", server.session.sessionId, "--base-dir", baseDir]),
+      );
+      yield* persistServerRuntimeState({
+        path: server.config.serverRuntimeStatePath,
+        state: {
+          ...baseState,
+          pid: process.pid,
+          origin: "http://127.0.0.1:1",
+          startedAt: testProcessStartedAt,
+        },
+      });
+      yield* revoke;
+      assert.isFalse(yield* Deferred.isDone(server.removed));
+
+      yield* server.persistRunningServer;
+      yield* revoke;
+
+      yield* Deferred.await(server.removed);
+    }).pipe(Effect.scoped, Effect.provide(layerCliRuntime)),
+  );
+
+  it.effect("sends no credential when the recorded origin serves another T3 home", () =>
+    withDescriptorServer((origin, requests) =>
+      Effect.gen(function* () {
+        yield* expectDatabaseOnlyRevoke(origin);
+        assert.deepEqual(requests, [
+          { url: "/.well-known/t3/environment", authorization: undefined },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("sends nothing when the recorded process start time does not match", () =>
+    withDescriptorServer((origin, requests) =>
+      Effect.gen(function* () {
+        // The recorded start predates this test process, so the PID belongs to a later process.
+        yield* expectDatabaseOnlyRevoke(origin, {
+          homeEnvironmentId: testDescriptor.environmentId,
+          startedAt: "2000-01-01T00:00:00.000Z",
+        });
+        assert.deepEqual(requests, []);
+      }),
+    ),
   );
 });
 
