@@ -215,4 +215,20 @@ describe("ScheduledTasksSettings", () => {
     await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeInTheDocument();
     await expect.element(name).toHaveValue("My draft");
   });
+
+  it("offers the model only while the task is not bound to a thread", async () => {
+    setup();
+    await using _screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    const dialog = page.getByRole("dialog");
+    const model = dialog.getByRole("button", { name: "Choose model" });
+    await expect
+      .element(dialog.getByText("Each run continues this conversation", { exact: false }))
+      .toBeVisible();
+    await expect.element(model).not.toBeInTheDocument();
+
+    await userEvent.click(dialog.getByRole("combobox", { name: "Destination" }));
+    await userEvent.click(page.getByRole("option", { name: "New thread each run" }));
+
+    await expect.element(model).toBeEnabled();
+  });
 });

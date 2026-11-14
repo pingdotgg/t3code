@@ -90,7 +90,8 @@ Under **Destination**, choose where runs go. **New thread each run** keeps every
 run separate. The two one-thread choices start a thread on the first run and post
 later runs there: one continues the same conversation, the other starts each run
 in a fresh session that doesn't see earlier runs, so the thread stays readable
-without the agent's context growing. To move a one-thread task, pick another
+without the agent's context growing. Once the thread exists, runs use its current
+model, so the task no longer offers a model choice. To move a one-thread task, pick another
 thread in its project under **Destination**. Moving such a task to another
 project starts a new thread there on its next run.
 

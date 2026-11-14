@@ -1245,7 +1245,7 @@ function ScheduledTaskDestination({
           : "The first run starts a thread with the workspace and model below. Later runs post there, each in a fresh session without earlier runs' context."
         : threadMode === "continue"
           ? "Each run continues this conversation, in its workspace and with its current model."
-          : "Each run starts a fresh session in this thread, without earlier runs' context.";
+          : "Each run starts a fresh session in this thread, with its current model and without earlier runs' context.";
   return (
     <Field label="Destination" htmlFor="scheduled-task-destination">
       {onThreadModeChange ? (
@@ -1766,24 +1766,26 @@ function ScheduledTaskEditorForm({
             />
           </Field>
 
-          <Field label="Model">
-            <div>
-              <ProviderModelPicker
-                environmentId={environmentId}
-                disabled={saving || !connected}
-                activeInstanceId={activeInstanceId}
-                model={activeModel}
-                lockedProvider={null}
-                instanceEntries={instanceEntries}
-                modelOptionsByInstance={modelOptionsByInstance}
-                isComposerOwned={false}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) =>
-                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
-                }
-              />
-            </div>
-          </Field>
+          {draft.threadId === "" ? (
+            <Field label="Model">
+              <div>
+                <ProviderModelPicker
+                  environmentId={environmentId}
+                  disabled={saving || !connected}
+                  activeInstanceId={activeInstanceId}
+                  model={activeModel}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  isComposerOwned={false}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onInstanceModelChange={(instanceId, model) =>
+                    setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
+                  }
+                />
+              </div>
+            </Field>
+          ) : null}
 
           <div className="space-y-3">
             {task?.schedule.type === "interval" &&
