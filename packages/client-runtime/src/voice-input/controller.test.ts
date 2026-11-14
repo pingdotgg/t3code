@@ -49,7 +49,6 @@ function draft(overrides: Partial<VoiceDraftSnapshot> = {}): VoiceDraftSnapshot 
     ownerKey: "environment:thread",
     text: "hello world",
     selection: { start: 6, end: 11 },
-    revision: 1,
     ...overrides,
   };
 }
@@ -102,7 +101,7 @@ describe("environment voice input", () => {
     expect(harness.controller.currentState.phase).toBe("error");
     expect(harness.deleted).toEqual([]);
 
-    harness.setDraft(draft({ text: "updated ", revision: 2, selection: { start: 8, end: 8 } }));
+    harness.setDraft(draft({ text: "updated ", selection: { start: 8, end: 8 } }));
     await harness.controller.start();
     expect(transcribe.mock.calls.map(([uri]) => uri)).toEqual([
       "file:///voice.m4a",
@@ -234,12 +233,31 @@ describe("resolveTranscriptCommit", () => {
   it.each([
     ["Hello", "world", "Hello world"],
     ["Hello", "世界", "Hello世界"],
+    ["Hello", "𝟚", "Hello 𝟚"],
     ["你好", "世界", "你好世界"],
   ])(
     "preserves script boundaries with an autodetected language: %s + %s",
     (text, spoken, expected) => {
       const captured = draft({ text, selection: { start: text.length, end: text.length } });
       expect(resolveTranscriptCommit(captured, captured, spoken, "auto")).toMatchObject({
+        kind: "commit",
+        text: expected,
+      });
+    },
+  );
+
+  it.each([
+    ["Korean", "코드를", 3, "검토해 주세요", "ko_KR", "코드를 검토해 주세요"],
+    ["a supplementary letter", "𞤀", 2, "𞤦", "ff-Adlm", "𞤀 𞤦"],
+    ["a trailing combining mark", "नमस्ते", 6, "दुनिया", "hi-IN", "नमस्ते दुनिया"],
+    ["a non-ASCII word after the caret", "Änderungen", 0, "Weitere", "de_DE", "Weitere Änderungen"],
+    ["spaceless Japanese", "修正キャッシュ", 7, "テストも", "ja-JP", "修正キャッシュテストも"],
+    ["spaceless Thai", "โลก", 0, "สวัสดี", "th-TH", "สวัสดีโลก"],
+  ])(
+    "inserts at a caret with the recorded language's word spacing: %s",
+    (_case, text, caret, spoken, locale, expected) => {
+      const captured = draft({ text, selection: { start: caret, end: caret } });
+      expect(resolveTranscriptCommit(captured, captured, spoken, locale)).toMatchObject({
         kind: "commit",
         text: expected,
       });
@@ -261,17 +279,72 @@ describe("resolveTranscriptCommit", () => {
     });
   });
 
-  it("does not replace text after the owner, text, or revision changes", () => {
+  it.each([
+    [
+      "at the start of the selection",
+      { start: 6, end: 11 },
+      "hello [cite]world",
+      "hello [cite]world new text",
+    ],
+    [
+      "inside the selection",
+      { start: 6, end: 11 },
+      "hello wo[cite]rld",
+      "hello wo[cite]rld new text",
+    ],
+    ["at the caret", { start: 6, end: 6 }, "hello [cite] world", "hello [cite] new text world"],
+    [
+      "that repeats the selection",
+      { start: 0, end: 5 },
+      "hello there hello world",
+      "hello there hello new text world",
+    ],
+    [
+      "that repeats the selection next to it",
+      { start: 0, end: 5 },
+      "hello hello world",
+      "hello hello new text world",
+    ],
+  ])("keeps text inserted %s while recording", (_, selection, current, expected) => {
+    const captured = draft({ text: "hello world", selection });
+    const result = resolveTranscriptCommit(
+      captured,
+      draft({ text: current, selection: { start: 0, end: 0 } }),
+      "new text",
+      "en-US",
+    );
+    expect(result).toMatchObject({ kind: "commit", text: expected });
+  });
+
+  it("keeps every citation when several were inserted while recording", () => {
+    const captured = draft({ text: "[todo", selection: { start: 0, end: 1 } });
+    const current = "[A](t3-citation://v1/a)[todo[B](t3-citation://v1/b)";
+    const result = resolveTranscriptCommit(
+      captured,
+      draft({ text: current, selection: { start: 0, end: 0 } }),
+      "spoken",
+      "en-US",
+    );
+    expect(result).toMatchObject({ kind: "commit", text: `${current} spoken` });
+  });
+
+  it("keeps surrogate pairs whole when an emoji changed while recording", () => {
+    const captured = draft({ text: "🔔", selection: { start: 0, end: 0 } });
+    const result = resolveTranscriptCommit(
+      captured,
+      draft({ text: "🤔", selection: { start: 0, end: 0 } }),
+      "hello",
+      "en-US",
+    );
+    expect(result).toMatchObject({ kind: "commit", text: "🤔hello" });
+  });
+
+  it("does not insert into a missing draft or another owner's draft", () => {
     const captured = draft();
+    expect(resolveTranscriptCommit(captured, null, "text", "en-US")).toEqual({ kind: "stale" });
     expect(
       resolveTranscriptCommit(captured, draft({ ownerKey: "other" }), "text", "en-US"),
     ).toEqual({
-      kind: "stale",
-    });
-    expect(resolveTranscriptCommit(captured, draft({ text: "newer" }), "text", "en-US")).toEqual({
-      kind: "stale",
-    });
-    expect(resolveTranscriptCommit(captured, draft({ revision: 2 }), "text", "en-US")).toEqual({
       kind: "stale",
     });
   });
@@ -290,7 +363,9 @@ describe("VoiceInputController", () => {
       code: "unavailable",
       message: "This device requires iOS 26 or later.",
     });
+    const configureRecording = vi.fn(async () => undefined);
     const unavailable = createHarness({
+      configureRecording,
       getTranscriber: () => ({
         prepare: async () => {
           throw reason;
@@ -299,6 +374,8 @@ describe("VoiceInputController", () => {
     });
     await unavailable.controller.start();
     expect(unavailable.controller.currentState.error).toBe(reason.message);
+    // Environment and web transcribers gate capture on consent checked during preparation.
+    expect(configureRecording).not.toHaveBeenCalled();
     expect(unavailable.recorder.record).not.toHaveBeenCalled();
 
     const denied = createHarness({
