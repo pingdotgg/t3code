@@ -1,7 +1,7 @@
 import type { ProviderOptionChoice, ProviderOptionDescriptor } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import type { AcpSessionModeState } from "./runtimeModel.ts";
+import { type AcpSessionModeState, findModelConfigOption } from "./runtimeModel.ts";
 
 export const ACP_SESSION_MODE_OPTION_ID = "_t3/session-mode";
 
@@ -60,10 +60,11 @@ export function acpProviderOptionDescriptors(input: {
   const seen = new Set<string>();
   const mirroredModeChoiceSets: Array<ReadonlySet<string>> = [];
   let hasModeCategory = false;
+  const primaryModelOption = findModelConfigOption(input.configOptions);
 
   for (const option of input.configOptions ?? []) {
-    // Model and collaboration_mode choices use T3 model and interaction controls.
-    if (option.category === "model" || option.category === "collaboration_mode") {
+    // The primary model and collaboration_mode choices use T3 model and interaction controls.
+    if (option === primaryModelOption || option.category === "collaboration_mode") {
       continue;
     }
     const id = boundedOpaqueValue(option.id, MAX_TEXT_LENGTH);
