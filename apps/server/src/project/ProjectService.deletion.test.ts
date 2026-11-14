@@ -38,6 +38,7 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { ServerActivation } from "../serverActivation.ts";
+import * as ProjectSettingsOverrideSweep from "../provider/ProjectSettingsOverrideSweep.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as StorageCleanup from "../storageCleanup.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
@@ -547,14 +548,34 @@ it.effect.each([
         });
 
         const entry = (yield* serverSettings.getSettings).projectSettingsOverrides[projectId];
-        assert.deepStrictEqual(
-          {
-            enabled: entry?.providerInstances?.[instanceId]?.enabled,
-            defaultAutoPull: entry?.defaultAutoPull,
-            worktreeCleanup: entry?.worktreeCleanup,
+        if (worktreeCleanup === undefined) {
+          assert.isUndefined(entry);
+        } else {
+          assert.deepStrictEqual(entry, { worktreeCleanup, providerInstances: {} });
+        }
+
+        const liveProjectId = ProjectId.make("project:still-live");
+        const missingProjectId = ProjectId.make("project:missing");
+        yield* seedProject(liveProjectId);
+        // Older deletions or interrupted best-effort cleanup can leave the original overrides on restart.
+        yield* serverSettings.updateSettings({
+          projectSettingsOverrides: {
+            [projectId]: {
+              providerInstances: { [instanceId]: { enabled: true } },
+              defaultAutoPull: true,
+              ...(worktreeCleanup === undefined ? {} : { worktreeCleanup }),
+            },
+            [liveProjectId]: { defaultAutoPull: true },
+            [missingProjectId]: { worktreeCleanup: { mode: "off" } },
           },
-          { enabled: undefined, defaultAutoPull: undefined, worktreeCleanup },
-        );
+        });
+        yield* ProjectSettingsOverrideSweep.sweep;
+        assert.deepStrictEqual((yield* serverSettings.getSettings).projectSettingsOverrides, {
+          [liveProjectId]: { defaultAutoPull: true },
+          ...(worktreeCleanup === undefined
+            ? {}
+            : { [projectId]: { worktreeCleanup, providerInstances: {} } }),
+        });
       }).pipe(Effect.provide(layerServices));
     }).pipe(Effect.provide(layerDatabase)),
 );
@@ -581,7 +602,7 @@ it.live.each([
     removed: true,
   },
 ] as const)(
-  "storage cleanup follows a deleted project's $override.mode worktree cleanup policy",
+  "storage cleanup follows a deleted project's $override.mode worktree cleanup policy after the startup sweep",
   ({ storageCleanup, override, removed }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -663,6 +684,7 @@ it.live.each([
             ),
           ),
         );
+        yield* ProjectSettingsOverrideSweep.sweep;
         yield* cleanup.runNow;
         assert.strictEqual(yield* fs.exists(worktree), !removed);
       }).pipe(Effect.provide(layerServices));
