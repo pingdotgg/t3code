@@ -126,7 +126,20 @@ import { composerCodeBlockHighlight } from "./composerCodeBlockHighlight";
 import { importPastedComposerText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
-import { ComposerCitationExtension, ComposerContextReferenceExtension, ComposerMarkersExtension, ComposerMentionExtension, ComposerSkillExtension, ComposerUndoGroupingExtension, blockquoteInputRule, bulletToTaskInputRule, headingInputRule, horizontalRuleInputRule, listMarkerInputRule, taskInputRule } from "./ComposerPromptEditorTiptap";
+import {
+  ComposerCitationExtension,
+  ComposerContextReferenceExtension,
+  ComposerMarkersExtension,
+  ComposerMentionExtension,
+  ComposerSkillExtension,
+  ComposerUndoGroupingExtension,
+  blockquoteInputRule,
+  bulletToTaskInputRule,
+  headingInputRule,
+  horizontalRuleInputRule,
+  listMarkerInputRule,
+  taskInputRule,
+} from "./ComposerPromptEditorTiptap";
 
 export function createComposerExtensions(richText: boolean) {
   return [
@@ -232,4 +245,3 @@ export function createComposerExtensions(richText: boolean) {
       : []),
   ];
 }
-

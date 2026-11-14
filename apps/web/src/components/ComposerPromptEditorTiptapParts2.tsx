@@ -127,7 +127,10 @@ import { importPastedComposerText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
 import { createComposerExtensions } from "./ComposerPromptEditorTiptapParts";
-import { CHIP_NODE_SELECTION_CLASS_NAME, ComposerCitationCommentContext } from "./ComposerPromptEditorTiptap";
+import {
+  CHIP_NODE_SELECTION_CLASS_NAME,
+  ComposerCitationCommentContext,
+} from "./ComposerPromptEditorTiptap";
 
 export function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   const commentContext = use(ComposerCitationCommentContext);
@@ -229,4 +232,3 @@ export function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps
     </NodeViewWrapper>
   );
 }
-
