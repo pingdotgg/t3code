@@ -15,6 +15,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { SshCommandError } from "@t3tools/ssh/errors";
+import { SYMLINK_HINT } from "./sshDeviceScript.ts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
@@ -448,14 +449,14 @@ describe("device setup consent", () => {
       exitCode: 1,
       stderr: "private diagnostics",
       expected:
-        "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+        "Connected over SSH, but the device host check failed on this Windows host. Windows SSH device hosts need a POSIX sh, such as Git for Windows, on the PATH for non-interactive SSH commands. To use this machine's devices without one, run T3 Code on it and connect to that environment.",
     },
     {
       name: "a Windows host returning 9009",
       exitCode: 9009,
       stderr: "private diagnostics",
       expected:
-        "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+        "Connected over SSH, but the device host check failed on this Windows host. Windows SSH device hosts need a POSIX sh, such as Git for Windows, on the PATH for non-interactive SSH commands. To use this machine's devices without one, run T3 Code on it and connect to that environment.",
     },
     {
       name: "missing Node on a Windows host with a POSIX shell",
@@ -464,21 +465,37 @@ describe("device setup consent", () => {
       expected:
         "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.",
     },
+    ...[
+      ["Node 22.12 or newer C:/private", "this host's Node is older than 22.12."],
+      [
+        "npm is missing: C:/private",
+        "npm is not on this host's PATH for non-interactive SSH commands.",
+      ],
+      ["No compatible Node C:/private", "this host has no npm compatible with Node 22.12+."],
+      ["npm probe failed: C:/private EACCES SIGTERM", "npm failed to run on this host."],
+      [SYMLINK_HINT, SYMLINK_HINT, "start"],
+    ].map(([diagnostic, expected, step = "probe"]) => ({
+      name: `a Windows host reporting ${diagnostic}`,
+      exitCode: 1,
+      stderr: `private diagnostics\n${diagnostic}`,
+      expected: step === "probe" ? `Connected over SSH, but ${expected}` : expected,
+      step,
+    })),
   ])(
     "reports SSH probe failure on $name through readiness and host status",
-    ({ exitCode, stderr, expected }) =>
+    ({ exitCode, stderr, expected, ...options }) =>
       Effect.gen(function* () {
+        const step = "step" in options ? options.step : "probe";
+        const cause = new SshCommandError({
+          command: ["ssh", "private arguments"],
+          exitCode,
+          stderr,
+          message: "private diagnostics",
+        });
         const failure = new DeviceHost.DeviceHostError({
           hostId: LOCAL_DEVICE_HOST_ID,
-          step: "probe",
-          cause: new SshDeviceHost.SshWindowsHostError({
-            cause: new SshCommandError({
-              command: ["ssh", "private arguments"],
-              exitCode,
-              stderr,
-              message: "private diagnostics",
-            }),
-          }),
+          step,
+          cause: step === "probe" ? new SshDeviceHost.SshWindowsHostError({ cause }) : cause,
         });
         const { service, settings } = yield* fixture(Effect.void, undefined, false, failure);
         yield* Ref.update(settings, (current) => ({
@@ -729,12 +746,12 @@ it.effect.each([1, 9009])(
         hostId: "windows",
         hostLabel: "Windows test",
         reason:
-          "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+          "Connected over SSH, but the device host check failed on this Windows host. Windows SSH device hosts need a POSIX sh, such as Git for Windows, on the PATH for non-interactive SSH commands. To use this machine's devices without one, run T3 Code on it and connect to that environment.",
       });
       const codec = Schema.fromJsonString(DeviceError);
       const decoded = yield* Schema.decodeEffect(codec)(yield* Schema.encodeEffect(codec)(error));
       expect(decoded.message).toBe(
-        "Windows test is unavailable: Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+        "Windows test is unavailable: Connected over SSH, but the device host check failed on this Windows host. Windows SSH device hosts need a POSIX sh, such as Git for Windows, on the PATH for non-interactive SSH commands. To use this machine's devices without one, run T3 Code on it and connect to that environment.",
       );
       expect(decoded.message).not.toContain("private SSH diagnostics");
     }).pipe(

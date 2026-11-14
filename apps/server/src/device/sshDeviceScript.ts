@@ -3,7 +3,32 @@ import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 export const quoteRemoteArg = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
 
-export const remoteDeviceEnvironment = `export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+export const NODE_MINIMUM = "22.12";
+export const SYMLINK_HINT = "Windows SSH account needs symbolic-link permission or Developer Mode.";
+const [nodeMajor, nodeMinor] = NODE_MINIMUM.split(".");
+// Shared by the SSH shell setup and the remote script, so it must not contain single quotes.
+const nodeSupported = `((version) => { const [major, minor] = version.split(".").map(Number); return major > ${nodeMajor} || (major === ${nodeMajor} && minor >= ${nodeMinor}); })`;
+// Shells drop NUL, and Git for Windows sh drops CR, while reading script source.
+const printfEscaped = (value: string) =>
+  value.replaceAll("\\", "\\\\").replaceAll("\r", "\\0015").replaceAll("\0", "\\0000");
+export const remoteDeviceCommand = (
+  script: string,
+  stdin?: string,
+  options?: { readonly nodeBootstrap?: boolean },
+) => ({
+  remoteCommandArgs: ["sh", "-s"],
+  stdin:
+    remoteDeviceEnvironment(options) +
+    (stdin === undefined
+      ? `${script} </dev/null\n`
+      : `printf %b ${quoteRemoteArg(printfEscaped(stdin))} | { ${script}; }\n`),
+});
+
+export const remoteDeviceEnvironment = (options?: {
+  readonly nodeBootstrap?: boolean;
+}) => `export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
+export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
+${options?.nodeBootstrap ? `node -e 'process.exit(${nodeSupported}(process.versions.node) ? 0 : 1)' 2>/dev/null || export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"` : ""}
 if [ -z "$ANDROID_HOME" ]; then
   if [ -n "$ANDROID_SDK_ROOT" ]; then export ANDROID_HOME="$ANDROID_SDK_ROOT";
   elif [ -d "$HOME/Library/Android/sdk" ]; then export ANDROID_HOME="$HOME/Library/Android/sdk";
@@ -38,7 +63,50 @@ const net = require('node:net');
 const { spawn, spawnSync } = require('node:child_process');
 const root = path.join(os.homedir(), '.t3', 'device');
 const state = path.join(root, 'hosts', owner);
+const nodeSupported = ${nodeSupported};
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', timeout: 30000, ...options });
+const runNpm = (args, options) => {
+  if (process.platform !== 'win32') return run('npm', args, options);
+  const env = { ...process.env, ...options?.env };
+  const pathKeys = Object.keys(env).filter(key => key.toLowerCase() === 'path');
+  const inheritedPath = pathKeys.map(key => env[key]).filter(Boolean).join(path.delimiter);
+  for (const key of pathKeys) delete env[key];
+  const directories = [path.dirname(process.execPath), ...inheritedPath.split(path.delimiter)];
+  const failures = [];
+  for (const directory of [...new Set(directories.filter(Boolean).map(dir => dir.replace(/^"|"$/g, '')))]) {
+    const npmRoot = path.join(directory, 'node_modules', 'npm');
+    const entry = path.join(npmRoot, 'bin', 'npm-cli.js');
+    if (!fs.existsSync(entry)) continue;
+    let npm, semver;
+    try {
+      npm = JSON.parse(fs.readFileSync(path.join(npmRoot, 'package.json'), 'utf8'));
+      if (typeof npm?.engines?.node !== 'string') throw Error('package.json has no engines.node');
+      semver = require(path.join(npmRoot, 'node_modules', 'semver'));
+    } catch (error) {
+      failures.push('npm at ' + entry + ': ' + error.message);
+      continue;
+    }
+    const sibling = path.join(directory, 'node.exe');
+    const nodes = [...new Set([...(fs.existsSync(sibling) ? [sibling] : []), process.execPath])];
+    for (const node of nodes) {
+      const version = node === process.execPath ? null : run(node, ['-p', 'process.versions.node']);
+      if (version && (version.error || version.status !== 0)) { failures.push('Node at ' + node + ': ' + commandFailure(version)); continue; }
+      const nodeVersion = version ? version.stdout.trim() : process.versions.node;
+      if (!nodeSupported(nodeVersion) || !semver.satisfies(nodeVersion, npm.engines.node)) { failures.push('npm ' + npm.version + ' at ' + entry + ' requires Node ' + npm.engines.node + '; found ' + nodeVersion + ' at ' + node); continue; }
+      const pairedOptions = { ...options, env: { ...env, PATH: path.dirname(node) + path.delimiter + inheritedPath } };
+      const probe = run(node, [entry, '--version'], pairedOptions);
+      if (probe.error || probe.status !== 0) { failures.push('npm at ' + entry + ': npm probe failed: ' + commandFailure(probe)); continue; }
+      return args.length === 1 && args[0] === '--version' ? probe : run(node, [entry, ...args], pairedOptions);
+    }
+  }
+  if (failures.length) throw Error('No compatible Node ${NODE_MINIMUM}+ and npm pair: ' + failures.join('; '));
+  throw Error('npm is missing: could not find node_modules/npm/bin/npm-cli.js beside Node or on the non-interactive SSH PATH.');
+};
+const commandFailure = result => [
+  result.error?.message,
+  result.signal ? 'signal ' + result.signal : result.status !== null ? 'exit code ' + result.status : null,
+  (result.stderr?.trim() || result.stdout?.trim())?.slice(-2000),
+].filter(Boolean).join(': ');
 const read = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 const write = (file, value) => { const tmp = file + '.' + process.pid; fs.writeFileSync(tmp, JSON.stringify(value), { mode: 0o600 }); fs.renameSync(tmp, file); };
 const toolVersions = (name, requiredVersion, entry, record) => {
@@ -90,6 +158,7 @@ async function acquireLock(lock, complete = () => false) {
       fs.symlinkSync(token, lock);
       return () => { if (owner() === token) fs.unlinkSync(lock); };
     } catch (error) {
+      if (process.platform === 'win32' && error.code === 'EPERM') throw Error(${JSON.stringify(SYMLINK_HINT)});
       if (error.code !== 'EEXIST') throw error;
       if (complete()) return null;
       const previous = owner();
@@ -120,8 +189,8 @@ async function install(name, version, entry) {
   try {
     if (complete()) return file;
     staging = fs.mkdtempSync(path.join(path.dirname(dir), '.install-'));
-    const result = run('npm', ['install', '--prefix', staging, '--no-fund', '--no-audit', name + '@' + version], { timeout: 600000, maxBuffer: 8 * 1024 * 1024 });
-    if (result.status !== 0) throw Error('Installing ' + name + ': ' + (result.error?.message || result.stderr?.slice(-2000)));
+    const result = runNpm(['install', '--prefix', staging, '--no-fund', '--no-audit', name + '@' + version], { timeout: 600000, maxBuffer: 8 * 1024 * 1024 });
+    if (result.error || result.status !== 0) throw Error('Installing ' + name + ': ' + commandFailure(result));
     if (!fs.existsSync(path.join(staging, 'node_modules', name, entry))) throw Error('Missing installed entry for ' + name);
     fs.writeFileSync(path.join(staging, '.install-complete'), version);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -136,9 +205,10 @@ async function install(name, version, entry) {
   const ios = process.platform === 'darwin' && run('xcrun', ['simctl', 'help']).status === 0;
   // The SSH shell setup chose ANDROID_HOME, so later commands use the SDK accepted here.
   const sdk = process.env.ANDROID_HOME;
+  const sdkTool = relative => path.join(sdk, relative + (process.platform === 'win32' ? (relative.endsWith('avdmanager') ? '.bat' : '.exe') : ''));
   const executable = (relative) => {
     try {
-      const file = path.join(sdk, relative);
+      const file = sdkTool(relative);
       fs.accessSync(file, fs.constants.X_OK);
       return fs.statSync(file).isFile();
     } catch {
@@ -149,7 +219,7 @@ async function install(name, version, entry) {
     : !executable('platform-tools/adb') ? 'Android SDK Platform-Tools are missing from ' + sdk + '. Install them in Android Studio SDK Manager.'
     : !executable('emulator/emulator') ? 'Android Emulator is missing from ' + sdk + '. Install it in Android Studio SDK Manager.'
     : !executable('cmdline-tools/latest/bin/avdmanager') ? 'Android SDK Command-line Tools (latest) are missing from ' + sdk + '. Install them in Android Studio SDK Manager.'
-    : run(path.join(sdk, 'platform-tools', 'adb'), ['version']).status !== 0 ? 'adb in ' + sdk + ' failed to run. Reinstall Android SDK Platform-Tools.'
+    : run(sdkTool('platform-tools/adb'), ['version']).status !== 0 ? 'adb in ' + sdk + ' failed to run. Reinstall Android SDK Platform-Tools.'
     : null;
   const android = androidReason === null;
   const platforms = [
@@ -157,9 +227,9 @@ async function install(name, version, entry) {
     { platform: 'android', available: android, ...(!android ? { reason: androidReason } : {}) },
   ];
   if (mode === 'probe') {
-    const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
-    if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 12)) throw Error('Node 22.12 or newer is required on the device host.');
-    if (run('npm', ['--version']).status !== 0) throw Error('npm is missing from the non-interactive SSH PATH.');
+    if (!nodeSupported(process.versions.node)) throw Error('Node ${NODE_MINIMUM} or newer is required on the device host. Found ' + process.versions.node + ' at ' + process.execPath + '.');
+    const npm = runNpm(['--version']);
+    if (npm.error || npm.status !== 0) throw Error(npm.error?.code === 'ENOENT' ? 'npm is missing from the non-interactive SSH PATH: ' + npm.error.message : 'npm probe failed: ' + commandFailure(npm));
     console.log(JSON.stringify({ nodePath: process.execPath, platforms, tools: versions() })); return;
   }
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });
@@ -199,8 +269,7 @@ async function install(name, version, entry) {
   // Only a Mac can list Apple simulators. Recording the filter replaces hubs started without it.
   const hubPlatform = process.platform === 'darwin' ? undefined : 'android';
   const cameraArgs = android ? ['front', 'back'].flatMap(facing => {
-    const emulator = process.env.ANDROID_HOME ? path.join(process.env.ANDROID_HOME, 'emulator', 'emulator') : 'emulator';
-    const help = run(emulator, ['-help-camera-' + facing], { timeout: 5000 });
+    const help = run(sdkTool('emulator/emulator'), ['-help-camera-' + facing], { timeout: 5000 });
     const text = (help.stdout || '') + '\n' + (help.stderr || '');
     // The hub's imagefile camera mode is not supported by every installed SDK emulator.
     return help.status === 0 && /\bemulated\b/.test(text) && !/\bimagefile\b/.test(text) ? ['-camera-' + facing, 'emulated'] : [];
