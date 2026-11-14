@@ -1,21 +1,27 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestAction,
+  PullRequestCheck,
   PullRequestComment,
   PullRequestInvolvement,
   PullRequestListState,
   PullRequestMergeMethod,
 } from "@t3tools/contracts";
 
+import { sortChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
+
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import { blobContent, readBlobZip } from "./azureDevOpsBlobZip.ts";
 import {
   decodeItemContentJson,
   decodeIterationChangesJson,
   decodeIterationsJson,
+  decodePolicyChecksJson,
   decodePullRequestJson,
   decodePullRequestListJson,
   decodeThreadsJson,
@@ -108,8 +114,18 @@ const PULL_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const CHANGE_ENTRIES_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 /** JSON escaping and base64 can exceed the decoded file's size. */
 const ITEM_CONTENT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+/** A larger batch is left to per-file reads rather than held in memory at once. */
+const BLOB_ARCHIVE_MAX_BYTES = 64 * 1024 * 1024;
+/** Matches what a per-file read could carry. */
+const BLOB_MAX_BYTES = ITEM_CONTENT_MAX_OUTPUT_BYTES;
+/** Blobs past this, together, are left to per-file reads, which hold a few at a time. */
+const BLOB_BATCH_MAX_BYTES = 16 * 1024 * 1024;
+const BLOB_ID = /^[0-9a-f]{40}$/i;
 /** Review history is unpaged and independent of diff size. */
 const REVIEW_HISTORY_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+
+const POLICY_EVALUATIONS_PER_PAGE = 100;
+const MAX_POLICY_EVALUATIONS = 1000;
 
 /** Azure's iteration-change page limit. */
 const CHANGE_ENTRIES_PER_PAGE = 2000;
@@ -157,6 +173,13 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly number: number;
     }) => Effect.Effect<AzureDevOpsPullRequest, AzureDevOpsPullRequestCliError>;
 
+    readonly listPolicyChecks: (input: {
+      readonly cwd: string;
+      readonly number: number;
+      /** Azure holds builds back on a draft, which reads the same as a build about to start. */
+      readonly isDraft: boolean;
+    }) => Effect.Effect<ReadonlyArray<PullRequestCheck>, AzureDevOpsPullRequestCliError>;
+
     readonly listThreads: (input: {
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
@@ -183,6 +206,19 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly path: string;
       readonly commit: string;
     }) => Effect.Effect<AzureDevOpsItemContent, AzureDevOpsPullRequestCliError>;
+
+    /**
+     * Many files in one `az` run, by blob id, keyed by lowercase id. A blob only Azure's item read
+     * decodes faithfully, or one too large to carry, is left out.
+     */
+    readonly readBlobs: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly objectIds: ReadonlyArray<string>;
+    }) => Effect.Effect<
+      ReadonlyMap<string, AzureDevOpsItemContent>,
+      AzureDevOpsPullRequestCliError
+    >;
 
     readonly runPullRequestAction: (input: {
       readonly cwd: string;
@@ -276,6 +312,7 @@ function isReviewerName(value: string): boolean {
 /** @public */
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   // Let `az` parse all three remote formats.
   const detectArgs = ["--detect", "true"] as const;
@@ -545,6 +582,41 @@ export const make = Effect.gen(function* () {
       );
     }),
 
+    listPolicyChecks: Effect.fn("AzureDevOpsPullRequestCli.listPolicyChecks")(function* (input) {
+      const unreadable = (cause: unknown) =>
+        new AzureDevOpsPullRequestReadError({
+          command: "az",
+          cwd: input.cwd,
+          operation: "listPolicyChecks",
+          cause,
+        });
+      const checks: PullRequestCheck[] = [];
+      for (let skip = 0; skip < MAX_POLICY_EVALUATIONS; skip += POLICY_EVALUATIONS_PER_PAGE) {
+        const result = yield* executeJson({
+          cwd: input.cwd,
+          args: [
+            "repos",
+            "pr",
+            "policy",
+            "list",
+            ...detectArgs,
+            "--id",
+            String(input.number),
+            "--top",
+            String(POLICY_EVALUATIONS_PER_PAGE),
+            "--skip",
+            String(skip),
+          ],
+        });
+        if (result.stdoutTruncated) return yield* unreadable("Policy output was truncated");
+        const page = decodePolicyChecksJson(result.stdout.trim(), { isDraft: input.isDraft });
+        if (!Result.isSuccess(page)) return yield* unreadable(page.failure);
+        checks.push(...page.success.checks);
+        if (page.success.rawCount < POLICY_EVALUATIONS_PER_PAGE) return sortChecks(checks);
+      }
+      return yield* unreadable("Policy evaluations exceeded the read limit");
+    }),
+
     listThreads: Effect.fn("AzureDevOpsPullRequestCli.listThreads")(function (input) {
       return invoke({
         cwd: input.cwd,
@@ -595,6 +667,78 @@ export const make = Effect.gen(function* () {
         return from(0, []);
       },
     ),
+
+    readBlobs: Effect.fn("AzureDevOpsPullRequestCli.readBlobs")(function* (input) {
+      const requested = new Map<string, string>();
+      // Azure states ids in uppercase and names entries in lowercase.
+      for (const id of input.objectIds) {
+        const key = id.toLowerCase();
+        if (BLOB_ID.test(id) && !requested.has(key)) requested.set(key, id);
+      }
+      if (requested.size === 0) return new Map<string, AzureDevOpsItemContent>();
+      const readFailure = (cause: unknown) =>
+        new AzureDevOpsPullRequestReadError({
+          command: "az",
+          cwd: input.cwd,
+          operation: "readBlobs",
+          cause,
+        });
+      return yield* Effect.scoped(
+        Effect.gen(function* () {
+          const directory = yield* fileSystem
+            .makeTempDirectoryScoped({ prefix: "t3-azure-blobs-" })
+            .pipe(Effect.mapError(readFailure));
+          const request = `${directory}/ids.json`;
+          // invoke refuses to overwrite its output, so the archive gets a name nothing holds yet.
+          const archive = `${directory}/blobs.zip`;
+          yield* fileSystem
+            .writeFileString(
+              request,
+              `[${[...requested.values()].map((id) => `"${id}"`).join(",")}]`,
+            )
+            .pipe(Effect.mapError(readFailure));
+          yield* azure.execute({
+            cwd: input.cwd,
+            args: [
+              "devops",
+              "invoke",
+              ...detectArgs,
+              "--area",
+              "git",
+              "--resource",
+              "blobs",
+              "--api-version",
+              REST_API_VERSION,
+              "--route-parameters",
+              ...repositoryRoute(input.location),
+              "--http-method",
+              "POST",
+              "--in-file",
+              request,
+              "--accept-media-type",
+              "application/zip",
+              "--out-file",
+              archive,
+              "--only-show-errors",
+            ],
+          });
+          const size = yield* fileSystem.stat(archive).pipe(
+            Effect.map((info) => Number(info.size)),
+            Effect.mapError(readFailure),
+          );
+          const contents = new Map<string, AzureDevOpsItemContent>();
+          if (size > BLOB_ARCHIVE_MAX_BYTES) return contents;
+          const zip = yield* fileSystem.readFile(archive).pipe(Effect.mapError(readFailure));
+          const entries = readBlobZip(zip, BLOB_MAX_BYTES, BLOB_BATCH_MAX_BYTES);
+          if (entries === null) return yield* readFailure("Azure returned an unreadable archive.");
+          for (const [id, bytes] of entries) {
+            const content = requested.has(id) ? blobContent(bytes) : null;
+            if (content !== null) contents.set(id, content);
+          }
+          return contents;
+        }),
+      );
+    }),
 
     readItemContent: Effect.fn("AzureDevOpsPullRequestCli.readItemContent")(function (input) {
       return invoke({

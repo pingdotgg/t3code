@@ -263,8 +263,10 @@ export const makeRotatingLogFileWriter = Effect.fn("makeRotatingLogFileWriter")(
     const entries = yield* fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
     for (const entry of entries) {
       if (!entry.startsWith(`${baseName}.`)) continue;
-      const suffix = Number(entry.slice(baseName.length + 1));
-      if (!Number.isInteger(suffix) || suffix <= maxFiles) continue;
+      const suffixText = entry.slice(baseName.length + 1);
+      const suffix = Number(suffixText);
+      if (!Number.isInteger(suffix) || String(suffix) !== suffixText || suffix <= maxFiles)
+        continue;
       yield* fileSystem.remove(path.join(directory, entry), { force: true }).pipe(Effect.ignore);
     }
   });

@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -97,6 +98,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   modelCatalog: Effect.Effect<ClaudeModelCatalog> = Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
+  routeModelCatalog: (
+    catalog: ClaudeModelCatalog,
+    cwd: string,
+  ) => Effect.Effect<ClaudeModelCatalog> = Effect.succeed,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -146,9 +151,19 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   }: TextGenerationOperations.Request<S>): Effect.fn.Return<
     S["Type"],
     TextGenerationError,
-    S["DecodingServices"]
+    S["DecodingServices"] | Scope.Scope
   > {
-    const catalog = yield* scopedModelCatalog;
+    const workingDirectory =
+      operation === "generateThreadTitle"
+        ? yield* fileSystem
+            .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
+            .pipe(
+              Effect.mapError((cause) =>
+                normalizeCliError("claude", operation, cause, "Failed to create title directory"),
+              ),
+            )
+        : cwd;
+    const catalog = yield* routeModelCatalog(yield* scopedModelCatalog, workingDirectory);
     const resolvedModelSelection = {
       ...modelSelection,
       model: resolveClaudeModelSlug(catalog, modelSelection.model),
@@ -200,16 +215,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* (
       noSessionPersistence: boolean,
     ) {
-      const workingDirectory =
-        operation === "generateThreadTitle"
-          ? yield* fileSystem
-              .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
-              .pipe(
-                Effect.mapError((cause) =>
-                  normalizeCliError("claude", operation, cause, "Failed to create title directory"),
-                ),
-              )
-          : cwd;
       const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
       const spawnCommand = yield* resolveSpawnCommand(
         claudeSettings.binaryPath || "claude",
@@ -344,5 +349,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     );
   });
 
-  return TextGenerationOperations.fromRunner("ClaudeTextGeneration", runClaudeJson);
+  return TextGenerationOperations.fromRunner(
+    "ClaudeTextGeneration",
+    <S extends Schema.Top>(request: TextGenerationOperations.Request<S>) =>
+      Effect.scoped(runClaudeJson(request)),
+  );
 });
