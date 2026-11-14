@@ -56,7 +56,6 @@ import { useUsageLimitsPanel } from "./chat/useUsageLimitsPanel";
 import { useWorktreeSetup } from "./chat/useWorktreeSetup";
 import { useChatShortcuts } from "./chat/useChatShortcuts";
 import { ChatBannerLane } from "./chat/ChatBannerLane";
-import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import {
   AuthOrchestrationOperateScope,
@@ -3449,11 +3448,6 @@ export default function ChatView(props: ChatViewProps) {
                   syncing={threadSyncPhase !== null}
                   detailLoading={threadDetailLoading}
                   detailBehind={threadBehindShell}
-                  detailUpdatedAt={
-                    serverProjection === null
-                      ? null
-                      : DateTime.toEpochMillis(serverProjection.updatedAt)
-                  }
                   citationRequest={citationRequest}
                   citationHistory={citationHistory}
                   onCiteAssistantText={citeAssistantTextStable}

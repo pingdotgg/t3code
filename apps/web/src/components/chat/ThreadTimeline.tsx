@@ -2,7 +2,11 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { type ComponentProps, useLayoutEffect } from "react";
 import { useIncrementalTimelineEntries } from "../../hooks/useIncrementalTimelineEntries";
 import type { TimelineEntriesInput, TimelineEntry } from "../../session-logic";
-import { useThreadShellNewerThan, useTimelineVisibleTurnItems } from "../../state/entities";
+import {
+  readThreadDetailUpdatedAt,
+  useThreadShellNewerThan,
+  useTimelineVisibleTurnItems,
+} from "../../state/entities";
 import {
   peekRememberedThreadTimeline,
   peekRememberedThreadTimelineUpdatedAt,
@@ -26,7 +30,6 @@ export function ThreadTimeline({
   syncing,
   detailLoading,
   detailBehind,
-  detailUpdatedAt,
   ...timelineProps
 }: Omit<ComponentProps<typeof MessagesTimeline>, "timelineEntries"> & {
   /** Null until the thread's detail may load; see resolveThreadDetailRef. */
@@ -39,8 +42,6 @@ export function ThreadTimeline({
   detailLoading: boolean;
   /** The detail is older than the thread's latest activity; see behindShellAtom. */
   detailBehind: boolean;
-  /** Epoch ms of the detail projection, remembered with its entries. */
-  detailUpdatedAt: number | null;
 }) {
   const visibleTurnItems = useTimelineVisibleTurnItems(threadDetailRef);
   const serverEntries = useIncrementalTimelineEntries(activeThreadKey, {
@@ -67,11 +68,12 @@ export function ThreadTimeline({
     if (detailLoading || entries.length === 0 || timelineHasEphemeralPreviewUrls(entries)) {
       return;
     }
+    const updatedAt = threadDetailRef === null ? null : readThreadDetailUpdatedAt(threadDetailRef);
     rememberReadyThreadTimeline({
       threadKey: activeThreadKey,
       entries,
-      ...(detailUpdatedAt === null ? {} : { updatedAt: detailUpdatedAt }),
+      ...(updatedAt === null ? {} : { updatedAt }),
     });
-  }, [activeThreadKey, detailLoading, detailUpdatedAt, entries]);
+  }, [activeThreadKey, detailLoading, entries, threadDetailRef]);
   return <MessagesTimeline {...timelineProps} behind={behind} timelineEntries={displayedEntries} />;
 }

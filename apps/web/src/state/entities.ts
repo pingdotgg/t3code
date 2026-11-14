@@ -1,4 +1,4 @@
-import type * as DateTime from "effect/DateTime";
+import * as DateTime from "effect/DateTime";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentProject,
@@ -349,6 +349,12 @@ export function readThreadTurnItems(ref: ScopedThreadRef) {
     appAtomRegistry.get(environmentThreadDetails.quietThreadAtom(ref))?.projection
       .visibleTurnItems ?? []
   );
+}
+
+/** Epoch ms of the loaded detail, read once: subscribing would re-render on every text delta. */
+export function readThreadDetailUpdatedAt(ref: ScopedThreadRef): number | null {
+  const thread = appAtomRegistry.get(environmentThreadDetails.threadAtom(ref));
+  return thread === null ? null : DateTime.toEpochMillis(thread.projection.updatedAt);
 }
 
 export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | null {
