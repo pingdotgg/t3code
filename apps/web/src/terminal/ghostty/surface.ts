@@ -1,3 +1,4 @@
+import { createReadOnlyPromptFilter } from "@t3tools/client-runtime/state/terminal";
 import { resolveEventKeys } from "@t3tools/shared/keybindingMatching";
 import { isMacPlatform } from "../../lib/utils";
 import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "../../lib/selectionActions";
@@ -34,11 +35,6 @@ const TERMINAL_GLYPH_FALLBACKS =
 const DEFAULT_TERMINAL_FONT_FAMILY =
   '"SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", ' + TERMINAL_GLYPH_FALLBACKS;
 const CONTENT_PADDING = 4;
-// OSC 133;A;redraw=1 asks for the prompt to be cleared on resize because the
-// shell redraws it, but only a resize of the PTY makes it redraw. A read-only
-// viewer never resizes the PTY, so it turns the request off and keeps the prompt.
-const SHELL_REDRAWS_PROMPT = "\x1b]133;A;redraw=1";
-const SHELL_KEEPS_PROMPT = "\x1b]133;A;redraw=0";
 const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 const CURSOR_BLINK_INTERVAL_MS = 500;
 const TERMINAL_LINK_HOVER_DELAY_MS = 250;
@@ -642,7 +638,7 @@ export class GhosttyTerminalSurface {
     moved: boolean;
   } | null = null;
   private lastMouseMotionData = "";
-  private heldPromptMark = "";
+  private readonly promptFilter = createReadOnlyPromptFilter();
   private mouseAnyEventTracking = false;
   private dprMedia: MediaQueryList | null = null;
   // Watch reduced motion changes to restart blink cycles that have no remaining timer.
@@ -772,7 +768,7 @@ export class GhosttyTerminalSurface {
   write(data: string): void {
     if (this.disposed) return;
     this.core.write(
-      this.forPromptRedraw(data),
+      this.promptFilter.filter(data, this.input.readOnly),
       this.synchronizedRenderTimer === null
         ? undefined
         : () => this.cancelSynchronizedRenderTimer(),
@@ -787,7 +783,7 @@ export class GhosttyTerminalSurface {
     if (this.disposed) return;
     this.cancelSynchronizedRenderTimer();
     this.lastMouseMotionData = "";
-    this.heldPromptMark = "";
+    this.promptFilter.reset();
     // The history was written at the PTY's grid. Replay it there and then
     // resize, as a live terminal would, so Ghostty reflows it and clears the
     // marked prompt that the shell redraws once the PTY takes this size.
@@ -795,7 +791,7 @@ export class GhosttyTerminalSurface {
     if (replay !== null) {
       this.core.resize(replay.cols, replay.rows, this.metrics.width, this.metrics.height);
     }
-    this.core.resetAndWrite(this.forPromptRedraw(data));
+    this.core.resetAndWrite(this.promptFilter.filter(data, this.input.readOnly));
     if (replay !== null) {
       // Before the first fit this surface has no grid of its own yet; keep the
       // PTY's so that fit applies the real change.
@@ -810,17 +806,6 @@ export class GhosttyTerminalSurface {
     this.forceFullRender = true;
     this.scrollbarDirty = true;
     this.requestRender();
-  }
-
-  private forPromptRedraw(data: string): string {
-    const text = this.heldPromptMark + data;
-    this.heldPromptMark = "";
-    if (!this.input.readOnly) return text;
-    // Output arrives in chunks; hold back an end that may be the mark's start.
-    let held = Math.min(text.length, SHELL_REDRAWS_PROMPT.length - 1);
-    while (held > 0 && !SHELL_REDRAWS_PROMPT.startsWith(text.slice(-held))) held -= 1;
-    this.heldPromptMark = text.slice(text.length - held);
-    return text.slice(0, text.length - held).replaceAll(SHELL_REDRAWS_PROMPT, SHELL_KEEPS_PROMPT);
   }
 
   setTheme(theme: GhosttyTheme): void {

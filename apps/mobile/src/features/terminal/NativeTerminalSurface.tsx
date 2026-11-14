@@ -3,7 +3,16 @@ import {
   type TerminalGrid,
   type TerminalOutputState,
 } from "@t3tools/client-runtime/state/terminal";
-import { memo, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
+import {
+  memo,
+  useEffect,
+  useEffectEvent,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type Ref,
+} from "react";
 import {
   Pressable,
   ScrollView,
@@ -232,6 +241,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface({
   const nativeRef = useRef<NativeTerminalSurfaceHandle>(null);
   const writerRef = useRef<ReturnType<typeof createTerminalOutputWriter> | null>(null);
   const [nativeReady, setNativeReady] = useState(false);
+  const isReadOnly = useEffectEvent(() => props.readOnly ?? false);
 
   // The fallback surface binds the same ref itself.
   useImperativeHandle(NativeTerminalSurfaceView ? ref : undefined, () => ({
@@ -247,7 +257,10 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface({
   useEffect(() => {
     const view = nativeRef.current;
     if (!streaming || !nativeReady || view === null) return;
-    const writer = createTerminalOutputWriter((data, reset) => view.writeOutput(data, reset));
+    const writer = createTerminalOutputWriter(
+      (data, reset) => view.writeOutput(data, reset),
+      () => isReadOnly(),
+    );
     writerRef.current = writer;
     return () => {
       writerRef.current = null;

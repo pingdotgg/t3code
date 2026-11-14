@@ -356,3 +356,28 @@ export function readTerminalOutputUpdate(
 }
 
 export { appendOutput, clearOutput, resetOutput };
+
+// OSC 133;A;redraw=1 asks a renderer to clear the prompt on resize because the
+// shell redraws it, but only a resize of the PTY makes it redraw. A read-only
+// viewer never resizes the PTY, so it turns the request off and keeps the prompt.
+const SHELL_REDRAWS_PROMPT = "\x1b]133;A;redraw=1";
+const SHELL_KEEPS_PROMPT = "\x1b]133;A;redraw=0";
+
+/** One per renderer: rewrites prompt marks for a read-only viewer, across chunk boundaries. */
+export function createReadOnlyPromptFilter() {
+  let held = "";
+  return {
+    filter(data: string, readOnly: boolean): string {
+      const text = held + data;
+      held = "";
+      if (!readOnly) return text;
+      let keep = Math.min(text.length, SHELL_REDRAWS_PROMPT.length - 1);
+      while (keep > 0 && !SHELL_REDRAWS_PROMPT.startsWith(text.slice(-keep))) keep -= 1;
+      held = text.slice(text.length - keep);
+      return text.slice(0, text.length - keep).replaceAll(SHELL_REDRAWS_PROMPT, SHELL_KEEPS_PROMPT);
+    },
+    reset() {
+      held = "";
+    },
+  };
+}
