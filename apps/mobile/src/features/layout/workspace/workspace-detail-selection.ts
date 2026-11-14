@@ -61,6 +61,10 @@ export function setNativelyPoppingWorkspaceRoute(key: string | null) {
   nativelyPoppingRoute = key;
 }
 
+export function isNativelyPoppingWorkspaceRoute(key: string | undefined) {
+  return key !== undefined && key === nativelyPoppingRoute;
+}
+
 /**
  * The root stack after selecting `detail`: Home, then the detail alone. The route already showing
  * it, or else the detail column's current page of the same kind, keeps its key, so the column

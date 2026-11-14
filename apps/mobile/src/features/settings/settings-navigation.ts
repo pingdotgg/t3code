@@ -1,4 +1,5 @@
 import type { NavigationState, PartialState } from "@react-navigation/native";
+import { isNativelyPoppingWorkspaceRoute } from "../layout/workspace/workspace-detail-selection";
 
 import {
   dispatchRootStackReset,
@@ -80,13 +81,19 @@ export function settingsNavigationState<State extends { readonly routes: readonl
   const list = state.routes.find((route) => route.name === "Settings") ?? { name: "Settings" };
   const current = page
     ? state.routes.find(
-        (route) => route.name === page && JSON.stringify(route.params) === JSON.stringify(params),
+        (route) =>
+          route.name === page &&
+          !isNativelyPoppingWorkspaceRoute(route.key) &&
+          JSON.stringify(route.params) === JSON.stringify(params),
       )
     : undefined;
+  const pageKey = isNativelyPoppingWorkspaceRoute(key) ? undefined : key;
   const routes = [
     home,
     list,
-    ...(page ? [current ?? (key ? { key, name: page, params } : { name: page, params })] : []),
+    ...(page
+      ? [current ?? (pageKey ? { key: pageKey, name: page, params } : { name: page, params })]
+      : []),
   ];
   return { ...state, index: routes.length - 1, routes };
 }
