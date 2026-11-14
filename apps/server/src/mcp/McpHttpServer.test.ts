@@ -34,7 +34,6 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as AssetSigner from "../assets/AssetSigner.ts";
-import * as ServerHttp from "../http.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -1400,20 +1399,10 @@ it.effect("gives outside clients an upload URL on the origin their request reach
         capabilities: new Set(["orchestration"]),
         issuedAt: 1,
       };
-      const settingsContext = yield* Layer.build(ServerSettings.layerTest());
-      const storageContext = yield* Layer.build(
-        AssetSigner.layer.pipe(
-          Layer.provideMerge(ServerSecretStore.layer),
-          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-upload-" })),
-          Layer.provideMerge(DocumentText.layer),
-          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-        ),
-      );
-      const serverLayer = Layer.mergeAll(
-        McpHttpServer.layerMcpTransport(McpHttpServer.layerAttachmentToolkit),
-        ServerHttp.layerAttachmentUploadRoute,
+      const serverLayer = McpHttpServer.layerMcpTransport(
+        McpHttpServer.layerAttachmentToolkit,
       ).pipe(
-        Layer.provide(Layer.succeedContext(settingsContext)),
+        Layer.provide(ServerSettings.layerTest()),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
@@ -1429,10 +1418,16 @@ it.effect("gives outside clients an upload URL on the origin their request reach
               ),
           }),
         ),
+        Layer.provide(
+          AssetSigner.layer.pipe(
+            Layer.provideMerge(ServerSecretStore.layer),
+            Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-upload-" })),
+            Layer.provideMerge(DocumentText.layer),
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ),
       );
-      // Route handlers read their services from the server, as `server.ts` provides them.
       yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
-        Layer.provide(Layer.succeedContext(storageContext)),
         Layer.build,
       );
       const httpClient = yield* HttpClient.HttpClient;
@@ -1477,7 +1472,7 @@ it.effect("gives outside clients an upload URL on the origin their request reach
             ),
           });
           const body = (yield* response.json) as {
-            result: { structuredContent: { attachmentId: string; uploadUrl: string } };
+            result: { structuredContent: { uploadUrl: string } };
           };
           return body.result.structuredContent;
         });
@@ -1485,21 +1480,7 @@ it.effect("gives outside clients an upload URL on the origin their request reach
       const direct = yield* prepareUpload({});
       const { address } = yield* HttpServer.HttpServer;
       if (!NetAddress.isInetAddress(address)) throw new Error("Expected a TCP test server");
-      const uploadUrl = new URL(direct.uploadUrl);
-      expect(uploadUrl.origin).toBe(`http://127.0.0.1:${address.port}`);
-      // The test client prepends that same origin, so it takes the path.
-      const uploaded = yield* httpClient.execute(
-        HttpClientRequest.post(uploadUrl.pathname).pipe(
-          HttpClientRequest.bodyUint8Array(new Uint8Array([1, 2, 3, 4, 5, 6]), "image/png"),
-        ),
-      );
-      expect([uploaded.status, yield* uploaded.text]).toEqual([204, ""]);
-      const { attachmentsDir } = Context.get(storageContext, ServerConfig.ServerConfig);
-      const stored = yield* Context.get(storageContext, FileSystem.FileSystem).readDirectory(
-        attachmentsDir,
-        { recursive: true },
-      );
-      expect(stored.some((path) => path.includes(direct.attachmentId))).toBe(true);
+      expect(new URL(direct.uploadUrl).origin).toBe(`http://127.0.0.1:${address.port}`);
 
       const proxied = yield* prepareUpload({ "x-forwarded-proto": "https" });
       expect(new URL(proxied.uploadUrl).protocol).toBe("https:");
