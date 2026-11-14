@@ -144,7 +144,12 @@ it.each(["thread", "session"] as const)(
       store.setProjectDraftThreadId(scopeProjectRef(environmentId, ProjectId.make("p")), target);
     }
     store.setPrompt(target, "half-written prompt");
-    using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+    using _draft = {
+      [Symbol.dispose]: () => {
+        if (typeof target === "string") store.clearDraftThread(target);
+        else store.clearComposerContent(target);
+      },
+    };
     const targetKey = composerTargetKey(target);
 
     // Wider than the 2000 px limit, so the real compression re-encodes it.
@@ -156,6 +161,11 @@ it.each(["thread", "session"] as const)(
     const real = await vi.importActual<typeof import("../../lib/imageCompression")>(
       "../../lib/imageCompression",
     );
+    const previousCompression = compression.prepare.getMockImplementation();
+    using _compression = {
+      [Symbol.dispose]: () =>
+        compression.prepare.mockReset().mockImplementation(previousCompression),
+    };
     compression.prepare.mockReset().mockImplementation(real.prepareImageForAttachment);
     const decoding = deferred<void>();
     const resumeDecode = deferred<void>();
