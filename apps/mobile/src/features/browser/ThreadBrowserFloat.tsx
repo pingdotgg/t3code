@@ -2,11 +2,12 @@ import { useIsFocused } from "@react-navigation/native";
 import type { EnvironmentId, PreviewSessionSnapshot, ThreadId } from "@t3tools/contracts";
 import { previewPdfAssetUrl } from "@t3tools/shared/preview";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, Pressable, View } from "react-native";
+import { useState } from "react";
+import { Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { useAppForeground } from "../../lib/appState";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { browserTabTitle } from "./browserTabs";
 import { PreviewStreamWebView } from "./PreviewStreamWebView";
@@ -25,37 +26,40 @@ export function ThreadBrowserFloat(props: {
   readonly onOpen: (tabId: string) => void;
 }) {
   const [tabId, setTabId] = useState<string | null>(null);
-  const known = useRef<ReadonlyMap<string, string | undefined> | null>(null);
-  useEffect(() => {
-    if (!props.loaded) return;
-    const previous = known.current;
-    known.current = new Map(props.tabs.map((tab) => [tab.tabId, tab.revealRequest?.id]));
-    if (previous === null) return;
-    const opened = props.tabs.findLast(
-      (tab) =>
-        tab.reveal === true &&
-        (tab.revealRequest
-          ? previous.get(tab.tabId) !== tab.revealRequest.id
-          : !previous.has(tab.tabId)),
-    );
+  // The reveal requests already seen, so only a tab revealed after the first
+  // list pops the player.
+  const [seen, setSeen] = useState<{
+    readonly tabs: ReadonlyArray<PreviewSessionSnapshot>;
+    readonly reveals: ReadonlyMap<string, string | undefined>;
+  } | null>(null);
+  if (props.loaded && seen?.tabs !== props.tabs) {
+    setSeen({
+      tabs: props.tabs,
+      reveals: new Map(props.tabs.map((tab) => [tab.tabId, tab.revealRequest?.id])),
+    });
+    const previous = seen?.reveals;
+    const opened =
+      previous === undefined
+        ? undefined
+        : props.tabs.findLast(
+            (tab) =>
+              tab.reveal === true &&
+              (tab.revealRequest
+                ? previous.get(tab.tabId) !== tab.revealRequest.id
+                : !previous.has(tab.tabId)),
+          );
     if (opened !== undefined) setTabId(opened.tabId);
-  }, [props.loaded, props.tabs]);
+  }
   const focused = useIsFocused();
-  const [foreground, setForeground] = useState(AppState.currentState !== "background");
-  useEffect(() => {
-    const subscription = AppState.addEventListener("change", (state) =>
-      setForeground(state !== "background"),
-    );
-    return () => subscription.remove();
-  }, []);
+  const foreground = useAppForeground();
   const tab = props.tabs.find((entry) => entry.tabId === tabId) ?? null;
   const onOpen = props.onOpen;
-  const open = useCallback(() => {
+  const open = () => {
     if (tabId === null) return;
     setTabId(null);
     onOpen(tabId);
-  }, [onOpen, tabId]);
-  const close = useCallback(() => setTabId(null), []);
+  };
+  const close = () => setTabId(null);
   if (!tab || !focused) return null;
   return (
     <FloatingBrowserPlayer

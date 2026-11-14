@@ -1,3 +1,4 @@
+import { threadPullRequestKeyOf } from "@t3tools/client-runtime/thread-pull-requests";
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
 import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
 import {
@@ -19,11 +20,12 @@ import {
   composerStateAtPromptEnd,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  extendReplacementRangeForTrailingSpace,
   formatAssistantCitationForComposer,
-  isCollapsedCursorAdjacentToInlineToken,
   isPathSuggestionCurrent,
   replaceTextRange,
 } from "./composer-logic";
+import { slashCommandItemsForPromptPosition } from "./components/chat/composerSlashCommandSearch";
 import { carryDisplacedCustomAnswerIntoPrompt } from "./pendingUserInput";
 import { formatTerminalContextReference } from "./lib/terminalContext";
 
@@ -120,6 +122,25 @@ describe("composerSubmissionIntentForKey", () => {
       }),
     ).toBe(expected);
   });
+
+  it.each([
+    ["mod-enter", "one line"],
+    ["mod-enter-multiline", "two\nlines"],
+  ] as const)(
+    "starts a new thread in the foreground on Mod+Enter with %s",
+    (sendShortcut, prompt) => {
+      const draft = { ...input, isDraftThread: true, sendShortcut, prompt };
+      expect(composerSubmissionIntentForKey({ ...draft, event: { ...enter, ctrlKey: true } })).toBe(
+        "foreground",
+      );
+      expect(
+        composerSubmissionIntentForKey({
+          ...draft,
+          event: { ...enter, ctrlKey: true, altKey: true },
+        }),
+      ).toBe("background");
+    },
+  );
 
   it("honors the send preference with an existing install's saved alternate binding", () => {
     const keybindings = mergeWithDefaultKeybindings(
@@ -265,6 +286,18 @@ describe("detectComposerTrigger", () => {
     expect(trigger).toBeNull();
   });
 
+  it.each([
+    "It costs $5",
+    "budget $9.99",
+    "only $.99",
+    "about €20",
+    "raise $10k",
+    "raise $10k.",
+    "is it $5?",
+  ])("does not detect a skill trigger for the amount in %j", (text) => {
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
+  });
+
   it("detects a pull request number at a token boundary", () => {
     const text = "Compare this with #8737";
 
@@ -299,30 +332,35 @@ describe("detectComposerTrigger", () => {
 describe("filterComposerPullRequestMatches", () => {
   const entries = [
     {
+      host: "github.com",
       number: 7,
       projectId: "project-1",
       repository: "t3tools/t3code",
       updatedAt: "2026-09-01T12:00:00.000Z",
     },
     {
+      host: "github.com",
       number: 8987,
       projectId: "project-1",
       repository: "T3Tools/T3Code",
       updatedAt: "2026-09-03T12:00:00.000Z",
     },
     {
+      host: "github.com",
       number: 27,
       projectId: "project-1",
       repository: "t3tools/t3code",
       updatedAt: "2026-09-02T12:00:00.000Z",
     },
     {
+      host: "github.com",
       number: 27,
       projectId: "project-1",
       repository: "t3tools/t3code",
       updatedAt: "2026-09-01T13:00:00.000Z",
     },
     {
+      host: "github.com",
       number: 70,
       projectId: "project-2",
       repository: "t3tools/other",
@@ -333,6 +371,7 @@ describe("filterComposerPullRequestMatches", () => {
   it("matches and de-duplicates number fragments within one repository, exact match first", () => {
     expect(
       filterComposerPullRequestMatches({
+        keyOf: threadPullRequestKeyOf,
         entries,
         projectId: "project-1",
         repository: "t3tools/t3code",
@@ -344,18 +383,21 @@ describe("filterComposerPullRequestMatches", () => {
 
   it("keeps an older exact match when newer substring matches would fill the limit", () => {
     const exact = {
+      host: "github.com",
       number: 7,
       projectId: "project-1",
       repository: "t3tools/t3code",
       updatedAt: "2020-01-01T00:00:00.000Z",
     };
     const newerSubstringMatches = Array.from({ length: 12 }, (_unused, index) => ({
+      host: "github.com",
       number: 700 + index,
       projectId: "project-1",
       repository: "t3tools/t3code",
       updatedAt: `2026-09-${String(index + 1).padStart(2, "0")}T12:00:00.000Z`,
     }));
     const matches = filterComposerPullRequestMatches({
+      keyOf: threadPullRequestKeyOf,
       entries: [...newerSubstringMatches, exact],
       projectId: "project-1",
       repository: "t3tools/t3code",
@@ -482,9 +524,6 @@ describe("assistant citation cursor offsets", () => {
     for (const offset of [1, citationSource.length - 1, citationSource.length]) {
       expect(collapseExpandedComposerCursor(text, prefix.length + offset)).toBe(prefix.length + 1);
     }
-    expect(isCollapsedCursorAdjacentToInlineToken(text, prefix.length, "right")).toBe(true);
-    expect(isCollapsedCursorAdjacentToInlineToken(text, prefix.length + 1, "left")).toBe(true);
-    expect(isCollapsedCursorAdjacentToInlineToken(text, prefix.length + 2, "left")).toBe(false);
   });
 
   it("deletes one collapsed citation without changing its neighbor or surrounding punctuation", () => {
@@ -498,27 +537,6 @@ describe("assistant citation cursor offsets", () => {
 
     expect(result).toEqual({ text: `(),${citationSource}!`, cursor: 1 });
     expect(collapseExpandedComposerCursor(result.text, result.text.length)).toBe("(),□!".length);
-  });
-});
-
-describe("isCollapsedCursorAdjacentToInlineToken", () => {
-  it("detects left adjacency only when cursor is directly after a mention", () => {
-    const text = "open @AGENTS.md next";
-    const mentionStart = "open ".length;
-    const mentionEnd = mentionStart + 1;
-
-    expect(isCollapsedCursorAdjacentToInlineToken(text, mentionEnd, "left")).toBe(true);
-    expect(isCollapsedCursorAdjacentToInlineToken(text, mentionStart, "left")).toBe(false);
-    expect(isCollapsedCursorAdjacentToInlineToken(text, mentionEnd + 1, "left")).toBe(false);
-  });
-
-  it("treats context reference pills as inline tokens for adjacency checks", () => {
-    const text = `open ${terminalReference} next`;
-    const tokenStart = "open ".length;
-    const tokenEnd = tokenStart + 1;
-
-    expect(isCollapsedCursorAdjacentToInlineToken(text, tokenEnd, "left")).toBe(true);
-    expect(isCollapsedCursorAdjacentToInlineToken(text, tokenStart, "right")).toBe(true);
   });
 });
 
@@ -549,5 +567,29 @@ describe("literal editor answer cursor state", () => {
       });
     }
     expect(composerStateAtPromptEnd("Use $my").trigger?.kind).toBe("skill");
+  });
+});
+
+describe("extendReplacementRangeForTrailingSpace", () => {
+  it("swallows one existing space after the range when the replacement ends with one", () => {
+    expect(extendReplacementRangeForTrailingSpace("@fi rest", 3, "@file ")).toBe(4);
+    expect(extendReplacementRangeForTrailingSpace("@firest", 3, "@file ")).toBe(3);
+    expect(extendReplacementRangeForTrailingSpace("@fi rest", 3, "@file")).toBe(3);
+    expect(extendReplacementRangeForTrailingSpace("@fi", 3, "@file ")).toBe(3);
+  });
+});
+
+describe("side chat slash commands", () => {
+  it("are not offered after the start of a message", () => {
+    const items = (["side", "btw", "clear", "model"] as const).map((command) => ({
+      id: `slash:${command}`,
+      type: "slash-command" as const,
+      command,
+      label: `/${command}`,
+      description: "",
+    }));
+    expect(slashCommandItemsForPromptPosition(items, false).map((item) => item.id)).toEqual([
+      "slash:model",
+    ]);
   });
 });

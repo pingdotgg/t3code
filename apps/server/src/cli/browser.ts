@@ -39,10 +39,7 @@ const runStep = Effect.fn("browserSetup.runStep")(function* (
   }
 });
 
-/**
- * Under `sudo` the process home is root's, so an unspecified home falls back to
- * the invoking user's `~/.t3`.
- */
+/** Under sudo, an unspecified home uses the invoking user's ~/.t3. */
 const setupBaseDir = Effect.fn("browserSetup.baseDir")(function* (explicit: Option.Option<string>) {
   const env = yield* HostProcess.Environment;
   const raw = Option.getOrUndefined(explicit) ?? env.T3CODE_HOME;
@@ -117,16 +114,28 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
       }
       const fs = yield* FileSystem.FileSystem;
       const isRoot = (yield* HostProcess.UserId) === 0;
-      const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
-      // Root, unless sudo came from another user, is likely the server's own account.
       const env = yield* HostProcess.Environment;
+      const baseDirPath = yield* setupBaseDir(baseDir);
+      // sudo resets the environment, so a chosen home has to be on the command line.
+      const setupCommand = yield* resolveRootCliCommand(
+        PreviewBrowserHost.SETUP_SUBCOMMAND,
+        Option.isSome(baseDir) || env.T3CODE_HOME !== undefined ? ["--base-dir", baseDirPath] : [],
+      );
+      // Root, unless sudo came from another user, is likely the server's own account.
       const rootWarning =
         isRoot && (env.SUDO_USER ?? "root") === "root" && !PreviewBrowserHost.sandboxDisabled(env)
           ? new PreviewBrowserHost.PreviewBrowserRootError().message
           : undefined;
 
-      const needsProfile = yield* PreviewBrowserHost.sandboxBlocked;
-      const browser = yield* installedBrowser(yield* setupBaseDir(baseDir));
+      const restricted = yield* PreviewBrowserHost.usernsRestricted;
+      // The kernel can lack a profile that is on disk, as on a host restored from an image,
+      // and only root can read the loaded list, so root reloads it on every run.
+      const needsProfile = isRoot ? restricted : yield* PreviewBrowserHost.sandboxBlocked;
+      const reloadHint =
+        restricted && !isRoot
+          ? `\nIf the browser still reports a blocked sandbox, the AppArmor profile at ${PreviewBrowserHost.APPARMOR_PROFILE_PATH} is not loaded. To load it, run:\n\n  ${setupCommand}\n`
+          : "";
+      const browser = yield* installedBrowser(baseDirPath);
       const missing = Option.isSome(browser)
         ? yield* PreviewBrowserHost.missingLibraries(browser.value)
         : [];
@@ -138,7 +147,8 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
           rootWarning ??
             (Option.isSome(browser)
               ? "This host is ready for T3's browser."
-              : "Chrome's sandbox is allowed here. T3's browser installs on first use; if it then reports missing libraries, run this again."),
+              : "Chrome's sandbox is allowed here. T3's browser installs on first use; if it then reports missing libraries, run this again.") +
+              reloadHint,
         );
       }
 
@@ -160,25 +170,35 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
       }
 
       if (needsProfile) {
-        yield* fs
-          .writeFileString(
-            PreviewBrowserHost.APPARMOR_PROFILE_PATH,
-            PreviewBrowserHost.APPARMOR_PROFILE,
-          )
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new BrowserSetupStepError({
-                  step: `write ${PreviewBrowserHost.APPARMOR_PROFILE_PATH}`,
-                  detail: cause.message,
-                }),
-            ),
-          );
+        // An existing profile may carry an administrator's edits, so it is reloaded as is.
+        const profileOnDisk = yield* fs
+          .exists(PreviewBrowserHost.APPARMOR_PROFILE_PATH)
+          .pipe(Effect.orElseSucceed(() => false));
+        if (!profileOnDisk) {
+          yield* fs
+            .writeFileString(
+              PreviewBrowserHost.APPARMOR_PROFILE_PATH,
+              PreviewBrowserHost.APPARMOR_PROFILE,
+            )
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new BrowserSetupStepError({
+                    step: `write ${PreviewBrowserHost.APPARMOR_PROFILE_PATH}`,
+                    detail: cause.message,
+                  }),
+              ),
+            );
+        }
         yield* runStep("load the AppArmor profile", "apparmor_parser", [
           "-r",
           PreviewBrowserHost.APPARMOR_PROFILE_PATH,
         ]);
-        yield* Console.log("Allowed Chrome's sandbox for T3's browser.");
+        yield* Console.log(
+          profileOnDisk
+            ? `Reloaded the AppArmor profile at ${PreviewBrowserHost.APPARMOR_PROFILE_PATH} that allows Chrome's sandbox for T3's browser.`
+            : `Wrote and loaded the AppArmor profile at ${PreviewBrowserHost.APPARMOR_PROFILE_PATH} that allows Chrome's sandbox for T3's browser.`,
+        );
       }
 
       if ((missing.length > 0 || needsFonts) && !hasApt) {

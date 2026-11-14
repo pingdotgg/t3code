@@ -67,7 +67,6 @@ describe("async attachment references", () => {
       liveTargetKey = composerTargetKey(targetB);
       promptRef.current = "Draft B original";
       editor.text = promptRef.current;
-      // Use the latest stored A prompt, including edits from elsewhere during compression.
       store.setPrompt(targetA, "Draft A original updated");
       finishCompression(image);
       expect(await pending).toBe(true);

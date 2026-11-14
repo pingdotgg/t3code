@@ -6,6 +6,8 @@ import { GrokSettings } from "./settings.ts";
 export const grokClient = defineProviderClient({
   driverKind: ProviderDriverKind.make("grok"),
   label: "Grok",
+  modelFamilies: ["Grok "],
+  acpRegistryAgentIds: ["grok-build"],
   settingsSchema: GrokSettings,
   icon: {
     viewBox: "0 0 24 24",

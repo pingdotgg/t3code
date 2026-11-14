@@ -1,9 +1,5 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import { changeRequestUrlFor } from "@t3tools/shared/changeRequestUrl";
-import {
-  detectSourceControlProviderFromGitRemoteUrl,
-  normalizeGitRemoteUrl,
-} from "@t3tools/shared/git";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { refineUnknownRemoteProvider } from "@t3tools/source-control-core/server/discovery";
 import { processOutput } from "@t3tools/source-control-testing/TestSourceControlHost";
 import { assert, it } from "@effect/vitest";
@@ -16,6 +12,7 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 import * as GitLabCli from "./GitLabCli.ts";
 import { parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
+import { definition } from "../shared/definition.ts";
 
 function makeProvider(gitlab: Partial<GitLabCli.GitLabCli["Service"]>) {
   return GitLabSourceControlProvider.make.pipe(
@@ -128,7 +125,10 @@ it.effect.each([
         canonicalKey: normalizeGitRemoteUrl(remoteUrl),
         locator: { source: "git-remote" as const, remoteName: "upstream", remoteUrl },
         rootPath: "/repo",
-        provider: detectSourceControlProviderFromGitRemoteUrl(remoteUrl)?.kind ?? "unknown",
+        // Only a remote no host recognised is left for glab to refine.
+        provider: SourceControlProviderKind.make(
+          expectedProvider === "github" ? "github" : "unknown",
+        ),
       };
       let authCalls = 0;
       const refined = yield* (
@@ -166,16 +166,21 @@ it.effect.each([
             ),
         }) ?? Effect.succeed(identity)
       );
-      const [host, ...repository] = refined.canonicalKey.split("/");
-      assert.strictEqual(
-        changeRequestUrlFor(refined.provider, host!, repository.join("/"), 42),
-        expectedProvider === "gitlab"
-          ? "https://code.example.test/team/repo/-/merge_requests/42"
-          : expectedProvider === "github"
-            ? "https://github.com/team/repo/pull/42"
-            : null,
-      );
-      assert.deepStrictEqual(refined, { ...identity, provider: expectedProvider });
+      if (expectedProvider === "gitlab") {
+        const [host, ...repository] = refined.canonicalKey.split("/");
+        assert.strictEqual(
+          definition.changeRequestUrl({
+            host: host!,
+            repository: repository.join("/"),
+            number: 42,
+          }),
+          "https://code.example.test/team/repo/-/merge_requests/42",
+        );
+      }
+      assert.deepStrictEqual(refined, {
+        ...identity,
+        provider: SourceControlProviderKind.make(expectedProvider),
+      });
       if (expectedProvider === "github") assert.strictEqual(authCalls, 0);
     }),
 );
@@ -193,6 +198,21 @@ selfhosted
     ],
   );
 });
+
+it.effect(
+  "looks up a branch's merge requests a full page at a time, past forks' same-named branches",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* makeProvider({});
+      assert.deepStrictEqual(
+        provider.headBranchProbe?.({
+          headSelectors: ["octocat:feature", "feature"],
+          state: "open",
+        }),
+        { headSelectors: ["feature"], limit: 100 },
+      );
+    }),
+);
 
 it.effect.each(["merge_requests", "issues"])(
   "resolves %s subjects on the linked host without using the checkout",
@@ -229,13 +249,15 @@ it.effect.each(["merge_requests", "issues"])(
         title: "Pairing expiry",
         body: "Preserve remote access",
       });
-      assert.strictEqual(
-        provider.resolveLink?.({
-          cwd: "/unrelated",
-          url: new URL("https://gitlab.com/owner/repo"),
-        }),
-        undefined,
-      );
+      for (const url of [
+        "https://gitlab.com/owner/repo",
+        "https://gitlab.attacker.test/team/project/-/issues/1",
+      ]) {
+        assert.strictEqual(
+          provider.resolveLink?.({ cwd: "/unrelated", url: new URL(url) }),
+          undefined,
+        );
+      }
     }),
 );
 
@@ -273,4 +295,62 @@ it.effect.each(["read", "decode"] as const)(
       if (stage === "read") assert.strictEqual(error.cause, cause);
       else assert.propertyVal(error.cause, "_tag", "SchemaError");
     }),
+);
+
+it.effect.each([
+  { headSelector: "octocat:feature/fix", source: undefined, sourceProject: "octocat/t3code" },
+  {
+    headSelector: "feature/fix",
+    source: { owner: "team/subgroup", refName: "feature/fix" },
+    sourceProject: "team/subgroup/t3code",
+  },
+  {
+    headSelector: "feature/fix",
+    source: { repository: "octocat/renamed-fork", refName: "feature/fix" },
+    sourceProject: "octocat/renamed-fork",
+  },
+])("creates a fork MR from $sourceProject into the current project", (testCase) =>
+  Effect.gen(function* () {
+    const requests: ReadonlyArray<string>[] = [];
+    const host = TestSourceControlHost.layer({
+      process: {
+        run: (input) => {
+          requests.push(input.args);
+          if (input.args[1] === "projects/:fullpath") {
+            return Effect.succeed(processOutput(JSON.stringify({ id: 100, path: "t3code" })));
+          }
+          assert.deepStrictEqual(input.args, [
+            "api",
+            "--method",
+            "POST",
+            `projects/${encodeURIComponent(testCase.sourceProject)}/merge_requests`,
+            "--raw-field",
+            "source_branch=feature/fix",
+            "--raw-field",
+            "target_branch=main",
+            "--raw-field",
+            "target_project_id=100",
+            "--raw-field",
+            "title=Fix remote flow",
+            "--field",
+            "description=@/tmp/body.md",
+          ]);
+          return Effect.succeed(processOutput("{}"));
+        },
+      },
+    });
+    const provider = yield* GitLabSourceControlProvider.make.pipe(
+      Effect.provide(Layer.merge(host, GitLabCli.layer.pipe(Layer.provide(host)))),
+    );
+    yield* provider.createChangeRequest({
+      cwd: "/repo",
+      baseRefName: "main",
+      headSelector: testCase.headSelector,
+      ...(testCase.source ? { source: testCase.source } : {}),
+      title: "Fix remote flow",
+      bodyFile: "/tmp/body.md",
+    });
+    assert.strictEqual(requests.length, 2);
+    assert.deepStrictEqual(requests[0], ["api", "projects/:fullpath"]);
+  }),
 );

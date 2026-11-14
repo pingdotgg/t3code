@@ -7,11 +7,13 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import * as previewRuntime from "./browser/previewRuntime";
 import { type ClosedViewEntry, useClosedViewStore } from "./closedViewStore";
 import { __setClientSettingsForTests } from "./hooks/useSettings";
 import { readThreadPreviewState, resetPreviewStateForTests } from "./previewStateStore";
 import { planNextReopen, type ReopenOwnerState, reopenClosedView } from "./reopenClosedView";
 import {
+  hostRightPanel,
   selectThreadRightPanelState,
   type ThreadRightPanelState,
   useRightPanelStore,
@@ -29,6 +31,8 @@ const snapshot: PreviewSessionSnapshot = {
   canGoForward: false,
   viewport: { _tag: "freeform", width: 1200, height: 800 },
   profileId: "work",
+  zoomFactor: 1.5,
+  colorScheme: "dark",
   updatedAt: "2026-09-22T12:00:00.000Z",
 };
 
@@ -40,28 +44,117 @@ beforeEach(() => {
 });
 
 describe("reopenClosedView", () => {
-  it("restores a file tab at its line without creating a browser session", async () => {
-    const openPreview = vi.fn();
-    const reopened = await reopenClosedView(
-      {
-        kind: "panel-tab",
+  it.each([
+    { relativePath: "src/app.ts", line: 18, folderTrail: undefined },
+    { relativePath: "apps", line: null, folderTrail: "apps/web/src" },
+    { relativePath: "", line: null, folderTrail: "apps/web/src" },
+  ])(
+    "restores the captured file or folder tab at '$relativePath'",
+    async ({ relativePath, line, folderTrail }) => {
+      const panels = useRightPanelStore.getState();
+      if (folderTrail === undefined) panels.openFile(threadRef, relativePath, line ?? undefined);
+      else {
+        panels.openFile(threadRef, folderTrail);
+        panels.navigateFolder(threadRef, `file:${folderTrail}`, relativePath, folderTrail);
+      }
+      const expected =
+        relativePath === ""
+          ? { kind: "files", id: "files", folderTrail }
+          : {
+              kind: "file",
+              id: `file:${relativePath}`,
+              relativePath,
+              revealLine: line,
+              revealRequestId: 1,
+              ...(folderTrail === undefined ? {} : { folderTrail }),
+            };
+      const before = selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
         threadRef,
-        surface: {
-          kind: "file",
-          id: "file:src/app.ts",
-          relativePath: "src/app.ts",
-          revealLine: 18,
-          revealRequestId: 1,
-        },
-      },
-      { openPreview, workspaceAvailable: true },
-    );
-    expect(reopened).toBe(true);
-    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef);
-    expect(state.isOpen).toBe(true);
-    expect(state.surfaces).toMatchObject([{ id: "file:src/app.ts", revealLine: 18 }]);
-    expect(openPreview).not.toHaveBeenCalled();
-  });
+      );
+      expect(before.surfaces).toEqual([expected]);
+      panels.closeSurface(threadRef, expected.id);
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).surfaces,
+      ).toEqual([]);
+      const entries = useClosedViewStore.getState().entries;
+      expect(entries).toEqual([
+        { id: expect.any(String), kind: "panel-tab", threadRef, surface: expected },
+      ]);
+      const openPreview = vi.fn();
+      const reopened = await reopenClosedView(entries[0]!, {
+        openPreview,
+        workspaceAvailable: true,
+      });
+      expect(reopened).toBe(true);
+      const state = selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        threadRef,
+      );
+      expect(state.isOpen).toBe(true);
+      expect(state.activeSurfaceId).toBe(expected.id);
+      expect(state.surfaces).toEqual([expected]);
+      expect(openPreview).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { hosted: false, folderTrail: "packages/contracts/src" },
+    { hosted: false, folderTrail: undefined },
+    { hosted: true, folderTrail: "packages/contracts/src" },
+    { hosted: true, folderTrail: undefined },
+  ])(
+    "preserves a hidden root tab with trail $folderTrail (hosted: $hosted)",
+    async ({ hosted, folderTrail }) => {
+      const panels = useRightPanelStore.getState();
+      panels.openFile(threadRef, "apps/web/src");
+      panels.navigateFolder(threadRef, "file:apps/web/src", "", "apps/web/src");
+      panels.closeSurface(threadRef, "files");
+      const entry = useClosedViewStore.getState().entries[0]!;
+      const hostRef = hosted
+        ? { ...threadRef, threadId: "host" as ScopedThreadRef["threadId"] }
+        : threadRef;
+      const unhost = hosted ? hostRightPanel(threadRef, hostRef) : undefined;
+      try {
+        if (folderTrail === undefined) panels.open(threadRef, "files");
+        else {
+          panels.openFile(threadRef, folderTrail);
+          panels.navigateFolder(threadRef, `file:${folderTrail}`, "", folderTrail);
+        }
+        panels.close(threadRef);
+        const before = selectThreadRightPanelState(
+          useRightPanelStore.getState().byThreadKey,
+          hostRef,
+        );
+        expect(before.isOpen).toBe(false);
+        const plan = planNextReopen([entry], () => ({
+          environmentKnown: true,
+          catalogReady: true,
+          ownerExists: true,
+          sideChatExists: true,
+          shellLive: true,
+          panel: before,
+        }));
+        expect(plan.restore).toBe(entry);
+        const openPreview = vi.fn();
+        expect(
+          await reopenClosedView(plan.restore!, { openPreview, workspaceAvailable: true }),
+        ).toBe(true);
+        const after = selectThreadRightPanelState(
+          useRightPanelStore.getState().byThreadKey,
+          hostRef,
+        );
+        expect(after.isOpen).toBe(true);
+        expect(after.activeSurfaceId).toBe("files");
+        expect(after.surfaces).toEqual([
+          { kind: "files", id: "files", ...(folderTrail === undefined ? {} : { folderTrail }) },
+        ]);
+        expect(openPreview).not.toHaveBeenCalled();
+      } finally {
+        unhost?.();
+      }
+    },
+  );
 
   it("does not reopen workspace tabs without an available project", async () => {
     const options = {
@@ -69,13 +162,21 @@ describe("reopenClosedView", () => {
       workspaceAvailable: false,
     };
     for (const surface of [
-      { kind: "files", id: "files" },
+      { kind: "files", id: "files", folderTrail: "apps/web/src" },
       {
         kind: "file",
         id: "file:src/app.ts",
         relativePath: "src/app.ts",
         revealLine: null,
         revealRequestId: 0,
+      },
+      {
+        kind: "file",
+        id: "file:apps",
+        relativePath: "apps",
+        revealLine: null,
+        revealRequestId: 1,
+        folderTrail: "apps/web/src",
       },
     ] as const) {
       expect(await reopenClosedView({ kind: "panel-tab", threadRef, surface }, options)).toBe(
@@ -87,7 +188,8 @@ describe("reopenClosedView", () => {
     ).toEqual([]);
   });
 
-  it("recreates a browser tab with saved URL, viewport and profile, then selects its new ID", async () => {
+  it("recreates a server browser tab with its saved URL, viewport, profile, zoom and appearance, then selects its new ID", async () => {
+    using _runtime = vi.spyOn(previewRuntime, "previewRuntimeFor").mockReturnValue("server");
     const openPreview = vi.fn(async () => AsyncResult.success({ ...snapshot, tabId: "new-tab" }));
     const result = await reopenClosedView(
       { kind: "browser", threadRef, snapshot },
@@ -101,6 +203,9 @@ describe("reopenClosedView", () => {
         url: "https://example.com",
         viewport: snapshot.viewport,
         profileId: "work",
+        runtime: "server",
+        zoomFactor: 1.5,
+        colorScheme: "dark",
       },
     });
     expect(readThreadPreviewState(threadRef).snapshot?.tabId).toBe("new-tab");
@@ -134,6 +239,7 @@ describe("planNextReopen", () => {
     environmentKnown: true,
     catalogReady: true,
     ownerExists: true,
+    sideChatExists: true,
     shellLive: true,
     panel: { isOpen: false, activeSurfaceId: null, surfaces: [] },
   };
@@ -162,6 +268,18 @@ describe("planNextReopen", () => {
       [{ ...known, ownerExists: false }, known],
       [],
       "b",
+    ],
+    [
+      "skips but keeps a side chat deleted from a live shell",
+      [{ ...known, sideChatExists: false }, known],
+      [],
+      "b",
+    ],
+    [
+      "waits when a cached shell lacks the side chat",
+      [{ ...known, sideChatExists: false, shellLive: false }, known],
+      [],
+      null,
     ],
     [
       "waits when a cached shell lacks the thread",

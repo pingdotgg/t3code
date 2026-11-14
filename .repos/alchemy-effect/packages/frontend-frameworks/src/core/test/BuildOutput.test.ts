@@ -24,6 +24,11 @@ describe("toOutputFile", () => {
     const file = await run(toOutputFile("data.bin", new Uint8Array([1, 2, 3])));
     expect(Buffer.isBuffer(file.content)).toBe(true);
   });
+
+  it("names modules with `/` even when given a Windows-style path", async () => {
+    const file = await run(toOutputFile("server\\serve-neon.mjs", ""));
+    expect(file.name).toBe("server/serve-neon.mjs");
+  });
 });
 
 describe("sortServerModules", () => {
@@ -33,11 +38,19 @@ describe("sortServerModules", () => {
       { name: "server/index.js", content: "", hash: "" },
       { name: "server/a.js", content: "", hash: "" },
     ];
-    expect(
-      sortServerModules(modules, "server/index.js").map(
-        (module) => module.name,
-      ),
-    ).toEqual(["server/index.js", "server/a.js", "server/z.js"]);
+    expect(sortServerModules(modules, "server/index.js").map((module) => module.name)).toEqual([
+      "server/index.js",
+      "server/a.js",
+      "server/z.js",
+    ]);
+  });
+
+  it("matches a Windows-style entry against `/`-separated module names", () => {
+    const modules = [
+      { name: "server/chunks/0.js", content: "", hash: "" },
+      { name: "server/index.js", content: "", hash: "" },
+    ];
+    expect(sortServerModules(modules, "server\\index.js")[0]?.name).toBe("server/index.js");
   });
 });
 
@@ -50,9 +63,7 @@ describe("build output persistence", () => {
       clientDirectory: "/project/dist/client",
       serverModules: [
         await run(toOutputFile("server/index.js", "export default {};")),
-        await run(
-          toOutputFile("server/data.bin", new Uint8Array([0, 1, 2, 255])),
-        ),
+        await run(toOutputFile("server/data.bin", new Uint8Array([0, 1, 2, 255]))),
       ],
       externalWorkspaces: new Set(["/workspaces/b", "/workspaces/a"]),
     };
@@ -66,9 +77,7 @@ describe("build output persistence", () => {
     expect(Buffer.isBuffer(binary.content)).toBe(true);
     expect(Array.from(binary.content as Buffer)).toEqual([0, 1, 2, 255]);
     expect(binary.hash).toBe(output.serverModules![1]!.hash);
-    expect(parsed.externalWorkspaces).toEqual(
-      new Set(["/workspaces/a", "/workspaces/b"]),
-    );
+    expect(parsed.externalWorkspaces).toEqual(new Set(["/workspaces/a", "/workspaces/b"]));
   });
 
   it("creates the target's parent directory when it does not exist", async () => {

@@ -5,6 +5,7 @@ import {
   decodeItemContentJson,
   decodeIterationChangesJson,
   decodeIterationsJson,
+  decodePolicyChecksJson,
   decodePullRequestJson,
   decodePullRequestListJson,
   decodeThreadsJson,
@@ -208,7 +209,7 @@ describe("decodeThreadsJson", () => {
     });
   });
 
-  it("reads a thread pinned to a file as a review comment", () => {
+  it("reads a thread pinned to a file as a review comment on the path its diff uses", () => {
     const comments = expectSuccess(
       decodeThreadsJson(
         asJson({
@@ -223,7 +224,7 @@ describe("decodeThreadsJson", () => {
       ),
     );
 
-    expect(comments[0]).toMatchObject({ kind: "review-comment", path: "/src/app.ts" });
+    expect(comments[0]).toMatchObject({ kind: "review-comment", path: "src/app.ts" });
   });
 
   it("keeps the replies under a thread, which are as much of the conversation", () => {
@@ -431,15 +432,8 @@ describe("decodeItemContentJson", () => {
   });
 });
 
-/**
- * These are the shapes a real organisation answered with, read back through `az devops invoke`
- * rather than `az rest`: the extension hands over the route's own body with one key of its own
- * added, and a live repository leaves out fields the contract documents.
- */
 describe("what az devops invoke answers with", () => {
   it("reads the envelope the extension adds its own continuation token to", () => {
-    // Set on every JSON body it returns, from a response header these routes do not send, so it
-    // arrives as null rather than not at all.
     expect(
       expectSuccess(decodeThreadsJson(asJson({ value: [], count: 0, continuation_token: null }))),
     ).toEqual([]);
@@ -470,8 +464,6 @@ describe("what az devops invoke answers with", () => {
   });
 
   it("keeps the files of a change that names neither their object type nor their page after it", () => {
-    // A live iteration states `changeType`, `item.path` and `item.objectId` and nothing else: no
-    // `gitObjectType`, no `isFolder`, and no `nextSkip` on the only page.
     const page = expectSuccess(
       decodeIterationChangesJson(
         asJson({
@@ -504,9 +496,6 @@ describe("what az devops invoke answers with", () => {
   });
 
   it("reads a text file whose content type Azure calls a stream", () => {
-    // `contentMetadata` comes back for a markdown file with `application/octet-stream` on it and
-    // no `isBinary` at all, so the content type is not the field to ask, and its absence is the
-    // answer that the text is text.
     expect(
       expectSuccess(
         decodeItemContentJson(
@@ -526,5 +515,138 @@ describe("what az devops invoke answers with", () => {
         ),
       ),
     ).toEqual({ contents: "# T3Demo\n", isBinary: false });
+  });
+});
+
+describe("decodePolicyChecksJson", () => {
+  const BUILD_TYPE = "0609b952-1397-4640-95ec-e00a01b2c241";
+  const STATUS_TYPE = "cbdc66da-9728-4af8-aada-9a5a32e4a226";
+  const CONFIGURATION_URL =
+    "https://dev.azure.com/acme/6f9c9b7f-0000-0000-0000-000000000000/_apis/policy/configurations/54";
+
+  const evaluation = (
+    status: string,
+    context: Record<string, unknown> | null,
+    settings: Record<string, unknown> = { displayName: "PR validation" },
+    configuration: Record<string, unknown> = {},
+  ) => ({
+    status,
+    context,
+    configuration: {
+      url: CONFIGURATION_URL,
+      isBlocking: true,
+      type: { id: BUILD_TYPE, displayName: "Build" },
+      settings,
+      ...configuration,
+    },
+  });
+
+  const decodeOne = (value: unknown, isDraft = false) =>
+    expectSuccess(decodePolicyChecksJson(asJson([value]), { isDraft })).checks[0];
+
+  it.each([
+    ["approved", "success"],
+    ["running", "pending"],
+    ["rejected", "failure"],
+    ["broken", "failure"],
+    ["notApplicable", "skipped"],
+    ["someNewStatus", "pending"],
+  ])("reads a build evaluation %s as %s", (status, expected) => {
+    expect(decodeOne(evaluation(status, { buildId: 21959 }))?.status).toBe(expected);
+  });
+
+  it("links a build to its results page, in the project the policy belongs to", () => {
+    expect(decodeOne(evaluation("running", { buildId: 21959 }))).toEqual({
+      name: "PR validation",
+      status: "pending",
+      description: null,
+      url: "https://dev.azure.com/acme/6f9c9b7f-0000-0000-0000-000000000000/_build/results?buildId=21959",
+      required: true,
+    });
+  });
+
+  it("names a build policy without its own name after the pipeline it runs", () => {
+    const check = decodeOne(evaluation("approved", { buildDefinitionName: "PR - Validation" }, {}));
+    expect(check?.name).toBe("PR - Validation");
+    expect(check?.url).toBeNull();
+  });
+
+  it("reads a status policy, which reports an external service's verdict", () => {
+    expect(
+      decodeOne(
+        evaluation(
+          "rejected",
+          null,
+          { defaultDisplayName: "SonarCloud", statusName: "gate" },
+          {
+            type: { id: STATUS_TYPE, displayName: "Status" },
+          },
+        ),
+      ),
+    ).toMatchObject({ name: "SonarCloud", status: "failure", url: null });
+  });
+
+  // Both arrive as `queued`; a spinner would never stop on either.
+  it.each([
+    {
+      name: "an expired build",
+      value: evaluation("queued", { buildId: 21919, isExpired: true }),
+    },
+    {
+      name: "a build only a person can queue",
+      value: evaluation("queued", null, { displayName: "Nightly", manualQueueOnly: true }),
+    },
+  ])("asks for action on $name", ({ value }) => {
+    const check = decodeOne(value);
+    expect(check?.status).toBe("action-required");
+    expect(check?.description).not.toBeNull();
+  });
+
+  // A watch waits on every check that asks for action, and nobody has to queue an optional one.
+  it.each([
+    { name: "expired", value: evaluation("queued", { buildId: 21919, isExpired: true }) },
+    {
+      name: "manual-only",
+      value: evaluation("queued", null, { displayName: "Nightly", manualQueueOnly: true }),
+    },
+  ])("skips an optional $name build that nobody queued", ({ value }) => {
+    const check = decodeOne({
+      ...value,
+      configuration: { ...value.configuration, isBlocking: false },
+    });
+    expect(check?.status).toBe("skipped");
+    expect(check?.description).not.toBeNull();
+  });
+
+  it("reports nothing for a build Azure holds back on a draft", () => {
+    expect(decodeOne(evaluation("queued", null), true)).toBeUndefined();
+    expect(decodeOne(evaluation("running", { buildId: 21960 }), true)?.status).toBe("pending");
+  });
+
+  it("keeps a build that is really waiting for an agent as running", () => {
+    expect(decodeOne(evaluation("queued", { buildId: 21960, isExpired: false }))?.status).toBe(
+      "pending",
+    );
+    expect(decodeOne(evaluation("queued", null))?.status).toBe("pending");
+  });
+
+  it.each([
+    {
+      name: "a review gate, which waits on people",
+      configuration: { type: { id: "fa4e907d-c16b-4a4c-9dfa-4906e5d171dd" } },
+    },
+    { name: "a disabled policy", configuration: { isEnabled: false } },
+    { name: "a deleted policy", configuration: { isDeleted: true } },
+  ])("leaves out $name but still counts the row for paging", ({ configuration }) => {
+    const row = evaluation("queued", null, {}, configuration);
+    expect(expectSuccess(decodePolicyChecksJson(asJson([row]), { isDraft: false }))).toEqual({
+      checks: [],
+      rawCount: 1,
+    });
+  });
+
+  it("fails the page on a row it cannot read, which could be a required check", () => {
+    const rows = asJson([evaluation("rejected", null), { status: 7 }]);
+    expect(Result.isFailure(decodePolicyChecksJson(rows, { isDraft: false }))).toBe(true);
   });
 });
