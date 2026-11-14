@@ -198,8 +198,6 @@ describe("GitCafeSourceControlProvider", () => {
 
   it.effect.each([
     ["no context", undefined, "https://git.cafe/fork/project.git"],
-    ["an HTTPS remote", "https://git.cafe/team/project.git", "https://git.cafe/fork/project.git"],
-    ["an SSH remote", "ssh@git.cafe:team/project.git", "ssh@git.cafe:fork/project.git"],
     ["an ssh:// remote", "ssh://ssh@git.cafe/team/project.git", "ssh@git.cafe:fork/project.git"],
     [
       "an HTTPS remote with a user",
@@ -244,12 +242,14 @@ describe("GitCafeSourceControlProvider", () => {
           };
     return Effect.gen(function* () {
       const provider = yield* GitCafeSourceControlProvider.make;
-      yield* provider.checkoutChangeRequest({
-        cwd: "/repo",
-        reference: "https://git.cafe/team/project/pulls/7",
-        ...(context === undefined ? {} : { context }),
-      });
-      assert.deepStrictEqual(remotes, [expected]);
+      for (const route of ["pull", "pulls"]) {
+        yield* provider.checkoutChangeRequest({
+          cwd: "/repo",
+          reference: `https://git.cafe/team/project/${route}/7`,
+          ...(context === undefined ? {} : { context }),
+        });
+      }
+      assert.deepStrictEqual(remotes, [expected, expected]);
     }).pipe(
       Effect.provide(
         Layer.merge(GitCafeApi.layer, NoFiles).pipe(

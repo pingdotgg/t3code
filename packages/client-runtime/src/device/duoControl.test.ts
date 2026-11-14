@@ -85,6 +85,7 @@ it("pinches only a hit device, accumulates independently of native readback, cla
   expect(pinch.active).toBe(false);
 });
 
+// regression: #16630 fold controls follow the phone's orientation on each screen
 it.each([
   [
     "vertical phone, closed",

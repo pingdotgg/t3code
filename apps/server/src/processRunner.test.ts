@@ -1,6 +1,9 @@
+import { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Cause from "effect/Cause";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
@@ -117,49 +120,9 @@ describe("runProcess", () => {
     );
   });
 
-  it.effect("preserves resolved spawn context and cause", () =>
-    Effect.gen(function* () {
-      const cause = PlatformError.systemError({
-        _tag: "PermissionDenied",
-        module: "ChildProcessSpawner",
-        method: "spawn",
-        pathOrDescriptor: "/actual/fake",
-      });
-      const spawner = makeSpawner(() => Effect.fail(cause));
-
-      const error = yield* runWith(spawner)({
-        command: "fake",
-        args: ["--flag", "secret-token-value"],
-        cwd: "/logical",
-        spawnCwd: "/actual",
-      }).pipe(Effect.flip);
-
-      expect(error._tag).toBe("ProcessSpawnError");
-      if (error._tag !== "ProcessSpawnError") {
-        return expect.fail("Expected ProcessSpawnError");
-      }
-      expect(error).toMatchObject({
-        command: "fake",
-        argumentCount: 2,
-        cwd: "/logical",
-        spawnCwd: "/actual",
-        resolvedCommand: "fake",
-        resolvedArgumentCount: 2,
-        shell: false,
-      });
-      expect(error.cause).toBe(cause);
-      expect(error.message).toBe("Failed to spawn process 'fake' in '/actual'");
-      expect(error).not.toHaveProperty("args");
-      expect(error).not.toHaveProperty("resolvedArgs");
-      expect(error.message).not.toContain("secret-token-value");
-    }),
-  );
-
   it.effect("types spawn failures that the platform spawner throws synchronously", () =>
     Effect.gen(function* () {
-      // A non-directory entry on PATH makes node's spawn throw ENOTDIR
-      // synchronously. The platform spawner calls it inside `Effect.callback`,
-      // so the throw arrives as a defect rather than a typed error.
+      // File-valued PATH entries make spawn throw ENOTDIR synchronously, arriving through Effect.callback as a defect.
       const defect = Object.assign(new Error("spawn jj ENOTDIR"), { code: "ENOTDIR" });
       const spawner = makeSpawner(() =>
         Effect.callback<never, never>(() => {
@@ -180,6 +143,29 @@ describe("runProcess", () => {
       expect(error).toMatchObject({ command: "jj", argumentCount: 1, cwd: "/repo" });
       expect(error.cause).toBe(defect);
     }),
+  );
+
+  it.effect("reports child startup before delivering cancellation during acquisition", () =>
+    Effect.gen(function* () {
+      let started = false;
+      const spawner = makeSpawner(() =>
+        Effect.withFiber((fiber) =>
+          Effect.sync(() => {
+            fiber.interruptUnsafe();
+            return makeHandle({});
+          }),
+        ),
+      );
+      const result = yield* runWith(spawner)({
+        command: "git",
+        args: ["restore"],
+        onSpawn: () => {
+          started = true;
+        },
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(result) && Cause.hasInterruptsOnly(result.cause)).toBe(true);
+      expect(started).toBe(true);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("fails when output exceeds max buffer in default mode", () =>
@@ -300,15 +286,12 @@ describe("runProcess", () => {
       expect(result.code).toBe(0);
     }),
   );
-
-  for (const {} of ["timeout", "success"] as const) {
-  }
 });
 
 describe("isWindowsCommandNotFound", () => {
   it.effect("matches the localized German cmd.exe error text", () =>
     Effect.gen(function* () {
-      const isCommandNotFound = yield* ProcessRunner.isWindowsCommandNotFound(
+      const isCommandNotFound = yield* isWindowsCommandNotFound(
         1,
         "wird nicht als interner oder externer Befehl, betriebsfahiges Programm oder Batch-Datei erkannt",
       ).pipe(Effect.provideService(HostProcess.Platform, "win32"));

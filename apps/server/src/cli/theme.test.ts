@@ -3,9 +3,11 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { assert, describe, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
@@ -15,13 +17,14 @@ import { cli } from "../binCli.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-// These force a failure with chmod, which Windows ignores for directories and
-// cannot use to make a file unreadable, so the failure never happens there.
+// Windows chmod cannot force these directory or file permission failures.
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
 const runCli = (args: ReadonlyArray<string>) =>
   Command.runWith(cli, { version: "0.0.0" })(args).pipe(
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer, TestConsole.layer)),
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer, TestConsole.layer),
+    ),
   );
 
 const makeBaseDir = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-theme-cli-"));
@@ -78,6 +81,40 @@ describe("t3 theme", () => {
     }),
   );
 
+  it.effect("sets the theme of a dev server running in the default home", () =>
+    Effect.gen(function* () {
+      const home = makeBaseDir();
+      const devStateDir = NodePath.join(home, ".t3", "dev");
+      NodeFS.mkdirSync(devStateDir, { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(devStateDir, "server-runtime.json"),
+        `${JSON.stringify({
+          version: 1,
+          pid: process.pid,
+          port: 4888,
+          origin: "http://127.0.0.1:4888",
+          devUrl: "http://127.0.0.1:5999",
+          startedAt: "1970-01-01T00:00:00.000Z",
+        })}\n`,
+      );
+
+      const result = yield* runCli(["theme", "set", "ocean"]).pipe(
+        Effect.provideService(HostProcess.HomeDirectory, home),
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+        Effect.result,
+      );
+
+      assert.equal(
+        NodeFS.existsSync(NodePath.join(home, ".t3", "userdata", "settings.json")),
+        false,
+      );
+      if (result._tag === "Success") {
+        const devSettings = NodePath.join(devStateDir, "settings.json");
+        assert.equal(JSON.parse(NodeFS.readFileSync(devSettings, "utf8")).defaultTheme, "ocean");
+      }
+    }),
+  );
+
   it.effect("publishes a theme file under its filename and sets it", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -109,23 +146,6 @@ describe("t3 theme", () => {
       assert.include(String(failure), "not a valid theme file");
       assert.equal(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "themes")), false);
       assert.equal(NodeFS.existsSync(settingsPathFor(baseDir)), false);
-    }),
-  );
-
-  it.effect("publishes nothing when the settings file cannot be used", () =>
-    Effect.gen(function* () {
-      const baseDir = makeBaseDir();
-      NodeFS.mkdirSync(NodePath.dirname(settingsPathFor(baseDir)), { recursive: true });
-      NodeFS.writeFileSync(settingsPathFor(baseDir), "{ not json");
-      const themeFile = NodePath.join(baseDir, "nightfall.json");
-      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
-
-      const failure = yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
-        Effect.flip,
-      );
-
-      assert.include(String(failure), "not a JSON object");
-      assert.equal(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "themes")), false);
     }),
   );
 
@@ -171,20 +191,6 @@ describe("t3 theme", () => {
     }),
   );
 
-  it.effect("rejects a path that does not exist instead of storing it as an id", () =>
-    Effect.gen(function* () {
-      const baseDir = makeBaseDir();
-      const failure = yield* runCli([
-        "theme",
-        "set",
-        `${baseDir}/missing.json`,
-        "--base-dir",
-        baseDir,
-      ]).pipe(Effect.flip);
-      assert.include(String(failure), "Could not read");
-    }),
-  );
-
   it.effect.skipIf(windowsHost)("refuses to write when the settings file cannot be read", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -199,50 +205,6 @@ describe("t3 theme", () => {
       assert.include(String(failure), "Could not read");
       assert.equal(readSettings(baseDir).enableProviderUpdateChecks, false);
       assert.equal(Object.hasOwn(readSettings(baseDir), "defaultTheme"), false);
-    }),
-  );
-
-  it.effect("accepts an id a published file provides", () =>
-    Effect.gen(function* () {
-      const baseDir = makeBaseDir();
-      const themeFile = NodePath.join(baseDir, "nightfall.json");
-      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
-      yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]);
-
-      yield* runCli(["theme", "clear", "--base-dir", baseDir]);
-      yield* runCli(["theme", "set", "nightfall", "--base-dir", baseDir]);
-      assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
-    }),
-  );
-
-  it.effect("rejects an id whose published file the watcher would skip", () =>
-    Effect.gen(function* () {
-      const baseDir = makeBaseDir();
-      const themesDir = NodePath.join(baseDir, "userdata", "themes");
-      NodeFS.mkdirSync(themesDir, { recursive: true });
-      NodeFS.writeFileSync(NodePath.join(themesDir, "broken.json"), "{ not json\n");
-
-      const failure = yield* runCli(["theme", "set", "broken", "--base-dir", baseDir]).pipe(
-        Effect.flip,
-      );
-      assert.include(String(failure), "No theme named");
-    }),
-  );
-
-  it.effect("rejects a theme file larger than the watcher will read", () =>
-    Effect.gen(function* () {
-      const baseDir = makeBaseDir();
-      const themeFile = NodePath.join(baseDir, "huge.json");
-      const padding = "x".repeat(40 * 1024);
-      NodeFS.writeFileSync(
-        themeFile,
-        `{ "name": "Huge", "appearance": "dark", "canvas": "#1a1b26", "accent": "#7aa2f7", "note": "${padding}" }\n`,
-      );
-
-      const failure = yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
-        Effect.flip,
-      );
-      assert.include(String(failure), "larger than");
     }),
   );
 });

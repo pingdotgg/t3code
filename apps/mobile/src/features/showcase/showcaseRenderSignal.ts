@@ -7,10 +7,16 @@ export type ShowcaseRenderSignal = Readonly<{
 }>;
 
 const listeners = new Set<() => void>();
-let renderSignal: ShowcaseRenderSignal | null = null;
+export type ShowcaseRenderSnapshot = Readonly<{
+  signal: ShowcaseRenderSignal | null;
+  // A redraw can repeat the same scene and theme; counting reports lets it restart the settle delay.
+  reports: number;
+}>;
 
-export function getShowcaseRenderSignal(): ShowcaseRenderSignal | null {
-  return renderSignal;
+let snapshot: ShowcaseRenderSnapshot = { signal: null, reports: 0 };
+
+export function getShowcaseRenderSnapshot(): ShowcaseRenderSnapshot {
+  return snapshot;
 }
 
 export function subscribeToShowcaseRenderSignal(listener: () => void): () => void {
@@ -19,13 +25,13 @@ export function subscribeToShowcaseRenderSignal(listener: () => void): () => voi
 }
 
 export function reportShowcaseSceneRendered(signal: ShowcaseRenderSignal): void {
-  renderSignal = signal;
+  snapshot = { signal, reports: snapshot.reports + 1 };
   for (const listener of listeners) listener();
 }
 
 export function clearShowcaseRenderSignal(): void {
-  if (renderSignal === null) return;
-  renderSignal = null;
+  if (snapshot.signal === null) return;
+  snapshot = { signal: null, reports: snapshot.reports + 1 };
   for (const listener of listeners) listener();
 }
 

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -111,7 +112,7 @@ describe("OpenCode2Server error details", () => {
         Layer.mergeAll(
           OpenCode2Client.layer.pipe(Layer.provide(httpClient)),
           OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
-        ).pipe(Layer.provideMerge(NodeServices.layer)),
+        ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
       ),
     );
 
@@ -148,6 +149,51 @@ describe("OpenCode2Server error details", () => {
   );
 });
 
+describe("OpenCode2Server external server", () => {
+  it.effect("reverifies after forgetting, so a replaced service's version is seen", () =>
+    Effect.gen(function* () {
+      let version = "2.2.4";
+      const layerService = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(JSON.stringify({ version, pid: 1, urls: [], paths: { tmp: "/tmp" } }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              }),
+            ),
+          ),
+        ),
+      );
+      const versions = yield* Effect.gen(function* () {
+        const server = yield* OpenCode2Server.make({
+          binaryPath: "opencode",
+          serverUrl: "http://127.0.0.1:49374",
+          serverPassword: "secret",
+          directory: "/project",
+          environment: {},
+        });
+        const read = server.withConnection((connection) => Effect.succeed(connection.version));
+        const before = yield* read;
+        version = "2.2.5";
+        const cached = yield* read;
+        yield* server.forget;
+        return [before, cached, yield* read];
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            OpenCode2Client.layer.pipe(Layer.provide(layerService)),
+            OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+          ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+        ),
+      );
+      assert.deepStrictEqual(versions, ["2.2.4", "2.2.4", "2.2.5"]);
+    }),
+  );
+});
+
 describe("OpenCode2Server passwords", () => {
   it("hands the spawned server only the T3 password", () => {
     const password = Redacted.make("t3-generated");
@@ -177,47 +223,52 @@ server.listen(0, "127.0.0.1", () => {
 `;
 
 describe("OpenCode2Server spawned server", () => {
-  it.live(
-    "is ready once /api/info accepts the generated password",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const platform = yield* HostProcess.Platform;
-        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode2-fake-" });
-        const isWindows = platform === "win32";
-        const binaryPath = path.join(directory, isWindows ? "opencode.cmd" : "opencode");
-        const scriptPath = path.join(directory, "opencode.mjs");
-        yield* fs.writeFileString(scriptPath, FAKE_SERVER);
-        yield* fs.writeFileString(
-          binaryPath,
-          isWindows
-            ? `@echo off\r\n"${yield* HostProcess.ExecutablePath}" "${scriptPath}" %*\r\n`
-            : `#!/bin/sh\nexec "${yield* HostProcess.ExecutablePath}" "${scriptPath}" "$@"\n`,
-        );
-        if (!isWindows) yield* fs.chmod(binaryPath, 0o755);
+  it.live("is ready once /api/info accepts the generated password", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const platform = yield* HostProcess.Platform;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode2-fake-" });
+      const isWindows = platform === "win32";
+      const binaryPath = path.join(directory, isWindows ? "opencode.cmd" : "opencode");
+      const scriptPath = path.join(directory, "opencode.mjs");
+      yield* fs.writeFileString(scriptPath, FAKE_SERVER);
+      yield* fs.writeFileString(
+        binaryPath,
+        isWindows
+          ? `@echo off\r\n"${yield* HostProcess.ExecutablePath}" "${scriptPath}" %*\r\n`
+          : `#!/bin/sh\nexec "${yield* HostProcess.ExecutablePath}" "${scriptPath}" "$@"\n`,
+      );
+      if (!isWindows) yield* fs.chmod(binaryPath, 0o755);
 
-        const server = yield* OpenCode2Server.make({
-          binaryPath,
-          serverUrl: "",
-          serverPassword: "",
-          directory,
-          environment: { ...(yield* HostProcess.Environment), OPENCODE_SERVER_PASSWORD: "ambient" },
-        });
-        const first = yield* server.withConnection((connection) => Effect.succeed(connection));
-        const second = yield* server.withConnection((connection) => Effect.succeed(connection));
-        assert.strictEqual(first.version, "2.0.18");
-        assert.strictEqual(first.external, false);
-        assert.strictEqual(second.client, first.client);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            OpenCode2Client.layer,
-            OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
-          ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))),
+      const server = yield* OpenCode2Server.make({
+        binaryPath,
+        serverUrl: "",
+        serverPassword: "",
+        directory,
+        environment: { ...(yield* HostProcess.Environment), OPENCODE_SERVER_PASSWORD: "ambient" },
+      });
+      const first = yield* server.withConnection((connection) => Effect.succeed(connection));
+      const second = yield* server.withConnection((connection) => Effect.succeed(connection));
+      assert.strictEqual(first.version, "2.0.18");
+      assert.strictEqual(first.external, false);
+      assert.strictEqual(second.client, first.client);
+      if (first.processExit === undefined)
+        return yield* Effect.die("Missing owned process lifetime");
+      return first.processExit;
+    }).pipe(
+      Effect.scoped,
+      Effect.flatten,
+      Effect.provide(
+        Layer.mergeAll(
+          OpenCode2Client.layer,
+          OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+        ).pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer),
+          ),
         ),
       ),
-    15_000,
+    ),
   );
 });

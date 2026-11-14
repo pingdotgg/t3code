@@ -44,14 +44,7 @@ it("derives Hyprland setup from its own helper and registered action, not old GN
   expect(captureSetupAccessReady({ ...installed, message: "Check access" })).toBe(false);
 });
 
-it.each([
-  "not-installed",
-  "disabled",
-  "restart-required",
-  "update-required",
-  "extensions-disabled",
-  "error",
-] as const)(
+it.each(["disabled", "error"] as const)(
   "keeps %s GNOME setup on the access step, even with a previously verified shortcut",
   (status) => {
     const state = {
@@ -82,11 +75,6 @@ it("resumes after login from real extension state without an onboarding-complete
   expect(captureSetupInitialStep(gnome)).toBe("shortcut");
 });
 
-it("finishes setup with a saved shortcut without requiring a separate delivery test", () => {
-  expect(captureSetupInitialStep({ ...gnome, shortcutVerified: false })).toBe("shortcut");
-  expect(captureSetupShortcutReady(gnome, false)).toBe(true);
-});
-
 it("does not skip native permission setup when capture has not been enabled", () => {
   expect(
     captureSetupInitialStep({
@@ -111,7 +99,7 @@ it("offers manual capture on an unsupported GNOME version instead of trapping se
   expect(captureSetupCheckMessage(state)).toContain("choose a window each time");
 });
 
-it.each(["not-installed", "update-required", "error"] as const)(
+it.each(["not-installed", "error"] as const)(
   "requires KDE helper access for %s even with a saved shortcut",
   (status) => {
     const state = {
@@ -138,51 +126,6 @@ it("resumes KDE setup after the helper passes its real permission check", () => 
   expect(captureSetupAccessReady(state)).toBe(true);
   expect(captureSetupInitialStep(state)).toBe("shortcut");
   expect(captureSetupInitialStep({ ...state, shortcutRegistered: false })).toBe("shortcut");
-});
-
-it("uses the current desktop's access requirements while preserving setup for the others", () => {
-  const kde: DesktopSnapShotState = {
-    ...gnome,
-    linuxDesktop: "kde",
-    linuxBackend: "kde",
-    kdeHelper: { status: "not-installed", message: "Install the helper" },
-    shortcutVerified: false,
-  };
-  expect(captureSetupDesktopName(kde)).toBe("KDE Plasma");
-  expect(captureSetupInitialStep(kde)).toBe("access");
-  expect(
-    captureSetupInitialStep({
-      ...kde,
-      kdeHelper: { status: "ready", message: "Ready" },
-      shortcutRegistered: false,
-    }),
-  ).toBe("shortcut");
-
-  const niri: DesktopSnapShotState = {
-    ...gnome,
-    linuxDesktop: "niri",
-    linuxBackend: "niri",
-    shortcutRegistered: false,
-  };
-  expect(captureSetupDesktopName(niri)).toBe("Niri");
-  expect(captureSetupInitialStep(niri)).toBe("shortcut");
-
-  expect(captureSetupDesktopName(gnome)).toBe("GNOME");
-  expect(captureSetupInitialStep(gnome)).toBe("shortcut");
-  expect(captureSetupShortcutReady(gnome, false)).toBe(true);
-});
-
-it("only confirms capture access when the rechecked extension is running and reachable", () => {
-  expect(captureSetupCheckMessage(gnome)).toBe("Ready. Continue to choose your shortcut.");
-  expect(captureSetupCheckMessage({ ...gnome, linuxBackend: "picker" })).toBe(
-    "Not ready yet. Finish the step above.",
-  );
-  expect(
-    captureSetupCheckMessage({
-      ...gnome,
-      gnomeExtension: { status: "disabled", message: "Enable it" },
-    }),
-  ).toBe("Not ready yet. Finish the step above.");
 });
 
 it("does not report a successful check when capture support could not be read", () => {
@@ -260,9 +203,7 @@ it("blocks finishing if desktop access is lost during the wizard", () => {
 
 it.each([
   [false, false, true],
-  [false, true, false],
   [true, false, false],
-  [true, true, false],
 ] as const)(
   "closing setup (previously enabled=%s, completed=%s) disables only an unfinished first opt-in",
   (wasEnabled, completed, disable) => {

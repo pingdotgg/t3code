@@ -13,50 +13,16 @@ import type {
 import { create } from "zustand";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
 import { environmentProjectClonesAtom, silenceProjectCloneToasts } from "../state/projectClones";
 import { projectEnvironment } from "../state/projects";
 import { sourceControlEnvironment } from "../state/sourceControl";
 
-export type CloneProtocol = "ssh" | "https";
-
 /** Matches the server's read cap: a larger file would arrive truncated. */
 export const COPYABLE_FILE_MAX_BYTES = 1024 * 1024;
 
-const SCP_LIKE_URL = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)(.+)$/;
-const SSH_URL = /^ssh:\/\/(?:[^@/\s]+@)?([^:/\s]+)(:\d+)?\/(.+)$/;
-const HTTPS_URL = /^https?:\/\/(?:[^@/\s]+@)?([^:/\s]+)(:\d+)?\/(.+)$/;
-
-function parseCloneUrl(
-  url: string,
-): { protocol: CloneProtocol; host: string; path: string; customPort: boolean } | null {
-  const trimmed = url.trim();
-  const ssh = SSH_URL.exec(trimmed);
-  if (ssh) return { protocol: "ssh", host: ssh[1]!, path: ssh[3]!, customPort: !!ssh[2] };
-  const https = HTTPS_URL.exec(trimmed);
-  if (https) return { protocol: "https", host: https[1]!, path: https[3]!, customPort: !!https[2] };
-  const scp = SCP_LIKE_URL.exec(trimmed);
-  if (scp) return { protocol: "ssh", host: scp[1]!, path: scp[2]!, customPort: false };
-  return null;
-}
-
-export function cloneUrlProtocol(url: string): CloneProtocol | null {
-  return parseCloneUrl(url)?.protocol ?? null;
-}
-
-/**
- * Rewrites a clone URL to the other protocol, because the target machine may
- * only have SSH keys or only an HTTPS credential helper. Returns null when the
- * URL cannot be rewritten safely, such as a custom port.
- */
-export function cloneUrlForProtocol(url: string, protocol: CloneProtocol): string | null {
-  const parsed = parseCloneUrl(url);
-  if (!parsed) return null;
-  if (parsed.protocol === protocol) return url.trim();
-  if (parsed.customPort) return null;
-  return protocol === "ssh"
-    ? `git@${parsed.host}:${parsed.path}`
-    : `https://${parsed.host}/${parsed.path}`;
-}
+/** The server lists at most this many ignored files, so one pick never exceeded it. */
+export const COPIED_FILES_MAX_COUNT = 200;
 
 const DEFAULT_COPIED_FILE_NAME = /^(?:\.env(?:\..+)?|\.envrc|\.dev\.vars)$/;
 
@@ -134,12 +100,11 @@ export function dismissProjectFileCopy(ref: ScopedProjectRef) {
 }
 
 /**
- * Clones a project onto another machine, then copies the chosen ignored files
- * from the source. The client relays the files because the two servers never
- * talk to each other. Resolves once the clone starts. The caller opens the new
- * project, whose composer shows the clone and copy progress, so nothing toasts.
+ * Clones onto another machine, then relays the chosen ignored files, since the
+ * two servers never talk. Resolves with the cloning project once it starts; the
+ * caller opens it, and its composer shows progress, so nothing toasts.
  */
-export async function addProjectToMachine(input: AddProjectToMachineInput): Promise<void> {
+export async function addProjectToMachine(input: AddProjectToMachineInput): Promise<ProjectId> {
   // Read first, so the copy reflects the files as they were when the user asked.
   const reads = await Promise.all(
     input.files.map(async (relativePath) => {
@@ -157,11 +122,11 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
     }),
   );
 
-  const targetRef = { environmentId: input.target.environmentId, projectId: input.projectId };
-  const copyKey = scopedProjectKey(targetRef);
+  const requestedRef = { environmentId: input.target.environmentId, projectId: input.projectId };
+  const requestedKey = scopedProjectKey(requestedRef);
   // Marked before the start request, since the clone list can arrive before its reply.
-  silenceProjectCloneToasts(targetRef);
-  if (reads.length > 0) setFileCopy(copyKey, { phase: "copying" });
+  silenceProjectCloneToasts(requestedRef);
+  if (reads.length > 0) setFileCopy(requestedKey, { phase: "copying" });
   const started = await runAtomCommand(
     appAtomRegistry,
     sourceControlEnvironment.startProjectClone,
@@ -178,13 +143,25 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
     { label: "Add project to machine", reportFailure: false },
   );
   if (started._tag === "Failure") {
-    setFileCopy(copyKey, null);
+    setFileCopy(requestedKey, null);
     throw new Error(failureMessage(started));
   }
-  if (reads.length === 0) return;
+  // The server clones for the existing project when one already owns the empty destination.
+  const { projectId } = started.value;
+  const targetRef = { environmentId: input.target.environmentId, projectId };
+  const copyKey = scopedProjectKey(targetRef);
+  if (projectId !== input.projectId) {
+    silenceProjectCloneToasts(targetRef);
+    if (reads.length > 0) {
+      setFileCopy(copyKey, { phase: "copying" });
+      setFileCopy(requestedKey, null);
+    }
+  }
+  void suggestAppAccessForRemote(input.target.environmentId, input.remoteUrl);
+  if (reads.length === 0) return projectId;
 
   void (async () => {
-    const clone = await waitForClone(input.target.environmentId, input.projectId);
+    const clone = await waitForClone(input.target.environmentId, projectId);
     if (!clone) {
       setFileCopy(copyKey, null);
       return;
@@ -224,4 +201,5 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
           },
     );
   })();
+  return projectId;
 }

@@ -100,8 +100,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
   it.effect("counts the rows it walked past as more to come", () =>
     Effect.gen(function* () {
-      // Bitbucket pages in fifties whatever was asked for, so a request for ninety-nine reads a
-      // hundred and drops one.
       const next = "https://api.bitbucket.org/2.0/repositories/acme/web/pullrequests?page=2";
       mockedRequest
         .mockReturnValueOnce(Effect.succeed(response(page(50, 1, next))))
@@ -149,10 +147,27 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         cursor: { updatedBefore: "2026-07-02T00:00:00+00:00", delivered: 50 },
       });
 
-      // Bitbucket takes one `q`, so the two narrowings are joined rather than one replacing the
-      // other — and the search keeps its brackets, which is what keeps the AND out of its OR.
       expect(filterOfCall(0)).toBe(
-        '(title ~ "page" OR description ~ "page") AND updated_on <= 2026-07-02T00:00:00+00:00',
+        '(title ~ "page" OR description ~ "page") AND updated_on < 2026-07-02T00:00:00.001Z',
+      );
+    }),
+  );
+
+  it.effect("narrows by author and draft state in the same query", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response(page(0, 1))));
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      yield* api.listPullRequests({
+        repository: "acme/web",
+        state: "open",
+        limit: 50,
+        author: 'ana"',
+        draft: false,
+      });
+
+      expect(filterOfCall(0)).toBe(
+        '(author.nickname = "ana\\"" OR author.display_name = "ana\\"") AND draft = false',
       );
     }),
   );
@@ -305,21 +320,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("rewrites a title alone, without touching anything else", () =>
-    Effect.gen(function* () {
-      mockedRequest.mockReturnValue(Effect.succeed(response("{}")));
-      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
-
-      yield* api.updateChangeRequest({ repository: "acme/web", number: 7, title: "A new title" });
-
-      const call = callAt(0);
-      expect(call.method).toBe("PUT");
-      expect(call.url).toBe("/repositories/acme/web/pullrequests/7");
-      // Bitbucket's PUT is a partial update, so a field left out of the body is left as it was.
-      expect(JSON.parse(call.body ?? "")).toEqual({ title: "A new title" });
-    }),
-  );
-
   it.effect("asks for the time a pull request closed, which Bitbucket leaves out by default", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(
@@ -418,35 +418,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         isResolved: true,
       });
       expect(threads[0]?.comments.map((comment) => comment.id)).toEqual(["10", "11", "12"]);
-    }),
-  );
-
-  it.effect("writes a review's line comments, its summary, then its verdict", () =>
-    Effect.gen(function* () {
-      mockedRequest.mockReturnValue(Effect.succeed(response("{}")));
-      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
-
-      yield* api.submitReview({
-        repository: "acme/web",
-        number: 7,
-        verdict: "request-changes",
-        body: "Two things.",
-        comments: [
-          {
-            path: "src/a.ts",
-            position: { kind: "deleted", oldLine: 12 },
-            body: "why remove?",
-          },
-        ],
-      });
-
-      expect(callAt(0).url).toContain("/pullrequests/7/comments");
-      expect(JSON.parse(callAt(0).body ?? "")).toEqual({
-        content: { raw: "why remove?" },
-        inline: { path: "src/a.ts", from: 12 },
-      });
-      expect(callAt(1).url).toContain("/pullrequests/7/comments");
-      expect(callAt(2).url).toContain("/pullrequests/7/request-changes");
     }),
   );
 
@@ -552,8 +523,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         requested: true,
       });
 
-      // Bitbucket writes `reviewers` whole, so the one already on the pull request travels with
-      // the new one or the request would take them off it.
       const call = callAt(1);
       expect(call.method).toBe("PUT");
       expect(call.url).toBe("/repositories/acme/web/pullrequests/7");

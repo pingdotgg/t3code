@@ -60,6 +60,7 @@ describe("Codex MCP elicitation approvals", () => {
     });
   });
 
+  // regression: #8058 show Codex app access approval prompts
   it("returns persistent approval in the MCP response", () => {
     NodeAssert.deepStrictEqual(toMcpElicitationResponse(request, "acceptAlways"), {
       action: "accept",

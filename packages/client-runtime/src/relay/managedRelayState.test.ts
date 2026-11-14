@@ -6,11 +6,15 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { AtomRegistry } from "effect/reactivity";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as TestClock from "effect/testing/TestClock";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, vi } from "vite-plus/test";
 
 import * as ManagedRelay from "./managedRelay.ts";
 import {
+  createManagedRelayQueryManager,
   createManagedRelaySession,
   deregisterManagedRelayEnvironment,
   ManagedRelaySessionError,
@@ -63,6 +67,9 @@ function createClient(overrides?: Partial<ManagedRelay.ManagedRelayClient["Servi
     createEnvironmentLinkChallenge: () => Effect.die("unused"),
     linkEnvironment: () => Effect.die("unused"),
     unlinkEnvironment: () => Effect.die("unused"),
+    getT3ChatLink: () => Effect.die("unused"),
+    createT3ChatLinkRequest: () => Effect.die("unused"),
+    unlinkT3Chat: () => Effect.die("unused"),
     getEnvironmentStatus: () =>
       Effect.succeed({
         environmentId: environment.environmentId,
@@ -90,11 +97,54 @@ function setSession() {
 function clerkToken(expiresAtSeconds: number): string {
   const encode = (value: unknown) =>
     btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
-  return `${encode({ alg: "none" })}.${encode({ exp: expiresAtSeconds })}.signature`;
+  return `${encode({ alg: "RS256" })}.${encode({ exp: expiresAtSeconds })}.c2lnbmF0dXJl`;
 }
 
 describe("createManagedRelayQueryManager", () => {
   afterEach(resetRegistry);
+
+  it.effect("logs a failed device listing once however many readers mount it", () =>
+    Effect.gen(function* () {
+      const logs: Array<unknown> = [];
+      const runtime = Atom.runtime(
+        Layer.mergeAll(
+          Layer.succeed(
+            ManagedRelay.ManagedRelayClient,
+            createClient({
+              listDevices: () =>
+                Effect.fail(
+                  new ManagedRelay.ManagedRelayRequestFailedError({
+                    action: "list relay client devices",
+                    cause: new Error("relay down"),
+                  }),
+                ),
+            }),
+          ),
+          Logger.layer([Logger.make(({ message }) => logs.push(message))], {
+            mergeWithExisting: false,
+          }),
+        ),
+      );
+      const manager = createManagedRelayQueryManager(runtime);
+      setSession();
+      const atom = manager.devicesAtom("account-1");
+
+      const failed = Promise.withResolvers<void>();
+      const readers = [0, 1].map(() =>
+        registry.subscribe(
+          atom,
+          (result) => {
+            if (result._tag === "Failure") failed.resolve();
+          },
+          { immediate: true },
+        ),
+      );
+      yield* Effect.promise(() => failed.promise);
+      for (const unsubscribe of readers) unsubscribe();
+
+      expect(logs).toEqual([["[t3-cloud] Relay device listing failed"]]);
+    }),
+  );
 
   it.effect("rejects deregistration after the account changes", () =>
     Effect.gen(function* () {
@@ -139,6 +189,42 @@ describe("createManagedRelayQueryManager", () => {
       expect(yield* Fiber.join(readsFiber)).toEqual([token, token]);
       expect(yield* session.readClerkToken()).toBe(token);
       expect(readClerkToken).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect("replaces a Clerk token read that has not answered after 4 seconds", () =>
+    Effect.gen(function* () {
+      const token = clerkToken(4_102_444_800);
+      const readClerkToken = vi
+        .fn<() => Promise<string | null>>()
+        .mockReturnValueOnce(new Promise(() => {}))
+        .mockResolvedValue(token);
+      const session = createManagedRelaySession({ accountId: "account-1", readClerkToken });
+
+      const readsFiber = yield* Effect.all([session.readClerkToken(), session.readClerkToken()], {
+        concurrency: "unbounded",
+      }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("3999 millis");
+      expect(readClerkToken).toHaveBeenCalledTimes(1);
+
+      yield* TestClock.adjust("1 millis");
+      expect(yield* Fiber.join(readsFiber)).toEqual([token, token]);
+      expect(readClerkToken).toHaveBeenCalledTimes(2);
+    }),
+  );
+
+  it.effect("fails a Clerk token read that never answers after three tries", () =>
+    Effect.gen(function* () {
+      const readClerkToken = vi.fn(() => new Promise<string | null>(() => {}));
+      const session = createManagedRelaySession({ accountId: "account-1", readClerkToken });
+
+      const readFiber = yield* session.readClerkToken().pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust("12 seconds");
+
+      expect((yield* Fiber.join(readFiber)).message).toBe(
+        "Timed out obtaining the T3 Connect session token.",
+      );
+      expect(readClerkToken).toHaveBeenCalledTimes(3);
     }),
   );
 

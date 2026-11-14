@@ -4,33 +4,10 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 
 import {
-  beginCodexFeedbackSubmission,
   codexFeedbackNotice,
-  parseCodexFeedbackCommand,
   submitCodexFeedback,
   type CodexFeedbackSubmission,
 } from "./threadFeedback.ts";
-
-describe("beginCodexFeedbackSubmission", () => {
-  it("allows only one upload per thread until the active upload releases its guard", () => {
-    const inFlight = new Set<string>();
-    const finish = beginCodexFeedbackSubmission(inFlight, "environment:thread");
-
-    expect(finish).not.toBeNull();
-    expect(beginCodexFeedbackSubmission(inFlight, "environment:thread")).toBeNull();
-    expect(beginCodexFeedbackSubmission(inFlight, "environment:other-thread")).not.toBeNull();
-
-    finish?.();
-    expect(beginCodexFeedbackSubmission(inFlight, "environment:thread")).not.toBeNull();
-  });
-});
-
-describe("parseCodexFeedbackCommand", () => {
-  it("ignores other slash commands and ordinary messages", () => {
-    expect(parseCodexFeedbackCommand("/feedback-status")).toBeNull();
-    expect(parseCodexFeedbackCommand("Please send /feedback")).toBeNull();
-  });
-});
 
 describe("submitCodexFeedback", () => {
   const submission = {

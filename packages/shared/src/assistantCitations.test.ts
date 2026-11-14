@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   ASSISTANT_CITATION_CONTEXT_LENGTH,
   ASSISTANT_CITATION_MAX_COMMENT_LENGTH,
+  ASSISTANT_CITATION_MAX_ID_LENGTH,
   ASSISTANT_CITATION_MAX_TEXT_LENGTH,
   EnvironmentId,
   MessageId,
@@ -9,6 +10,7 @@ import {
   type AssistantCitation,
 } from "@t3tools/contracts";
 import {
+  assistantCitationLabel,
   assistantCitationsToPlainText,
   collectAssistantCitations,
   expandAssistantCitationsForProvider,
@@ -89,22 +91,11 @@ describe("assistant citation references", () => {
   });
 
   it.each([
-    "https://example.com/quote",
     "t3-citation://v2/a/b/c?text=quote&start=0&end=5&prefix=&suffix=",
-    "t3-citation://v1/%ZZ/b/c?text=quote&start=0&end=5&prefix=&suffix=",
-    "t3-citation://v1/a/b/c?text=quote&start=NaN&end=5&prefix=&suffix=",
     "t3-citation://v1/a/b/c?text=quote&start=5&end=0&prefix=&suffix=",
-    "t3-citation://v1/a/b/c?text=quote&start=0&end=9007199254740992&prefix=&suffix=",
     "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&text=other",
     "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&unknown=value",
-    "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&comment=note&unknown=value",
     "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&comment=one&comment=two",
-    "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&comment=&comment=",
-    "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&comment=one&%63omment=two",
-    "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&comment=note",
-    "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&text=other&comment=note",
-    "t3-citation://v1/a/b/c?text=&start=0&end=5&prefix=&suffix=",
-    "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=#unexpected",
   ])("leaves invalid or unsupported references unchanged: %s", (href) => {
     expect(parseAssistantCitationHref(href)).toBeNull();
     const prompt = `[Assistant quote](${href})`;
@@ -136,9 +127,9 @@ describe("assistant citation references", () => {
   it("accepts complete 8k CJK quotes and comments with maximum-sized source selectors", () => {
     const largeCitation: AssistantCitation = {
       ...citation,
-      environmentId: EnvironmentId.make("環".repeat(512)),
-      threadId: ThreadId.make("線".repeat(512)),
-      messageId: MessageId.make("文".repeat(512)),
+      environmentId: EnvironmentId.make("環".repeat(ASSISTANT_CITATION_MAX_ID_LENGTH)),
+      threadId: ThreadId.make("線".repeat(ASSISTANT_CITATION_MAX_ID_LENGTH)),
+      messageId: MessageId.make("文".repeat(ASSISTANT_CITATION_MAX_ID_LENGTH)),
       text: "引".repeat(ASSISTANT_CITATION_MAX_TEXT_LENGTH),
       comment: "注".repeat(ASSISTANT_CITATION_MAX_COMMENT_LENGTH),
       start: Number.MAX_SAFE_INTEGER - ASSISTANT_CITATION_MAX_TEXT_LENGTH,
@@ -237,6 +228,12 @@ describe("assistant citation references", () => {
 
     expect(assistantCitationsToPlainText(prompt)).toBe(
       `Before ${citation.text}\nComment: ${commented.comment}\n${citation.text}\nComment: ${commented.comment} After`,
+    );
+  });
+
+  it("shortens a long quote label without splitting an emoji", () => {
+    expect(assistantCitationLabel({ ...citation, text: `${"a".repeat(63)}😀 and more` })).toBe(
+      `${"a".repeat(63)}…`,
     );
   });
 

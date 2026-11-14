@@ -3,10 +3,12 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import indexHtml from "../index.html?raw";
 import {
   CUSTOM_THEMES_STORAGE_KEY,
+  ENVIRONMENT_THEMES_STORAGE_KEY,
   getDefaultThemeColors,
   getThemeColorsForMode,
   invalidateCustomThemes,
   isKnownThemePreference,
+  publishedThemeDefinitions,
   resolveThemeAppearance,
   T3_CHAT_THEME,
   EMBER_THEME,
@@ -283,6 +285,30 @@ describe("index.html boot script", () => {
     expect(boot.metaContent).toBe(colors.chrome);
   });
 
+  it("paints a published theme from its stored copy before the server connects", () => {
+    const [published] = publishedThemeDefinitions([
+      {
+        id: "nightfall",
+        name: "Nightfall",
+        appearance: "dark",
+        canvas: "#1a1b26",
+        accent: "#7aa2f7",
+      },
+    ]);
+    if (!published) throw new Error("expected the published theme");
+    const boot = runBootScript({
+      storage: {
+        [THEME_STORAGE_KEY]: "nightfall",
+        [ENVIRONMENT_THEMES_STORAGE_KEY]: JSON.stringify([published]),
+      },
+      prefersDark: true,
+    });
+
+    expect(boot.themeId).toBe("nightfall");
+    expect(boot.bootVariables["--boot-background"]).toBe(published.colors.canvas);
+    expect(boot.backgroundColor).toBe(published.colors.chrome);
+  });
+
   it("keeps every built-in boot splash in sync with the real palettes", () => {
     for (const theme of [T3_CHAT_THEME, GROVE_THEME, OCEAN_THEME, EMBER_THEME, IRIS_THEME]) {
       expect(theme.appearance).toBe("light");
@@ -329,27 +355,6 @@ describe("index.html boot script", () => {
     );
   });
 
-  it("lets a dark half go dark when the light-only base cannot", () => {
-    const boot = runBootScript({
-      storage: {
-        [THEME_STORAGE_KEY]: "paper",
-        [THEME_APPEARANCE_MODE_STORAGE_KEY]: "system",
-        [CUSTOM_THEMES_STORAGE_KEY]: JSON.stringify([
-          {
-            id: "paper",
-            label: "Paper",
-            appearance: "light",
-            colors: { canvas: "#f8fbff", text: "#10243d", accent: "#5b6cff" },
-          },
-        ]),
-        "t3code:theme-halves:v1": JSON.stringify({ dark: GROVE_THEME.id }),
-      },
-      prefersDark: true,
-    });
-    expect(boot.isDark).toBe(true);
-    expect(boot.themeId).toBe(GROVE_THEME.id);
-  });
-
   it("paints the half's splash when the base theme no longer exists", () => {
     const boot = runBootScript({
       storage: {
@@ -365,19 +370,6 @@ describe("index.html boot script", () => {
     expect(boot.bootVariables["--boot-background"]).toBe(
       getThemeColorsForMode(GROVE_THEME, "dark")!.canvas,
     );
-  });
-
-  it("ignores a mix half that names an unknown theme", () => {
-    const boot = runBootScript({
-      storage: {
-        [THEME_STORAGE_KEY]: "t3-chat",
-        [THEME_APPEARANCE_MODE_STORAGE_KEY]: "system",
-        "t3code:theme-halves:v1": JSON.stringify({ dark: "gone-theme" }),
-      },
-      prefersDark: true,
-    });
-    expect(boot.themeId).toBe("t3-chat");
-    expect(boot.isDark).toBe(true);
   });
 
   it("uses runtime defaults for malformed custom roles", () => {

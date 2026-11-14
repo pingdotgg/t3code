@@ -189,6 +189,7 @@ describe("OtlpEndpointCheck", () => {
         ...OtelEnvironment.none,
         traces: OtelEnvironment.OtelSignal.Export({
           url: otelUrl,
+          variable: "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
           protocol: otelExport.protocol,
           headers: otelExport.headers,
         }),

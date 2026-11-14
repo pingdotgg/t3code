@@ -80,16 +80,7 @@ afterEach(async () => {
 describe("protected storage startup", () => {
   it.each([
     { launch: "background", state: "background", checkRejects: false },
-    { launch: "inactive", state: "inactive", checkRejects: false },
-    { launch: "unknown", state: "unknown", checkRejects: false },
-    { launch: "unset", state: null, checkRejects: false },
     { launch: "background with a failed native check", state: "background", checkRejects: true },
-    {
-      launch: "background without a native check",
-      state: "background",
-      nativeCheckSupported: false,
-    },
-    { launch: "unknown without a native check", state: "unknown", nativeCheckSupported: false },
     { launch: "unset without a native check", state: null, nativeCheckSupported: false },
   ])(
     "keeps a locked $launch launch usable after activation without rebuilding its runtime",

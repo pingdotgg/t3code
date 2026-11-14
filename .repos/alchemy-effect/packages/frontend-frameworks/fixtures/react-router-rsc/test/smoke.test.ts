@@ -5,9 +5,7 @@ for (const method of Playwright.SERVER_METHODS) {
   test.describe(method, () => {
     const it = Playwright.make(method);
 
-    it("server-renders the home page markup (RSC -> SSR)", async ({
-      server,
-    }) => {
+    it("server-renders the home page markup (RSC -> SSR)", async ({ server }) => {
       // Raw fetch, no JS: the worker runs the `rsc` environment and renders
       // HTML through the `ssr` environment — the server-component copy must
       // already be in the payload.
@@ -18,10 +16,7 @@ for (const method of Playwright.SERVER_METHODS) {
       expect(html).toContain("rendered as a React Server Component");
     });
 
-    it("renders the homepage and hydrates client routes", async ({
-      page,
-      server,
-    }) => {
+    it("renders the homepage and hydrates client routes", async ({ page, server }) => {
       const response = await page.goto(server.url.toString());
       expect(response?.status()).toBe(200);
       await page.waitForLoadState("networkidle");
@@ -58,9 +53,7 @@ for (const method of Playwright.SERVER_METHODS) {
 
       // Hard browser navigation straight to the route (no client-side
       // transition from /) — the client component must hydrate.
-      const response = await page.goto(
-        new URL("/about", server.url).toString(),
-      );
+      const response = await page.goto(new URL("/about", server.url).toString());
       expect(response?.status()).toBe(200);
       await expect(page.locator("h1")).toHaveText("About");
       const counter = page.locator("button.counter");

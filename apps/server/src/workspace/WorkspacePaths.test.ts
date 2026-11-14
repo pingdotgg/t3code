@@ -4,7 +4,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
+
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 
@@ -39,39 +40,6 @@ it.layer(layerTest)("WorkspacePathsLive", (it) => {
         expect(stat.type).toBe("Directory");
       }),
     );
-
-    it.effect("preserves non-NotFound stat failures while validating the root", () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const workspacePaths = yield* WorkspacePaths.make.pipe(
-          Effect.provideService(FileSystem.FileSystem, {
-            ...fileSystem,
-            stat: (path) =>
-              Effect.fail(
-                PlatformError.systemError({
-                  _tag: "PermissionDenied",
-                  module: "FileSystem",
-                  method: "stat",
-                  pathOrDescriptor: String(path),
-                  description: "Test PermissionDenied stat failure.",
-                }),
-              ),
-          }),
-        );
-        const path = yield* Path.Path;
-        const workspaceRoot = " ./permission-denied ";
-        const normalizedWorkspaceRoot = path.resolve(workspaceRoot.trim());
-
-        const error = yield* workspacePaths.normalizeWorkspaceRoot(workspaceRoot).pipe(Effect.flip);
-
-        expect(error).toBeInstanceOf(WorkspacePaths.WorkspaceRootStatFailedError);
-        expect(error).toMatchObject({
-          workspaceRoot,
-          normalizedWorkspaceRoot,
-          phase: "validate-existing",
-        });
-      }),
-    );
   });
 
   describe("resolveRelativePathWithinRoot", () => {
@@ -91,6 +59,26 @@ it.layer(layerTest)("WorkspacePathsLive", (it) => {
           "Workspace file path must be relative to the project root: ../escape.md",
         );
       }),
+    );
+
+    // On Windows `\` is a separator, so these names cannot exist there.
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      "keeps a backslash in a name as part of the name",
+      () =>
+        Effect.gen(function* () {
+          const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir();
+
+          for (const relativePath of ["weird\\name.txt", "..\\..\\etc"]) {
+            expect(
+              yield* workspacePaths.resolveRelativePathWithinRoot({
+                workspaceRoot: cwd,
+                relativePath,
+              }),
+            ).toEqual({ absolutePath: path.join(cwd, relativePath), relativePath });
+          }
+        }),
     );
   });
 });

@@ -71,6 +71,7 @@ describe("Antigravity with unchecked sign-in", () => {
     }
   });
 
+  // regression: #18623 neutral unchecked-sign-in display must not mask real warnings
   it("preserves actionable warnings, failures and disabled states outside unchecked Google sign-in", () => {
     const cases = [
       {

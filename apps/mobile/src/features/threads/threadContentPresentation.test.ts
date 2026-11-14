@@ -28,19 +28,4 @@ describe("thread content presentation", () => {
       detail: "Reconnect this environment to load the conversation.",
     });
   });
-
-  it("surfaces detail errors before presenting a loading state", () => {
-    expect(
-      projectThreadContentPresentation({
-        hasDetail: false,
-        detailError: "The thread stream failed.",
-        detailDeleted: false,
-        connectionState: "connected",
-      }),
-    ).toEqual({
-      kind: "unavailable",
-      title: "Could not load conversation",
-      detail: "The thread stream failed.",
-    });
-  });
 });

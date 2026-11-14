@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -350,43 +350,6 @@ describe("attachmentUploadQueue", () => {
     );
   });
 
-  it("uses the fallback MIME type for both the upload claim and request header", async () => {
-    const bytes = new File([new Uint8Array([1, 2, 3])], "unknown.bin");
-    const file: ComposerFileAttachment = {
-      type: "file",
-      id: "file-without-browser-mime",
-      name: bytes.name,
-      mimeType: "application/octet-stream",
-      sizeBytes: bytes.size,
-      file: bytes,
-    };
-
-    startAttachmentUpload({ environmentId: firstEnvironment, image: file });
-    await Promise.resolve();
-
-    expect(mocks.runAtomCommand).toHaveBeenCalledWith(
-      expect.anything(),
-      mocks.createUploadUrl,
-      {
-        environmentId: firstEnvironment,
-        input: {
-          type: "file",
-          name: "unknown.bin",
-          mimeType: "application/octet-stream",
-          sizeBytes: 3,
-        },
-      },
-      expect.anything(),
-    );
-    expect(TestXmlHttpRequest.requests[0]?.headers.get("Content-Type")).toBe(
-      "application/octet-stream",
-    );
-
-    const settled = awaitAttachmentUploads([file.id]);
-    TestXmlHttpRequest.requests[0]!.complete();
-    await settled;
-  });
-
   it("persists a background completion's ids to the draft with no composer mounted", async () => {
     const draftId = DraftId.make("draft-background-upload");
     const file = makeFile("background");
@@ -408,6 +371,32 @@ describe("attachmentUploadQueue", () => {
         {
           id: file.id,
           uploadedAttachmentId: "pending-environment-1-background.pdf",
+          uploadEnvironmentId: firstEnvironment,
+        },
+      ]);
+    } finally {
+      useComposerDraftStore.getState().clearComposerContent(draftId);
+    }
+  });
+
+  it("stamps a file that lands in a draft after its upload finished", async () => {
+    const draftId = DraftId.make("draft-restored-upload");
+    const file = makeFile("restored");
+    try {
+      startAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
+      await Promise.resolve();
+      const settled = awaitAttachmentUploads([file.id]);
+      TestXmlHttpRequest.requests[0]!.complete();
+      await settled;
+
+      useComposerDraftStore.getState().addFiles(draftId, [file]);
+      startAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
+
+      expect(TestXmlHttpRequest.requests).toHaveLength(1);
+      expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.files).toMatchObject([
+        {
+          id: file.id,
+          uploadedAttachmentId: "pending-environment-1-restored.pdf",
           uploadEnvironmentId: firstEnvironment,
         },
       ]);
@@ -577,27 +566,6 @@ describe("attachmentUploadQueue", () => {
     }
   });
 
-  it("releases the persisted server upload when a hydrated draft is discarded after a reload", () => {
-    const file: ComposerFileAttachment = {
-      ...makeFile("hydrated"),
-      file: null,
-      uploadedAttachmentId: "pending-hydrated-pdf",
-      uploadEnvironmentId: firstEnvironment,
-    };
-
-    releaseDraftAttachment(file);
-
-    expect(mocks.runAtomCommand).toHaveBeenCalledWith(
-      expect.anything(),
-      mocks.removeUpload,
-      {
-        environmentId: firstEnvironment,
-        input: { attachmentId: "pending-hydrated-pdf" },
-      },
-      expect.anything(),
-    );
-  });
-
   it("routes a live persisted upload through the queue release exactly once", async () => {
     const file: ComposerFileAttachment = {
       ...makeFile("live"),
@@ -672,27 +640,54 @@ describe("attachmentUploadQueue", () => {
     );
   });
 
-  it("restores the previous environment after a replacement upload fails", async () => {
-    const image = makeImage("image-move");
-    startAttachmentUpload({ environmentId: firstEnvironment, image });
-    await Promise.resolve();
-    let settled = awaitAttachmentUploads([image.id]);
-    TestXmlHttpRequest.requests[0]!.complete();
-    await settled;
+  it.each(["image", "file"] as const)(
+    "restores the previous environment after a replacement upload fails: %s",
+    async (kind) => {
+      const draftId = DraftId.make("draft-environment-roundtrip");
+      const store = useComposerDraftStore.getState();
+      const image = kind === "image" ? makeImage("image-move") : makeFile("file-move");
+      const moveDraftTo = (environmentId: EnvironmentId) => {
+        store.setProjectDraftThreadId(
+          { environmentId, projectId: ProjectId.make("project") },
+          draftId,
+        );
+        startAttachmentUpload({ environmentId, image, draftTarget: draftId });
+      };
+      try {
+        if (image.type === "file") store.addFiles(draftId, [image]);
+        moveDraftTo(firstEnvironment);
+        await Promise.resolve();
+        let settled = awaitAttachmentUploads([image.id]);
+        TestXmlHttpRequest.requests[0]!.complete();
+        await settled;
 
-    startAttachmentUpload({ environmentId: secondEnvironment, image });
-    await Promise.resolve();
-    settled = awaitAttachmentUploads([image.id]);
-    TestXmlHttpRequest.requests[1]!.complete(500);
-    await settled;
+        moveDraftTo(secondEnvironment);
+        await Promise.resolve();
+        settled = awaitAttachmentUploads([image.id]);
+        TestXmlHttpRequest.requests[1]!.complete(500);
+        await settled;
 
-    startAttachmentUpload({ environmentId: firstEnvironment, image });
-    expect(readAttachmentUpload(image.id)).toMatchObject({
-      status: "ready",
-      environmentId: firstEnvironment,
-      attachmentId: "pending-environment-1-image-move.png",
-    });
-  });
+        moveDraftTo(firstEnvironment);
+        const attachmentId = `pending-environment-1-${image.name}`;
+        expect(readAttachmentUpload(image.id)).toMatchObject({
+          status: "ready",
+          environmentId: firstEnvironment,
+          attachmentId,
+        });
+        if (image.type === "file") {
+          expect(store.getComposerDraft(draftId)?.files).toMatchObject([
+            {
+              id: image.id,
+              uploadedAttachmentId: attachmentId,
+              uploadEnvironmentId: firstEnvironment,
+            },
+          ]);
+        }
+      } finally {
+        store.clearDraftThread(draftId);
+      }
+    },
+  );
 
   it("does not let stalled uploads block another environment", async () => {
     const images = ["image-a", "image-b", "image-c", "image-d"].map(makeImage);

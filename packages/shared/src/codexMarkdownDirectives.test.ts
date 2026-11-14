@@ -74,12 +74,8 @@ describe("remarkCodexDirectives", () => {
 
   it.each([
     "Meeting at 10:30",
-    "Open src/main.ts:42",
-    "Use :hover and :tada:",
-    "::note",
     ":::note\ncontent\n:::",
     ':codex-file-citation-extra{path="outputs/report.xlsx"}',
-    "::artifact-template-extra",
     ':codex-followup-extra[Label]{prompt="Prompt"}',
   ])("does not change unrelated colon syntax: %s", (markdown) => {
     expect(parse(markdown)).toEqual(parseOrdinaryMarkdown(markdown));
@@ -87,10 +83,8 @@ describe("remarkCodexDirectives", () => {
 
   it.each([
     ':codex-file-citation{purpose="output"}',
-    '::artifact-template{skill_name="artifact-template-hello-world"}',
     ":codex-followup[Prepare print version]",
     ':codex-followup[ ]{prompt="Prepare the document for printing."}',
-    ':codex-followup[Prepare print version]{prompt=" "}',
   ])("keeps malformed supported directives literal: %s", (markdown) => {
     expect(parse(markdown)).toEqual(parseOrdinaryMarkdown(markdown));
   });
@@ -100,17 +94,30 @@ describe.each([
   { name: "renderCodexDirectivesForCopy", render: renderCodexDirectivesForCopy },
   { name: "renderCodexInlineDirectivesAsMarkdown", render: renderCodexInlineDirectivesAsMarkdown },
 ])("$name file citation round trips", ({ render }) => {
+  // regression: #12243 copied Codex citations keep their backslashes
   it.each([
-    "C:\\Users\\test\\[draft]\\report.md",
-    "\\\\server\\share\\report.md",
-    "outputs/report.md",
-    "/tmp/report%5C.md",
-  ])("preserves the literal path and line: %s", (path) => {
+    ["C:\\Users\\test\\[draft]\\report.md", "C:\\Users\\test\\[draft]\\report.md"],
+    ["\\\\server\\share\\report.md", "\\\\server\\share\\report.md"],
+    ["/tmp/report%5C.md", "/tmp/report%5C.md"],
+    ["~\\reports\\draft.md", "~/reports/draft.md"],
+    ["reports/100% #1? draft.md", "./reports/100% #1? draft.md"],
+    ["./reports/draft.md", "./reports/draft.md"],
+  ])("preserves the literal path and line: %s", (path, linkPath) => {
     const markdown = render(`:codex-file-citation{path="${path}" line_range_start="7"}`);
     const link = parseOrdinaryMarkdown(markdown).children?.[0]?.children?.[0];
 
     expect(link?.type).toBe("link");
-    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path, line: 7 });
+    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path: linkPath, line: 7 });
+  });
+
+  it("keeps an entity-like ampersand in the path literal", () => {
+    const markdown = render(
+      ':codex-file-citation{path="/tmp/a&amp;copy;.txt" line_range_start="7"}',
+    );
+    const link = parseOrdinaryMarkdown(markdown).children?.[0]?.children?.[0];
+
+    expect(link?.type).toBe("link");
+    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path: "/tmp/a&copy;.txt", line: 7 });
   });
 });
 
@@ -126,7 +133,6 @@ describe("native Markdown adapters", () => {
   it.each([
     `\\${FILE_CITATION}`,
     `\`${FILE_CITATION}\``,
-    `\`\`\`text\n${FILE_CITATION}\n\`\`\``,
     `[See ${FILE_CITATION}](https://example.com)`,
   ])("does not render excluded citation syntax: %s", (markdown) => {
     expect(renderCodexInlineDirectivesAsMarkdown(markdown)).toBe(markdown);

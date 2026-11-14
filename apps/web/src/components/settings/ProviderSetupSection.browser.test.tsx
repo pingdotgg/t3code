@@ -50,8 +50,6 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: ((command: unknown) => command) as never,
 }));
-// The queries behave like live subscriptions: changing `setup.auth` and calling
-// `publish()` re-renders the sections that read them.
 const queryListeners = vi.hoisted(() => new Set<() => void>());
 vi.mock(import("../../state/query"), async (original) => {
   const { useSyncExternalStore } = await import("react");
@@ -183,6 +181,41 @@ function resetSetup() {
 }
 
 describe("Antigravity setup", () => {
+  it("can start installation before the first install snapshot arrives", async () => {
+    resetSetup();
+    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
+    const idleInstallation = setup.installation!;
+    setup.installation = null;
+    let resolveStart!: () => void;
+    const command = new Promise<{ _tag: "Success"; value: undefined }>((resolve) => {
+      resolveStart = () => resolve({ _tag: "Success", value: undefined });
+    });
+    setup.startInstall.mockReturnValueOnce(command);
+    await using screen = await renderSetup({ provider: { ...provider, installed: false } });
+
+    await screen.click("Install Antigravity");
+    await expect
+      .element(screen.getByRole("status").filter({ hasText: "Starting installation." }))
+      .toBeVisible();
+
+    setup.installation = {
+      ...idleInstallation,
+      operationId: "install-1",
+      phase: "downloading",
+      downloadedBytes: 1_000_000,
+      totalBytes: 2_000_000,
+    };
+    await publish();
+    await expect
+      .element(screen.getByRole("button", { name: "Cancel installation" }))
+      .toBeDisabled();
+    await act(async () => resolveStart());
+    await expect.element(screen.getByRole("button", { name: "Cancel installation" })).toBeEnabled();
+    await expect
+      .element(screen.getByRole("status").filter({ hasText: "Downloading 1.0 MB of 2.0 MB." }))
+      .toBeVisible();
+  });
+
   it("waits for verified auth after submitting a callback to the selected environment", async () => {
     resetSetup();
     const callbackUrl = "http://127.0.0.1:5555/?state=test-only&code=test-only";
@@ -231,25 +264,6 @@ describe("Antigravity setup", () => {
 
     expect(setup.completeAuth).not.toHaveBeenCalled();
     expect(setup.authState).toHaveBeenLastCalledWith({ environmentId, input: { instanceId } });
-  });
-
-  it("removes an owned damaged runtime only after confirmation", async () => {
-    resetSetup();
-    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
-    setup.installation = {
-      ...setup.installation!,
-      phase: "failed",
-      canRemove: true,
-      installedVersion: null,
-    };
-    await using screen = await renderSetup();
-    await screen.click("Remove downloaded runtime");
-    expect(setup.confirm).toHaveBeenCalledOnce();
-    expect(setup.removeInstall).not.toHaveBeenCalled();
-
-    setup.confirm.mockResolvedValue(true);
-    await screen.click("Remove downloaded runtime");
-    expect(setup.removeInstall).toHaveBeenCalledWith({ environmentId, input: { instanceId } });
   });
 
   it("does not let a shared managed install hide an invalid custom binary path", async () => {

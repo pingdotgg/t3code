@@ -5,7 +5,6 @@ import type {
   EnvironmentId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -58,15 +57,7 @@ const loadPreviewWebviewConfig = (
   });
 };
 
-/**
- * `Atom.family` keys on its argument, so the environment and profile are
- * folded into one string: passing an object would allocate a fresh entry on
- * every render.
- *
- * The profile is the tail rather than a second field, so an id containing the
- * delimiter round-trips whole instead of being truncated into a different
- * profile's key.
- */
+// Atom.family needs a primitive key; keep profile last so delimiter-containing ids round-trip.
 const CONFIG_KEY_DELIMITER = "\u0000";
 
 const configKey = (environmentId: EnvironmentId, profileId: string | undefined): string =>
@@ -99,5 +90,5 @@ export function usePreviewWebviewConfig(
   profileId?: string,
 ): DesktopPreviewWebviewConfig | null {
   const result = useAtomValue(previewWebviewConfigAtom(configKey(environmentId, profileId)));
-  return Option.getOrNull(AsyncResult.value(result));
+  return AsyncResult.getOrElse(result, () => null);
 }

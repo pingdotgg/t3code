@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { detectComposerTrigger, serializeComposerFileLink } from "./composerTrigger.ts";
+import {
+  detectComposerTrigger,
+  parseSideChatCommand,
+  serializeComposerFileLink,
+} from "./composerTrigger.ts";
 
 describe("detectComposerTrigger", () => {
   it.each([
     ["Run /tmp/build.sh", "Run /tmp/build.sh".length],
     ["/etc/hosts", "/etc/hosts".length],
     ["Use /etc/hosts now", "Use /et".length],
+    ["cmd /foo\\bar", "cmd /foo\\bar".length],
+    ["/Windows\\System32", "/Windows\\System32".length],
   ])("keeps the path in %j out of the slash menu", (text, cursor) => {
     expect(detectComposerTrigger(text, cursor)).toBeNull();
   });
@@ -17,6 +23,16 @@ describe("detectComposerTrigger", () => {
       query: "openai/gpt",
     });
   });
+
+  it.each(["/Model opus", "/MODEL opus"])(
+    "opens the model picker for capitalized %j the same as /model",
+    (text) => {
+      expect(detectComposerTrigger(text, text.length)).toMatchObject({
+        kind: "slash-model",
+        query: "opus",
+      });
+    },
+  );
 
   it.each(["Use /", "Use /review"])("detects the inline slash token in %j", (text) => {
     expect(detectComposerTrigger(text, text.length)).toEqual({
@@ -41,6 +57,25 @@ describe("detectComposerTrigger", () => {
       rangeEnd: text.length,
     });
   });
+
+  it.each([
+    "budget $9.99",
+    "only $.99",
+    "about €20",
+    "raise $10k",
+    "$1,000",
+    "£2e6",
+    "raise $10k.",
+  ])("does not open the skill menu for the amount in %j", (text) =>
+    expect(detectComposerTrigger(text, text.length)).toBeNull(),
+  );
+
+  it.each(["$", "$1password", "$2fa"])("still detects the skill prefix %j", (text) => {
+    expect(detectComposerTrigger(text, text.length)).toMatchObject({
+      kind: "skill",
+      query: text.slice(1),
+    });
+  });
 });
 
 describe("serializeComposerFileLink", () => {
@@ -60,5 +95,21 @@ describe("serializeComposerFileLink", () => {
     expect(serializeComposerFileLink("@scope/package.json")).toBe(
       "[package.json](@scope/package.json)",
     );
+  });
+});
+
+describe("parseSideChatCommand", () => {
+  it("reads an optional prompt after /side or /btw", () => {
+    expect(parseSideChatCommand("/side")).toEqual({ prompt: "" });
+    expect(parseSideChatCommand("  /SIDE  why does this fail?\nline two ")).toEqual({
+      prompt: "why does this fail?\nline two",
+    });
+    expect(parseSideChatCommand("/btw check @src/a.ts")).toEqual({ prompt: "check @src/a.ts" });
+  });
+
+  it("ignores other commands and inline mentions", () => {
+    expect(parseSideChatCommand("/sidebar")).toBeNull();
+    expect(parseSideChatCommand("/btwx")).toBeNull();
+    expect(parseSideChatCommand("ask /side later")).toBeNull();
   });
 });

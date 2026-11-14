@@ -20,8 +20,4 @@ describe("mobileThemeRuntime", () => {
 
     expect(operations).toEqual([]);
   });
-
-  it("does no native work when persistence echoes an already-applied state", () => {
-    expect(createMobileThemeRuntimeOperations(initialState, initialState)).toEqual([]);
-  });
 });

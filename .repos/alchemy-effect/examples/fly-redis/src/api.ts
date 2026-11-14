@@ -1,4 +1,4 @@
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";

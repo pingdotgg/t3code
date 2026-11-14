@@ -4,7 +4,6 @@ import { fakeTimers } from "../../test/render";
 import { SidebarPointerSensor } from "./Sidebar.pointer";
 
 const sensors: SidebarPointerSensor[] = [];
-let hidden = false;
 
 function pointer(type: string, values: PointerEventInit = {}) {
   return new PointerEvent(type, {
@@ -44,8 +43,6 @@ function gesture(
 function setup() {
   const stack = new DisposableStack();
   stack.use(fakeTimers());
-  hidden = false;
-  stack.use(vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden));
   stack.defer(() => {
     for (const sensor of sensors.splice(0)) sensor.cancel();
     // Cancelled sensors keep suppressing clicks on the shared document until the next press.
@@ -56,22 +53,6 @@ function setup() {
 }
 
 describe("sidebar pointer lifecycle", () => {
-  const interruptions = {
-    blur: () => window.dispatchEvent(new Event("blur")),
-    hidden: () => {
-      hidden = true;
-      document.dispatchEvent(new Event("visibilitychange"));
-    },
-    pagehide: () => window.dispatchEvent(new Event("pagehide")),
-    resize: () => window.dispatchEvent(new Event("resize")),
-    escape: () => document.dispatchEvent(new KeyboardEvent("keydown", { code: "Escape" })),
-    pointercancel: () => document.dispatchEvent(pointer("pointercancel")),
-    "missed release": () =>
-      document.dispatchEvent(pointer("pointermove", { buttons: 0, clientY: 100 })),
-  };
-  for (const [] of Object.entries(interruptions)) {
-  }
-
   it("drops context when a zero-button move precedes pointerup", () => {
     using _environment = setup();
     const onDrop = vi.fn((point: { x: number; y: number }) => point.x > 50);
@@ -90,6 +71,23 @@ describe("sidebar pointer lifecycle", () => {
     expect(drag.onFinish).toHaveBeenCalledExactlyOnceWith(true);
   });
 
+  // regression: #22058 a press that never became a drag must keep its click
+  it("keeps the click when a zero-button move precedes pointerup before activation", () => {
+    using _environment = setup();
+    const press = gesture();
+    document.dispatchEvent(pointer("pointermove", { clientX: 11 }));
+    document.dispatchEvent(pointer("pointermove", { buttons: 0, clientX: 12 }));
+    document.dispatchEvent(pointer("pointerup", { buttons: 0, clientX: 12 }));
+    const onClick = vi.fn();
+    document.body.addEventListener("click", onClick);
+    document.body.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    document.body.removeEventListener("click", onClick);
+
+    expect(press.onCancel).not.toHaveBeenCalled();
+    expect(onClick).toHaveBeenCalledOnce();
+  });
+
+  // regression: #17373 a zero-button release outside a drop target must cancel, not reorder
   it("cancels a missed sidebar release without committing a reorder", () => {
     using _environment = setup();
     const onDrop = vi.fn((point: { x: number; y: number }) => point.x > 50);

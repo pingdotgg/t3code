@@ -90,6 +90,7 @@ describe("stripUnservedToolOutputImageBytes", () => {
     });
   });
 
+  // regression: #16652 stop storing tool image bytes no client reads
   it("strips a Cursor image part that names no mime type", () => {
     const item = toolItem({
       content: [{ text: { text: "captured" } }, { image: { data: PNG_BASE64 } }],
@@ -184,6 +185,7 @@ describe("stripUnservedToolOutputImageBytes", () => {
     expect(stripUnservedToolOutputImageBytes(item)).toBe(item);
   });
 
+  // regression: #16652 stop storing tool image bytes no client reads
   it("measures the size instead of trusting one the provider supplied", () => {
     const item = toolItem({
       type: "image",

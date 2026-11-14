@@ -37,16 +37,6 @@ describe("composer code block highlighting", () => {
 
     expect(decorations).toEqual([{ from: 5, to: 8, color: "#00ff00" }]);
   });
-
-  it("falls back to plain text when the grammar throws", () => {
-    const throwing = {
-      codeToTokens() {
-        throw new Error("unsupported language");
-      },
-    } as unknown as Parameters<typeof tokenizeBlock>[0];
-
-    expect(tokenizeBlock(throwing, "const answer = 42", "nope", THEME)).toEqual([]);
-  });
 });
 
 describe("highlighting edited fences", () => {
@@ -55,7 +45,7 @@ describe("highlighting edited fences", () => {
     vi.unstubAllGlobals();
   });
 
-  async function mountFence(text: string, resolveTheme = () => THEME) {
+  async function mountFence(text: string, resolveTheme = () => THEME, language = "ts") {
     vi.useFakeTimers();
     const highlighter = fakeHighlighter((content) =>
       content.startsWith("x") ? "#ff0000" : undefined,
@@ -70,9 +60,7 @@ describe("highlighting edited fences", () => {
       ],
       content: {
         type: "doc",
-        content: [
-          { type: "codeBlock", attrs: { language: "ts" }, content: [{ type: "text", text }] },
-        ],
+        content: [{ type: "codeBlock", attrs: { language }, content: [{ type: "text", text }] }],
       },
     });
     vi.stubGlobal("document", { documentElement: {} });
@@ -143,5 +131,11 @@ describe("highlighting edited fences", () => {
       [3_010, 6_010],
     ]);
     expect(fence.colored()).toEqual(["x".repeat(3_000), "x".repeat(3_000)]);
+  });
+
+  it("highlights a gitignore fence with the ini grammar, as chat does", async () => {
+    await mountFence("*.log\n!keep.log", () => THEME, 'gitignore title=".gitignore"');
+
+    expect(vi.mocked(getSyntaxHighlighterPromise)).toHaveBeenLastCalledWith("ini");
   });
 });

@@ -329,6 +329,8 @@ describe("thread outbox", () => {
       },
       runtimeMode: "approval-required",
       interactionMode: "plan",
+      dispatchMode: "queue",
+      compactBeforeSend: true,
     } satisfies QueuedThreadMessage;
 
     expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(selectedMessage))).toEqual(
@@ -355,8 +357,8 @@ describe("thread outbox", () => {
       options: [{ id: "native-option", value: "keep-this-choice" }],
     };
     const providers = [
-      { instanceId: codex.instanceId, showInteractionModeToggle: true },
-      { instanceId: antigravity.instanceId, showInteractionModeToggle: false },
+      { instanceId: codex.instanceId, showInteractionModeToggle: true, models: [] },
+      { instanceId: antigravity.instanceId, showInteractionModeToggle: false, models: [] },
     ];
     const message = {
       ...queuedMessage({ messageId: "queued-plan", createdAt: "2026-09-02T10:00:00.000Z" }),
@@ -389,37 +391,40 @@ describe("thread outbox", () => {
     ).toBe("plan");
   });
 
-  it("serializes mutations even when an earlier mutation is slower", async () => {
-    const registry = AtomRegistry.make();
-    const manager = createThreadOutboxManager({
-      registry,
-      storage: {
-        load: async () => ({ messages: [], errors: [] }),
-        write: async () => undefined,
-        remove: async () => undefined,
+  // regression: #29729 Cursor runs its own Fast default when the turn carries no fastMode
+  it("sends the Fast off the picker shows for a model without a Fast selection", () => {
+    const cursor = { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2.5" };
+    const providers = [
+      {
+        instanceId: cursor.instanceId,
+        showInteractionModeToggle: true,
+        models: [
+          {
+            slug: cursor.model,
+            capabilities: {
+              optionDescriptors: [
+                { id: "fastMode", label: "Fast", type: "boolean", currentValue: true } as const,
+              ],
+            },
+          },
+        ],
       },
-    });
-    const order: string[] = [];
-    let releaseFirst!: () => void;
-    const firstBlocked = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
+    ];
+    const thread = {
+      modelSelection: cursor,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    } as const;
+    const message = queuedMessage({ messageId: "fast", createdAt: "2026-11-03T10:00:00.000Z" });
+    const fastOn = { ...cursor, options: [{ id: "fastMode", value: true }] };
 
-    const first = manager.serialize(async () => {
-      order.push("first:start");
-      await firstBlocked;
-      order.push("first:end");
-    });
-    const second = manager.serialize(async () => {
-      order.push("second");
-    });
-
-    await Promise.resolve();
-    expect(order).toEqual(["first:start"]);
-    releaseFirst();
-    await Promise.all([first, second]);
-    expect(order).toEqual(["first:start", "first:end", "second"]);
-    registry.dispose();
+    expect(resolveQueuedThreadSettings(message, thread, providers).modelSelection.options).toEqual([
+      { id: "fastMode", value: false },
+    ]);
+    expect(
+      resolveQueuedThreadSettings({ ...message, modelSelection: fastOn }, thread, providers)
+        .modelSelection,
+    ).toEqual(fastOn);
   });
 
   it("holds the mutation queue while persisted messages are loading", async () => {
@@ -1134,7 +1139,6 @@ describe("thread outbox", () => {
         threadExists: false,
         shellStatus: "synchronizing",
         environmentConnected: true,
-        threadBusy: false,
       }),
     ).toBe("wait");
     expect(
@@ -1143,7 +1147,6 @@ describe("thread outbox", () => {
         threadExists: false,
         shellStatus: "live",
         environmentConnected: true,
-        threadBusy: false,
       }),
     ).toBe("remove");
     expect(
@@ -1152,9 +1155,20 @@ describe("thread outbox", () => {
         threadExists: true,
         shellStatus: "live",
         environmentConnected: true,
-        threadBusy: false,
       }),
     ).toBe("send");
+  });
+
+  it("removes a missing-thread message only after a settled family read when idle children can be omitted", () => {
+    const missing = {
+      isCreation: false,
+      threadExists: false,
+      shellStatus: "live",
+      environmentConnected: true,
+    } as const;
+    expect(resolveThreadOutboxDeliveryAction({ ...missing, familyRead: "pending" })).toBe("wait");
+    expect(resolveThreadOutboxDeliveryAction({ ...missing, familyRead: "failed" })).toBe("wait");
+    expect(resolveThreadOutboxDeliveryAction({ ...missing, familyRead: "settled" })).toBe("remove");
   });
 
   it("sends existing-thread messages whenever connected so queued messages can steer", () => {
@@ -1164,7 +1178,6 @@ describe("thread outbox", () => {
         threadExists: true,
         shellStatus: "live",
         environmentConnected: true,
-        threadBusy: true,
       }),
     ).toBe("send");
     expect(
@@ -1173,7 +1186,6 @@ describe("thread outbox", () => {
         threadExists: true,
         shellStatus: "live",
         environmentConnected: false,
-        threadBusy: true,
       }),
     ).toBe("wait");
   });
@@ -1185,7 +1197,6 @@ describe("thread outbox", () => {
         threadExists: false,
         shellStatus: "cached",
         environmentConnected: false,
-        threadBusy: false,
       }),
     ).toBe("wait");
     expect(
@@ -1194,7 +1205,6 @@ describe("thread outbox", () => {
         threadExists: false,
         shellStatus: "synchronizing",
         environmentConnected: true,
-        threadBusy: false,
       }),
     ).toBe("wait");
     expect(
@@ -1203,7 +1213,6 @@ describe("thread outbox", () => {
         threadExists: false,
         shellStatus: "live",
         environmentConnected: true,
-        threadBusy: false,
       }),
     ).toBe("send");
     expect(
@@ -1212,7 +1221,6 @@ describe("thread outbox", () => {
         threadExists: true,
         shellStatus: "live",
         environmentConnected: true,
-        threadBusy: true,
       }),
     ).toBe("remove");
   });

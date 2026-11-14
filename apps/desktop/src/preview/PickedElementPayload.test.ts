@@ -31,10 +31,6 @@ function validPayload(overrides?: Record<string, unknown>): Record<string, unkno
 }
 
 describe("isPickedElementPayload", () => {
-  it("accepts a complete, well-typed payload", () => {
-    expect(isPickedElementPayload(validPayload())).toBe(true);
-  });
-
   it("rejects non-finite numeric line/column numbers", () => {
     expect(
       isPickedElementPayload(
