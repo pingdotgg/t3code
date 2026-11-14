@@ -3,6 +3,10 @@ import {
   CommandId,
   EventId,
   MessageId,
+  NodeId,
+  RuntimeRequestId,
+  TurnItemId,
+  type OrchestrationV2DomainEvent,
   type ModelSelection,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ThreadProjection,
@@ -86,6 +90,7 @@ function makeRestartAdapter(
   state: Ref.Ref<RestartAdapterState>,
   sessionCapabilities: OrchestrationV2ProviderCapabilities = pooledCapabilities,
   providerInstanceId = initialSelection.instanceId,
+  replacementOpenAlwaysFails = false,
 ): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: providerInstanceId,
@@ -102,7 +107,7 @@ function makeRestartAdapter(
         const failThisOpen = yield* Ref.modify(state, (current) => {
           const shouldFail =
             sessionInput.modelSelection.model === replacementSelection.model &&
-            !current.failedReplacementOpen;
+            (replacementOpenAlwaysFails || !current.failedReplacementOpen);
           return [
             shouldFail,
             {
@@ -1036,4 +1041,379 @@ it.live.each(["active", "idle", "selection-command", "pooled", "separate-home"] 
         assert.deepEqual(messages, ["first", "second", "third"]);
       }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry)));
     }),
+);
+
+it.live("settles inherited work and native descendants when a selection restart never opens", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const name = "restart-inherited-work";
+      const cwd = yield* checkpointWorkspace(name);
+      const threadId = ThreadId.make(name);
+      const state = yield* Ref.make<RestartAdapterState>({
+        activeTurn: null,
+        opened: [],
+        started: [],
+        closedSessionCount: 0,
+        failedReplacementOpen: false,
+      });
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const awaitEvent = (matches: (event: OrchestrationV2DomainEvent) => boolean) =>
+          sink.stream({ threadId, afterSequence: 0 }).pipe(
+            Stream.filter(({ event }) => matches(event)),
+            Stream.take(1),
+            Stream.runDrain,
+          );
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}:create`),
+          threadId,
+          projectId: ProjectId.make(name),
+          title: name,
+          modelSelection: initialSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}:start`),
+          threadId,
+          messageId: MessageId.make(`${name}:start`),
+          text: "Start work",
+          attachments: [],
+          modelSelection: initialSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* awaitEvent(
+          (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+        );
+        yield* worker.drain();
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const run = before.runs[0]!;
+        const root = before.nodes.find((node) => node.id === run.rootNodeId)!;
+        const now = yield* DateTime.now;
+        const childId = ThreadId.make(`${name}:native`);
+        const grandchildId = ThreadId.make(`${name}:nested`);
+        const delegatedId = ThreadId.make(`${name}:delegated`);
+        let sequence = 0;
+        const write = <Type extends OrchestrationV2DomainEvent["type"]>(event: {
+          type: Type;
+          threadId: ThreadId;
+          payload: Extract<OrchestrationV2DomainEvent, { type: Type }>["payload"];
+        }) =>
+          sink.write({
+            events: [
+              {
+                ...event,
+                id: EventId.make(`${name}:${++sequence}`),
+                occurredAt: now,
+              } as OrchestrationV2DomainEvent,
+            ],
+          });
+        const itemBase = {
+          runId: run.id,
+          providerThreadId: root.providerThreadId,
+          providerTurnId: root.providerTurnId,
+          nativeItemRef: null,
+          parentItemId: null,
+          title: null,
+          ordinal: 1,
+          status: "running" as const,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        };
+        // A terminal native link still owns its child's live work. App tasks do not.
+        for (const [parentId, id, origin, status] of [
+          [threadId, childId, "provider_native", "running"],
+          [childId, grandchildId, "provider_native", "completed"],
+          [threadId, delegatedId, "app_owned", "running"],
+        ] as const) {
+          const nodeId = NodeId.make(`link:${id}`);
+          yield* write({
+            type: "thread.created",
+            threadId: id,
+            payload: {
+              ...before.thread,
+              id,
+              createdBy: "agent",
+              creationSource: origin === "provider_native" ? "provider" : "mcp",
+              activeProviderThreadId: null,
+              lineage: {
+                parentThreadId: parentId,
+                relationshipToParent: "subagent",
+                rootThreadId: threadId,
+              },
+            },
+          });
+          yield* write({
+            type: "node.updated",
+            threadId: parentId,
+            payload: {
+              ...root,
+              id: nodeId,
+              threadId: parentId,
+              runId: parentId === threadId ? run.id : null,
+              parentNodeId: root.id,
+              kind: "subagent",
+              countsForRun: false,
+              checkpointScopeId: null,
+              status,
+              completedAt: status === "completed" ? now : null,
+            },
+          });
+          yield* write({
+            type: "subagent.updated",
+            threadId: parentId,
+            payload: {
+              id: nodeId,
+              threadId: parentId,
+              runId: parentId === threadId ? run.id : null,
+              parentNodeId: root.id,
+              origin,
+              createdBy: "agent",
+              driver,
+              providerInstanceId,
+              providerThreadId: null,
+              childThreadId: id,
+              nativeTaskRef: null,
+              prompt: "Inspect the workspace",
+              title: null,
+              model: initialSelection.model,
+              status,
+              result: status === "completed" ? "Finished launching" : null,
+              startedAt: now,
+              completedAt: status === "completed" ? now : null,
+              updatedAt: now,
+            },
+          });
+          yield* write({
+            type: "turn-item.updated",
+            threadId: parentId,
+            payload: {
+              ...itemBase,
+              id: TurnItemId.make(`link:${id}`),
+              threadId: parentId,
+              runId: parentId === threadId ? run.id : null,
+              nodeId,
+              status,
+              completedAt: status === "completed" ? now : null,
+              type: "subagent",
+              subagentId: nodeId,
+              prompt: "Inspect the workspace",
+              result: status === "completed" ? "Finished launching" : null,
+              origin,
+              driver,
+              providerInstanceId,
+              childThreadId: id,
+            },
+          });
+        }
+        for (const id of [threadId, childId, grandchildId, delegatedId]) {
+          const ownedRunId = id === threadId ? run.id : null;
+          yield* write({
+            type: "turn-item.updated",
+            threadId: id,
+            payload: {
+              ...itemBase,
+              id: TurnItemId.make(`command:${id}`),
+              threadId: id,
+              runId: ownedRunId,
+              nodeId: null,
+              type: "command_execution",
+              input: "vp test run",
+              output: "Still running",
+            },
+          });
+        }
+        // A runless child request and reply exercise reads that active-run recovery omits.
+        for (const id of [threadId, childId]) {
+          const requestId = RuntimeRequestId.make(`${id}:approval`);
+          const approvalNodeId = NodeId.make(`${id}:approval`);
+          yield* write({
+            type: "node.updated",
+            threadId: id,
+            payload: {
+              ...root,
+              id: approvalNodeId,
+              parentNodeId: id === threadId ? root.id : null,
+              rootNodeId: id === threadId ? root.id : approvalNodeId,
+              threadId: id,
+              runId: id === threadId ? run.id : null,
+              kind: "approval_request",
+              status: "waiting",
+              countsForRun: false,
+              checkpointScopeId: null,
+              runtimeRequestId: requestId,
+            },
+          });
+          yield* write({
+            type: "runtime-request.updated",
+            threadId: id,
+            payload: {
+              id: requestId,
+              nodeId: approvalNodeId,
+              providerTurnId: root.providerTurnId,
+              nativeRequestRef: null,
+              kind: "command",
+              status: "pending",
+              responseCapability: {
+                type: "live",
+                providerSessionId: before.providerSessions[0]!.id,
+              },
+              createdAt: now,
+              resolvedAt: null,
+            },
+          });
+          yield* write({
+            type: "turn-item.updated",
+            threadId: id,
+            payload: {
+              ...itemBase,
+              id: TurnItemId.make(`${id}:approval`),
+              threadId: id,
+              runId: id === threadId ? run.id : null,
+              nodeId: approvalNodeId,
+              type: "approval_request",
+              status: "waiting",
+              requestId,
+              requestKind: "command",
+            },
+          });
+        }
+        yield* write({
+          type: "turn-item.updated",
+          threadId,
+          payload: {
+            ...itemBase,
+            id: TurnItemId.make(`${name}:secret`),
+            threadId,
+            nodeId: root.id,
+            type: "secret_request",
+            status: "waiting",
+            label: "Token",
+            reason: "Read the repository",
+            secretStatus: "pending",
+          },
+        });
+        yield* write({
+          type: "message.updated",
+          threadId: childId,
+          payload: {
+            id: MessageId.make(`${name}:reply`),
+            threadId: childId,
+            runId: null,
+            nodeId: null,
+            role: "assistant",
+            createdBy: "agent",
+            creationSource: "provider",
+            text: "Inspecting files",
+            attachments: [],
+            streaming: true,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}:restart`),
+          threadId,
+          messageId: MessageId.make(`${name}:restart`),
+          text: "Change model",
+          attachments: [],
+          modelSelection: replacementSelection,
+          dispatchMode: { type: "restart_active", targetRunId: run.id },
+        });
+        yield* awaitEvent(
+          (event) => event.type === "run.updated" && event.payload.status === "failed",
+        );
+        yield* worker.drain();
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        const child = yield* orchestrator.getThreadProjection(childId);
+        assert.deepEqual(
+          after.runs.map(({ id, status }) => ({ id, status })),
+          [{ id: run.id, status: "failed" }],
+        );
+        assert.deepEqual(
+          after.attempts.map(({ status }) => status),
+          ["superseded", "failed"],
+        );
+        assert.equal((yield* Ref.get(state)).started.length, 1);
+        const commands = yield* Effect.forEach([threadId, grandchildId, delegatedId], (id) =>
+          orchestrator.getThreadProjection(id).pipe(
+            Effect.map((projection) => {
+              const command = projection.turnItems.find(
+                (item) => item.type === "command_execution",
+              );
+              return { threadId: id, status: command?.status, output: command?.output };
+            }),
+          ),
+        );
+        const secret = after.turnItems.find((item) => item.type === "secret_request");
+        assert.deepEqual(
+          {
+            requests: [after, child].flatMap((projection) =>
+              projection.runtimeRequests.map(({ status }) => status),
+            ),
+            childMessages: child.messages.map(({ text, streaming }) => ({ text, streaming })),
+            childItems: Object.fromEntries(
+              child.turnItems.map(({ type, status }) => [type, status]),
+            ),
+            childApproval: child.nodes.find(({ id }) => id === NodeId.make(`${childId}:approval`))
+              ?.status,
+            nestedLink: child.subagents[0]?.status,
+            subagents: Object.fromEntries(
+              after.subagents.map(({ origin, status }) => [origin, status]),
+            ),
+            delegatedNode: after.nodes.find(({ id }) => id === NodeId.make(`link:${delegatedId}`))
+              ?.status,
+            delegatedItem: after.turnItems.find(
+              ({ id }) => id === TurnItemId.make(`link:${delegatedId}`),
+            )?.status,
+            secret: { status: secret?.status, secretStatus: secret?.secretStatus },
+            commands,
+          },
+          {
+            requests: ["cancelled", "cancelled"],
+            childMessages: [{ text: "Inspecting files", streaming: false }],
+            childItems: {
+              subagent: "completed",
+              command_execution: "failed",
+              approval_request: "failed",
+            },
+            childApproval: "failed",
+            nestedLink: "completed",
+            subagents: { provider_native: "failed", app_owned: "running" },
+            delegatedNode: "running",
+            delegatedItem: "running",
+            secret: { status: "failed", secretStatus: "cancelled" },
+            commands: [
+              { threadId, status: "failed", output: "Still running" },
+              { threadId: grandchildId, status: "failed", output: "Still running" },
+              { threadId: delegatedId, status: "running", output: "Still running" },
+            ],
+          },
+        );
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name },
+            ProviderAdapterRegistry.layerSingle(
+              makeRestartAdapter(state, pooledCapabilities, providerInstanceId, true),
+            ),
+          ),
+        ),
+      );
+    }),
+  ),
 );

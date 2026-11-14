@@ -15,6 +15,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as ProviderCommitBatch from "./ProviderCommitBatch.ts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -123,6 +124,8 @@ export interface EventSinkV2Shape {
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
   readonly writeIfRunCurrent: (input: {
+    /** Read current work and build cleanup inside the guarded transaction; failure drops only cleanup. */
+    readonly settlement?: Effect.Effect<ReadonlyArray<OrchestrationV2DomainEvent>, unknown>;
     readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly threadId: ThreadId;
@@ -573,11 +576,23 @@ const layerBase: Layer.Layer<
               }
             }
 
-            const normalized = yield* normalizeEvents(
-              input.guardPendingUserInputCancellations === true
-                ? yield* guardUserInputCancellations(input.events)
-                : input.events,
+            const settlement = yield* (input.settlement ?? Effect.succeed([])).pipe(
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (cause) =>
+                  Effect.logWarning("Could not settle inherited work for a failed start", {
+                    threadId: input.threadId,
+                    runId: input.runId,
+                    cause,
+                  }).pipe(Effect.as([])),
+              ),
             );
+            const normalized = yield* normalizeEvents([
+              ...settlement,
+              ...(input.guardPendingUserInputCancellations === true
+                ? yield* guardUserInputCancellations(input.events)
+                : input.events),
+            ]);
             const storedEvents = yield* eventStore.append({
               ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
               events: normalized,
