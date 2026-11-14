@@ -49,8 +49,8 @@ const withEnvironmentThemes = <A, E>(
     | Path.Path
     | Scope.Scope
   >,
-  /** Receives each theme id the service makes the environment theme. */
-  selected: Array<string | undefined> = [],
+  /** Receives each theme and appearance the service makes the environment default. */
+  selected: Array<{ readonly theme?: string; readonly appearance?: string }> = [],
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -77,7 +77,12 @@ const withEnvironmentThemes = <A, E>(
                       }),
                     )
                   : Effect.sync(() => {
-                      selected.push(patch.defaultTheme);
+                      selected.push({
+                        ...(patch.defaultTheme === undefined ? {} : { theme: patch.defaultTheme }),
+                        ...(patch.defaultAppearance === undefined
+                          ? {}
+                          : { appearance: patch.defaultAppearance }),
+                      });
                       return DEFAULT_SERVER_SETTINGS;
                     }),
             }),
@@ -242,7 +247,7 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
   );
 
   it.effect("publishes and selects a theme, and refuses unsafe CSS and unknown ids", () => {
-    const selected: Array<string | undefined> = [];
+    const selected: Array<{ readonly theme?: string; readonly appearance?: string }> = [];
     return withEnvironmentThemes(
       {},
       Effect.gen(function* () {
@@ -270,13 +275,20 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
         const unknown = yield* themes.apply({ themeId: "missing" }).pipe(Effect.flip);
         assert.strictEqual(unknown.reason, "unknown-id");
         yield* themes.apply({ themeId: "grove" });
+        yield* themes.apply({ themeId: "grove", appearance: "dark" });
+        yield* themes.apply({ appearance: "light" });
 
         assert.deepEqual(
           (yield* themes.current).map((theme) => theme.id),
           ["agent-look"],
         );
         // Only a theme that was published or already exists becomes the environment theme.
-        assert.deepEqual(selected, ["agent-look", "grove"]);
+        assert.deepEqual(selected, [
+          { theme: "agent-look" },
+          { theme: "grove" },
+          { theme: "grove", appearance: "dark" },
+          { appearance: "light" },
+        ]);
       }),
       selected,
     );

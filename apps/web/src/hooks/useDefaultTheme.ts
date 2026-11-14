@@ -5,6 +5,7 @@ import { getThemeDefinition, singleAppearanceOf, subscribeToCustomThemes } from 
 import { setAppearanceMode, setTheme } from "./useTheme";
 
 const APPLIED_DEFAULT_THEME_STORAGE_PREFIX = "t3code:default-theme-applied:v2:";
+const APPLIED_DEFAULT_APPEARANCE_STORAGE_PREFIX = "t3code:default-appearance-applied:v1:";
 
 /** Include set time so reasserting the same theme still applies. */
 export function defaultThemeGeneration(theme: string, setAt: string): string {
@@ -67,6 +68,30 @@ function adoptDefaultTheme(): void {
   writeAppliedGeneration(storageKey, generation);
 }
 
+/** Like the theme, the environment's mode applies once per set, then local choices win. */
+function adoptDefaultAppearance(): void {
+  if (typeof window === "undefined") return;
+  const environmentId = appAtomRegistry.get(themeEnvironmentIdAtom);
+  const { defaultAppearance, defaultAppearanceSetAt } =
+    appAtomRegistry.get(themeServerSettingsAtom);
+  const storageKey = `${APPLIED_DEFAULT_APPEARANCE_STORAGE_PREFIX}${environmentId}`;
+  const generation = defaultThemeToApply({
+    environmentId,
+    defaultTheme: defaultAppearance,
+    defaultThemeSetAt: defaultAppearanceSetAt,
+    appliedGeneration: readAppliedGeneration(storageKey),
+    resolves: true,
+  });
+  if (generation === null || defaultAppearance === "") return;
+  if (setAppearanceMode(defaultAppearance)) writeAppliedGeneration(storageKey, generation);
+}
+
+/** The theme goes first: a single-appearance theme sets its own mode, which a set mode then overrides. */
+function adoptDefaults(): void {
+  adoptDefaultTheme();
+  adoptDefaultAppearance();
+}
+
 /**
  * Applies the theme environment's default theme once per generation. Start it after the
  * environment theme sync so a first-run client adopting the environment's own theme finds it
@@ -75,11 +100,11 @@ function adoptDefaultTheme(): void {
  */
 export function startDefaultThemeAdoption(): () => void {
   const unsubscribes = [
-    appAtomRegistry.subscribe(themeEnvironmentIdAtom, adoptDefaultTheme),
-    appAtomRegistry.subscribe(themeServerSettingsAtom, adoptDefaultTheme),
-    subscribeToCustomThemes(adoptDefaultTheme),
+    appAtomRegistry.subscribe(themeEnvironmentIdAtom, adoptDefaults),
+    appAtomRegistry.subscribe(themeServerSettingsAtom, adoptDefaults),
+    subscribeToCustomThemes(adoptDefaults),
   ];
-  adoptDefaultTheme();
+  adoptDefaults();
   return () => {
     for (const unsubscribe of unsubscribes) unsubscribe();
   };

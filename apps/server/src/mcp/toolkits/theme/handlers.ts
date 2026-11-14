@@ -34,8 +34,17 @@ export const layer = McpToolAccess.toLayer(ThemeToolkit, {
       };
     }),
   ),
-  t3_theme_set: McpToolAccess.writesEnvironment(({ themeId, theme }, check) =>
+  t3_theme_set: McpToolAccess.writesEnvironment(({ themeId, theme, appearance }, check) =>
     Effect.gen(function* () {
+      const input =
+        themeId !== undefined
+          ? { themeId, theme, appearance }
+          : theme === undefined && appearance !== undefined
+            ? { appearance }
+            : undefined;
+      if (input === undefined) {
+        return yield* invalid("Give `themeId`, `appearance`, or both. `theme` needs a `themeId`.");
+      }
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
       const themes = yield* EnvironmentTheme.EnvironmentThemeService;
@@ -43,13 +52,17 @@ export const layer = McpToolAccess.toLayer(ThemeToolkit, {
         // The turn may have ended, or the thread's modes changed, while this waited for the lock.
         yield* check;
         yield* themes
-          .apply({ themeId, theme })
+          .apply(input)
           .pipe(
             Effect.mapError((error) =>
               error.reason === "not-selected" ? unavailable() : invalid(error.message),
             ),
           );
-        return { themeId, published: theme !== undefined };
+        return {
+          ...(themeId === undefined ? {} : { themeId }),
+          ...(appearance === undefined ? {} : { appearance }),
+          published: theme !== undefined,
+        };
       });
       return yield* scope.thread === undefined
         ? set

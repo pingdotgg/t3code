@@ -49,9 +49,11 @@ it.effect("applies the theme through the service and reports a refusal as an inv
         getThreadShell: () => Effect.succeed(liveThreadShell(threadId)),
       }),
       Layer.mock(EnvironmentThemeService)({
-        apply: ({ themeId }) =>
-          themeId === "missing"
-            ? Effect.fail(new EnvironmentThemeApplyError({ themeId, reason: "unknown-id" }))
+        apply: (input) =>
+          "themeId" in input && input.themeId === "missing"
+            ? Effect.fail(
+                new EnvironmentThemeApplyError({ themeId: input.themeId, reason: "unknown-id" }),
+              )
             : Effect.void,
       }),
       Layer.mock(Settings.ServerSettingsService)({}),
@@ -70,6 +72,12 @@ it.effect("applies the theme through the service and reports a refusal as an inv
         published: true,
       });
       expect(yield* call({ themeId: "grove" })).toEqual({ themeId: "grove", published: false });
+      expect(yield* call({ appearance: "dark" })).toEqual({
+        appearance: "dark",
+        published: false,
+      });
+      expect(yield* call({ theme: AGENT_THEME })).toMatchObject({ code: "invalid_request" });
+      expect(yield* call({})).toMatchObject({ code: "invalid_request" });
       expect(yield* call({ themeId: "missing" })).toMatchObject({
         code: "invalid_request",
         message: 'Theme "missing" is not a built-in or published theme.',

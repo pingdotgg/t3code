@@ -12,6 +12,8 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 
+const Appearance = Schema.Literals(["light", "dark", "system"]);
+
 const shared = {
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
@@ -53,12 +55,17 @@ const ThemeReadTool = Tool.make("t3_theme_read", {
 const ThemeSetTool = Tool.make("t3_theme_set", {
   ...shared,
   description:
-    "Restyle T3 Code itself, only when the user asks. With `theme`, publish it as `themeId` (the same id updates it) and switch this machine's web and desktop clients to it. Without `theme`, switch to a built-in or published `themeId`. Live full-access or default caller thread only.",
+    "Restyle T3 Code itself, only when the user asks. With `theme`, publish it as `themeId` (the same id updates it) and switch this machine's web and desktop clients to it. Without `theme`, switch to a built-in or published `themeId`. `appearance` switches them to light, dark, or system mode, with or without a theme. Live full-access or default caller thread only.",
   parameters: Schema.Struct({
-    themeId: EnvironmentThemeId,
+    themeId: Schema.optionalKey(EnvironmentThemeId),
     theme: Schema.optionalKey(EnvironmentThemeFile),
+    appearance: Schema.optionalKey(Appearance),
   }),
-  success: Schema.Struct({ themeId: EnvironmentThemeId, published: Schema.Boolean }),
+  success: Schema.Struct({
+    themeId: Schema.optionalKey(EnvironmentThemeId),
+    appearance: Schema.optionalKey(Appearance),
+    published: Schema.Boolean,
+  }),
 }).annotate(Tool.Destructive, true);
 
 export const ThemeToolkit = Toolkit.make(ThemeReadTool, ThemeSetTool);

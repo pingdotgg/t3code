@@ -3,6 +3,7 @@
 import * as NodeFS from "node:fs";
 
 import {
+  type DefaultAppearancePreference,
   EnvironmentTheme,
   EnvironmentThemeFile,
   EnvironmentThemeId,
@@ -61,13 +62,14 @@ const APPLY_FAILURES = {
   "too-large": `is larger than ${MAX_THEME_FILE_BYTES} bytes.`,
   "not-published": "could not be published. The themes directory may be full or not writable.",
   occupied: "would replace a file that could not be backed up. Use another theme id.",
-  "not-selected": "was not made the environment theme, because the settings could not be saved.",
+  "not-selected": "was not applied, because the settings could not be saved.",
 } as const;
 
 export class EnvironmentThemeApplyError extends Schema.TaggedError<EnvironmentThemeApplyError>()(
   "EnvironmentThemeApplyError",
   {
-    themeId: Schema.String,
+    /** Absent when only the appearance was set. */
+    themeId: Schema.optional(Schema.String),
     reason: Schema.Literals([
       "invalid-id",
       "unknown-id",
@@ -84,7 +86,8 @@ export class EnvironmentThemeApplyError extends Schema.TaggedError<EnvironmentTh
 ) {
   override get message(): string {
     const known = this.known ? ` Available: ${this.known.join(", ")}.` : "";
-    return `Theme "${this.themeId}" ${APPLY_FAILURES[this.reason]}${known}`;
+    const subject = this.themeId === undefined ? "The appearance" : `Theme "${this.themeId}"`;
+    return `${subject} ${APPLY_FAILURES[this.reason]}${known}`;
   }
 }
 
@@ -94,13 +97,19 @@ export class EnvironmentThemeService extends Context.Service<
     readonly current: Effect.Effect<ReadonlyArray<EnvironmentTheme>>;
 
     /**
-     * Makes `themeId` the environment theme, so connected clients switch to it. With `theme`,
-     * first publishes that file under the id, replacing one already there.
+     * Makes `themeId` the environment theme and `appearance` its mode, so connected clients
+     * switch to them. With `theme`, first publishes that file under the id, replacing one already
+     * there.
      */
-    readonly apply: (input: {
-      readonly themeId: string;
-      readonly theme?: EnvironmentThemeFile | undefined;
-    }) => Effect.Effect<void, EnvironmentThemeApplyError>;
+    readonly apply: (
+      input:
+        | {
+            readonly themeId: string;
+            readonly theme?: EnvironmentThemeFile | undefined;
+            readonly appearance?: Exclude<DefaultAppearancePreference, ""> | undefined;
+          }
+        | { readonly appearance: Exclude<DefaultAppearancePreference, ""> },
+    ) => Effect.Effect<void, EnvironmentThemeApplyError>;
 
     /** Subscribes before reading to retain changes during connection. */
     readonly streamChanges: Stream.Stream<ReadonlyArray<EnvironmentTheme>>;
@@ -316,18 +325,25 @@ const make = Effect.gen(function* () {
 
   const apply: EnvironmentThemeService["Service"]["apply"] = Effect.fn(
     "EnvironmentThemeService.apply",
-  )(function* ({ themeId, theme }) {
+  )(function* (input) {
+    const themeId = "themeId" in input ? input.themeId : undefined;
+    const theme = "theme" in input ? input.theme : undefined;
+    const { appearance } = input;
     const fail = (
       reason: EnvironmentThemeApplyError["reason"],
       detail?: { readonly known?: ReadonlyArray<string>; readonly cause?: unknown },
     ) => new EnvironmentThemeApplyError({ themeId, reason, ...detail });
-    if (!isEnvironmentThemeId(themeId)) return yield* fail("invalid-id");
-    // The timestamp makes clients apply the theme again when its id did not change.
+    if (themeId !== undefined && !isEnvironmentThemeId(themeId)) return yield* fail("invalid-id");
+    // Timestamps make clients apply a set again when its value did not change. Theme and
+    // appearance have one each, so setting one does not undo a later local choice of the other.
     const select = Effect.gen(function* () {
+      const setAt = DateTime.formatIso(yield* DateTime.now);
       yield* settings
         .updateSettings({
-          defaultTheme: themeId,
-          defaultThemeSetAt: DateTime.formatIso(yield* DateTime.now),
+          ...(themeId === undefined ? {} : { defaultTheme: themeId, defaultThemeSetAt: setAt }),
+          ...(appearance === undefined
+            ? {}
+            : { defaultAppearance: appearance, defaultAppearanceSetAt: setAt }),
         })
         .pipe(Effect.mapError((cause) => fail("not-selected", { cause })));
     });
@@ -335,6 +351,7 @@ const make = Effect.gen(function* () {
     // If the theme cannot be selected, the file it replaced comes back.
     yield* publishSemaphore.withPermits(1)(
       Effect.gen(function* () {
+        if (themeId === undefined) return yield* select;
         if (theme === undefined) {
           const known = [...BUILT_IN_THEME_IDS, ...(yield* refresh).themes.map(({ id }) => id)];
           if (!known.includes(themeId)) return yield* fail("unknown-id", { known });
