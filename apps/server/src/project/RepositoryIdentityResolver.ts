@@ -1,5 +1,7 @@
 import type { RepositoryIdentity, SourceControlProviderError } from "@t3tools/contracts";
+import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
 import { repositoryPathFromRemoteUrl } from "@t3tools/source-control-core/server/SourceControlProvider";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -12,7 +14,7 @@ import * as Path from "effect/Path";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
-import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
+import { explicitBareRepositoryEnv, unsetInheritedRepositoryEnv } from "../vcs/VcsProcess.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
@@ -50,11 +52,10 @@ function isLocalRemoteUrl(url: string): boolean {
 
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   const remotes = new Map<string, string>();
-  for (const line of stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
+  for (const line of stdout.split(/\r?\n/)) {
+    // Git uses a tab before the URL and one space before the direction; both can occur in URLs.
     // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
-    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(trimmed);
+    const match = /^(\S+)\t(.+) \((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(line);
     if (!match) continue;
     const [, remoteName = "", remoteUrl = "", direction = ""] = match;
     if (
@@ -70,9 +71,43 @@ function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   return remotes;
 }
 
+// `gh repo set-default` marks one remote with `base`, or with OWNER/REPO when it picked a
+// parent repository. gh reads PRs from that repository, so the identity follows the mark when
+// a remote fetches it. The locator must name a real remote: review checkouts fetch through it.
+function pickMarkedRemote(
+  remotes: ReadonlyMap<string, string>,
+  resolved: string,
+): { readonly remoteName: string; readonly remoteUrl: string } | null {
+  const marks = resolved.split("\n").flatMap((line) => {
+    const match = /^remote\.(.+)\.gh-resolved\s+(\S+)$/u.exec(line.trim());
+    const remoteUrl = match?.[1] === undefined ? undefined : remotes.get(match[1]);
+    return match?.[1] && match[2] && remoteUrl
+      ? [{ remoteName: match[1], remoteUrl, value: match[2] }]
+      : [];
+  });
+  // gh's choice is ambiguous with several marks; GitHubSourceControlProvider ignores them too.
+  const [mark, ...others] = marks;
+  if (!mark || others.length > 0) return null;
+  if (mark.value === "base") return { remoteName: mark.remoteName, remoteUrl: mark.remoteUrl };
+  // Compare hosts with HTTP ports kept: one hostname can serve separate forges on two ports.
+  const host = parseGitRemoteHost(mark.remoteUrl)?.host;
+  const markedPath = mark.value.toLowerCase();
+  const [remoteName, remoteUrl] =
+    [...remotes.entries()].find(
+      ([, url]) =>
+        parseGitRemoteHost(url)?.host === host &&
+        normalizeGitRemoteUrl(url).split("/").slice(1).join("/") === markedPath,
+    ) ?? [];
+  return remoteName && remoteUrl ? { remoteName, remoteUrl } : null;
+}
+
 function pickPrimaryRemote(
   remotes: ReadonlyMap<string, string>,
+  resolved: string,
 ): { readonly remoteName: string; readonly remoteUrl: string } | null {
+  const marked = pickMarkedRemote(remotes, resolved);
+  if (marked) return marked;
+
   for (const preferredRemoteName of ["upstream", "origin"] as const) {
     const remoteUrl = remotes.get(preferredRemoteName);
     if (remoteUrl) {
@@ -88,7 +123,12 @@ function pickPrimaryRemote(
 function repositoryPathOf(canonicalKey: string, remoteUrl: string): string {
   const canonicalPath = canonicalKey.split("/").slice(1).join("/");
   const displayPath = repositoryPathFromRemoteUrl(remoteUrl);
-  return displayPath?.toLowerCase() === canonicalPath ? displayPath : canonicalPath;
+  if (displayPath === null) return canonicalPath;
+  // A host that names repositories literally keeps the `.git` the display path drops.
+  return (
+    [displayPath, `${displayPath}.git`].find((path) => path.toLowerCase() === canonicalPath) ??
+    canonicalPath
+  );
 }
 
 function buildRepositoryOrigin(
@@ -137,12 +177,17 @@ class RepositoryIdentityCacheKey extends Data.Class<{
   readonly isBare: boolean;
 }> {}
 
+const gitEnv = (platform: NodeJS.Platform): NodeJS.ProcessEnv => ({
+  ...unsetInheritedRepositoryEnv(process.env, platform),
+  ...explicitBareRepositoryEnv(process.env, platform),
+});
+
 const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
   function* (cwd: string) {
     const processRunner = yield* ProcessRunner.ProcessRunner;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const env = explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform);
+    const env = gitEnv(yield* HostProcess.Platform);
 
     // `git -C` cannot enter a missing folder or a file, so every probe below would fail.
     const isFolder = yield* fileSystem.stat(cwd).pipe(
@@ -165,7 +210,8 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       return null;
     }
     if (topLevelResult.value.code === 0) {
-      const rootPath = topLevelResult.value.stdout.trim();
+      // Paths may end in spaces, so strip only git's line terminator.
+      const rootPath = topLevelResult.value.stdout.replace(/\r?\n$/, "");
       return rootPath.length > 0
         ? new RepositoryIdentityCacheKey({ rootPath, isBare: false })
         : null;
@@ -209,9 +255,7 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       if (bareResult._tag === "None" || bareResult.value.timedOut) return null;
       if (bareResult.value.code !== 0) continue;
 
-      const [isBare, rootPath = ""] = bareResult.value.stdout
-        .split("\n")
-        .map((line) => line.trim());
+      const [isBare, rootPath = ""] = bareResult.value.stdout.split(/\r?\n/);
       // A checkout's .git directory contains remotes but is not a project root.
       return isBare === "true" && rootPath.length > 0
         ? new RepositoryIdentityCacheKey({ rootPath, isBare: true })
@@ -227,20 +271,31 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   cacheKey: RepositoryIdentityCacheKey,
 ): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner.ProcessRunner> {
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  const remoteResult = yield* processRunner
-    .run({
-      command: "git",
-      args: ["-C", cacheKey.rootPath, ...(cacheKey.isBare ? ["--git-dir=."] : []), "remote", "-v"],
-      env: explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform),
-      timeoutBehavior: "timedOutResult",
-    })
-    .pipe(Effect.option);
+  const env = gitEnv(yield* HostProcess.Platform);
+  const runGit = (args: ReadonlyArray<string>) =>
+    processRunner
+      .run({
+        command: "git",
+        args: ["-C", cacheKey.rootPath, ...(cacheKey.isBare ? ["--git-dir=."] : []), ...args],
+        env,
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(Effect.option);
+  const [remoteResult, resolvedResult] = yield* Effect.all(
+    [runGit(["remote", "-v"]), runGit(["config", "--get-regexp", "^remote\\..*\\.gh-resolved$"])],
+    { concurrency: "unbounded" },
+  );
   if (remoteResult._tag === "None" || remoteResult.value.code !== 0) {
     return null;
   }
 
   const remotes = parseRemoteFetchUrls(remoteResult.value.stdout);
-  const remote = pickPrimaryRemote(remotes);
+  // Exits 1 when no remote has a mark.
+  const resolved =
+    resolvedResult._tag === "Some" && resolvedResult.value.code === 0
+      ? resolvedResult.value.stdout
+      : "";
+  const remote = pickPrimaryRemote(remotes, resolved);
   return remote
     ? buildRepositoryIdentity({
         ...remote,

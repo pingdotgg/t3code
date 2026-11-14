@@ -156,13 +156,15 @@ export function installRecordingCursor(
     moveHuman(point);
     pointer(point, "move");
   };
+  const press = (point: { readonly x: number; readonly y: number }, phase: "down" | "up") => {
+    if (phase === "down") moveHuman(point);
+    pointer(point, phase);
+  };
   const pointerDown = (event: PointerEvent) => {
-    if (event.pointerType === "touch") return;
-    moveHuman({ x: event.clientX, y: event.clientY });
-    pointer({ x: event.clientX, y: event.clientY }, "down");
+    if (event.pointerType !== "touch") press({ x: event.clientX, y: event.clientY }, "down");
   };
   const pointerUp = (event: PointerEvent) => {
-    if (event.pointerType !== "touch") pointer({ x: event.clientX, y: event.clientY }, "up");
+    if (event.pointerType !== "touch") press({ x: event.clientX, y: event.clientY }, "up");
   };
   const keyDown = (event: KeyboardEvent) => {
     if (event.isComposing || event.repeat) return;
@@ -196,6 +198,7 @@ export function installRecordingCursor(
   window.addEventListener("blur", hide);
   return {
     move,
+    press,
     keyPress,
     setController,
     setTheme,
