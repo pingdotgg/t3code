@@ -4,7 +4,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { memo, useRef, useState } from "react";
+import { memo, useRef, useState, useSyncExternalStore } from "react";
 import { InfoIcon, XIcon } from "lucide-react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button, InlineButton } from "../ui/button";
@@ -51,10 +51,43 @@ export function getProviderStatusBannerKey(status: ServerProvider | null): strin
 
 export function shouldShowProviderStatusBanner(
   status: ServerProvider | null,
-  dismissedBannerKey: string | null,
+  isDismissed: boolean,
 ): boolean {
+  return getProviderStatusBannerKey(status) !== null && !isDismissed;
+}
+
+// Built-in instance ids such as `codex` repeat across environments.
+export function getProviderStatusDismissalKey(
+  environmentId: string | undefined,
+  status: ServerProvider | null,
+): string | null {
   const bannerKey = getProviderStatusBannerKey(status);
-  return bannerKey !== null && bannerKey !== dismissedBannerKey;
+  return bannerKey === null ? null : `${environmentId ?? ""}\u0000${bannerKey}`;
+}
+
+// A dismissal lasts the session, not one view, so opening another thread cannot bring it back.
+const sessionDismissedProviderStatusBannerKeys = new Set<string>();
+const dismissalListeners = new Set<() => void>();
+
+export function dismissProviderStatusBannerForSession(bannerKey: string | null): void {
+  if (bannerKey === null || sessionDismissedProviderStatusBannerKeys.has(bannerKey)) return;
+  sessionDismissedProviderStatusBannerKeys.add(bannerKey);
+  for (const listener of dismissalListeners) listener();
+}
+
+export function isProviderStatusBannerDismissedForSession(bannerKey: string | null): boolean {
+  return bannerKey !== null && sessionDismissedProviderStatusBannerKeys.has(bannerKey);
+}
+
+function subscribeToDismissals(listener: () => void) {
+  dismissalListeners.add(listener);
+  return () => dismissalListeners.delete(listener);
+}
+
+export function useProviderStatusBannerDismissed(bannerKey: string | null): boolean {
+  return useSyncExternalStore(subscribeToDismissals, () =>
+    isProviderStatusBannerDismissedForSession(bannerKey),
+  );
 }
 
 export function hasProviderSetup(status: ServerProvider): boolean {

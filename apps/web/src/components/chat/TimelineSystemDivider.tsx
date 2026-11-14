@@ -19,7 +19,7 @@ export function TimelineSystemDivider(props: {
     <>
       <span
         className={cn(
-          "inline-flex items-center gap-1.5 align-baseline font-medium",
+          "inline-flex items-baseline gap-1.5 align-baseline font-medium",
           props.wrapDetail && "shrink-0 whitespace-nowrap",
         )}
       >
