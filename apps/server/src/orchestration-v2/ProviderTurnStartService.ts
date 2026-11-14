@@ -264,6 +264,12 @@ export const layer: Layer.Layer<
       return {
         ...session,
         startTurn: (input: Parameters<typeof session.startTurn>[0]) => start(input),
+        ...(session.resumeTurn === undefined
+          ? {}
+          : {
+              resumeTurn: (input: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) =>
+                start(ProviderAdapter.resumeTurnInput(input)),
+            }),
         ...(session.compactThread === undefined
           ? {}
           : {
@@ -746,7 +752,7 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const userText = projectComposerContextForProvider({
+      let userText = projectComposerContextForProvider({
         text: message.text,
         records: message.context?.records ?? [],
       });
@@ -1440,6 +1446,37 @@ export const layer: Layer.Layer<
         legacyInputRunIds,
         budget,
       } = handoffContext;
+      const resumeSource = projection.runs.find(
+        (source) => source.id === run.manualContinuationOfRunId,
+      );
+      const unsentResumeMessage =
+        resumeSource !== undefined &&
+        resumeSource.manualContinuationOfRunId === undefined &&
+        !acceptedAttempts.some((attempt) => attempt.runId === resumeSource.id)
+          ? projection.messages.find((source) => source.id === resumeSource.userMessageId)
+          : undefined;
+      if (
+        run.manualContinuationOfRunId !== undefined &&
+        unsentResumeMessage === undefined &&
+        session.resumeTurn === undefined
+      ) {
+        yield* settleStartFailure({
+          signal: "resume-unsupported",
+          title: "Native resume is unavailable",
+          error: new ProviderAdapter.ProviderResumeUnsupportedError({
+            driver: session.driver,
+            providerThreadId: providerThread.id,
+          }),
+        });
+        return;
+      }
+      const providerMessage = unsentResumeMessage ?? message;
+      if (unsentResumeMessage !== undefined) {
+        userText = projectComposerContextForProvider({
+          text: unsentResumeMessage.text,
+          records: unsentResumeMessage.context?.records ?? [],
+        });
+      }
       const retryHandoff = resumedRetryHandoff ?? (yield* prepareRetryHandoff(handoffContext));
       const runningProviderThread: OrchestrationV2ProviderThread = {
         ...loadedProviderThread,
@@ -1637,13 +1674,20 @@ export const layer: Layer.Layer<
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
-          yield* start({
-            ...(noteContinuation ? promptedInput : turnInput),
-            message: {
-              ...turnInput.message,
-              text: goalCommand ? userText : withInlineContext(context, userText),
-            },
-          }).pipe(
+          const startInput = noteContinuation ? promptedInput : turnInput;
+          const { resume: _resume, ...contextInput } = startInput;
+          const { message: resumeMessage, resume: _resumeIntent, ...resumeInput } = startInput;
+          const operation =
+            turnInput.resume && context === "" && session.resumeTurn !== undefined
+              ? session.resumeTurn({ ...resumeInput, messageId: resumeMessage.messageId })
+              : start({
+                  ...(context === "" ? startInput : contextInput),
+                  message: {
+                    ...turnInput.message,
+                    text: goalCommand ? userText : withInlineContext(context, userText),
+                  },
+                });
+          yield* operation.pipe(
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.
             Effect.tapError((error) =>
               refusedBeforePrompt(error)
@@ -1729,6 +1773,7 @@ export const layer: Layer.Layer<
               .filter((turn) => turn.providerThreadId === providerThread.id)
               .map((turn) => turn.ordinal),
           ) + 1,
+        resume: run.manualContinuationOfRunId !== undefined && unsentResumeMessage === undefined,
         nativeThreadHasTurns:
           nativeInputRunIds.size > 0 ||
           (legacyInputRunIds.size > 0 &&
@@ -1742,7 +1787,7 @@ export const layer: Layer.Layer<
         message: {
           messageId: message.id,
           text: userText,
-          attachments: message.attachments,
+          attachments: providerMessage.attachments,
           createdBy: message.createdBy,
           creationSource: message.creationSource,
           ...(message.scheduledTaskId === undefined

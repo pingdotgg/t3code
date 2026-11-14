@@ -267,6 +267,69 @@ function makeClaudeTestTurnInput(input: {
   };
 }
 
+describe("ClaudeAdapterV2 native resume history", () => {
+  const entry = (uuid: string, type: string, content: unknown) => ({
+    uuid,
+    type,
+    message: { content },
+  });
+  const prompt = entry("prompt", "user", "Run the task");
+  const completed = entry("completed-tool", "user", [
+    { type: "tool_result", tool_use_id: "done", content: "Saved", is_error: false },
+  ]);
+  const call = entry("call", "assistant", [
+    { type: "tool_use", id: "pending", name: "Bash", input: {} },
+  ]);
+  const interrupted = entry("stopped-tool", "user", [
+    {
+      type: "tool_result",
+      tool_use_id: "pending",
+      content: "The user doesn't want to proceed with this tool use. STOP",
+      is_error: true,
+    },
+  ]);
+  it.each([
+    {
+      name: "an interrupted reply",
+      messages: [
+        prompt,
+        entry("reply", "assistant", "Partial response"),
+        entry("stop", "user", [{ type: "text", text: "[Request interrupted by user]" }]),
+      ],
+      head: "reply",
+    },
+    {
+      name: "an interrupted tool after completed work",
+      messages: [
+        prompt,
+        completed,
+        call,
+        interrupted,
+        entry("stop", "user", "[Request interrupted by user for tool use]"),
+      ],
+      head: "call",
+    },
+    {
+      name: "an interrupted request before any reply",
+      messages: [prompt, entry("stop", "user", "[Request interrupted by user]")],
+      head: "prompt",
+    },
+    {
+      name: "completed tool results",
+      messages: [prompt, completed, entry("stop", "user", "[Request interrupted by user]")],
+      head: "completed-tool",
+    },
+    { name: "an explicit refusal", messages: [prompt, call, interrupted], head: undefined },
+    {
+      name: "ordinary conversation text",
+      messages: [prompt, entry("reply", "assistant", "Continue where you left off.")],
+      head: undefined,
+    },
+  ])("selects the native history head for $name", ({ messages, head }) => {
+    assert.equal(ClaudeAdapterV2.claudeResumeSessionAt(messages), head);
+  });
+});
+
 describe("ClaudeAdapterV2 runtime query policy", () => {
   it.each([
     "-- --thinking-display omitted",
@@ -3677,6 +3740,51 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect("resumes a stopped query with empty SDK content and a fresh native process", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshQueueOnReopen: true,
+        close: (queue) => Queue.shutdown(queue),
+      });
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: DateTime.makeUnsafe(0),
+        attemptId: RunAttemptId.make("native-resume"),
+        text: "Initial task",
+        attachments: [],
+        providerTurnOrdinal: 1,
+      });
+      yield* harness.runtime.startTurn(input);
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      const { message, ...turn } = input;
+      yield* harness.runtime.resumeTurn!({
+        ...turn,
+        providerTurnOrdinal: 2,
+        messageId: message.messageId,
+      });
+      assert.equal(harness.processQueues.length, 2);
+      assert.equal(
+        harness.getOpenedOptions()?.resume,
+        harness.providerThread.nativeThreadRef?.nativeId,
+      );
+      assert.deepEqual(harness.offeredMessages.at(-1)?.message.content, []);
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 
   it.effect("resumes the session a /clear selected after the Claude process is replaced", () =>
     Effect.gen(function* () {
