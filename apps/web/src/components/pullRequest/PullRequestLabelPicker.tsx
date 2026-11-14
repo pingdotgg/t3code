@@ -7,6 +7,7 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
+import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { readableFailure } from "./pullRequestDetail.logic";
@@ -88,10 +89,10 @@ export function PullRequestLabelPicker({
       truncated={candidatesQuery.data?.truncated === true}
       truncatedLabel="This repository has more labels than are listed here. Apply the rest on the host."
       candidateKey={(candidate) => candidate.name}
-      disabled={pending !== null}
+      pendingKey={pending}
       onSelect={(candidate) => void toggle(candidate)}
     >
-      {(candidate) => {
+      {(candidate, busy) => {
         const dot = pullRequestLabelColor(candidate.color);
         return (
           <>
@@ -106,7 +107,9 @@ export function PullRequestLabelPicker({
                 <span className="text-muted-foreground"> · {candidate.description}</span>
               ) : null}
             </span>
-            {candidate.isApplied ? (
+            {busy ? (
+              <Spinner size="sm" className="shrink-0" />
+            ) : candidate.isApplied ? (
               <CheckIcon aria-label="Applied" className="size-3.5 shrink-0" />
             ) : null}
           </>
