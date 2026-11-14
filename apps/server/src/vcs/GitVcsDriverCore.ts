@@ -97,6 +97,8 @@ const REVIEW_UNTRACKED_MAX_BYTES = 256 * 1024 * 1024;
 const UNTRACKED_TOTALS_RETRY_MIN_MS = 60_000;
 const UNTRACKED_TOTALS_RETRY_MAX_MS = 30 * 60_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+// Git's ident clean step (convert.c ident_to_git): `$Id:` up to the next `$` on the same line.
+const GIT_IDENT_KEYWORD = /\$Id:[^$\n]*\$/g;
 const REVIEW_BRANCH_COMMIT_LIMIT = 100;
 const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
 const REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES = 128 * 1024;
@@ -4216,7 +4218,43 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (bytes.includes(0)) {
       return yield* fileError("fs.readFile", `Cannot expand binary file '${input.newPath}'.`);
     }
-    return new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+    const contents = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+    if (!contents.includes("$Id:")) return contents;
+    const collapsed = contents.replace(GIT_IDENT_KEYWORD, () => "$Id$");
+    if (collapsed === contents) return contents;
+    // check-attr reports both boolean ident and literal ident=set as "set".
+    const attribute = yield* runGitStdout(
+      "GitVcsDriver.getReviewDiffFileContents.workingTree.ident",
+      repositoryRoot,
+      ["check-attr", "-z", "ident", "filter", "--", input.newPath],
+    );
+    const attributes = attribute.split("\0");
+    if (attributes[2] !== "set" || attributes[5] !== "unspecified") return contents;
+
+    // Literal filter=unspecified is indistinguishable from an absent filter in check-attr.
+    const filters = yield* executeGit(
+      "GitVcsDriver.getReviewDiffFileContents.workingTree.filters",
+      repositoryRoot,
+      ["config", "--name-only", "--get-regexp", "^filter\\.unspecified\\."],
+      { allowNonZeroExit: true },
+    );
+    if (filters.exitCode !== 1 || filters.stdout.length > 0) return contents;
+    // Probe a nonoverlapping keyword so ident conversion runs once on the actual file.
+    const [canonicalHash, collapsedHash] = yield* Effect.all([
+      runGitStdoutWithOptions(
+        "GitVcsDriver.getReviewDiffFileContents.workingTree.canonicalHash",
+        repositoryRoot,
+        ["hash-object", "--stdin", `--path=${input.newPath}`],
+        { stdin: "$Id: probe $" },
+      ),
+      runGitStdoutWithOptions(
+        "GitVcsDriver.getReviewDiffFileContents.workingTree.collapsedHash",
+        repositoryRoot,
+        ["hash-object", "--stdin", `--path=${input.newPath}`],
+        { stdin: "$Id$" },
+      ),
+    ]);
+    return canonicalHash === collapsedHash ? collapsed : contents;
   });
 
   const getReviewDiffFileContents = Effect.fn("getReviewDiffFileContents")(function* (

@@ -3712,6 +3712,77 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("loads working-tree contents as Git diffs them under the ident attribute", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const filePath = (yield* Path.Path).join(cwd, "README.md");
+        const committed = "$Id$\nfirst\nsecond\n";
+        yield* writeTextFile(cwd, ".gitattributes", "README.md ident\n");
+        yield* writeTextFile(cwd, "README.md", committed);
+        yield* writeTextFile(cwd, "PLAIN.md", "plain\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add ident keyword"]);
+        // Checkout smudges the keyword to `$Id: <blob> $`.
+        yield* fileSystem.remove(filePath);
+        yield* git(cwd, ["checkout-index", "--force", "README.md"]);
+        const smudged = yield* fileSystem.readFileString(filePath);
+        assert.match(smudged, /^\$Id: [0-9a-f]{40} \$\n/);
+        yield* writeTextFile(cwd, "README.md", smudged.replace("first", "edited"));
+        yield* writeTextFile(cwd, "PLAIN.md", "$Id: literal $\n");
+        const disk = yield* fileSystem.readFile(filePath);
+
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd),
+        );
+        const plain = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, { oldPath: "PLAIN.md", newPath: "PLAIN.md" }),
+        );
+
+        assert.deepStrictEqual(contents, {
+          oldContents: committed,
+          newContents: "$Id$\nedited\nsecond\n",
+        });
+        assert.strictEqual(plain.newContents, "$Id: literal $\n");
+        yield* writeTextFile(cwd, "README.md", "$Id: x $Id: y $\n");
+        const sharedDollar = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd),
+        );
+        assert.strictEqual(sharedDollar.newContents, "$Id$Id: y $\n");
+        yield* git(cwd, ["config", "filter.unrelated.clean", "touch filter-ran; cat"]);
+        yield* writeTextFile(cwd, ".gitattributes", "README.md ident text eol=lf\n");
+        yield* writeTextFile(
+          cwd,
+          "README.md",
+          smudged.replace("first", "edited").replaceAll("\n", "\r\n"),
+        );
+        const crlf = yield* driver.getReviewDiffFileContents(makeReviewDiffFileContentsInput(cwd));
+        assert.strictEqual(crlf.newContents, "$Id$\r\nedited\r\nsecond\r\n");
+        yield* fileSystem.writeFile(filePath, disk);
+        yield* writeTextFile(cwd, ".gitattributes", "README.md ident=set\n");
+        const literal = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd),
+        );
+        assert.strictEqual(literal.newContents, smudged.replace("first", "edited"));
+        yield* writeTextFile(cwd, ".gitattributes", "README.md ident filter=probe\n");
+        yield* git(cwd, ["config", "filter.probe.clean", "touch filter-ran; cat"]);
+        const filtered = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd),
+        );
+        assert.strictEqual(filtered.newContents, literal.newContents);
+        yield* writeTextFile(cwd, ".gitattributes", "README.md ident filter=unspecified\n");
+        yield* git(cwd, ["config", "filter.unspecified.clean", "touch filter-ran; cat"]);
+        const reservedFilter = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd),
+        );
+        assert.strictEqual(reservedFilter.newContents, literal.newContents);
+        assert.isFalse(yield* fileSystem.exists((yield* Path.Path).join(cwd, "filter-ran")));
+        assert.deepStrictEqual(yield* fileSystem.readFile(filePath), disk);
+      }),
+    );
+
     it.effect("Changes combines commits, uncommitted edits, and untracked files", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
