@@ -1034,6 +1034,24 @@ function itemizedFailedRunIds(
   );
 }
 
+// The agent's message right before a question is what the question asks about, so it stays visible with the answer.
+function questionContextMessageIds(entries: ReadonlyArray<TimelineEntry>): ReadonlySet<string> {
+  const ids = new Set<string>();
+  let lastAssistantMessageId: string | null = null;
+  for (const entry of entries) {
+    if (
+      entry.kind === "message" &&
+      entry.message.role === "assistant" &&
+      (entry.message.text.trim().length > 0 || (entry.message.attachments?.length ?? 0) > 0)
+    ) {
+      lastAssistantMessageId = entry.id;
+    } else if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) {
+      if (lastAssistantMessageId !== null) ids.add(lastAssistantMessageId);
+    }
+  }
+  return ids;
+}
+
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   terminalAssistantMessageIds: ReadonlySet<string>;
@@ -1153,13 +1171,14 @@ function deriveTurnFolds(input: {
       continue;
     }
     const hiddenEntryIds = new Set<string>();
+    const questionContextIds = questionContextMessageIds(group.entries);
     const terminalEntryIndex = group.terminalEntry
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
       : group.entries.length;
     // Folded dividers lose their place in the turn, so only the latest stays visible.
     const visibleCompactionId = group.entries.findLast(timelineEntryIsCompaction)?.id;
     for (const [index, entry] of group.entries.entries()) {
-      if (entry.id === group.terminalEntry?.id) {
+      if (entry.id === group.terminalEntry?.id || questionContextIds.has(entry.id)) {
         continue;
       }
       const isCompaction = timelineEntryIsCompaction(entry);
