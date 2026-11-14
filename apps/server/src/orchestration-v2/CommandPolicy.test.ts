@@ -294,6 +294,7 @@ layer("CommandPolicyV2", (it) => {
         capabilities: CursorProviderCapabilitiesV2,
         sameProvider: true,
         hasStrongNativeSource: true,
+        hasNativeTurnBoundary: false,
         sourceRunStatus: "completed",
         fromSpecificTurn: true,
         sourceBusy: false,
@@ -303,24 +304,38 @@ layer("CommandPolicyV2", (it) => {
     }),
   );
 
-  it.effect("forks a busy source through portable context", () =>
-    Effect.gen(function* () {
-      const policy = yield* CommandPolicy.CommandPolicyV2;
-      const decide = (sourceBusy: boolean) =>
-        policy.decideForkExecution({
-          commandId,
-          threadId,
-          providerInstanceId: ProviderInstanceId.make("codex"),
-          capabilities: CodexProviderCapabilitiesV2,
-          sameProvider: true,
-          hasStrongNativeSource: true,
-          sourceRunStatus: "completed",
-          fromSpecificTurn: true,
-          sourceBusy,
-        });
+  it.effect.each([
+    { canForkWhileRunning: true, hasNativeTurnBoundary: true, busyStrategy: "native_fork" },
+    {
+      canForkWhileRunning: undefined,
+      hasNativeTurnBoundary: true,
+      busyStrategy: "portable_context",
+    },
+    { canForkWhileRunning: true, hasNativeTurnBoundary: false, busyStrategy: "portable_context" },
+  ] as const)(
+    "forks a busy source with canForkWhileRunning=$canForkWhileRunning and hasNativeTurnBoundary=$hasNativeTurnBoundary",
+    ({ canForkWhileRunning, hasNativeTurnBoundary, busyStrategy }) =>
+      Effect.gen(function* () {
+        const policy = yield* CommandPolicy.CommandPolicyV2;
+        const decide = (sourceBusy: boolean) =>
+          policy.decideForkExecution({
+            commandId,
+            threadId,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            capabilities: {
+              ...CodexProviderCapabilitiesV2,
+              threads: { ...CodexProviderCapabilitiesV2.threads, canForkWhileRunning },
+            },
+            sameProvider: true,
+            hasStrongNativeSource: true,
+            hasNativeTurnBoundary,
+            sourceRunStatus: "completed",
+            fromSpecificTurn: true,
+            sourceBusy,
+          });
 
-      assert.equal(yield* decide(false), "native_fork");
-      assert.equal(yield* decide(true), "portable_context");
-    }),
+        assert.equal(yield* decide(false), "native_fork");
+        assert.equal(yield* decide(true), busyStrategy);
+      }),
   );
 });
