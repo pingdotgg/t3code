@@ -1,4 +1,7 @@
-import type { ProjectionRecordField } from "../orchestration-v2/ProjectionStore.ts";
+import type {
+  ProjectionRecordField,
+  ProjectionRecordFilter,
+} from "../orchestration-v2/ProjectionStore.ts";
 import {
   CommandId,
   OrchestratorMcpFailure,
@@ -48,7 +51,8 @@ export const dispatchFailure = (
   error: OrchestratorV2Error | ThreadManagement.ThreadManagementProviderInstanceDisabledError,
 ) =>
   error._tag === "ThreadManagementProviderInstanceDisabledError" ||
-  error._tag === "OrchestratorRuntimeModeAboveCeilingError"
+  error._tag === "OrchestratorRuntimeModeAboveCeilingError" ||
+  error._tag === "OrchestratorProviderSelectionBusyError"
     ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.message })
     : (error._tag === "OrchestratorDispatchError" ||
           error._tag === "OrchestratorCommandRejectedError") &&
@@ -181,7 +185,7 @@ const resolveThreadId = (context: Caller, threadId: ThreadId | undefined) =>
 
 export const readThread = Effect.fn("mcp.readThread")(function* <
   K extends ProjectionRecordField = never,
->(threadId?: ThreadId, fields: ReadonlyArray<K> = []) {
+>(threadId?: ThreadId, fields: ReadonlyArray<K> = [], filter?: ProjectionRecordFilter) {
   const context = yield* readCaller();
   const targetId = yield* resolveThreadId(context, threadId);
   const shell = yield* context.threads.getThreadShell(targetId).pipe(Effect.mapError(unavailable));
@@ -191,6 +195,7 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
   const projection = yield* context.threads
     .getProjectThreadRecords({ projectId: shell.projectId, threadId: targetId }, fields, {
       turnItemTypes: ["user_input_request"],
+      ...filter,
     })
     .pipe(
       Effect.mapError((error) =>
