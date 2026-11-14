@@ -49,6 +49,7 @@ import { makeClaudeEnvironment, mergeClaudeProcessEnvironment } from "../../prov
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fixPath } from "../../os-jank.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 
 const SCENARIOS = process.env.CONFORMANCE_SCENARIOS ?? "";
 const ROOT = process.env.CONFORMANCE_ROOT ?? "";
@@ -84,6 +85,15 @@ interface Scenario {
   /** Spread over the runtime policy, as T3's RuntimePolicy.layerWithOverride does. */
   readonly policyOverride?: { readonly approvalPolicy?: unknown; readonly sandboxPolicy?: unknown };
   readonly claudeSettings?: unknown;
+  /**
+   * A `providerInstances` entry: its id, `config` (ClaudeSettings) and `environment`, as
+   * createClaudeAdapterV2 receives them. `{side}` in a string value is "t3" here.
+   */
+  readonly instance?: {
+    readonly id?: string;
+    readonly config?: Record<string, unknown>;
+    readonly environment?: ReadonlyArray<{ name: string; value: string; sensitive?: boolean }>;
+  };
   readonly steps: ReadonlyArray<Step>;
 }
 
@@ -116,8 +126,11 @@ if (baseEnvironment.SHELL !== undefined) {
   );
 }
 
+// The scenario's instance id (`instance.id`), set as each scenario starts.
+let INSTANCE = "claudeAgent";
+
 const selection = (model?: string): ModelSelection => ({
-  instanceId: ProviderInstanceId.make("claudeAgent"),
+  instanceId: ProviderInstanceId.make(INSTANCE),
   model: model ?? file.model,
 });
 
@@ -138,7 +151,7 @@ const appThread = (
   id: ThreadId.make(id),
   projectId: ProjectId.make("project-conformance"),
   title: "Conformance",
-  providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+  providerInstanceId: ProviderInstanceId.make(INSTANCE),
   modelSelection: model,
   runtimeMode,
   interactionMode: "default",
@@ -171,14 +184,27 @@ const runScenario = (scenario: Scenario) =>
       NodeFS.writeFileSync(settingsFile, JSON.stringify(scenario.claudeSettings));
       yield* Effect.addFinalizer(() => Effect.sync(() => NodeFS.rmSync(settingsFile, { force: true })));
     }
-    const settings = Schema.decodeSync(ClaudeSettings)({ binaryPath: stub });
+    INSTANCE = scenario.instance?.id ?? "claudeAgent";
+    const side = (value: unknown) => (typeof value === "string" ? value.replaceAll("{side}", "t3") : value);
+    const instanceConfig = Object.fromEntries(
+      Object.entries(scenario.instance?.config ?? {}).map(([key, value]) => [key, side(value)]),
+    );
+    const instanceEnvironment = scenario.instance?.environment?.map((variable) => ({
+      ...variable,
+      value: side(variable.value) as string,
+    }));
+    const decoded = Schema.decodeSync(ClaudeSettings)({ binaryPath: stub, ...instanceConfig });
     // As createClaudeAdapterV2 builds it.
     const environment = yield* makeClaudeEnvironment(
-      settings,
-      yield* mergeClaudeProcessEnvironment(settings, undefined, baseEnvironment),
+      decoded,
+      yield* mergeClaudeProcessEnvironment(decoded, instanceEnvironment as any, baseEnvironment),
     );
+    const settings = {
+      ...decoded,
+      binaryPath: expandHomePath(decoded.binaryPath, baseEnvironment.HOME ?? ""),
+    };
     const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
-      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      instanceId: ProviderInstanceId.make(INSTANCE),
       settings,
       environment,
       attachmentsDir: ATTACHMENTS,
@@ -201,7 +227,7 @@ const runScenario = (scenario: Scenario) =>
         environmentId: EnvironmentId.make("environment-conformance"),
         threadId: ThreadId.make(THREAD),
         providerSessionId,
-        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        providerInstanceId: ProviderInstanceId.make(INSTANCE),
         endpoint: MCP_URL,
         authorizationHeader: MCP_AUTHORIZATION,
         browserToolsAvailable: false,
