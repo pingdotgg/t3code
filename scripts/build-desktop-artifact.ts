@@ -43,6 +43,7 @@ import {
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
+import { resolveTaggedSourceVersion } from "./lib/tagged-source-version.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -2211,6 +2212,13 @@ export const copyDirectoryPreservingSymlinks = Effect.fn("copyDirectoryPreservin
 
 export const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSelfContained")(
   function* (input: { readonly asarPath: string; readonly verbose: boolean }) {
+    // A PR preview's bundle is untrusted and this job may hold signing secrets, so never run it.
+    if (yield* Config.Boolean("T3CODE_DESKTOP_UNTRUSTED_BUNDLE").pipe(Config.withDefault(false))) {
+      yield* Effect.log(
+        "[desktop-artifact] Skipped the bundle self-check for an untrusted bundle.",
+      );
+      return;
+    }
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
 
@@ -2921,10 +2929,18 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ],
       desktop: {
         entry: {
-          StartupWMClass: "t3code",
+          // Match Electron's WM_CLASS from setDesktopName so docks use this launcher.
+          StartupWMClass: "com.t3tools.T3Code",
         },
       },
     };
+    // electron-updater replaces an installed AppImage in place only when its name has no x.y.z version.
+    if (buildConfig.publish) {
+      buildConfig.appImage = {
+        artifactName:
+          updateChannel === "nightly" ? "T3-Code-Nightly-${arch}.${ext}" : "T3-Code-${arch}.${ext}",
+      };
+    }
     buildConfig.deb = {
       // FPM runs outside the staged app directory, so source paths must be absolute.
       fpm: [
@@ -3574,6 +3590,34 @@ export const validateMacPackagedPayload = Effect.fn("desktopArtifact.validateMac
   },
 );
 
+export class LinuxPackagedAppMissingError extends Schema.TaggedError<LinuxPackagedAppMissingError>()(
+  "LinuxPackagedAppMissingError",
+  { stageDistDir: Schema.String },
+) {
+  override get message(): string {
+    return `Expected electron-builder to leave resources/app.asar under ${this.stageDistDir}/linux*-unpacked.`;
+  }
+}
+
+export const validateLinuxPackagedPayload = Effect.fn(
+  "desktopArtifact.validateLinuxPackagedPayload",
+)(function* (input: { readonly stageDistDir: string; readonly verbose?: boolean }) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const asarPaths = (yield* fs.readDirectory(input.stageDistDir))
+    .filter((entry) => entry.startsWith("linux") && entry.endsWith("-unpacked"))
+    .map((entry) => path.join(input.stageDistDir, entry, "resources/app.asar"));
+  if (asarPaths.length === 0) {
+    return yield* new LinuxPackagedAppMissingError({ stageDistDir: input.stageDistDir });
+  }
+  for (const asarPath of asarPaths) {
+    yield* verifyPackagedBundleIsSelfContained({ asarPath, verbose: input.verbose ?? false });
+  }
+  yield* Effect.log(
+    `[desktop-artifact] Validated Linux payload (${String(asarPaths.length)} app bundle(s)).`,
+  );
+});
+
 const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(function* (
   options: ResolvedBuildOptions,
 ) {
@@ -3650,7 +3694,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       }),
   });
 
-  const appVersion = options.version ?? serverPackageJson.version;
+  const appVersion =
+    options.version ?? resolveTaggedSourceVersion(repoRoot, serverPackageJson.version);
   const iconAssets = resolveDesktopBuildIconAssets(appVersion);
   const commitHash = yield* resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
@@ -4068,6 +4113,14 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       }),
       verbose: options.verbose,
     });
+  }
+  // The probe runs on the host Node, so a cross-arch build skips it.
+  if (
+    options.platform === "linux" &&
+    hostPlatform === "linux" &&
+    options.arch === (yield* HostProcess.Architecture)
+  ) {
+    yield* validateLinuxPackagedPayload({ stageDistDir, verbose: options.verbose });
   }
   // x64 builds on arm64 runners; the arm64 check covers the shared JS bundle.
   if (options.platform === "mac" && options.arch === "arm64" && hostPlatform === "darwin") {

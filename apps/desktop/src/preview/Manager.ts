@@ -24,6 +24,7 @@ import type {
   DesktopPreviewScreenshotArtifact,
   DesktopPreviewTabDefaults,
   PreviewForwardedShortcut,
+  PreviewAutomationLoadError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { matchesKeybindingShortcut } from "@t3tools/shared/keybindings";
@@ -80,13 +81,13 @@ import {
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
-  MOUSE_NAVIGATE_CHANNEL,
   PAGE_UNHANDLED_SHORTCUT_CHANNEL,
   RECORDING_CURSOR_CHANNEL,
   RECORDING_INPUT_CHANNEL,
   RECORDING_CONTROLLER_CHANNEL,
   RECORDING_POINTER_CHANNEL,
   START_PICK_CHANNEL,
+  THUMB_PRESS_CHANNEL,
 } from "./GuestProtocol.ts";
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
@@ -135,6 +136,7 @@ const PICTURE_IN_PICTURE_JPEG_QUALITY = 80;
 const CAPTURE_PAGE_RETRY_ATTEMPTS = 3;
 const CAPTURE_PAGE_RETRY_DELAY_MS = 120;
 const CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS = 1_000;
+const BUSY_PAGE_PROBE_MS = 1_000;
 const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
 const PICTURE_IN_PICTURE_INITIAL_HEIGHT = 320;
 const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
@@ -443,6 +445,9 @@ type FindResultListener = (event: DesktopPreviewFindResultEvent) => Effect.Effec
 
 const PAGE_FIRST_FORWARDED_COMMANDS: ReadonlySet<PreviewForwardedShortcut["command"]> = new Set([
   "preview.find",
+  "preview.zoomIn",
+  "preview.zoomOut",
+  "preview.resetZoom",
 ]);
 
 const decodePageShortcutKeys = Schema.decodeUnknownOption(
@@ -562,9 +567,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const random = yield* SecureRandom.SecureRandom;
   const parentScope = yield* Scope.Scope;
   const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
+  const browserSession = yield* BrowserSession.BrowserSession;
   const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
+  const runPromise = Effect.runPromiseWith(context);
   const resolvedArtifactDirectory = path.resolve(artifactDirectory);
 
   let forwardedShortcuts: ReadonlyArray<PreviewForwardedShortcut> = [];
@@ -604,6 +611,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     { readonly semaphore: Semaphore.Semaphore; users: number }
   >();
   const tabLifecycleGenerations = new Map<string, number>();
+  // A guest can fail its first load before registerWebview installs its tab listeners.
+  const guestLoadFailures = new Map<number, PreviewAutomationLoadError>();
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -1398,16 +1407,39 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       validatedUrl: string,
       isMainFrame: boolean,
     ): void => {
-      if (code === -3 || !isMainFrame) return;
+      if (code === -3 || !isMainFrame || wc.isDestroyed()) return;
+      const url = validatedUrl || wc.getURL();
       runFork(
-        update(tabId, {
-          navStatus: {
-            kind: "LoadFailed",
-            url: validatedUrl || wc.getURL(),
-            title: wc.getTitle(),
-            code,
-            description,
-          },
+        Effect.gen(function* () {
+          const updatedAt = yield* currentIso;
+          const next = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+            const current = tabs.get(tabId);
+            if (
+              !current ||
+              current.webContentsId !== wc.id ||
+              wc.isDestroyed() ||
+              webContents.fromId(wc.id) !== wc
+            ) {
+              return [Option.none<PreviewTabState>(), tabs] as const;
+            }
+            const state: PreviewTabState = {
+              ...current,
+              navStatus: { kind: "LoadFailed", url, title: wc.getTitle(), code, description },
+              updatedAt,
+            };
+            return [
+              Option.some(state),
+              replaceMap(tabs, (copy) => copy.set(tabId, state)),
+            ] as const;
+          });
+          if (Option.isNone(next)) return;
+          const current = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+          if (current?.webContentsId !== wc.id || current.navStatus !== next.value.navStatus)
+            return;
+          if (current.serverTab) {
+            browserHost.loadFailed(current.serverTab, { url, code, description });
+          }
+          yield* emitIfCurrent(tabId, next.value);
         }),
       );
     };
@@ -1459,15 +1491,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const humanInput = (_event: unknown, rawSignal?: unknown): void => {
       runFork(handleHumanInput(rawSignal));
     };
-    const mouseNavigate = (_event: unknown, payload?: unknown): void => {
-      const direction =
-        typeof payload === "object" && payload !== null && "direction" in payload
-          ? (payload as { direction?: unknown }).direction
-          : undefined;
-      if (direction !== "back" && direction !== "forward") return;
+    // Chromium navigates the outermost WebContents (the host app) on thumb buttons, even from guest iframes.
+    const beforeMouse = (event: Electron.Event, mouse: Electron.MouseInputEvent): void => {
+      // Electron reports thumb buttons as "back" and "forward", which its typings omit.
+      const button: string | undefined = mouse.button;
+      if (button !== "back" && button !== "forward") return;
+      if (mouse.type !== "mouseDown" && mouse.type !== "mouseUp") return;
+      event.preventDefault();
+      // The page never sees the press, so the guest replays it; these coordinates are DIPs, not CSS px.
+      const zoom = wc.getZoomFactor();
+      const phase = mouse.type === "mouseDown" ? "down" : "up";
+      wc.send(
+        THUMB_PRESS_CHANNEL,
+        phase,
+        mouse.x / zoom,
+        mouse.y / zoom,
+        button === "back" ? 3 : 4,
+      );
+      if (phase !== "up") return;
       runFork(
         attempt({ operation: "mouseNavigate", tabId, webContentsId: wc.id }, () => {
-          if (direction === "back") {
+          if (button === "back") {
             if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
           } else if (wc.navigationHistory.canGoForward()) {
             wc.navigationHistory.goForward();
@@ -1525,7 +1569,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         });
       if (forwarded && host) {
         // The page keeps these keys. Only the main-frame preload can report one it
-        // left unhandled, so a focused iframe (e.g. Google Docs' input) keeps its own find.
+        // left unhandled, so a focused iframe (e.g. Google Docs' input) keeps its own find or zoom.
         if (PAGE_FIRST_FORWARDED_COMMANDS.has(forwarded.command)) return;
         event.preventDefault();
         if (!input.isAutoRepeat) {
@@ -1577,9 +1621,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("found-in-page", foundInPage as never);
         wc.off("did-create-window", windowCreated);
         wc.off("before-input-event", beforeInput);
+        wc.off("before-mouse-event", beforeMouse);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
         wc.ipc.off(RECORDING_INPUT_CHANNEL, recordingInput);
-        wc.ipc.off(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         wc.ipc.off(PAGE_UNHANDLED_SHORTCUT_CHANNEL, pageUnhandledShortcut);
         detachPasskeys();
       }).pipe(Effect.ignore),
@@ -1600,7 +1644,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("found-in-page", foundInPage as never);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
         wc.ipc.on(RECORDING_INPUT_CHANNEL, recordingInput);
-        wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         wc.ipc.on(PAGE_UNHANDLED_SHORTCUT_CHANNEL, pageUnhandledShortcut);
         detachPasskeys = passkeys.attachGuest(wc);
         wc.setWindowOpenHandler((details) => {
@@ -1614,7 +1657,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               emitOpenLink({
                 tabId,
                 url: details.url,
-                background: details.disposition === "background-tab",
+                // A person's own click or key leaves the guest a focused frame; GuestInput hands
+                // focus back after the agent's press, so a foreground tab would take it again.
+                background:
+                  details.disposition === "background-tab" ||
+                  (wc.focusedFrame === null && browserHost.agentLedPage(wc)),
               }),
             );
             return { action: "deny" };
@@ -1628,6 +1675,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         });
         wc.on("did-create-window", windowCreated);
         wc.on("before-input-event", beforeInput);
+        wc.on("before-mouse-event", beforeMouse);
       });
       yield* Ref.update(attachedRef, (attached) =>
         replaceMap(attached, (copy) => {
@@ -1887,11 +1935,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           ] as const;
         }
         const pendingUrl = current.navStatus.kind === "Loading" ? current.navStatus.url : null;
+        const failure = guestLoadFailures.get(webContentsId);
         const { favicon: _favicon, ...currentWithoutFavicon } = current;
         const next: PreviewTabState = {
           ...currentWithoutFavicon,
           webContentsId,
-          navStatus: pendingUrl === null ? computeNavStatus(wc) : current.navStatus,
+          navStatus:
+            failure && (pendingUrl === null || pendingUrl === failure.url)
+              ? { kind: "LoadFailed", title: wc.getTitle(), ...failure }
+              : pendingUrl === null
+                ? computeNavStatus(wc)
+                : current.navStatus,
           canGoBack: wc.navigationHistory.canGoBack(),
           canGoForward: wc.navigationHistory.canGoForward(),
           audible: attachedAudible,
@@ -1959,7 +2013,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     yield* rendererHistory.register(wc, { surface: "preview" });
     const webContentsId = wc.id;
+    wc.on("did-start-navigation", (event) => {
+      if (event.isMainFrame && !event.isSameDocument) guestLoadFailures.delete(webContentsId);
+    });
+    wc.on("did-fail-load", (_event, code, description, validatedUrl, isMainFrame) => {
+      if (code === -3 || !isMainFrame) return;
+      guestLoadFailures.set(webContentsId, {
+        url: validatedUrl || wc.getURL(),
+        code,
+        description,
+      });
+    });
     wc.once("destroyed", () => {
+      guestLoadFailures.delete(webContentsId);
       runFork(hideDestroyedGuest(webContentsId));
       runFork(detachControlSession(webContentsId));
     });
@@ -1971,6 +2037,28 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }),
       ),
     );
+  });
+
+  /**
+   * A same-site navigation reuses the renderer, so it never commits while a page script holds it.
+   * Runs before the navigation starts: Chromium does not deliver a terminate once one is pending.
+   */
+  const leaveBusyPage = Effect.fn("PreviewManager.leaveBusyPage")(function* (
+    wc: Electron.WebContents,
+  ) {
+    const control = (yield* SynchronizedRef.get(controlSessionsRef)).get(wc.id);
+    if (!control) return;
+    const answered = yield* Effect.promise(() =>
+      control.debugger.sendCommand("Runtime.evaluate", { expression: "0" }).then(
+        () => undefined,
+        () => undefined,
+      ),
+    ).pipe(Effect.timeoutOption(BUSY_PAGE_PROBE_MS));
+    if (Option.isSome(answered)) return;
+    // Not awaited: a renderer blocked on something other than script may never acknowledge it.
+    yield* Effect.sync(() => {
+      void control.debugger.sendCommand("Runtime.terminateExecution").catch(() => undefined);
+    });
   });
 
   const navigate = Effect.fn("PreviewManager.navigate")(function* (tabId: string, rawUrl: string) {
@@ -2055,6 +2143,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       return;
     }
+    yield* leaveBusyPage(wc);
     if (wc.getURL() === url) {
       yield* attempt({ operation: "navigate.reload", tabId, webContentsId: wc.id }, () =>
         wc.reload(),
@@ -2090,17 +2179,28 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* attempt({ operation, tabId, webContentsId: wc.id }, () => use(wc));
   });
 
+  const leavePage = Effect.fn("PreviewManager.leavePage")(function* (
+    operation: string,
+    tabId: string,
+    use: (wc: Electron.WebContents) => void,
+  ) {
+    const wc = yield* requireWebContents(tabId);
+    yield* leaveBusyPage(wc);
+    yield* attempt({ operation, tabId, webContentsId: wc.id }, () => use(wc));
+  });
+
   const goBack = (tabId: string) =>
-    withWebContents("goBack", tabId, (wc) => {
+    leavePage("goBack", tabId, (wc) => {
       if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
     });
   const goForward = (tabId: string) =>
-    withWebContents("goForward", tabId, (wc) => {
+    leavePage("goForward", tabId, (wc) => {
       if (wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
     });
-  const refresh = (tabId: string) => withWebContents("refresh", tabId, (wc) => wc.reload());
+  const refresh = (tabId: string) => leavePage("refresh", tabId, (wc) => wc.reload());
+  const stopLoading = (tabId: string) => withWebContents("stopLoading", tabId, (wc) => wc.stop());
   const hardReload = (tabId: string) =>
-    withWebContents("hardReload", tabId, (wc) => wc.reloadIgnoringCache());
+    leavePage("hardReload", tabId, (wc) => wc.reloadIgnoringCache());
   const findInPage = (
     tabId: string,
     text: string,
@@ -2421,14 +2521,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const beforeAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
       if (beforeAttach?.webContentsId !== wc.id) return;
       const control = yield* ensureControlSession(wc);
+      if (beforeAttach.serverTab) yield* listenToBrowserHost;
       const afterAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
       if (afterAttach?.webContentsId !== wc.id) {
         yield* detachControlSession(wc.id);
         return;
       }
       if (afterAttach.serverTab) {
-        yield* listenToBrowserHost;
-        browserHost.attach(afterAttach.serverTab, { webContents: wc, debugger: control.debugger });
+        browserHost.attach(afterAttach.serverTab, {
+          webContents: wc,
+          debugger: control.debugger,
+          cookiesCleared: () => runPromise(browserSession.cookiesCleared(wc.session)),
+        });
+        // CDP cannot recover a failure that happened before it attached.
+        const { navStatus } = afterAttach;
+        if (navStatus.kind === "LoadFailed") {
+          browserHost.loadFailed(afterAttach.serverTab, {
+            url: navStatus.url,
+            code: navStatus.code,
+            description: navStatus.description,
+          });
+        }
       }
       if (afterAttach.colorScheme !== "system") {
         yield* attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
@@ -3469,6 +3582,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     prepareWebview,
     reapplyZoom,
     refresh,
+    stopLoading,
     registerWebview,
     resetZoom: (tabId: string) => applyZoom(tabId, () => DEFAULT_ZOOM_FACTOR),
     setZoomFactor: (tabId: string, zoomFactor: number) =>
@@ -3670,6 +3784,7 @@ export class PreviewManager extends Context.Service<
     readonly goBack: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly goForward: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly refresh: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly stopLoading: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly zoomIn: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly zoomOut: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly resetZoom: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
@@ -3844,6 +3959,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     goBack: operations.goBack,
     goForward: operations.goForward,
     refresh: operations.refresh,
+    stopLoading: operations.stopLoading,
     zoomIn: operations.zoomIn,
     zoomOut: operations.zoomOut,
     resetZoom: operations.resetZoom,
