@@ -654,7 +654,8 @@ function keepClosingPane(tabId: string, pane: HTMLElement): void {
 }
 
 useLayoutStore.subscribe(({ layout }, previous) => {
-  if (layout === previous.layout) return;
+  // The store also runs without a page, where there is no pane to copy.
+  if (layout === previous.layout || typeof document === "undefined") return;
   for (const tabId of closedLayoutTabIds(previous.layout, layout)) {
     const pane = document.querySelector<HTMLElement>(
       `[data-layout-tab-id="${CSS.escape(tabId)}"]:is([data-layout-surface], [data-layout-page])`,
