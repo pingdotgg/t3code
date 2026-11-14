@@ -30,6 +30,7 @@ import {
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
+  OrchestrationMessageContext,
   type NodeId,
   type ModelSelection,
   OrchestrationV2Command,
@@ -84,6 +85,7 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
+import { mergeQueuedMessages } from "@t3tools/shared/queuedMessageMerge";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
@@ -203,6 +205,7 @@ import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
 
+const encodeMessageContext = Schema.encodeUnknownEffect(OrchestrationMessageContext);
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
 );
@@ -667,6 +670,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "queued-run.reorder":
     case "queued-run.cancel":
     case "queued-run.edit":
+    case "queued-run.merge":
     case "runtime-request.respond":
     case "runtime-request.delivery.fail":
     case "thread.user-input.dismiss":
@@ -11486,47 +11490,141 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       { text: command.text, attachments: command.attachments ?? queuedMessage.attachments },
       queuedRunModelSelection(projection, queuedRun).instanceId,
     );
-    const queuedTurnItem = projection.turnItems.find(
-      (candidate) => candidate.type === "user_message" && candidate.messageId === queuedMessage.id,
-    );
-
-    const now = yield* DateTime.now;
-    const emitEvent = emit(events, command);
-    const editedAttachments =
-      command.attachments === undefined ? {} : { attachments: command.attachments };
-    yield* emitEvent({
-      type: "message.updated",
-      threadId: command.threadId,
-      runId: queuedRun.id,
-      ...(queuedRun.rootNodeId === null ? {} : { nodeId: queuedRun.rootNodeId }),
-      providerInstanceId: queuedRun.providerInstanceId,
-      occurredAt: now,
-      payload: withoutGuestAttribution({
-        ...queuedMessage,
+    yield* emitQueuedMessageRewrite({
+      command,
+      events,
+      projection,
+      run: queuedRun,
+      message: queuedMessage,
+      rewrite: {
         text: command.text,
-        ...editedAttachments,
+        ...(command.attachments === undefined ? {} : { attachments: command.attachments }),
         ...(command.context ? { context: command.context } : {}),
-        updatedAt: now,
-      }),
+      },
     });
-    if (queuedTurnItem !== undefined && queuedTurnItem.type === "user_message") {
-      yield* emitEvent({
-        type: "turn-item.updated",
-        threadId: command.threadId,
-        runId: queuedRun.id,
-        ...(queuedRun.rootNodeId === null ? {} : { nodeId: queuedRun.rootNodeId }),
-        providerInstanceId: queuedRun.providerInstanceId,
-        occurredAt: now,
-        payload: withoutGuestAttribution({
-          ...queuedTurnItem,
-          text: command.text,
-          ...editedAttachments,
-          ...(command.context ? { context: command.context } : {}),
-          updatedAt: now,
-        }),
+  });
+
+  const dispatchQueuedRunMerge = Effect.fn("Orchestrator.dispatchQueuedRunMerge")(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "queued-run.merge" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const projection = yield* loadProjectionForCommand(
+      command,
+      ["runs", "messages", "nodes", "attempts", "turnItems"],
+      { turnItemTypes: ["user_message"], messageRoles: ["user"] },
+    );
+    const queue = queuedRunsInDeliveryOrder(projection).filter(
+      (run) =>
+        !projection.messages.some(
+          (message) =>
+            message.id === run.userMessageId && message.delegatedCompletion !== undefined,
+        ),
+    );
+    const missingRunId = command.runIds.find((runId) => !queue.some((run) => run.id === runId));
+    if (missingRunId !== undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Run ${missingRunId} is not queued.`,
       });
     }
+    const start = queue.findIndex((run) => run.id === command.runIds[0]);
+    const runs = queue.slice(start, start + command.runIds.length);
+    // A message queued, moved, or removed since the client looked must not be folded in or skipped.
+    if (
+      runs.length !== command.runIds.length ||
+      runs.some((run, index) => run.id !== command.runIds[index])
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "The queue changed. Review it and try again.",
+      });
+    }
+    const parts = runs.map((run) => ({
+      run,
+      message: projection.messages.find((message) => message.id === run.userMessageId),
+    }));
+    const merged = mergeQueuedMessages(parts);
+    const [survivor, ...absorbed] = parts;
+    if (merged._tag === "Blocked" || survivor?.message === undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: merged._tag === "Blocked" ? merged.reason : "The queued message was not found.",
+      });
+    }
+    if (merged.context !== undefined) {
+      // Past its serialized limit the context fails the event store's encoding with no reason.
+      yield* encodeMessageContext(merged.context).pipe(
+        Effect.mapError(
+          () =>
+            new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "Queued messages carry too much context to send as one.",
+            }),
+        ),
+      );
+    }
+    yield* emitQueuedMessageRewrite({
+      command,
+      events,
+      projection,
+      run: survivor.run,
+      message: survivor.message,
+      rewrite: {
+        text: merged.text,
+        attachments: merged.attachments,
+        ...(merged.context ? { context: merged.context } : {}),
+      },
+    });
+    const now = yield* DateTime.now;
+    yield* Effect.forEach(
+      absorbed,
+      ({ run }) => emitQueuedRunCancellation({ command, events, projection, run, now }),
+      { concurrency: 1, discard: true },
+    );
   });
+
+  const emitQueuedMessageRewrite = Effect.fn("Orchestrator.emitQueuedMessageRewrite")(
+    function* (input: {
+      readonly command: OrchestrationV2ServerCommand;
+      readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+      readonly projection: Pick<OrchestrationV2ThreadProjection, "turnItems">;
+      readonly run: OrchestrationV2Run;
+      readonly message: OrchestrationV2ConversationMessage;
+      readonly rewrite: Pick<OrchestrationV2ConversationMessage, "text"> &
+        Partial<Pick<OrchestrationV2ConversationMessage, "attachments" | "context">>;
+    }) {
+      const { run, message, rewrite } = input;
+      const turnItem = input.projection.turnItems.find(
+        (candidate) => candidate.type === "user_message" && candidate.messageId === message.id,
+      );
+      const now = yield* DateTime.now;
+      const emitEvent = emit(input.events, input.command);
+      yield* emitEvent({
+        type: "message.updated",
+        threadId: run.threadId,
+        runId: run.id,
+        ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: withoutGuestAttribution({ ...message, ...rewrite, updatedAt: now }),
+      });
+      if (turnItem !== undefined && turnItem.type === "user_message") {
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: run.threadId,
+          runId: run.id,
+          ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: withoutGuestAttribution({ ...turnItem, ...rewrite, updatedAt: now }),
+        });
+      }
+    },
+  );
 
   const subagentCount = (threadId: ThreadId) =>
     projectionStore
@@ -15010,6 +15108,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "queued-run.edit":
         yield* dispatchQueuedRunEdit(command, events);
         break;
+      case "queued-run.merge":
+        yield* dispatchQueuedRunMerge(command, events);
+        break;
       case "checkpoint.rollback":
         yield* dispatchCheckpointRollback(command, events, effects);
         break;
@@ -15228,7 +15329,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ),
             );
           if (
-            command.type === "queued-run.edit" &&
+            (command.type === "queued-run.edit" || command.type === "queued-run.merge") &&
             receipt.status === "rejected" &&
             cause._tag === "OrchestratorDispatchError"
           ) {

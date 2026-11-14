@@ -25,7 +25,8 @@ send shortcut. Click the send button to use the configured follow-up behavior.
 
 When a thread has queued messages, `mod+Shift+Enter` sends the first one as a steer
 while a turn is running, or as a new turn when the thread is stopped. Change it under
-**Queue: Send First Queued Message** in Keybindings.
+**Queue: Send First Queued Message** in Keybindings. To send every queued message
+as one, bind **Queue: Send All Queued as One Message**. It has no default shortcut.
 
 Use `mod+shift+m` to choose a model and `mod+shift+h` to choose a host.
 To step a new thread to the next machine instead of opening the menu, bind

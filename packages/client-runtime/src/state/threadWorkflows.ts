@@ -5,6 +5,8 @@ import {
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
+import { isSlashCommandText, modelSelectionsEqual } from "@t3tools/shared/model";
+import { mergeQueuedMessages } from "@t3tools/shared/queuedMessageMerge";
 
 import type { ThreadStructure } from "./models.ts";
 
@@ -39,7 +41,11 @@ export interface ThreadQueueWorkflowState {
   /** The active run is a compaction, so promoting a queued message stops it instead of steering. */
   readonly promoteSkipsCompaction: boolean;
   readonly canSendNow: boolean;
+  readonly sendAsOneBlockedReason: string | null;
+  readonly sendEachBlockedReason: string | null;
 }
+
+const SEND_NOT_NOW_REASON = "The current turn can't take messages right now.";
 
 export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Run | null {
   return projection.runs.findLast((run) => ACTIVE_RUN_STATUSES.has(run.status)) ?? null;
@@ -151,43 +157,108 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     projection.providerTurns.some(
       (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
     );
-  const queuedRuns = copySorted(
-    getUserQueuedThreadRuns(projection),
+  const deliveryQueue = copySorted(
+    projection.runs.filter(
+      (run) =>
+        run.status === "queued" &&
+        !projection.messages.some(
+          (message) =>
+            message.id === run.userMessageId && message.delegatedCompletion !== undefined,
+        ),
+    ),
     (left, right) =>
       (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
       left.ordinal - right.ordinal,
-  ).map((run) => {
-    const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-    return {
-      run,
-      // A queued guest message shows the guest's words; the agent still gets the attributed text.
-      text: message?.context?.guest?.text ?? message?.text ?? "Queued message",
-      attachments: message?.attachments ?? [],
-      messageId: run.userMessageId,
-      ...(message?.context ? { context: message.context } : {}),
-      ...(message ? { message } : {}),
-    };
+  );
+  const userQueuedRunIds = new Set(getUserQueuedThreadRuns(projection).map((run) => run.id));
+  const queuedRuns = deliveryQueue
+    .filter((run) => userQueuedRunIds.has(run.id))
+    .map((run) => {
+      const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+      return {
+        run,
+        // A queued guest message shows the guest's words; the agent still gets the attributed text.
+        text: message?.context?.guest?.text ?? message?.text ?? "Queued message",
+        attachments: message?.attachments ?? [],
+        messageId: run.userMessageId,
+        ...(message?.context ? { context: message.context } : {}),
+        ...(message ? { message } : {}),
+      };
+    });
+
+  const canSendNow =
+    activeRun === null &&
+    projection.thread.archivedAt == null &&
+    projection.thread.deletedAt == null;
+  const canPromoteToSteer =
+    promoteSkipsCompaction ||
+    ((activeRun?.status === "preparing" || activeRun?.status === "starting") &&
+      (capabilities === undefined ||
+        capabilities.supportsActiveSteering ||
+        capabilities.supportsSteeringByInterruptRestart)) ||
+    (hasSteerableProviderTurn &&
+      (capabilities?.supportsActiveSteering === true ||
+        capabilities?.supportsSteeringByInterruptRestart === true));
+  const merged = mergeQueuedMessages(queuedRuns);
+  const queueStart = deliveryQueue.findIndex((run) => run.id === queuedRuns[0]?.run.id);
+  const queueIsContiguous = queuedRuns.every(
+    ({ run }, index) => deliveryQueue[queueStart + index]?.id === run.id,
+  );
+  const steerEachBlockedReason = resolveSteerEachBlockedReason({
+    activeRun,
+    queuedRuns,
+    canPromoteToSteer,
+    promoteSkipsCompaction,
+    capabilities,
   });
 
   return {
     activeRun,
     queuedRuns,
     isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
-    canSendNow:
-      activeRun === null &&
-      projection.thread.archivedAt == null &&
-      projection.thread.deletedAt == null,
-    canPromoteToSteer:
-      promoteSkipsCompaction ||
-      ((activeRun?.status === "preparing" || activeRun?.status === "starting") &&
-        (capabilities === undefined ||
-          capabilities.supportsActiveSteering ||
-          capabilities.supportsSteeringByInterruptRestart)) ||
-      (hasSteerableProviderTurn &&
-        (capabilities?.supportsActiveSteering === true ||
-          capabilities?.supportsSteeringByInterruptRestart === true)),
+    canSendNow,
+    canPromoteToSteer,
     promoteSkipsCompaction,
+    sendAsOneBlockedReason: !queueIsContiguous
+      ? "A notification is waiting between these messages."
+      : merged._tag === "Blocked"
+        ? merged.reason
+        : canSendNow || promoteSkipsCompaction
+          ? null
+          : !canPromoteToSteer
+            ? SEND_NOT_NOW_REASON
+            : capabilities?.supportsSteeringByInterruptRestart === true
+              ? null
+              : steerEachBlockedReason,
+    sendEachBlockedReason: canSendNow ? null : steerEachBlockedReason,
   };
+}
+
+/**
+ * The server rejects a steer into a run that a previous steer restarted, so steering a whole
+ * queue in a row only works when each message joins the running turn as it is.
+ */
+function resolveSteerEachBlockedReason(input: {
+  readonly activeRun: Run | null;
+  readonly queuedRuns: ReadonlyArray<QueuedThreadRun>;
+  readonly canPromoteToSteer: boolean;
+  readonly promoteSkipsCompaction: boolean;
+  readonly capabilities: ProviderSession["capabilities"]["turns"] | undefined;
+}): string | null {
+  const { activeRun, capabilities } = input;
+  if (!input.canPromoteToSteer || activeRun === null) return SEND_NOT_NOW_REASON;
+  if (input.promoteSkipsCompaction) return "Send them as one to skip the compaction.";
+  if (capabilities?.supportsActiveSteering !== true) {
+    return "This agent restarts its turn for every message. Send them as one instead.";
+  }
+  const joinsRunningTurn = ({ run, message, attachments }: QueuedThreadRun) =>
+    run.freshContext !== true &&
+    !isSlashCommandText(message?.text ?? "") &&
+    modelSelectionsEqual(run.modelSelection, activeRun.modelSelection) &&
+    (attachments.length === 0 || capabilities.activeSteeringAcceptsAttachments !== false);
+  return input.queuedRuns.every(joinsRunningTurn)
+    ? null
+    : "Some queued messages can't join the current turn.";
 }
 
 export function canForkProjectedAssistantItem(input: {
