@@ -50,6 +50,8 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   /** Conversational sessions only; helpers and probes leave the system prompt untouched. */
   readonly sessionSystemPromptAppend?: string;
   readonly authMethod?: AntigravityAuthMethod;
+  /** The thread's environment (T3CODE_THREAD_ID, MCP endpoint) from the ACP adapter. */
+  readonly processEnvironment?: NodeJS.ProcessEnv;
 }
 
 function parseAntigravityVersion(version: string | null | undefined) {

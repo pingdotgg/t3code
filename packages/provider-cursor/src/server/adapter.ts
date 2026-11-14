@@ -2,6 +2,7 @@ import type {
   AgentMessage,
   AgentOptions,
   InteractionUpdate,
+  LocalSubagentResourceProviderFields,
   McpServerConfig,
   RunResult,
   SDKUserMessage,
@@ -304,6 +305,15 @@ const CURSOR_AGENT_SETTING_SOURCES = [
   "plugins",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
+// Shells run inside this process, so the thread id cannot come from process.env. The local executor
+// reads shellExtraEnvProvider from these fields; patches/@cursor__sdk@1.2.0.patch exports its result.
+const threadShellEnvironment = (threadId: ThreadId) => {
+  const fields: LocalSubagentResourceProviderFields & {
+    readonly shellExtraEnvProvider: () => Record<string, string>;
+  } = { shellExtraEnvProvider: () => ({ T3CODE_THREAD_ID: threadId }) };
+  return fields;
+};
+
 export function makeCursorAgentOptions(input: {
   readonly apiKey?: string;
   readonly modelSelection: ModelSelection;
@@ -328,6 +338,7 @@ export function makeCursorAgentOptions(input: {
         enabled: policy.sandboxEnabled,
       },
       enableAgentRetries: true,
+      resourceProviderOptions: threadShellEnvironment(input.threadId),
     },
     ...(mcpServers === undefined ? {} : { mcpServers }),
   };

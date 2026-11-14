@@ -2228,6 +2228,11 @@ describe("CursorAdapterV2", () => {
       platform: "linux",
     });
     assert.deepEqual(options.mcpServers, cursorMcpServers(mcpSession));
+    const shellEnvironment = Reflect.get(
+      options.local?.resourceProviderOptions ?? {},
+      "shellExtraEnvProvider",
+    );
+    assert.deepEqual(shellEnvironment?.(), { T3CODE_THREAD_ID: threadId });
 
     const logged = JSON.stringify(CursorAgentSdk.loggedCursorAgentOptions(options));
     assert.notInclude(logged, "secret-cursor-api-key");

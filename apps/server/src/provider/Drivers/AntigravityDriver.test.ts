@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  EnvironmentId,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
@@ -141,6 +142,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     forceFileStorage: string | undefined;
     credentialKeys: ReadonlyArray<string>;
     geminiApiKey: string | undefined;
+    threadId: string | undefined;
     tempDirectory: string | undefined;
     handle: ChildProcessSpawner.ChildProcessHandle;
   }> = [];
@@ -198,6 +200,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
           blockedCredentialKeys.has(key.toUpperCase()),
         ),
         geminiApiKey: env("GEMINI_API_KEY"),
+        threadId: env("T3CODE_THREAD_ID"),
         tempDirectory:
           environment.ANTIGRAVITY_HARNESS_PATH === undefined ? undefined : env("TMPDIR"),
         handle,
@@ -372,6 +375,15 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           cwd: workspace,
         });
         const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("environment-antigravity-capabilities"),
+          threadId,
+          providerSessionId: "mcp-session-antigravity-capabilities",
+          providerInstanceId: h.instance.instanceId,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer antigravity-test-token",
+          browserToolsAvailable: false,
+        });
         const session = yield* h.instance.orchestrationAdapter.openSession({
           threadId,
           providerSessionId: ProviderSessionId.make("provider-session-antigravity-capabilities"),
@@ -379,6 +391,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           runtimePolicy,
         });
         yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+        expect(h.launches.at(-1)?.threadId).toBe(threadId);
 
         const helper = {
           fs: { readTextFile: false, writeTextFile: false },
