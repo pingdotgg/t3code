@@ -7,7 +7,7 @@ import { cn } from "~/lib/utils";
 
 const MIN_WIDTH = 160;
 const MAX_WIDTH = 560;
-const FILE_CONTENT_MIN_WIDTH = 256;
+const FILE_CONTENT_MIN_WIDTH = 160;
 
 /** A persisted, resizable file-tree column; fills the row when resizing is disabled.
  * Callers can retain a responsive initial width via defaultWidthFraction (a fraction of the row),

@@ -13,7 +13,7 @@ describe("FileExplorerPane", () => {
       view: "Files",
       defaultWidth: 256,
       minWidth: 160,
-      expected: 164,
+      expected: 256,
     },
   ])(
     "preserves the $view initial width in a 420px row",
