@@ -183,23 +183,45 @@ const { T3_CODE_ORCHESTRATION_INSTRUCTIONS } = await import(
   ).href
 );
 const instructionsOut = NodePath.join(here, "..", "src", "instructions.txt");
-// Claude also gets CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS, which the adapter does not export.
+// Claude also gets the adapter's own texts after T3_CODE_ORCHESTRATION_INSTRUCTIONS, which it
+// does not export: `T3_CODE_ORCHESTRATION_INSTRUCTIONS + CLAUDE_A + CLAUDE_B + (deviceInstructions
+// ? … : "")` in makeClaudeQueryOptions. Read the constant names from that expression, in order,
+// so a new or moved text fails `--check` instead of drifting. The device text is left out: this
+// server has no device tools, and T3 adds it only with them.
 const adapter = NodeFS.readFileSync(
   NodePath.join(server, "src/orchestration-v2/Adapters/ClaudeAdapterV2.ts"),
   "utf8",
 );
-const backgroundWait = /const CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = `((?:[^`\\]|\\.)*)`;/.exec(
+const appendExpression = /: T3_CODE_ORCHESTRATION_INSTRUCTIONS \+((?:\s*CLAUDE_\w+ \+)+)\s*\(deviceInstructions\b/.exec(
   adapter,
 );
-if (backgroundWait === null) {
-  console.error("ClaudeAdapterV2.ts no longer defines CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS.");
+if (appendExpression === null) {
+  console.error(
+    "ClaudeAdapterV2.ts no longer appends `T3_CODE_ORCHESTRATION_INSTRUCTIONS + CLAUDE_… + (deviceInstructions …)`: " +
+      "read makeClaudeQueryOptions and teach gen-tools.mjs the new shape.",
+  );
   process.exit(1);
 }
-const claudeOut = NodePath.join(here, "..", "src", "claude-background-wait.txt");
+const claudeTextNames = [...appendExpression[1].matchAll(/CLAUDE_\w+/g)].map((m) => m[0]);
+const claudeTexts = claudeTextNames.map((name) => {
+  const found = new RegExp(`const ${name} = \`((?:[^\`\\\\]|\\\\.)*)\`;`).exec(adapter);
+  if (found === null) {
+    console.error(`ClaudeAdapterV2.ts appends ${name} but defines it in a shape gen-tools.mjs cannot read.`);
+    process.exit(1);
+  }
+  return found[1].replace(/\\(.)/g, "$1");
+});
+const claudeOut = NodePath.join(here, "..", "src", "claude-instructions.txt");
+// The `next` text of a running task: the schema takes any string, so the catalog no longer holds it.
+const { ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } = await import(
+  NodeURL.pathToFileURL(NodePath.join(repo, "packages/contracts/src/orchestratorMcp.ts")).href
+);
+const runningTaskNextOut = NodePath.join(here, "..", "src", "running-task-next.txt");
 const outputs = [
   [out, text, `${catalog.length} tools`],
+  [runningTaskNextOut, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT, "running task next text"],
   [instructionsOut, T3_CODE_ORCHESTRATION_INSTRUCTIONS, "agent instructions"],
-  [claudeOut, backgroundWait[1].replace(/\\(.)/g, "$1"), "Claude background-wait text"],
+  [claudeOut, claudeTexts.join(""), `Claude texts (${claudeTextNames.join(" + ")})`],
 ];
 if (process.argv.includes("--check")) {
   for (const [file, content, what] of outputs) {

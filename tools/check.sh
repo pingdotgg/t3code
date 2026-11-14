@@ -75,6 +75,9 @@ monorepo_checks=(
   "parity"
   "codex instructions --check"
   "codex conformance"
+  "claude catalog --check"
+  "claude conformance"
+  "claude t3-replay"
 )
 
 if [ -z "${CONN_MONOREPO:-}" ]; then
@@ -110,6 +113,17 @@ else
   run "codex instructions --check" \
     node crates/conn-provider-codex/tools/gen-instructions.mjs --check
   run "codex conformance" node crates/conn-provider-codex/tools/conformance.mjs
+  run "claude catalog --check" crates/conn-provider-claude/tools/gen-catalog/run.sh --check
+  # The Claude conformance check runs the real Agent SDK in the SDK host, so it needs
+  # `npm ci` in helpers/sdk-host. Without it the check is skipped, never counted as passed.
+  if [ -d helpers/sdk-host/node_modules/@anthropic-ai/claude-agent-sdk ]; then
+    run "claude conformance" crates/conn-provider-claude/tools/conformance/run.sh
+  else
+    printf '\nhelpers/sdk-host has no node_modules: skipping claude conformance (run npm ci in helpers/sdk-host).\n'
+    skipped_tools+=("claude conformance")
+  fi
+  # Exactly the scenarios in expected-failures.txt may fail; any other change fails the check.
+  run "claude t3-replay" node crates/conn-provider-claude/tools/t3-replay/check.mjs
 fi
 # orbit-flow needs no monorepo.
 run "orbit-flow (fake provider)" \
@@ -123,7 +137,7 @@ for name in "${skipped[@]+"${skipped[@]}"}"; do
   printf 'skip %s\n' "$name" >>"$summary"
 done
 for name in "${skipped_tools[@]+"${skipped_tools[@]}"}"; do
-  printf 'skipped %s (tool not installed)\n' "$name"
+  printf 'skipped %s (a tool or npm ci is missing; see above)\n' "$name"
   printf 'skip %s\n' "$name" >>"$summary"
 done
 [ "${#failed[@]}" -eq 0 ]

@@ -94,6 +94,15 @@ thread resume after a restart, rollback (`CodexThreadRevert.ts`), fork (native, 
 - `turn.terminal` has no `failureItemOrdinal` or `retryStartedAt`: the trait has no field.
 - Capabilities switch off what is listed above.
 
+## Stop that Codex never confirms
+
+T3 (since b5b470542a) leaves the turn open and marked interrupting when Codex does not end
+it within 10 s of `turn/interrupt`, and returns `ProviderAdapterInterruptTimeoutError`; the
+engine then offers "Force stop". This crate ends the turn as interrupted after 10 s, as T3
+did before. The provider trait has no interrupt-timeout error and the engine no
+"unresponsive" Stop result, so following T3 alone would leave the turn open with no prompt
+to force it.
+
 ## Version tie
 
 The crate reads the few fields it uses by name and tolerates new ones. Unknown methods and

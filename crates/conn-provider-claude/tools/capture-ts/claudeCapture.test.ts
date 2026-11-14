@@ -677,7 +677,10 @@ describe("capture ClaudeAdapterV2 events from recorded CLI transcripts", () => {
       };
       NodeFS.mkdirSync(OUT_DIR, { recursive: true });
       NodeFS.writeFileSync(`${OUT_DIR}/${name}.json`, JSON.stringify(out, null, 2) + "\n");
-      NodeFS.writeFileSync(`${OUT_DIR}/${name}.log`, log.join("\n") + "\n");
+      // The harness log is for debugging a capture; it is no reference event, so it goes
+      // elsewhere and only when asked for.
+      const logDir = process.env.CAPTURE_LOG_DIR;
+      if (logDir) NodeFS.writeFileSync(`${logDir}/${name}.log`, log.join("\n") + "\n");
     }).pipe(
       Effect.scoped,
       Effect.provide(

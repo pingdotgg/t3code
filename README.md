@@ -8,7 +8,7 @@ the T3 server (`apps/server` in the Conn monorepo, TypeScript on Effect) with a 
 memory footprint. We reproduce behaviour at three boundaries (the client contract, `/mcp`, the
 provider protocols). We do not translate the TypeScript.
 
-**Base:** Conn `origin/main` at `b685417bb6157408d3c3b78544dfd5bbc3e67753` (2026-11-13). `conn.pin` holds it.
+**Base:** Conn `origin/main` at `b12470dcadd6320324abb28f90d224660c9c04c8` (2026-11-14). `conn.pin` holds it.
 **Contract:** `crates/conn-contract/methods.json` records the commit in which `packages/contracts`
 last changed.
 
@@ -86,6 +86,9 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 | MCP parity          | `node crates/conn-mcp/tools/parity.mjs target/release/examples/replay_server`                                                   | `/mcp` answers as the T3 server's does, on the same calls                                            |
 | Codex instructions  | `node crates/conn-provider-codex/tools/gen-instructions.mjs --check`                                                             | T3's Codex `additionalContext` text is current, byte for byte                                         |
 | Codex conformance   | `node crates/conn-provider-codex/tools/conformance.mjs`                                                                         | Codex argv, environment, every stdin frame and shutdown equal the T3 server's, on a stub `codex`      |
+| Claude catalog      | `crates/conn-provider-claude/tools/gen-catalog/run.sh --check`                                                                   | The Claude model catalog matches T3's bundled catalog                                                |
+| Claude conformance  | `crates/conn-provider-claude/tools/conformance/run.sh` (skipped, with one line, without `npm ci` in `helpers/sdk-host`)          | The `claude` CLI gets the same argv, environment and stdin as from the T3 server, on a stub CLI      |
+| T3 replay (Claude)  | `node crates/conn-provider-claude/tools/t3-replay/check.mjs`                                                                    | The T3 server's Claude transcripts: exactly the scenarios in `expected-failures.txt` fail            |
 | Orbit flow          | `node crates/conn-server/tools/orbit-flow.mjs target/release/examples/replay_server`                                            | Orbit's container flow: start, project add, session issue, launch over `/mcp`, revoke, clean stop   |
 
 `replay_server` is `conn-server` with the engine's scripted fake provider, so these checks call
@@ -378,7 +381,7 @@ to the socket.
 
 ## Status
 
-**Coverage:** 81 of 235 methods (20 of 32 streams), from the method table at startup. Every
+**Coverage:** 81 of 236 methods (20 of 33 streams), from the method table at startup. Every
 registered method checks the scope the T3 server requires (`src/scopes.rs`, its table
 generated). Every registered method but two has a run that decodes its answer with the real
 client (`tools/decode-coverage.mjs`; the rest are in `decode-coverage.pending`). The engine's
@@ -460,7 +463,7 @@ What a real Conn session hits that this server does not do:
 - **No checkpoints:** turns are not captured as git refs, so no turn diff or restore.
 - **No title model wired:** `generateTitle` keeps the client's seed title. A generator must call
   the provider the way the T3 server does.
-- **`/mcp` serves 16 of 84 T3 tools** (`crates/conn-mcp/README.md`).
+- **`/mcp` serves 16 of 87 T3 tools** (`crates/conn-mcp/README.md`).
 - **Worktree launch:** the worktree is made before the thread exists; `prepared-run.*` stays
   refused and no project setup script runs.
 - **Providers:** Claude and Codex. Their gaps are in each crate's README.
@@ -486,7 +489,7 @@ host for all sessions: about 44 MB of private memory on macOS arm64.
   proves that the `claude` CLI gets the same argv, environment and stdin from the Conn Server
   as from the T3 server. `crates/conn-provider-claude/tools/t3-replay/run.sh` replays the T3
   server's own Claude transcripts against our session (15 of 39 pass; its README lists the
-  rest with reasons). Both need `CONN_MONOREPO`.
+  rest with reasons). Both need `CONN_MONOREPO`, and `tools/check.sh` runs both.
 - **Live:** `cargo test -p conn-provider-claude live_ -- --ignored --test-threads=1` runs
   11 tests on Claude Haiku through the SDK host.
 

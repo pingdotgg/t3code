@@ -38,7 +38,8 @@ result equal, byte for byte.
   `helpers/sdk-host/index.mjs` under `node`. A missing helper is a provider error in the turn.
 - **Executable:** `ClaudeConfig.binary` as `pathToClaudeCodeExecutable` (default `claude`).
   The helper spawns it like T3: `/bin/sh` watchdog with argv0 `t3-claude`, its own process
-  group, an fd 3 pipe whose EOF stops the group, and the descendant tracker.
+  group, an fd 3 pipe whose EOF stops the group, an fd 4 launch gate, the shell entering the
+  cwd itself (`cd -P`), and the descendant tracker.
 - **Options:** model, effort and settings from the catalog; `title`; tools preset;
   `permissionMode` (+ `allowDangerouslySkipPermissions` for bypass); `includePartialMessages`;
   `promptSuggestions: false`; `sessionId` or `resume` (+ `resumeSessionAt`); `allowedTools`
@@ -138,7 +139,11 @@ Normalized in the comparison:
   `ENABLE_TOOL_SEARCH`, the delegated child's prompt cache TTL, prompt suggestions, the
   device-tool text and hook (no device tools), custom models.
 - **Process:** no Linux `systemd-run` agent scope (T3's `AgentScope`; macOS and containers
-  without systemd have none either).
+  without systemd have none either). T3 records each CLI before it opens the fd 4 gate, so a
+  restarted server can reap survivors (`ProviderProcesses`); the helper opens the gate at once
+  and nothing reaps after a restart.
+- **Wakes:** T3 tells a Claude Monitor event from finished work (`monitorEvent`) and shows a
+  subagent that Claude resumes by itself as running again. Not followed here.
 - **Interrupt** returns when the CLI acknowledges; TS waits for the terminal.
 - **Elicitation:** only field-less forms; TS fills simple forms.
 - **No `/mcp` instructions text** in this crate: the server passes it as `mcp_instructions`.
@@ -181,6 +186,7 @@ last query closed (`helpers/sdk-host/README.md`). The host process stayed at 4.6
 cargo test -p conn-provider-claude                                        # offline
 cargo test -p conn-provider-claude live_ -- --ignored --test-threads=1    # real CLI, Haiku
 tools/conformance/run.sh                                                  # vs the T3 server, no model
+node tools/t3-replay/check.mjs                                            # T3's transcripts, expected failures listed
 tools/gen-catalog/run.sh                                                  # regenerate model_catalog.json
 cargo run --release -p conn-provider-claude --example helper_memory -- <claude> <cwd> 10
 ```

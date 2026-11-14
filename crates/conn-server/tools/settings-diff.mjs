@@ -52,7 +52,8 @@ const cases = JSON.parse(
 const settingsCodec = Schema.toCodecJson(contracts.ServerSettings);
 const decodeSettings = Schema.decodeUnknownSync(settingsCodec);
 const encodeSettings = Schema.encodeSync(settingsCodec);
-const decodePatch = Schema.decodeUnknownSync(Schema.toCodecJson(contracts.ServerSettingsPatch));
+// server.updateSettings decodes ClientServerSettingsPatch (no theme defaults).
+const decodePatch = Schema.decodeUnknownSync(Schema.toCodecJson(contracts.ClientServerSettingsPatch));
 const decodeMutation = Schema.decodeUnknownSync(
   Schema.toCodecJson(contracts.ProviderInstanceMutation),
 );

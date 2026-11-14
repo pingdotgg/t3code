@@ -66,7 +66,7 @@ pub fn list_item(config: &McpConfig, caller: &Caller, shell: &Value, now: &str) 
     let title = shell["title"].as_str().unwrap_or_default();
     let (settled, settled_at) = settled(shell);
     let (snoozed, snoozed_until) = snoozed(shell, now);
-    json!({
+    let mut item = json!({
         "threadId": id,
         "projectId": shell["projectId"],
         "title": title,
@@ -80,8 +80,6 @@ pub fn list_item(config: &McpConfig, caller: &Caller, shell: &Value, now: &str) 
         "runtimeMode": shell["runtimeMode"],
         "interactionMode": shell["interactionMode"],
         "linkedPullRequest": shell.get("linkedPullRequest").cloned().unwrap_or(Value::Null),
-        "pullRequests": open_pull_requests(&shell["pullRequests"]),
-        "pullRequestCount": visible_pull_requests(&shell["pullRequests"]).count(),
         "settled": settled,
         "settledAt": settled_at,
         "snoozed": snoozed,
@@ -93,7 +91,9 @@ pub fn list_item(config: &McpConfig, caller: &Caller, shell: &Value, now: &str) 
         "itemCount": shell["visibleItemCount"].as_u64().unwrap_or(0),
         "createdAt": shell["createdAt"],
         "updatedAt": shell["updatedAt"],
-    })
+    });
+    insert_pull_requests(&mut item, &shell["pullRequests"], true);
+    item
 }
 
 /// The status a list shows: the live run's, else the latest run's (TS `listedThreadStatus`).
@@ -145,7 +145,6 @@ pub fn thread_detail(
         "runtimeMode": thread["runtimeMode"],
         "interactionMode": thread["interactionMode"],
         "linkedPullRequest": thread.get("linkedPullRequest").cloned().unwrap_or(Value::Null),
-        "pullRequestCount": visible_pull_requests(&thread["pullRequests"]).count(),
         "titleRegeneration": title_regeneration(&thread["titleRegeneration"]),
         "lastTitleRegeneration": if thread["lastTitleRegeneration"].is_object() {
             thread["lastTitleRegeneration"].clone()
@@ -169,9 +168,7 @@ pub fn thread_detail(
         "createdAt": thread["createdAt"],
         "updatedAt": projection["updatedAt"],
     });
-    if page == Page::First {
-        detail["pullRequests"] = open_pull_requests(&thread["pullRequests"]);
-    }
+    insert_pull_requests(&mut detail, &thread["pullRequests"], page == Page::First);
     detail
 }
 
@@ -184,17 +181,51 @@ fn visible_pull_requests(links: &Value) -> impl Iterator<Item = &Value> {
         .filter(|link| link["source"] != "stack-dismissed")
 }
 
-/// `threadPullRequests` (`OrchestratorMcpService.ts`): the visible links that are not merged
-/// or closed. The host is the link's authority or host, trimmed and lower case; the T3
-/// server also maps host aliases through the source control registry, which this does not.
-fn open_pull_requests(links: &Value) -> Value {
-    visible_pull_requests(links)
+/// The most open links a list item or a first read page shows (`THREAD_PULL_REQUEST_PREVIEW_LIMIT`);
+/// `list_thread_pull_requests` pages the rest.
+const PULL_REQUEST_PREVIEW_LIMIT: usize = 5;
+
+/// `threadPullRequestUpdatedAtMs`: the snapshot's update time, else the link time; 0 when the
+/// text is not a time.
+fn pull_request_updated_ms(link: &Value) -> i64 {
+    link["snapshot"]["updatedAt"]
+        .as_str()
+        .or_else(|| link["linkedAt"].as_str())
+        .and_then(crate::time::parse_iso_ms)
+        .unwrap_or(0)
+}
+
+/// `threadPullRequests` (`OrchestratorMcpService.ts`): `pullRequestCount` always. With
+/// `include_links`: the visible links that are not merged or closed, watched first and then
+/// newest first, the first five as `pullRequests`, and their number as `openPullRequestCount`.
+/// The host is the link's authority or host, trimmed and lower case; the T3 server also maps
+/// host aliases through the source control registry, which this does not.
+fn insert_pull_requests(out: &mut Value, links: &Value, include_links: bool) {
+    let visible: Vec<&Value> = visible_pull_requests(links).collect();
+    out["pullRequestCount"] = json!(visible.len());
+    if !include_links {
+        return;
+    }
+    let mut open: Vec<&Value> = visible
+        .into_iter()
         .filter(|link| {
             !matches!(
                 link["snapshot"]["state"].as_str(),
                 Some("merged" | "closed")
             )
         })
+        .collect();
+    out["openPullRequestCount"] = json!(open.len());
+    // A stable sort, as `toSorted`.
+    open.sort_by(|left, right| {
+        right["watch"]
+            .is_object()
+            .cmp(&left["watch"].is_object())
+            .then_with(|| pull_request_updated_ms(right).cmp(&pull_request_updated_ms(left)))
+    });
+    out["pullRequests"] = open
+        .into_iter()
+        .take(PULL_REQUEST_PREVIEW_LIMIT)
         .map(|link| {
             let host = link["authority"]
                 .as_str()
@@ -214,7 +245,7 @@ fn open_pull_requests(links: &Value) -> Value {
                 "watchStartedAt": watch["startedAt"].as_str().map_or(Value::Null, |s| json!(s)),
             })
         })
-        .collect()
+        .collect();
 }
 
 /// The title regeneration in flight, as `{ requestId, startedAt }`.
@@ -334,19 +365,47 @@ pub fn turn_item_text(item: &Value) -> Option<String> {
     })
 }
 
+/// The end of a text page that starts at `offset`, in UTF-16 units, as the T3 server counts
+/// text (`textPageEnd`). A cut inside a surrogate pair moves to the pair's edge, so no page
+/// holds half an emoji.
+fn text_page_end(units: &[u16], offset: usize, max_chars: usize) -> usize {
+    let end = offset.saturating_add(max_chars);
+    if end >= units.len() {
+        return end;
+    }
+    let is_high_surrogate = end
+        .checked_sub(1)
+        .and_then(|last| units.get(last))
+        .is_some_and(|unit| (0xd800..=0xdbff).contains(unit));
+    if !is_high_surrogate {
+        end
+    } else if end - 1 > offset {
+        end - 1
+    } else {
+        end + 1
+    }
+}
+
+fn utf16_slice(units: &[u16], start: usize, end: usize) -> String {
+    let end = end.min(units.len());
+    let start = start.min(end);
+    units
+        .get(start..end)
+        .map(String::from_utf16_lossy)
+        .unwrap_or_default()
+}
+
 /// `OrchestratorMcpThreadTimelineItem` for one visible row, its text cut to a page of
-/// `max_chars` characters from `offset`.
+/// `max_chars` UTF-16 units from `offset` (the T3 server's `text.slice`).
 pub fn timeline_item(row: &Value, messages: &[Value], max_chars: usize, offset: usize) -> Value {
     let item = &row["item"];
-    let text = turn_item_text(item);
-    let chars: Option<Vec<char>> = text.map(|t| t.chars().collect());
-    let (page, truncated, next) = match &chars {
-        Some(chars) => {
-            let start = offset.min(chars.len());
-            let end = (start + max_chars).min(chars.len());
-            let truncated = end < chars.len();
+    let units: Option<Vec<u16>> = turn_item_text(item).map(|t| t.encode_utf16().collect());
+    let (page, truncated, next) = match &units {
+        Some(units) => {
+            let end = text_page_end(units, offset, max_chars);
+            let truncated = units.len() > end;
             (
-                Some(chars[start..end].iter().collect::<String>()),
+                Some(utf16_slice(units, offset, end)),
                 truncated,
                 truncated.then_some(end),
             )
@@ -386,6 +445,73 @@ pub fn timeline_item(row: &Value, messages: &[Value], max_chars: usize, offset: 
     out
 }
 
+/// The size a value has on the wire: bytes of its compact JSON, as the T3 server measures
+/// (`jsonBytes`).
+pub fn json_bytes(value: &Value) -> usize {
+    value.to_string().len()
+}
+
+/// The longest length in `[low, high]` that `fits`, else `low - 1`: the T3 server's binary
+/// search (`longestFitting`), which assumes a longer cut never fits when a shorter one does not.
+fn longest_fitting(low: i64, high: i64, fits: impl Fn(i64) -> bool) -> i64 {
+    let (mut low, mut high, mut best) = (low, high, low - 1);
+    while low <= high {
+        let mid = low + (high - low) / 2;
+        if fits(mid) {
+            best = mid;
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+    best
+}
+
+/// `timelineItemWithin`: the item with its text cut, and an oversized title too, until its
+/// JSON fits `max_bytes`.
+pub fn timeline_item_within(
+    row: &Value,
+    messages: &[Value],
+    max_chars: usize,
+    offset: usize,
+    max_bytes: usize,
+) -> Value {
+    let longest_text = |title: &Value| {
+        let with_text = |chars: usize| {
+            let mut item = timeline_item(row, messages, chars, offset);
+            item["title"] = title.clone();
+            item
+        };
+        let chars = longest_fitting(2, max_chars as i64 - 1, |n| {
+            json_bytes(&with_text(n as usize)) <= max_bytes
+        });
+        with_text(chars.max(1) as usize)
+    };
+    let item = longest_text(&row["item"]["title"]);
+    let Some(title) = item["title"].as_str() else {
+        return item;
+    };
+    if json_bytes(&item) <= max_bytes {
+        return item;
+    }
+    // Half the budget for the title keeps `textOffset` pages of the text useful.
+    let units: Vec<u16> = title.encode_utf16().collect();
+    let cut_title = |chars: i64| {
+        let end = if chars <= 0 {
+            0
+        } else {
+            text_page_end(&units, 0, chars as usize)
+        };
+        json!(utf16_slice(&units, 0, end))
+    };
+    let title_chars = longest_fitting(1, units.len() as i64 - 1, |n| {
+        let mut cut = item.clone();
+        cut["title"] = cut_title(n);
+        json_bytes(&cut) * 2 <= max_bytes
+    });
+    longest_text(&cut_title(title_chars.max(0)))
+}
+
 /// The last assistant answer of a run, or its failure (TS `subagentResultForRun`).
 pub fn run_result_text(projection: &Value, run_id: &str) -> Option<String> {
     let items = projection["turnItems"].as_array()?;
@@ -404,6 +530,12 @@ pub fn run_result_text(projection: &Value, run_id: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn with_pull_requests(links: &Value, include_links: bool) -> Value {
+        let mut out = json!({});
+        insert_pull_requests(&mut out, links, include_links);
+        out
+    }
+
     #[test]
     fn pull_requests_follow_the_t3_list_rules() {
         let links = json!([
@@ -416,16 +548,163 @@ mod tests {
         // The dismissed link is hidden; the merged one counts but is not listed.
         assert_eq!(visible_pull_requests(&links).count(), 2);
         assert_eq!(
-            open_pull_requests(&links),
-            json!([{ "host": "github.com", "repository": "a/b", "number": 1, "url": "u1",
-                     "source": "agent", "state": "open", "watching": true,
-                     "watchStartedAt": "2026-01-01T00:00:00.000Z" }])
+            with_pull_requests(&links, true),
+            json!({ "pullRequestCount": 2, "openPullRequestCount": 1,
+                    "pullRequests": [{ "host": "github.com", "repository": "a/b", "number": 1,
+                     "url": "u1", "source": "agent", "state": "open", "watching": true,
+                     "watchStartedAt": "2026-01-01T00:00:00.000Z" }] })
         );
-        assert_eq!(open_pull_requests(&Value::Null), json!([]));
+        // A later page has the count only.
+        assert_eq!(
+            with_pull_requests(&links, false),
+            json!({ "pullRequestCount": 2 })
+        );
+        assert_eq!(
+            with_pull_requests(&Value::Null, true),
+            json!({ "pullRequestCount": 0, "openPullRequestCount": 0, "pullRequests": [] })
+        );
         assert_eq!(title_regeneration(&Value::Null), Value::Null);
         assert_eq!(
             title_regeneration(&json!({ "requestId": "r", "startedAt": "t", "x": 1 })),
             json!({ "requestId": "r", "startedAt": "t" })
+        );
+    }
+
+    fn link(number: u64, updated: Option<&str>, linked: &str, watched: bool) -> Value {
+        let mut link = json!({ "host": "github.com", "repository": "a/b", "number": number,
+                               "url": format!("u{number}"), "source": "agent",
+                               "linkedAt": linked, "snapshot": { "state": "open" } });
+        if let Some(updated) = updated {
+            link["snapshot"]["updatedAt"] = json!(updated);
+        }
+        if watched {
+            link["watch"] = json!({ "startedAt": "2026-01-01T00:00:00.000Z" });
+        }
+        link
+    }
+
+    fn numbers(out: &Value) -> Vec<u64> {
+        out["pullRequests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|pr| pr["number"].as_u64().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn open_pull_requests_list_watched_first_then_newest_and_keep_five() {
+        let day = |d: u32| format!("2026-02-{d:02}T00:00:00.000Z");
+        // 1: old, unwatched. 2: watched, older than 3. 3: newest by snapshot. 4: no snapshot
+        // time, so its link time counts. 5 and 6: fill the rest; 7: oldest of all.
+        let links = Value::Array(vec![
+            link(1, Some(&day(1)), &day(1), false),
+            link(2, Some(&day(2)), &day(2), true),
+            link(3, Some(&day(20)), &day(3), false),
+            link(4, None, &day(15), false),
+            link(5, Some(&day(10)), &day(10), false),
+            link(6, Some(&day(9)), &day(9), false),
+            link(7, Some("garbage"), &day(30), false),
+        ]);
+        let out = with_pull_requests(&links, true);
+        assert_eq!(numbers(&out), vec![2, 3, 4, 5, 6]);
+        assert_eq!(out["pullRequestCount"], 7);
+        assert_eq!(out["openPullRequestCount"], 7);
+        // A merged link counts as a link, not as an open one.
+        let mut more = links.as_array().unwrap().clone();
+        more.push(
+            json!({ "host": "github.com", "repository": "a/b", "number": 8, "url": "u8",
+                          "source": "agent", "snapshot": { "state": "closed" } }),
+        );
+        let out = with_pull_requests(&Value::Array(more), true);
+        assert_eq!(
+            (
+                out["pullRequestCount"].as_u64(),
+                out["openPullRequestCount"].as_u64()
+            ),
+            (Some(8), Some(7))
+        );
+        // Two watched links keep the newest first; ties keep their order.
+        let links = json!([
+            link(1, Some(&day(5)), &day(5), true),
+            link(2, Some(&day(6)), &day(6), true),
+            link(3, Some(&day(6)), &day(6), true),
+        ]);
+        assert_eq!(numbers(&with_pull_requests(&links, true)), vec![2, 3, 1]);
+    }
+
+    fn row(position: i64, kind: &str, title: Value, text: &str) -> Value {
+        json!({ "position": position, "visibility": "visible", "sourceThreadId": "t",
+                "sourceItemId": format!("i{position}"),
+                "item": { "type": kind, "runId": "r", "status": "completed", "title": title,
+                          "updatedAt": "2026-01-01T00:00:00.000Z", "text": text, "messageId": "m" } })
+    }
+
+    #[test]
+    fn text_pages_count_utf16_units_and_keep_surrogate_pairs_whole() {
+        // Three emoji: two UTF-16 units each.
+        let r = row(1, "reasoning", Value::Null, "😀😀😀");
+        let first = timeline_item(&r, &[], 3, 0);
+        // A cut after one unit of the second emoji moves back to the pair's edge.
+        assert_eq!(first["text"], "😀");
+        assert_eq!(first["nextTextOffset"], 2);
+        assert_eq!(first["textTruncated"], true);
+        let second = timeline_item(&r, &[], 3, 2);
+        assert_eq!(
+            (second["text"].as_str(), second["nextTextOffset"].as_u64()),
+            (Some("😀"), Some(4))
+        );
+        let last = timeline_item(&r, &[], 3, 4);
+        assert_eq!(
+            (last["text"].as_str(), last["textTruncated"].as_bool()),
+            (Some("😀"), Some(false))
+        );
+        // One unit is not enough for a pair: the page takes the whole pair.
+        assert_eq!(timeline_item(&r, &[], 1, 0)["text"], "😀");
+        // A read past the end is empty, not truncated.
+        let past = timeline_item(&r, &[], 3, 99);
+        assert_eq!(
+            (past["text"].as_str(), past["textTruncated"].as_bool()),
+            (Some(""), Some(false))
+        );
+    }
+
+    #[test]
+    fn longest_fitting_is_the_t3_binary_search() {
+        assert_eq!(longest_fitting(2, 100, |n| n <= 37), 37);
+        assert_eq!(longest_fitting(2, 100, |_| false), 1);
+        assert_eq!(longest_fitting(1, 0, |_| true), 0);
+        assert_eq!(longest_fitting(2, 100, |_| true), 100);
+    }
+
+    #[test]
+    fn an_oversized_item_is_cut_to_the_byte_budget() {
+        // CJK text is three bytes per character: the budget counts bytes, not characters.
+        let text = "漢".repeat(5_000);
+        let r = row(1, "assistant_message", json!("title"), &text);
+        let item = timeline_item_within(&r, &[], 5_000, 0, 2_000);
+        assert!(json_bytes(&item) <= 2_000);
+        assert!(
+            json_bytes(&item) > 1_900,
+            "the cut is the longest that fits"
+        );
+        assert_eq!(item["textTruncated"], true);
+        let kept = item["text"].as_str().unwrap().chars().count();
+        assert_eq!(item["nextTextOffset"], kept);
+        // The next page starts where this one ended.
+        assert_eq!(item["title"], "title");
+        // A huge title shares the budget: it is cut to half, and the text keeps the rest.
+        let r = row(1, "assistant_message", json!("T".repeat(10_000)), &text);
+        let item = timeline_item_within(&r, &[], 5_000, 0, 2_000);
+        assert!(json_bytes(&item) <= 2_000);
+        let title_len = item["title"].as_str().unwrap().len();
+        assert!(title_len > 500 && title_len < 1_000, "{title_len}");
+        assert!(!item["text"].as_str().unwrap().is_empty());
+        // An item that already fits stays whole.
+        let small = row(1, "assistant_message", Value::Null, "short");
+        assert_eq!(
+            timeline_item_within(&small, &[], 500, 0, 2_000),
+            timeline_item(&small, &[], 500, 0)
         );
     }
 }

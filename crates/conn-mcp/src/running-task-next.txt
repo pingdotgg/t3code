@@ -1,0 +1,1 @@
+Completion wakes this thread. Do not wait on it or poll it. Continue other work, and end your turn when none is left.

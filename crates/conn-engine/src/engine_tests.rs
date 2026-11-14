@@ -697,6 +697,47 @@ async fn a_message_sent_during_a_turn_queues_and_starts_after_it() {
     );
 }
 
+/// `thread.metadata.update` with a `continuation` queues that message in the same commit, as
+/// the agent through /mcp (T3's `metadataUpdateContinuation`, used by the worktree handoff).
+#[tokio::test(flavor = "current_thread")]
+async fn a_metadata_update_queues_its_continuation() {
+    let db = TempDb::new("metadata-continuation");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+
+    dispatch(
+        &engine,
+        json!({"type": "thread.metadata.update", "commandId": "c3", "threadId": "t1",
+               "title": "Moved", "continuation": {"messageId": "m-next", "text": "go on"}}),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["thread"]["title"], "Moved", "the update applies");
+    assert_eq!(
+        run_statuses(&p),
+        [
+            ("run:t1:1".into(), "running".into()),
+            ("run:t1:2".into(), "queued".into())
+        ],
+        "the continuation queues behind the active run"
+    );
+    let queued = p["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == "m-next")
+        .expect("the continuation message exists");
+    assert_eq!(queued["createdBy"], "agent");
+    assert_eq!(queued["creationSource"], "mcp");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn stop_holds_the_queue_until_resume() {
     let db = TempDb::new("hold");

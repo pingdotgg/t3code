@@ -4,13 +4,18 @@
 // Server does not serve. tools/bump-conn.sh calls it.
 //
 //   node tools/bump-report.mjs --before <snapshot dir> --from <old sha> --to <new sha>
-//        [--checks <file>] [--binary <conn-server>]
+//        [--checks <file>] [--binary <conn-server>] [--reference-events <file>]
 //   node tools/bump-report.mjs --tool-digests <gen-tools --all output> <out>
 //
 // --before holds the generated files as they were at the old pin, at their repository paths.
 // The files of this repository are the state after the bump. `--checks` has one line per check:
 // `ok <name>`, `FAIL <name>` or `skip <name>`. `--binary` is started once with a temp state
-// folder to read its method coverage line, then stopped. Reads CONN_MONOREPO with `git` only.
+// folder to read its method coverage line, then stopped. `--reference-events` is the output of
+// tools/reference-events.mjs after --capture. Reads CONN_MONOREPO with `git` only.
+//
+// The report starts with "What to do": the red checks, the served methods and /mcp tools whose
+// shape changed, the provider files that moved with the result of their conformance checks,
+// and pins that differ. The long lists follow.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -120,10 +125,33 @@ line(
     : `T3 server version: ${newVersion ?? "?"} (unchanged)`,
 );
 
+// Everything a person must act on, printed at the top under "What to do".
+const headerEnd = out.length;
+const todo = [];
+const act = (text) => todo.push(text);
+const CHECK_HINTS = {
+  "cargo clippy": "a changed contract type; follow the served methods below in crates/conn-server/src/methods",
+  "cargo test": "a changed contract type or a hand-kept table; read the failing test",
+  "release build": "a changed contract type",
+  "codex conformance": "what the server sends to codex differs from the T3 server; follow CodexAdapterV2",
+  "claude conformance": "what the claude CLI gets differs from the T3 server; follow ClaudeAdapterV2",
+  "claude t3-replay": "a T3 Claude transcript changed its result; see tools/t3-replay/expected-failures.txt",
+  "check-copies": "a hand-kept table differs from upstream; the check prints the value",
+  "decode coverage": "a newly served method has no decoding run; add a call to effect-client.mjs",
+  parity: "an /mcp answer differs from the T3 server",
+  "settings-diff": "the T3 server's settings rules moved; follow the printed path in settings.rs",
+};
+const checkRows = [];
+const checkState = (name) => {
+  const row = checkRows.find((r) => r.slice(r.indexOf(" ") + 1) === name);
+  return row === undefined ? "not run" : row.slice(0, row.indexOf(" ")).replace("FAIL", "FAILED").replace("ok", "passed").replace("skip", "skipped");
+};
+
 const checksFile = option("--checks");
 let failedChecks = [];
 if (checksFile && NodeFS.existsSync(checksFile)) {
   const rows = NodeFS.readFileSync(checksFile, "utf8").split("\n").filter(Boolean);
+  checkRows.push(...rows);
   const by = (kind) => rows.filter((r) => r.startsWith(`${kind} `)).map((r) => r.slice(kind.length + 1));
   failedChecks = by("FAIL");
   line();
@@ -136,6 +164,9 @@ if (checksFile && NodeFS.existsSync(checksFile)) {
         : "## Checks: green",
   );
   list("failed", failedChecks);
+  for (const name of failedChecks) {
+    act(`Red check: ${name}${CHECK_HINTS[name] ? ` (${CHECK_HINTS[name]})` : ""}. Read the log, then docs/upkeep.md "Fix a red bump".`);
+  }
   line(`  passed ${by("ok").length}${by("skip").length ? `, skipped: ${by("skip").join(", ")}` : ""}`);
 }
 
@@ -203,6 +234,11 @@ function closure(items, roots) {
   return seen;
 }
 
+// The methods this server registers, read from its sources.
+const allMethods = newMethods?.methods ?? [];
+const registered = registeredTags(new Set(allMethods.map((m) => m.tag)));
+const servedMark = (tag) => (registered.has(tag) ? `${tag}*` : tag);
+
 const oldItems = parseItems(readText(before, "crates/conn-contract/src/generated.rs"));
 const newItems = parseItems(readText(repoRoot, "crates/conn-contract/src/generated.rs"));
 const oldReport = readJson(before, "crates/conn-contract/generated/report.json");
@@ -220,18 +256,26 @@ const PARTS = [
   ["error", "error"],
   ["item", "item"],
 ];
-const tagged = (tag, row) => `${tag}${row?.stream ? " [stream]" : ""}`;
+const tagged = (tag, row) => `${servedMark(tag)}${row?.stream ? " [stream]" : ""}`;
 const addedMethods = [...newRows.keys()].filter((t) => !oldRows.has(t)).sort();
 const removedMethods = [...oldRows.keys()].filter((t) => !newRows.has(t)).sort();
 const changedMethods = [];
+/** Served methods whose shape changed, grouped by the types that moved. */
+const servedChanged = new Map();
 for (const [tag, row] of [...newRows].sort(([a], [b]) => (a < b ? -1 : 1))) {
   const old = oldRows.get(tag);
   if (old === undefined) continue;
   const parts = [];
-  if (old.stream !== row.stream) parts.push(row.stream ? "now a stream" : "no longer a stream");
+  // What moved, without the part labels: the key that groups served methods with one cause.
+  const touched = [];
+  if (old.stream !== row.stream) {
+    parts.push(row.stream ? "now a stream" : "no longer a stream");
+    touched.push("stream");
+  }
   for (const [key, label] of PARTS) {
     if ((old[key] ?? "") !== (row[key] ?? "")) {
       parts.push(`${label} ${old[key] ?? "none"} → ${row[key] ?? "none"}`);
+      touched.push(`${old[key] ?? "none"} → ${row[key] ?? "none"}`);
       continue;
     }
     if (row[key] === undefined) continue;
@@ -242,14 +286,21 @@ for (const [tag, row] of [...newRows].sort(([a], [b]) => (a < b ? -1 : 1))) {
     const gone = [...oldSet].filter((n) => !newSet.has(n));
     if (moved.length + gone.length > 0) {
       const names = [...moved, ...gone].sort();
+      touched.push(...names);
       parts.push(`${label} (${names.slice(0, 4).join(", ")}${names.length > 4 ? `, +${names.length - 4}` : ""})`);
     }
   }
-  if (parts.length) changedMethods.push(`${tagged(tag, row)}: ${parts.join("; ")}`);
+  if (parts.length) {
+    changedMethods.push(`${tagged(tag, row)}: ${parts.join("; ")}`);
+    if (registered.has(tag)) {
+      const cause = [...new Set(touched)].sort().join(", ");
+      servedChanged.set(cause, [...(servedChanged.get(cause) ?? []), tag]);
+    }
+  }
 }
 
 line();
-line(`## Contract: ${oldRows.size} → ${newRows.size} methods`);
+line(`## Contract: ${oldRows.size} → ${newRows.size} methods (* = served)`);
 if (newItems.size === 0) line("  generated.rs is missing or empty: gen-contract failed, so no method diff.");
 list("added", addedMethods.map((t) => tagged(t, newRows.get(t))));
 list("removed", removedMethods.map((t) => tagged(t, oldRows.get(t))));
@@ -257,6 +308,13 @@ if (changedMethods.length) {
   line(`  changed (${changedMethods.length}):`);
   for (const row of changedMethods.slice(0, 40)) line(`    ${row}`);
   if (changedMethods.length > 40) line(`    … ${changedMethods.length - 40} more`);
+}
+for (const [cause, tags] of servedChanged) {
+  const shown = cause.length > 160 ? `${cause.slice(0, 160)}…` : cause;
+  act(
+    `Served method${tags.length > 1 ? "s" : ""} changed shape through ${shown}: ${tags.join(", ")}. ` +
+      "Read what the T3 server sends now; the decode coverage and effect-client checks prove the client still decodes it.",
+  );
 }
 if (addedMethods.length + removedMethods.length + changedMethods.length === 0 && newItems.size) {
   line("  no method changed shape");
@@ -290,7 +348,11 @@ if (oldTools === undefined || newTools === undefined) {
 } else {
   line(`## /mcp tools: ${oldTools.size} → ${newTools.size} in the T3 server, ${served.size} served (* = served)`);
   list("added", [...newTools.keys()].filter((n) => !oldTools.has(n)).sort().map(mark));
-  list("removed", [...oldTools.keys()].filter((n) => !newTools.has(n)).sort().map(mark));
+  const removedTools = [...oldTools.keys()].filter((n) => !newTools.has(n)).sort();
+  list("removed", removedTools.map(mark));
+  for (const name of removedTools.filter((n) => served.has(n))) {
+    act(`Served /mcp tool removed upstream: ${name}. Remove it from tools.implemented and conn-mcp.`);
+  }
   const changed = [];
   for (const [name, tool] of [...newTools].sort(([a], [b]) => (a < b ? -1 : 1))) {
     const old = oldTools.get(name);
@@ -299,13 +361,16 @@ if (oldTools === undefined || newTools === undefined) {
       (k) => JSON.stringify(old[k]) !== JSON.stringify(tool[k]),
     );
     if (keys.length) changed.push(`${mark(name)} (${keys.join(", ")})`);
+    if (keys.length && served.has(name)) {
+      act(`Served /mcp tool changed: ${name} (${keys.join(", ")}). Follow OrchestratorMcpService.ts; prove it with parity.mjs and conn-mcp tests.`);
+    }
   }
   list("changed", changed);
   if (changed.length === 0 && oldTools.size === newTools.size) line("  no tool changed");
 }
 for (const [rel, what] of [
   ["crates/conn-mcp/src/instructions.txt", "agent instructions text"],
-  ["crates/conn-mcp/src/claude-background-wait.txt", "Claude background-wait text"],
+  ["crates/conn-mcp/src/claude-instructions.txt", "Claude system prompt texts (the Claude conformance check must still show no differences)"],
 ]) {
   const a = readText(before, rel);
   const b = readText(repoRoot, rel);
@@ -353,6 +418,7 @@ function scopeTables(root) {
     table,
     payload: strings("PAYLOAD_RULES"),
     providerKeys: strings("PROVIDER_SETTINGS"),
+    accessKeys: strings("ACCESS_SETTINGS"),
     inHandler: strings("IN_HANDLER_RULES"),
   };
 }
@@ -369,14 +435,21 @@ if (!oldScopes || !newScopes) {
   const [payloadAdded, payloadRemoved] = diff(oldScopes.payload, newScopes.payload);
   const [keysAdded, keysRemoved] = diff(oldScopes.providerKeys, newScopes.providerKeys);
   const [handlerAdded, handlerRemoved] = diff(oldScopes.inHandler, newScopes.inHandler);
+  const [accessAdded, accessRemoved] = diff(oldScopes.accessKeys, newScopes.accessKeys);
   const moved = changedScopes.length + payloadAdded.length + payloadRemoved.length +
-    keysAdded.length + keysRemoved.length + handlerAdded.length + handlerRemoved.length;
+    keysAdded.length + keysRemoved.length + handlerAdded.length + handlerRemoved.length +
+    accessAdded.length + accessRemoved.length;
+  if (payloadAdded.length + payloadRemoved.length > 0) {
+    act(`Payload scope rules moved (${[...payloadAdded, ...payloadRemoved].join(", ")}): follow them in scopes.rs from_payload.`);
+  }
   line(`## Scopes (${SCOPES_RS}): ${moved === 0 ? "no scope changed" : `${moved} changes`}`);
   list("scope changed", changedScopes);
   list("payload rule added (follow it in scopes.rs from_payload)", payloadAdded);
   list("payload rule removed (drop it from scopes.rs from_payload)", payloadRemoved);
   list("providers:manage settings key added", keysAdded);
   list("providers:manage settings key removed", keysRemoved);
+  list("access:write settings key added", accessAdded);
+  list("access:write settings key removed", accessRemoved);
   list("in-handler scope rule added (apply it when the method is served)", handlerAdded);
   list("in-handler scope rule removed", handlerRemoved);
 }
@@ -419,6 +492,7 @@ if (!oldCommands || !newCommands || !handled) {
   list("removed", removed.map(mark));
   const dead = [...handled].filter((t) => !newCommands.has(t)).sort();
   list("handled but gone from the contract (cargo test engine_commands fails)", dead);
+  if (dead.length) act(`Engine commands handled here but gone upstream: ${dead.join(", ")}. Follow the rename in commands.rs.`);
   list("not handled (refused)", [...newCommands].filter((t) => !handled.has(t)).sort(), 60);
 }
 
@@ -533,6 +607,17 @@ if (!monorepo) {
       ? git("diff", "--shortstat", from, to, "--", ...part.specs, ...NO_TESTS)?.trim()
       : "";
     line(`  ${part.name}: ${rows.length === 0 ? "no change" : `${rows.length} commits; ${stat}`}`);
+    const proofs = {
+      "crates/conn-provider-claude": ["claude conformance", "claude t3-replay"],
+      "crates/conn-provider-codex": ["codex conformance"],
+      "crates/conn-provider-support": ["claude conformance", "codex conformance"],
+    }[part.name];
+    if (proofs && rows.length > 0) {
+      act(
+        `${part.name} follows ${rows.length} upstream commits (listed below). Read each; a change in what the CLI is sent must show in: ` +
+          proofs.map((name) => `${name} ${checkState(name)}`).join(", ") + ".",
+      );
+    }
     for (const row of rows.slice(0, MAX_SUBJECTS)) line(`    ${row}`);
     if (rows.length > MAX_SUBJECTS) line(`    … ${rows.length - MAX_SUBJECTS} more (git log ${range.split("..").map(short).join("..")} -- <the part's files>)`);
   }
@@ -561,23 +646,47 @@ if (!monorepo) {
     const versions = text ? [...new Set([...text.matchAll(/version: "([^"]+)"/g)].map((m) => m[1]))] : [];
     return versions.length ? versions.join(", ") : "?";
   };
-  const rustPin = (rel, re) => re.exec(readText(repoRoot, rel) ?? "")?.[1] ?? "?";
-  const rustSdk = rustPin("crates/conn-provider-claude/src/launch.rs", /AGENT_SDK_VERSION: &str = "([^"]+)"/);
-  const rustCodex = rustPin("crates/conn-provider-codex/src/client.rs", /TESTED_CLI_VERSION: &str = "([^"]+)"/);
+  const hostSdk = readJson(repoRoot, "helpers/sdk-host/package.json")?.dependencies?.["@anthropic-ai/claude-agent-sdk"] ?? "?";
+  const rustCodex = /TESTED_CLI_VERSION: &str = "([^"]+)"/.exec(readText(repoRoot, "crates/conn-provider-codex/src/client.rs") ?? "")?.[1] ?? "?";
+  const sdkFrom = sdk(from);
   const sdkTo = sdk(to);
+  const codexFrom = codex(from);
   const codexTo = codex(to);
+  const sdkDiffers = !sdkTo.includes(`lock ${hostSdk})`);
   line("  Pins:");
-  line(`    Claude Agent SDK: ${sdk(from)} → ${sdkTo}; conn-provider-claude pins ${rustSdk}` +
-    (sdkTo.includes(`lock ${rustSdk})`) ? "" : "  ← differs"));
-  line(`    Codex CLI (managed): ${codex(from)} → ${codexTo}; conn-provider-codex tested ${rustCodex}` +
-    (codexTo.split(", ").includes(rustCodex) ? "" : "  ← differs"));
+  line(`    Claude Agent SDK: T3 ${sdkFrom} → ${sdkTo}; helpers/sdk-host pins ${hostSdk}${sdkDiffers ? "  ← differs" : ""}`);
+  if (sdkDiffers) {
+    act(`Claude Agent SDK: T3 locks ${sdkTo}, helpers/sdk-host pins ${hostSdk}. Move helpers/sdk-host (package.json, npm install), rerun gen-catalog, the Claude conformance check, the T3 replay and --capture.`);
+  }
+  // T3 manages one Codex version; the crate names the newest version whose schema was checked.
+  line(`    Codex CLI (T3 managed): ${codexFrom} → ${codexTo}${codexFrom !== codexTo ? "  ← moved" : ""}; conn-provider-codex TESTED_CLI_VERSION ${rustCodex}`);
+  if (codexFrom !== codexTo) {
+    act(`T3 moved its managed Codex CLI ${codexFrom} → ${codexTo}. Check the new app-server schema against conn-provider-codex and update TESTED_CLI_VERSION.`);
+  }
+}
+
+// ---- Reference events --------------------------------------------------------------------
+
+const referenceFile = option("--reference-events");
+line();
+if (referenceFile === undefined) {
+  line("## Reference events (provider testdata/ts): not regenerated (bump-conn.sh --capture)");
+} else {
+  const rows = NodeFS.existsSync(referenceFile)
+    ? NodeFS.readFileSync(referenceFile, "utf8").split("\n").filter(Boolean)
+    : [];
+  const moved = rows.filter((r) => /^(changed|added|removed) /.test(r));
+  line(`## Reference events (provider testdata/ts): ${rows.length === 0 ? "capture failed (see the log)" : `${moved.length} changed`}`);
+  for (const row of moved) line(`  ${row}`);
+  if (moved.length) {
+    act(`${moved.length} reference event files changed (listed under Reference events). cargo test replays the providers against them; read the diff before you commit.`);
+  }
 }
 
 // ---- Coverage ----------------------------------------------------------------------------
 
 line();
-const all = newMethods?.methods ?? [];
-const registered = registeredTags(new Set(all.map((m) => m.tag)));
+const all = allMethods;
 const missing = all.filter((m) => !registered.has(m.tag));
 const servedCount = all.length - missing.length;
 const binaryLine = await binaryCoverage(option("--binary"));
@@ -602,6 +711,14 @@ for (const [area, tags] of [...areas].sort(([a], [b]) => (a < b ? -1 : 1))) {
 const servedRemoved = registeredTags(new Set(removedMethods));
 if (servedRemoved.size) {
   line(`  served but removed from the contract (the server panics at start): ${[...servedRemoved].join(", ")}`);
+  act(`Served methods removed from the contract (the server panics at start): ${[...servedRemoved].join(", ")}.`);
 }
 
-console.log(out.join("\n"));
+const summary = [
+  "",
+  "## What to do",
+  ...(todo.length === 0
+    ? ["  Nothing beyond reading the lists below: no red check, no served shape change, no provider file moved."]
+    : todo.map((t) => `  - ${t}`)),
+];
+console.log([...out.slice(0, headerEnd), ...summary, ...out.slice(headerEnd)].join("\n"));

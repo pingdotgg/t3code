@@ -50,14 +50,14 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 21 checks with `CONN_MONOREPO` set.
+`main` is in a working state. `tools/check.sh` passes 24 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
 
 | Part | State |
 | --- | --- |
-| RPC methods | 81 of 235 served; 79 have a run that the real client's decoders accept |
+| RPC methods | 81 of 236 served; 80 have a run that the real client's decoders accept |
 | Engine commands | 41 of 56 |
-| HTTP routes | 13 of 55 |
-| `/mcp` tools | 16 of 84 |
+| HTTP routes | 13 of 57 |
+| `/mcp` tools | 16 of 87 |
 | Providers | Claude and Codex, of the 10 the T3 server has without Pi |
 
 Proven:
@@ -169,7 +169,7 @@ remembering: an own server brings its own defects.
    old snippet rule).
 6. **Features.** `pullRequests.*` (34), `sourceControl.*` and `git.*`; the Conn-only methods
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest
-   share); 68 more `/mcp` tools; Codex subagents and MCP elicitation; worktree setup scripts
+   share); 71 more `/mcp` tools; Codex subagents and MCP elicitation; worktree setup scripts
    the T3 way (typed into a thread terminal, with a completion marker).
 7. **Small leftovers.** Limits on terminal environment variables; string caps on
    `assets.createUrl`; finished `git` children stay unreaped while the server runs;
@@ -178,10 +178,12 @@ remembering: an own server brings its own defects.
    own blocking thread).
 8. **Proofs.** The recorder with the real web client and a live model; live Codex; the Linux
    pass; Orbit in a scratch container on Beast; desktop and mobile in a VM.
-9. **Upkeep.** Hook the provider capture tools into `tools/bump-conn.sh --capture`; wire the
-   bump into the nightly sync (its script is outside the Conn repository; `FORK.md` there says
-   the Grok bot runs it); add the Claude conformance check and the T3 replay to
-   `tools/check.sh` with a list of expected failures.
+9. **Upkeep.** Wire the bump into the nightly sync (its script is outside the Conn
+   repository; `FORK.md` there says the Grok bot runs it). The first real bump
+   (2026-11-14, `docs/upkeep.md` "Bumps") took about four hours. The provider gaps it left:
+   Codex Stop with "Force stop" (needs an interrupt-timeout error in the provider trait and
+   an unresponsive Stop in the engine), reaping a recorded Claude CLI after a restart, Claude
+   Monitor wakes, `workState: "waiting_for_children"` in `/mcp`.
 
 ### Where the review reports are
 
@@ -232,8 +234,8 @@ The check is the one to trust; several review findings did not hold.
 2. `eval "$(tools/conn-checkout --source <conn git dir or URL>)"` gives a Conn checkout at
    `conn.pin` as `CONN_MONOREPO`.
 3. `(cd helpers/sdk-host && npm ci)`, then `tools/check.sh`. It must pass before any change.
-4. Move the pin with `tools/bump-conn.sh <commit>` and read its report (`docs/upkeep.md`).
-   Expect a large report: the pin is from 2026-11-13.
+4. Move the pin with `tools/bump-conn.sh <commit> --capture` and read "What to do" at the
+   top of its report (`docs/upkeep.md`).
 
 CI: on 2026-11-13 the test step passed on Linux in one run and failed in the next on the
 terminal byte-window test, which is fixed since. The rust job now installs the SDK host first

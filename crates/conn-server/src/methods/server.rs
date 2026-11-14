@@ -205,6 +205,9 @@ pub fn server_config(environment: &Environment, providers: Vec<Value>) -> Result
     config.scratch_workspace_root =
         Some(environment.state_dir.join("scratch").display().to_string());
     crate::environment::config_flags(&mut config);
+    // The host's clock when the config is built, so clients count live times against it
+    // (T3 `ws.ts`, 2d80cb6bc7). Only a subscription's first snapshot is fresh, as in T3.
+    config.server_time = Some(iso8601(auth::now_ms()));
     Ok(conn_contract::to_json(&config))
 }
 
@@ -357,6 +360,12 @@ mod tests {
         let config = server_config(&env, Vec::new()).unwrap();
         assert!(config["keybindings"].as_array().unwrap().len() > 10);
         assert_eq!(config["auth"]["policy"], "remote-reachable");
+        let before = iso8601(auth::now_ms());
+        let server_time = config["serverTime"].as_str().unwrap();
+        assert!(
+            server_time.len() == 24 && server_time <= before.as_str(),
+            "serverTime is the host clock as an ISO time: {server_time}"
+        );
         let mut stream = config_stream(env.clone(), config);
         assert_eq!(stream.recv().await.unwrap().unwrap()["type"], "snapshot");
         env.settings

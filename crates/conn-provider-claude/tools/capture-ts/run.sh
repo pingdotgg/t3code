@@ -20,4 +20,4 @@ CAPTURE_CLI_DIR="$(cd "$CAPTURE_CLI_DIR" && pwd)"
 trap 'rm -f "$copy"' EXIT
 cp "$here/claudeCapture.test.ts" "$copy"
 cd "$repo/apps/server"
-vp test run src/orchestration-v2/Adapters/claudeCapture.test.ts
+node "$repo/node_modules/vite-plus/bin/vp" test run src/orchestration-v2/Adapters/claudeCapture.test.ts

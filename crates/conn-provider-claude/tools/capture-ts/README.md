@@ -9,7 +9,8 @@ CONN_MONOREPO=/path/to/conn ./run.sh     # required; there is no default
 ```
 
 Variables: `CONN_MONOREPO` (monorepo root), `CAPTURE_CLI_DIR` (default `testdata/cli`),
-`CAPTURE_OUT_DIR` (default `testdata/ts`; point it elsewhere to diff before overwriting).
+`CAPTURE_OUT_DIR` (default `testdata/ts`; point it elsewhere to diff before overwriting),
+`CAPTURE_LOG_DIR` (unset: no harness logs; set it to keep one `<name>.log` per transcript).
 
 `run.sh` copies `claudeCapture.test.ts` into the monorepo's `apps/server/src/orchestration-v2/Adapters/`
 (its relative imports resolve only there), runs it with `vp test run`, and always deletes the copy.

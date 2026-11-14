@@ -351,6 +351,63 @@ fn a_request_codex_resolved_itself_gets_no_late_answer() {
     assert!(mapper.respond(&answer).is_err());
 }
 
+/// A question with an empty id shows as `question-<n>`; the answer goes back under Codex's own
+/// id (`nativeQuestionIds` in T3's CodexAdapterV2). A padded id shows trimmed.
+#[test]
+fn answers_go_back_under_codexs_own_question_ids() {
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    let input = turn_input(&ts["startTurn"][0]);
+    let mut mapper = Mapper::new(FixedEnv::default());
+    mapper.begin_turn("th", &input);
+    let _ = mapper.turn_start_result("th", &json!({"turn": {"id": "tu", "startedAt": null}}));
+    let request = json!({"method": "item/tool/requestUserInput", "id": 7,
+        "params": {"threadId": "th", "turnId": "tu", "itemId": "q", "questions": [
+            {"id": "", "header": "H", "question": "Q1", "options": []},
+            {"id": " pad ", "header": "H", "question": "Q2", "options": []},
+            {"id": "plain", "header": "H", "question": "Q3", "options": []}]}});
+    let outs = mapper.handle(Inbound::from_value(request));
+    let event = |kind: &str, key: &str| {
+        outs.iter()
+            .find_map(|o| match o {
+                Out::Event(e) => {
+                    let v = serde_json::to_value(e).unwrap();
+                    (v["type"] == kind).then(|| v[key].clone())
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
+    let request = event("runtime_request.updated", "runtimeRequest");
+    let item = event("turn_item.updated", "turnItem");
+    let shown: Vec<&str> = item["questions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|q| q["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(shown, ["question-1", "pad", "plain"], "ids the client sees");
+    let answer = RuntimeRequestResponse {
+        request_id: request["id"].as_str().unwrap().into(),
+        decision: None,
+        feedback: None,
+        answers: from_json(json!({"question-1": "a", "pad": "b", "plain": "c", "other": "d"})).ok(),
+    };
+    let outs = mapper.respond(&answer).unwrap();
+    let reply: Value = outs
+        .iter()
+        .find_map(|o| match o {
+            Out::Write(line) => serde_json::from_str(line).ok(),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        reply["result"]["answers"],
+        json!({"": {"answers": ["a"]}, " pad ": {"answers": ["b"]}, "plain": {"answers": ["c"]}}),
+        "answers keyed by Codex's ids; unknown ids dropped"
+    );
+}
+
 /// Hundreds of turns of every kind leave the mapper's collections at a fixed size: messages,
 /// reasoning, plans, commands, approvals, usage, interrupts and failures.
 #[test]

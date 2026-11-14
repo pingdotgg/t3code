@@ -30,6 +30,12 @@ pub fn round_trip(
             go::<conn_contract::AuthAccessStreamSnapshotEvent>(value)
         }
         "AuthAccessTokenResult" => go::<conn_contract::AuthAccessTokenResult>(value),
+        "AuthApproveConnectDeviceInput" => {
+            go::<conn_contract::AuthApproveConnectDeviceInput>(value)
+        }
+        "AuthApproveConnectDeviceResult" => {
+            go::<conn_contract::AuthApproveConnectDeviceResult>(value)
+        }
         "AuthBrowserSessionRequest" => go::<conn_contract::AuthBrowserSessionRequest>(value),
         "AuthBrowserSessionResult" => go::<conn_contract::AuthBrowserSessionResult>(value),
         "AuthClientMetadata" => go::<conn_contract::AuthClientMetadata>(value),
@@ -41,6 +47,8 @@ pub fn round_trip(
         "AuthClientSessionRevokeResult" => {
             go::<conn_contract::AuthClientSessionRevokeResult>(value)
         }
+        "AuthConnectDevice" => go::<conn_contract::AuthConnectDevice>(value),
+        "AuthConnectDeviceRequest" => go::<conn_contract::AuthConnectDeviceRequest>(value),
         "AuthCreatePairingCredentialInput" => {
             go::<conn_contract::AuthCreatePairingCredentialInput>(value)
         }
@@ -76,6 +84,10 @@ pub fn round_trip(
         "AuthPairingLink" => go::<conn_contract::AuthPairingLink>(value),
         "AuthPairingLinkRevokeResult" => go::<conn_contract::AuthPairingLinkRevokeResult>(value),
         "AuthRevokeClientSessionInput" => go::<conn_contract::AuthRevokeClientSessionInput>(value),
+        "AuthRevokeConnectDeviceInput" => go::<conn_contract::AuthRevokeConnectDeviceInput>(value),
+        "AuthRevokeConnectDeviceResult" => {
+            go::<conn_contract::AuthRevokeConnectDeviceResult>(value)
+        }
         "AuthRevokePairingLinkInput" => go::<conn_contract::AuthRevokePairingLinkInput>(value),
         "AuthSessionState" => go::<conn_contract::AuthSessionState>(value),
         "AuthTokenExchangeRequest" => go::<conn_contract::AuthTokenExchangeRequest>(value),
@@ -99,6 +111,9 @@ pub fn round_trip(
         }
         "EnvironmentCloudRelayConfigResult" => {
             go::<conn_contract::EnvironmentCloudRelayConfigResult>(value)
+        }
+        "EnvironmentConnectApprovalPendingError" => {
+            go::<conn_contract::EnvironmentConnectApprovalPendingError>(value)
         }
         "EnvironmentConnectReachability" => {
             go::<conn_contract::EnvironmentConnectReachability>(value)
@@ -587,6 +602,10 @@ pub fn round_trip(
         "OrchestrationV2ThreadTitles" => go::<conn_contract::OrchestrationV2ThreadTitles>(value),
         "OrchestrationV2ThreadTranscript" => {
             go::<conn_contract::OrchestrationV2ThreadTranscript>(value)
+        }
+        "OrchestrationV2ThreadVisit" => go::<conn_contract::OrchestrationV2ThreadVisit>(value),
+        "OrchestrationV2ThreadVisitJson" => {
+            go::<conn_contract::OrchestrationV2ThreadVisitJson>(value)
         }
         "OrchestrationV2ToolCapabilities" => {
             go::<conn_contract::OrchestrationV2ToolCapabilities>(value)
@@ -1820,6 +1839,15 @@ pub fn round_trip(
         "rpc::pull_requests::submit_review::Success" => {
             go::<conn_contract::rpc::pull_requests::submit_review::Success>(value)
         }
+        "rpc::pull_requests::subscribe_linked_thread_refreshes::Error" => {
+            go::<conn_contract::rpc::pull_requests::subscribe_linked_thread_refreshes::Error>(value)
+        }
+        "rpc::pull_requests::subscribe_linked_thread_refreshes::Item" => {
+            go::<conn_contract::rpc::pull_requests::subscribe_linked_thread_refreshes::Item>(value)
+        }
+        "rpc::pull_requests::subscribe_linked_thread_refreshes::Payload" => go::<
+            conn_contract::rpc::pull_requests::subscribe_linked_thread_refreshes::Payload,
+        >(value),
         "rpc::pull_requests::subscribe_refreshes::Error" => {
             go::<conn_contract::rpc::pull_requests::subscribe_refreshes::Error>(value)
         }

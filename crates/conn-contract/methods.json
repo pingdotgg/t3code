@@ -1,5 +1,5 @@
 {
-  "commit": "415dd488bac9dee7f7d2a869595f3c8f1da26863",
+  "commit": "b12470dcadd6320324abb28f90d224660c9c04c8",
   "methods": [
     {
       "tag": "agentSessions.import",
@@ -659,6 +659,11 @@
     {
       "tag": "pullRequests.submitReview",
       "stream": false,
+      "origin": "official"
+    },
+    {
+      "tag": "pullRequests.subscribeLinkedThreadRefreshes",
+      "stream": true,
       "origin": "official"
     },
     {
