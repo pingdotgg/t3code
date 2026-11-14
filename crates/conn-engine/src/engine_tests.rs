@@ -1885,6 +1885,85 @@ fn paused_clock() -> Arc<dyn crate::Clock> {
     Arc::new(PausedClock(tokio::time::Instant::now()))
 }
 
+/// Paused tokio time plus a wall-clock jump, as a container sees on wake after Orbit froze
+/// it with a still monotonic clock.
+struct JumpClock {
+    start: tokio::time::Instant,
+    jumped: std::sync::atomic::AtomicU64,
+}
+
+impl crate::Clock for JumpClock {
+    fn now_millis(&self) -> u64 {
+        u64::try_from(self.start.elapsed().as_millis())
+            .unwrap_or(u64::MAX)
+            .saturating_add(self.jumped.load(std::sync::atomic::Ordering::SeqCst))
+    }
+}
+
+impl JumpClock {
+    fn jump(&self, by: Duration) {
+        let by = u64::try_from(by.as_millis()).unwrap_or(u64::MAX);
+        self.jumped
+            .fetch_add(by, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// An engine with T3's idle limits (30 minutes, a 4-hour hold) on a [`JumpClock`].
+async fn engine_on_jump_clock(name: &str, first: &str) -> (TempDb, SqliteEngine, Arc<JumpClock>) {
+    let db = TempDb::new(name);
+    let clock = Arc::new(JumpClock {
+        start: tokio::time::Instant::now(),
+        jumped: std::sync::atomic::AtomicU64::new(0),
+    });
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.clock = clock.clone();
+    config.idle_session = Some(Duration::from_secs(30 * 60));
+    config.idle_max_hold = Duration::from_secs(4 * 60 * 60);
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", first)).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    (db, engine, clock)
+}
+
+/// The idle release reads the engine's wall clock when the reaper wakes (every 15 minutes
+/// of monotonic time). After a wall jump with a still monotonic clock, the jump counts as
+/// idle time: 10 minutes plus one 15-minute reaper wait keeps the session; 2 hours or
+/// 3 days release it at that wait. T3 waits on `Effect.sleep(idleTimeoutMs)`
+/// (`ProviderSessionManager.ts`), monotonic, so there it would wait 30 minutes after the
+/// thaw. With a monotonic clock that ran on, both release at the thaw.
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn an_idle_session_after_a_wall_clock_jump() {
+    for (jump, live) in [(10 * 60, 1), (2 * 3600, 0), (3 * 86_400, 0)] {
+        let (_db, engine, clock) = engine_on_jump_clock("idle-jump", "first").await;
+        clock.jump(Duration::from_secs(jump));
+        tokio::time::sleep(Duration::from_secs(15 * 60 + 1)).await;
+        assert_eq!(engine.inner().live_count(), live, "+{jump}s");
+    }
+}
+
+/// Background work holds an idle session up to 4 hours from the first idle check that finds
+/// it, by the wall clock, as T3's `pinnedSinceMs` (`Clock.currentTimeMillis`). A 2-hour
+/// jump starts the hold; a 3-day jump after it ends the hold at the next reaper wait.
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn background_work_holds_through_a_jump_until_the_wall_clock_passes_the_hold() {
+    let (_db, engine, clock) = engine_on_jump_clock("idle-hold-jump", "background-hold").await;
+    clock.jump(Duration::from_secs(10 * 60));
+    tokio::time::sleep(Duration::from_secs(15 * 60 + 1)).await;
+    assert_eq!(engine.inner().live_count(), 1, "+10 minutes: not idle yet");
+    clock.jump(Duration::from_secs(2 * 3600));
+    tokio::time::sleep(Duration::from_secs(15 * 60)).await;
+    assert_eq!(engine.inner().live_count(), 1, "+2 hours: held");
+    clock.jump(Duration::from_secs(3 * 86_400));
+    tokio::time::sleep(Duration::from_secs(15 * 60)).await;
+    assert_eq!(engine.inner().live_count(), 0, "+3 days: the hold is over");
+}
+
 #[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn an_idle_session_closes_and_the_next_turn_resumes_it() {
     let db = TempDb::new("idle");
