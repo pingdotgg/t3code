@@ -22,12 +22,8 @@ import {
   resolveThreadActivityTimestamp,
 } from "@t3tools/client-runtime/state/thread-sort";
 import { type EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import {
-  formatWorkingDurationLabel,
-  resolveThreadProviderStack,
-} from "@t3tools/client-runtime/state/models";
+import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { toServerClock } from "@t3tools/client-runtime/clock";
 import {
   AuthOrchestrationOperateScope,
   type ContextMenuSource,
@@ -44,18 +40,13 @@ import {
   CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
-  CircleDashedIcon,
-  CircleDotDashedIcon,
   ClockIcon,
   GitBranchIcon,
-  MessageCircleQuestionIcon,
   PinIcon,
   PinOffIcon,
-  ShieldQuestionIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
-  UserRoundIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -76,12 +67,11 @@ import { useOpenPrLink } from "../../lib/openPullRequestLink";
 import { useUiStateStore } from "../../uiStateStore";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { useNowMinute } from "../../hooks/useNowMinute";
-import { useNowSecond } from "../../hooks/useNowSecond";
 import { vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
 import { useSidebarLinkedIssueState } from "../../state/issues";
 import { useEnvironmentQuery } from "../../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { formatRelativeTime, parseTimestampDate } from "../../timestampFormat";
+import { formatRelativeTime } from "../../timestampFormat";
 import type { SidebarThreadSummary } from "../../types";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
@@ -90,12 +80,13 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
   animateSidebarLayoutChanges,
   hasUnseenCompletion,
+  isSidebarThreadWoke,
   resolveSidebarRowAccessibility,
   type SidebarDropVerb,
   resolveSidebarRowStatus,
+  resolveSidebarTopStatus,
   resolveThreadLastVisitedAt,
   shouldRecedeSidebarThread,
-  resolveWorkingStartedAt,
   useRetainedValue,
   withoutRemovedCheckout,
   useSidebarRowSubscriptionLease,
@@ -120,7 +111,8 @@ import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "../chat/workspaceFileDrop";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
-import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
+import { shouldShowInstanceBadge } from "../../providerInstances";
+import type { SidebarProviderEntry } from "./sidebarProviderEntries";
 import { useThreadRunningTerminalIds } from "../../state/terminalSessions";
 import { InlineButton } from "../ui/button";
 import { Kbd } from "../ui/kbd";
@@ -132,21 +124,8 @@ import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 import { ThreadDetailsIssueRows } from "../chat/ThreadDetailsIssueRows";
 import { IssueGlyph, issueStatePresentation } from "../issue/issuePresentation";
+import { ThreadTopStatusLabel, TopStatusIcon } from "./ThreadTopStatus";
 
-// The fields thread rows show. Provider status pushes refresh `checkedAt`,
-// status and auth on every provider; leaving those out keeps each
-// environment's map, and every memoized row, stable across them.
-export type SidebarProviderEntry = Pick<
-  ProviderInstanceEntry,
-  | "instanceId"
-  | "driverKind"
-  | "enabled"
-  | "displayName"
-  | "accentColor"
-  | "acpRegistryAgentId"
-  | "acpRegistryIconUrl"
-  | "models"
->;
 function compactSidebarTimeLabel(timestamp: string, nowMs: number, resolve: MessageResolver) {
   const parts = formatRelativeTime(timestamp, nowMs, resolve);
   if (parts === null) return "";
@@ -155,7 +134,7 @@ function compactSidebarTimeLabel(timestamp: string, nowMs: number, resolve: Mess
 
 // Subscribes to the minute tick itself, so only the label re-renders each
 // minute. The minute is passed as the clock so it is the formatter's input.
-function RelativeTimeLabel(props: { timestamp: string | null }) {
+export function RelativeTimeLabel(props: { timestamp: string | null }) {
   const nowMinute = useNowMinute();
   const m = useMessages();
   return props.timestamp === null
@@ -174,27 +153,6 @@ export function JumpHintBadge(props: { label: string }) {
 export const JUMP_HINT_SLOT_CLASS_NAME =
   "[&>:not([data-jump-hint])]:invisible [&>:not([data-jump-hint])]:absolute";
 
-function WorkingDuration(props: { environmentId: EnvironmentId; startedAt: string | null }) {
-  const startedMs = props.startedAt !== null ? Date.parse(props.startedAt) : Number.NaN;
-  if (Number.isNaN(startedMs)) return null;
-  return <WorkingDurationLabel environmentId={props.environmentId} startedMs={startedMs} />;
-}
-
-// Self-ticking so only this span re-renders each second, not the whole row;
-// the shared tick lands every working row's update in the same frame.
-function WorkingDurationLabel(props: { environmentId: EnvironmentId; startedMs: number }) {
-  const nowMs = useNowSecond();
-  const messages = useMessages();
-  return (
-    <span className="tabular-nums">
-      {formatWorkingDurationLabel(
-        toServerClock(props.environmentId, nowMs) - props.startedMs,
-        messages,
-      )}
-    </span>
-  );
-}
-
 function terminalProcessLabel(count: number, resolve: MessageResolver): string {
   return resolve(
     msg(
@@ -204,7 +162,7 @@ function terminalProcessLabel(count: number, resolve: MessageResolver): string {
   );
 }
 
-function SidebarProviderStack(props: {
+export function SidebarProviderStack(props: {
   thread: SidebarThreadSummary;
   providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
 }) {
@@ -248,6 +206,14 @@ function SidebarProviderStack(props: {
         );
       })}
       <span className="relative z-10 inline-flex items-center">{current}</span>
+    </span>
+  );
+}
+
+export function SidebarRemoteMachineIcon(props: { kind: EnvironmentMachineKind }) {
+  return (
+    <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+      <EnvironmentMachineIcon aria-hidden kind={props.kind} className="size-3.5" />
     </span>
   );
 }
@@ -556,22 +522,6 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
   ),
 };
 
-const TOP_STATUS_ICONS = {
-  working: CircleDashedIcon,
-  waiting: CircleDotDashedIcon,
-  input: MessageCircleQuestionIcon,
-  request: UserRoundIcon,
-  approval: ShieldQuestionIcon,
-  failed: CircleAlertIcon,
-  done: CircleCheckIcon,
-  woke: AlarmClockIcon,
-} as const;
-
-function TopStatusIcon(props: { icon: keyof typeof TOP_STATUS_ICONS; className: string }) {
-  const Icon = TOP_STATUS_ICONS[props.icon];
-  return <Icon aria-hidden className={cn("shrink-0", props.className)} />;
-}
-
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   // "folder" is a one-line row inside a boring sidebar project folder;
@@ -767,12 +717,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarRowStatus({ ...thread, lastVisitedAt });
-  const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
-  const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
-  const isWoke =
-    wokeAtDate !== null &&
-    (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
-    thread.settledOverride !== "settled";
+  const isWoke = isSidebarThreadWoke({
+    wokeAt: props.wokeAt,
+    lastVisitedAt,
+    settledOverride: thread.settledOverride,
+  });
   const shouldRecede = shouldRecedeSidebarThread({
     status,
     isUnread,
@@ -780,67 +729,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     isActive: props.isActive,
     isSelected,
   });
-  const topStatus =
-    status === "preparing" || status === "working"
-      ? {
-          label:
-            status === "preparing"
-              ? gt("Setting up")
-              : thread.goal?.status === "active"
-                ? gt("Goal", { $context: "thread status: working on a goal" })
-                : gt("Working", { $context: "thread status" }),
-          icon: "working" as const,
-          className: "text-info-foreground",
-        }
-      : status === "waiting"
-        ? {
-            label: gt("Waiting", { $context: "thread status" }),
-            icon: "waiting" as const,
-            className: "text-muted-foreground",
-          }
-        : status === "approval"
-          ? {
-              label: gt("Approval", { $context: "thread status: needs approval" }),
-              icon: "approval" as const,
-              className: "text-warning-foreground",
-            }
-          : status === "input"
-            ? {
-                label: gt("Input", { $context: "thread status: needs user input" }),
-                icon: "input" as const,
-                className: "text-indigo-600 dark:text-indigo-300",
-              }
-            : status === "request"
-              ? {
-                  label: gt("Request", { $context: "thread status: guest request" }),
-                  icon: "request" as const,
-                  className: "text-guest-foreground",
-                }
-              : status === "limited"
-                ? {
-                    label: gt("Limited", { $context: "thread status: usage limited" }),
-                    icon: "failed" as const,
-                    className: "text-warning-foreground",
-                  }
-                : status === "failed"
-                  ? {
-                      label: gt("Failed", { $context: "thread status" }),
-                      icon: "failed" as const,
-                      className: "text-error-foreground",
-                    }
-                  : isWoke
-                    ? {
-                        label: gt("Woke", { $context: "thread status: woke from snooze" }),
-                        icon: "woke" as const,
-                        className: "text-warning-foreground",
-                      }
-                    : isUnread
-                      ? {
-                          label: gt("Done", { $context: "thread status" }),
-                          icon: "done" as const,
-                          className: "text-success-foreground",
-                        }
-                      : null;
+  const topStatus = resolveSidebarTopStatus({
+    status,
+    goalActive: thread.goal?.status === "active",
+    isWoke,
+    isUnread,
+  });
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
@@ -1258,9 +1152,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const remoteMachineIcon =
     isRemote && !showsScratchMachine ? (
-      <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
-        <EnvironmentMachineIcon aria-hidden kind={props.environmentMachine} className="size-3.5" />
-      </span>
+      <SidebarRemoteMachineIcon kind={props.environmentMachine} />
     ) : null;
   const diff = latestRunDiff(thread);
   // Only the trailing icons would remain, so the row moves them to the title line instead.
@@ -1443,7 +1335,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         )}
                       >
                         <TopStatusIcon icon={topStatus.icon} className="size-3" />
-                        {topStatus.label}
+                        {messages(topStatus.label)}
                       </span>
                     ) : (
                       <span className="text-xs">
@@ -1621,7 +1513,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                                 )}
                               >
                                 <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
-                                <span role="status">{topStatus.label}</span>
+                                <span role="status">{messages(topStatus.label)}</span>
                               </button>
                             }
                           />
@@ -1630,33 +1522,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           </TooltipPopup>
                         </Tooltip>
                       ) : (
-                        <span
-                          className={cn(
-                            "inline-flex items-center gap-1 font-medium",
-                            topStatus.className,
-                          )}
-                        >
-                          <TopStatusIcon icon={topStatus.icon} className="size-4" />
-                          {/* Not a live region: a collapsed sidebar is inert, so
-                            BackgroundThreadAnnouncer and the open thread's
-                            timeline speak status changes instead. */}
-                          {topStatus.label}
-                          {status === "preparing" || status === "working" ? (
-                            <span aria-hidden>
-                              <WorkingDuration
-                                environmentId={thread.environmentId}
-                                startedAt={resolveWorkingStartedAt(thread)}
-                              />
-                            </span>
-                          ) : status === "waiting" ? (
-                            <span aria-hidden>
-                              <WorkingDuration
-                                environmentId={thread.environmentId}
-                                startedAt={thread.latestRun?.completedAt ?? null}
-                              />
-                            </span>
-                          ) : null}
-                        </span>
+                        <ThreadTopStatusLabel
+                          topStatus={topStatus}
+                          status={status}
+                          thread={thread}
+                        />
                       )
                     ) : (
                       <RelativeTimeLabel timestamp={resolveThreadActivityTimestamp(thread)} />

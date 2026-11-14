@@ -15,7 +15,12 @@ import {
   AutocompleteListHeading,
   AutocompleteListVirtualized,
 } from "~/components/ui/autocomplete";
-import { DIALOG_BACKDROP_CLASS, DIALOG_POPUP_CLASS } from "~/components/ui/dialog-styles";
+import {
+  DIALOG_BACKDROP_CLASS,
+  DIALOG_POPUP_CLASS,
+  DIALOG_POPUP_LAYOUT_CLASS,
+  DIALOG_SURFACE_CLASS,
+} from "~/components/ui/dialog-styles";
 import { Button } from "~/components/ui/button";
 
 const CommandDialog = CommandDialogPrimitive.Root;
@@ -36,20 +41,24 @@ function CommandDialogBackdrop({ className, ...props }: CommandDialogPrimitive.B
   );
 }
 
-function CommandDialogViewport({ className, ...props }: CommandDialogPrimitive.Viewport.Props) {
-  // Short desktop windows would put the search field under the native window controls.
+const COMMAND_POPUP_CLASS = "pointer-events-auto max-h-105 max-w-xl text-foreground";
+
+const COMMAND_VIEWPORT_CLASS =
+  "pointer-events-none fixed inset-0 z-50 flex flex-col items-center px-4 [-webkit-app-region:no-drag] pt-[max(--spacing(4),4vh,calc(var(--command-titlebar-height)+--spacing(2)))] pb-[max(--spacing(4),4vh)] sm:pt-[max(10vh,calc(var(--command-titlebar-height)+--spacing(2)))] sm:pb-[10vh]";
+
+// Short desktop windows would put the search field under the native window controls.
+function useCommandViewportStyle() {
   const nativeTitlebarHeight = useNativeTitlebarHeight();
-  const titlebarStyle = {
-    "--command-titlebar-height": `${nativeTitlebarHeight}px`,
-  } as React.CSSProperties;
+  return { "--command-titlebar-height": `${nativeTitlebarHeight}px` } as React.CSSProperties;
+}
+
+function CommandDialogViewport({ className, ...props }: CommandDialogPrimitive.Viewport.Props) {
+  const viewportStyle = useCommandViewportStyle();
   return (
     <CommandDialogPrimitive.Viewport
-      className={cn(
-        "pointer-events-none fixed inset-0 z-50 flex flex-col items-center px-4 [-webkit-app-region:no-drag] pt-[max(--spacing(4),4vh,calc(var(--command-titlebar-height)+--spacing(2)))] pb-[max(--spacing(4),4vh)] sm:pt-[max(10vh,calc(var(--command-titlebar-height)+--spacing(2)))] sm:pb-[10vh]",
-        className,
-      )}
+      className={cn(COMMAND_VIEWPORT_CLASS, className)}
       data-slot="command-dialog-viewport"
-      style={titlebarStyle}
+      style={viewportStyle}
       {...props}
     />
   );
@@ -74,7 +83,8 @@ function CommandDialogPopup({
           ref={popupRef}
           className={cn(
             DIALOG_POPUP_CLASS,
-            "pointer-events-auto max-h-105 max-w-xl text-foreground data-ending-style:pointer-events-none",
+            COMMAND_POPUP_CLASS,
+            "data-ending-style:pointer-events-none",
             className,
           )}
           data-slot="command-dialog-popup"
@@ -84,6 +94,26 @@ function CommandDialogPopup({
         </CommandDialogPrimitive.Popup>
       </CommandDialogViewport>
     </CommandDialogPortal>
+  );
+}
+
+/** The palette's surface and placement without its dialog: no backdrop, and it takes no focus. */
+function CommandOverlayPopup({ className, ...props }: React.ComponentProps<"div">) {
+  const viewportStyle = useCommandViewportStyle();
+  return (
+    <div className={COMMAND_VIEWPORT_CLASS} style={viewportStyle}>
+      <div
+        className={cn(
+          DIALOG_SURFACE_CLASS,
+          DIALOG_POPUP_LAYOUT_CLASS,
+          COMMAND_POPUP_CLASS,
+          "overflow-hidden",
+          className,
+        )}
+        data-slot="command-overlay-popup"
+        {...props}
+      />
+    </div>
   );
 }
 
@@ -263,6 +293,7 @@ export {
   CommandList,
   CommandListHeading,
   CommandListVirtualized,
+  CommandOverlayPopup,
   CommandPanel,
   CommandShortcut,
 };
