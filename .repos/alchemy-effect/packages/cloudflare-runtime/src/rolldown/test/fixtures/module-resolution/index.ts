@@ -1,7 +1,7 @@
 import { test as aliasTest } from "@alias/test";
 import { legacyMessage } from "@fixtures/legacy-main-fields-package";
-import { featureMessage } from "@fixtures/module-resolution-package/feature";
 import { packageMessage } from "@fixtures/module-resolution-package";
+import { featureMessage } from "@fixtures/module-resolution-package/feature";
 import { helloWorldExt } from "./requires/ext";
 import { helloWorldNoExt } from "./requires/no-ext";
 

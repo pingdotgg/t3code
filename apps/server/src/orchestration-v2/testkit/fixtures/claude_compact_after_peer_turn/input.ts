@@ -4,10 +4,7 @@ export const CLAUDE_COMPACT_FIRST_PROMPT = "Reply with exactly: compact probe fi
 // Held until the continuation run settles, as the CLI process outlives it.
 const CLAUDE_COMPACT_LAST_FRAME_LABEL = "command_lifecycle:compact-completed";
 
-// A `/compact` that Claude answers only after a turn of its own: a peer
-// message woke it while the compaction was queued (the frames of a live
-// `claude` 2.1.285 `/compact` with a peer-origin turn from a provider log
-// spliced in front of it).
+// Splice a peer-origin turn before live Claude 2.1.285 /compact frames to model queued compaction.
 export function claudeCompactAfterPeerTurnInput(): OrchestratorFixtureInput {
   return {
     steps: [

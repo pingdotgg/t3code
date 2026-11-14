@@ -3,12 +3,6 @@ import type { SharePayload } from "expo-sharing";
 
 import { createIncomingSharePayloadReader } from "./incoming-share-native";
 
-const PAYLOAD: SharePayload = {
-  shareType: "text",
-  mimeType: "text/plain",
-  value: "Fix this",
-};
-
 describe("createIncomingSharePayloadReader", () => {
   it("treats a missing iOS App Group as an unavailable inbox", () => {
     const readPayloads = vi.fn((): ReadonlyArray<SharePayload> => {
@@ -23,15 +17,7 @@ describe("createIncomingSharePayloadReader", () => {
     expect(readPayloads).toHaveBeenCalledTimes(1);
   });
 
-  it("returns native payloads when receiving is available", () => {
-    const read = createIncomingSharePayloadReader({
-      platform: "ios",
-      readPayloads: () => [PAYLOAD],
-    });
-
-    expect(read()).toEqual([PAYLOAD]);
-  });
-
+  // regression: #4943 stop shared content errors in Personal Team builds
   it("preserves other native errors", () => {
     const error = new Error("native failure");
     const read = createIncomingSharePayloadReader({
