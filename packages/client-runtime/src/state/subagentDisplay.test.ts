@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { subagentDetailPreview } from "./subagentDisplay.js";
+import { subagentCardDetail, subagentDetailPreview } from "./subagentDisplay.js";
 
 describe("subagentDetailPreview", () => {
   it("prefers progress for live work and results for settled work", () => {
@@ -36,6 +36,17 @@ it("normalizes Unicode whitespace and ignores a large hidden suffix", () => {
     subagentDetailPreview({ status: "running", progress: "\uFEFF\u2029", result: " Done " }),
   ).toBe("Done");
   expect(subagentDetailPreview({ status: "failed", result: "x".repeat(279) + "😀" })).toBe(
-    "x".repeat(279) + "\uD83D…",
+    "x".repeat(279) + "…",
   );
+});
+
+describe("subagentCardDetail", () => {
+  it.each([
+    ["![screenshot](screenshots/shot.png) Verified", "screenshot Verified"],
+    ["[docs](https://en.wikipedia.org/wiki/T3_(protocol))", "docs"],
+    ["[report](outputs/report%20(final).md)", "report"],
+    ["[report](outputs/report\\(final.md)", "report"],
+  ])("strips image and link markup from %s", (detail, expected) => {
+    expect(subagentCardDetail(detail)).toBe(expected);
+  });
 });
