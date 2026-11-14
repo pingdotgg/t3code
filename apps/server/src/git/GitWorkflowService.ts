@@ -67,7 +67,8 @@ export class GitWorkflowService extends Context.Service<
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
-    readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
+    readonly invalidateStatus: GitManager.GitManager["Service"]["invalidateStatus"];
+    readonly statusUpstreamFetchCount: GitVcsDriver.GitVcsDriver["Service"]["statusUpstreamFetchCount"];
     /** The checkout's own HEAD file, inside a linked worktree's admin directory when there is one. */
     readonly headPath: (cwd: string) => Effect.Effect<string | null, never>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
@@ -391,6 +392,7 @@ export const make = Effect.gen(function* () {
     invalidateLocalStatus: gitManager.invalidateLocalStatus,
     invalidateRemoteStatus: gitManager.invalidateRemoteStatus,
     invalidateStatus: gitManager.invalidateStatus,
+    statusUpstreamFetchCount: git.statusUpstreamFetchCount,
     headPath: Effect.fn("GitWorkflowService.headPath")(function (cwd) {
       return git
         .execute({

@@ -199,6 +199,32 @@ export function resolveBranchToolbarValue(input: {
   return currentGitBranch ?? activeThreadBranch;
 }
 
+export interface BranchHold {
+  readonly branch: string | null;
+  readonly replaces: string | null;
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+}
+
+/**
+ * A finished checkout's branch stays on screen until status reports any change, because the status
+ * stream and the RPC reply are not ordered and showing status first would flip back to the old branch.
+ */
+export function isBranchHoldCurrent(
+  hold: BranchHold,
+  current: {
+    readonly canonicalBranch: string | null;
+    readonly environmentId: EnvironmentId;
+    readonly cwd: string | null;
+  },
+): boolean {
+  return (
+    hold.environmentId === current.environmentId &&
+    hold.cwd === current.cwd &&
+    hold.replaces === current.canonicalBranch
+  );
+}
+
 /**
  * The base a New worktree thread gets without the user picking one. Only a listed ref qualifies:
  * during a clone the status names an unborn HEAD that no ref backs.

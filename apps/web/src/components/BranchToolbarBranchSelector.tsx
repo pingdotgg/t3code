@@ -45,7 +45,9 @@ import { parsePullRequestReference } from "@t3tools/client-runtime/pull-request-
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
+  type BranchHold,
   deriveLocalBranchNameFromRemoteRef,
+  isBranchHoldCurrent,
   isWorktreeChangeBlocked,
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
@@ -326,8 +328,17 @@ export function BranchToolbarBranchSelector({
     activeThreadBranch,
     currentGitBranch,
   });
+  const [branchHold, setBranchHold] = useState<BranchHold | null>(null);
+  const branchHoldCurrent =
+    branchHold !== null &&
+    isBranchHoldCurrent(branchHold, {
+      canonicalBranch: canonicalActiveBranch,
+      environmentId,
+      cwd: branchCwd,
+    });
+  if (branchHold !== null && !branchHoldCurrent) setBranchHold(null);
   const [resolvedActiveBranch, setOptimisticBranch] = useOptimistic(
-    canonicalActiveBranch,
+    branchHoldCurrent ? branchHold.branch : canonicalActiveBranch,
     (_currentBranch: string | null, optimisticBranch: string | null) => optimisticBranch,
   );
   const listedActiveBranch =
@@ -416,7 +427,6 @@ export function BranchToolbarBranchSelector({
     startBranchActionTransition(async () => {
       await action();
       branchRefState.refresh();
-      branchStatusQuery.refresh();
     });
   };
 
@@ -478,11 +488,16 @@ export function BranchToolbarBranchSelector({
         const nextBranchName = refName.isRemote
           ? (checkoutResult.value.refName ?? selectedBranchName)
           : selectedBranchName;
-        setOptimisticBranch(
-          setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath)
-            ? nextBranchName
-            : previousBranch,
-        );
+        const switched = setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath);
+        setOptimisticBranch(switched ? nextBranchName : previousBranch);
+        if (switched) {
+          setBranchHold({
+            branch: nextBranchName,
+            replaces: canonicalActiveBranch,
+            environmentId,
+            cwd: selectionTarget.checkoutCwd,
+          });
+        }
         return;
       }
       setOptimisticBranch(previousBranch);
@@ -519,9 +534,16 @@ export function BranchToolbarBranchSelector({
       });
       if (createBranchResult._tag === "Success") {
         const nextBranchName = createBranchResult.value.refName;
-        setOptimisticBranch(
-          setThreadBranch(nextBranchName, activeWorktreePath) ? nextBranchName : previousBranch,
-        );
+        const switched = setThreadBranch(nextBranchName, activeWorktreePath);
+        setOptimisticBranch(switched ? nextBranchName : previousBranch);
+        if (switched) {
+          setBranchHold({
+            branch: nextBranchName,
+            replaces: canonicalActiveBranch,
+            environmentId,
+            cwd: branchCwd,
+          });
+        }
         return;
       }
       setOptimisticBranch(previousBranch);
