@@ -173,7 +173,11 @@ describe("SidebarUpdatePill update everything", () => {
       hasUpdates: true,
       rows: [{ environmentId: null, label, app: "this-app", skipped: null, providers: ["Claude"] }],
     });
-    await using screen = await render(<SidebarUpdatePill />);
+    await using screen = await render(
+      <SidebarProvider>
+        <SidebarUpdatePill />
+      </SidebarProvider>,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Update everything" }));
 
     const table = page.getByRole("table");
