@@ -2016,9 +2016,15 @@ const make = Effect.gen(function* () {
   const resolveScheduledTaskBaseRef = Effect.fn(
     "OrchestratorMcpService.resolveScheduledTaskBaseRef",
   )(function* (cwd: string) {
-    const remoteName = yield* gitDriver
-      .resolvePrimaryRemoteName(cwd)
-      .pipe(Effect.orElseSucceed(() => null));
+    const remote = yield* gitDriver.resolvePrimaryRemoteName(cwd).pipe(
+      Effect.map((name) => ({ name })),
+      Effect.catch((error) =>
+        Effect.succeed(error.reason === "not_a_repository" ? null : { name: null }),
+      ),
+    );
+    // A project folder outside Git has no worktree to make, so runs use the folder itself.
+    if (remote === null) return null;
+    const remoteName = remote.name;
     const conventional = ["main", "master"];
     if (remoteName !== null) {
       const remoteDefault = yield* gitDriver
@@ -2046,11 +2052,9 @@ const make = Effect.gen(function* () {
   )(function* (boundToThread: boolean, projectId: ProjectId) {
     if (boundToThread) return { type: "root" as const };
     const { workspaceRoot } = yield* requireProject(projectId);
-    return {
-      type: "worktree" as const,
-      baseRef: yield* resolveScheduledTaskBaseRef(workspaceRoot),
-      startFromOrigin: true,
-    };
+    const baseRef = yield* resolveScheduledTaskBaseRef(workspaceRoot);
+    if (baseRef === null) return { type: "root" as const };
+    return { type: "worktree" as const, baseRef, startFromOrigin: true };
   });
 
   const scheduledTaskRunModes = Effect.fn("OrchestratorMcpService.scheduledTaskRunModes")(

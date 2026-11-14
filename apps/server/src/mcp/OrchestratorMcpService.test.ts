@@ -3516,6 +3516,42 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
 
+    it.effect("runs in the project folder when that folder is not a Git repository", () =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const notARepository = (operation: string, cwd: string) =>
+          Effect.fail(
+            new GitCommandError({
+              operation,
+              command: "git",
+              cwd,
+              detail: "fatal: not a git repository (or any of the parent directories): .git",
+              reason: "not_a_repository",
+            }),
+          );
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            service(
+              {
+                execute: (input) => notARepository(input.operation, input.cwd),
+                resolvePrimaryRemoteName: (cwd) => notARepository("resolvePrimaryRemoteName", cwd),
+                resolveDefaultBranchName: (cwd) => notARepository("resolveDefaultBranchName", cwd),
+                resolveCommit: ({ cwd }) => notARepository("resolveCommit", cwd),
+              },
+              saved,
+              { ...existing, threadId: ThreadId.make("thread:scheduled-base") },
+            ),
+          ),
+        );
+        yield* mcp.scheduleTask(client, { projectId, prompt: "Check the build", schedule });
+        yield* mcp.updateScheduledTask(client, {
+          scheduledTaskId: existing.id,
+          bindToCurrentThread: false,
+        });
+        assert.deepEqual(yield* Ref.get(saved), [{ type: "root" }, { type: "root" }]);
+      }),
+    );
+
     it.effect("keeps the saved workspace when an unbound task stays unbound", () =>
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
