@@ -1070,6 +1070,14 @@ export const make = Effect.gen(function* () {
               failure("The pull request description could not be read.", cause),
             ),
           );
+        // An `owner:branch` head names no repository when the fork shares the base's owner.
+        const [headOwner, headName] = input.headRepository?.split("/") ?? [];
+        const headRepository =
+          headOwner?.toLowerCase() === locator.owner.toLowerCase() &&
+          headName !== undefined &&
+          headName.toLowerCase() !== locator.name.toLowerCase()
+            ? input.headRepository
+            : undefined;
         yield* rest({
           host: locator.host,
           operation: "createPullRequest",
@@ -1080,6 +1088,7 @@ export const make = Effect.gen(function* () {
           body: {
             base: input.baseRefName,
             head: input.headSelector,
+            ...(headRepository === undefined ? {} : { head_repo: headRepository }),
             title: input.title,
             body,
             maintainer_can_modify: true,

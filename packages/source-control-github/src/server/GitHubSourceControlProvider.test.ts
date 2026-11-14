@@ -583,6 +583,56 @@ describe("GitHubSourceControlProvider writes", () => {
     }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)));
   });
 
+  it.effect("names the head repository for a fork owned by the base repository's owner", () => {
+    const requests: Array<GitHubRest.GitHubRestInput> = [];
+    const { layer } = harness({
+      remotes: remotesOutput(
+        ["origin", "git@github.com:acme/web-fork.git"],
+        ["upstream", "git@github.com:acme/web.git"],
+      ),
+      resolved: "remote.upstream.gh-resolved base",
+      api: {
+        rest: (input) =>
+          Effect.sync(() => {
+            requests.push(input);
+            return restResponse({ number: 1 }, 201);
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const bodyFile = yield* fs.makeTempFileScoped({ suffix: ".md" });
+      yield* fs.writeFileString(bodyFile, "Body");
+      const gh = yield* GitHubSourceControlProvider.make;
+      yield* gh.createChangeRequest({
+        cwd: "/repo",
+        baseRefName: "main",
+        headSelector: "acme:feature",
+        headRepository: "acme/web-fork",
+        title: "Title",
+        bodyFile,
+      });
+      assert.strictEqual(requests[0]!.path, "repos/acme/web/pulls");
+      assert.deepStrictEqual(requests[0]!.body, {
+        base: "main",
+        head: "acme:feature",
+        head_repo: "acme/web-fork",
+        title: "Title",
+        body: "Body",
+        maintainer_can_modify: true,
+      });
+      yield* gh.createChangeRequest({
+        cwd: "/repo",
+        baseRefName: "main",
+        headSelector: "acme:feature",
+        headRepository: "acme/web",
+        title: "Title",
+        bodyFile,
+      });
+      assert.notProperty(requests[1]!.body, "head_repo");
+    }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)), Effect.scoped);
+  });
+
   it.effect("creates a repository under an organization the viewer is not", () => {
     const requests: Array<string> = [];
     const { layer } = harness({

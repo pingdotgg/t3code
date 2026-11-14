@@ -191,6 +191,8 @@ export class SourceControlProvider extends Context.Service<
       readonly target?: SourceControlRefSelector;
       readonly baseRefName: string;
       readonly headSelector: string;
+      /** `owner/name` of the repository holding the head branch, when known. */
+      readonly headRepository?: string | undefined;
       readonly title: string;
       readonly bodyFile: string;
     }) => Effect.Effect<void, SourceControlProviderError>;
