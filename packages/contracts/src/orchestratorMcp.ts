@@ -495,6 +495,8 @@ export type OrchestratorMcpThreadDetail = typeof OrchestratorMcpThreadDetail.Typ
 
 export const OrchestratorMcpThreadRun = Schema.Struct({
   runId: RunId,
+  /** On a run that ended unstarted: where its message went, or null when it was not promoted. */
+  promotedToRunId: Schema.optional(Schema.NullOr(RunId)),
   ordinal: PositiveInt,
   status: OrchestrationV2RunStatus,
   providerInstanceId: ProviderInstanceId,

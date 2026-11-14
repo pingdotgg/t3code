@@ -13,6 +13,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderSessionId,
+  ProviderTurnId,
   type Project,
   type RepositoryIdentity,
   RunId,
@@ -47,10 +49,12 @@ import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -141,6 +145,8 @@ interface BoxThread {
   readonly sent: Ref.Ref<ReadonlyArray<string>>;
   /** Runs as the launch there is answered, before the laptop hears back. */
   readonly afterLaunch: Ref.Ref<Effect.Effect<void>>;
+  /** Once set, the box's thread calls go to this real orchestration. */
+  readonly real: Ref.Ref<ThreadManagement.ThreadManagementService["Service"] | null>;
 }
 
 const makeBoxThread = Effect.gen(function* () {
@@ -179,6 +185,7 @@ const makeBoxThread = Effect.gen(function* () {
     releaseStop: yield* Deferred.make<void>(),
     sent: yield* Ref.make<ReadonlyArray<string>>([]),
     afterLaunch: yield* Ref.make<Effect.Effect<void>>(Effect.void),
+    real: yield* Ref.make<ThreadManagement.ThreadManagementService["Service"] | null>(null),
   } satisfies BoxThread;
 });
 
@@ -255,11 +262,26 @@ const boxToolkitLayer = (thread: BoxThread) => {
       const status = yield* Ref.get(thread.status);
       const runless = yield* Ref.get(thread.runless);
       const model = yield* Ref.get(thread.executedModel);
+      const sent = yield* Ref.get(thread.sent);
+      const laterEnded = yield* Deferred.isDone(thread.laterFinished);
       return shell === null
         ? (null as never)
         : {
             ...idleThreadProjection(shell),
-            runs: runless ? [] : [runOf(status)],
+            runs: runless
+              ? []
+              : [
+                  runOf(status),
+                  ...(sent.length === 0
+                    ? []
+                    : [
+                        {
+                          ...runOf(laterEnded ? "completed" : "running"),
+                          id: boxLaterRunId,
+                          ordinal: 2,
+                        },
+                      ]),
+                ],
             providerTurns: (model === null
               ? []
               : [{ runAttemptId: "attempt:box", ordinal: 1, model }]) as never,
@@ -276,7 +298,18 @@ const boxToolkitLayer = (thread: BoxThread) => {
         yield* Deferred.succeed(thread.interruptedOnce, undefined);
       }
     });
-  const layerBoxThreads = Layer.mock(ThreadManagement.ThreadManagementService)({
+  type Threads = ThreadManagement.ThreadManagementService["Service"];
+  // Once `thread.real` is set, each call goes to that orchestration instead of the fakes below.
+  const there = <A, E, B, F>(
+    fake: Effect.Effect<A, E>,
+    real: (threads: Threads) => Effect.Effect<B, F>,
+  ) =>
+    Ref.get(thread.real).pipe(
+      Effect.flatMap((threads): Effect.Effect<A | B, E | F> =>
+        threads === null ? fake : real(threads),
+      ),
+    );
+  const mocked = {
     getThreadShell: shellOf,
     getProjectThreadRecords: (input) => projectionOf(input.threadId),
     getThreadRecords: (threadId) => projectionOf(threadId),
@@ -499,6 +532,40 @@ const boxToolkitLayer = (thread: BoxThread) => {
             : { run: { id: boxLaterRunId, status: "running" }, delivery: "started" }) as never,
         ),
       ),
+  } satisfies Partial<Threads>;
+  const layerBoxThreads = Layer.mock(ThreadManagement.ThreadManagementService)({
+    getThreadShell: (threadId) =>
+      there(mocked.getThreadShell(threadId), (real) => real.getThreadShell(threadId)),
+    getProjectThreadRecords: ((...args: Parameters<Threads["getProjectThreadRecords"]>) =>
+      there(mocked.getProjectThreadRecords(args[0]), (real) =>
+        real.getProjectThreadRecords(...args),
+      )) as never,
+    getThreadRecords: ((...args: Parameters<Threads["getThreadRecords"]>) =>
+      there(mocked.getThreadRecords(args[0]), (real) => real.getThreadRecords(...args))) as never,
+    waitForThread: (input) =>
+      there(mocked.waitForThread(input), (real) => real.waitForThread(input)),
+    getTimelinePage: (threadId, options) =>
+      there(mocked.getTimelinePage(threadId, options), (real) =>
+        real.getTimelinePage(threadId, options),
+      ),
+    getMessagesById: (threadId, ids) =>
+      there(Effect.succeed(new Map()), (real) => real.getMessagesById(threadId, ids)),
+    interruptThread: (input) =>
+      there(mocked.interruptThread(input), (real) => real.interruptThread(input)),
+    dispatch: (command) =>
+      there(mocked.dispatch(command), (real) =>
+        recordStop(command.commandId, "thread.stop").pipe(
+          Effect.when(Effect.succeed(command.type === "thread.stop")),
+          Effect.andThen(real.dispatch(command)),
+        ),
+      ),
+    stopDelegatedTasks: (input) =>
+      there(mocked.stopDelegatedTasks(input), (real) =>
+        recordStop(input.commandId, "delegated-tasks").pipe(
+          Effect.andThen(real.stopDelegatedTasks(input)),
+        ),
+      ),
+    sendToThread: (input) => there(mocked.sendToThread(input), (real) => real.sendToThread(input)),
   });
   const layerBoxLaunches = Layer.mock(ThreadLaunch.ThreadLaunchService)({
     launch: (input) =>
@@ -542,8 +609,9 @@ const boxToolkitLayer = (thread: BoxThread) => {
         ),
       ),
   });
-  return Layer.merge(
+  return Layer.mergeAll(
     McpHttpServer.layerOrchestratorToolkit,
+    McpHttpServer.layerThreadToolkit,
     McpHttpServer.layerProjectRegistration,
   ).pipe(
     Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
@@ -574,7 +642,12 @@ const boxToolkitLayer = (thread: BoxThread) => {
         list: () => Effect.succeed([boxClaude.instanceId]),
       }),
     ),
-    Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+    Layer.provide(
+      Layer.merge(
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ThreadSearch.ThreadSearch)({}),
+      ),
+    ),
     Layer.provide(
       Layer.mock(ProjectService.ProjectService)({
         getById: (id) =>
@@ -744,6 +817,74 @@ const makeLaptop = (
           ),
     };
   });
+
+/** The box's own real orchestration (its own in-memory SQLite), with no provider process. */
+const makeBoxState = Effect.gen(function* () {
+  const boxAdapter = {
+    ...adapter,
+    openSession: (input) =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        return {
+          instanceId,
+          driver,
+          providerSessionId: input.providerSessionId,
+          providerSession: {
+            id: input.providerSessionId,
+            driver,
+            providerInstanceId: instanceId,
+            status: "ready",
+            cwd: input.runtimePolicy.cwd ?? process.cwd(),
+            model: modelSelection.model,
+            capabilities: CodexProviderCapabilitiesV2,
+            createdAt: now,
+            updatedAt: now,
+            lastError: null,
+          },
+          events: Stream.never,
+          ensureThread: () => Effect.die("unused"),
+          resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+          startTurn: () => Effect.void,
+          steerTurn: () => Effect.void,
+          interruptTurn: () => Effect.void,
+          respondToRuntimeRequest: () => Effect.void,
+          readThreadSnapshot: () => Effect.die("unused"),
+          rollbackThread: () => Effect.die("unused"),
+          forkThread: () => Effect.die("unused"),
+        };
+      }),
+  } satisfies ProviderAdapter.ProviderAdapterV2["Service"];
+  const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+  const layerDatabase = Layer.succeedContext(database);
+  const layerOrchestrator = Layer.mergeAll(
+    layerDatabase,
+    ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+    ProviderReplayHarness.layerWithRegistry(
+      { name: "remote-delegation-box" },
+      ProviderAdapterRegistry.layerFromAdapters([boxAdapter]),
+      { databaseLayer: layerDatabase, runEffectWorker: false },
+    ),
+  ).pipe(
+    Layer.provide(
+      Layer.succeed(ProviderContinuationRequests.ProviderContinuationRequests, {
+        offer: () => Effect.void,
+        take: Effect.never,
+      }),
+    ),
+  );
+  const state = yield* ThreadManagement.layer.pipe(
+    Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+    Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
+    Layer.fresh,
+    Layer.build,
+  );
+  return {
+    threads: Context.get(state, ThreadManagement.ThreadManagementService),
+    orchestrator: Context.get(state, Orchestrator.OrchestratorV2),
+    sink: Context.get(state, EventSink.EventSinkV2),
+    sessions: Context.get(state, ProviderSessionManager.ProviderSessionManagerV2),
+  };
+});
 
 const parentThreadId = ThreadId.make("thread:laptop-parent");
 const parentRunId = RunId.make("run:laptop-parent");
@@ -2502,6 +2643,362 @@ it.effect("a local task runs in this thread's project", () =>
       });
       expect(result.isError).toBe(true);
       expect(JSON.stringify(result.content)).toContain("invalid_request");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect.each([
+  "cancelled",
+  "older",
+  "queued",
+  "running",
+  "older-running",
+  "lost-response",
+  "promoted",
+  "promoted-by-older-peer",
+  "failed",
+] as const)("cancelling a queued follow-up task there when its run is $0", (outcome) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const box_ = yield* makeBoxState;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* a.remote.start();
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const delegated = yield* delegateToBox(a);
+      yield* Ref.set(thread.reply, "All green.");
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      expect(yield* taskResult(a, delegated.taskId)).toMatchObject({ status: "completed" });
+
+      // The box's real orchestration takes over the thread, created as the launch recorded it.
+      const remoteId = delegated.remoteChild.threadId;
+      const launchedWith = (yield* Ref.get(thread.launchedWith))!;
+      const linkOrigin = (yield* Ref.get(thread.linkOrigin))!;
+      const delegatedFrom = (yield* Ref.get(thread.delegatedFrom))!;
+      yield* box_.orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("command:box:create-task-thread"),
+        threadId: remoteId,
+        projectId: boxProject,
+        title: "Run the full suite on the box.",
+        modelSelection: launchedWith.modelSelection!,
+        runtimeMode: launchedWith.runtimeMode!,
+        interactionMode: launchedWith.interactionMode!,
+        branch: null,
+        worktreePath: null,
+        linkOrigin: linkOrigin as never,
+        delegatedFrom: delegatedFrom!,
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      yield* Ref.set(thread.real, box_.threads);
+
+      const busy = yield* a.call("t3_thread_send", {
+        environmentId: box.environmentId,
+        threadId: remoteId,
+        message: "Now run the slow suite too.",
+      });
+      expect(busy.isError, JSON.stringify(busy.content)).toBe(false);
+      const queued = yield* a.call("t3_thread_send", {
+        environmentId: box.environmentId,
+        threadId: remoteId,
+        message: "Then the flaky suite.",
+        mode: "queue",
+      });
+      expect(queued.isError, JSON.stringify(queued.content)).toBe(false);
+      type Sent = { taskId?: NodeId; runId: RunId; delivery: string };
+      const busySent = busy.structuredContent as Sent;
+      const queuedSent = queued.structuredContent as Sent;
+      expect(busySent.delivery).toBe("started");
+      expect(queuedSent.delivery).toBe("queued");
+      expect(queuedSent.taskId).toBeDefined();
+
+      const sibling = yield* a.call("t3_thread_send", {
+        environmentId: box.environmentId,
+        threadId: remoteId,
+        message: "An unrelated queued task.",
+        mode: "queue",
+      });
+      expect(sibling.isError, JSON.stringify(sibling.content)).toBe(false);
+      expect((sibling.structuredContent as Sent).delivery).toBe("queued");
+
+      // The queued task here names exactly the run queued there.
+      const thereBefore = yield* box_.orchestrator.getThreadProjection(remoteId);
+      const queuedRun = thereBefore.runs.find((run) => run.id === queuedSent.runId)!;
+      expect(queuedRun.id).toBe(queuedSent.runId);
+      const { subagents } = yield* a.threads.getThreadRecords(parentThreadId, ["subagents"]);
+      const queuedTask = subagents.find((task) => task.id === queuedSent.taskId)!;
+      expect(queuedTask.remoteChild).toMatchObject({ threadId: remoteId, runId: queuedRun.id });
+      expect(queuedTask.id).not.toBe(busySent.taskId);
+
+      if (outcome === "older" || outcome === "older-running") {
+        const now = yield* DateTime.now;
+        yield* box_.sink.write({
+          commandId: CommandId.make("command:box:newer-runs"),
+          events: Array.from({ length: 51 }, (_, index) => {
+            const runId = RunId.make(`run:box:newer-${index}`);
+            return {
+              id: EventId.make(`event:box:newer-${index}`),
+              type: "run.updated" as const,
+              threadId: remoteId,
+              runId,
+              providerInstanceId: queuedRun.providerInstanceId,
+              occurredAt: now,
+              payload: {
+                ...queuedRun,
+                id: runId,
+                ordinal: Math.max(...thereBefore.runs.map((run) => run.ordinal)) + index + 1,
+                status: "completed" as const,
+                startedAt: now,
+                completedAt: now,
+              },
+            };
+          }),
+        });
+      }
+      if (outcome === "failed") {
+        const now = yield* DateTime.now;
+        yield* box_.sink.write({
+          commandId: CommandId.make("command:box:queued-failed"),
+          events: [
+            {
+              id: EventId.make("event:box:queued-failed"),
+              type: "run.updated",
+              threadId: remoteId,
+              runId: queuedRun.id,
+              providerInstanceId: queuedRun.providerInstanceId,
+              occurredAt: now,
+              payload: { ...queuedRun, status: "failed", completedAt: now },
+            },
+          ],
+        });
+      }
+      const beforeCancel = yield* box_.orchestrator.getThreadProjection(remoteId);
+      if (outcome === "promoted" || outcome === "promoted-by-older-peer") {
+        const now = yield* DateTime.now;
+        const busyRun = beforeCancel.runs.find((run) => run.id === busySent.runId)!;
+        const providerThread = beforeCancel.providerThreads.find(
+          (thread) => thread.id === busyRun.providerThreadId,
+        )!;
+        const sessionId = ProviderSessionId.make("session:box");
+        yield* box_.sessions.open({
+          threadId: remoteId,
+          providerSessionId: sessionId,
+          modelSelection,
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          },
+        });
+        yield* box_.sink.write({
+          commandId: CommandId.make("command:box:running"),
+          events: [
+            {
+              id: EventId.make("event:box:busy-running"),
+              type: "run.updated",
+              threadId: remoteId,
+              runId: busyRun.id,
+              providerInstanceId: instanceId,
+              occurredAt: now,
+              payload: { ...busyRun, status: "running", startedAt: now },
+            },
+            {
+              id: EventId.make("event:box:provider-thread"),
+              type: "provider-thread.updated",
+              threadId: remoteId,
+              providerInstanceId: instanceId,
+              driver,
+              occurredAt: now,
+              payload: { ...providerThread, providerSessionId: sessionId },
+            },
+            {
+              id: EventId.make("event:box:provider-turn"),
+              type: "provider-turn.updated",
+              threadId: remoteId,
+              runId: busyRun.id,
+              providerInstanceId: instanceId,
+              driver,
+              occurredAt: now,
+              payload: {
+                id: ProviderTurnId.make("turn:box"),
+                providerThreadId: providerThread.id,
+                nodeId: busyRun.rootNodeId!,
+                runAttemptId: busyRun.activeAttemptId!,
+                nativeTurnRef: null,
+                ordinal: 1,
+                status: "running",
+                startedAt: now,
+                completedAt: null,
+              },
+            },
+          ],
+        });
+        yield* box_.orchestrator.dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make("command:box:promote"),
+          threadId: remoteId,
+          queuedRunId: queuedRun.id,
+          targetRunId: busySent.runId,
+        });
+        const read = yield* a.call("t3_thread_read", {
+          environmentId: box.environmentId,
+          threadId: remoteId,
+        });
+        expect(read.isError, JSON.stringify(read.content)).toBe(false);
+        expect(
+          (
+            read.structuredContent as {
+              recentRuns: ReadonlyArray<{ runId: RunId; promotedToRunId?: RunId }>;
+            }
+          ).recentRuns.find((run) => run.runId === queuedRun.id),
+        ).toMatchObject({ promotedToRunId: busySent.runId });
+      }
+      if (outcome === "promoted-by-older-peer") {
+        // A peer without promotion reporting reads this run as cancelled and unstarted, nothing more.
+        yield* Ref.set(thread.real, {
+          ...box_.threads,
+          getMessagesById: () => Effect.succeed(new Map()),
+        });
+      }
+      if (
+        outcome !== "cancelled" &&
+        outcome !== "older" &&
+        outcome !== "promoted" &&
+        outcome !== "promoted-by-older-peer" &&
+        outcome !== "failed"
+      ) {
+        yield* Ref.set(thread.real, {
+          ...box_.threads,
+          // The laptop reads the exact run there with a 1ms wait, which TestClock never ends.
+          waitForThread: (input) => TestClock.withLive(box_.threads.waitForThread(input)),
+          dispatch: (command) =>
+            Effect.gen(function* () {
+              if (command.type !== "queued-run.cancel")
+                return yield* box_.threads.dispatch(command).pipe(Effect.orDie);
+              if (outcome === "lost-response")
+                yield* box_.threads.dispatch(command).pipe(Effect.orDie);
+              if (outcome === "running" || outcome === "older-running") {
+                const now = yield* DateTime.now;
+                const busyRun = beforeCancel.runs.find((run) => run.id === busySent.runId)!;
+                yield* box_.sink
+                  .write({
+                    commandId: CommandId.make("command:box:busy-ended"),
+                    events: [
+                      {
+                        id: EventId.make("event:box:busy-ended"),
+                        type: "run.updated",
+                        threadId: remoteId,
+                        runId: busyRun.id,
+                        providerInstanceId: instanceId,
+                        occurredAt: now,
+                        payload: { ...busyRun, status: "completed", completedAt: now },
+                      },
+                    ],
+                  })
+                  .pipe(Effect.orDie);
+                yield* box_.orchestrator
+                  .dispatch({
+                    type: "queued-run.start",
+                    commandId: CommandId.make("command:box:start-queued"),
+                    threadId: remoteId,
+                    runId: queuedRun.id,
+                  })
+                  .pipe(Effect.orDie);
+                const started = yield* box_.orchestrator
+                  .getThreadProjection(remoteId)
+                  .pipe(Effect.orDie);
+                const run = started.runs.find((run) => run.id === queuedRun.id)!;
+                expect(run.status).toBe("starting");
+                yield* box_.sink
+                  .write({
+                    commandId: CommandId.make("command:box:cancel-race"),
+                    events: [
+                      {
+                        id: EventId.make("event:box:cancel-race"),
+                        type: "run.updated",
+                        threadId: remoteId,
+                        runId: run.id,
+                        providerInstanceId: run.providerInstanceId,
+                        occurredAt: now,
+                        payload: { ...run, status: "running", startedAt: now },
+                      },
+                    ],
+                  })
+                  .pipe(Effect.orDie);
+              }
+              return yield* new Orchestrator.OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause: "Queued cancellation was refused.",
+              });
+            }),
+        });
+      }
+
+      const cancelled = yield* a.call("task_cancel", { taskId: queuedTask.id });
+      expect(cancelled.isError, JSON.stringify(cancelled.content)).toBe(false);
+      expect(yield* taskResult(a, queuedTask.id)).toMatchObject({ status: "cancelled" });
+
+      if (outcome === "queued") {
+        const result = yield* taskResult(a, queuedTask.id);
+        expect(result?.result).toContain("Queued cancellation was refused.");
+        expect(yield* Ref.get(thread.stops)).toEqual([]);
+        expect((yield* box_.orchestrator.getThreadProjection(remoteId)).runs).toEqual(
+          beforeCancel.runs,
+        );
+        // A later attempt can still cancel the exact run after the route recovers.
+        yield* Ref.set(thread.real, box_.threads);
+        yield* a.call("task_cancel", {
+          taskId: queuedTask.id,
+          clientRequestId: "cancel-recovered",
+        });
+      } else if (
+        outcome === "running" ||
+        outcome === "older-running" ||
+        outcome === "promoted" ||
+        outcome === "promoted-by-older-peer"
+      ) {
+        expect(yield* Ref.get(thread.stops)).toEqual(["thread.stop", "delegated-tasks"]);
+        return;
+      } else if (outcome === "failed") {
+        // It never started and was not promoted, so nothing there needs stopping.
+        expect(yield* Ref.get(thread.stops)).toEqual([]);
+        return;
+      }
+
+      // Only that run ends there: the other turn runs on, and the thread is neither stopped nor held.
+      const runsOf = (projection: typeof thereBefore) =>
+        projection.runs.map(({ id, status, queueHeld }) => ({ id, status, queueHeld }));
+      const thereAfter = yield* box_.orchestrator.getThreadProjection(remoteId);
+      expect(runsOf(thereAfter)).toEqual(
+        runsOf(beforeCancel).map((run) =>
+          run.id === queuedRun.id ? { ...run, status: "cancelled" } : run,
+        ),
+      );
+      expect(yield* Ref.get(thread.stops)).toEqual([]);
+
+      yield* box_.orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make("command:box:resume"),
+        threadId: remoteId,
+      });
+      const resumed = yield* box_.orchestrator.getThreadProjection(remoteId);
+      expect(resumed.runs.find((run) => run.id === queuedRun.id)?.status).toBe("cancelled");
+
+      // A repeat cancel sees the run ended unstarted and stops nothing. Hidden by newer runs, it
+      // cannot be told from a promoted run, so it stops the thread.
+      yield* a.call("task_cancel", { taskId: queuedTask.id, clientRequestId: "cancel-again" });
+      expect(yield* Ref.get(thread.stops)).toEqual(
+        outcome === "older" ? ["thread.stop", "delegated-tasks"] : [],
+      );
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

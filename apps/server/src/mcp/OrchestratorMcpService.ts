@@ -3230,10 +3230,28 @@ const make = Effect.gen(function* () {
           input.beforePosition === undefined &&
           input.itemId === undefined,
       );
-      const recentRuns = target.runs
+      const visibleRuns = target.runs
         .toSorted((left, right) => right.ordinal - left.ordinal)
-        .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
-        .map((run) => threadRun(target, run));
+        .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT);
+      const unstartedEndedMessageIds = visibleRuns
+        .filter(
+          (run) =>
+            run.startedAt === null && ThreadManagementService.isTerminalRunStatus(run.status),
+        )
+        .map((run) => run.userMessageId);
+      const unstartedEndedMessages =
+        unstartedEndedMessageIds.length === 0
+          ? undefined
+          : yield* threadManagement
+              .getMessagesById(input.threadId, unstartedEndedMessageIds)
+              .pipe(Effect.mapError(threadManagementFailure));
+      const recentRuns = visibleRuns.map((run) => {
+        const message = unstartedEndedMessages?.get(run.userMessageId);
+        if (message === undefined) return threadRun(target, run);
+        const promotedToRunId =
+          message.runId == null || message.runId === run.id ? null : message.runId;
+        return { ...threadRun(target, run), promotedToRunId };
+      });
       const { items, start } = timelineItemsWithinBudget(
         { thread, recentRuns, nextPosition: null, hasMore: false, earlierPosition: null },
         timeline.items.map((row) => ({
