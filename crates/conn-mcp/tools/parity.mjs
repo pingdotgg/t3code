@@ -23,7 +23,7 @@ if (recordAt !== -1 && (recordFile === undefined || recordFile.startsWith("--"))
   console.error("--record-tools-list needs a file");
   process.exit(2);
 }
-const rustBinary = argv.find((a, i) => !a.startsWith("--") && i !== recordAt + 1);
+const rustBinary = argv.find((a, i) => !a.startsWith("--") && (recordAt === -1 || i !== recordAt + 1));
 if (rustBinary === undefined) {
   console.error("usage: parity.mjs [--model] <conn-server-binary>");
   process.exit(2);

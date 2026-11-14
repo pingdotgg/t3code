@@ -15,6 +15,9 @@ CONN_MONOREPO=/path/to/conn ./run.sh            # needs node
 drives `ClaudeSession` through the steps of the fixture's `input.ts` (`scenarios.json`; prompt
 texts come from the transcript). Every outbound frame must equal the recorded one.
 
+`tools/check.sh` runs `check.mjs`: it fails when a scenario that is not in
+`expected-failures.txt` fails, and when a listed one passes (then remove it from the list).
+
 ## Result at the pinned commit
 
 15 of 39 pass: `simple`, `multi_turn`, `command_output_streaming`, `subagent`, `web_search`,
