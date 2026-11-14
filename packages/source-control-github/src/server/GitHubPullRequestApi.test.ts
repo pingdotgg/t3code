@@ -2995,14 +2995,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(diff.patch).toContain("diff --git a/src/file1.ts b/src/file1.ts");
       expect(diff.patch).toContain("diff --git a/src/file2.ts b/src/file2.ts");
       assert.strictEqual(callAt(1).host, "github.acme.dev");
-      assert.strictEqual(pathAt(1), "repos/acme/web/pulls/7/files?per_page=100&page=1");
+      assert.strictEqual(pathAt(1), "repos/acme/web/pulls/7/files?per_page=30&page=1");
     }),
   );
 
   it.effect("hands back a cursor for the next page rather than walking on by itself", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.fail(diffRefused));
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(100, 0))));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(30, 0))));
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
       const diff = yield* cli.getPullRequestDiff({
@@ -3057,7 +3057,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(diff.patch).toContain("diff --git a/src/file1.ts b/src/file1.ts");
       assert.strictEqual(
         pathAt(0),
-        "repos/acme/web/commits/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0?per_page=100&page=1",
+        "repos/acme/web/commits/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0?per_page=30&page=1",
       );
     }),
   );
@@ -3882,7 +3882,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
       });
 
-      assert.strictEqual(pathAt(1), "repos/acme/web/pulls/7/files?per_page=100&page=1");
+      assert.strictEqual(pathAt(1), "repos/acme/web/pulls/7/files?per_page=30&page=1");
       expect(slice.patch).toContain("src/file1.ts");
       expect(slice.patch).not.toContain("diff --git a/a b/a");
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
