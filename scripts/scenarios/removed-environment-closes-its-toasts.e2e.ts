@@ -58,7 +58,13 @@ test(
   "Removing an environment closes the in-app notifications it raised",
   WEB,
   async ({ t3, app, screen, browser }) => {
-    await t3.project("demo");
+    const project = await t3.project("demo");
+    const primaryThread = await t3.thread({
+      project,
+      title: "Finished here",
+      messages: ["first"],
+    });
+    const primary = makeState(T3_HOME);
     const second = makeState(SECOND_HOME);
     const pairing = Promise.withResolvers<{ host: string; token: string }>();
     const server = Effect.runFork(
@@ -91,22 +97,35 @@ test(
       // The client announces only a change it saw happen, so it must hold the thread first.
       await expect(screen.getByText("Finished elsewhere").first()).toBeVisible({ timeout: 60_000 });
       await runPromise(
+        primary.cli(["thread", "send", primaryThread.threadId, "second", "--wait", "--json"]),
+      );
+      const primaryToast = browser.locator(
+        '[data-slot="toast-description"]:has-text("Finished here")',
+      );
+      await expect(primaryToast).toBeVisible({ timeout: 60_000 });
+      await primaryToast.hover();
+      await runPromise(
         second.cli(["thread", "send", thread.threadId, "second", "--wait", "--json"]),
       );
-      const toast = screen.getByText("Thread completed");
+      const toast = browser.locator(
+        '[data-slot="toast-description"]:has-text("Finished elsewhere")',
+      );
       await expect(toast).toBeVisible({ timeout: 60_000 });
 
       // A hovered toast does not time out. The removal goes by keyboard so the pointer stays.
-      await screen.getByRole("button", "Open thread").hover();
+      await toast.hover();
       await moreActions.press("Enter");
       await screen.getByRole("menuitem", "Remove from this device…").press("Enter");
+      await expect(toast).toBeVisible();
       await screen.getByRole("button", "Confirm").press("Enter");
+      try {
+        await expect(toast).toBeHidden();
+        // Both timers pause together; an older surviving toast rules out auto-dismissal.
+        await expect(primaryToast).toBeVisible();
+      } finally {
+        await app.screenshot("after-removal");
+      }
       await expect(moreActions).toBeHidden({ timeout: 30_000 });
-      // Modal focus changes can resume toast timers; F6 pauses them in the notification region.
-      await browser.keyboard.press("F6");
-      await app.screenshot("after-removal");
-
-      await expect(toast).toBeHidden();
     } finally {
       await Effect.runPromise(Fiber.interrupt(server));
     }
