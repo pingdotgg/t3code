@@ -1443,7 +1443,8 @@ export function appendComposerDraftAttachments(
 
 /**
  * Moves `sourceKeys`' attachments to the end of `draftKey` with their chips, past the attachment
- * limit, clears the sources, and returns the ones the draft had no chip room for.
+ * limit, and clears the sources. Media without chip room still shows in the strip; returns the
+ * files the draft could not show.
  */
 export function moveComposerDraftAttachments(
   sourceKeys: ReadonlyArray<string>,
@@ -1457,8 +1458,16 @@ export function moveComposerDraftAttachments(
     appendReference: true,
     insertion: { text, start: text.length, end: text.length },
   });
+  const unchipped = attachments.slice(attachments.length - rejected);
+  const media = unchipped.filter(
+    (attachment) =>
+      attachment.type === "image" ||
+      imageMimeType(attachment) !== null ||
+      videoMimeType(attachment) !== null,
+  );
+  appendComposerDraftAttachments(draftKey, media, { allowOverflow: true });
   for (const key of sourceKeys) clearComposerDraft(key);
-  return attachments.slice(attachments.length - rejected);
+  return unchipped.filter((attachment) => !media.includes(attachment));
 }
 
 export function replaceComposerDraftAttachments(

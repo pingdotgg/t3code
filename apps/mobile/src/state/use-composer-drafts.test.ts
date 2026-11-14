@@ -506,7 +506,7 @@ describe("mobile composer drafts", () => {
     await releaseUnusedComposerAttachmentFiles([file]);
     expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalledWith(file.fileUri);
 
-    // A thread draft without chip room returns what it could not take.
+    // Without chip room, media still shows in the strip; other files come back to the caller.
     appendComposerDraftAttachments(
       "thread",
       Array.from({ length: COMPOSER_CONTEXT_MAX_RECORDS - 1 }, (_, index) => ({
@@ -516,8 +516,18 @@ describe("mobile composer drafts", () => {
       { allowOverflow: true, appendReference: true },
     );
     const overflow = { ...file, id: "overflow-file" };
-    appendComposerDraftAttachments(question, [overflow]);
+    const image = {
+      ...file,
+      type: "image" as const,
+      id: "overflow-image",
+      name: "screen.png",
+      mimeType: "image/png",
+      fileUri: "file:///documents/t3-composer-attachments/overflow-image.png",
+      previewUri: "file:///documents/t3-composer-attachments/overflow-image.png",
+    };
+    appendComposerDraftAttachments(question, [overflow, image]);
     expect(moveComposerDraftAttachments([question], "thread")).toEqual([overflow]);
+    expect(getComposerDraftSnapshot("thread").attachments.at(-1)).toEqual(image);
     expect(getComposerDraftSnapshot(question).attachments).toEqual([]);
   });
 
