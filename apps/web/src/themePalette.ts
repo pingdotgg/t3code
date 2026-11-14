@@ -1668,6 +1668,13 @@ export function withReadableThemeText(colors: ThemeColors): ThemeColors {
   };
 }
 
+const DESTRUCTIVE_FILL_VARIABLE = "--app-theme-destructive-fill";
+
+/** Solid destructive fills carry white labels, so they get their own `error` that white reads on. */
+export function destructiveFillColor(colors: ThemeColors): string {
+  return themeAccentWithContrast(colors.error, ["#ffffff"]);
+}
+
 /** Callers must restore the stored theme with refreshTheme when the draft closes. */
 export function applyThemeColorPreview(
   colors: ThemeColors,
@@ -1681,6 +1688,7 @@ export function applyThemeColorPreview(
   root.dataset.themeId = THEME_PREVIEW_ID;
   root.classList.toggle("dark", appearance === "dark");
   const readable = withReadableThemeText(colors);
+  root.style.setProperty(DESTRUCTIVE_FILL_VARIABLE, destructiveFillColor(colors));
   for (const [role, value] of Object.entries(readable) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
@@ -1704,6 +1712,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
     const mode = appearance ?? legacyThemeMode(theme) ?? palette.appearance;
     const colors = getThemeColorsForMode(palette, mode) ?? palette.colors;
     const readable = withReadableThemeText(colors);
+    root.style.setProperty(DESTRUCTIVE_FILL_VARIABLE, destructiveFillColor(colors));
     for (const [role, value] of Object.entries(readable) as Array<[ThemeColorRole, string]>) {
       root.style.setProperty(APP_THEME_VARIABLES[role], value);
     }
@@ -1712,6 +1721,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   }
 
   delete root.dataset.themeId;
+  root.style.removeProperty(DESTRUCTIVE_FILL_VARIABLE);
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }
