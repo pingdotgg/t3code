@@ -131,7 +131,7 @@ stdenv.mkDerivation (
       fetcherVersion = 5;
       # Refresh with `nix build .#t3code-unwrapped` and copy the
       # `got: sha256-…` from a hash-mismatch error whenever pnpm-lock.yaml changes.
-      hash = "sha256-+dNJoQzAIAx8QFov2dW9eN/TVoTwdWQiPrw2xHfBeEU=";
+      hash = "sha256-pYb9FqBoYJp1AW3HK0uwNinmi0TgcTbQJQA8Yv1Hr8I=";
     };
 
     preBuild = ''

@@ -32,9 +32,9 @@ Two fixed-output hashes pin the dependency closures:
 | `nix/unwrapped.nix` (`pnpmDeps.hash`)    | pnpm store   | `pnpm-lock.yaml` changes — run `nix build`, copy `got: sha256-…` from the mismatch error |
 | `nix/resource-monitor.nix` (`cargoHash`) | cargo vendor | `native/resource-monitor/Cargo.lock` changes — same procedure                            |
 
-> Both hashes verified against a real build from this checkout — the
-> pnpm hash matches `a9e709f`'s lockfile, the cargo hash matches nixpkgs'
-> (the Rust sidecar is unchanged between the two).
+> Both hashes verified against a real build from this checkout — the pnpm hash
+> matches the current lockfile, and the cargo hash matches nixpkgs' (the Rust
+> sidecar is unchanged between the two).
 
 The build needs network once (fetching npm/crates) and takes a while
 (web bundle + server bundle + Electron packaging, roughly 20–60 min on a
