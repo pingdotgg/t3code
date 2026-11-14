@@ -532,7 +532,7 @@ function summarizeGitActionResult(
   return { title: "Done" };
 }
 
-// commitlint's config-conventional rejects a capitalized description; acronyms and names like GitHub are left alone.
+// A backstop for models that ignore the preset's lowercase instruction; acronyms and names like GitHub are left alone.
 const CONVENTIONAL_CAPITALIZED_DESCRIPTION =
   /^([a-z]+(?:\([^)\n]*\))?!?: )([A-Z][a-z]*)(?![A-Za-z0-9])/;
 
