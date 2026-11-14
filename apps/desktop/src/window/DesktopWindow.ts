@@ -5,6 +5,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
@@ -393,8 +394,11 @@ export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const backendReadyRef = yield* Ref.make(false);
-  let backendHasStarted = false;
-  let mainClosedDuringStartup = false;
+  // Backend readiness repeats after every restart, and on macOS the app outlives its last
+  // window, so a window the user closed stays closed until they activate the app.
+  let mainClosed = false;
+  // A revealing request that arrived while the backend was down opens the window once it is back.
+  let revealWhenReady = false;
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
@@ -998,7 +1002,7 @@ export const make = Effect.gen(function* () {
     }
 
     window.on("closed", () => {
-      if (!backendHasStarted) mainClosedDuringStartup = true;
+      mainClosed = true;
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
       void runPromise(electronWindow.clearMain(Option.some(window)));
@@ -1010,7 +1014,8 @@ export const make = Effect.gen(function* () {
   const createMain = Effect.gen(function* () {
     const window = yield* createWindow();
     if (Option.isSome(window)) {
-      mainClosedDuringStartup = false;
+      mainClosed = false;
+      revealWhenReady = false;
       yield* logWindowInfo("main window created");
     }
     return window;
@@ -1106,7 +1111,10 @@ export const make = Effect.gen(function* () {
   ) {
     if (yield* Ref.get(desktopState.quitting)) return;
     const existingWindow = yield* reveal ? focusedMainWindow : electronWindow.main;
-    if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) return;
+    if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) {
+      if (reveal) revealWhenReady = true;
+      return;
+    }
     const window = Option.isSome(existingWindow) ? existingWindow : yield* ensureMain;
     if (Option.isNone(window) || window.value.isDestroyed()) return;
     const targetWindow = window.value;
@@ -1141,7 +1149,7 @@ export const make = Effect.gen(function* () {
         yield* revealMain(existingWindow.value);
         return;
       }
-      if (mainClosedDuringStartup) {
+      if (mainClosed) {
         yield* ensureMain;
         return;
       }
@@ -1158,10 +1166,12 @@ export const make = Effect.gen(function* () {
     createMainIfBackendReady,
     showConnectingSplash,
     handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(function* (httpBaseUrl) {
-      backendHasStarted = true;
       yield* Ref.set(backendReadyRef, true);
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
-      if (!mainClosedDuringStartup) yield* createMainIfBackendReady;
+      // A startup failure surfaced the recovery window, which closes only into a main window.
+      const recovering =
+        (yield* SubscriptionRef.get(desktopState.primaryBackendStartup))._tag === "Failing";
+      if (!mainClosed || revealWhenReady || recovering) yield* createMainIfBackendReady;
     }),
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(
       Effect.withSpan("desktop.window.handleBackendNotReady"),
