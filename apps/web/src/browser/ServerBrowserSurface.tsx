@@ -147,6 +147,9 @@ export function ServerBrowserSurface(props: {
   readonly visible: boolean;
   readonly followSize?: boolean;
   readonly controlPosition?: "top" | "bottom";
+  readonly onTakeControl?: () => void;
+  readonly takeControlOnOpen?: boolean;
+  readonly onControlRequestHandled?: () => void;
   readonly onFirstFrame?: () => void;
   readonly onViewport?: (viewport: PreviewStreamViewport) => void;
   readonly onControl?: (control: PreviewStreamControl | null) => void;
@@ -162,6 +165,9 @@ export function ServerBrowserSurface(props: {
     visible,
     followSize = true,
     controlPosition = "top",
+    onTakeControl,
+    takeControlOnOpen,
+    onControlRequestHandled,
     onFirstFrame,
     onViewport,
     onControl,
@@ -304,6 +310,20 @@ export function ServerBrowserSurface(props: {
   };
 
   const focusInput = () => inputRef.current?.focus({ preventScroll: true });
+
+  const controller = control?.controller;
+  const canOperate = control?.canOperate;
+  const controlRequestHandled = useEffectEvent(() => onControlRequestHandled?.());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- viewer control belongs to the panel's stream, not the floating stream it replaces
+  useEffect(() => {
+    if (!visible || !takeControlOnOpen || !controller) return;
+    if (canOperate && (controller === "agent" || controller === "unclaimed")) {
+      clientRef.current?.send({ type: "takeControl" });
+      return;
+    }
+    if (controller === "you") inputRef.current?.focus({ preventScroll: true });
+    controlRequestHandled();
+  }, [visible, takeControlOnOpen, controller, canOperate]);
 
   useImperativeHandle(
     ref,
@@ -762,9 +782,11 @@ export function ServerBrowserSurface(props: {
             variant="outline"
             size="xs"
             disabled={control.controller === "another-viewer"}
-            onClick={() =>
-              send({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
-            }
+            onClick={() => {
+              if (control.controller === "you") send({ type: "releaseControl" });
+              else if (onTakeControl) onTakeControl();
+              else send({ type: "takeControl" });
+            }}
           >
             {control.controller === "you" ? "Release control" : "Take control"}
           </Button>

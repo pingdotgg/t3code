@@ -201,6 +201,9 @@ export function PreviewView({
   const runtimeTabId = tabId
     ? previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId)
     : null;
+  const takeControlOnOpen = useRightPanelStore(
+    (state) => runtimeTabId !== null && state.pendingBrowserControl === runtimeTabId,
+  );
   if (find !== null && find.tabId !== runtimeTabId) setFind(null);
   const recordingRuntimeTabId =
     tabId && runtimeTabId
@@ -1088,6 +1091,10 @@ export function PreviewView({
                     : null
                 }
                 visible={visible}
+                takeControlOnOpen={takeControlOnOpen}
+                onControlRequestHandled={() =>
+                  useRightPanelStore.setState({ pendingBrowserControl: null })
+                }
                 onFirstFrame={() => setServerFrameTabId(runtimeTabId)}
                 onControl={(control) =>
                   setServerControlledTabId(control?.controller === "you" ? runtimeTabId : null)

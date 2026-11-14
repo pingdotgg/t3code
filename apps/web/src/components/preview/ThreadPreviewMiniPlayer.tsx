@@ -233,9 +233,9 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
     previewMiniPlayerSourceKey(browserMiniPlayerSource(tabId)),
   );
 
-  const openInPanel = () => {
+  const openInPanel = (takeControlRuntimeTabId?: string) => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
-    useRightPanelStore.getState().openBrowser(threadRef, tabId);
+    useRightPanelStore.getState().openBrowser(threadRef, tabId, takeControlRuntimeTabId);
   };
 
   const toggleNativePictureInPicture = async () => {
@@ -281,7 +281,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
       sourceSize={sourceSize}
       label="Floating browser preview"
       recording={recording}
-      onOpenInPanel={openInPanel}
+      onOpenInPanel={() => openInPanel()}
       pillActions={
         canPopOut ? (
           <Tooltip>
@@ -323,6 +323,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
               visible
               followSize={false}
               controlPosition="bottom"
+              onTakeControl={() => openInPanel(runtimeTabId)}
               onViewport={(viewport) =>
                 useStreamedSourceSize.setState(
                   (state) =>
