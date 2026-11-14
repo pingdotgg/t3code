@@ -1,15 +1,20 @@
 import { describe, expect, it } from "@effect/vitest";
 import { splitTransferredFiles } from "./workspaceFileDrop";
 
+const entry = (isDirectory: boolean) => ({ isDirectory }) as FileSystemEntry;
+
 describe("splitTransferredFiles", () => {
-  it("separates copied folders from files before attachment validation", () => {
+  it("separates copied folders from files and keeps their entries aligned", () => {
     const folder = new File([], "photos.png");
+    const folderEntry = entry(true);
+    const secondFolder = new File([], "src");
+    const secondFolderEntry = entry(true);
     const emptyFile = new File([], "empty.txt");
     const image = new File(["image"], "photo.png", { type: "image/png" });
 
     expect(
       splitTransferredFiles({
-        files: [folder, emptyFile, image],
+        files: [folder, emptyFile, image, secondFolder],
         items: [
           {
             kind: "string",
@@ -19,21 +24,30 @@ describe("splitTransferredFiles", () => {
           {
             kind: "file",
             getAsFile: () => folder,
-            webkitGetAsEntry: () => ({ isDirectory: true }),
+            webkitGetAsEntry: () => folderEntry,
           },
           {
             kind: "file",
             getAsFile: () => emptyFile,
-            webkitGetAsEntry: () => ({ isDirectory: false }),
+            webkitGetAsEntry: () => entry(false),
           },
           {
             kind: "file",
             getAsFile: () => image,
             webkitGetAsEntry: () => null,
           },
+          {
+            kind: "file",
+            getAsFile: () => secondFolder,
+            webkitGetAsEntry: () => secondFolderEntry,
+          },
         ],
       }),
-    ).toEqual({ files: [emptyFile, image], folders: [folder] });
+    ).toEqual({
+      files: [emptyFile, image],
+      folders: [folder, secondFolder],
+      folderEntries: [folderEntry, secondFolderEntry],
+    });
   });
 
   it("ignores clipboard file items that cannot provide a file", () => {
@@ -44,10 +58,10 @@ describe("splitTransferredFiles", () => {
           {
             kind: "file",
             getAsFile: () => null,
-            webkitGetAsEntry: () => ({ isDirectory: true }),
+            webkitGetAsEntry: () => entry(true),
           },
         ],
       }),
-    ).toEqual({ files: [], folders: [] });
+    ).toEqual({ files: [], folders: [], folderEntries: [] });
   });
 });

@@ -13,6 +13,7 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
 import {
+  changeQuestionAttachmentPreparation,
   questionAttachmentDraftId,
   trackOpenQuestionAttachmentDraft,
   useQuestionAttachmentPreparation,
@@ -47,11 +48,19 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import {
+  buildFolderZip,
+  collectFolderEntries,
+  collectPickedFolderEntries,
+  FolderArchiveError,
+  type FolderCollection,
+} from "./folderArchive";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
@@ -261,7 +270,11 @@ import { Kbd } from "../ui/kbd";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { usePanelAnimationSettings } from "../../panelAnimations";
-import { readEnvironmentScope, readPreparedConnection } from "../../state/session";
+import {
+  readEnvironmentScope,
+  readPreparedConnection,
+  usePreparedConnection,
+} from "../../state/session";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { useComposerRestingTransition } from "./useComposerRestingTransition";
 import { ComposerCommandMenuLayer } from "./ComposerCommandMenuLayer";
@@ -287,11 +300,13 @@ function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   return armed;
 }
 
+const isFolderArchiveError = Schema.is(FolderArchiveError);
+
 export interface ChatComposerHandle {
   focusAtEnd: () => void;
   focusAt: (cursor: number) => void;
   addDroppedFiles: (files: File[]) => void;
-  addDroppedFolders: (folders: File[]) => void;
+  addDroppedFolders: (folders: File[], folderEntries: FileSystemDirectoryEntry[]) => void;
   hasPendingAttachments: () => boolean;
   insertTextAtEnd: (
     text: string,
@@ -2649,49 +2664,145 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const insertComposerTextAtEndStable = useStableCallback(insertComposerTextAtEnd);
 
-  const addComposerFolders = (folders: File[]) => {
-    const target = folderDropTarget({
-      localEnvironmentDisabled: isLocalEnvironmentDisabled(),
+  // A synchronous IPC read on desktop; the setting only changes with a restart, so read it once.
+  const [localEnvironmentDisabledAtMount] = useState(isLocalEnvironmentDisabled);
+  const preparedConnection = usePreparedConnection(environmentId);
+  const resolveFolderTarget = () =>
+    folderDropTarget({
+      localEnvironmentDisabled: localEnvironmentDisabledAtMount,
       environmentId,
       primaryEnvironmentId,
       connection: readPreparedConnection(environmentId),
       isDesktopRenderer: window.desktopBridge !== undefined,
     });
-    if (target === "remote") {
+  const insertFolderPathLink = (path: string): boolean => {
+    const inserted = insertComposerTextAtEndStable(`${serializeComposerFileLink(path)} `, {
+      ensureLeadingBoundary: true,
+    });
+    if (!inserted) {
       toastManager.add({
         type: "error",
-        title: "Folders can only be referenced on a server running on this computer",
+        title: "Unable to add folder",
+        description: "The composer is busy; try again once it is ready.",
       });
+    }
+    return inserted;
+  };
+  // A folder the server can't reach by path is uploaded as one ZIP file attachment.
+  const attachFolderArchive = async (
+    folderName: string,
+    collect: () => Promise<FolderCollection> | FolderCollection,
+  ) => {
+    if (fileStagingLimit === null) {
+      toastManager.add({ type: "error", title: "This server does not support file attachments." });
       return;
     }
-    for (const folder of folders) {
-      const path = resolveDroppedFolderPath(folder, window.desktopBridge?.getPathForFile);
-      if (path === null) {
+    if (pendingUserInputs.length > 0 && !questionTakesSnapShots) {
+      toastManager.add({ type: "error", title: "This question cannot accept attachments." });
+      return;
+    }
+    const toastId = toastManager.add({ type: "loading", title: `Compressing "${folderName}"…` });
+    const targetKey = attachmentTargetKey;
+    pendingDraftWork.begin(targetKey);
+    if (questionAttachmentTarget) changeQuestionAttachmentPreparation(questionAttachmentTarget, 1);
+    const attach = async () => {
+      try {
+        const collection = await collect();
+        const skipped = collection.skipped;
+        const zip = await buildFolderZip(collection, { maxZipBytes: fileStagingLimit });
+        if (skipped.length === 0) {
+          toastManager.close(toastId);
+        } else {
+          toastManager.update(toastId, {
+            type: "info",
+            title: `Attached ${zip.name}`,
+            description: `Left out ${skipped.map(({ name }) => name).join(" and ")}.`,
+          });
+        }
+        await addComposerAttachments([zip]);
+      } catch (error) {
+        toastManager.update(toastId, {
+          type: "error",
+          title: `Couldn't attach "${folderName}"`,
+          description: isFolderArchiveError(error)
+            ? error.message
+            : "The folder could not be read.",
+        });
+      }
+    };
+    await attach().finally(() => {
+      pendingDraftWork.end(targetKey);
+      if (questionAttachmentTarget)
+        changeQuestionAttachmentPreparation(questionAttachmentTarget, -1);
+    });
+  };
+  const addComposerFolders = (folders: File[], folderEntries: FileSystemDirectoryEntry[]) => {
+    const target = resolveFolderTarget();
+    folders.forEach((folder, index) => {
+      const path =
+        target === "local"
+          ? resolveDroppedFolderPath(folder, window.desktopBridge?.getPathForFile)
+          : null;
+      if (path !== null) {
+        insertFolderPathLink(path);
+        return;
+      }
+      const entry = folderEntries[index];
+      if (entry === undefined) {
         toastManager.add({
           type: "error",
-          title: `Couldn't get the path of "${folder.name}"`,
+          title: `Couldn't read "${folder.name}"`,
           description: "Type the folder path with @ instead.",
         });
-        continue;
+        return;
       }
-      const inserted = insertComposerTextAtEndStable(`${serializeComposerFileLink(path)} `, {
-        ensureLeadingBoundary: true,
-      });
-      if (!inserted) {
-        toastManager.add({
-          type: "error",
-          title: "Unable to add folder",
-          description: "The composer is busy; try again once it is ready.",
-        });
-        break;
-      }
-    }
+      void attachFolderArchive(entry.name, () => collectFolderEntries(entry));
+    });
     focusComposer();
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
+  // The desktop folder dialog returns a path on this computer, so it is only offered when the
+  // thread's server shares this filesystem, the same rule as dropped folders.
+  const pickFolder = window.desktopBridge?.pickFolder;
+  // The dialog refuses to open while the local environment is off, even for a loopback server.
+  const canPickLocalFolder =
+    pickFolder !== undefined &&
+    !localEnvironmentDisabledAtMount &&
+    folderDropTarget({
+      localEnvironmentDisabled: localEnvironmentDisabledAtMount,
+      environmentId,
+      primaryEnvironmentId,
+      connection: Option.getOrNull(preparedConnection),
+      isDesktopRenderer: true,
+    }) === "local";
+  const attachLocalFolder = async () => {
+    if (!pickFolder) return;
+    let path: string | null;
+    try {
+      path = await pickFolder(gitCwd ? { initialPath: gitCwd } : undefined);
+    } catch {
+      toastManager.add({ type: "error", title: "Couldn't open the folder picker" });
+      return;
+    }
+    if (path !== null) insertFolderPathLink(path);
+    focusComposer();
+  };
+  const attachLocalFolderStable = useStableCallback(attachLocalFolder);
+  const addPickedFolder = (files: File[]) => {
+    // Browsers without folder picking (iOS Safari) return plain files with no relative path.
+    const folderName = files[0]?.webkitRelativePath.split("/")[0];
+    if (!folderName) {
+      if (files.length > 0) {
+        toastManager.add({ type: "error", title: "This browser can't attach a folder" });
+      }
+      return;
+    }
+    void attachFolderArchive(folderName, () => collectPickedFolderEntries(files));
+  };
+  const addPickedFolderStable = useStableCallback(addPickedFolder);
 
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
-    const { files, folders } = splitTransferredFiles(event.clipboardData);
+    const { files, folders, folderEntries } = splitTransferredFiles(event.clipboardData);
     const plainText = event.clipboardData.getData("text/plain");
     const bypassAutoAttachment = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
     if (
@@ -2702,7 +2813,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ) {
       event.preventDefault();
       event.stopPropagation();
-      if (folders.length > 0) addComposerFoldersStable(folders);
+      if (folders.length > 0) addComposerFoldersStable(folders, folderEntries);
       if (files.length > 0) {
         void addComposerAttachments(files, { skipImageInlineChip: bypassAutoAttachment });
       }
@@ -3274,6 +3385,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     <ComposerAttachButton
       addComposerAttachments={addComposerAttachments}
       focusComposer={focusComposer}
+      attachFolder={canPickLocalFolder ? attachLocalFolderStable : undefined}
+      addPickedFolder={addPickedFolderStable}
     />
   ) : null;
   return (

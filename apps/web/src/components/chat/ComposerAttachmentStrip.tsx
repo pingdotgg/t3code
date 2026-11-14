@@ -6,7 +6,15 @@ import type {
   SnapShotSource,
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import { CircleAlertIcon, ImageIcon, PaperclipIcon, PlayIcon, XIcon } from "lucide-react";
+import {
+  CircleAlertIcon,
+  FileIcon,
+  FolderIcon,
+  ImageIcon,
+  PaperclipIcon,
+  PlayIcon,
+  XIcon,
+} from "lucide-react";
 import { type ComponentProps, useLayoutEffect, useRef } from "react";
 
 import {
@@ -32,6 +40,7 @@ import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { AttachmentImage } from "../media/AttachmentImage";
 import { Button } from "../ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { composerFloatingLayerProps } from "./composerEventScope";
@@ -702,11 +711,38 @@ export function ComposerQueuedAttachmentRow({
 export function ComposerAttachButton({
   addComposerAttachments,
   focusComposer,
+  attachFolder,
+  addPickedFolder,
 }: {
   readonly addComposerAttachments: (files: File[]) => Promise<boolean>;
   readonly focusComposer: () => void;
+  /** Picks a folder by path on this computer; preferred over `addPickedFolder` when present. */
+  readonly attachFolder?: (() => void) | undefined;
+  /** Receives the files of a folder chosen in the browser's folder picker. */
+  readonly addPickedFolder?: ((files: File[]) => void) | undefined;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const canPickFolder = attachFolder !== undefined || addPickedFolder !== undefined;
+  const pickFolder = () => (attachFolder ? attachFolder() : folderInputRef.current?.click());
+  const label = canPickFolder ? "Attach files or a folder" : "Attach files";
+  const triggerButton = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-sm"
+      aria-label={label}
+      // Keeps editor focus for the direct picker; the menu opens on mousedown, which this would cancel.
+      {...(canPickFolder
+        ? {}
+        : {
+            onPointerDown: (event: { preventDefault(): void }) => event.preventDefault(),
+            onClick: () => inputRef.current?.click(),
+          })}
+    />
+  );
+  // The clip's weight sits in its upper loop; 1px down reads as centered on the row.
+  const icon = <PaperclipIcon className="translate-y-px" />;
   return (
     <>
       <input
@@ -725,24 +761,45 @@ export function ComposerAttachButton({
           });
         }}
       />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={() => inputRef.current?.click()}
-              aria-label="Attach files"
-            />
-          }
-        >
-          {/* The clip's weight sits in its upper loop; 1px down reads as centered on the row. */}
-          <PaperclipIcon className="translate-y-px" />
-        </TooltipTrigger>
-        <TooltipPopup>Attach files</TooltipPopup>
-      </Tooltip>
+      {addPickedFolder && !attachFolder ? (
+        <input
+          // React has no prop for this non-standard attribute.
+          ref={(input) => {
+            folderInputRef.current = input;
+            input?.setAttribute("webkitdirectory", "");
+          }}
+          type="file"
+          className="hidden"
+          onChange={(event) => {
+            const files = Array.from(event.currentTarget.files ?? []);
+            event.currentTarget.value = "";
+            addPickedFolder(files);
+          }}
+        />
+      ) : null}
+      {canPickFolder ? (
+        <Menu>
+          <Tooltip>
+            <TooltipTrigger render={<MenuTrigger render={triggerButton} />}>{icon}</TooltipTrigger>
+            <TooltipPopup>{label}</TooltipPopup>
+          </Tooltip>
+          <MenuPopup align="start" {...composerFloatingLayerProps}>
+            <MenuItem onClick={() => inputRef.current?.click()}>
+              <FileIcon />
+              Files…
+            </MenuItem>
+            <MenuItem onClick={pickFolder}>
+              <FolderIcon />
+              Folder…
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger render={triggerButton}>{icon}</TooltipTrigger>
+          <TooltipPopup>{label}</TooltipPopup>
+        </Tooltip>
+      )}
     </>
   );
 }
