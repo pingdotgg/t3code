@@ -91,6 +91,7 @@ monorepo_checks=(
   "codex conformance"
   "claude catalog --check"
   "claude conformance"
+  "claude probe conformance"
   "claude t3-replay"
   "t3 fixture replay"
   "acp instructions --check"
@@ -139,9 +140,11 @@ else
   # `npm ci` in helpers/sdk-host. Without it the check is skipped, never counted as passed.
   if [ -d helpers/sdk-host/node_modules/@anthropic-ai/claude-agent-sdk ]; then
     run "claude conformance" crates/conn-provider-claude/tools/conformance/run.sh
+    # Claude's status entry: T3's checkClaudeProviderStatus and ours against stub CLIs.
+    run "claude probe conformance" node crates/conn-provider-claude/tools/probe-conformance/run.mjs
   else
     printf '\nhelpers/sdk-host has no node_modules: skipping claude conformance (run npm ci in helpers/sdk-host).\n'
-    skipped_tools+=("claude conformance")
+    skipped_tools+=("claude conformance" "claude probe conformance")
   fi
   # Exactly the scenarios in expected-failures.txt may fail; any other change fails the check.
   run "claude t3-replay" node crates/conn-provider-claude/tools/t3-replay/check.mjs
