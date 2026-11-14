@@ -42,6 +42,12 @@ describe("backgroundWorkNotification", () => {
         .summary,
       'Monitor "Three ticks" reported new output',
     );
+    assert.equal(
+      backgroundWorkNotification([
+        { kind: "command", label: `${"a".repeat(78)}😀 and more`, outcome: "completed" },
+      ]).summary,
+      `Command "${"a".repeat(78)}…" finished`,
+    );
   });
 
   it("names every piece of work that ended together, without opening one of them", () => {

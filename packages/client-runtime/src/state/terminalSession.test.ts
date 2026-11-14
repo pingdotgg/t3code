@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { EnvironmentId, TerminalSessionSnapshot, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  retainedTerminalHistory,
+  TerminalSessionSnapshot,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import {
   applyTerminalAttachStreamEvent,
@@ -119,6 +124,14 @@ describe("terminal session reducers", () => {
 
     expect(terminalOutputText(state.output)).toBe("\uFEFFtail");
     expect(state.output.retainedBytes).toBe(7);
+    const serverTail = retainedTerminalHistory("discard﻿tail", 7);
+    expect(
+      applyTerminalAttachStreamEvent(
+        EMPTY_TERMINAL_BUFFER_STATE,
+        { type: "snapshot", snapshot: { ...BASE_SNAPSHOT, history: serverTail } },
+        7,
+      ),
+    ).toEqual(state);
   });
 
   it("trims whole Unicode code points from a partially retained chunk", () => {
@@ -146,6 +159,47 @@ describe("terminal session reducers", () => {
     }
   });
 
+  it("does not retain the tail of a control sequence whose introducer was trimmed", () => {
+    for (const [history, maxBytes, replayable] of [
+      ["prefix\u001b[31mOK", 6, /^(?:[a-z]*\u001b\[31mOK|O?K?)$/],
+      ["prefix\u001b]0;HIDDEN\u0007OK", 10, /^(?:[a-z]*\u001b\]0;HIDDEN\u0007OK|O?K?)$/],
+      ["prefix\u001b]0;HIDDEN\u0007OK", 4, /^(?:[a-z]*\u001b\]0;HIDDEN\u0007OK|O?K?)$/],
+    ] as const) {
+      const state = applyTerminalAttachStreamEvent(
+        EMPTY_TERMINAL_BUFFER_STATE,
+        { type: "snapshot", snapshot: { ...BASE_SNAPSHOT, history } },
+        maxBytes,
+      );
+      expect(terminalOutputText(state.output)).toBe("OK");
+
+      // The same text as live output: a mounted terminal still receives every byte, while one
+      // that mounts later, even inside the sequence, never prints the rest of it.
+      let live = applyTerminalAttachStreamEvent(
+        EMPTY_TERMINAL_BUFFER_STATE,
+        { type: "snapshot", snapshot: { ...BASE_SNAPSHOT, history: "" } },
+        maxBytes,
+      );
+      const readers = [{ cursor: INITIAL_TERMINAL_OUTPUT_CURSOR, written: "" }];
+      for (const data of history) {
+        live = applyTerminalAttachStreamEvent(
+          live,
+          { type: "output", threadId: TARGET.threadId, terminalId: TARGET.terminalId, data },
+          maxBytes,
+        );
+        readers.push({ cursor: INITIAL_TERMINAL_OUTPUT_CURSOR, written: "" });
+        for (const reader of readers) {
+          const update = readTerminalOutputUpdate(live.output, reader.cursor);
+          if (update.type === "reset") reader.written = update.data;
+          if (update.type === "append") reader.written += update.data;
+          reader.cursor = update.cursor;
+        }
+      }
+      expect(readers[0]!.written).toBe(history);
+      for (const reader of readers) expect(reader.written).toMatch(replayable);
+      expect(terminalOutputText(live.output)).toBe("OK");
+    }
+  });
+
   it("delivers all output when several events arrive before a renderer reads", () => {
     const initial = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
       type: "snapshot",
@@ -164,6 +218,46 @@ describe("terminal session reducers", () => {
     const update = readTerminalOutputUpdate(state.output, cursor);
     expect(update).toMatchObject({ type: "append", data: " one two three" });
     expect(readTerminalOutputUpdate(state.output, update.cursor).type).toBe("none");
+  });
+
+  it("bounds historical chunk inspection when reading new tail output", () => {
+    let state = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "snapshot",
+      snapshot: { ...BASE_SNAPSHOT, history: "" },
+    });
+    for (let index = 0; index < 512; index += 1) {
+      state = applyTerminalAttachStreamEvent(state, {
+        type: "output",
+        threadId: TARGET.threadId,
+        terminalId: TARGET.terminalId,
+        data: "history\r\n",
+      });
+    }
+    const cursor = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR).cursor;
+    const next = applyTerminalAttachStreamEvent(state, {
+      type: "output",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      data: "latest\r\n",
+    });
+    let historicalChunkReads = 0;
+    const chunks = next.output.chunks.map((chunk, index) =>
+      index < state.output.chunks.length
+        ? {
+            ...chunk,
+            get startOffset() {
+              historicalChunkReads += 1;
+              return chunk.startOffset;
+            },
+          }
+        : chunk,
+    );
+
+    expect(readTerminalOutputUpdate({ ...next.output, chunks }, cursor)).toMatchObject({
+      type: "append",
+      data: "latest\r\n",
+    });
+    expect(historicalChunkReads).toBeLessThanOrEqual(2);
   });
 
   it("preserves the byte-limited tail and resets a cursor before a partially trimmed chunk", () => {
@@ -199,16 +293,20 @@ describe("terminal session reducers", () => {
     expect(state.output.retainedBytes).toBe(8);
   });
 
-  it("resets for repeated snapshots, clear, and restart even when output text repeats", () => {
+  it("resets for repeated snapshots and restart even when output text repeats, and erases on clear", () => {
     let state = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
       type: "snapshot",
       snapshot: BASE_SNAPSHOT,
     });
     let cursor = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR).cursor;
+    const attachedGeneration = state.output.generation;
+    // A socket reconnect resubscribes the same stream, so the server's new snapshot gets no seed.
     state = applyTerminalAttachStreamEvent(state, { type: "snapshot", snapshot: BASE_SNAPSHOT });
     const repeated = readTerminalOutputUpdate(state.output, cursor);
     expect(repeated).toMatchObject({ type: "reset", data: "hello" });
     expect(state.version).toBe(2);
+    // Viewers replay their measured grid once per generation; the new attachment holds the old size.
+    expect(state.output.generation).not.toBe(attachedGeneration);
     cursor = repeated.cursor;
 
     state = applyTerminalAttachStreamEvent(state, {
@@ -216,8 +314,22 @@ describe("terminal session reducers", () => {
       threadId: TARGET.threadId,
       terminalId: TARGET.terminalId,
     });
+    // Clear erases text in place: a full reset would drop the running program's modes.
+    const erase = "\u001b[H\u001b[2J\u001b[3J";
     const cleared = readTerminalOutputUpdate(state.output, cursor);
-    expect(cleared).toMatchObject({ type: "reset", data: "" });
+    expect(cleared).toMatchObject({ type: "append", data: erase });
+    expect(readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR)).toMatchObject({
+      type: "reset",
+      data: `hello${erase}`,
+    });
+    expect(terminalOutputText(state.output)).toBe("");
+    const afterClear = applyTerminalAttachStreamEvent(state, {
+      type: "output",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      data: "next",
+    });
+    expect(terminalOutputText(afterClear.output)).toBe("next");
     state = applyTerminalAttachStreamEvent(state, {
       type: "restarted",
       threadId: TARGET.threadId,

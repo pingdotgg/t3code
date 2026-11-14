@@ -1,6 +1,7 @@
 import {
   GUEST_ATTACHMENT_ROUTE,
   GUEST_COMMAND_OUTPUT_ROUTE,
+  GUEST_HISTORY_ROUTE,
   GUEST_ITEM_ROUTE,
   GUEST_MEDIA_ROUTE,
   GUEST_RENDER_ROUTE,
@@ -16,6 +17,7 @@ import {
   isProviderSendTurnSupportedImageMimeType,
   OrchestrationV2CommandOutputFrame,
   OrchestrationV2GetTurnItemResult,
+  OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
 import * as ByteSize from "effect/ByteSize";
 import * as Duration from "effect/Duration";
@@ -52,6 +54,7 @@ const encodeOutputFrame = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2CommandOutputFrame),
 );
 const encodeItem = Schema.encodeEffect(Schema.toCodecJson(OrchestrationV2GetTurnItemResult));
+const encodeHistoryPage = Schema.encodeEffect(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage));
 
 const errorResponse = (error: GuestShareAccessError) =>
   HttpServerResponse.json(
@@ -189,9 +192,12 @@ export const readSubmission = Effect.gen(function* () {
         }),
     ),
   );
-  const fields = yield* decodeSubmit({ shareId: parts.shareId, text: parts.text ?? "" }).pipe(
-    Effect.option,
-  );
+  const text = parts.text ?? "";
+  const fields = yield* decodeSubmit({
+    shareId: parts.shareId,
+    // Form data sends every line break as CRLF; the textarea gave the guest LF.
+    text: typeof text === "string" ? text.replaceAll("\r\n", "\n") : text,
+  }).pipe(Effect.option);
   if (fields._tag === "None") return null;
   const files = parts.file;
   const uploads: ReadonlyArray<GuestUpload> = Array.isArray(files)
@@ -292,6 +298,26 @@ const itemRoute = HttpRouter.add(
   }),
 );
 
+const historyRoute = HttpRouter.add(
+  "GET",
+  GUEST_HISTORY_ROUTE,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const cursor = new URLSearchParams(request.url.split("?", 2)[1] ?? "").get("cursor");
+    if (!cursor) return yield* badRequest;
+    const guestShares = yield* GuestShareService;
+    return yield* guestShares.history(yield* sessionToken, cursor).pipe(
+      Effect.flatMap((page) =>
+        encodeHistoryPage(page).pipe(
+          Effect.mapError(() => new GuestShareAccessError({ reason: "unavailable" })),
+        ),
+      ),
+      Effect.map((body) => HttpServerResponse.jsonUnsafe(body, { headers: NO_STORE })),
+      Effect.catchTags({ GuestShareAccessError: errorResponse }),
+    );
+  }),
+);
+
 // Ends when the command settles; the page closes its EventSource on that last frame, so the
 // browser does not reconnect.
 const commandOutputRoute = HttpRouter.add(
@@ -365,6 +391,7 @@ export const layer = Layer.mergeAll(
   streamRoute,
   renderRoute,
   itemRoute,
+  historyRoute,
   commandOutputRoute,
   attachmentRoute,
   mediaRoute,

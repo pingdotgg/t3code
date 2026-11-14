@@ -1,6 +1,7 @@
 import {
   SimlockDeviceHostConfig,
   type EnvironmentId,
+  type SettingsSecretValue,
   type SimlockDeviceHostConfig as SimlockDeviceHostConfigType,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -54,15 +55,15 @@ export interface SimlockHostEnvironment {
   readonly hosts: ReadonlyArray<SimlockDeviceHostConfigType>;
 }
 
-/** A token field: the environment's saved token, a replacement, or none. */
+/** A token field: the environment's saved token, a replacement or secret reference, or none. */
 export type SimlockTokenEntry =
   | { kind: "saved" }
-  | { kind: "new"; value: string }
+  | { kind: "new"; value: SettingsSecretValue }
   | { kind: "cleared" };
 
 /**
  * The host list each environment saves: the shared fields everywhere, and each environment's own
- * token. Saved tokens arrive redacted, and sending the redacted value back keeps them.
+ * token, which may stay blank until later. Saved tokens arrive redacted; sending one back keeps it.
  */
 export function planSimlockDeviceHostSave(
   environments: ReadonlyArray<SimlockHostEnvironment>,
@@ -83,8 +84,13 @@ export function planSimlockDeviceHostSave(
     const saved = environment.hosts.find((host) => host.id === draft.id)?.agentToken ?? "";
     const entry = tokens.get(environment.environmentId) ?? { kind: "cleared" };
     const agentToken =
-      entry.kind === "saved" ? saved : entry.kind === "new" ? entry.value.trim() : "";
-    if (!agentToken) return { problem: `Add an agent token for ${environment.label}.` };
+      entry.kind === "saved"
+        ? saved
+        : entry.kind !== "new"
+          ? ""
+          : typeof entry.value === "string"
+            ? entry.value.trim()
+            : entry.value;
     patches.push({
       environmentId: environment.environmentId,
       hosts: updateSimlockDeviceHosts(environment.hosts, { ...draft, agentToken }, false),

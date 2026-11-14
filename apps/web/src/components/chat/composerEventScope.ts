@@ -1,4 +1,5 @@
 import { useComposerHandleContext } from "../../composerHandleContext";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 
 const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-composer-drawer-layer="true"]',
@@ -11,19 +12,22 @@ export const composerFloatingLayerProps = {
 
 export function useComposerMenuProps() {
   const composerRef = useComposerHandleContext();
+  const isCoarsePointer = useMediaQuery({ pointer: "coarse" });
 
   return {
     ...composerFloatingLayerProps,
-    finalFocus: composerRef
-      ? () => {
-          const activeElement = document.activeElement;
-          if (activeElement !== document.body && !isInsideComposerFloatingLayer(activeElement)) {
+    // Focusing the editor on a touch device opens the on-screen keyboard, so the menu keeps its own focus return.
+    finalFocus:
+      composerRef && !isCoarsePointer
+        ? () => {
+            const activeElement = document.activeElement;
+            if (activeElement !== document.body && !isInsideComposerFloatingLayer(activeElement)) {
+              return false;
+            }
+            composerRef.current?.focusAtEnd();
             return false;
           }
-          composerRef.current?.focusAtEnd();
-          return false;
-        }
-      : undefined,
+        : undefined,
   };
 }
 
@@ -59,10 +63,35 @@ export function markOpenToPermissions(trigger: HTMLElement): void {
 export function focusRequestedPermission(open: boolean, trigger: HTMLElement | null): void {
   if (!trigger?.dataset.openToPermissions) return;
   delete trigger.dataset.openToPermissions;
-  if (!open) return;
-  const popupId = trigger.getAttribute("aria-controls");
+  if (open) focusCheckedPermission(trigger);
+}
+
+/** Focuses the checked permission in the menu this trigger opened. */
+export function focusCheckedPermission(trigger: HTMLElement | null): void {
+  const popupId = trigger?.getAttribute("aria-controls");
   const popup = popupId ? document.getElementById(popupId) : null;
   popup
     ?.querySelector<HTMLElement>("[data-composer-permissions] [aria-checked='true']")
     ?.focus({ preventScroll: true });
+}
+
+/**
+ * composer.effort marks the model picker trigger it opens; the picker then moves focus to the
+ * selected effort level once its popup is open.
+ */
+export function markOpenToEffort(trigger: HTMLElement): void {
+  trigger.dataset.openToEffort = "true";
+}
+
+/** Reads and clears an open-to mark: effort from composer.effort, permissions from composer.mode. */
+export function takeOpenTarget(trigger: HTMLElement | null): "effort" | "permissions" | null {
+  if (trigger?.dataset.openToEffort) {
+    delete trigger.dataset.openToEffort;
+    return "effort";
+  }
+  if (trigger?.dataset.openToPermissions) {
+    delete trigger.dataset.openToPermissions;
+    return "permissions";
+  }
+  return null;
 }

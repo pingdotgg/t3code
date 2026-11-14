@@ -10,7 +10,7 @@ import {
 import * as Cause from "effect/Cause";
 import { AsyncResult, type Atom } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { QueuedThreadMessage } from "./thread-outbox-model";
+import { threadOutboxRetryDelayMs, type QueuedThreadMessage } from "./thread-outbox-model";
 
 const state = vi.hoisted(() => ({
   draftText: "Keep this draft separate",
@@ -41,7 +41,7 @@ const state = vi.hoisted(() => ({
   },
   config: {
     shellThreadFamilies: false,
-    providers: [{ instanceId: "codex", driver: "codex" }],
+    providers: [{ instanceId: "codex", driver: "codex", models: [] }],
     environment: { capabilities: {} },
   },
 }));
@@ -100,7 +100,7 @@ vi.mock("./threads", async () => {
       familyAtom: () => Atom.make(AsyncResult.success({})),
       refresh: vi.fn(),
     },
-    environmentThreadDetails: { threadAtom: () => Atom.make(null) },
+    environmentThreadDetails: { stateAtom: () => Atom.make(null) },
   };
 });
 vi.mock("./git", () => ({ gitEnvironment: { preparePullRequestThread: state.checkout } }));
@@ -136,6 +136,7 @@ vi.mock("./use-thread-outbox", async () => {
   return {
     editingQueuedMessageIdsAtom: Atom.make({}).pipe(Atom.keepAlive),
     dispatchingQueuedMessageIdAtom: Atom.make<MessageId | null>(null).pipe(Atom.keepAlive),
+    retryingQueuedMessageIdsAtom: Atom.make({}).pipe(Atom.keepAlive),
     threadOutboxShellStatusesAtom: Atom.make(new Map([["secondary", "live"]])),
   };
 });
@@ -151,6 +152,7 @@ vi.mock("./use-composer-drafts", async () => {
       state.draftText += `\n${input.text}`;
     }),
     replaceComposerDraftAttachments: vi.fn(),
+    setFreshSessionPending: vi.fn(),
     undoComposerDraftMerge: vi.fn(),
     updateComposerDraftSettings: vi.fn(),
     waitForComposerDraftsLoaded: vi.fn(),
@@ -224,6 +226,7 @@ beforeEach(() => {
   ]) {
     command.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   }
+  state.start.mockResolvedValue(AsyncResult.success({}));
   state.prepare.mockReset().mockImplementation(async ({ attachments }) => ({
     status: "ready",
     attachments: [],
@@ -427,7 +430,8 @@ describe("queued task operation access", () => {
       );
       await state.manager.enqueue(queued);
       const started = Promise.withResolvers<void>();
-      const delivery = Promise.withResolvers<AsyncResult.AsyncResult<void, Error>>();
+      const delivery =
+        Promise.withResolvers<AsyncResult.AsyncResult<{ readonly sequence?: number }, Error>>();
       state.start.mockImplementationOnce(() => {
         started.resolve();
         return delivery.promise;
@@ -437,7 +441,7 @@ describe("queued task operation access", () => {
       setOperateGrant("secondary", false);
       delivery.resolve(
         accepted
-          ? AsyncResult.success(undefined)
+          ? AsyncResult.success({})
           : AsyncResult.failure(Cause.fail(new Error("This connection cannot control this task."))),
       );
       await drained;
@@ -495,4 +499,155 @@ describe("queued task operation access", () => {
       expect(remaining()).toEqual([queued]);
     },
   );
+});
+
+describe("queued task whose launch reply is lost", () => {
+  const queuedTask = (creation: Partial<NonNullable<QueuedThreadMessage["creation"]>> = {}) =>
+    message({
+      threadId: ThreadId.make("new-thread"),
+      text: "My dictated idea",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      creation: {
+        projectId: ProjectId.make("project"),
+        projectCwd: "/repo",
+        workspaceMode: "local",
+        branch: null,
+        worktreePath: null,
+        ...creation,
+      },
+    });
+
+  /** The server creates the thread, but the launch reply is lost; the thread then shows up. */
+  async function loseLaunchReply(queued: QueuedThreadMessage, edit?: string): Promise<void> {
+    setOperateGrant("secondary", true);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    state.cleanups.push(() => vi.useRealTimers());
+    await state.manager.enqueue(queued);
+    state.start.mockImplementationOnce(async () => {
+      if (edit !== undefined) await state.manager.update({ ...queued, text: edit });
+      return AsyncResult.failure(Cause.fail(new Error("Socket is not connected")));
+    });
+    await runDrain();
+    expect(remaining()).toHaveLength(1);
+    appAtomRegistry.set(state.threadShells, [state.thread, { ...state.thread, id: "new-thread" }]);
+  }
+
+  async function fireRetry(): Promise<void> {
+    const settled = Promise.withResolvers<void>();
+    const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdAtom, (id) => {
+      if (id === null) settled.resolve();
+    });
+    vi.advanceTimersByTime(threadOutboxRetryDelayMs(1));
+    await settled.promise.finally(release);
+  }
+
+  it("resends an unedited launch instead of handing its text back", async () => {
+    await loseLaunchReply(queuedTask());
+    await fireRetry();
+
+    expect(state.draftText).toBe("Keep this draft separate");
+    // The resend reuses the launch's command and message ids, so the server replays it.
+    const [first, resent] = state.start.mock.calls.map(([call]) => call.input);
+    expect(state.start).toHaveBeenCalledTimes(2);
+    expect(resent.commandId).toBe(first.commandId);
+    expect(resent.message.messageId).toBe(first.message.messageId);
+    expect(remaining()).toEqual([]);
+  });
+
+  it("hands back a task edited while its launch was in flight", async () => {
+    await loseLaunchReply(queuedTask(), "Edited idea");
+    await fireRetry();
+
+    expect(state.draftText).toBe("Keep this draft separate\nEdited idea");
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(remaining()).toEqual([]);
+  });
+
+  it("holds the resend while operation access is missing", async () => {
+    await loseLaunchReply(queuedTask());
+    setOperateGrant("secondary", false);
+    vi.advanceTimersByTime(threadOutboxRetryDelayMs(1));
+    expect(appAtomRegistry.get(dispatchingQueuedMessageIdAtom)).toBeNull();
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(remaining()).toHaveLength(1);
+
+    setOperateGrant("secondary", true);
+    await runDrain();
+    expect(state.start).toHaveBeenCalledTimes(2);
+    expect(state.draftText).toBe("Keep this draft separate");
+    expect(remaining()).toEqual([]);
+  });
+
+  it("resends a pull request task in its launched worktree without checking out again", async () => {
+    state.checkout.mockResolvedValueOnce(
+      AsyncResult.success({
+        branch: "pr-123",
+        worktreePath: "/repo/.t3/worktrees/pr-123",
+        isOnPullRequestHead: true,
+      }),
+    );
+    await loseLaunchReply(
+      queuedTask({
+        workspaceMode: "worktree",
+        branch: "fork/feature",
+        pullRequestReference: "https://github.com/acme/repo/pull/123",
+      }),
+    );
+    await fireRetry();
+
+    expect(state.checkout).toHaveBeenCalledOnce();
+    const [first, resent] = state.start.mock.calls.map(([call]) => call.input);
+    expect(resent.bootstrap.createThread.worktreePath).toBe("/repo/.t3/worktrees/pr-123");
+    expect(resent.bootstrap).toEqual(first.bootstrap);
+    expect(remaining()).toEqual([]);
+  });
+});
+
+describe("compaction before a queued send", () => {
+  const compactTurn = {
+    commandId: "command:compact",
+    message: {
+      messageId: "message:compact",
+      role: "user",
+      text: "/compact",
+      attachments: [],
+      idleCompaction: "onReturn",
+    },
+    dispatchMode: "queue",
+  };
+
+  it("queues /compact ahead of the message and resends the same /compact on a retry", async () => {
+    setOperateGrant("secondary", true);
+    const queued = message({ compactBeforeSend: true, dispatchMode: "queue" });
+    await state.manager.enqueue(queued);
+    state.start
+      .mockResolvedValueOnce(AsyncResult.success({}))
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Socket is not connected"))));
+    await runDrain();
+    expect(remaining()).toEqual([queued]);
+
+    // A restarted app delivers the persisted message again.
+    state.cleanups.splice(0).forEach((cleanup) => cleanup());
+    await runDrain();
+    expect(state.start.mock.calls.map(([call]) => call.input)).toEqual([
+      expect.objectContaining(compactTurn),
+      expect.objectContaining({ commandId: "command", dispatchMode: "queue" }),
+      expect.objectContaining(compactTurn),
+      expect.objectContaining({ commandId: "command", dispatchMode: "queue" }),
+    ]);
+    expect(remaining()).toEqual([]);
+  });
+
+  it("holds the message when its /compact cannot be sent", async () => {
+    setOperateGrant("secondary", true);
+    const queued = message({ compactBeforeSend: true, dispatchMode: "queue" });
+    await state.manager.enqueue(queued);
+    state.start.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Socket is not connected"))),
+    );
+    await runDrain();
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(state.start.mock.calls[0]?.[0].input).toMatchObject(compactTurn);
+    expect(remaining()).toEqual([queued]);
+  });
 });
