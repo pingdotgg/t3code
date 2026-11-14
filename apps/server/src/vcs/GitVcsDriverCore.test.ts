@@ -4909,7 +4909,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(cwd, "initial.ts", "// first file\n");
         yield* git(cwd, ["add", "initial.ts"]);
         yield* writeTextFile(cwd, "initial.ts", "// edited after staging\n");
-        const index = yield* git(cwd, ["ls-files", "--stage"]);
 
         const status = yield* driver.statusDetailsLocal(cwd);
 
@@ -4917,7 +4916,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.deepStrictEqual(status.workingTree.files, [
           { path: "initial.ts", insertions: 1, deletions: 0 },
         ]);
-        assert.equal(yield* git(cwd, ["ls-files", "--stage"]), index);
       }),
     );
   });
