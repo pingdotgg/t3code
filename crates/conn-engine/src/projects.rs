@@ -61,6 +61,14 @@ fn mutate(tx: &mut Tx<'_>, input: &Value) -> ProjectResult<(Value, Vec<Effect>)>
     let now = tx.now().to_owned();
     match input["type"].as_str() {
         Some("project.create") => {
+            // Other areas name folders after a project id; `.` and `..` name no folder of
+            // their own. The T3 server takes them.
+            if matches!(project_id.as_str(), "." | "..") {
+                return Err(ProjectFailure::tagged(
+                    "ProjectInvalidError",
+                    format!("`{project_id}` cannot be a project id."),
+                ));
+            }
             if tx
                 .project_any(&project_id)?
                 .is_some_and(|p| p["deletedAt"].is_null())

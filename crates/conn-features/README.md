@@ -26,11 +26,17 @@ with its state and what it needs from outside the server.
   their end state; removal records the ids first, so a stopped removal finishes on the next
   read. Ids name files, so an id outside `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,199}$` never reaches a
   path (a defect over RPC, `-32602` over `/mcp`, as the schema refuses it).
+- **Deliberate difference from the T3 server:** a project id made only of dots (`.`, `..`)
+  gets the folder `%2E` or `%2E%2E`, not the annotations root or the state folder, and every
+  folder must be one child of the annotations root. The T3 server's `directoryFor` keeps the
+  dots, so there `..` writes into the state folder (`docs/status.md`, "Faults found in the T3
+  server"). Folders the T3 server wrote for every other id load under the same name. The lock
+  is per folder, so two ids that map to one folder share it.
 - **`/mcp`:** the caller thread's project. Failures reach the agent as their plain message:
   Effect's `McpServer` renders a declared `Error` with a message that way
   (`declaredFailureResult`), and `parity.mjs` shows the T3 server does so for this toolkit.
-- **Proofs:** 11 unit tests (the 8 cases of `AnnotationStore.test.ts`, the id rule, and files
-  the T3 server wrote); the 2 cases of `McpAnnotationsToolkit.test.ts` plus the refusals;
+- **Proofs:** 11 unit tests (the 8 cases of `AnnotationStore.test.ts`, the id rule, files
+  the T3 server wrote, and 3 for hostile project ids); the 2 cases of `McpAnnotationsToolkit.test.ts` plus the refusals;
   the 3 methods decode with the real client's decoders; 7 `parity.mjs` steps, no differences.
 - **Not done:** no client reducer check: the web client keeps the stream's latest list as it
   is, so the decode check is what it needs.

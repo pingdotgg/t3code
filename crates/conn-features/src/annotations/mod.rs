@@ -286,7 +286,27 @@ fn decode_screenshot(data_url: &str) -> Option<Screenshot> {
     Some(Screenshot { extension, bytes })
 }
 
-/// One project's lock and change counter.
+/// The project's folder name under the annotations root: `directoryFor`, with a name made
+/// only of dots escaped.
+fn folder_name(project_id: &str) -> String {
+    let name: String = project_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if name.bytes().all(|b| b == b'.') {
+        name.replace('.', "%2E")
+    } else {
+        name
+    }
+}
+
+/// One folder's lock and change counter.
 #[derive(Debug)]
 struct Entry {
     lock: Mutex<()>,
@@ -304,7 +324,7 @@ struct Inner {
     root: PathBuf,
     clock: Arc<dyn Clock>,
     projects: Arc<dyn ProjectLookup>,
-    /// One entry per project that was used; projects are few and bounded by the engine.
+    /// One entry per folder that was used; projects are few and bounded by the engine.
     entries: StdMutex<HashMap<String, Arc<Entry>>>,
 }
 
@@ -320,19 +340,24 @@ impl Annotations {
         }
     }
 
-    /// `directoryFor`: characters outside `[A-Za-z0-9._-]` become `_`.
-    fn directory(&self, project_id: &str) -> PathBuf {
-        let name: String = project_id
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        self.inner.root.join(name)
+    /// `directoryFor`: characters outside `[A-Za-z0-9._-]` become `_`. Unlike the T3 server,
+    /// a name made only of dots (`.`, `..`) has each dot written as `%2E`, so no project id
+    /// names the annotations root or the state folder; no other name can hold a `%`. The
+    /// result must be one folder right under the root, or the call is refused.
+    fn directory(&self, project_id: &str) -> Result<(String, PathBuf), AnnotationError> {
+        let name = folder_name(project_id);
+        let dir = self.inner.root.join(&name);
+        let one_child = matches!(
+            Path::new(&name).components().collect::<Vec<_>>().as_slice(),
+            [std::path::Component::Normal(part)] if *part == name.as_str()
+        );
+        if one_child && dir.parent() == Some(self.inner.root.as_path()) {
+            Ok((name, dir))
+        } else {
+            Err(AnnotationError::invalid(
+                "This project id cannot name a folder.",
+            ))
+        }
     }
 
     fn now(&self) -> String {
@@ -354,13 +379,14 @@ impl Annotations {
         }
     }
 
-    fn entry(&self, project_id: &str) -> Arc<Entry> {
+    /// The entry of a folder name, so two project ids that map to one folder share one lock.
+    fn entry(&self, folder: &str) -> Arc<Entry> {
         let mut entries = match self.inner.entries.lock() {
             Ok(entries) => entries,
             Err(poisoned) => poisoned.into_inner(),
         };
         entries
-            .entry(project_id.to_owned())
+            .entry(folder.to_owned())
             .or_insert_with(|| {
                 Arc::new(Entry {
                     lock: Mutex::new(()),
@@ -378,9 +404,9 @@ impl Annotations {
         work: impl FnOnce(&mut ProjectData) -> Result<T, AnnotationError> + Send + 'static,
     ) -> Result<T, AnnotationError> {
         self.require_project(project_id).await?;
-        let entry = self.entry(project_id);
+        let (folder, dir) = self.directory(project_id)?;
+        let entry = self.entry(&folder);
         let _guard = entry.lock.lock().await;
-        let dir = self.directory(project_id);
         let (result, changed) = tokio::task::spawn_blocking(move || {
             let mut data = ProjectData::load(dir)
                 .map_err(AnnotationError::store("Could not read the annotations."))?;
@@ -413,7 +439,8 @@ impl Annotations {
         project_id: &str,
     ) -> Result<mpsc::Receiver<Result<Value, AnnotationError>>, AnnotationError> {
         self.require_project(project_id).await?;
-        let mut changes = self.entry(project_id).changes.subscribe();
+        let (folder, _) = self.directory(project_id)?;
+        let mut changes = self.entry(&folder).changes.subscribe();
         let first = self.list(project_id).await?;
         let (tx, rx) = mpsc::channel(1);
         let store = self.clone();

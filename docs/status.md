@@ -476,6 +476,20 @@ Memory: the T3 transcript replay (18 scenarios, release) peaked at 4.11–4.16 M
 `main` and 3.94–4.28 MiB on the branch (3 runs each); the new state is bounded (64 roster
 tasks, 64 links, 8 tails per turn, 16 ledger models).
 
+## Faults found in the T3 server
+
+- **A project id of `..` puts the annotation folder at the state folder.** In
+  `apps/server/src/annotations/AnnotationStore.ts:141`, `directoryFor` keeps dots, so
+  `annotations/..` is the state folder, and `ProjectId` takes any non-empty text. Input: a client
+  with `orchestration:operate` and `preview:operate` creates a project with id `..`, then calls
+  `annotations.create` with id `settings`. Effect in the T3 server: `<userdata>/settings.json`
+  is replaced by the annotation JSON, and `annotations.remove` deletes it; the same holds for
+  `keybindings.json` and any other `<id>.json` or `<id>.png|jpg|webp` there. Auth lives in
+  `statev2.sqlite`, which no annotation name reaches. Here the same call could also replace or
+  delete `auth.json`. Our fix: a folder name made only of dots is escaped (each `.` becomes
+  `%2E`), the folder must be one child of the annotations root, the per-project lock is keyed
+  by the folder name, and `project.create` refuses `.` and `..`.
+
 ## What is left, in the planned order
 
 1. **Rust hygiene, step 1: done (2026-11-14).** The toolchain is pinned to 1.99.1; BeautifulRust's
