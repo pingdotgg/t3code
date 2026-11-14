@@ -58,7 +58,28 @@ export function piRecordNumber(input: unknown, key: string): number | undefined 
   return Predicate.isNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
-export function parsePiModelSlug(slug: string): { provider: string; modelId: string } | null {
+// Pi provider names and model ids may both contain "/", so a slug only splits
+// reliably through the `{provider, id}` pairs `get_available_models` reported.
+export function findReportedPiModel(
+  slug: string,
+  reportedModels: unknown,
+): { provider: string; modelId: string } | undefined {
+  if (!Array.isArray(reportedModels)) return undefined;
+  for (const model of reportedModels) {
+    const provider = piRecordString(model, "provider");
+    const modelId = piRecordString(model, "id");
+    if (provider !== undefined && modelId !== undefined && `${provider}/${modelId}` === slug)
+      return { provider, modelId };
+  }
+  return undefined;
+}
+
+export function resolvePiModelSlug(
+  slug: string,
+  reportedModels: unknown,
+): { provider: string; modelId: string } | null {
+  const reported = findReportedPiModel(slug, reportedModels);
+  if (reported !== undefined) return reported;
   const separator = slug.indexOf("/");
   if (separator <= 0 || separator === slug.length - 1) return null;
   return { provider: slug.slice(0, separator), modelId: slug.slice(separator + 1) };
@@ -199,6 +220,8 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
         extendEnv: false,
         shell: spawnCommand.shell,
         detached: platform !== "win32",
+        // On stdin EOF Pi quits without its SIGTERM handler, so the later SIGTERM kills it mid-cleanup.
+        stdin: { stream: "pipe", endOnDone: false },
       }),
     )
     .pipe(Effect.mapError((cause) => new PiRpcError({ operation: "spawn", cause })));

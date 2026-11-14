@@ -3,18 +3,6 @@ import type { OrchestrationV2Subagent } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 
-export function subagentCardDetail(detail: string | null): string | null {
-  if (!detail || /^Child task ended with status\b/i.test(detail)) return null;
-  return (
-    detail
-      .replace(/!?\[([^\]]+)\]\((?:\\.|[^\\()]|\((?:\\.|[^\\()])*\))*\)/g, "$1")
-      .replace(/`/g, "")
-      .replace(/^[ \t]*[-*][ \t]+/gm, "")
-      .replace(/\s+/g, " ")
-      .trim() || null
-  );
-}
-
 export function subagentCardElapsed(
   agents: ReadonlyArray<Pick<OrchestrationV2Subagent, "status" | "startedAt" | "completedAt">>,
   nowMs: number,
