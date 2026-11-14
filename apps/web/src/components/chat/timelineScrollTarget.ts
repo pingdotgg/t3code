@@ -2,8 +2,11 @@ export function isTimelineScrollTarget(
   target: EventTarget | null,
   timeline: HTMLElement,
   deltaY: number,
+  wheel?: Pick<WheelEvent, "deltaX" | "shiftKey">,
 ): boolean {
   if (!(target instanceof Element) || !timeline.contains(target) || deltaY === 0) return false;
+  // Shift-wheel scrolls sideways; trackpads can add vertical noise to a horizontal swipe.
+  if (wheel?.shiftKey || Math.abs(wheel?.deltaX ?? 0) > Math.abs(deltaY)) return false;
 
   for (
     let element: Element | null = target;

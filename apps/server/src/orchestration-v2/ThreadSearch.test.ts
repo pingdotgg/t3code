@@ -840,7 +840,7 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
 });
 
 it.effect.each([true, false])(
-  "ThreadSearch narrows short words outside ASCII before the hit limit (indexed: %s)",
+  "ThreadSearch narrows Cyrillic and accent-folded Latin short words before the hit limit (indexed: %s)",
   (indexed) =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -848,12 +848,15 @@ it.effect.each([true, false])(
       const sql = yield* SqlClient.SqlClient;
       const project = ProjectId.make("project:short-limit");
       const older = ThreadId.make("thread:short-older");
+      const olderFrench = ThreadId.make("thread:short-older-french");
       const newer = ThreadId.make("thread:short-newer");
       yield* createProject(project);
       yield* Effect.forEach(
         [
           thread(older, project),
           message(older, "older", "user", "В логах ошибка"),
+          thread(olderFrench, project),
+          message(olderFrench, "older-french", "user", "École fermée à Lyon"),
           thread(newer, project),
         ],
         projections.apply,
@@ -870,15 +873,14 @@ it.effect.each([true, false])(
         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
         INSERT INTO orchestration_v2_projection_messages
           (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
-        SELECT 'short-newer-' || i, ${newer}, 'assistant', 0, ${DateTime.formatIso(at(5))},
-          ${DateTime.formatIso(at(5))}, json_object('text', 'ошибка здесь')
-        FROM n
+        SELECT 'short-newer-' || i || '-' || word, ${newer}, 'assistant', 0,
+          ${DateTime.formatIso(at(5))}, ${DateTime.formatIso(at(5))}, json_object('text', text)
+        FROM n, (SELECT 'ru' AS word, 'ошибка здесь' AS text UNION ALL SELECT 'fr', 'fermée ici')
       `;
-      const { matches } = yield* search.search({ query: "ошибка в" });
-      assert.deepEqual(
-        matches.map((match) => match.threadId),
-        [older],
-      );
+      const threadIds = (query: string) =>
+        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+      assert.deepEqual(yield* threadIds("ошибка в"), [older]);
+      assert.deepEqual(yield* threadIds("fermée ec"), [olderFrench]);
     }).pipe(Effect.provide(layerTest)),
 );
 
@@ -898,6 +900,9 @@ it.layer(layerTest)("ThreadSearch short words outside ASCII", (it) => {
           message(russian, "russian", "user", "В логах ошибка"),
           thread(french, project),
           message(french, "french", "user", "École fermée à Lyon"),
+          message(french, "french-shout", "user", "Météo école"),
+          message(french, "romanian", "user", "Școala închisă"),
+          message(french, "vietnamese", "user", "Hồ Chí Minh"),
         ],
         projections.apply,
         { discard: true },
@@ -908,8 +913,13 @@ it.layer(layerTest)("ThreadSearch short words outside ASCII", (it) => {
       const assertMatches = Effect.gen(function* () {
         assert.deepEqual(yield* threadIds("ошибка в"), [russian]);
         assert.deepEqual(yield* threadIds("fermée éc"), [french]);
+        assert.deepEqual(yield* threadIds("ecole fermée"), [french]);
+        assert.deepEqual(yield* threadIds("école me"), [french]);
+        assert.deepEqual(yield* threadIds("închisă sc"), [french]);
+        assert.deepEqual(yield* threadIds("chí ho"), [french]);
         // They still narrow: a word the message lacks rules it out.
         assert.deepEqual(yield* threadIds("ошибка я"), []);
+        assert.deepEqual(yield* threadIds("fermée ce"), []);
       });
       yield* assertMatches;
       yield* sql`DROP TABLE orchestration_v2_message_search`;

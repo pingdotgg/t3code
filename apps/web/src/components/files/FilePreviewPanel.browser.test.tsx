@@ -17,6 +17,8 @@ const state = vi.hoisted(() => ({
   file: null as ProjectReadFileResult | null,
   optimistic: null as ProjectReadFileResult | null,
   writeFile: vi.fn(),
+  assetUrl: { _tag: "Loading" } as import("~/assets/assetUrls").AssetUrlState,
+  mintUrl: vi.fn<() => Promise<string | null>>(),
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
@@ -57,6 +59,15 @@ vi.mock(import("~/hooks/useTheme"), async (original) => ({
 }));
 vi.mock(import("~/hooks/useWorkspaceMutationRefresh"), () => ({
   useWorkspaceMutationRefresh: vi.fn(),
+}));
+vi.mock(import("~/assets/assetUrls"), async (original) => ({
+  ...(await original()),
+  useAssetUrlRefresh: () => state.mintUrl,
+  useAssetUrlState: () => state.assetUrl,
+}));
+// The Word engine compiles a large WebAssembly bundle; these tests only need the URL it loads.
+vi.mock(import("./OfficeFilePreview"), () => ({
+  OfficeFilePreview: ({ src }: { src: string }) => <div data-testid="office-preview">{src}</div>,
 }));
 vi.mock(import("./FileBreadcrumbs"), () => ({ FileBreadcrumbs: () => <></> }));
 vi.mock(import("./FileBrowserPanel"), () => ({
@@ -109,6 +120,9 @@ function setup() {
   localStorage.setItem(keys[1]!, "true");
   state.file = null;
   state.optimistic = null;
+  state.assetUrl = { _tag: "Loading" };
+  let mints = 0;
+  state.mintUrl.mockReset().mockImplementation(async () => `/assets/report.docx?mint=${++mints}`);
   state.writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   return {
     [Symbol.dispose]() {
@@ -121,17 +135,17 @@ function setup() {
   };
 }
 
-function markdownPreview(truncated: boolean) {
+function markdownPreview(truncated: boolean, contents = "- [ ] Keep the rest of this file\n") {
   state.file = {
     relativePath: "tasks.md",
-    contents: "- [ ] Keep the rest of this file\n",
-    byteLength: truncated ? 1_200_000 : 32,
+    contents,
+    byteLength: truncated ? 1_200_000 : contents.length,
     truncated,
   };
   return filePreview("tasks.md");
 }
 
-function filePreview(relativePath: string) {
+function filePreview(relativePath: string, workspaceMutationId: string | null = null) {
   return (
     <FilePreviewPanel
       environmentId={environmentId}
@@ -150,9 +164,20 @@ function filePreview(relativePath: string) {
       folderTrail={undefined}
       onPendingChange={vi.fn()}
       selectedFilePending={false}
-      workspaceMutationId={null}
+      workspaceMutationId={workspaceMutationId}
     />
   );
+}
+
+function documentPreview(workspaceMutationId: string, fileRevision: string) {
+  state.file = null;
+  state.assetUrl = {
+    _tag: "Success",
+    url: "/assets/report.docx",
+    expiresAt: Number.MAX_SAFE_INTEGER,
+    fileRevision,
+  };
+  return filePreview("report.docx", workspaceMutationId);
 }
 
 function deepActiveElement() {
@@ -276,5 +301,90 @@ describe("rendered Markdown task saves", () => {
         contents: "- [x] Keep the rest of this file\n",
       },
     });
+  });
+});
+
+describe("workspace document previews", () => {
+  it("keeps an unchanged document loaded when another workspace change lands", async () => {
+    using _settings = setup();
+    await using screen = await render(documentPreview("mutation-1", "revision-1"));
+    const preview = screen.getByTestId("office-preview");
+    await expect.element(preview).toHaveTextContent("/assets/report.docx?mint=1");
+    const loaded = preview.element();
+
+    await screen.rerender(documentPreview("mutation-2", "revision-1"));
+
+    expect(state.mintUrl, "an unchanged document re-minted its URL").toHaveBeenCalledOnce();
+    expect(screen.container.contains(loaded), "an unchanged document was remounted").toBe(true);
+  });
+
+  it("keeps an unchanged document mounted while its revision check reloads", async () => {
+    using _settings = setup();
+    await using screen = await render(documentPreview("mutation-1", "revision-1"));
+    const preview = screen.getByTestId("office-preview");
+    await expect.element(preview).toHaveTextContent("/assets/report.docx?mint=1");
+    const loaded = preview.element();
+
+    state.assetUrl = { _tag: "Loading" };
+    await screen.rerender(filePreview("report.docx", "mutation-1"));
+    await screen.rerender(documentPreview("mutation-1", "revision-1"));
+
+    expect(
+      state.mintUrl,
+      "a reloading revision check re-minted the document URL",
+    ).toHaveBeenCalledOnce();
+    expect(
+      screen.container.contains(loaded),
+      "a reloading revision check remounted the document",
+    ).toBe(true);
+  });
+
+  it("reloads the document when its URL can no longer be minted", async () => {
+    using _settings = setup();
+    await using screen = await render(documentPreview("mutation-1", "revision-1"));
+    const preview = screen.getByTestId("office-preview");
+    await expect.element(preview).toHaveTextContent("/assets/report.docx?mint=1");
+
+    state.assetUrl = { _tag: "Failure" };
+    await screen.rerender(filePreview("report.docx", "mutation-2"));
+
+    await expect.element(preview).toHaveTextContent("/assets/report.docx?mint=2");
+  });
+
+  it("loads the new bytes when the document itself changes", async () => {
+    using _settings = setup();
+    await using screen = await render(documentPreview("mutation-1", "revision-1"));
+    const preview = screen.getByTestId("office-preview");
+    await expect.element(preview).toHaveTextContent("/assets/report.docx?mint=1");
+
+    await screen.rerender(documentPreview("mutation-2", "revision-2"));
+
+    await expect.element(preview).toHaveTextContent("/assets/report.docx?mint=2");
+  });
+});
+
+describe("rendered Markdown select all", () => {
+  it("selects only the rendered file, including after a task toggle", async () => {
+    using _settings = setup();
+    await using screen = await render(
+      <>
+        <p>Transcript text from the chat thread.</p>
+        {markdownPreview(false, "- [ ] Task item\n\nRendered file body.\n")}
+      </>,
+    );
+    const expectFileOnlySelection = async () => {
+      await userEvent.keyboard(
+        isMacPlatform(navigator.platform) ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
+      );
+      const selection = window.getSelection()?.toString() ?? "";
+      expect(selection).toContain("Rendered file body.");
+      expect(selection).not.toContain("Transcript text from the chat thread.");
+    };
+
+    await userEvent.click(screen.getByText("Rendered file body."));
+    await expectFileOnlySelection();
+    // A toggled checkbox keeps focus on an input inside the preview.
+    await userEvent.click(screen.getByRole("checkbox"));
+    await expectFileOnlySelection();
   });
 });

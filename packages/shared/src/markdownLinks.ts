@@ -407,6 +407,18 @@ function markdownLinkDestinationScanner(markdown: string) {
   };
 }
 
+// The composer escapes brackets in labels (`[\[id\].tsx](...)`), and `\]` does not close one.
+function unescapedLabelEnd(markdown: string, start: number): number {
+  let end = markdown.indexOf("]", start);
+  while (end !== -1) {
+    let backslashes = 0;
+    while (end - backslashes > start && markdown[end - backslashes - 1] === "\\") backslashes += 1;
+    if (backslashes % 2 === 0) return end;
+    end = markdown.indexOf("]", end + 1);
+  }
+  return -1;
+}
+
 export function extractMarkdownLinkHrefs(markdown: string): string[] {
   const hrefs: string[] = [];
   const scanDestination = markdownLinkDestinationScanner(markdown);
@@ -414,7 +426,7 @@ export function extractMarkdownLinkHrefs(markdown: string): string[] {
   while (cursor < markdown.length) {
     const labelStart = markdown.indexOf("[", cursor);
     if (labelStart === -1) break;
-    const labelEnd = markdown.indexOf("]", labelStart + 1);
+    const labelEnd = unescapedLabelEnd(markdown, labelStart + 1);
     if (labelEnd === -1) break;
 
     // Skip a failed label once; nested openings share its closing bracket.
