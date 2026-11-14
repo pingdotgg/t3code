@@ -85,6 +85,8 @@ export function DeviceStreamView(props: {
   readonly platform: DevicePlatform;
   readonly deviceId: string;
   readonly deviceName?: string;
+  /** Hardware product name, which picks the 3D body when the simulator was renamed. */
+  readonly deviceModel?: string | undefined;
   readonly deviceDescription?: string;
   readonly visible: boolean;
   readonly hostId: string;
@@ -96,7 +98,8 @@ export function DeviceStreamView(props: {
   /** The host serves only serve-sim's stream and input socket (Simlock). */
   readonly serveSimOnly?: boolean;
 }) {
-  const model = deviceModel(props.platform, props.deviceName ?? "");
+  const hardwareName = props.deviceModel ?? props.deviceName ?? "";
+  const model = deviceModel(props.platform, hardwareName);
   const isDuo = model?.id === "iphone-duo";
   const [presentation, setPresentation] = useState<"phone" | "flat">("phone");
   const [keyboardAttached, setKeyboardAttached] = useState(false);
@@ -235,7 +238,7 @@ export function DeviceStreamView(props: {
             ? "Turn off accessibility frames to use 3D"
             : null;
 
-  const keyboardSource = deviceKeyboard(props.platform, props.deviceName ?? "");
+  const keyboardSource = deviceKeyboard(props.platform, hardwareName);
   const resetView = () => {
     if (!isDuo) {
       const orientation = keyboardAttached ? "landscape_right" : "portrait";
@@ -245,7 +248,7 @@ export function DeviceStreamView(props: {
   };
   const profile = resolveDeviceShape({
     platform: props.platform,
-    name: props.deviceName ?? "",
+    name: hardwareName,
     portraitAspect: Math.min(aspect, 1 / aspect),
   });
 
@@ -424,7 +427,7 @@ export function DeviceStreamView(props: {
         ) : session && showPhone ? (
           <DevicePhoneViewport
             profile={profile}
-            model={deviceModel(props.platform, props.deviceName ?? "")}
+            model={model}
             accessory={keyboardAttached ? keyboardSource : null}
             source={session.canvas}
             onFrameListener={session.setFrameListener}

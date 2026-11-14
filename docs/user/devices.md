@@ -48,10 +48,12 @@ unless you power it off. Closed tabs stay closed after a reload. To watch the
 device again, choose it from **+ → Device**.
 
 Choose **3D view** to inspect supported devices while the live screen stays
-interactive. On iPhone Duo, use the fold and stance controls to change its
-physical pose, or pinch over the device to adjust the hinge. Turning the model
-to the other screen switches the live display and touch input to that screen.
-**Restore 3D view** returns the device to a screen-facing position.
+interactive. The 3D body follows the simulator's device type, so a renamed
+simulator still looks like its hardware. On iPhone Duo, use the fold and stance
+controls to change its physical pose, or pinch over the device to adjust the
+hinge. Turning the model to the other screen switches the live display and touch
+input to that screen. **Restore 3D view** returns the device to a screen-facing
+position.
 On supported Android foldables, use **Fold device** and **Unfold device** beside
 the screen to change its posture in either view.
 
