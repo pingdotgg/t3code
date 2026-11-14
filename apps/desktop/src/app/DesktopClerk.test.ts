@@ -3,6 +3,8 @@ import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodePathLayer from "@effect/platform-node/NodePath";
 import { codexAuthHandoffUrl, readCodexAuthDelivery } from "@t3tools/shared/codexAuthHandoff";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
@@ -10,9 +12,16 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import { afterAll, beforeEach, vi } from "vite-plus/test";
 
 const clerkStateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-clerk-"));
+const droppedFolder = NodePath.join(clerkStateDir, "project");
+const htmlNamedFolder = NodePath.join(clerkStateDir, "site.html");
+const htmlFile = NodePath.join(clerkStateDir, "page.html");
+NodeFS.mkdirSync(droppedFolder);
+NodeFS.mkdirSync(htmlNamedFolder);
+NodeFS.writeFileSync(htmlFile, "<p>page</p>");
 afterAll(() => {
   NodeFS.rmSync(clerkStateDir, { recursive: true, force: true });
 });
@@ -43,6 +52,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
+import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
 
@@ -50,6 +60,23 @@ const ignoreWebLinks = DesktopWebLinks.DesktopWebLinks.of({
   receive: () => Effect.void,
   setRendererReady: () => Effect.void,
 });
+
+const ignoreAppActivation = DesktopAppActivation.DesktopAppActivation.of({
+  start: Effect.void,
+  setRendererReady: () => Effect.void,
+  complete: () => Effect.void,
+  openWorkspace: () => Effect.void,
+});
+
+const recordOpenedWorkspaces = (opened: Array<string>, onOpen: () => void) =>
+  DesktopAppActivation.DesktopAppActivation.of({
+    ...ignoreAppActivation,
+    openWorkspace: (workspaceRoot) =>
+      Effect.sync(() => {
+        opened.push(workspaceRoot);
+        onOpen();
+      }),
+  });
 
 const layerDesktopClerk = (
   isDevelopment = true,
@@ -165,6 +192,7 @@ describe("DesktopClerk", () => {
         "requestSingleInstanceLock",
         "on:second-instance",
         "on:open-url",
+        "on:open-file",
         "createClerkBridge",
       ]);
       assert.deepEqual(storageMock.mock.calls, [
@@ -209,6 +237,8 @@ describe("DesktopClerk", () => {
         Effect.provideService(ElectronApp.ElectronApp, electronApp),
         Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
         Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
+        Effect.provideService(DesktopAppActivation.DesktopAppActivation, ignoreAppActivation),
+        Effect.provide(NodeFileSystem.layer),
       );
     },
   );
@@ -218,6 +248,8 @@ describe("DesktopClerk", () => {
     createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
     const listeners = new Map<string, (...args: unknown[]) => void>();
     const received: string[] = [];
+    const openedWorkspaces: string[] = [];
+    const workspaceOpened = Promise.withResolvers<void>();
     const first = "t3code://new?prompt=first";
     const second = "t3code://threads/env-1/thread-1";
     const later = "t3code://new?prompt=later";
@@ -235,13 +267,18 @@ describe("DesktopClerk", () => {
       listeners.get("second-instance")?.({}, ["t3", first]);
       listeners.get("second-instance")?.({}, ["t3", second]);
       listeners.get("open-url")?.({ preventDefault: () => undefined }, launchPair);
+      const dockDrop = { preventDefault: vi.fn() };
+      listeners.get("open-file")?.(dockDrop, droppedFolder);
+      assert.strictEqual(dockDrop.preventDefault.mock.calls.length, 1);
       assert.deepEqual(received, []);
 
       yield* clerk.configure;
       listeners.get("second-instance")!({}, ["t3", later]);
       yield* Effect.promise(() => delivered.promise);
+      yield* Effect.promise(() => workspaceOpened.promise);
 
       assert.deepEqual(received, [launchPair, first, second, later]);
+      assert.deepEqual(openedWorkspaces, [droppedFolder]);
     }).pipe(
       Effect.scoped,
       Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, listeners)),
@@ -261,6 +298,11 @@ describe("DesktopClerk", () => {
           setRendererReady: () => Effect.void,
         }),
       ),
+      Effect.provideService(
+        DesktopAppActivation.DesktopAppActivation,
+        recordOpenedWorkspaces(openedWorkspaces, workspaceOpened.resolve),
+      ),
+      Effect.provide(NodeFileSystem.layer),
     );
   });
 
@@ -337,6 +379,8 @@ it.effect(
       Effect.provideService(ElectronApp.ElectronApp, electronApp),
       Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
       Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
+      Effect.provideService(DesktopAppActivation.DesktopAppActivation, ignoreAppActivation),
+      Effect.provide(NodeFileSystem.layer),
     );
   },
 );
@@ -423,6 +467,8 @@ it.effect.each(["startup", "open-url", "early-second-instance"] as const)(
           {} as ElectronWindow.ElectronWindow["Service"],
         ),
         Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
+        Effect.provideService(DesktopAppActivation.DesktopAppActivation, ignoreAppActivation),
+        Effect.provide(NodeFileSystem.layer),
       );
     }),
 );
@@ -440,7 +486,15 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
         }),
     } as unknown as ElectronApp.ElectronApp["Service"];
     const received: Array<string> = [];
+    const openedWorkspaces: Array<string> = [];
+    const pageOpened = Promise.withResolvers<void>();
+    const workspaceOpened = Promise.withResolvers<void>();
     const pairLink = "t3code://pair?pairingUrl=https%3A%2F%2Fvps.example.com%2F%23token%3Dabc";
+    const missingFolder = NodePath.join(clerkStateDir, "private-missing-folder");
+    const warning = Promise.withResolvers<string>();
+    const logger = Logger.make(({ logLevel, message, cause }) => {
+      if (logLevel === "Warn") warning.resolve(JSON.stringify({ message, cause }));
+    });
     yield* Effect.gen(function* () {
       const clerk = yield* DesktopClerk.DesktopClerk;
       yield* clerk.configure;
@@ -457,14 +511,28 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
       assert.strictEqual(open("t3code://pair"), 0);
       assert.strictEqual(open("mailto:hello@example.com"), 0);
       assert.strictEqual(open("t3code://somewhere-else"), 0);
-      yield* Effect.yieldNow;
+      const openFile = (path: string) => {
+        const event = { preventDefault: vi.fn() };
+        listeners.get("open-file")!(event, path);
+        return event.preventDefault.mock.calls.length;
+      };
+      assert.strictEqual(openFile(htmlFile), 1);
+      assert.strictEqual(openFile(htmlNamedFolder), 1);
+      assert.strictEqual(openFile(missingFolder), 1);
+      yield* Effect.promise(() => Promise.all([pageOpened.promise, workspaceOpened.promise]));
+      const logged = yield* Effect.promise(() => warning.promise);
+      assert.notInclude(logged, clerkStateDir);
+      assert.notInclude(logged, "private-missing-folder");
+      assert.include(logged, "NotFound");
       assert.deepStrictEqual(received, [
         "https://example.com/page",
         "http://localhost:3000/",
         "t3code://new?prompt=hi",
         "t3code://threads/env-1/thread-1",
         pairLink,
+        NodeURL.pathToFileURL(htmlFile).href,
       ]);
+      assert.deepStrictEqual(openedWorkspaces, [htmlNamedFolder]);
     }).pipe(
       Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, listeners)),
       Effect.provideService(HostProcess.Arguments, ["t3"]),
@@ -476,9 +544,20 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
       Effect.provideService(
         DesktopWebLinks.DesktopWebLinks,
         DesktopWebLinks.DesktopWebLinks.of({
-          receive: (url) => Effect.sync(() => void received.push(url)),
+          receive: (url) =>
+            Effect.sync(() => {
+              received.push(url);
+              if (url.startsWith("file:")) pageOpened.resolve();
+            }),
           setRendererReady: () => Effect.void,
         }),
+      ),
+      Effect.provideService(
+        DesktopAppActivation.DesktopAppActivation,
+        recordOpenedWorkspaces(openedWorkspaces, workspaceOpened.resolve),
+      ),
+      Effect.provide(
+        Layer.mergeAll(NodeFileSystem.layer, Logger.layer([logger], { mergeWithExisting: false })),
       ),
     );
   }),
