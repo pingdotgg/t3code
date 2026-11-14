@@ -57,7 +57,7 @@ describe("project files queries", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows a newer read after a save whose confirmation read failed", () => {
+  it("keeps saved contents while its confirmation read is pending or failed", () => {
     const file = (contents: string): ProjectReadFileResult => ({
       relativePath: "convex.json",
       contents,
@@ -84,15 +84,6 @@ describe("project files queries", () => {
         }),
       );
       expect(contentsNow()).toBe("saved draft");
-
-      const external = file("external update");
-      appAtomRegistry.set(read, AsyncResult.success(external));
-      expect(contentsNow()).toBe("external update");
-      expect(resolveProjectFileQueryData(environmentId, "/repo", "convex.json", external)).toBe(
-        external,
-      );
-      appAtomRegistry.set(read, AsyncResult.waiting(AsyncResult.success(external)));
-      expect(contentsNow()).toBe("external update");
     } finally {
       closePreview();
     }

@@ -39,8 +39,8 @@ export type {
 
 export interface OptimisticProjectFile {
   readonly data: ProjectReadFileResult;
-  /** Unsaved while undefined; once saved, the read value the save was confirmed against. */
-  readonly confirmedAgainst: ProjectReadFileResult | null | undefined;
+  /** Saved contents remain visible until a successful read completes. */
+  readonly saved: boolean;
 }
 
 export interface OptimisticProjectFileTarget {
@@ -139,6 +139,11 @@ export function createProjectEnvironmentAtoms<R, E>(
       tag: WS_METHODS.projectsReadFile,
       staleTimeMs: 30_000,
       idleTtlMs: 5 * 60_000,
+      onAnswer: ({ environmentId, input }, _value, registry) =>
+        Effect.sync(() => {
+          const atom = optimisticFileFamily(optimisticProjectFileKey({ environmentId, ...input }));
+          if (registry.get(atom)?.saved) registry.set(atom, null);
+        }),
       execute: (input) =>
         fileMetadata.seedAfterRead(
           request(WS_METHODS.projectsReadFile, input),

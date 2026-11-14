@@ -79,7 +79,7 @@ test(
     await expect.poll(() => openTreeRow("notes.txt")).toBe(true);
     await expect.poll(editorText).toContain("before save");
 
-    // Write-only: the autosave succeeds and the read that confirms it fails.
+    // Requires a non-root server and in-place writes: autosave succeeds, confirmation read fails.
     await chmod(notes, 0o200);
     await browser.keyboard.press("ControlOrMeta+a");
     await browser.keyboard.type("saved draft");

@@ -91,7 +91,7 @@ export function setProjectFileQueryData(
     unsavedFileMounts.set(atom, appAtomRegistry.mount(atom));
   }
   appAtomRegistry.set(atom, {
-    confirmedAgainst: undefined,
+    saved: false,
     data: {
       relativePath,
       contents,
@@ -101,26 +101,12 @@ export function setProjectFileQueryData(
   });
 }
 
-// Saved contents stand in for the file until a read returns contents newer than the save.
-function visibleOptimisticFile(
-  optimistic: Atom.Type<ReturnType<typeof optimisticFileAtom>>,
-  read: AsyncResult.AsyncResult<ProjectReadFileResult, unknown>,
-): ProjectReadFileResult | null {
-  if (!optimistic) return null;
-  if (optimistic.confirmedAgainst === undefined) return optimistic.data;
-  const current = Option.getOrNull(AsyncResult.value(read));
-  return current === null || current === optimistic.confirmedAgainst ? optimistic.data : null;
-}
-
 export function getOptimisticProjectFileQueryData(
   environmentId: EnvironmentId,
   cwd: string,
   relativePath: string,
 ): ProjectReadFileResult | null {
-  return visibleOptimisticFile(
-    appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath)),
-    appAtomRegistry.get(getProjectFileQueryAtom(environmentId, cwd, relativePath)),
-  );
+  return appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath))?.data ?? null;
 }
 
 export function getProjectFileContents(
@@ -141,7 +127,7 @@ export function getUnsavedProjectFileQueryData(
   relativePath: string,
 ): ProjectReadFileResult | null {
   const optimistic = appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath));
-  return optimistic?.confirmedAgainst === undefined ? (optimistic?.data ?? null) : null;
+  return !optimistic?.saved ? (optimistic?.data ?? null) : null;
 }
 
 export function confirmProjectFileQueryData(
@@ -157,7 +143,7 @@ export function confirmProjectFileQueryData(
   const queryAtom = getProjectFileQueryAtom(environmentId, cwd, relativePath);
   appAtomRegistry.set(atom, {
     ...optimisticFile,
-    confirmedAgainst: Option.getOrNull(AsyncResult.value(appAtomRegistry.get(queryAtom))),
+    saved: true,
   });
   releaseUnsavedFile(atom);
   appAtomRegistry.refresh(queryAtom);
@@ -272,8 +258,7 @@ export function useProjectFileQuery(
   const optimisticResult = useAtomValue(
     optimisticFileAtom(environmentId, cwd, relativePath ?? EMPTY_PROJECT_FILE_PATH),
   );
-  const optimisticFile =
-    relativePath === null ? null : visibleOptimisticFile(optimisticResult, result);
+  const optimisticFile = relativePath === null ? null : (optimisticResult?.data ?? null);
   const cause = failureCause(result);
   const readError = isProjectReadFileError(cause) ? cause : null;
   const data = canReadFiles ? (optimisticFile ?? (isMissing ? null : readData)) : null;
