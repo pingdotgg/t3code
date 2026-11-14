@@ -1348,7 +1348,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               ) : (
                 <span
                   className={cn(
-                    "relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end",
+                    "group/sidebar-status-slot relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end",
                     props.sweepAction !== null && "hidden",
                     jumpHintLabel && JUMP_HINT_SLOT_CLASS_NAME,
                   )}
@@ -1359,7 +1359,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                       variantAction === "unsettle" && "text-(--sidebar-settled-meta)",
                       !isWoke &&
                         (props.settlementSupported && variantAction === "settle"
-                          ? "group-any-hover/sidebar-row:hidden"
+                          ? "group-has-[:focus-visible]/sidebar-status-slot:hidden group-any-hover/sidebar-row:hidden"
                           : "group-any-hover/sidebar-row:opacity-0"),
                     )}
                   >
