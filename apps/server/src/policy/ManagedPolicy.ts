@@ -185,7 +185,10 @@ const make = Effect.gen(function* () {
   const policy = yield* Option.match(devPath, {
     onSome: load,
     onNone: () =>
-      readManagedPolicy(platform).pipe(
+      readManagedPolicy(
+        platform,
+        ManagedProviders.knownDriverLabels().map(({ driver }) => driver),
+      ).pipe(
         Effect.flatMap((found) =>
           fromDocument(found?.source ?? managedPolicyPath(platform), found?.document),
         ),

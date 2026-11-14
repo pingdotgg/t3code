@@ -15,6 +15,7 @@ import {
 import { type ComposerThreadTarget, useComposerDraftStore } from "~/composerDraftStore";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { configuredHostedAppUrl } from "~/hostedPairing";
+import { draftModelSelectionApplies } from "~/lib/chatThreadActions";
 
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
@@ -48,14 +49,16 @@ export function composerPromptLink(input: {
   readonly project: EnvironmentProject | undefined;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly threadModelSelection: ModelSelection | null;
+  readonly threadStarted: boolean;
   readonly withContext: boolean;
 }): string | null {
   const draft = useComposerDraftStore.getState().getComposerDraft(input.target);
   if (!draft) return null;
   if (!input.withContext) return promptLinkFor(draft.prompt);
   const selection =
-    (draft.activeProvider ? draft.modelSelectionByProvider[draft.activeProvider] : undefined) ??
-    input.threadModelSelection;
+    (draft.activeProvider && draftModelSelectionApplies(draft, input.threadStarted)
+      ? draft.modelSelectionByProvider[draft.activeProvider]
+      : undefined) ?? input.threadModelSelection;
   const provider = selection
     ? (input.providers.find((candidate) => candidate.instanceId === selection.instanceId)?.driver ??
       null)
@@ -69,8 +72,7 @@ export function composerPromptLink(input: {
 
 export async function copyPromptLink(link: string): Promise<void> {
   try {
-    if (!(await writeTextToClipboard(link))) return;
-    toastManager.add({ type: "success", title: "Prompt link copied" });
+    await writeTextToClipboard(link);
   } catch (error) {
     toastManager.add(
       stackedThreadToast({

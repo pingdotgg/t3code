@@ -1,25 +1,20 @@
-import * as Effect from "effect/Effect";
+import { fileURLToPath } from "node:url";
+import { describe, expect, test } from "@alchemy.run/test";
+import * as TestCore from "@alchemy.run/test/Core";
 import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import { fileURLToPath } from "node:url";
 import path from "pathe";
-import { describe, expect, test } from "alchemy-test";
-import {
-  collectAuthProviders,
-  buildStackProviders,
-  DEFAULT_ENTRYPOINT,
-  importStack,
-  open,
-  routeCacheLayer,
-  StackModuleLoader,
-} from "@/Alchemist/Session.ts";
+import { authRegistryLayer, collectAuthProviders } from "@/Alchemist/AuthRegistry.ts";
+import { DEFAULT_ENTRYPOINT, importStack, StackModuleLoader } from "@/Alchemist/Entrypoint.ts";
+import * as Alchemist from "@/Alchemist/index.ts";
+import { buildProviders } from "@/Alchemist/Operations.ts";
 import { Secrets, Stack, inMemoryState } from "@/index.ts";
-import * as CliKit from "@/Cli/CliKit/index.ts";
-import { evalStack } from "../../src/Stack";
-import * as TestCore from "../../src/Test/Core";
+import * as Interaction from "@/Interaction.ts";
+import { evalStack } from "../../src/EvalStack";
 import { TestLayers } from "../test.resources";
 
 const fixtureAbsolutePath = fileURLToPath(
@@ -58,11 +53,10 @@ describe("importStack", { tags: ["unit", "local"] }, () => {
           },
           Config.String("ALCHEMY_DOTENV_SESSION_VALUE"),
         );
-        const result = yield* open({
-          entrypoint: fixtureAbsolutePath,
-          stage: "prod",
-          envFile,
-        }).pipe(
+        const result = yield* importStack(fixtureAbsolutePath).pipe(
+          Effect.flatMap((stack) =>
+            Alchemist.plan({ stack, operation: "deploy", stage: "prod", envFile }),
+          ),
           Effect.result,
           Effect.provideService(StackModuleLoader, {
             import: async () => ({ default: stack }),
@@ -78,7 +72,7 @@ describe("importStack", { tags: ["unit", "local"] }, () => {
       { providers: TestLayers() },
     ));
 
-  test("--env-file and --profile steer the default secrets for sessions and provider-only builds", () =>
+  test("--env-file and --profile steer the default secrets for stack and provider-only builds", () =>
     TestCore.run(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -105,23 +99,24 @@ describe("importStack", { tags: ["unit", "local"] }, () => {
           Config.String("ALCHEMY_DOTENV_SESSION_VALUE"),
         );
         yield* Effect.gen(function* () {
-          const session = yield* open({
-            entrypoint: fixtureAbsolutePath,
-            stage: "prod",
-            envFile,
-            profile: "cli-profile",
-          });
-          // The flag's file replaces `.env` in the default list...
-          expect(session.stack.output).toBe("cli");
-          const providers = yield* buildStackProviders({
-            main: fixtureAbsolutePath,
-            envFile: Option.some(envFile),
-            profile: "cli-profile",
-          });
-          expect(
-            yield* Config.String("ALCHEMY_DOTENV_SESSION_VALUE").pipe(
-              Effect.provide(providers.context),
+          const plan = yield* importStack(fixtureAbsolutePath).pipe(
+            Effect.flatMap((stack) =>
+              Alchemist.plan({
+                stack,
+                operation: "deploy",
+                stage: "prod",
+                envFile,
+                profile: "cli-profile",
+              }),
             ),
+          );
+          // The flag's file replaces `.env` in the default list...
+          expect(plan.native.output).toBe("cli");
+          const providers = yield* importStack(fixtureAbsolutePath).pipe(
+            Effect.flatMap((stack) => buildProviders(stack, { envFile, profile: "cli-profile" })),
+          );
+          expect(
+            yield* Config.String("ALCHEMY_DOTENV_SESSION_VALUE").pipe(Effect.provide(providers)),
           ).toBe("cli");
           // ...and --profile beats the ALCHEMY_PROFILE the file sets.
           expect(observations).toEqual([
@@ -138,43 +133,21 @@ describe("importStack", { tags: ["unit", "local"] }, () => {
     ));
 
   test("loads stack entrypoint via relative path", () =>
-    expect(runFixture(fixtureRelativePath)).resolves.toBe(
-      "import-stack-fixture",
-    ));
+    expect(runFixture(fixtureRelativePath)).resolves.toBe("import-stack-fixture"));
 
   test("loads stack entrypoint via absolute path", () =>
-    expect(runFixture(fixtureAbsolutePath)).resolves.toBe(
-      "import-stack-fixture",
-    ));
+    expect(runFixture(fixtureAbsolutePath)).resolves.toBe("import-stack-fixture"));
 
-  test("memoizes an opened stack session within a command scope", async () => {
-    const [first, second] = await TestCore.run(
-      Effect.all([
-        open({ entrypoint: fixtureAbsolutePath, stage: "test" }),
-        open({ entrypoint: fixtureAbsolutePath, stage: "test" }),
-      ]).pipe(
-        Effect.provide(routeCacheLayer),
-        Effect.provide(CliKit.layer({ input: false })),
-      ),
-      { providers: TestLayers() },
-    );
-
-    expect(second).toBe(first);
-  });
-
-  test("memoizes an auth registry within a command scope", async () => {
+  test("memoizes an auth registry within its layer", async () => {
     const options = {
       main: DEFAULT_ENTRYPOINT,
       envFile: Option.none<string>(),
       profile: "default",
     };
     const [first, second] = await TestCore.run(
-      Effect.all([
-        collectAuthProviders(options),
-        collectAuthProviders(options),
-      ]).pipe(
-        Effect.provide(routeCacheLayer),
-        Effect.provide(CliKit.layer({ input: false })),
+      Effect.all([collectAuthProviders(options), collectAuthProviders(options)]).pipe(
+        Effect.provide(authRegistryLayer),
+        Effect.provide(Interaction.layerNonInteractive()),
       ),
       { providers: TestLayers() },
     );
@@ -184,9 +157,7 @@ describe("importStack", { tags: ["unit", "local"] }, () => {
 
   test("reports a missing stack entrypoint as a user-facing error", async () => {
     const result = await TestCore.run(
-      importStack(
-        path.join(import.meta.dirname, "missing-alchemy.run.ts"),
-      ).pipe(Effect.result),
+      importStack(path.join(import.meta.dirname, "missing-alchemy.run.ts")).pipe(Effect.result),
       { providers: TestLayers() },
     );
 
