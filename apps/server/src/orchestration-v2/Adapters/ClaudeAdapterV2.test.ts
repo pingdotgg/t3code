@@ -688,6 +688,47 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.notInclude(JSON.stringify(logged), "secret-claude-token");
   });
 
+  it("adds profile MCP servers beside T3's without pre-approving them", () => {
+    const profileMcpServers = {
+      docs: { type: "http" as const, url: "https://docs.example/mcp", headers: { A: "b" } },
+      local: { type: "stdio" as const, command: "npx", args: ["local"], env: { T: "v" } },
+    };
+    const docs = { type: "http" as const, url: "https://docs.example/mcp", headers: { A: "b" } };
+    const local = { type: "stdio" as const, command: "npx", args: ["local"], env: { T: "v" } };
+    const alone = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession: undefined,
+      readOnlySandbox: false,
+      allowedTools: ["Read"],
+      profileMcpServers,
+    });
+    assert.deepEqual(alone, { allowedTools: ["Read"], mcpServers: { docs, local } });
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "m" },
+      nativeThreadId: "profile-mcp",
+      resume: false,
+      cwd: null,
+      ...(alone.mcpServers === undefined ? {} : { mcpServers: alone.mcpServers }),
+    });
+    assert.notInclude(JSON.stringify(options.systemPrompt), "Use `delegate_task`");
+
+    const threadId = ThreadId.make("thread-claude-profile-mcp");
+    const withT3 = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession: {
+        environmentId: EnvironmentId.make("environment-claude-mcp"),
+        threadId,
+        providerSessionId: "mcp-session-claude",
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer t3",
+        browserToolsAvailable: true,
+      },
+      readOnlySandbox: false,
+      profileMcpServers,
+    });
+    assert.deepEqual(Object.keys(withT3.mcpServers ?? {}), ["docs", "local", "t3-code"]);
+    assert.deepEqual(withT3.allowedTools, ["mcp__t3-code__*"]);
+  });
+
   it("appends a profile without replacing Claude's preset or isolated settings", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: {

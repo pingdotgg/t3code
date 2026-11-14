@@ -80,3 +80,16 @@ it("maps Codex features and rejects config that overlaps T3 runtime policy", () 
   assert.equal(mapped.refused.length, 10);
   assert.isTrue(mapped.unsupported);
 });
+
+it("adds profile MCP servers to Codex as whole tables", () => {
+  assert.deepEqual(
+    codexProfileConfig(undefined, {
+      docs: { type: "http", url: "https://docs.example/mcp", headers: { A: "b" } },
+      local: { type: "stdio", command: "npx", args: ["local"], env: {} },
+    }).config,
+    {
+      "mcp_servers.docs": { url: "https://docs.example/mcp", http_headers: { A: "b" } },
+      "mcp_servers.local": { command: "npx", args: ["local"] },
+    },
+  );
+});

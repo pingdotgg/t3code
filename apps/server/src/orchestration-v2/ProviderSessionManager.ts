@@ -1,6 +1,8 @@
 import type * as Path from "effect/Path";
 import { supportsProfiles } from "@t3tools/shared/profiles";
 import * as Profiles from "../profiles/Profiles.ts";
+import { PROFILE_MCP_DRIVERS, resolveProfileMcpServers } from "../profiles/mcpServers.ts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ServerConfig from "../config.ts";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -368,6 +370,7 @@ export const layerWithOptions = (
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+      const secretResolver = yield* Effect.serviceOption(SecretResolver.SecretResolver);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
@@ -2466,6 +2469,7 @@ export const layerWithOptions = (
               );
               let profileInstructions: string | undefined;
               let providerSettings: ResolvedProviderSettings | undefined;
+              let profileMcpServers: ProviderAdapter.ProviderAdapterV2OpenSessionInput["profileMcpServers"];
               const profileId = input.modelSelection.profileId;
               if (
                 profileId &&
@@ -2506,6 +2510,24 @@ export const layerWithOptions = (
                       warning ??
                       `Profile ${profileId} no longer exists. Select another profile or No profile.`,
                   });
+                const servers = Object.hasOwn(loaded.mcpServers, profileId)
+                  ? loaded.mcpServers[profileId]
+                  : undefined;
+                if (servers !== undefined && PROFILE_MCP_DRIVERS.has(adapter.driver))
+                  profileMcpServers = yield* resolveProfileMcpServers({
+                    servers,
+                    allowCommands: settings.profilesMcpCommands,
+                    resolver: secretResolver,
+                  }).pipe(
+                    Effect.mapError(
+                      (profileWarning) =>
+                        new ProviderSessionOpenError({
+                          instanceId: input.modelSelection.instanceId,
+                          providerSessionId: input.providerSessionId,
+                          profileWarning,
+                        }),
+                    ),
+                  );
               }
               if (profileInstructions !== undefined)
                 yield* Effect.logInfo("Profile applied to provider session", {
@@ -2513,6 +2535,7 @@ export const layerWithOptions = (
                   threadId: input.threadId,
                   providerSessionId: input.providerSessionId,
                   instructionCharacters: profileInstructions.length,
+                  mcpServers: Object.keys(profileMcpServers ?? {}),
                 });
               const openedWithLinkedEnvironments = yield* readLinkedEnvironments;
               const prepared = yield* prepareMcpSession(
@@ -2538,6 +2561,7 @@ export const layerWithOptions = (
                   promptSuggestions: promptSuggestionsEnabled,
                   ...(profileInstructions === undefined ? {} : { profileInstructions }),
                   ...(providerSettings === undefined ? {} : { providerSettings }),
+                  ...(profileMcpServers === undefined ? {} : { profileMcpServers }),
                   ...(input.resumeFromSession === undefined
                     ? {}
                     : { resumeFromSession: input.resumeFromSession }),

@@ -1,7 +1,7 @@
 # Profiles
 
-A profile bundles prompt parts, skills and, for each provider, a named set of **provider settings**
-that shape how that provider's harness runs. Pick a profile beside the composer on web, desktop or
+A profile bundles prompt parts, skills, MCP servers and, for each provider, a named set of
+**provider settings** that shape how that provider's harness runs. Pick a profile beside the composer on web, desktop or
 mobile. New threads use the default profile. Delegated tasks do not inherit a parent's profile.
 
 Manage everything in **Settings → Profiles**. Mobile shows the same page with fewer controls; edit
@@ -17,6 +17,7 @@ that environment has a supported editor.
 profiles/
   profiles.json            profiles and the default
   provider-settings.json   named provider settings per provider
+  mcp-servers.json         MCP servers profiles can add
   prompts/<name>.md        prompt parts
   .agents/skills/<name>/   skills, one SKILL.md each
   skills-lock.json         where installed skills came from
@@ -51,6 +52,35 @@ agent its name, description and the path of its `SKILL.md`, which the agent read
 can contain scripts and run with the agent's permissions, and syncing copies them to every
 environment, so only add skills you trust.
 
+## MCP servers
+
+Define MCP servers once in **Settings → Profiles → MCP servers**, then tick them in each profile. A
+selected server is added to Claude and Codex sessions, next to your own MCP servers and T3's. Other
+providers start without it. Give profile servers names your own MCP config does not use.
+
+A server is either a **URL** (with optional headers) or a **command** (with arguments and environment
+variables). `mcp-servers.json` uses the same shape as Claude's `.mcp.json`, so you can paste
+definitions in:
+
+```json
+{
+  "mcpServers": {
+    "docs": { "type": "http", "url": "https://docs.example.com/mcp" },
+    "browser": { "command": "npx", "args": ["-y", "@example/browser-mcp"] }
+  }
+}
+```
+
+The folder syncs to your other machines, and a command server runs on whichever machine starts the
+session. So command servers only run where **Allow MCP commands** is on in **Settings → Profiles**;
+it is off by default on each machine. A session whose profile needs a command server does not start
+until you turn it on there or remove the server from the profile.
+
+Header and environment values are copied to every machine too. For tokens, pick a
+[secret provider](./secrets.md) instead of **Value**. The secret is read when a session starts; if
+that machine cannot read it, the session does not start and says which server needs it. Changing MCP
+servers needs permission to manage providers.
+
 ## Provider settings
 
 Provider settings are named per provider, such as `lean` or `full` for Claude. A profile picks one for
@@ -66,7 +96,8 @@ another machine lacks is marked and skipped there.
 
 Login, binary path and home directory stay with the provider in **Settings → Providers**. Settings T3
 itself needs, such as its own tools and MCP servers, cannot be turned off. Provider settings are copied
-to every environment, so do not put secrets in them.
+to every environment, so do not put secrets in them. Add MCP servers in the MCP servers section, not
+here.
 
 Changes apply when a session starts or resumes, not to a turn that is running. Claude, Codex, Pi,
 Muse and ACP providers support profile prompts and skills. Named provider settings apply only to

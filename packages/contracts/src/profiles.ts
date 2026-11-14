@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { SecretReference } from "./secretReference.ts";
 
 export const ProfileId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(128),
@@ -19,10 +20,49 @@ export const ProfileProviderSettingsRefs = Schema.Struct({
 });
 export type ProfileProviderSettingsRefs = typeof ProfileProviderSettingsRefs.Type;
 
+/** Names starting with `t3-code` belong to T3's own MCP servers. */
+export const ProfileMcpServerName = ProfileId.check(
+  Schema.makeFilter((name: string) => !/^t3-code/i.test(name), {
+    expected: "a name that does not start with t3-code",
+  }),
+);
+
+/** A literal, or a secret reference read on the environment when a session opens. */
+export const ProfileMcpValue = Schema.Union([Schema.String, SecretReference]);
+export type ProfileMcpValue = typeof ProfileMcpValue.Type;
+
+const McpValues = Schema.Record(TrimmedNonEmptyString, ProfileMcpValue);
+
+/** Shaped like a Claude `.mcp.json` entry, so existing definitions can be pasted in. */
+export const ProfileMcpServer = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("http"),
+    description: Schema.optionalKey(TrimmedNonEmptyString),
+    url: TrimmedNonEmptyString.check(Schema.isPattern(/^https?:\/\/\S+$/)),
+    headers: Schema.optionalKey(McpValues),
+  }),
+  Schema.Struct({
+    type: Schema.optionalKey(Schema.Literal("stdio")),
+    description: Schema.optionalKey(TrimmedNonEmptyString),
+    command: TrimmedNonEmptyString,
+    args: Schema.optionalKey(Schema.Array(Schema.String)),
+    env: Schema.optionalKey(McpValues),
+  }),
+]);
+export type ProfileMcpServer = typeof ProfileMcpServer.Type;
+
+/** `mcp-servers.json`: MCP servers profiles can add to a session. */
+export const McpServersFile = Schema.Struct({
+  mcpServers: Schema.Record(ProfileMcpServerName, ProfileMcpServer),
+});
+export type McpServersFile = typeof McpServersFile.Type;
+
 export const Profile = Schema.Struct({
   description: Schema.optionalKey(TrimmedNonEmptyString),
   prompts: Schema.Array(ProfileId),
   skills: Schema.Array(ProfileId),
+  /** Names from `mcp-servers.json`, added to Claude and Codex sessions. */
+  mcpServers: Schema.optionalKey(Schema.Array(ProfileMcpServerName)),
   providerSettings: Schema.optionalKey(ProfileProviderSettingsRefs),
   provider: Schema.optionalKey(ProviderInstanceId),
   model: Schema.optionalKey(TrimmedNonEmptyString),
@@ -148,6 +188,8 @@ export const ProfilesEditorState = Schema.Struct({
   /** Null when `profiles.json` is missing or cannot be decoded; see `error`. */
   profiles: Schema.NullOr(ProfilesFile),
   providerSettings: ProviderSettingsFile,
+  // Older servers leave it out.
+  mcpServers: Schema.optionalKey(McpServersFile),
   prompts: Schema.Array(ProfilePrompt),
   skills: Schema.Array(ProfileSkill),
   catalog: ProfileCatalog,
@@ -163,6 +205,8 @@ export const ProfilesEditorWriteInput = Schema.Struct({
   expectedHash: Schema.optionalKey(Schema.String),
   profiles: Schema.optionalKey(ProfilesFile),
   providerSettings: Schema.optionalKey(ProviderSettingsFile),
+  /** Needs `providers:manage` too: a command server runs on every environment that allows them. */
+  mcpServers: Schema.optionalKey(McpServersFile),
   prompts: Schema.optionalKey(
     Schema.Struct({
       upsert: Schema.optionalKey(Schema.Array(ProfilePrompt)),

@@ -110,6 +110,15 @@ export function clientRpcRequiredScopes(
     )
       return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
   }
+  // A command MCP server runs on every environment that allows them, as a skill command does.
+  if (
+    method === WS_METHODS.profilesEditorWrite &&
+    typeof input === "object" &&
+    input !== null &&
+    "mcpServers" in input &&
+    input.mcpServers !== undefined
+  )
+    return [AuthSettingsWriteScope, AuthProvidersManageScope];
   return Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)
     ? [CLIENT_GUARDED_RPC_SCOPES[method as ClientGuardedRpcTag]]
     : [];

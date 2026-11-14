@@ -24,8 +24,12 @@ it.effect(
           expectedRevision: initial.sync.revision,
           profiles: { profiles: { coding: { prompts: ["coding"], skills: [] } } },
           prompts: { upsert: [{ name: "coding", content: "original" }] },
+          mcpServers: { mcpServers: { docs: { type: "http", url: "https://docs.example/mcp" } } },
         });
         assert.equal(first.sync.revision, initial.sync.revision + 1);
+        assert.deepEqual(first.mcpServers, {
+          mcpServers: { docs: { type: "http", url: "https://docs.example/mcp" } },
+        });
         const outcomes = yield* Effect.all(
           [
             store

@@ -11,6 +11,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as DateTime from "effect/DateTime";
 import { parse as parseYaml } from "yaml";
 import {
+  McpServersFile,
   ProfileId,
   ProfilesFile,
   ProviderSettingsFile,
@@ -36,6 +37,7 @@ import * as ProfilesCommandRunner from "./ProfilesCommandRunner.ts";
 const decodeSyncState = Schema.decodeUnknownSync(ProfilesSyncState);
 const decodeProfilesFile = Schema.decodeUnknownSync(ProfilesFile);
 const decodeProviderSettings = Schema.decodeUnknownSync(ProviderSettingsFile);
+const decodeMcpServers = Schema.decodeUnknownSync(McpServersFile);
 const isProfileId = Schema.is(ProfileId);
 const decodeWrite = Schema.decodeEffect(ProfilesEditorWriteInput);
 const decodeSkills = Schema.decodeEffect(ProfilesSkillsInput);
@@ -297,6 +299,7 @@ const make = Effect.gen(function* () {
       );
       let profiles: ProfilesFile | null = null;
       let providerSettings: ProviderSettingsFile = {};
+      let mcpServers: McpServersFile = { mcpServers: {} };
       let error: string | undefined;
       const exists = (await stat(NodePath.join(root, "profiles.json"))) !== undefined;
       try {
@@ -311,6 +314,12 @@ const make = Effect.gen(function* () {
           );
       } catch {
         error = "Could not decode provider-settings.json. Check the provider settings format.";
+      }
+      try {
+        if (contents.has("mcp-servers.json"))
+          mcpServers = decodeMcpServers(JSON.parse(contents.get("mcp-servers.json") ?? ""));
+      } catch {
+        error = "Could not decode mcp-servers.json. Check the MCP servers format.";
       }
       let sources: Record<string, { source?: string }> = {};
       try {
@@ -358,6 +367,7 @@ const make = Effect.gen(function* () {
         exists,
         profiles,
         providerSettings,
+        mcpServers,
         prompts,
         skills,
         catalog,
@@ -384,6 +394,8 @@ const make = Effect.gen(function* () {
         writes.push(["profiles.json", JSON.stringify(decoded.profiles, null, 2)]);
       if (decoded.providerSettings !== undefined)
         writes.push(["provider-settings.json", JSON.stringify(decoded.providerSettings, null, 2)]);
+      if (decoded.mcpServers !== undefined)
+        writes.push(["mcp-servers.json", JSON.stringify(decoded.mcpServers, null, 2)]);
       for (const prompt of decoded.prompts?.upsert ?? [])
         writes.push([`prompts/${prompt.name}.md`, prompt.content]);
       const removals = (decoded.prompts?.remove ?? []).map((name) => `prompts/${name}.md`);

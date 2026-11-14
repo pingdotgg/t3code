@@ -1760,7 +1760,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     }),
     openSession: Effect.fn("CodexAdapterV2.openSession")(
       function* (input) {
-        const profile = codexProfileConfig(input.providerSettings);
+        const profile = codexProfileConfig(input.providerSettings, input.profileMcpServers);
         if (profile.refused.length > 0 || profile.unsupported)
           yield* Effect.logWarning("Profile contains unsupported or protected Codex settings", {
             refusedKeyCount: profile.refused.length,

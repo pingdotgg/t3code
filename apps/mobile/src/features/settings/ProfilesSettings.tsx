@@ -10,11 +10,13 @@ import {
   type SectionDraft,
   syncStatusText,
   toggleInList,
+  toggleInOptionalList,
   viewDraft,
   withKey,
 } from "@t3tools/client-runtime/profiles-editor";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  AuthProvidersManageScope,
   AuthSettingsWriteScope,
   type EnvironmentId,
   type Profile,
@@ -41,7 +43,7 @@ import {
 } from "../../state/profiles";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { useEnvironmentsWithScope } from "../../state/session";
+import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
 import type { SettingsTarget } from "./settings-environment-filter";
@@ -91,6 +93,7 @@ function ProfilesFolderSettings(props: {
   const save = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const canWrite = useAtomValue(serverEnvironment.updateSettings.permissionAtom(environmentId));
   const canSync = useAtomValue(profilesEnvironment.writeSync.permissionAtom(environmentId));
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const sync = useProfilesSyncSnapshot();
   const { environments } = useEnvironments();
   const writable = useEnvironmentsWithScope(environments, AuthSettingsWriteScope);
@@ -178,6 +181,13 @@ function ProfilesFolderSettings(props: {
           disabled={!canWrite || saving}
           value={settings.profilesSync}
           onValueChange={(value) => void update({ profilesSync: value })}
+        />
+        <ListToggleRow
+          label="Allow MCP commands"
+          description="Let profiles start command servers on this machine. Off by default, because profiles sync from your other machines."
+          disabled={!canWrite || !canManageProviders || saving}
+          value={settings.profilesMcpCommands}
+          onValueChange={(value) => void update({ profilesMcpCommands: value })}
         />
         <Button
           label="Sync now"
@@ -407,6 +417,35 @@ function ProfilesEditor(props: {
                 />
               ),
             )}
+            <Text className="px-4 text-sm text-foreground-muted">MCP servers</Text>
+            {[
+              ...new Set([
+                ...(profile.mcpServers ?? []),
+                ...Object.keys(state.mcpServers?.mcpServers ?? {}),
+              ]),
+            ].map((name) => (
+              <ListToggleRow
+                key={name}
+                label={name}
+                description={
+                  state.mcpServers?.mcpServers[name] === undefined
+                    ? "Not defined"
+                    : "For Claude and Codex"
+                }
+                value={profile.mcpServers?.includes(name) === true}
+                disabled={disabled}
+                onValueChange={(on) =>
+                  editProfile(
+                    id,
+                    withKey(
+                      profile,
+                      "mcpServers",
+                      toggleInOptionalList(profile.mcpServers, name, on),
+                    ),
+                  )
+                }
+              />
+            ))}
             <View className="gap-2 px-4">
               {PROFILE_DRIVERS.map((driver) => {
                 const current = profile.providerSettings?.[driver];

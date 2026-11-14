@@ -1,4 +1,5 @@
 import type { ResolvedProviderSettings } from "@t3tools/contracts";
+import type { ProfileMcpServerLaunch } from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as Schema from "effect/Schema";
 
 // These drive T3's plan/dialog, task tracking, and deferred MCP tool flows.
@@ -95,7 +96,10 @@ const codexProtectedKeys = [
 const overlaps = (key: string, protectedKey: string) =>
   key === protectedKey || key.startsWith(`${protectedKey}.`) || protectedKey.startsWith(`${key}.`);
 
-export function codexProfileConfig(resolved: ResolvedProviderSettings | undefined) {
+export function codexProfileConfig(
+  resolved: ResolvedProviderSettings | undefined,
+  mcpServers: Readonly<Record<string, ProfileMcpServerLaunch>> = {},
+) {
   const value = resolved?._tag === "codex" ? resolved.settings : {};
   const config: Record<string, Schema.Json> = {};
   const refused: string[] = [];
@@ -114,6 +118,19 @@ export function codexProfileConfig(resolved: ResolvedProviderSettings | undefine
       refused.push(key);
     else config[key] = entry;
   }
+  // Whole tables, so a same-named server from Codex's own config is replaced, not merged into.
+  for (const [name, server] of Object.entries(mcpServers))
+    config[`mcp_servers.${name}`] =
+      server.type === "http"
+        ? {
+            url: server.url,
+            ...(Object.keys(server.headers).length === 0 ? {} : { http_headers: server.headers }),
+          }
+        : {
+            command: server.command,
+            args: server.args,
+            ...(Object.keys(server.env).length === 0 ? {} : { env: server.env }),
+          };
   return {
     config,
     refused,

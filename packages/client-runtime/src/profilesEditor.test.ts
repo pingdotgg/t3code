@@ -3,9 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   deleteProfile,
+  mcpServerNameError,
   parseJsonObject,
   profileNameError,
   promptUpserts,
+  removeMcpServerRefs,
   renamePromptRefs,
   renameProfile,
   renameProviderSettings,
@@ -81,6 +83,19 @@ describe("references", () => {
       "review",
     ]);
     expect(renamePromptRefs(file, "base", null).profiles.home?.prompts).toEqual([]);
+  });
+
+  it("drops a deleted MCP server, and the empty list with it", () => {
+    const withServers: ProfilesFile = {
+      profiles: {
+        work: { prompts: [], skills: [], mcpServers: ["docs", "local"] },
+        home: { prompts: [], skills: [], mcpServers: ["docs"] },
+      },
+    };
+    const next = removeMcpServerRefs(withServers, "docs");
+    expect(next.profiles.work?.mcpServers).toEqual(["local"]);
+    expect(next.profiles.home).toEqual({ prompts: [], skills: [] });
+    expect(mcpServerNameError("T3-code-x", [])).toBe("Names starting with t3-code are T3's own.");
   });
 
   it("renames a named provider settings entry in place and removes empty drivers", () => {

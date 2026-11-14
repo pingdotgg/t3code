@@ -479,9 +479,25 @@ export const ProviderAdapterV2Error = Schema.Union([
 ]);
 export type ProviderAdapterV2Error = typeof ProviderAdapterV2Error.Type;
 
+/** A profile MCP server with its secrets read. It can hold credentials, so never log it. */
+export type ProfileMcpServerLaunch =
+  | {
+      readonly type: "http";
+      readonly url: string;
+      readonly headers: Readonly<Record<string, string>>;
+    }
+  | {
+      readonly type: "stdio";
+      readonly command: string;
+      readonly args: ReadonlyArray<string>;
+      readonly env: Readonly<Record<string, string>>;
+    };
+
 export interface ProviderAdapterV2OpenSessionInput {
   readonly profileInstructions?: string;
   readonly providerSettings?: ResolvedProviderSettings;
+  /** Only Claude and Codex receive these. */
+  readonly profileMcpServers?: Readonly<Record<string, ProfileMcpServerLaunch>>;
   readonly threadId: ThreadId;
   readonly providerSessionId: ProviderSessionId;
   readonly modelSelection: ModelSelection;

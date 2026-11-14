@@ -1851,7 +1851,8 @@ export function makeClaudeQueryOptions(input: {
           ...compactQuerySettings,
           env: { ...compactQuerySettings?.env, ENABLE_TOOL_SEARCH: input.toolSearchOverride },
         } as ClaudeSdkSettings);
-  const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
+  const hasT3Tools = input.mcpServers?.["t3-code"] !== undefined;
+  const deviceInstructions = hasT3Tools && input.deviceToolsAvailable === true;
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     // T3 names threads; a supplied title skips Claude's redundant naming request.
@@ -1915,7 +1916,7 @@ export function makeClaudeQueryOptions(input: {
           harness: "Claude Code",
           profileInstructions: input.profileInstructions,
         }) +
-          (input.mcpServers === undefined
+          (!hasT3Tools
             ? ""
             : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
               CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
@@ -2045,13 +2046,32 @@ export function claudeMcpQueryOverrides(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly readOnlySandbox: boolean;
   readonly allowedTools?: ReadonlyArray<string>;
+  readonly profileMcpServers?: ProviderAdapter.ProviderAdapterV2OpenSessionInput["profileMcpServers"];
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
 } {
   const session = input.mcpSession;
+  // Their tools are not pre-approved, so Claude asks before using them.
+  const profileServers = Object.entries(input.profileMcpServers ?? {}).map(
+    ([name, server]) =>
+      [
+        name,
+        server.type === "http"
+          ? { type: "http" as const, url: server.url, headers: { ...server.headers } }
+          : {
+              type: "stdio" as const,
+              command: server.command,
+              args: [...server.args],
+              env: { ...server.env },
+            },
+      ] as const,
+  );
   if (session === undefined) {
-    return input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools };
+    return {
+      ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
+      ...(profileServers.length === 0 ? {} : { mcpServers: Object.fromEntries(profileServers) }),
+    };
   }
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
@@ -2059,6 +2079,7 @@ export function claudeMcpQueryOverrides(input: {
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
+      ...Object.fromEntries(profileServers),
       "t3-code": {
         type: "http",
         url: session.endpoint,
@@ -10942,6 +10963,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
           const mcpOverrides = claudeMcpQueryOverrides({
             mcpSession,
+            ...(input.profileMcpServers === undefined
+              ? {}
+              : { profileMcpServers: input.profileMcpServers }),
             readOnlySandbox:
               sandboxPolicyKindForClaudeRuntimePolicy(turnInput.runtimePolicy) === "readOnly",
             ...(queryPolicy.allowedTools === undefined
