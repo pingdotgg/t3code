@@ -5,12 +5,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
-import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
-import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
+import * as CodexManagedResponses from "./CodexManagedResponses.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
-import { COMMAND_TIMEOUT_MS } from "./CodexManagedTokenProtocol.ts";
 import { materializeCodexShadowHome } from "./Drivers/CodexHomeLayout.ts";
 
 export interface CodexEffectiveRuntime {
@@ -19,11 +16,11 @@ export interface CodexEffectiveRuntime {
   readonly revision: string;
 }
 const decodeSettings = Schema.decodeSync(CodexSettings);
-const managedCodexLaunchArgs = (command: string, args: ReadonlyArray<string>) =>
+const managedCodexLaunchArgs = (baseUrl: string) =>
   [
     'model_provider="openai_token_sharing"',
     // Codex persists this provider ID in rollouts and needs it unchanged to resume.
-    `model_providers.openai_token_sharing={name="OpenAI Token Sharing",base_url="https://api.openai.com/v1",model_catalog_url="https://api.openai.com/v1/models",wire_api="responses",requires_openai_auth=false,supports_websockets=false,auth={command=${JSON.stringify(command)},args=${JSON.stringify(args)},timeout_ms=${COMMAND_TIMEOUT_MS},refresh_interval_ms=0}}`,
+    `model_providers.openai_token_sharing={name="OpenAI Token Sharing",base_url=${JSON.stringify(baseUrl)},model_catalog_url=${JSON.stringify(`${baseUrl}/models`)},wire_api="responses",requires_openai_auth=false,supports_websockets=false,env_key="T3_CODEX_MANAGED_TOKEN"}`,
     "features.api_key_model_discovery=true",
     "features.multi_agent=false",
     "features.multi_agent_v2=false",
@@ -41,10 +38,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const broker = yield* CodexManagedTokenBroker.CodexManagedTokenBroker;
-  const environmentIdentity = yield* ServerEnvironment.ServerEnvironmentIdentity;
-  const environmentId = yield* environmentIdentity.getEnvironmentId;
-  const invocation = yield* resolveSelfInvocation();
+  const managedResponses = yield* CodexManagedResponses.CodexManagedResponses;
   const auth = yield* makeCodexChatGptAuth({
     instanceId: options.instanceId,
     defaultReturnUrl: new URL(
@@ -59,15 +53,14 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
   );
   const homePath = homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath;
   const resolve = Effect.gen(function* () {
-    // Establish renewal availability before auth.access can consume a refresh token.
-    const endpoint = yield* broker.endpoint.pipe(
+    // Establish the HTTP boundary before auth.access can consume a refresh token.
+    const responses = yield* managedResponses.bridge.pipe(
       Effect.mapError(
         (cause) =>
           new ProviderSetupError({
             instanceId: options.instanceId,
             operation: "runtime",
-            detail:
-              "Could not prepare the private managed Codex token listener. Restart T3 and retry.",
+            detail: "Could not prepare the private managed Codex listener. Restart T3 and retry.",
             cause,
           }),
       ),
@@ -84,13 +77,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     );
     const credentials = yield* auth.access;
     const profileKey = yield* auth.profileKey(credentials);
-    const authArgs = selfInvocationArgs(invocation, [
-      "__managed-chatgpt-token",
-      endpoint,
-      options.instanceId,
-      environmentId,
-      profileKey,
-    ]);
+    const token = yield* responses.register({ instanceId: options.instanceId, profileKey });
     yield* materializeCodexShadowHome(homeLayout).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
@@ -117,6 +104,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     const environment: NodeJS.ProcessEnv = {
       ...options.environment,
       CODEX_HOME: homePath,
+      T3_CODEX_MANAGED_TOKEN: token,
     };
     delete environment.ACCESS_TOKEN;
     delete environment.T3CODE_CODEX_LAUNCH_ARGS;
@@ -128,7 +116,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
         setupMode: "managed",
         binaryPath: executable.executablePath,
         homePath,
-        launchArgs: managedCodexLaunchArgs(invocation.command, authArgs),
+        launchArgs: managedCodexLaunchArgs(responses.baseUrl),
       }),
       environment,
       revision: profileKey,

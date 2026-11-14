@@ -59,7 +59,7 @@ import {
 import { makeManagedCodexProvider } from "./CodexManagedProvider.ts";
 import { codexUsageReader } from "./codexUsage.ts";
 import * as CodexInstallation from "../CodexInstallation.ts";
-import * as CodexManagedTokenBroker from "../CodexManagedTokenBroker.ts";
+import * as CodexManagedResponses from "../CodexManagedResponses.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -144,7 +144,7 @@ export type CodexDriverEnv =
   | ServerSecretStore.ServerSecretStore
   | ServerEnvironment.ServerEnvironmentIdentity
   | CodexInstallation.CodexInstallation
-  | CodexManagedTokenBroker.CodexManagedTokenBroker;
+  | CodexManagedResponses.CodexManagedResponses;
 
 export const CodexDriver: ProviderDriver<
   CodexSettings,
