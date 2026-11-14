@@ -557,6 +557,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           readonly emitted: Map<string, string>;
         }
       >();
+      // The launch snapshot arrives before the tool result that names its run.
+      let latestAsyncSnapshotRuns: ReadonlyArray<unknown> = [];
       // Pi can settle immediately after dialog response; serialize so terminal cannot overtake request resolution.
       const sessionEventPermit = yield* Semaphore.make(1);
       let threadState: PiThreadState | null = null;
@@ -1380,7 +1382,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         // Async launches return no results; their members arrive in the subagent-async widget.
         const asyncId = recordString(details, "asyncId");
         if (!emitted && asyncId !== undefined && !piAsyncRuns.has(asyncId)) {
-          piAsyncRuns.set(asyncId, { turn, toolCallId, emitted: new Map() });
+          const tracked = { turn, toolCallId, emitted: new Map<string, string>() };
+          piAsyncRuns.set(asyncId, tracked);
+          // Keeps the run ingesting after the coordinator's turn ends, until the run settles.
+          yield* emit({
+            type: "background_work.updated",
+            driver: PI_PROVIDER,
+            providerTurnId: turn.providerTurn.id,
+            pending: true,
+          });
+          const run = latestAsyncSnapshotRuns.find((run) => recordString(run, "id") === asyncId);
+          if (run !== undefined) yield* updateAsyncRun(asyncId, tracked, run);
         }
       });
 
@@ -1459,6 +1471,49 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         });
       });
 
+      const updateAsyncRun = Effect.fnUntraced(function* (
+        runId: string,
+        tracked: {
+          readonly turn: ActivePiTurn;
+          readonly toolCallId: string;
+          readonly emitted: Map<string, string>;
+        },
+        run: unknown,
+      ) {
+        const children = recordField(run, "children");
+        for (const child of Array.isArray(children) ? children : []) {
+          const id = recordString(child, "id");
+          const agent = recordString(child, "agent");
+          const status = piAsyncSubagentStatus(recordString(child, "state"));
+          if (recordString(child, "kind") !== "step" || id === undefined) continue;
+          if (agent === undefined || status === undefined) continue;
+          const model = recordString(child, "model") ?? null;
+          const key = `${status}:${model}`;
+          if (tracked.emitted.get(id) === key) continue;
+          tracked.emitted.set(id, key);
+          yield* emitSubagent(tracked.turn, tracked.toolCallId, id, {
+            agent,
+            task: "",
+            model,
+            status,
+            result: null,
+          });
+        }
+        const runStatus = piAsyncSubagentStatus(recordString(run, "state"));
+        if (runStatus === undefined || runStatus === "running" || runStatus === "pending") return;
+        piAsyncRuns.delete(runId);
+        const providerTurnId = tracked.turn.providerTurn.id;
+        for (const other of piAsyncRuns.values()) {
+          if (other.turn.providerTurn.id === providerTurnId) return;
+        }
+        yield* emit({
+          type: "background_work.updated",
+          driver: PI_PROVIDER,
+          providerTurnId,
+          pending: false,
+        });
+      });
+
       const updateAsyncSubagents = Effect.fnUntraced(function* (event: PiRpcRecord) {
         const lines = recordField(event, "widgetLines");
         if (!Array.isArray(lines)) return;
@@ -1469,33 +1524,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           );
           const runs = recordField(snapshot, "runs");
           if (!Array.isArray(runs)) continue;
+          latestAsyncSnapshotRuns = runs;
           for (const run of runs) {
             const runId = recordString(run, "id");
             const tracked = runId === undefined ? undefined : piAsyncRuns.get(runId);
             if (runId === undefined || tracked === undefined) continue;
-            const children = recordField(run, "children");
-            for (const child of Array.isArray(children) ? children : []) {
-              const id = recordString(child, "id");
-              const agent = recordString(child, "agent");
-              const status = piAsyncSubagentStatus(recordString(child, "state"));
-              if (recordString(child, "kind") !== "step" || id === undefined) continue;
-              if (agent === undefined || status === undefined) continue;
-              const model = recordString(child, "model") ?? null;
-              const key = `${status}:${model}`;
-              if (tracked.emitted.get(id) === key) continue;
-              tracked.emitted.set(id, key);
-              yield* emitSubagent(tracked.turn, tracked.toolCallId, id, {
-                agent,
-                task: "",
-                model,
-                status,
-                result: null,
-              });
-            }
-            const runStatus = piAsyncSubagentStatus(recordString(run, "state"));
-            if (runStatus !== undefined && runStatus !== "running" && runStatus !== "pending") {
-              piAsyncRuns.delete(runId);
-            }
+            yield* updateAsyncRun(runId, tracked, run);
           }
         }
       });
