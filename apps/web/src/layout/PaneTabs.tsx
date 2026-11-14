@@ -13,6 +13,7 @@ import { create } from "zustand";
 import { useAtomValue } from "@effect/atom-react";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import {
+  ArrowLeftIcon,
   ChartNoAxesColumnIcon,
   GitForkIcon,
   PanelRightIcon,
@@ -356,8 +357,8 @@ function moveJoin(
   );
   const slide = piece("[data-jm]")?.animate(
     [
-      { translate: `${from.x + r}px 0`, scale: `${middle(from.w)} 1` },
-      { translate: `${to.x + r}px 0`, scale: `${middle(to.w)} 1` },
+      { translate: `${from.x + r}px 0`, scale: `${middle(from.w) / Math.max(1, middle(to.w))} 1` },
+      { translate: `${to.x + r}px 0`, scale: "1 1" },
     ],
     timing,
   );
@@ -863,14 +864,40 @@ export function LayoutTabCloseButton({ tabId, title }: { tabId: string; title: s
 }
 
 /**
- * A pane tab that is not the pane's active one (pen W6VyO): the same 28px
- * notch tab with its label in the muted tier. Click shows it, middle click
- * or its close button closes it, right click opens the tab's own menu without
- * showing it, dragging moves or splits it.
+ * The way back from a child thread to its parent, ahead of the child tabs: a
+ * muted arrow and the parent's title, so it reads as navigation, not a tab.
  */
-export const LayoutPaneTab = memo(function LayoutPaneTab({ tab }: { tab: LayoutTab }) {
+export function ParentThreadLinkLabel({ title }: { title: string }) {
+  return (
+    <>
+      <ArrowLeftIcon aria-hidden className="size-3.5 shrink-0" />
+      <span className={PANE_INACTIVE_TAB_TITLE_CLASS} dir={textDirection(title)}>
+        {title}
+      </span>
+    </>
+  );
+}
+
+/**
+ * An inactive pane tab (pen W6VyO): click shows it, middle click or its close
+ * button closes it, right click opens its menu, dragging moves or splits it.
+ * As the active thread's parent (`parentLink`) it draws as a back link and keeps every handler.
+ */
+export const LayoutPaneTab = memo(function LayoutPaneTab({
+  tab,
+  parentLink = false,
+}: {
+  tab: LayoutTab;
+  parentLink?: boolean;
+}) {
   if (tab.content.kind === "chat" && tab.content.target.kind === "server") {
-    return <ThreadLayoutPaneTab tab={tab} threadRef={tab.content.target.threadRef} />;
+    return (
+      <ThreadLayoutPaneTab
+        tab={tab}
+        threadRef={tab.content.target.threadRef}
+        parentLink={parentLink}
+      />
+    );
   }
   return <PlainLayoutPaneTab tab={tab} />;
 });
@@ -880,12 +907,21 @@ function PlainLayoutPaneTab({ tab }: { tab: LayoutTab }) {
   return (
     <LayoutPaneTabButton
       tab={tab}
+      parentLink={false}
       onOpenMenu={(position) => void showLayoutTabMenu(tab.id, position, keybindings)}
     />
   );
 }
 
-function ThreadLayoutPaneTab({ tab, threadRef }: { tab: LayoutTab; threadRef: ScopedThreadRef }) {
+function ThreadLayoutPaneTab({
+  tab,
+  threadRef,
+  parentLink,
+}: {
+  tab: LayoutTab;
+  threadRef: ScopedThreadRef;
+  parentLink: boolean;
+}) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const canShareWithGuest = useAtomValue(canShareWithGuestAtom(threadRef.environmentId));
   const thread = useQuietThreadShell(threadRef);
@@ -903,14 +939,16 @@ function ThreadLayoutPaneTab({ tab, threadRef }: { tab: LayoutTab; threadRef: Sc
       if (isLayoutTabMenuId(id)) runLayoutTabMenuAction(id, tab.id);
     },
   });
-  return <LayoutPaneTabButton tab={tab} onOpenMenu={openMenu} />;
+  return <LayoutPaneTabButton tab={tab} parentLink={parentLink} onOpenMenu={openMenu} />;
 }
 
 function LayoutPaneTabButton({
   tab,
+  parentLink,
   onOpenMenu,
 }: {
   tab: LayoutTab;
+  parentLink: boolean;
   onOpenMenu: (position: { x: number; y: number }) => void;
 }) {
   const label = useLayoutTabLabel(tab);
@@ -931,6 +969,7 @@ function LayoutPaneTabButton({
               variant="tab"
               type="button"
               data-layout-pane-tab={tab.id}
+              aria-label={parentLink ? `Back to parent thread: ${label.title}` : undefined}
               onClick={focusTab}
               onDoubleClick={() => useLayoutStore.getState().keepTab(tab.id)}
               onAuxClick={(event) => closeLayoutTabOnMiddleClick(event, tab.id)}
@@ -943,22 +982,29 @@ function LayoutPaneTabButton({
             />
           }
         >
-          <span className={LAYOUT_TAB_ICON_CLASS}>{label.icon}</span>
-          <span
-            className={cn(
-              PANE_INACTIVE_TAB_TITLE_CLASS,
-              isLayoutGhostTab(tab) && PANE_GHOST_TAB_TITLE_CLASS,
-            )}
-            dir={textDirection(label.title)}
-          >
-            {label.title}
-          </span>
+          {parentLink ? (
+            <ParentThreadLinkLabel title={label.title} />
+          ) : (
+            <>
+              <span className={LAYOUT_TAB_ICON_CLASS}>{label.icon}</span>
+              <span
+                className={cn(
+                  PANE_INACTIVE_TAB_TITLE_CLASS,
+                  isLayoutGhostTab(tab) && PANE_GHOST_TAB_TITLE_CLASS,
+                )}
+                dir={textDirection(label.title)}
+              >
+                {label.title}
+              </span>
+            </>
+          )}
         </TooltipTrigger>
         <TooltipPopup side="bottom" className="whitespace-pre-line">
-          {label.tooltip}
+          {parentLink ? `${label.title}\nParent thread` : label.tooltip}
         </TooltipPopup>
       </Tooltip>
-      <LayoutTabCloseButton tabId={tab.id} title={label.title} />
+      {/* A back link has no close button; middle click and its menu still close the tab. */}
+      {parentLink ? null : <LayoutTabCloseButton tabId={tab.id} title={label.title} />}
     </span>
   );
 }
@@ -1126,15 +1172,15 @@ export function useLayoutTabLabel(tab: LayoutTab): {
     };
   }
   const title = thread?.title ?? "New thread";
+  const lineageIcon = <GitForkIcon aria-hidden className="size-3.5 shrink-0" />;
   if (tab.ghostOf) {
-    return {
-      icon: <GitForkIcon aria-hidden className="size-3.5 shrink-0" />,
-      title,
-      tooltip: ghostTabTooltip(title, ghostParent?.title),
-    };
+    return { icon: lineageIcon, title, tooltip: ghostTabTooltip(title, ghostParent?.title) };
   }
+  // A subagent opened any other way (a thread mention, a kept tab) keeps the same icon.
   const icon =
-    draftId !== null ? (
+    thread?.lineage.relationshipToParent === "subagent" ? (
+      lineageIcon
+    ) : draftId !== null ? (
       <SquarePenIcon aria-hidden className="size-3.5 shrink-0" />
     ) : project ? (
       <ProjectFavicon project={project} className="size-3.5 shrink-0" />

@@ -457,6 +457,26 @@ describe("replaceLayoutTabContent", () => {
   });
 });
 
+describe("selectLayoutPaneSlots", () => {
+  it("keeps a full-width column on screen when the strip narrows after it was arranged", () => {
+    // Arranged with the sidebar closed, then the sidebar opens and the strip narrows.
+    const state: LayoutState = {
+      focusedWorkspaceId: "workspace",
+      workspaces: [
+        {
+          id: "workspace",
+          name: null,
+          focusedPaneId: null,
+          cameraWidth: 1300,
+          columns: [column("chat", 1), column("terminal", 0.5)],
+        },
+      ],
+    };
+    expect(drawnRightEdges(state, 1300)).toEqual([1300, 1950]);
+    expect(drawnRightEdges(state, 1000)).toEqual([1000, 1500]);
+  });
+});
+
 describe("resizeLayoutColumnEdge", () => {
   it("keeps the dragged edge under the pointer when the strip was arranged wider than the window", () => {
     const viewportWidth = 1000;

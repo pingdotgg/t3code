@@ -321,6 +321,11 @@ export function selectLayoutPaneSlots(
   } else {
     unitWidth = Math.max(arranged, viewport.width / total);
   }
+  // No column is wider than the strip shows, so each fits wholly on screen. A
+  // strip arranged wider (sidebar closed) and then narrowed (sidebar opened)
+  // would otherwise keep a full-width column at the old width, off the edge.
+  const widest = Math.max(...weights);
+  if (widest > 0) unitWidth = Math.min(unitWidth, viewport.width / widest);
   const totalPx = total * unitWidth;
   const fits = totalPx <= viewport.width + 0.5;
   const stripPx = Math.max(viewport.width, totalPx) || 1;
@@ -369,6 +374,33 @@ export function selectWindowStartPaneId(
     }
   }
   return startPaneId;
+}
+
+/**
+ * Top panes showing within this far of the window's right edge sit under the
+ * Windows and Linux caption buttons, so their headers make room for them.
+ * The strip scrolls, so the last column is not always the one there.
+ */
+const WINDOW_END_EDGE_PX = 160;
+
+/**
+ * The top panes under the caption buttons, each with how far it runs on past
+ * the window's right edge: its header's room for them starts that far in.
+ */
+export function selectWindowEndPanes(
+  slots: readonly LayoutPaneSlot[],
+  scrollLeft: number,
+  stripPx: number,
+  viewportPx: number,
+): { paneId: string; clipPx: number }[] {
+  return slots.flatMap((slot) => {
+    if (slot.hasAbove) return [];
+    const screenLeft = slot.rect.left * stripPx - scrollLeft;
+    const screenRight = screenLeft + slot.rect.width * stripPx;
+    return screenLeft < viewportPx - 1 && screenRight > viewportPx - WINDOW_END_EDGE_PX
+      ? [{ paneId: slot.paneId, clipPx: Math.max(0, Math.round(screenRight - viewportPx)) }]
+      : [];
+  });
 }
 
 /** The pane with this id and where it sits, or null. */

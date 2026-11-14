@@ -85,7 +85,7 @@ export function ChatPaneHeaderControls({
   marksHost?: boolean;
   children: ReactNode;
 }) {
-  const { split } = useLayoutPane();
+  const { split, trailingEdge } = useLayoutPane();
   return (
     <div
       ref={measureRef}
@@ -95,9 +95,12 @@ export function ChatPaneHeaderControls({
         split || local
           ? "absolute top-[var(--workspace-pane-local-controls-top)] right-[var(--workspace-pane-local-controls-right)] md:top-0 md:right-0"
           : "fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] mr-px md:right-(--workspace-pane-inset) md:mr-0",
+        // Only the pane under the window's caption buttons makes room for them.
+        (split || local) && !trailingEdge && "md:pe-2",
       )}
       data-workspace-titlebar-controls
-      data-sidebar-slide-hold={split || local ? undefined : ""}
+      // The window's right edge holds still as the sidebar slides, and so does a pane's run to it.
+      data-sidebar-slide-hold={local || (split && !trailingEdge) ? undefined : ""}
     >
       <PaneNotch side="right" marksHost={marksHost}>
         <div className="pointer-events-auto flex h-full items-center gap-1.5">{children}</div>

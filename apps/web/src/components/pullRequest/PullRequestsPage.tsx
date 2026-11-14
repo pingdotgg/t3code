@@ -1513,7 +1513,6 @@ export function PullRequestsPage() {
     sortMenu,
     filtersMenu,
     compactMenu,
-    rightPanelOpen: rightPanelState.isOpen,
     maximizedAway: rightPanelMaximized,
     listBody,
     scrollRef,
