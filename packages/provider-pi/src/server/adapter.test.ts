@@ -2108,6 +2108,51 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("forks a resumed session recorded in another cwd into the runtime cwd", () =>
+    Effect.gen(function* () {
+      const host = yield* ProviderHost.ProviderHost;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const fake = yield* makeFakePi;
+      const forkFake = yield* makeFakePi;
+      const forkFile = "/fake/forked-into-worktree.jsonl";
+      const { runtime } = yield* openRuntime(fake, "default", THREAD_ID, SESSION_ID, forkFake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const dir = yield* fileSystem.makeTempDirectoryScoped();
+      const sessionAt = (sessionCwd: string) =>
+        Effect.gen(function* () {
+          const file = `${dir}/${sessionCwd.length}.jsonl`;
+          yield* fileSystem.writeFileString(
+            file,
+            `${JSON.stringify({ type: "session", version: 3, id: "s", cwd: sessionCwd })}\n{}\n`,
+          );
+          return {
+            ...providerThread,
+            nativeThreadRef: { driver: PI_PROVIDER, nativeId: file, strength: "strong" as const },
+          };
+        });
+      const lastSwitch = () =>
+        fake.allRequests().findLast((request) => request.type === "switch_session")?.sessionPath;
+
+      const sameCwd = yield* sessionAt(host.paths.cwd);
+      yield* runtime.resumeThread({ providerThread: sameCwd });
+      assert.equal(lastSwitch(), sameCwd.nativeThreadRef?.nativeId);
+      assert.isFalse(forkFake.allRequests().some((request) => request.type === "get_state"));
+
+      const otherCwd = yield* sessionAt(`${host.paths.cwd}-original-checkout`);
+      forkFake.queueState({ sessionFile: forkFile });
+      fake.queueState({ sessionFile: forkFile });
+      const resumed = yield* runtime.resumeThread({ providerThread: otherCwd });
+      const args = forkFake.lastSpawn().args;
+      assert.equal(args[args.indexOf("--fork") + 1], otherCwd.nativeThreadRef?.nativeId);
+      assert.equal(lastSwitch(), forkFile);
+      assert.equal(resumed.nativeThreadRef?.nativeId, forkFile);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("creates a distinct native session after a failed resume", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
