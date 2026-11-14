@@ -108,13 +108,12 @@ export function createCdpRelayConnection(
   // Each page session holds one unacknowledged frame and keeps the newest one skipped meanwhile.
   const unackedFrames = new Map<string, number>();
   const skippedFrames = new Map<string, Record<string, unknown>>();
-  // A frame every session is busy for stays unacknowledged natively, so Chromium waits for a consumer.
-  let heldNativeFrame: number | null = null;
-  const releaseNativeFrame = (frameId: unknown, delivered: boolean) => {
-    if (heldNativeFrame === null || heldNativeFrame !== frameId) return;
-    if (!delivered && [...skippedFrames.values()].some((f) => f["sessionId"] === frameId)) return;
-    heldNativeFrame = null;
-    target.ackScreencastFrame(frameId);
+  // Chromium keeps a few frames in flight and reuses one frame id per run, so pacing it means
+  // leaving frames every session is busy for unacknowledged and releasing one per consumer ack.
+  const heldNativeFrames: Array<number> = [];
+  const releaseHeldFramesWithoutHolders = () => {
+    if (skippedFrames.size === 0)
+      for (const frameId of heldNativeFrames.splice(0)) target.ackScreencastFrame(frameId);
   };
   const sendFrame = (sessionId: string, params: Record<string, unknown>) => {
     unackedFrames.set(sessionId, params["sessionId"] as number);
@@ -188,9 +187,8 @@ export function createCdpRelayConnection(
         if (typeof sessionId === "string" && sessionId !== PAGE_SESSION_ID) {
           sessions.delete(sessionId);
           unackedFrames.delete(sessionId);
-          const skipped = skippedFrames.get(sessionId);
           skippedFrames.delete(sessionId);
-          releaseNativeFrame(skipped?.["sessionId"], false);
+          releaseHeldFramesWithoutHolders();
           target.sessionDetached?.(sessionId);
         }
         return {};
@@ -230,13 +228,19 @@ export function createCdpRelayConnection(
         unackedFrames.delete(sessionId);
         const skipped = skippedFrames.get(sessionId);
         skippedFrames.delete(sessionId);
-        const delivered =
+        if (
           skipped !== undefined &&
-          target.receivesScreencast(sessionId === PAGE_SESSION_ID ? undefined : sessionId);
-        if (delivered) sendFrame(sessionId, skipped);
-        releaseNativeFrame(skipped?.["sessionId"], delivered);
+          target.receivesScreencast(sessionId === PAGE_SESSION_ID ? undefined : sessionId)
+        )
+          sendFrame(sessionId, skipped);
+        const released = heldNativeFrames.shift();
+        if (released !== undefined) target.ackScreencastFrame(released);
       }
       return Promise.resolve({});
+    }
+    if (command.method === "Page.stopScreencast" && child === undefined) {
+      skippedFrames.delete(command.sessionId!);
+      releaseHeldFramesWithoutHolders();
     }
     // The shared debugger keeps Runtime enabled after an earlier connection, and a repeated
     // enable reports no existing contexts; Playwright waits for them, so reset once per connection.
@@ -302,8 +306,6 @@ export function createCdpRelayConnection(
         const frame = (params ?? {}) as Record<string, unknown>;
         const frameId = frame["sessionId"];
         if (typeof frameId !== "number") return;
-        if (heldNativeFrame !== null) target.ackScreencastFrame(heldNativeFrame);
-        heldNativeFrame = null;
         let held = false;
         let delivered = false;
         for (const [id, kind] of sessions) {
@@ -317,7 +319,7 @@ export function createCdpRelayConnection(
             delivered = true;
           }
         }
-        if (held && !delivered) heldNativeFrame = frameId;
+        if (held && !delivered) heldNativeFrames.push(frameId);
         else target.ackScreencastFrame(frameId);
         return;
       }

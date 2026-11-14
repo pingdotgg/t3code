@@ -202,15 +202,17 @@ describe("CDP relay extra sessions", () => {
     // A session that has not acknowledged its frame gets only the newest one, on its ack.
     for (let i = 2; i < 100; i++) frame(i);
     expect(delivered()).toEqual([]);
-    // Chromium waits on the newest frame while every session is busy; it is acknowledged once delivered.
-    expect(nativeAcks.at(-1)).toBe(98);
+    // Frames every session is busy for stay unacknowledged, so Chromium pauses at its in-flight limit.
+    expect(nativeAcks).toEqual([1]);
     ack(extra, 1);
     await settle();
     expect(delivered()).toEqual([[extra, 99]]);
-    expect(nativeAcks.at(-1)).toBe(99);
+    // Each consumer ack lets Chromium send one more frame.
+    expect(nativeAcks).toEqual([1, 2]);
     ack(extra, 99);
     await settle();
     expect(delivered()).toEqual([]);
+    expect(nativeAcks).toEqual([1, 2, 3]);
     frame(100);
     expect(delivered()).toEqual([[extra, 100]]);
     ack(extra, 99);
