@@ -60,7 +60,9 @@ providers start without it. Give profile servers names your own MCP config does 
 
 A server is either a **URL** (with optional headers) or a **command** (with arguments and environment
 variables). `mcp-servers.json` uses the same shape as Claude's `.mcp.json`, so you can paste
-definitions in:
+definitions in. Only the fields T3 knows are kept, and URL servers must use `"type": "http"` — the
+older `"sse"` type is not supported. Server names starting with `t3-code` belong to T3 itself. If a
+server cannot be reached when a session starts, the session starts without it.
 
 ```json
 {

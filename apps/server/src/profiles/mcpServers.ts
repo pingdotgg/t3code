@@ -51,7 +51,7 @@ export const resolveProfileMcpServers = Effect.fn("Profiles.resolveMcpServers")(
         ? yield* input.resolver.value.label(reference.provider)
         : reference.provider;
       return yield* Effect.fail(
-        `MCP server ${owners[index]} could not read its credential from the secret provider "${provider}". Unlock or fix it in Settings, then try again.`,
+        `MCP server ${owners[index]} could not read its credential from the secret provider "${provider}". Unlock it, then select Refresh in Settings → Providers and try again.`,
       );
     }
     secrets.set(reference, value);

@@ -198,9 +198,11 @@ it.effect(
         );
         assert.equal(yield* fs.readFileString(`${root}/profiles/prompts/coding.md`), "original");
         yield* fs.writeFileString(`${root}/profiles/profiles.json`, "broken json");
+        yield* fs.writeFileString(`${root}/profiles/mcp-servers.json`, "broken json");
         const broken = yield* store.read();
         assert.isNull(broken.profiles);
         assert.isDefined(broken.error);
+        assert.isUndefined(broken.mcpServers);
         for (let i = 0; i < 9; i++)
           yield* fs.writeFileString(`${root}/profiles/large-${i}`, "x".repeat(1024 * 1024));
         assert.equal(

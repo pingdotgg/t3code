@@ -20,9 +20,9 @@ export const ProfileProviderSettingsRefs = Schema.Struct({
 });
 export type ProfileProviderSettingsRefs = typeof ProfileProviderSettingsRefs.Type;
 
-/** Names starting with `t3-code` belong to T3's own MCP servers. */
+/** Names starting with `t3-code`, `t3_code` or `t3code` are shown as T3's own tools. */
 export const ProfileMcpServerName = ProfileId.check(
-  Schema.makeFilter((name: string) => !/^t3-code/i.test(name), {
+  Schema.makeFilter((name: string) => !/^t3[-_]?code/i.test(name), {
     expected: "a name that does not start with t3-code",
   }),
 );

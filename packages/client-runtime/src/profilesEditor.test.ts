@@ -2,7 +2,9 @@ import type { ProfilesFile } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  cleanMcpServers,
   deleteProfile,
+  mcpServerError,
   mcpServerNameError,
   parseJsonObject,
   profileNameError,
@@ -96,6 +98,19 @@ describe("references", () => {
     expect(next.profiles.work?.mcpServers).toEqual(["local"]);
     expect(next.profiles.home).toEqual({ prompts: [], skills: [] });
     expect(mcpServerNameError("T3-code-x", [])).toBe("Names starting with t3-code are T3's own.");
+    expect(mcpServerNameError("t3_code", [])).toBe("Names starting with t3-code are T3's own.");
+    expect(mcpServerError({ url: "https://" })).not.toBeNull();
+    expect(mcpServerError({ url: "https://example.com/mcp" })).toBeNull();
+    expect(mcpServerError({ command: "" })).not.toBeNull();
+    expect(mcpServerError({ command: "npx" })).toBeNull();
+    expect(
+      cleanMcpServers({
+        mcpServers: {
+          a: { command: "x", args: ["", "b", "", ""] },
+          c: { command: "y", args: [""] },
+        },
+      }),
+    ).toEqual({ mcpServers: { a: { command: "x", args: ["", "b"] }, c: { command: "y" } } });
   });
 
   it("renames a named provider settings entry in place and removes empty drivers", () => {

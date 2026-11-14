@@ -689,12 +689,9 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
   });
 
   it("adds profile MCP servers beside T3's without pre-approving them", () => {
-    const profileMcpServers = {
-      docs: { type: "http" as const, url: "https://docs.example/mcp", headers: { A: "b" } },
-      local: { type: "stdio" as const, command: "npx", args: ["local"], env: { T: "v" } },
-    };
     const docs = { type: "http" as const, url: "https://docs.example/mcp", headers: { A: "b" } };
     const local = { type: "stdio" as const, command: "npx", args: ["local"], env: { T: "v" } };
+    const profileMcpServers = { docs, local };
     const alone = ClaudeAdapterV2.claudeMcpQueryOverrides({
       mcpSession: undefined,
       readOnlySandbox: false,

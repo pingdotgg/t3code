@@ -6,6 +6,7 @@ import type {
   ProfilesFile,
 } from "@t3tools/contracts";
 import {
+  mcpServerError,
   mcpServerNameError,
   profilesUsingMcpServer,
   withKey,
@@ -41,6 +42,7 @@ export function McpServersEditor(props: {
   const [newKind, setNewKind] = useState<Kind>("http");
   const newNameError = newName === "" ? null : mcpServerNameError(newName, names);
   const users = current === null ? [] : profilesUsingMcpServer(props.profiles, current);
+  const serverError = server === undefined ? null : mcpServerError(server);
   const setServer = (next: ProfileMcpServer) => {
     if (current !== null)
       props.onChange({ mcpServers: { ...props.value.mcpServers, [current]: next } });
@@ -145,8 +147,10 @@ export function McpServersEditor(props: {
                 placeholder="Command, such as npx"
                 value={server.command}
                 disabled={props.disabled}
+                aria-invalid={serverError !== null}
                 onChange={(event) => setServer({ ...server, command: event.target.value })}
               />
+              {serverError ? <p className="text-xs text-destructive">{serverError}</p> : null}
               <Textarea
                 aria-label="MCP server arguments"
                 placeholder="Arguments, one per line"
@@ -181,8 +185,10 @@ export function McpServersEditor(props: {
                 placeholder="https://example.com/mcp"
                 value={server.url}
                 disabled={props.disabled}
+                aria-invalid={serverError !== null}
                 onChange={(event) => setServer({ ...server, url: event.target.value })}
               />
+              {serverError ? <p className="text-xs text-destructive">{serverError}</p> : null}
               <ValuesEditor
                 environmentId={props.environmentId}
                 title="Headers"
@@ -255,7 +261,11 @@ function ValuesEditor(props: {
         <Button
           size="xs"
           variant="outline"
-          disabled={props.disabled || newKey.trim() === "" || newKey.trim() in (props.values ?? {})}
+          disabled={
+            props.disabled ||
+            newKey.trim() === "" ||
+            Object.hasOwn(props.values ?? {}, newKey.trim())
+          }
           onClick={() => {
             set(newKey.trim(), "");
             setNewKey("");

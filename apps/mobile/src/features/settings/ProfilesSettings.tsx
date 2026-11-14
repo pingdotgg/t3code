@@ -417,13 +417,19 @@ function ProfilesEditor(props: {
                 />
               ),
             )}
-            <Text className="px-4 text-sm text-foreground-muted">MCP servers</Text>
-            {[
-              ...new Set([
-                ...(profile.mcpServers ?? []),
-                ...Object.keys(state.mcpServers?.mcpServers ?? {}),
-              ]),
-            ].map((name) => (
+            {/* Missing when the file is broken or the server predates MCP servers. */}
+            {state.mcpServers === undefined ? null : (
+              <Text className="px-4 text-sm text-foreground-muted">MCP servers</Text>
+            )}
+            {(state.mcpServers === undefined
+              ? []
+              : [
+                  ...new Set([
+                    ...(profile.mcpServers ?? []),
+                    ...Object.keys(state.mcpServers.mcpServers),
+                  ]),
+                ]
+            ).map((name) => (
               <ListToggleRow
                 key={name}
                 label={name}

@@ -48,6 +48,7 @@ import {
   addProfile,
   cleanMcpServers,
   EMPTY_MCP_SERVERS,
+  mcpServerError,
   deleteProfile,
   duplicateProfile,
   editDraft,
@@ -131,7 +132,9 @@ function useDraft<T>(saved: T) {
 function EnvironmentProfiles({ environmentId }: { environmentId: EnvironmentId }) {
   const editorQuery = useEnvironmentQuery(profilesEnvironment.editor({ environmentId, input: {} }));
   const canWrite = useAtomValue(profilesEnvironment.writeEditor.permissionAtom(environmentId));
-  const canManageSkills = useAtomValue(profilesEnvironment.runSkills.permissionAtom(environmentId));
+  const canManageProviders = useAtomValue(
+    profilesEnvironment.runSkills.permissionAtom(environmentId),
+  );
   const write = useAtomCommand(profilesEnvironment.writeEditor, { reportFailure: false });
   const state = editorQuery.data;
   const refreshCatalog = useAtomRefresh(
@@ -243,6 +246,7 @@ function EnvironmentProfiles({ environmentId }: { environmentId: EnvironmentId }
     };
     if (!(name in savedMcpServers.mcpServers)) {
       mcpServers.set(remaining);
+      profiles.set(removeMcpServerRefs(profiles.value, name));
       return;
     }
     const users = profilesUsingMcpServer(savedProfiles, name);
@@ -382,30 +386,39 @@ function EnvironmentProfiles({ environmentId }: { environmentId: EnvironmentId }
               }
             />
           </SettingsSection>
-          <SettingsSection
-            {...searchableSetting("profiles-mcp-servers")}
-            title="MCP servers"
-            headerAction={
-              <SaveActions
-                dirty={mcpServers.dirty}
-                disabled={disabled || !canManageSkills}
-                onDiscard={mcpServers.discard}
-                onSave={() =>
-                  void saveSection(mcpServers, { mcpServers: cleanMcpServers(mcpServers.value) })
-                }
+          {/* Missing when the file is broken or the server predates MCP servers. */}
+          {state.mcpServers !== undefined ? (
+            <SettingsSection
+              {...searchableSetting("profiles-mcp-servers")}
+              title="MCP servers"
+              headerAction={
+                <SaveActions
+                  dirty={mcpServers.dirty}
+                  disabled={
+                    disabled ||
+                    !canManageProviders ||
+                    Object.values(mcpServers.value.mcpServers).some(
+                      (server) => mcpServerError(server) !== null,
+                    )
+                  }
+                  onDiscard={mcpServers.discard}
+                  onSave={() =>
+                    void saveSection(mcpServers, { mcpServers: cleanMcpServers(mcpServers.value) })
+                  }
+                />
+              }
+            >
+              <AllowMcpCommands environmentId={environmentId} />
+              <McpServersEditor
+                environmentId={environmentId}
+                value={mcpServers.value}
+                profiles={profiles.value}
+                disabled={disabled || !canManageProviders}
+                onChange={mcpServers.set}
+                onDelete={(name) => void deleteMcpServer(name)}
               />
-            }
-          >
-            <AllowMcpCommands environmentId={environmentId} />
-            <McpServersEditor
-              environmentId={environmentId}
-              value={mcpServers.value}
-              profiles={profiles.value}
-              disabled={disabled || !canManageSkills}
-              onChange={mcpServers.set}
-              onDelete={(name) => void deleteMcpServer(name)}
-            />
-          </SettingsSection>
+            </SettingsSection>
+          ) : null}
         </>
       ) : null}
       {state?.exists ? (
@@ -437,7 +450,7 @@ function EnvironmentProfiles({ environmentId }: { environmentId: EnvironmentId }
           <SkillsSection
             environmentId={environmentId}
             state={state}
-            disabled={!canManageSkills || state === null}
+            disabled={!canManageProviders || state === null}
           />
         </>
       ) : null}
@@ -862,20 +875,29 @@ function ProfilesEditor(props: {
               setProfile({ ...profile, skills: toggleInList(profile.skills, name, on) })
             }
           />
-          <NamedChecklist
-            title="MCP servers"
-            description="Added to Claude and Codex sessions."
-            names={orderedNames(profile.mcpServers ?? [], Object.keys(props.mcpServers.mcpServers))}
-            checked={profile.mcpServers ?? []}
-            missingLabel="not defined"
-            known={Object.keys(props.mcpServers.mcpServers)}
-            disabled={props.disabled}
-            onToggle={(name, on) =>
-              setProfile(
-                withKey(profile, "mcpServers", toggleInOptionalList(profile.mcpServers, name, on)),
-              )
-            }
-          />
+          {state.mcpServers !== undefined ? (
+            <NamedChecklist
+              title="MCP servers"
+              description="Added to Claude and Codex sessions."
+              names={orderedNames(
+                profile.mcpServers ?? [],
+                Object.keys(props.mcpServers.mcpServers),
+              )}
+              checked={profile.mcpServers ?? []}
+              missingLabel="not defined"
+              known={Object.keys(props.mcpServers.mcpServers)}
+              disabled={props.disabled}
+              onToggle={(name, on) =>
+                setProfile(
+                  withKey(
+                    profile,
+                    "mcpServers",
+                    toggleInOptionalList(profile.mcpServers, name, on),
+                  ),
+                )
+              }
+            />
+          ) : null}
           <div className="space-y-1.5">
             <p className="text-sm text-foreground">Provider settings</p>
             {PROFILE_DRIVERS.map((driver) => (

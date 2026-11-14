@@ -1581,8 +1581,22 @@ function redactCodexProtocolValue(value: unknown): unknown {
   return Object.fromEntries(
     Object.entries(value).map(([key, nested]) => [
       key,
-      isSensitiveCodexProtocolKey(key) ? "[REDACTED]" : redactCodexProtocolValue(nested),
+      isSensitiveCodexProtocolKey(key)
+        ? "[REDACTED]"
+        : isCodexCredentialMap(key, nested)
+          ? Object.fromEntries(Object.keys(nested).map((name) => [name, "[REDACTED]"]))
+          : redactCodexProtocolValue(nested),
     ]),
+  );
+}
+
+// Profile MCP servers arrive with secrets read, under names like GITHUB_PAT the key check misses.
+function isCodexCredentialMap(key: string, value: unknown): value is Record<string, unknown> {
+  return (
+    (key === "env" || key === "http_headers") &&
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
   );
 }
 

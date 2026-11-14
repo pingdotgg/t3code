@@ -29,8 +29,20 @@ export function profileNameError(name: string, taken: ReadonlyArray<string>): st
 }
 
 export function mcpServerNameError(name: string, taken: ReadonlyArray<string>): string | null {
-  if (/^t3-code/i.test(name)) return "Names starting with t3-code are T3's own.";
+  if (/^t3[-_]?code/i.test(name)) return "Names starting with t3-code are T3's own.";
   return profileNameError(name, taken);
+}
+
+/** Matches the server schema, so the editor can say what is missing before saving. */
+export function mcpServerError(server: {
+  readonly url?: string;
+  readonly command?: string;
+}): string | null {
+  if (server.command !== undefined)
+    return server.command.trim() === "" ? "Enter a command, such as npx." : null;
+  return /^https?:\/\/\S+$/.test(server.url ?? "")
+    ? null
+    : "Enter a full URL, such as https://example.com/mcp.";
 }
 
 export const EMPTY_MCP_SERVERS: McpServersFile = { mcpServers: {} };
@@ -47,7 +59,9 @@ export function cleanMcpServers(file: McpServersFile): McpServersFile {
     mcpServers: Object.fromEntries(
       Object.entries(file.mcpServers).map(([name, server]) => {
         if (!("command" in server) || server.args === undefined) return [name, server];
-        const args = server.args.filter((arg) => arg !== "");
+        // An empty line inside the list can be a deliberate empty argument.
+        const args = [...server.args];
+        while (args.at(-1) === "") args.pop();
         return [name, withKey(server, "args", args.length === 0 ? undefined : args)];
       }),
     ),

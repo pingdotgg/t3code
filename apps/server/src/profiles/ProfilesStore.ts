@@ -299,7 +299,8 @@ const make = Effect.gen(function* () {
       );
       let profiles: ProfilesFile | null = null;
       let providerSettings: ProviderSettingsFile = {};
-      let mcpServers: McpServersFile = { mcpServers: {} };
+      // Left out when it cannot be decoded, so the editor cannot save over the broken file.
+      let mcpServers: McpServersFile | undefined = { mcpServers: {} };
       let error: string | undefined;
       const exists = (await stat(NodePath.join(root, "profiles.json"))) !== undefined;
       try {
@@ -319,6 +320,7 @@ const make = Effect.gen(function* () {
         if (contents.has("mcp-servers.json"))
           mcpServers = decodeMcpServers(JSON.parse(contents.get("mcp-servers.json") ?? ""));
       } catch {
+        mcpServers = undefined;
         error = "Could not decode mcp-servers.json. Check the MCP servers format.";
       }
       let sources: Record<string, { source?: string }> = {};
@@ -367,7 +369,7 @@ const make = Effect.gen(function* () {
         exists,
         profiles,
         providerSettings,
-        mcpServers,
+        ...(mcpServers === undefined ? {} : { mcpServers }),
         prompts,
         skills,
         catalog,
