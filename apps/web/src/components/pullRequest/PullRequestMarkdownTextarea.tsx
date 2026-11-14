@@ -25,8 +25,14 @@ import { useDebouncedValue } from "~/state/queries";
 
 import { Popover, PopoverPopup } from "../ui/popover";
 import { Textarea, type TextareaProps } from "../ui/textarea";
+import { useTranslation } from "react-i18next";
+
 import { PULL_REQUEST_STATE_PRESENTATION } from "./pullRequestIcons";
-import { PullRequestActorAvatar, resolvePullRequestState } from "./pullRequestPresentation";
+import {
+  PullRequestActorAvatar,
+  presentationLabel,
+  resolvePullRequestState,
+} from "./pullRequestPresentation";
 
 /** The repository whose users `@` completes and whose issues and change requests `#` does. */
 export interface PullRequestCompletionScope {
@@ -95,17 +101,22 @@ function useCompletions(
 }
 
 function ReferenceStateIcon({ candidate }: { candidate: PullRequestReferenceCandidate }) {
-  const presentation =
+  const { t } = useTranslation("pullRequest");
+  const resolved =
     candidate.kind === "change-request"
       ? resolvePullRequestState({ state: candidate.state, isDraft: false })
+      : null;
+  const presentation =
+    resolved !== null
+      ? { ...resolved, label: presentationLabel(resolved.label) }
       : candidate.state === "open"
         ? {
-            label: "Open issue",
+            label: t("issues.open"),
             Icon: CircleDotIcon,
             toneClassName: PULL_REQUEST_STATE_PRESENTATION.open.toneClassName,
           }
         : {
-            label: "Closed issue",
+            label: t("issues.closed"),
             Icon: CircleCheckIcon,
             toneClassName: PULL_REQUEST_STATE_PRESENTATION.merged.toneClassName,
           };
@@ -143,16 +154,16 @@ function CompletionRow({ completion }: { completion: PullRequestCompletion }) {
 
 const EMPTY_STATE = {
   mention: {
-    label: "Mention a user",
-    pending: "Searching users...",
-    failed: "Couldn't search users on the host",
-    none: "No matching users",
+    label: "empty.mention.label",
+    pending: "empty.mention.pending",
+    failed: "empty.mention.failed",
+    none: "empty.mention.none",
   },
   reference: {
-    label: "Reference an issue or change request",
-    pending: "Searching...",
-    failed: "Couldn't search the host",
-    none: "No matching issues or change requests",
+    label: "empty.reference.label",
+    pending: "empty.reference.pending",
+    failed: "empty.reference.failed",
+    none: "empty.reference.none",
   },
 } as const;
 
@@ -178,6 +189,7 @@ export function PullRequestMarkdownTextarea({
   readonly completionScope: PullRequestCompletionScope | null;
 }) {
   const listId = useId();
+  const { t } = useTranslation("pullRequest");
   const [element, setElement] = useState<HTMLTextAreaElement | null>(null);
   const [caret, setCaret] = useState<number | null>(null);
   const [side, setSide] = useState<"top" | "bottom">("bottom");
@@ -299,7 +311,7 @@ export function PullRequestMarkdownTextarea({
             <div
               id={listId}
               role="listbox"
-              aria-label={EMPTY_STATE[trigger?.kind ?? "mention"].label}
+              aria-label={t(EMPTY_STATE[trigger?.kind ?? "mention"].label)}
               className="-mx-1.5"
             >
               {candidates.map((completion, index) => (
@@ -325,11 +337,11 @@ export function PullRequestMarkdownTextarea({
             </div>
           ) : (
             <p className="px-1 text-xs text-muted-foreground">
-              {
+              {t(
                 EMPTY_STATE[trigger?.kind ?? "mention"][
                   isPending ? "pending" : failed ? "failed" : "none"
-                ]
-              }
+                ],
+              )}
             </p>
           )}
         </PopoverPopup>

@@ -10,6 +10,8 @@ import zhHansSettings from "../locales/zh-Hans/settings.json";
 import zhHansTerminal from "../locales/zh-Hans/terminal.json";
 import enSidebar from "../locales/en/sidebar.json";
 import zhHansSidebar from "../locales/zh-Hans/sidebar.json";
+import enPullRequest from "../locales/en/pullRequest.json";
+import zhHansPullRequest from "../locales/zh-Hans/pullRequest.json";
 import { type UiLocale } from "@t3tools/contracts/settings";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
@@ -27,6 +29,7 @@ declare module "i18next" {
       chat: typeof enChat;
       diffs: typeof enDiffs;
       terminal: typeof enTerminal;
+      pullRequest: typeof enPullRequest;
     };
   }
 }
@@ -49,7 +52,7 @@ if (!i18next.isInitialized) {
     lng: "en",
     fallbackLng: "en",
     defaultNS: "settings",
-    ns: ["settings", "sidebar", "palette", "chat", "diffs", "terminal"],
+    ns: ["settings", "sidebar", "palette", "chat", "diffs", "terminal", "pullRequest"],
     resources: {
       en: {
         settings: enSettings,
@@ -58,6 +61,7 @@ if (!i18next.isInitialized) {
         chat: enChat,
         diffs: enDiffs,
         terminal: enTerminal,
+        pullRequest: enPullRequest,
       },
       "zh-Hans": {
         settings: zhHansSettings,
@@ -66,6 +70,7 @@ if (!i18next.isInitialized) {
         chat: zhHansChat,
         diffs: zhHansDiffs,
         terminal: zhHansTerminal,
+        pullRequest: zhHansPullRequest,
       },
     },
     // Locale files are bundled per language, so nothing is fetched at runtime.

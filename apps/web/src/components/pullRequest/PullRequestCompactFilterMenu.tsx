@@ -1,6 +1,7 @@
 import { ChevronDownIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { translateDynamic } from "../../i18nCore";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
@@ -36,8 +37,16 @@ export function PullRequestCompactFilterMenu<Value extends string>({
   return (
     <Menu>
       <MenuTrigger
-        aria-label={triggerLabel || iconOnly ? `${label}: ${current.label}` : label}
-        title={iconOnly ? `${label}: ${current.label}` : undefined}
+        aria-label={
+          triggerLabel || iconOnly
+            ? `${translateDynamic(`pullRequest:${label}`)}: ${translateDynamic(`pullRequest:${current.label}`)}`
+            : translateDynamic(`pullRequest:${label}`)
+        }
+        title={
+          iconOnly
+            ? `${translateDynamic(`pullRequest:${label}`)}: ${translateDynamic(`pullRequest:${current.label}`)}`
+            : undefined
+        }
         render={
           outlined ? (
             <Button variant="outline" size={iconOnly ? "icon" : "default"} />
@@ -56,7 +65,7 @@ export function PullRequestCompactFilterMenu<Value extends string>({
           </>
         ) : (
           <>
-            <span className="truncate">{current.label}</span>
+            <span className="truncate">{translateDynamic(`pullRequest:${current.label}`)}</span>
             <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-muted-foreground/70" />
           </>
         )}
@@ -73,7 +82,7 @@ export function PullRequestCompactFilterMenu<Value extends string>({
               >
                 <span className="flex min-w-0 items-center gap-2">
                   <PullRequestFilterOptionIcon option={option} />
-                  {option.label}
+                  {translateDynamic(`pullRequest:${option.label}`)}
                 </span>
               </MenuRadioItem>
             );

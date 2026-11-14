@@ -49,11 +49,11 @@ import {
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 
-export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
-  merge: "Merge",
-  squash: "Squash and merge",
-  rebase: "Rebase and merge",
-};
+import { translateDynamic } from "../../i18nCore";
+
+export function pullRequestMergeMethodLabel(method: PullRequestMergeMethod): string {
+  return translateDynamic(`pullRequest:mergeMethod.${method}`);
+}
 
 export function allowsSinglePullRequestMerge(input: {
   supportsStackActions: boolean;

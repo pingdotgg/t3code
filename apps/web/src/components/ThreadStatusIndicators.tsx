@@ -56,7 +56,8 @@ import {
   PullRequestGlyph,
   type PullRequestGlyphIcon,
 } from "./pullRequest/pullRequestIcons";
-import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import { presentationLabel, resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import { translateDynamic } from "../i18nCore";
 
 export interface PrStatusIndicator {
   label: string;
@@ -178,7 +179,11 @@ function resolveThreadPullRequestBadgePresentation({
     return {
       Icon: PullRequestGlyph.stack,
       toneClassName: aggregate.toneClassName,
-      label: `Stack of ${badge.layers} ${terminology.plural}, ${aggregate.label.toLowerCase()}`,
+      label: translateDynamic("pullRequest:badge.stack", {
+        count: badge.layers,
+        term: terminology.plural,
+        state: presentationLabel(aggregate.label).toLowerCase(),
+      }),
       text: badge.layers,
     };
   }
@@ -190,7 +195,11 @@ function resolveThreadPullRequestBadgePresentation({
     return {
       Icon: aggregate.Icon,
       toneClassName: aggregate.toneClassName,
-      label: `${tooltip}, and ${badge.others} more linked; overall ${aggregate.label.toLowerCase()}`,
+      label: translateDynamic("pullRequest:badge.more", {
+        tooltip,
+        count: badge.others,
+        state: presentationLabel(aggregate.label).toLowerCase(),
+      }),
       text: `+${badge.others + 1}`,
     };
   }
@@ -419,9 +428,9 @@ export function prStatusIndicator(
   const { shortLabel } = sourceControlClients.get(provider?.kind).changeRequest;
   const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true });
 
-  const tooltipLead = `${shortLabel} #${pr.number} - ${state.label}`;
+  const tooltipLead = `${shortLabel} #${pr.number} - ${presentationLabel(state.label)}`;
   return {
-    label: `${shortLabel} ${state.label.toLowerCase()}`,
+    label: `${shortLabel} ${presentationLabel(state.label).toLowerCase()}`,
     colorClass: state.toneClassName,
     Icon: state.Icon,
     tooltip: `${tooltipLead}: ${pr.title}`,

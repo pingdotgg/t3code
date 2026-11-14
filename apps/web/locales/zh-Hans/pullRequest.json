@@ -1,0 +1,299 @@
+{
+  "common": {
+    "retry": "重试",
+    "tryAgain": "请重试。"
+  },
+  "tabs": {
+    "summary": "摘要",
+    "guide": "导读",
+    "timeline": "时间线",
+    "code": "代码"
+  },
+  "state": {
+    "open": "打开",
+    "draft": "草稿",
+    "closed": "已关闭",
+    "merged": "已合并"
+  },
+  "reviewDecision": {
+    "approved": "已批准",
+    "changesRequested": "已请求修改",
+    "reviewRequired": "等待审查"
+  },
+  "checkStatus": {
+    "pending": "运行中",
+    "awaitingAction": "等待处理",
+    "success": "已通过",
+    "failure": "失败",
+    "cancelled": "已取消",
+    "skipped": "已跳过",
+    "neutral": "中性",
+    "awaitingApproval": "等待批准"
+  },
+  "checksState": {
+    "passing": "所有检查均已通过",
+    "failing": "部分检查未成功",
+    "pending": "部分检查尚未完成"
+  },
+  "checks": {
+    "title": "检查",
+    "withSummary": "检查：{{summary}}",
+    "noChecksReported": "未报告任何检查"
+  },
+  "reviewOutcome": {
+    "approved": "已批准",
+    "changesRequested": "已请求修改",
+    "dismissed": "审查已撤回",
+    "earlierChanges": "{{outcome}}了更早的更改"
+  },
+  "conflict": {
+    "hasConflicts": "存在冲突",
+    "withBranch": "与 {{branch}} 存在冲突"
+  },
+  "mergeMethod": {
+    "merge": "合并",
+    "squash": "压缩后合并",
+    "rebase": "变基后合并"
+  },
+  "automerge": {
+    "plain": "自动合并",
+    "withMethod": "自动合并（{{method}}）"
+  },
+  "issues": {
+    "open": "打开的议题",
+    "closed": "已关闭的议题"
+  },
+  "empty": {
+    "mention": {
+      "label": "提及用户",
+      "pending": "正在搜索用户…",
+      "failed": "无法在托管平台上搜索用户",
+      "none": "没有匹配的用户"
+    },
+    "reference": {
+      "label": "引用议题或变更请求",
+      "pending": "正在搜索…",
+      "failed": "无法搜索托管平台",
+      "none": "没有匹配的议题或变更请求"
+    }
+  },
+  "badge": {
+    "stack": "{{count}} 个 {{term}}的堆叠，{{state}}",
+    "more": "{{tooltip}}，还有 {{count}} 个已关联；整体{{state}}"
+  },
+  "actions": {
+    "checkOut": "检出",
+    "checkingOut": "检出中…",
+    "checkOutThis": "检出此{{term}}",
+    "preparing": "准备中…",
+    "resolveConflicts": "解决冲突",
+    "merging": "合并中…",
+    "confirmMerge": "确认合并？",
+    "enabling": "启用中…",
+    "confirmAutoMerge": "确认自动合并？",
+    "readyForReview": "请求审查",
+    "approving": "批准中…",
+    "confirmApprove": "确认批准？",
+    "approveWorkflows": "批准运行工作流",
+    "confirmClose": "确认关闭？",
+    "confirmRevert": "确认回退？",
+    "autoMergeHint": "{{label}}：满足条件后托管平台会自动合并"
+  },
+  "checkout": {
+    "worktree": "在独立的工作树中",
+    "worktreeDetail": "有自己的文件夹和线程。你已打开的内容不会移动。",
+    "local": "在本仓库中",
+    "localDetail": "切换你正在工作的分支。"
+  },
+  "toasts": {
+    "addedToComposer": "已加入编写区",
+    "composerQuestion": "问题已在编写区。确认内容后发送。",
+    "composerTask": "任务已在编写区。确认内容后发送。",
+    "composerTerm": "{{term}}已在编写区。输入你的问题后发送。",
+    "askedInThread": "已在线程中提问",
+    "preparingCheckout": "正在准备{{term}}的检出…",
+    "checkedOutHere": "已在此处检出",
+    "checkedOut": "已检出",
+    "checkedOutHereDetail": "本仓库已切换到该{{term}}的分支，并在线程中打开。",
+    "checkedOutDetail": "该{{term}}位于自己的工作树中，并在线程中打开。",
+    "checkoutReady": "检出就绪",
+    "checkedOutThreadStuck": "已检出，但线程仍留在原处",
+    "checkedOutThreadStuckHint": "检出已在 `{{branch}}` 就绪。从分支选择器把线程指过去，然后再试一次。",
+    "revertOpened": "已打开{{term}}的回退",
+    "branchDeleted": "分支已删除",
+    "copiedValue": "已复制 {{value}}"
+  },
+  "errors": {
+    "postComment": "无法发布评论",
+    "openThread": "无法打开线程",
+    "openThreadForCheckout": "无法为检出打开线程",
+    "openThreadHint": "请从项目页重试，或先打开一个线程。",
+    "prepareCheckout": "无法准备{{term}}的检出",
+    "copyCheckoutCommand": "无法复制检出命令",
+    "failedToCopy": "复制 {{value}} 失败",
+    "stackCheckFailed": "无法检查堆叠归属",
+    "stackChecking": "正在检查堆叠归属…",
+    "updateBranchRebaseHint": "托管平台拒绝了该操作。变基会在第一个无法干净应用的提交处停下；改用合并提交更新可能仍然可行。",
+    "saveMaintainerAccess": "无法保存维护者访问设置",
+    "loadMoreComments": "无法加载更多评论",
+    "replyNotPosted": "回复无法发布",
+    "commentNotSaved": "评论无法保存",
+    "conversationNotUpdated": "会话无法更新",
+    "termNotFound": "未找到 {{term}} #{{number}}",
+    "termNotFoundHint": "它可能是议题而不是{{term}}，或此账号无权查看。"
+  },
+  "actionFailure": {
+    "merge": "无法合并此{{term}}",
+    "ready": "无法标记为请求审查",
+    "draft": "无法转换为草稿",
+    "close": "无法关闭此{{term}}",
+    "reopen": "无法重新打开此{{term}}",
+    "updateBranch": "无法更新此分支",
+    "enableAutoMerge": "无法开启自动合并",
+    "disableAutoMerge": "无法关闭自动合并",
+    "revert": "无法打开{{term}}的回退",
+    "deleteBranch": "无法删除此分支",
+    "approveWorkflows": "无法批准工作流"
+  },
+  "actionFailureHint": {
+    "merge": "托管平台拒绝了合并。请检查你有写权限、它要求的检查已通过，且分支没有冲突。",
+    "ready": "托管平台拒绝了该操作。请检查你对本仓库有写权限。",
+    "draft": "托管平台拒绝了该操作。请检查你对本仓库有写权限。",
+    "close": "托管平台拒绝了该操作。请检查你有写权限，或它是你打开的。",
+    "reopen": "托管平台拒绝了该操作。请检查你有写权限，且分支仍然存在。",
+    "updateBranch": "托管平台拒绝了该操作。请检查你对分支有写权限（fork 分支还需其作者允许维护者修改），且它与基分支没有冲突。",
+    "enableAutoMerge": "托管平台拒绝了该操作。请检查本仓库允许自动合并、你有写权限，且还有它在等待的条件。",
+    "disableAutoMerge": "托管平台拒绝了该操作。请检查你有写权限，且合并尚未完成。",
+    "revert": "托管平台拒绝了该操作。请检查你有写权限，且此{{term}}已在托管平台合并。",
+    "deleteBranch": "托管平台拒绝了该操作。请检查你对源仓库有写权限，且分支自页面加载以来没有移动。",
+    "approveWorkflows": "托管平台拒绝了该操作。请检查你有 Actions 写权限，且这些工作流运行仍在等待批准。"
+  },
+  "confirm": {
+    "deleteBranchTitle": "删除分支 {{branch}}？",
+    "deleteBranchBody": "将从 {{repository}} 删除 {{branch}}。本地分支和工作树不受影响。"
+  },
+  "meta": {
+    "receivesChangesFrom": "接受来自以下分支的更改",
+    "prTabs": "变更请求标签页",
+    "reviewers": "审查者",
+    "labels": "标签",
+    "none": "无",
+    "description": "描述",
+    "termReference": "{{term}}引用"
+  },
+  "counts": {
+    "comments": "{{formatted}} 条评论",
+    "commentsUnavailable": "评论不可用",
+    "commits": "{{formatted}} 个提交",
+    "commitsUnavailable": "提交不可用",
+    "conversation": "{{count}} 个会话",
+    "conversations": "{{formatted}} 个会话"
+  },
+  "files": {
+    "count": "{{formatted}} 个文件"
+  },
+  "loading": {
+    "termDiff": "正在加载{{term}}的差异…"
+  },
+  "timeline": {
+    "showOldest": "先显示最早的动态",
+    "showNewest": "先显示最新的动态",
+    "newestFirst": "最新在前",
+    "oldestFirst": "最早在前"
+  },
+  "copy": {
+    "checkoutCommand": "复制检出命令",
+    "checkoutCommandCopied": "检出命令已复制",
+    "termBranch": "复制{{term}}分支",
+    "branchNameCopied": "分支名已复制"
+  },
+  "ghosts": {
+    "loadingPullRequests": "正在加载变更请求",
+    "loadingTerm": "正在加载{{term}}",
+    "loadingConversation": "正在加载{{term}}会话",
+    "loadingPeople": "正在加载成员",
+    "loadingTimeline": "正在加载时间线",
+    "backToThread": "返回本线程的变更请求",
+    "openOnHost": "在托管平台打开 {{term}} #{{number}}",
+    "actionsLoading": "{{term}}操作加载中",
+    "collapsePanel": "折叠{{term}}面板",
+    "reviewersLoading": "审查者加载中",
+    "labelsLoading": "标签加载中",
+    "updated": "更新于",
+    "checkoutCommandTarget": "{{term}}检出命令",
+    "branchName": "分支名"
+  },
+  "list": {
+    "title": "变更请求",
+    "search": "搜索变更请求",
+    "refresh": "刷新变更请求",
+    "breadcrumb": "变更请求面包屑",
+    "scopeBreadcrumb": "变更请求范围",
+    "filterByState": "按状态筛选",
+    "filterByInvolvement": "按参与角色筛选",
+    "filterByHost": "按托管平台筛选",
+    "filterByProvider": "按托管平台筛选",
+    "allHosts": "全部",
+    "state": {
+      "all": "全部",
+      "open": "打开",
+      "closed": "已关闭",
+      "merged": "已合并"
+    },
+    "involvement": {
+      "all": "全部",
+      "reviewing": "审查中",
+      "authored": "我发起的"
+    },
+    "sort": {
+      "ready": "合并就绪度",
+      "blocked": "等待我处理",
+      "updated": "最近更新",
+      "newest": "最新在前",
+      "oldest": "最早在前",
+      "largest": "最大的在前",
+      "smallest": "最小的在前"
+    }
+  },
+  "code": {
+    "changed": "有改动",
+    "changedTooltip": "自你标记为已查看后，此文件又有新的推送。",
+    "viewed": "已查看",
+    "fixInThread": "在线程中修复",
+    "restOfDiffNotLoaded": "差异的其余部分无法加载。",
+    "loadingMoreFiles": "正在加载更多文件…",
+    "loadMoreFiles": "加载更多文件",
+    "expandDiff": "展开差异",
+    "collapseDiff": "折叠差异",
+    "addToReview": "加入审查",
+    "addToAgent": "交给代理",
+    "allCommits": "所有提交",
+    "diffScope": "差异范围：{{scope}}",
+    "reviewSectionTitle": "PR #{{number}} 审查",
+    "ticksLocalOnly": "这些勾选标记只保存在本地，不在托管平台上",
+    "ticksUnreadable": "无法读取你的勾选标记",
+    "partialCount": "此计数只覆盖部分更改",
+    "diffPartiallyShown": "此差异有一部分未显示",
+    "lineCommentsFromWholeChange": "行内评论基于完整更改编写",
+    "diffOptions": "差异选项",
+    "showWhitespace": "显示空白更改",
+    "hideWhitespace": "隐藏空白更改",
+    "diffLayout": "差异布局",
+    "stackedView": "纵向堆叠视图",
+    "splitView": "左右分栏视图",
+    "enableWrapping": "开启差异换行",
+    "disableWrapping": "关闭差异换行",
+    "expandAllFiles": "展开所有文件",
+    "collapseAllFiles": "折叠所有文件",
+    "hideTestFiles": "隐藏测试文件",
+    "showTestFiles": "显示测试文件",
+    "hideFileTree": "隐藏文件树",
+    "showFileTree": "显示文件树",
+    "termNoChanges": "此{{term}}没有文件更改。",
+    "commitNoChanges": "此提交没有文件更改。",
+    "orphansCurrentDiff": "不在当前差异中的会话",
+    "orphansLoadedDiff": "不在已加载差异中的会话",
+    "line": "第 {{line}} 行",
+    "resizeFiles": "调整 PR 代码文件面板宽度"
+  }
+}
