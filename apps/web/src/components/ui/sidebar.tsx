@@ -726,7 +726,9 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
         <PanelLeftCloseIcon
           className={cn(
             "size-4",
-            props.variant === "media-navigation" ? "text-current" : "text-sidebar-toggle",
+            props.variant === "media-navigation"
+              ? "text-current light:text-sidebar-toggle"
+              : "text-sidebar-toggle",
           )}
 
           strokeWidth={2.25}
@@ -735,7 +737,9 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
         <PanelLeftIcon
           className={cn(
             "size-4",
-            props.variant === "media-navigation" ? "text-current" : "text-sidebar-toggle",
+            props.variant === "media-navigation"
+              ? "text-current light:text-sidebar-toggle"
+              : "text-sidebar-toggle",
           )}
 
           strokeWidth={2.25}
