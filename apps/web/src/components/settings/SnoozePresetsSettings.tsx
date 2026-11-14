@@ -313,8 +313,9 @@ function SnoozePresetList(props: {
         <Button
           variant="ghost-muted"
           size="compact"
-          disabled={props.presets.length >= MAX_SNOOZE_PRESETS}
-          onClick={props.onAdd}
+          // Not `disabled`: that drops focus, which the list would read as leaving it and sort.
+          aria-disabled={props.presets.length >= MAX_SNOOZE_PRESETS || undefined}
+          onClick={props.presets.length >= MAX_SNOOZE_PRESETS ? undefined : props.onAdd}
         >
           <PlusIcon />
           Add option
