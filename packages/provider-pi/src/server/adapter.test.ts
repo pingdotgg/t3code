@@ -54,7 +54,7 @@ import {
 } from "./adapter.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "./rpc.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
-import { PI_T3_RESUME_COMMAND, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import { PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
 import { turnItemOutputText } from "../../../client-runtime/src/work-log/itemDetail.ts";
 
 const layerTest = Layer.mergeAll(
@@ -2492,42 +2492,6 @@ describe("PiAdapterV2", () => {
           `/${PI_T3_SERVICE_TIER_COMMAND}`,
         ],
       );
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
-  );
-
-  it.effect("resumes a stopped turn through T3's extension command, not a model prompt", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakePi;
-      const { runtime, takeEvent } = yield* openRuntime(fake);
-      const providerThread = yield* runtime.ensureThread({
-        threadId: THREAD_ID,
-        modelSelection: modelSelection("default"),
-        runtimePolicy,
-      });
-      const appThread = yield* makeAppThread("default", THREAD_ID);
-      const runId = RunId.make(`run:${THREAD_ID}:1`);
-      yield* runtime.resumeTurn!({
-        appThread,
-        threadId: THREAD_ID,
-        runId,
-        runOrdinal: 1,
-        providerTurnOrdinal: 1,
-        attemptId: RunAttemptId.make(`run-attempt:${runId}:1`),
-        rootNodeId: NodeId.make(`node:${runId}:root`),
-        providerThread,
-        messageId: `message:${THREAD_ID}:1` as never,
-        modelSelection: modelSelection("default"),
-        runtimePolicy,
-      });
-      const prompt = yield* fake.takeRequest("prompt");
-      assert.equal(prompt["message"], `/${PI_T3_RESUME_COMMAND}`);
-      assert.isUndefined(prompt["images"]);
-      yield* fake.emit({ type: "agent_start" });
-      yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
-      yield* fake.emit({ type: "agent_settled" });
-      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
-      assert(terminal.type === "turn.terminal");
-      assert.equal(terminal.status, "completed");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

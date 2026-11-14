@@ -8,7 +8,6 @@ export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 export const PI_T3_SERVICE_TIER_COMMAND = "t3-service-tier";
-export const PI_T3_RESUME_COMMAND = "t3-resume";
 
 // These tools trigger file-change approvals, bypassed by Auto-accept edits.
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
@@ -26,7 +25,6 @@ const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
 const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
-const RESUME_COMMAND = ${JSON.stringify(PI_T3_RESUME_COMMAND)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
@@ -308,33 +306,6 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       serviceTier = args.trim() || undefined;
     },
   });
-
-  // Pi's own retry continues from the transcript without a new message, but RPC cannot reach it.
-  // This starts the same context-only run: Pi already drops the stopped reply from the request,
-  // and the empty marker that starts the run is removed before the model sees it.
-  pi.registerCommand(RESUME_COMMAND, {
-    description: "Continue the stopped turn from the current transcript",
-    handler: async (_args, ctx) => {
-      if (!ctx.isIdle()) throw new Error("Pi is still working.");
-      const last = [...ctx.sessionManager.getBranch()]
-        .reverse()
-        .find((entry) => entry.type === "message" && entry.message.role === "assistant");
-      const stopReason =
-        last?.type === "message" && last.message.role === "assistant"
-          ? last.message.stopReason
-          : undefined;
-      // Pi before 1.x records a stop during a tool as an error.
-      if (stopReason !== "aborted" && stopReason !== "error") {
-        throw new Error("Pi has no stopped turn to resume.");
-      }
-      pi.sendMessage({ customType: RESUME_COMMAND, content: [], display: false }, { triggerTurn: true });
-    },
-  });
-  pi.on("context", (event) => ({
-    messages: event.messages.filter(
-      (message) => !(message.role === "custom" && message.customType === RESUME_COMMAND),
-    ),
-  }));
 
   pi.on("before_provider_request", (event, ctx) => {
     const payload = event.payload;
