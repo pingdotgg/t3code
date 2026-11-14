@@ -1287,6 +1287,8 @@ describe("AntigravityAdapterV2 session system prompt", () => {
         } else {
           assert.notInclude(append, "systemPrompt");
           assert.include(sent, "<pull_request_linking>");
+          assert.isBelow(sent.indexOf("GLOBAL_RULE"), sent.indexOf("AGENTS_RULE"));
+          assert.isBelow(sent.indexOf("AGENTS_RULE"), sent.indexOf("GEMINI_RULE"));
         }
       }).pipe(Effect.provide(layerSession)),
   );

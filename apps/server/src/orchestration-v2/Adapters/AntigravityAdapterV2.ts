@@ -127,6 +127,19 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
 
 const RULES_FILE_MAX_BYTES = 256n * 1024n;
 
+type PromptPayload = Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"]>[0];
+
+// The ACP adapter resends runtime instructions on a session's first turn, after compaction and on
+// change; rules follow them so the agent's history keeps one current copy.
+const withTurnRules = (payload: PromptPayload, rules: string): PromptPayload => {
+  const index = payload.prompt.findIndex(
+    (block) => block.type === "text" && block.text.startsWith("<runtime_info>"),
+  );
+  return index === -1
+    ? payload
+    : { ...payload, prompt: payload.prompt.toSpliced(index, 0, { type: "text", text: rules }) };
+};
+
 interface AntigravityFlavorServices {
   readonly random: SecureRandom.SecureRandom["Service"];
   readonly fileSystem: FileSystem.FileSystem;
@@ -161,16 +174,18 @@ export function makeAntigravityAcpAdapterFlavor(
     );
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
-      const instructions: Array<string> = [];
+      const rules: Array<string> = [];
       for (const filePath of [
         options.path.join(options.userHome, ".gemini", "GEMINI.md"),
         options.path.join(input.cwd, "AGENTS.md"),
         options.path.join(input.cwd, "GEMINI.md"),
       ]) {
         const contents = yield* readRulesFile(filePath);
-        if (contents.trim()) instructions.push(`# ${filePath}\n\n${contents}`);
+        if (contents.trim()) rules.push(`# ${filePath}\n\n${contents}`);
       }
-      instructions.push(PULL_REQUEST_LINKING_INSTRUCTIONS);
+      const rulesText = rules.join("\n\n");
+      // Set on start: whether this agent drops the system-prompt append, so rules ride the turns.
+      let rulesInTurns = false;
       const scope = yield* Scope.fork(yield* Effect.scope);
       const runtime = yield* options
         .withProcess(
@@ -178,7 +193,7 @@ export function makeAntigravityAcpAdapterFlavor(
           options.makeRuntime({
             ...input,
             clientFileReads: true,
-            sessionSystemPromptAppend: instructions.join("\n\n"),
+            sessionSystemPromptAppend: [...rules, PULL_REQUEST_LINKING_INSTRUCTIONS].join("\n\n"),
             additionalDirectories: [options.host.paths.attachmentsDir],
           }),
         )
@@ -212,7 +227,14 @@ export function makeAntigravityAcpAdapterFlavor(
             ),
           ),
         prompt: (payload, promptOptions) =>
-          Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
+          Effect.sync(reads.reset).pipe(
+            Effect.andThen(
+              runtime.prompt(
+                rulesInTurns ? withTurnRules(payload, rulesText) : payload,
+                promptOptions,
+              ),
+            ),
+          ),
         handleSessionUpdate: (handler) => {
           projectUpdate = handler;
           return runtime.handleSessionUpdate((notification) =>
@@ -220,13 +242,13 @@ export function makeAntigravityAcpAdapterFlavor(
           );
         },
         start: () =>
-          runtime
-            .start()
-            .pipe(
-              Effect.tap(
-                (started) => options.onSessionStarted?.(started, input.cwd) ?? Effect.void,
-              ),
-            ),
+          runtime.start().pipe(
+            Effect.tap((started) => {
+              rulesInTurns =
+                rulesText !== "" && !antigravityAppendsSystemPrompt(started.initializeResult);
+              return options.onSessionStarted?.(started, input.cwd) ?? Effect.void;
+            }),
+          ),
       } satisfies typeof runtime;
     },
     Effect.provideService(SecureRandom.SecureRandom, options.random),
