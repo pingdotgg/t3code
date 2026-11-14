@@ -345,7 +345,7 @@ const make = Effect.gen(function* () {
         return yield* new AuthMcpRegistrationError({
           error: "invalid_client_metadata",
           error_description:
-            "Linked environments is off on that machine. Turn it on in its Settings → Labs.",
+            "Linked environments is off on that machine. Turn it on in its Settings → Labs. For a headless server, run `t3 pair` there and open its pairing link in a browser to reach Settings. Linked environments must be on for both machines.",
         });
       }
       return {
