@@ -16,6 +16,15 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeCdpReply = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ id: Schema.Number })),
 );
+const decodeCdpMessage = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      id: Schema.optional(Schema.Number),
+      method: Schema.optional(Schema.String),
+      sessionId: Schema.optional(Schema.String),
+    }),
+  ),
+);
 const key = { threadId: "thread-1", tabId: "tab-1" };
 /** Sends a page command whose id the fake debugger records as it receives it. */
 const command = (
@@ -43,6 +52,8 @@ const makeDebuggee = (
   const pending: Array<() => void> = [];
   const focusChanges: Array<() => void> = [];
   const sent: Array<unknown> = [];
+  const methods: Array<string> = [];
+  const rejects: Array<() => void> = [];
   const sendWaiters: Array<() => void> = [];
   const focusEmulation: Array<boolean> = [];
   const debuggee = Object.assign(emitter, {
@@ -67,6 +78,8 @@ const makeDebuggee = (
           return;
         }
         sent.push(params?.id);
+        methods.push(method);
+        rejects.push(() => reject(new Error("Refused")));
         pending.push(() => resolve({ method }));
         sendWaiters.shift()?.();
       }),
@@ -94,6 +107,10 @@ const makeDebuggee = (
       webContents.emit("did-fail-load", {}, code, "Failed", "http://localhost/", true),
     /** Ids of the commands the debugger received, in order. */
     sent,
+    /** Methods of the same commands, in order. */
+    methods,
+    /** Refuses the pending command the debugger received with this id. */
+    refuse: (id: number) => rejects[sent.indexOf(id)]?.(),
     focusEmulation,
     nextSend: () => new Promise<void>((resolve) => sendWaiters.push(resolve)),
     release: () => pending.splice(0).forEach((resolve) => resolve()),
@@ -116,16 +133,24 @@ const takeEvents = (host: DesktopBrowserHost.DesktopBrowserHost["Service"], coun
 /**
  * Ids of the replies the host sends, in order. A screenshot's reply leaves after its turn
  * has passed on, so by then the next waiting screenshot, if any, has been sent. Subscribe
- * before sending commands: a new subscriber releases the tab's relay.
+ * before sending commands: a new subscriber releases the tab's relay. Screencast frames
+ * go to `frames` by the session they were sent to.
  */
-const watchReplies = (host: DesktopBrowserHost.DesktopBrowserHost["Service"]) =>
+const watchReplies = (
+  host: DesktopBrowserHost.DesktopBrowserHost["Service"],
+  frames: Array<string | undefined> = [],
+) =>
   Effect.gen(function* () {
     const replies = yield* Queue.unbounded<number>();
     yield* host.events.pipe(
       Stream.map((line) => decodeEvent(new TextDecoder().decode(line))),
-      Stream.runForEach((event) =>
-        event.type === "cdp" ? Queue.offer(replies, decodeCdpReply(event.message).id) : Effect.void,
-      ),
+      Stream.runForEach((event) => {
+        if (event.type !== "cdp") return Effect.void;
+        const { id, method, sessionId } = decodeCdpMessage(event.message);
+        if (id !== undefined) return Queue.offer(replies, id);
+        if (method === "Page.screencastFrame") frames.push(sessionId);
+        return Effect.void;
+      }),
       Effect.forkScoped,
     );
     yield* Effect.yieldNow;
@@ -283,7 +308,7 @@ describe("DesktopBrowserHost", () => {
 
       expect(reply).toMatchObject({ type: "cdp" });
       expect(decodeCdpReply((reply as { message: string }).message).id).toBe(2);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("sends a page one screenshot at a time", () =>
@@ -302,7 +327,7 @@ describe("DesktopBrowserHost", () => {
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(1);
       expect(debuggee.sent).toEqual([1, 3, 2]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("stops waiting on a screenshot the page navigated away from", () =>
@@ -327,7 +352,7 @@ describe("DesktopBrowserHost", () => {
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(2);
       expect(debuggee.sent).toEqual([1, 2, 3]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("drops screenshots a released relay left waiting", () =>
@@ -399,7 +424,7 @@ describe("DesktopBrowserHost", () => {
       expect(yield* Queue.take(replies)).toBe(1);
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("lets a guest throttle once Chromium can no longer answer its pending command", () =>
@@ -490,6 +515,9 @@ describe("DesktopBrowserHost", () => {
 
       // Playwright re-enabling a domain after a reload is not the agent using the tab.
       yield* command(host, 1, "Runtime.enable");
+      yield* settle;
+      // The relay resets Runtime before a connection's first enable: answer the disable, then the enable.
+      debuggee.release();
       yield* settle;
       debuggee.release();
       yield* settle;
@@ -584,7 +612,7 @@ describe("DesktopBrowserHost", () => {
       yield* turn(false);
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false, true]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("paints for a screenshot queued behind one its viewer abandoned mid-capture", () =>
@@ -607,21 +635,22 @@ describe("DesktopBrowserHost", () => {
         params: { sessionId: "t3-preview-page-1" },
       });
       expect(yield* Queue.take(replies)).toBe(3);
-      expect(painting).toEqual([true, false]);
+      expect(painting).toEqual([true]);
 
       // The agent's screenshot waits its turn; painting lets the abandoned one finish first.
       yield* command(host, 4, "Page.captureScreenshot");
       yield* settle;
-      expect(painting).toEqual([true, false, true]);
+      expect(painting).toEqual([true]);
       debuggee.release();
       expect(yield* Queue.take(replies)).toBe(2);
       yield* settle;
       expect(debuggee.sent).toEqual([undefined, 4]);
+      expect(painting).toEqual([true]);
       debuggee.release();
       expect(yield* Queue.take(replies)).toBe(4);
       yield* settle;
-      expect(painting).toEqual([true, false, true, false]);
-    }).pipe(Effect.scoped),
+      expect(painting).toEqual([true, false]);
+    }),
   );
 
   it.effect("stops painting for a queued screenshot once its session detaches", () =>
@@ -645,17 +674,22 @@ describe("DesktopBrowserHost", () => {
       expect(yield* Queue.take(replies)).toBe(2);
       yield* raw({ id: 3, method: "Page.captureScreenshot", sessionId: "t3-preview-page-1" });
       yield* settle;
-      expect(painting).toEqual([true, false, true]);
+      expect(painting).toEqual([true]);
       yield* raw({
         id: 4,
         method: "Target.detachFromTarget",
         params: { sessionId: "t3-preview-page-1" },
       });
       expect(yield* Queue.take(replies)).toBe(4);
-      expect(painting).toEqual([true, false, true, false]);
+
+      // The agent's answers late; the viewer's is dropped unsent, so nothing is left to paint.
+      debuggee.release();
+      yield* settle;
+      expect(debuggee.sent).toEqual([1]);
+      expect(painting).toEqual([true, false]);
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("never sends a screenshot whose session detached while focus was changing", () =>
@@ -679,10 +713,10 @@ describe("DesktopBrowserHost", () => {
       debuggee.settleFocus();
       yield* settle;
       expect(debuggee.sent).toEqual([]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
-  it.effect("stops painting for a screenshot still queued when the agent's turn ends", () =>
+  it.effect("holds no focus for a screenshot still queued when the agent's turn ends", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
@@ -697,16 +731,19 @@ describe("DesktopBrowserHost", () => {
       yield* settle;
       yield* turn(false);
       yield* settle;
-      expect(painting).toEqual([true, false]);
+      expect(painting).toEqual([true]);
 
-      // The first answers late; the second still goes in turn, but holds nothing.
+      // The first answers late; the second still goes in turn, painting but holding no focus.
       debuggee.releaseFirst();
       yield* settle;
       expect(debuggee.sent).toEqual([1, 2]);
-      expect(painting).toEqual([true, false]);
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+      expect(painting).toEqual([true]);
+      debuggee.release();
+      yield* settle;
+      expect(painting).toEqual([true, false]);
+    }),
   );
 
   it.effect("lets a guest throttle when Chromium refuses a viewer's screencast", () =>
@@ -727,7 +764,7 @@ describe("DesktopBrowserHost", () => {
       expect(painting).toEqual([true, false]);
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("lets a guest throttle after a person's input through a viewer that then closed", () =>
@@ -756,7 +793,7 @@ describe("DesktopBrowserHost", () => {
       yield* settle;
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps a page's screencast when a child session's screencast is refused", () =>
@@ -778,7 +815,7 @@ describe("DesktopBrowserHost", () => {
       expect(yield* Queue.take(replies)).toBe(2);
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("ignores a screencast that arrives on a session after it detached", () =>
@@ -804,7 +841,7 @@ describe("DesktopBrowserHost", () => {
       yield* settle;
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("lets a guest throttle once the session waiting on its command detaches", () =>
@@ -831,7 +868,7 @@ describe("DesktopBrowserHost", () => {
       });
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("never sends a screenshot queued by a session that has since detached", () =>
@@ -862,7 +899,7 @@ describe("DesktopBrowserHost", () => {
 
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps a streamed guest focused until its screencast ends", () =>
@@ -923,7 +960,7 @@ describe("DesktopBrowserHost", () => {
       });
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("paints a hidden guest only while the screenshot it is taking is pending", () =>
@@ -949,10 +986,10 @@ describe("DesktopBrowserHost", () => {
       debuggee.release();
       yield* settle;
       expect(painting).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
-  it.effect("stops painting for a screenshot Chromium never answers", () =>
+  it.effect("stops painting for a screenshot Chromium never answers once its document goes", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
@@ -961,38 +998,40 @@ describe("DesktopBrowserHost", () => {
       const turn = (active: boolean) =>
         host.handleCommandLine(encodeJson({ type: "turn", threadId: key.threadId, active }));
 
-      // The server gave up on it, and the agent's turn ends.
+      // The server gave up on it, and the agent's turn ends; Chromium still holds the capture.
       yield* turn(true);
       yield* command(host, 1, "Page.captureScreenshot");
       yield* settle;
       yield* turn(false);
       yield* settle;
-      expect(painting).toEqual([true, false]);
+      expect(painting).toEqual([true]);
 
       // The page loads a new document, which also frees the screenshot turn.
       debuggee.navigate();
+      expect(painting).toEqual([true, false]);
       yield* command(host, 2, "Page.captureScreenshot");
       yield* settle;
       debuggee.navigate();
       yield* settle;
       expect(painting).toEqual([true, false, true, false]);
 
-      // The server releases the relay.
+      // The server releases the relay; Chromium still holds the capture.
       yield* command(host, 3, "Page.captureScreenshot");
       yield* settle;
       yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
       yield* settle;
-      expect(painting).toEqual([true, false, true, false, true, false]);
+      expect(painting).toEqual([true, false, true, false, true]);
 
       // The guest detaches; a replacement starts with no screenshot pending.
       const replacement = makeDebuggee();
       host.attach(key, replacement.tab);
+      expect(painting).toEqual([true, false, true, false, true, false]);
       yield* command(host, 4, "Page.captureScreenshot");
       yield* settle;
       host.detach(key);
       yield* settle;
       expect(painting).toEqual([true, false, true, false, true, false, true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("paints a streamed guest until its last screencast ends", () =>
@@ -1023,7 +1062,176 @@ describe("DesktopBrowserHost", () => {
       });
       yield* settle;
       expect(painting).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
+  );
+
+  it.effect("keeps a guest's one screencast running until its last streaming session stops", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const frames: Array<string | undefined> = [];
+      const replies = yield* watchReplies(host, frames);
+      const raw = (message: Record<string, unknown>) =>
+        host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
+      const nativeStops = () =>
+        debuggee.methods.filter((method) => method === "Page.stopScreencast").length;
+
+      // A viewer and a recording share Chromium's single screencast for the guest.
+      yield* raw({ id: 0, method: "Target.setAutoAttach", params: { autoAttach: true } });
+      expect(yield* Queue.take(replies)).toBe(0);
+      yield* raw({ id: 1, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      yield* raw({ id: 2, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      expect([yield* Queue.take(replies), yield* Queue.take(replies)]).toEqual([1, 2]);
+      yield* raw({ id: 3, method: "Page.startScreencast", sessionId: "t3-preview-page-1" });
+      yield* raw({ id: 4, method: "Page.startScreencast", sessionId: "t3-preview-page-2" });
+      yield* settle;
+      debuggee.release();
+      yield* raw({ id: 5, method: "Page.stopScreencast", sessionId: "t3-preview-page-1" });
+      yield* settle;
+      expect(nativeStops(), "stopped the screencast another session still streams").toBe(0);
+      debuggee.emit("Page.screencastFrame", { data: "frame", sessionId: 1 });
+      yield* settle;
+      expect(frames, "sent a stopped or idle session the screencast's frames").toEqual([
+        "t3-preview-page-2",
+      ]);
+
+      yield* raw({ id: 6, method: "Page.stopScreencast", sessionId: "t3-preview-page-2" });
+      yield* settle;
+      expect(nativeStops()).toBe(1);
+    }),
+  );
+
+  it.effect("keeps a session's screencast when another of its starts is refused", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const frames: Array<string | undefined> = [];
+      const replies = yield* watchReplies(host, frames);
+      const raw = (message: Record<string, unknown>) =>
+        host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
+
+      yield* raw({ id: 0, method: "Target.setAutoAttach", params: { autoAttach: true } });
+      expect(yield* Queue.take(replies)).toBe(0);
+      yield* raw({ id: 1, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      expect(yield* Queue.take(replies)).toBe(1);
+      yield* raw({
+        id: 2,
+        method: "Page.startScreencast",
+        params: { id: 2 },
+        sessionId: "t3-preview-page-1",
+      });
+      yield* raw({
+        id: 3,
+        method: "Page.startScreencast",
+        params: { id: 3 },
+        sessionId: "t3-preview-page-1",
+      });
+      yield* settle;
+      debuggee.refuse(2);
+      debuggee.release();
+      expect([yield* Queue.take(replies), yield* Queue.take(replies)].toSorted()).toEqual([2, 3]);
+      yield* settle;
+      expect(debuggee.methods).not.toContain("Page.stopScreencast");
+      debuggee.emit("Page.screencastFrame", { data: "frame", sessionId: 1 });
+      yield* settle;
+      expect(frames).toContain("t3-preview-page-1");
+
+      // A refused replacement leaves the session's running stream, shared with another session.
+      yield* raw({ id: 4, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      expect(yield* Queue.take(replies)).toBe(4);
+      yield* raw({
+        id: 5,
+        method: "Page.startScreencast",
+        params: { id: 5 },
+        sessionId: "t3-preview-page-2",
+      });
+      yield* raw({
+        id: 6,
+        method: "Page.startScreencast",
+        params: { id: 6 },
+        sessionId: "t3-preview-page-1",
+      });
+      yield* settle;
+      debuggee.refuse(6);
+      debuggee.release();
+      expect([yield* Queue.take(replies), yield* Queue.take(replies)].toSorted()).toEqual([5, 6]);
+      yield* settle;
+      frames.length = 0;
+      debuggee.emit("Page.screencastFrame", { data: "frame", sessionId: 2 });
+      yield* settle;
+      expect(frames).toEqual(["t3-preview-page-1", "t3-preview-page-2"]);
+    }),
+  );
+
+  it.effect("stops a guest's screencast once its last streaming session detaches", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+      const raw = (message: Record<string, unknown>) =>
+        host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
+      const nativeStops = () =>
+        debuggee.methods.filter((method) => method === "Page.stopScreencast").length;
+
+      yield* raw({ id: 1, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      yield* raw({ id: 2, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      expect([yield* Queue.take(replies), yield* Queue.take(replies)]).toEqual([1, 2]);
+      yield* raw({ id: 3, method: "Page.startScreencast", sessionId: "t3-preview-page-1" });
+      yield* raw({ id: 4, method: "Page.startScreencast", sessionId: "t3-preview-page-2" });
+      yield* settle;
+      debuggee.release();
+      // Streamers go without stopping, such as viewers that closed.
+      yield* raw({
+        id: 5,
+        method: "Target.detachFromTarget",
+        params: { sessionId: "t3-preview-page-1" },
+      });
+      yield* settle;
+      expect(nativeStops(), "stopped the screencast another session still streams").toBe(0);
+      yield* raw({
+        id: 6,
+        method: "Target.detachFromTarget",
+        params: { sessionId: "t3-preview-page-2" },
+      });
+      const answered = [];
+      for (let reply = 0; reply < 4; reply++) answered.push(yield* Queue.take(replies));
+      expect(answered.toSorted()).toEqual([3, 4, 5, 6]);
+      yield* settle;
+      expect(nativeStops()).toBe(1);
+    }),
+  );
+
+  it.effect("stops a screencast whose start lands after its session detached", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee({ deferFocus: true });
+      host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+      const raw = (message: Record<string, unknown>) =>
+        host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
+
+      yield* raw({ id: 1, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      expect(yield* Queue.take(replies)).toBe(1);
+      // The start waits on focus emulation while the viewer closes.
+      yield* raw({ id: 2, method: "Page.startScreencast", sessionId: "t3-preview-page-1" });
+      yield* raw({
+        id: 3,
+        method: "Target.detachFromTarget",
+        params: { sessionId: "t3-preview-page-1" },
+      });
+      expect(yield* Queue.take(replies)).toBe(3);
+      debuggee.settleFocus();
+      yield* settle;
+      debuggee.release();
+      expect(yield* Queue.take(replies)).toBe(2);
+      yield* settle;
+      expect(debuggee.methods.at(-1), "left the late screencast running").toBe(
+        "Page.stopScreencast",
+      );
+    }),
   );
 
   it.effect("saves a server tab's download under its CDP guid where the server asked", () =>
@@ -1058,7 +1266,7 @@ describe("DesktopBrowserHost", () => {
       expect(host.placeDownload(debuggee.tab.webContents, item)).toBe(true);
       expect(paths).toEqual(["/srv/downloads/guid-1"]);
       expect(host.placeDownload(debuggee.tab.webContents, item)).toBe(false);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("tells a download the person clicked from one the agent's input started", () =>
@@ -1088,6 +1296,41 @@ describe("DesktopBrowserHost", () => {
       );
       expect(host.humanStartedDownload(debuggee.tab.webContents)).toBe(false);
     }),
+  );
+
+  it.effect("stops crediting the agent once a person acts through a viewer", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+      const raw = (message: Record<string, unknown>) =>
+        host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
+      const viewer = (id: number, method: string, type: string) =>
+        raw({ id, method, params: { type }, sessionId: "t3-preview-page-1" });
+      const led = () => host.agentLedPage(debuggee.tab.webContents);
+
+      yield* command(host, 1, "DOM.getDocument");
+      expect(led()).toBe(false);
+      yield* raw({ id: 2, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      expect(yield* Queue.take(replies)).toBe(2);
+      yield* raw({ id: 3, method: "Page.startScreencast", sessionId: "t3-preview-page-1" });
+
+      for (const [method, type] of [
+        ["Input.dispatchKeyEvent", "rawKeyDown"],
+        ["Input.dispatchMouseEvent", "mousePressed"],
+        ["Input.dispatchTouchEvent", "touchStart"],
+      ] as const) {
+        yield* command(host, 4, "Runtime.evaluate");
+        expect(led()).toBe(true);
+        // The viewer's pointer only passes over the page the agent drives.
+        yield* viewer(5, "Input.dispatchMouseEvent", "mouseMoved");
+        yield* viewer(6, "Input.dispatchMouseEvent", "mouseWheel");
+        expect(led()).toBe(true);
+        yield* viewer(7, method, type);
+        expect(led()).toBe(false);
+      }
+    }).pipe(Effect.scoped),
   );
 
   it.effect("detaches only the tab whose CDP event is too large to relay", () =>
@@ -1156,6 +1399,6 @@ describe("DesktopBrowserHost", () => {
       expect(JSON.parse((next as { message: string }).message)).toMatchObject({
         method: "Page.loadEventFired",
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 });

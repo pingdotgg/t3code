@@ -25,7 +25,7 @@ import {
   isAttachmentOnlyBootstrapPrompt,
   parseComposerContextHref,
 } from "./composerContextReferences.ts";
-import { assistantCitationLabel, parseAssistantCitationHref } from "./assistantCitations.ts";
+import { parseAssistantCitationHref } from "./assistantCitations.ts";
 import type { OrchestrationV2ConversationMessage } from "@t3tools/contracts";
 import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "./proposedPlanText.ts";
 import { unified } from "unified";
@@ -37,6 +37,7 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
 } from "./markdownPipeline.ts";
 
 // Inline wrappers (including Shiki token spans) must not split a search phrase.
@@ -94,6 +95,7 @@ const insightBreaksProcessor = assistantTextProcessor(true, true);
 const userProcessor = unified()
   .use(remarkParse)
   .use(CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS)
+  .use(CHAT_USER_MARKDOWN_REMARK_PLUGINS)
   .use(remarkRehype, { allowDangerousHtml: true });
 
 interface TextTree {
@@ -150,7 +152,9 @@ function markdownThreadFindText(
     const citation =
       node.tagName === "a" && typeof href === "string" ? parseAssistantCitationHref(href) : null;
     if (citation) {
-      text += assistantCitationLabel(citation);
+      // The quote card is not searched, and it splits the text before it from its comment.
+      flush();
+      text += (citation.comment ?? "").replace(/\r?\n/g, " ");
       return;
     }
     {
