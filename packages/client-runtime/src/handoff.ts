@@ -24,7 +24,10 @@ export type HandoffTimelineRun = Pick<
 export type HandoffEndpoints = ReturnType<typeof resolveHandoffEndpoints>;
 
 export function resolvePendingHandoff(
-  projection: Pick<ThreadStructure, "runs" | "visibleTurnItems"> | null | undefined,
+  projection:
+    | Pick<ThreadStructure, "thread" | "contextTransfers" | "runs" | "visibleTurnItems">
+    | null
+    | undefined,
   selection: ModelSelection | null | undefined,
   providers: ReadonlyArray<ServerProvider>,
 ): HandoffEndpoints | null {
@@ -46,7 +49,18 @@ export function resolvePendingHandoff(
     (source?.continuation?.groupKey === undefined ||
       source.driver !== target?.driver ||
       source.continuation.groupKey !== target.continuation?.groupKey);
-  return needsHandoff ? { from: [from], to: selection } : null;
+  if (needsHandoff) return { from: [from], to: selection };
+  // The next turn delivers a merged-back fork's context; the fork's model is
+  // not in this projection, so only its provider is shown.
+  const mergedFrom = projection.contextTransfers.flatMap((transfer) =>
+    transfer.type === "merge_back" &&
+    transfer.status === "pending" &&
+    transfer.targetThreadId === projection.thread.id &&
+    transfer.sourceProviderInstanceId !== null
+      ? [{ instanceId: transfer.sourceProviderInstanceId }]
+      : [],
+  );
+  return mergedFrom.length > 0 ? { from: mergedFrom, to: selection } : null;
 }
 
 export function resolveHandoffEndpoints(

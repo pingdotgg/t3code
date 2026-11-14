@@ -2488,11 +2488,14 @@ export default function ChatView(props: ChatViewProps) {
       entry.enabled &&
       entry.isAvailable,
   );
-  const pendingHandoff = resolvePendingHandoff(
-    serverProjection,
-    pendingHandoffSelectionUsable ? pendingHandoffSelection : null,
-    providerStatuses,
-  );
+  // A send in flight is about to commit the handoff row, so the preview would be stale.
+  const pendingHandoff = isSendBusy
+    ? null
+    : resolvePendingHandoff(
+        serverProjection,
+        pendingHandoffSelectionUsable ? pendingHandoffSelection : null,
+        providerStatuses,
+      );
   const compactThreadUnavailable =
     !canOperateThread ||
     !activeThread ||
