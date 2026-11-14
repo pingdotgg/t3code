@@ -226,6 +226,7 @@ export interface ProviderChangeRequestActivity {
   readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
   readonly overviewThreads?: ReadonlyArray<PullRequestOverviewThread>;
   readonly commits: ReadonlyArray<PullRequestCommit>;
+  readonly commitsTruncated?: boolean;
   readonly reactions?: ReadonlyArray<PullRequestReaction>;
 }
 

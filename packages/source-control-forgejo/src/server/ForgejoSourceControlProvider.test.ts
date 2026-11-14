@@ -825,7 +825,7 @@ it.effect("gives Forgejo identities the browser URL of the login that serves the
       (yield* refine!({
         identity: identity("ssh://git@ssh.forge.test/team/repo.git"),
         resolveContext: served("http://forge.test:3000/git"),
-      })).webUrl,
+      }))?.webUrl,
       "http://forge.test:3000/git/team/repo",
     );
     const github = identity("https://github.com/team/repo.git", "github");

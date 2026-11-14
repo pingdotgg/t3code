@@ -18,7 +18,18 @@ it.each([
   "./team:group/repo",
   "file:///srv/git/repo.git",
   "hg::team/repo",
-  "codecommit::us-east-1://repo",
 ])("finds no host in %s, which git does not read as SSH", (remoteUrl) => {
   expect(sourceControlDefinitions.recognizeRemote(remoteUrl)).toBeNull();
 });
+
+it.each(["codecommit://self@Repo", "codecommit::us-east-1://self@Repo"])(
+  "recognizes CodeCommit helper remote %s",
+  (remoteUrl) => {
+    expect(sourceControlDefinitions.recognizeRemote(remoteUrl)?.kind).toBe("aws-codecommit");
+    expect(
+      sourceControlDefinitions.canonicalRepositoryKey(
+        "git-codecommit.us-east-1.amazonaws.com/123456789012/v1/repos/Repo",
+      ),
+    ).toBe("git-codecommit.us-east-1.amazonaws.com/123456789012/v1/repos/Repo");
+  },
+);

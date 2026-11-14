@@ -37,7 +37,9 @@ export function createdPullRequestKey(
   if (!identity || kind === undefined || repository === null) return null;
   return {
     host: sourceControlDefinitions.changeRequestHost(identity, kind),
-    repository: repository.toLowerCase(),
+    repository: sourceControlDefinitions.find(kind)?.caseSensitiveRepositoryPaths
+      ? repository
+      : repository.toLowerCase(),
     number,
     url,
   };

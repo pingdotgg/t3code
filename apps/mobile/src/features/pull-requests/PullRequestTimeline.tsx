@@ -321,7 +321,7 @@ export function pullRequestTimelineRows(
       ),
     })),
   ].sort((a, b) => a.date.localeCompare(b.date));
-  if (activity.commentsTruncated || activity.reviewThreadsTruncated)
+  if (activity.commentsTruncated || activity.reviewThreadsTruncated || activity.commitsTruncated)
     events.push({
       key: "truncated",
       date: "",

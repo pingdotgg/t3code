@@ -5,6 +5,7 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import { vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -94,6 +95,41 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity?.name).toBe("Tool.git");
       expect(sourceControlDefinitions.repositorySelector(identity)).toBe("Tool.git");
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
+  it.effect("keeps CodeCommit repository case and refreshes identity when credentials change", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-codecommit-",
+      });
+      const host = "git-codecommit.us-east-1.amazonaws.com";
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["remote", "add", "origin", `https://${host}/v1/repos/MyRepo`]);
+      const account = yield* Ref.make("123456789012");
+      const resolver = yield* RepositoryIdentityResolver.make({
+        refinementCacheKey: Ref.get(account),
+        refine: (identity) =>
+          Ref.get(account).pipe(
+            Effect.map((accountId) =>
+              accountId
+                ? { ...identity, canonicalKey: `${host}/${accountId}/v1/repos/MyRepo` }
+                : null,
+            ),
+          ),
+      }).pipe(Effect.provide(ProcessRunner.layer));
+
+      const identity = yield* resolver.resolve(cwd);
+      expect(identity?.canonicalKey).toBe(`${host}/123456789012/v1/repos/MyRepo`);
+      expect(identity?.displayName).toBe("v1/repos/MyRepo");
+      expect(identity?.name).toBe("MyRepo");
+      yield* Ref.set(account, "234567890123");
+      expect((yield* resolver.resolve(cwd))?.canonicalKey).toBe(
+        `${host}/234567890123/v1/repos/MyRepo`,
+      );
+      yield* Ref.set(account, "");
+      expect(yield* resolver.resolve(cwd)).toBeNull();
+    }),
   );
 
   it.effect("resolves the fetch remote of a partial clone", () =>

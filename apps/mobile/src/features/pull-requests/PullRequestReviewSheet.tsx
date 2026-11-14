@@ -57,6 +57,7 @@ function useActionSubmission(params: PullRequestParams) {
 const VERDICTS = [
   { value: "comment", title: "Comment" },
   { value: "approve", title: "Approve" },
+  { value: "revoke-approval", title: "Revoke approval" },
   {
     value: "request-changes",
     title: "Request changes",
@@ -109,6 +110,7 @@ export function PullRequestReviewSheet({
         (summaryRequired
           ? body.trim().length > 0
           : verdict.value === "approve" ||
+            verdict.value === "revoke-approval" ||
             body.trim().length > 0 ||
             store.draft.comments.length > 0)
       : permissions.canComment && body.trim().length > 0);
@@ -152,9 +154,11 @@ export function PullRequestReviewSheet({
               : reviewing
                 ? verdict?.value === "approve"
                   ? "Approve"
-                  : verdict?.value === "request-changes"
-                    ? "Request changes"
-                    : "Submit review"
+                  : verdict?.value === "revoke-approval"
+                    ? "Revoke approval"
+                    : verdict?.value === "request-changes"
+                      ? "Request changes"
+                      : "Submit review"
                 : "Post comment"
           }
           fullWidth

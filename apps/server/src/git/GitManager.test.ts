@@ -18,6 +18,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
+import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -77,6 +78,7 @@ type FakeChangeRequest = Omit<ChangeRequest, "provider" | "state" | "updatedAt">
 };
 
 interface FakeProviderScenario {
+  repositoryIdentityCacheKey?: Effect.Effect<string>;
   prListGate?: {
     readonly started: Deferred.Deferred<void>;
     readonly release: Deferred.Deferred<void>;
@@ -476,6 +478,9 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
   return {
     service: {
       kind,
+      ...(scenario.repositoryIdentityCacheKey
+        ? { repositoryIdentityCacheKey: scenario.repositoryIdentityCacheKey }
+        : {}),
       ...headBranchProbe,
       listChangeRequests: (input) =>
         record(input.cwd, {
@@ -725,6 +730,9 @@ function makeManager(input?: {
       Effect.map((provider) =>
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           resolveLink: (input) => provider.resolveLink?.(input),
+          ...(provider.repositoryIdentityCacheKey
+            ? { repositoryIdentityCacheKey: provider.repositoryIdentityCacheKey }
+            : {}),
           get: () => Effect.succeed(provider),
           resolveHandle: () => Effect.succeed({ provider, context: null }),
           resolve: () => Effect.succeed(provider),
@@ -1792,6 +1800,41 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("refreshes branch pull requests when the provider credential selection changes", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-account-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/account"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/account"]);
+      const account = yield* Ref.make("123456789012");
+      const host = "git-codecommit.us-east-1.amazonaws.com";
+      const key = (accountId: string) => `${host}/${accountId}/v1/repos/MyRepo`;
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: {
+          repositoryIdentityCacheKey: Ref.get(account),
+          prListSequence: ["123456789012", "234567890123"].map((accountId) => [
+            {
+              number: 1,
+              title: "Change",
+              url: "https://us-east-1.console.aws.amazon.com/codesuite/codecommit/repositories/MyRepo/pull-requests/1/details?region=us-east-1",
+              repositoryKey: key(accountId),
+              baseRefName: "main",
+              headRefName: "feature/account",
+            },
+          ]),
+        },
+      });
+      const lookup = manager.branchPullRequest({ cwd: repoDir, branch: "feature/account" });
+      expect((yield* lookup)?.repositoryKey).toBe(key("123456789012"));
+      expect((yield* lookup)?.repositoryKey).toBe(key("123456789012"));
+      yield* Ref.set(account, "234567890123");
+      expect((yield* lookup)?.repositoryKey).toBe(key("234567890123"));
+      expect(listed(providerCalls)).toHaveLength(2);
+    }),
+  );
+
   // regression: #8600 settle threads server-side
   it.effect("branch PR lookup propagates provider failures", () =>
     Effect.gen(function* () {
@@ -2155,6 +2198,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       "gitlab.example/group/pull/123/repository",
     ],
     ["https://github.example.com/team/repository/issues/42", null],
+    [
+      "https://us-east-1.console.aws.amazon.com/codesuite/codecommit/repositories/MyRepo/pull-requests/42/details?region=us-east-1",
+      "git-codecommit.us-east-1.amazonaws.com/v1/repos/MyRepo",
+    ],
   ] as const)("reads the repository from the returned PR URL %s", (url, expected) => {
     expect(GitManager.pullRequestRepositoryKey(url)).toBe(expected);
   });
@@ -3928,6 +3975,33 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       ).toBe("group/maria/project");
     }),
   );
+
+  it("keeps case-sensitive CodeCommit names distinct when matching branch pull requests", () => {
+    const pr = {
+      number: 42,
+      title: "Change",
+      url: "https://us-east-1.console.aws.amazon.com/codesuite/codecommit/repositories/MyRepo/pull-requests/42/details?region=us-east-1",
+      baseRefName: "main",
+      headRefName: "feature",
+      state: "open" as const,
+      updatedAt: Option.none(),
+      headRepositoryNameWithOwner: "MyRepo",
+      isCrossRepository: false,
+    };
+    const context = {
+      headBranch: "feature",
+      headRepositoryNameWithOwner: "MyRepo",
+      headRepositoryOwnerLogin: null,
+      isCrossRepository: false,
+    };
+    expect(GitManager.matchesBranchHeadContext(pr, context)).toBe(true);
+    expect(
+      GitManager.matchesBranchHeadContext(pr, {
+        ...context,
+        headRepositoryNameWithOwner: "myrepo",
+      }),
+    ).toBe(false);
+  });
 
   it.effect("rejects same-repo PR metadata when matching a cross-repo head context", () =>
     Effect.sync(() => {

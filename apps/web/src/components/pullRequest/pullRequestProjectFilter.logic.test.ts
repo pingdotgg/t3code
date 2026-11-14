@@ -81,6 +81,17 @@ describe("pull request project filter choices", () => {
     );
 
     expect(choices.map((choice) => choice.id)).toEqual(["enterprise", "github"]);
+    const codeCommitKey = "git-codecommit.us-east-1.amazonaws.com/123456789012/v1/repos/MyRepo";
+    expect(
+      pullRequestFilterProjects(
+        [
+          project("upper", nucbox, codeCommitKey),
+          project("lower", nucbox, codeCommitKey.replace("MyRepo", "myrepo")),
+          project("other-account", nucbox, codeCommitKey.replace("123456789012", "234567890123")),
+        ],
+        labels,
+      ).map((choice) => choice.id),
+    ).toEqual(["lower", "other-account", "upper"]);
   });
 
   // regression: #9948 project filter deduplication must not merge unidentified repos

@@ -58,7 +58,9 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
     confirm(
       "close",
       pullRequestActionLabel("close", terminology),
-      `Close this ${terminology.singular} without merging its changes?`,
+      sourceControlClients.get(pr?.provider).closeIsFinal
+        ? `Close this ${terminology.singular} permanently without merging? It cannot be reopened.`
+        : `Close this ${terminology.singular} without merging its changes?`,
     );
   };
   return { available, perform, confirm, confirmClose, busy };

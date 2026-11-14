@@ -1,3 +1,4 @@
+import * as AwsCodeCommitDriver from "@t3tools/source-control-codecommit/server/driver";
 import * as AzureDevOpsDriver from "@t3tools/source-control-azure-devops/server/driver";
 import * as BitbucketDriver from "@t3tools/source-control-bitbucket/server/driver";
 import * as CursorOriginDriver from "@t3tools/source-control-cursor-origin/server/driver";
@@ -16,6 +17,7 @@ export const BUILT_IN_SOURCE_CONTROL_DRIVER_LIST = [
   ForgejoDriver.driver,
   BitbucketDriver.driver,
   AzureDevOpsDriver.driver,
+  AwsCodeCommitDriver.driver,
 ] as const;
 
 export const sourceControlDefinitions = builtInSourceControlDefinitions;

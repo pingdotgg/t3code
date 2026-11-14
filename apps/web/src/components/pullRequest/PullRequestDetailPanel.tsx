@@ -827,12 +827,28 @@ export function PullRequestDetailPanel({
     updateMethod?: PullRequestUpdateMethod,
   ) => {
     if (!canWriteSourceControl || pendingAction !== null) return false;
+    if (
+      action === "close" &&
+      sourceControlClients.get(detail?.provider).closeIsFinal &&
+      !(await readLocalApi()?.dialogs.confirm(
+        "Close this pull request permanently? It cannot be reopened.",
+      ))
+    )
+      return false;
     setPendingAction(action);
     return finishAction(action, method, updateMethod);
   };
 
   const performCommentAction = async (body: string, action: "close" | "reopen") => {
     if (!canWriteSourceControl || pendingAction !== null) return { commentPosted: false };
+    if (
+      action === "close" &&
+      sourceControlClients.get(detail?.provider).closeIsFinal &&
+      !(await readLocalApi()?.dialogs.confirm(
+        "Close this pull request permanently? It cannot be reopened.",
+      ))
+    )
+      return { commentPosted: false };
     setPendingAction(action);
     const commentResult = await postComment({
       environmentId,
@@ -1482,6 +1498,7 @@ export function PullRequestDetailPanel({
               />
               {checkoutControl}
               <PullRequestActionsMenu
+                closeIsFinal={sourceControlClients.get(detail.provider).closeIsFinal === true}
                 environmentId={environmentId}
                 reference={reference}
                 pullRequestKey={pullRequestKey}

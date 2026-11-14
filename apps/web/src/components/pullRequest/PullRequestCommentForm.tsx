@@ -156,14 +156,20 @@ export function PullRequestCommentForm({
               // The longest label holds the width, so the confirming click lands on the button.
               <span className="inline-grid">
                 <span aria-hidden className="invisible col-start-1 row-start-1">
-                  Close with comment
+                  {sourceControlClients.get(detail.provider).closeIsFinal
+                    ? "Permanently close with comment"
+                    : "Close with comment"}
                 </span>
                 <span className="col-start-1 row-start-1">
                   {submitting === "close"
                     ? "Closing..."
                     : inlineConfirm.isArmed("close")
-                      ? "Confirm close?"
-                      : "Close with comment"}
+                      ? sourceControlClients.get(detail.provider).closeIsFinal
+                        ? "Confirm permanent close?"
+                        : "Confirm close?"
+                      : sourceControlClients.get(detail.provider).closeIsFinal
+                        ? "Permanently close with comment"
+                        : "Close with comment"}
                 </span>
               </span>
             ) : submitting === "reopen" ? (

@@ -1,4 +1,5 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { sourceControlClients } from "./sourceControlClients.ts";
 
 interface FilterProject {
   readonly id: ProjectId;
@@ -30,7 +31,10 @@ export function pullRequestFilterProjects<Project extends FilterProject>(
 ) {
   const byRepository = new Map<string, Project>();
   for (const project of projects) {
-    const repository = project.repositoryIdentity?.canonicalKey?.toLowerCase();
+    const canonicalKey = project.repositoryIdentity?.canonicalKey;
+    const repository = canonicalKey
+      ? sourceControlClients.canonicalRepositoryKey(canonicalKey)
+      : undefined;
     const key = JSON.stringify([
       project.environmentId,
       repository ? ["repository", repository] : ["project", project.id],

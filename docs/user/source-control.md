@@ -1,7 +1,7 @@
 # Source control
 
-T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, GitCafe, and Cursor
-Origin to clone and publish repositories, create pull requests, and review changes.
+T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, AWS CodeCommit,
+GitCafe, and Cursor Origin to clone and publish repositories, create pull requests, and review changes.
 
 ## Review turn changes
 
@@ -110,6 +110,32 @@ Install [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/), add the DevOp
 az extension add --name azure-devops
 az login
 ```
+
+### AWS CodeCommit
+
+Install [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) on
+the machine running your T3 Code server and configure credentials and a default region. In
+**Settings → Source control → AWS CodeCommit**, you can choose an AWS profile and region, then
+rescan. Each environment uses one profile and account at a time. Use a repository name such as
+`my-repo`, or its full HTTPS or SSH clone URL, when cloning. Published repositories are private.
+
+AWS CLI credentials give T3 Code access to the CodeCommit API, but do not configure Git. Set up
+[HTTPS Git credentials or SSH keys](https://docs.aws.amazon.com/codecommit/latest/userguide/setting-up.html)
+on the server for cloning and pushing, using the same AWS account as the selected profile.
+T3 Code supports HTTPS and SSH clone URLs, plus `git-remote-codecommit` URLs such as
+`codecommit://self@my-repo` and `codecommit::us-east-1://self@my-repo` when that Git helper is installed.
+Helper URLs use their named AWS profile. If you also select a profile in T3 Code, it must match.
+Without a region in the URL, the helper profile's configured region is used.
+
+Add a CodeCommit repository as a project to browse its pull requests. Git actions can create and
+check out PRs. The **Pull requests** page supports diffs, commit history, editing titles and
+descriptions, comments and replies, approvals and revocations, and fast-forward, squash, and
+three-way merges. CodeCommit does not support a request-changes verdict, resolving comment
+threads, or reopening a closed PR. Closing a CodeCommit PR is permanent.
+
+The selected role must allow each operation in IAM. Reading a repository or posting comments does
+not imply permission to edit comments, reply, publish repositories, or merge. An access-denied
+response names an IAM restriction rather than an expired sign-in.
 
 ### GitCafe
 

@@ -916,7 +916,15 @@ export function PullRequestTimelineTab({
           <div className="h-5" />
         )
       }
-      ListFooterComponent={<div className="h-5" />}
+      ListFooterComponent={
+        detail.commitsTruncated ? (
+          <p role="status" className="py-4 text-xs text-muted-foreground">
+            More commit history is available on the provider.
+          </p>
+        ) : (
+          <div className="h-5" />
+        )
+      }
     />
   );
 }

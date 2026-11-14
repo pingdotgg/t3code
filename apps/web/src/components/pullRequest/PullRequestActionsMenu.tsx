@@ -98,6 +98,7 @@ export function PullRequestActionsMenu({
   canWriteSourceControl,
   onMaintainerEditsSaved,
   confirmDeleteBranch,
+  closeIsFinal = false,
   pendingAction,
   perform,
   openOnHostText,
@@ -150,6 +151,7 @@ export function PullRequestActionsMenu({
   canWriteSourceControl: boolean;
   onMaintainerEditsSaved: () => void;
   confirmDeleteBranch: () => Promise<void>;
+  closeIsFinal?: boolean;
   pendingAction: PullRequestAction | null;
   perform: PerformPullRequestAction;
   openOnHostText: string;
@@ -421,14 +423,22 @@ export function PullRequestActionsMenu({
             <MenuItem
               closeOnClick={inlineConfirm.isArmed("close")}
               aria-label={
-                inlineConfirm.isArmed("close") ? "Confirm close?" : `Close ${terminology.singular}`
+                inlineConfirm.isArmed("close")
+                  ? closeIsFinal
+                    ? "Confirm permanent close?"
+                    : "Confirm close?"
+                  : `Close ${terminology.singular}`
               }
               variant="destructive"
               disabled={actionPending}
               {...inlineConfirm.props("close", () => void perform("close"))}
             >
               <PullRequestGlyph.closed className="size-3.5" />
-              {inlineConfirm.isArmed("close") ? "Confirm close?" : `Close ${terminology.singular}`}
+              {inlineConfirm.isArmed("close")
+                ? closeIsFinal
+                  ? "Confirm permanent close?"
+                  : "Confirm close?"
+                : `Close ${terminology.singular}`}
             </MenuItem>
           </>
         ) : detail.state === "closed" && can("reopen") ? (

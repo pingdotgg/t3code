@@ -2778,9 +2778,15 @@ export const make = Effect.gen(function* () {
       );
     }),
 
-    submitReview: Effect.fn("GitHubPullRequestApi.submitReview")(function (input) {
+    submitReview: Effect.fn("GitHubPullRequestApi.submitReview")(function* (input) {
+      if (input.verdict === "revoke-approval")
+        return yield* new GitHubPullRequestReadError({
+          cwd: input.cwd,
+          operation: "submitReview",
+          cause: "Approval revocation is not a GitHub review verdict.",
+        });
       const { owner, name } = parseRepositorySelector(input.repository);
-      return api
+      return yield* api
         .rest({
           host: input.host,
           operation: "submitReview",

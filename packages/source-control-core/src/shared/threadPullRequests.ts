@@ -73,11 +73,14 @@ export function makeThreadPullRequests(
     const parsed = key.url === undefined ? null : parse(key.url);
     const authority =
       key.authority ??
-      (parsed?.repository === key.repository.trim().toLowerCase() && parsed.number === key.number
+      (parsed !== null &&
+      registry.canonicalRepositoryKey(`${parsed.host}/${parsed.repository}`) ===
+        registry.canonicalRepositoryKey(`${key.host.trim()}/${key.repository.trim()}`) &&
+      parsed.number === key.number
         ? parsed.authority
         : undefined);
     const canonical = registry.canonicalRepositoryKey(
-      `${(authority ?? key.host).trim().toLowerCase()}/${key.repository.trim().toLowerCase()}`,
+      `${(authority ?? key.host).trim().toLowerCase()}/${key.repository.trim()}`,
     );
     const separator = canonical.indexOf("/");
     return {
@@ -108,11 +111,11 @@ export function makeThreadPullRequests(
         host = "unknown";
       }
     }
-    return {
-      host: host.trim().toLowerCase() || "unknown",
-      repository: linked.repository.trim().toLowerCase(),
+    return normalizeThreadPullRequestKey({
+      host: host.trim() || "unknown",
+      repository: linked.repository,
       number: linked.number,
-    };
+    });
   }
 
   function threadPullRequestKeysEqual(

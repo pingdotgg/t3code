@@ -290,7 +290,10 @@ const ReviewSubmissionSchema = Schema.Struct({
   ),
 });
 
-const REVIEW_EVENTS: Record<PullRequestReviewVerdict, "COMMENT" | "APPROVE" | "REQUEST_CHANGES"> = {
+const REVIEW_EVENTS: Record<
+  Exclude<PullRequestReviewVerdict, "revoke-approval">,
+  "COMMENT" | "APPROVE" | "REQUEST_CHANGES"
+> = {
   comment: "COMMENT",
   approve: "APPROVE",
   "request-changes": "REQUEST_CHANGES",
@@ -313,7 +316,7 @@ function gitHubReviewPosition(position: PullRequestReviewPosition): {
 }
 
 export function buildReviewSubmission(input: {
-  readonly verdict: PullRequestReviewVerdict;
+  readonly verdict: Exclude<PullRequestReviewVerdict, "revoke-approval">;
   readonly body: string;
   readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
 }): typeof ReviewSubmissionSchema.Type {
