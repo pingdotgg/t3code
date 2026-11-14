@@ -269,6 +269,7 @@ export function PullRequestReviewersRow(props: RowProps) {
         tint={summary.tint}
         value={summary.count}
         compact
+        accessibilityLabel={`Reviewers, ${summary.title}, ${summary.count}`}
         expanded={expanded}
         onPress={() => setExpanded(!expanded)}
       />
