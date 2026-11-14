@@ -869,6 +869,49 @@ export function useThreadComposerState(input: {
     return null;
   })();
 
+  /** Queues a standalone text command such as `/goal clear` and leaves the composer draft alone. */
+  const onSendCommand = async (text: string) => {
+    if (
+      !selectedThreadShell ||
+      selectedThreadCreation !== null ||
+      (selectedEnvironmentRuntime?.connectionState === "connected" &&
+        !readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope))
+    ) {
+      return null;
+    }
+    const thread = selectedThreadShell;
+    // Goal commands belong to the thread itself, not the model or modes picked in the draft.
+    const modelSelection = thread.modelSelection;
+    const serverConfig = selectedEnvironmentRuntime?.serverConfig;
+    if (
+      selectedEnvironmentRuntime?.connectionState === "connected" &&
+      isModelSelectionUnavailable(serverConfig, modelSelection, thread.projectId)
+    ) {
+      const { title, detail } = describeUnavailableModelSelection(
+        serverConfig,
+        modelSelection,
+        thread.projectId,
+      );
+      Dialog.alert(title, detail);
+      return null;
+    }
+    const metadata = makeQueuedMessageMetadata();
+    const messageId = MessageId.make(metadata.messageId);
+    await enqueueThreadOutboxMessage({
+      environmentId: thread.environmentId,
+      threadId: thread.id,
+      messageId,
+      commandId: CommandId.make(metadata.commandId),
+      text,
+      attachments: [],
+      modelSelection,
+      runtimeMode: thread.runtimeMode,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      createdAt: metadata.createdAt,
+    });
+    return messageId;
+  };
+
   const onChangeDraftMessage = (value: string) => {
     if (!selectedThreadShell) {
       return;
@@ -942,6 +985,7 @@ export function useThreadComposerState(input: {
     onNativePasteText,
     onRemoveDraftImage,
     onSendMessage,
+    onSendCommand,
     sideChatUnavailableReason,
   };
 }

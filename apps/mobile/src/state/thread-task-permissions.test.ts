@@ -459,6 +459,49 @@ describe("mobile task permissions", () => {
     );
   });
 
+  it("queues a goal command without sending or clearing the composer draft", async () => {
+    state.grantedEnvironments.add("secondary");
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    expect(await composer.onSendCommand("/goal clear")).toBe("message");
+    expect(state.enqueue).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        environmentId: "secondary",
+        threadId: "thread",
+        text: "/goal clear",
+        attachments: [],
+        modelSelection: state.thread.modelSelection,
+      }),
+    );
+    expect(state.clearDraft).not.toHaveBeenCalled();
+    expect(state.draft.text).toBe("Keep my draft");
+  });
+
+  it("sends a goal command with the thread's model and modes, not the draft's", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.draft.modelSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-sonnet-5-5",
+    };
+    Object.assign(state.draft, { runtimeMode: "approval-required", interactionMode: "plan" });
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    await composer.onSendCommand("/goal resume");
+    expect(state.enqueue).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        modelSelection: state.thread.modelSelection,
+        runtimeMode: state.thread.runtimeMode,
+        interactionMode: state.thread.interactionMode,
+      }),
+    );
+  });
+
+  it("rechecks the operate grant before queueing a command", async () => {
+    state.grantedEnvironments.add("secondary");
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    state.grantedEnvironments.delete("secondary");
+    expect(await composer.onSendCommand("/goal clear")).toBeNull();
+    expect(state.enqueue).not.toHaveBeenCalled();
+  });
+
   it("rechecks the target environment before an approval response", async () => {
     state.grantedEnvironments.add("secondary");
     const requests = useSelectedThreadRequests();
