@@ -199,11 +199,9 @@ export function FontFamilyPicker({
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <ComboboxEmpty>No fonts found.</ComboboxEmpty>
-          {/* A short window caps the popup. The list must shrink with it: rows
-              clipped here are unreachable, and keyboard scrollIntoView scrolls
-              this overflow-hidden box, which hides the top of the list. */}
+          {/* Short windows cap the popup; every level down to the list must shrink or rows are clipped unreachably. */}
           <div className="relative flex min-h-0 max-h-72 w-full flex-1 flex-col overflow-hidden">
-            <ComboboxListVirtualized className="flex size-full min-h-0 min-w-0 flex-col">
+            <ComboboxListVirtualized className="flex min-h-0 flex-col">
               <LegendList<string>
                 ref={scrollRef}
                 data={items}
