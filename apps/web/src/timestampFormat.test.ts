@@ -18,4 +18,10 @@ describe("timestamps in an explicit time zone", () => {
       /^yesterday at /,
     );
   });
+
+  it("formats when the host reports the unknown zone Etc/Unknown", () => {
+    expect(
+      formatUpcomingTimestamp("2026-07-02T00:30:00.000Z", "12-hour", now, "Etc/Unknown"),
+    ).toMatch(/\d:30/);
+  });
 });
