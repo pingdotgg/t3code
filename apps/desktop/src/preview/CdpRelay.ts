@@ -16,7 +16,9 @@ export interface CdpRelayTarget {
   readonly url: () => string;
   readonly title: () => string;
   readonly userAgent: () => string;
-  /** The desktop and its server share a disk; download paths need no translation. */
+  /** Where this app reaches a server path, resolving WSL mounts to their Windows paths. */
+  readonly serverPath: (path: string) => string | Promise<string>;
+  /** Downloads land there, so the server's Playwright reads them where it asked. */
   readonly setDownloadDirectory: (directory: string | null) => void;
 }
 
@@ -101,6 +103,7 @@ export function createCdpRelayConnection(
   };
   let attached = false;
   let downloadEventsEnabled = false;
+  let pendingDownloadBehavior = Promise.resolve<unknown>(undefined);
   /** Relay-created page sessions share one real debugger; child frame sessions retain their own ids. */
   const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
   let sessionSequence = 0;
@@ -123,16 +126,22 @@ export function createCdpRelayConnection(
     if (ACKNOWLEDGED.has(command.method)) return {};
     switch (command.method) {
       case "Browser.setDownloadBehavior": {
-        const directory = command.params?.["downloadPath"];
-        const allowed = command.params?.["behavior"] !== "deny" && typeof directory === "string";
-        // Browser-scoped behavior targets Electron's app session; preview paths belong to will-download.
-        const result = await target.send(
-          "Page.setDownloadBehavior",
-          { behavior: command.params?.["behavior"] === "deny" ? "deny" : "default" },
-          undefined,
-        );
-        target.setDownloadDirectory(allowed ? directory : null);
-        downloadEventsEnabled = command.params?.["eventsEnabled"] === true;
+        // Path conversion must not let an earlier allow overtake a later deny.
+        const result = pendingDownloadBehavior.then(async () => {
+          const directory = command.params?.["downloadPath"];
+          const allowed = command.params?.["behavior"] !== "deny" && typeof directory === "string";
+          const downloadDirectory = allowed ? await target.serverPath(directory) : null;
+          // Browser-scoped behavior targets Electron's app session; preview paths belong to will-download.
+          const result = await target.send(
+            "Page.setDownloadBehavior",
+            { behavior: command.params?.["behavior"] === "deny" ? "deny" : "default" },
+            undefined,
+          );
+          target.setDownloadDirectory(downloadDirectory);
+          downloadEventsEnabled = command.params?.["eventsEnabled"] === true;
+          return result;
+        });
+        pendingDownloadBehavior = result.catch(() => undefined);
         return result;
       }
       case "Browser.getVersion":
@@ -192,7 +201,7 @@ export function createCdpRelayConnection(
 
   let runtimeReset: Promise<unknown> | undefined;
 
-  const pageCommand = (command: CdpCommand): Promise<unknown> => {
+  const pageCommand = async (command: CdpCommand): Promise<unknown> => {
     const child = sessions.get(command.sessionId!) === "page" ? undefined : command.sessionId;
     const owner =
       child === undefined && command.sessionId !== PAGE_SESSION_ID ? command.sessionId : undefined;
@@ -210,7 +219,16 @@ export function createCdpRelayConnection(
         target.send(command.method, command.params ?? {}, undefined, owner),
       );
     }
-    return target.send(command.method, command.params ?? {}, child, owner);
+    let params = command.params ?? {};
+    if (command.method === "DOM.setFileInputFiles" && Array.isArray(params["files"])) {
+      const files = await Promise.all(
+        params["files"].map((path: unknown) =>
+          typeof path === "string" ? target.serverPath(path) : path,
+        ),
+      );
+      params = { ...params, files };
+    }
+    return target.send(command.method, params, child, owner);
   };
 
   return {
