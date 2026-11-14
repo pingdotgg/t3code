@@ -11,6 +11,8 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -19,6 +21,7 @@ import {
   acpRegistryProbeResult,
   listAcpRegistrySessions,
   logoutAcpRegistry,
+  makeAcpRegistryTextGeneration,
   normalizeAcpRegistryAuthMethods,
   normalizeAcpRegistryCommands,
   probeAcpRegistryConfiguration,
@@ -523,6 +526,63 @@ await import(pathToFileURL(agentPath).href);
         { id: "session-projection-cache", disabled: true },
       ]);
       expect(yield* fs.exists(probeDirectory)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live("generates text in an isolated ACP session and deletes it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "acp-title-" });
+      const requestLogPath = NodePath.join(directory, "requests.ndjson");
+      const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
+        search: () => Effect.die("unused search"),
+        prepare: () => Effect.die("unused prepare"),
+        inspect: () => Effect.die("unused inspect"),
+        uninstallManagedBinary: () => Effect.die("unused uninstall"),
+        resolve: () =>
+          Effect.succeed({
+            distribution: "local" as const,
+            spawn: {
+              command: "node",
+              args: [mockAgentPath],
+              env: {
+                ...process.env,
+                T3_ACP_SESSION_LIFECYCLE: "1",
+                T3_ACP_V2_MANAGEMENT: "1",
+                T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+                T3_ACP_PROMPT_RESPONSE_TEXT: '{"title":"Migrate Sessions to Postgres"}',
+              },
+            },
+          }),
+      });
+      const textGeneration = makeAcpRegistryTextGeneration(
+        {
+          instanceId,
+          settings: decodeSettings({ agentId: "mock-agent" }),
+          environment: process.env,
+        },
+        {
+          catalog,
+          spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+          random: yield* SecureRandom.SecureRandom,
+          fs,
+        },
+      );
+
+      const result = yield* textGeneration.generateThreadTitle({
+        cwd: process.cwd(),
+        message: "Move session storage from Redis to Postgres",
+        modelSelection: { instanceId, model: "default" },
+      });
+
+      expect(result.title).toBe("Migrate Sessions to Postgres");
+      const requests = (yield* fs.readFileString(requestLogPath))
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line));
+      expect(requests.filter((request) => request.method === "session/delete")).toEqual([
+        expect.objectContaining({ params: { sessionId: "mock-session-1" } }),
+      ]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
