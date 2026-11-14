@@ -256,6 +256,29 @@ const backgroundPresets = [...contracts.BackgroundActivityProfile.literals].sort
     Duration.toMillis(preset.providerHealthRefreshInterval),
   ];
 });
+// `resolveProjectProviderInstanceEnabled` (packages/contracts/src/settings.ts) uses two private
+// sets. Read their literals, then prove each entry with the exported functions.
+const SETTINGS_FILE = "packages/contracts/src/settings.ts";
+const settingsSource = NodeFS.readFileSync(inMonorepo(SETTINGS_FILE), "utf8");
+const literalSet = (name) => {
+  const match = new RegExp(`const ${name}[^=]*=\\s*new Set\\(\\s*\\[([^\\]]*)\\]`).exec(settingsSource);
+  if (match === null) throw new Error(`${SETTINGS_FILE} has no ${name} literal: the enabled defaults changed`);
+  return [...match[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]).sort();
+};
+const defaultDisabledDrivers = literalSet("DEFAULT_DISABLED_PROVIDER_DRIVERS");
+const defaultEnabledInstances = literalSet("DEFAULT_ENABLED_DEFAULT_INSTANCES");
+for (const driver of [...defaultDisabledDrivers, "codex", "claudeAgent", "conn-test-unknown"]) {
+  const enabled = settings.resolveProviderInstanceEnabled({ driver, config: {} });
+  if (enabled === defaultDisabledDrivers.includes(driver)) {
+    throw new Error(`resolveProviderInstanceEnabled(${driver}) disagrees with DEFAULT_DISABLED_PROVIDER_DRIVERS`);
+  }
+}
+for (const id of [...defaultEnabledInstances, ...defaultDisabledDrivers, "conn-test-unknown"]) {
+  if (settings.isUnconfiguredDefaultInstanceEnabled(id) !== defaultEnabledInstances.includes(id)) {
+    throw new Error(`isUnconfiguredDefaultInstanceEnabled(${id}) disagrees with DEFAULT_ENABLED_DEFAULT_INSTANCES`);
+  }
+}
+
 const strs = (list) => `&[${list.map(str).join(", ")}]`;
 const secretsRs = rustfmt(
   [
@@ -297,6 +320,13 @@ const secretsRs = rustfmt(
     "/// T3 server's decode drops every other top-level key, such as the theme defaults that only",
     "/// its theme service sets.",
     `pub(super) const CLIENT_PATCH_KEYS: &[&str] = ${strs(Object.keys(contracts.ClientServerSettingsPatch.fields).sort())};`,
+    "",
+    "/// Drivers whose instances stay off until settings enable them",
+    "/// (`DEFAULT_DISABLED_PROVIDER_DRIVERS`, packages/contracts/src/settings.ts).",
+    `pub(super) const DEFAULT_DISABLED_DRIVERS: &[&str] = ${strs(defaultDisabledDrivers)};`,
+    "",
+    "/// Default instances that run before settings name them (`DEFAULT_ENABLED_DEFAULT_INSTANCES`).",
+    `pub(super) const DEFAULT_ENABLED_INSTANCES: &[&str] = ${strs(defaultEnabledInstances)};`,
     "",
   ].join("\n"),
 );

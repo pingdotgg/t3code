@@ -292,6 +292,78 @@ pub(crate) fn parse_tool_call(update: &Value, fallback_status: Option<&str>) -> 
     })
 }
 
+/// The tool state of a `compaction_update` (`parseSessionUpdateEvent`): one "Compact context"
+/// tool per compaction id, its summary (or error) as output.
+pub(crate) fn compaction_tool(update: &Value) -> Option<ToolState> {
+    let id = update["compactionId"].as_str()?;
+    let summary = update["summary"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(crate::mapper::content_display_text)
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let status = match update["status"].as_str() {
+        Some("completed") => "completed",
+        Some("failed" | "cancelled") => "failed",
+        _ => "in_progress",
+    };
+    let output = match update.get("error").filter(|e| !e.is_null()) {
+        Some(error) => error.clone(),
+        None => json!(summary),
+    };
+    let mut state = Map::new();
+    state.insert("toolCallId".into(), json!(format!("acp-compaction:{id}")));
+    state.insert("title".into(), json!("Compact context"));
+    state.insert("kind".into(), json!("think"));
+    state.insert("status".into(), json!(status));
+    // `(error ?? summary) || undefined`.
+    if !(output.is_null() || output == json!("") || output == json!(false) || output == json!(0)) {
+        state.insert("rawOutput".into(), output);
+    }
+    if let Some(meta) = update.get("_meta") {
+        state.insert("_meta".into(), meta.clone());
+    }
+    parse_tool_call(&Value::Object(state), None)
+}
+
+/// The state a `compaction_summary_chunk` starts from when its compaction is not known yet.
+pub(crate) fn compaction_placeholder(tool_call_id: &str) -> ToolState {
+    let mut data = Map::new();
+    data.insert("toolCallId".into(), json!(tool_call_id));
+    ToolState {
+        tool_call_id: tool_call_id.to_owned(),
+        kind: Some("think".into()),
+        title: Some("Compact context".into()),
+        status: Some("inProgress".into()),
+        command: None,
+        detail: None,
+        data,
+    }
+}
+
+/// `toolOutputText`.
+fn tool_output_text(tool: &ToolState) -> String {
+    match tool.data.get("rawOutput") {
+        Some(Value::String(text)) => text.clone(),
+        Some(raw) if raw["text"].is_string() => raw["text"].as_str().unwrap_or("").to_owned(),
+        Some(raw) => text_from_unknown(raw).unwrap_or_default(),
+        None => String::new(),
+    }
+}
+
+/// `appendToolOutputText`: the output becomes `{type: "Text", text}`.
+pub(crate) fn append_output_text(mut tool: ToolState, text: &str) -> ToolState {
+    if text.is_empty() {
+        return tool;
+    }
+    let joined = format!("{}{text}", tool_output_text(&tool));
+    tool.data
+        .insert("rawOutput".into(), json!({"type": "Text", "text": joined}));
+    tool
+}
+
 fn item_type_for_kind(kind: Option<&str>) -> &'static str {
     match kind {
         Some("execute") => "command_execution",

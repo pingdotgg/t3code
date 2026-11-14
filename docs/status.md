@@ -135,6 +135,38 @@ Not proven:
 - Orbit's flow in a real container.
 - Codex on CLI 0.166 or 0.167 (the recordings are from 0.156).
 
+## ACP provider, part 3 (2026-11-14)
+
+- **`/compact` for Grok, as T3 serves it** (`supportsCompaction`): the native slash prompt,
+  the session marked compacted on success or on the agent's `compaction_update`, T3's
+  instructions and runtime notes sent again on the next prompt, the "Compact context" and
+  "Context compacted" items, the context usage cleared. Prompt delivery is now recorded only
+  when the prompt succeeds, as in T3. Proof: two scenarios built from the `multi_turn`
+  recording (not live recordings) run through T3's own fixture runner and Grok adapter; our
+  replay matches their events (12 of 17 Grok replays equal) and the stub conformance check
+  matches their stdin (12 of 12).
+- **Grok in the fixture replay**: the driver runs Grok on a stub `grok` that runs T3's own ACP
+  replay agent. Frames are equal for the 10 non-background variants; T3's assertions fail all
+  15. 9 fail on one engine difference: T3's buffered delivery never stores a running assistant
+  node or a streaming message or turn item, this engine writes them and deletes them at the
+  turn end (gaps in the stored sequence). 1 (`turn_interrupt`): T3's orchestrator leaves the
+  provider thread `idle` after Stop. 5 need Grok's background work or subagents and T3's
+  replay gate. Each is listed in `expected-failures.txt`.
+- **A command on a disabled provider instance is refused at dispatch**, as T3's
+  `assertDispatchTargetEnabled` does ("Provider instance "grok" is disabled for project …";
+  nothing is written). Before, the message was stored and the provider refused the session.
+  `EngineHost::provider_instance_enabled` (additive); the server answers from its settings
+  with T3's `resolveProjectProviderInstanceEnabled`; the two default sets are generated.
+- **Memory** (macOS, `examples/idle_memory.rs`, stub agent): one idle Grok session holds about
+  310 KiB of live heap on our side after one turn; 11 KiB stays after close. Not broken down;
+  a likely part is the event channel: a `ProviderEvent` is 1,560 bytes and tokio's bounded
+  channel allocates 32 slots (about 49 KiB) per block.
+- **Not built** in this part: Grok's background work and subagents (a port of several
+  thousand lines of T3 state: wake buffer, deferred finalize, continuation, subagent
+  carryover; the map is in the crate README), the file and terminal host, Kiro, fx,
+  Antigravity, the ACP registry, and the probe's demand gate, 30 s recheck and
+  `providerStatuses` debounce.
+
 ## Reviews
 
 On 2026-11-13 six reviews ran (Gemini 4 Carbon), and a second agent (Claude Opus 5.5) checked
@@ -274,9 +306,9 @@ so an upstream change shows. `tools/check.sh` runs it ("t3 fixture replay", abou
 `expected-failures.txt` lists every failing variant with its cause.
 
 Result at the pin: 33 of 159 variants pass (the testkit has 159 fixture variants over 170
-transcripts). Claude 17 of 34, Codex 16 of 25. The 100 variants of Grok, Kiro, the ACP
-registry, fx, Cursor, OpenCode, Muse and Pi fail because the server does not offer those
-providers. Of the 26 Claude and Codex failures: 6 are Codex subagents (not built), 9 the
+transcripts). Claude 17 of 34, Codex 16 of 25, Grok 0 of 15 (it runs since ACP part 3; see
+"ACP provider, part 3"). The 85 variants of Kiro, the ACP registry, fx, Cursor, OpenCode,
+Muse and Pi fail because the server does not offer those providers. Of the 26 Claude and Codex failures: 6 are Codex subagents (not built), 9 the
 Claude background roster, monitors and wakes (not built), 5 Claude event mapping, 3 steps the
 driver cannot run (T3's replay gate), 2 T3's test clock, 1 the engine (below).
 
@@ -434,15 +466,17 @@ passed all 30 checks with `CONN_MONOREPO` set; the fixture replay is unchanged.
    entry and the same CLI runs in 14 of 14 stub scenarios (missing, hanging, failing, old,
    logged out, ready, …); the real client decodes the probed entry. Not ported on purpose:
    T3's Grok account and usage read (credentials and xAI's API) and the version advisory (a
-   registry lookup). Next, in order: Grok's background work and subagents (the 5 failing
+   registry lookup). `/compact` is served since part 3 (below). Next, in order: Grok's
+   background work and subagents (the 5 failing
    transcripts; the crate README has a map of T3's mechanism), ACP protocol 2 replies for
    Kiro, then fx, Antigravity, the registry and its 11 `server.*` methods, and the file and
    terminal host (`ProviderHost`; in T3 only Antigravity's files and the registry's terminals
    use it). Cursor, OpenCode and Muse go in the SDK host as driver modules.
-4. **Replay of the T3 server's `testkit` fixtures: done (2026-11-14), Claude and Codex.** See
-   "Engine, part 2" and "Codex: the turn start, …". Next: Codex subagents (6 variants), a
-   replay gate in the stand-ins (3), the `queued_turn` tie (2; a provider clock seam is not
-   enough), Grok once the server offers it (15 transcripts are there).
+4. **Replay of the T3 server's `testkit` fixtures: done (2026-11-14), Claude, Codex and Grok.**
+   See "Engine, part 2", "Codex: the turn start, …" and "ACP provider, part 3". Next: T3's
+   buffered delivery in the engine (9 Grok variants), Codex subagents (6), a replay gate in the
+   stand-ins (3 + 4 Grok variants), the `queued_turn` tie (2; a provider clock seam is not
+   enough).
 5. **Engine.** Merge-back and the portable fork path (both need T3's `ContextHandoffService`);
    prepared runs and setup scripts in a `setup-<id>` terminal; bounded thread snapshots and the `/history`, `/bounded` and
    `/transcript` routes (a full snapshot of a long thread peaks at about 13 bytes per byte of

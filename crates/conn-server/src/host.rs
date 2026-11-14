@@ -60,6 +60,14 @@ impl Host {
 }
 
 impl EngineHost for Host {
+    fn provider_instance_enabled(&self, project_id: Option<&str>, instance_id: &str) -> bool {
+        crate::settings::provider_instance_enabled(
+            &self.environment.settings.raw(),
+            project_id,
+            instance_id,
+        )
+    }
+
     fn agent_tools(&self, session: AgentSession) -> Option<AgentTools> {
         let entry = self
             .mcp

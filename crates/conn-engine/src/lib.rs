@@ -134,6 +134,13 @@ pub trait EngineHost: Send + Sync {
         None
     }
 
+    /// `resolveProjectProviderInstanceEnabled` from the server's settings: whether a command
+    /// may start work on `instance_id` in `project_id`. A disabled one refuses the command at
+    /// dispatch, as T3's `assertDispatchTargetEnabled` does. The default allows all.
+    fn provider_instance_enabled(&self, _project_id: Option<&str>, _instance_id: &str) -> bool {
+        true
+    }
+
     /// Copies a message's pending uploads to the thread before the message is written. The
     /// result replaces the command's `attachments`; an error refuses the command.
     fn claim_attachments(

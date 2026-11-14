@@ -37,9 +37,10 @@ pub const SECRET_REDACTED: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{20
 mod generated;
 
 use generated::{
-    BACKGROUND_PRESETS, CLIENT_PATCH_KEYS, CLOUD_SPEECH, EAS_DEVICE_HOST, PROJECT_OVERRIDE_KEYS,
-    PROVIDER_CONFIG, SECRET_PROVIDER_KINDS, SIMLOCK_DEVICE_HOST, SOURCE_CONTROL_HOST,
-    TEXT_GENERATOR, USAGE_LIMIT_SOURCE,
+    BACKGROUND_PRESETS, CLIENT_PATCH_KEYS, CLOUD_SPEECH, DEFAULT_DISABLED_DRIVERS,
+    DEFAULT_ENABLED_INSTANCES, EAS_DEVICE_HOST, PROJECT_OVERRIDE_KEYS, PROVIDER_CONFIG,
+    SECRET_PROVIDER_KINDS, SIMLOCK_DEVICE_HOST, SOURCE_CONTROL_HOST, TEXT_GENERATOR,
+    USAGE_LIMIT_SOURCE,
 };
 
 /// Drops the top-level keys that `ClientServerSettingsPatch` does not have, as the T3 server's
@@ -934,6 +935,49 @@ fn restore_echoed_secrets(current: &Map<String, Value>, next: &mut Map<String, V
     );
 }
 
+/// `resolveProjectProviderInstanceEnabled`: the project's `providerInstances[id].enabled`
+/// override when set, else the machine-wide `resolveProviderInstanceEnabled` of the instance's
+/// entry (an explicit `false` on the envelope or in its `config` wins; then the envelope, the
+/// config, the driver's default), else whether the id is a default instance that runs
+/// unconfigured.
+pub fn provider_instance_enabled(
+    settings: &Map<String, Value>,
+    project_id: Option<&str>,
+    instance_id: &str,
+) -> bool {
+    let project_override = project_id.and_then(|project| {
+        settings
+            .get("projectSettingsOverrides")?
+            .get(project)?
+            .get("providerInstances")?
+            .get(instance_id)?
+            .get("enabled")?
+            .as_bool()
+    });
+    if let Some(enabled) = project_override {
+        return enabled;
+    }
+    let Some(instance) = settings
+        .get("providerInstances")
+        .and_then(|instances| instances.get(instance_id))
+    else {
+        return DEFAULT_ENABLED_INSTANCES.contains(&instance_id);
+    };
+    let envelope = instance.get("enabled").and_then(Value::as_bool);
+    let config = instance
+        .get("config")
+        .filter(|c| c.is_object())
+        .and_then(|c| c.get("enabled"))
+        .and_then(Value::as_bool);
+    if envelope == Some(false) || config == Some(false) {
+        return false;
+    }
+    envelope.or(config).unwrap_or_else(|| {
+        let driver = instance.get("driver").and_then(Value::as_str).unwrap_or("");
+        !DEFAULT_DISABLED_DRIVERS.contains(&driver)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1249,5 +1293,32 @@ mod tests {
         fs::write(&path, "{nope").unwrap();
         assert!(SettingsStore::open(path).raw().is_empty());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn provider_instance_enabled_follows_t3() {
+        let settings = |v: Value| v.as_object().cloned().unwrap();
+        let empty = Map::new();
+        assert!(provider_instance_enabled(&empty, None, "codex"));
+        assert!(provider_instance_enabled(&empty, Some("p"), "claudeAgent"));
+        assert!(!provider_instance_enabled(&empty, None, "grok"));
+        let grok_on =
+            settings(json!({"providerInstances": {"grok": {"driver": "grok", "enabled": true}}}));
+        assert!(provider_instance_enabled(&grok_on, Some("p"), "grok"));
+        let grok_default = settings(json!({"providerInstances": {"grok": {"driver": "grok"}}}));
+        assert!(!provider_instance_enabled(&grok_default, None, "grok"));
+        let config_off = settings(
+            json!({"providerInstances": {"grok": {"driver": "grok", "enabled": true, "config": {"enabled": false}}}}),
+        );
+        assert!(!provider_instance_enabled(&config_off, None, "grok"));
+        let unknown = settings(json!({"providerInstances": {"mine": {"driver": "fork"}}}));
+        assert!(provider_instance_enabled(&unknown, None, "mine"));
+        let project_off = settings(json!({
+            "providerInstances": {"grok": {"driver": "grok", "enabled": true}},
+            "projectSettingsOverrides": {"p": {"providerInstances": {"grok": {"enabled": false}}}},
+        }));
+        assert!(!provider_instance_enabled(&project_off, Some("p"), "grok"));
+        assert!(provider_instance_enabled(&project_off, Some("q"), "grok"));
+        assert!(provider_instance_enabled(&project_off, None, "grok"));
     }
 }

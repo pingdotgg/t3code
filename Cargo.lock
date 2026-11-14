@@ -144,6 +144,7 @@ version = "0.1.0"
 dependencies = [
  "conn-contract",
  "conn-provider",
+ "conn-provider-acp",
  "conn-provider-claude",
  "conn-provider-codex",
  "conn-support",
@@ -228,6 +229,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "stats_alloc",
  "tokio",
 ]
 

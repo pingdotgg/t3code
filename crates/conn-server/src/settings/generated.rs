@@ -171,3 +171,19 @@ pub(super) const CLIENT_PATCH_KEYS: &[&str] = &[
     "worktreeSubmodules",
     "worktreesDirectory",
 ];
+
+/// Drivers whose instances stay off until settings enable them
+/// (`DEFAULT_DISABLED_PROVIDER_DRIVERS`, packages/contracts/src/settings.ts).
+pub(super) const DEFAULT_DISABLED_DRIVERS: &[&str] = &[
+    "antigravity",
+    "cursor",
+    "fx",
+    "grok",
+    "kiro",
+    "muse",
+    "opencode",
+    "pi",
+];
+
+/// Default instances that run before settings name them (`DEFAULT_ENABLED_DEFAULT_INSTANCES`).
+pub(super) const DEFAULT_ENABLED_INSTANCES: &[&str] = &["claudeAgent", "codex"];

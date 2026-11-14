@@ -18,7 +18,8 @@
 //    parent's), every stdin line byte for byte (the workspace path written as <workspace>),
 //    and the order of the end of input and signals.
 //
-// Every fixture of the flavor that passes the replay test runs; those on
+// Every fixture of the flavor that passes the replay test runs, and this crate's own scenarios
+// (testdata/<flavor>-scenarios, see tools/make-scenarios.mjs); those on
 // testdata/<flavor>/expected-failures.txt are skipped and listed. Any difference exits 1.
 
 import * as NodeChildProcess from "node:child_process";
@@ -28,6 +29,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo, repoRoot } from "../../../tools/monorepo.mjs";
+import { readScenarios, scenarioTestSource } from "./scenarios.mjs";
 
 const MONOREPO = monorepo();
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -101,7 +103,8 @@ const plan = scenarios.map((name) => {
 const TEST_SOURCE = `
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { describe } from "@effect/vitest";
+import * as NodeUrl from "node:url";
+import { describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
@@ -150,8 +153,7 @@ const stubHarness = (binaryPath: string) => ({
     ),
 });
 
-describe("conn acp conformance", () => {
-  itRunsReplayFixtures("${FLAVOR}", (input) => {
+const runOne = (input: any) => {
     const scenario = PLAN.find((s: any) => s.name === input.fixtureName);
     if (scenario === undefined) return Effect.void;
     return runReplayFixture({ ...input, harness: stubHarness(scenario.tsBinary) as any }).pipe(
@@ -159,7 +161,13 @@ describe("conn acp conformance", () => {
       Effect.tap((exit) => Effect.sync(() => fs.writeFileSync(scenario.dir + "/ts-outcome.txt", String(exit._tag === "Success" ? "passed" : exit.cause)))),
       Effect.asVoid,
     );
-  });
+};
+
+describe("conn acp conformance", () => {
+  itRunsReplayFixtures("${FLAVOR}", runOne);
+});
+describe("conn acp conformance scenarios", () => {
+__SCENARIO_TESTS__
 });
 `;
 
@@ -173,7 +181,15 @@ const testFile = NodePath.join(
 const tsParentEnv = NodePath.join(work, "ts-parent-env.json");
 NodeFS.writeFileSync(
   testFile,
-  TEST_SOURCE.replace("__PLAN__", JSON.stringify(plan)).replace("__PARENT_ENV__", JSON.stringify(tsParentEnv)),
+  TEST_SOURCE.replace("__PLAN__", JSON.stringify(plan))
+    .replace("__PARENT_ENV__", JSON.stringify(tsParentEnv))
+    .replace(
+      "__SCENARIO_TESTS__",
+      scenarioTestSource(
+        readScenarios(FLAVOR).filter((s) => scenarios.includes(s.name)),
+        "runOne",
+      ),
+    ),
 );
 try {
   NodeChildProcess.execFileSync("vp", ["test", "run", NodePath.relative(server, testFile)], {

@@ -22,7 +22,9 @@ const agent = NodeChildProcess.spawn(process.execPath, [config.replayAgent], {
     ...process.env,
     T3_ACP_REPLAY_TRANSCRIPT_PATH: config.transcript,
     T3_ACP_REPLAY_STATUS_PATH: config.status,
-    T3_ACP_REPLAY_WORKSPACE: process.cwd(),
+    // The workspace as the recording's `<workspace>` stands for it: the config's, when the
+    // caller knows the path as the server wrote it (a temp folder can differ from its real path).
+    T3_ACP_REPLAY_WORKSPACE: config.workspace ?? process.cwd(),
   },
   stdio: ["pipe", "pipe", "inherit"],
 });

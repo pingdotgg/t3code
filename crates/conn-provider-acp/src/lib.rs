@@ -117,6 +117,10 @@ pub struct AcpConfig {
     pub server_cwd: PathBuf,
     /// The server's workspace (`host.paths.cwd`), where `grok inspect` looks for skills.
     pub workspace_cwd: Option<PathBuf>,
+    /// `ACP_TEXT_FLUSH_INTERVAL` (50 ms): streamed text that changed after its first emission
+    /// goes out this long later. `None` holds it until its segment closes, as T3's paused test
+    /// clock does; only replays of T3's fixtures set that.
+    pub text_flush_interval: Option<Duration>,
 }
 
 impl Default for AcpConfig {
@@ -126,6 +130,7 @@ impl Default for AcpConfig {
             environment: Vec::new(),
             server_cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
             workspace_cwd: None,
+            text_flush_interval: Some(session::FLUSH_INTERVAL),
         }
     }
 }
@@ -351,7 +356,7 @@ impl Provider for AcpProvider {
             let launch = self.launch(Some(&runtime_mode));
             let policy = to_json(&input.runtime_policy);
             let config = session::Config {
-                flush_interval: Some(session::FLUSH_INTERVAL),
+                flush_interval: self.config.text_flush_interval,
                 flavor: self.flavor,
                 instance_id: self.instance_id.as_str().to_owned(),
                 provider_session_id: input.provider_session_id.as_str().to_owned(),
