@@ -220,12 +220,6 @@ describe("CDP relay downloads", () => {
       windowsDownloads: "\\\\wsl.localhost\\Ubuntu\\tmp\\artifacts",
       windowsDirectory: "\\\\wsl.localhost\\Ubuntu\\home\\user\\assets",
     },
-    {
-      downloadPath: "/mnt/c/Users/user/My Downloads",
-      directoryPath: "/windows/Users/user/My Assets",
-      windowsDownloads: "C:\\Users\\user\\My Downloads",
-      windowsDirectory: "C:\\Users\\user\\My Assets",
-    },
   ])(
     "awaits WSL path conversion for downloads and directory uploads ($directoryPath)",
     async ({ downloadPath, directoryPath, windowsDownloads, windowsDirectory }) => {

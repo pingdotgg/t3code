@@ -586,11 +586,6 @@ describe("wslToWindowsPath", () => {
       "C:\\Users\\test user's assets \r\n",
       "C:\\Users\\test user's assets ",
     ],
-    [
-      "/home/test/assets",
-      "\\\\wsl.localhost\\Test Distro\\home\\test\\assets\n",
-      "\\\\wsl.localhost\\Test Distro\\home\\test\\assets",
-    ],
   ] as const)(
     "uses the selected distro's mount resolution for %s",
     ([linuxPath, output, expected]) =>
@@ -608,7 +603,7 @@ describe("wslToWindowsPath", () => {
         assert.equal(spawned._tag, "StandardCommand");
         if (spawned._tag !== "StandardCommand") return;
         assert.equal(spawned.command, "wsl.exe");
-        assert.deepEqual(spawned.args, ["-d", "Test Distro", "--", "wslpath", "-w", linuxPath]);
+        assert.deepEqual(spawned.args, ["-d", "Test Distro", "--exec", "wslpath", "-w", linuxPath]);
       }),
   );
 

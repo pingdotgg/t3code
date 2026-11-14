@@ -1098,7 +1098,7 @@ export const wslToWindowsPath = Effect.fn("desktop.wsl.wslToWindowsPath")(functi
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const command = ChildProcess.make(
         "wsl.exe",
-        [...buildDistroArgs(distro), "--", "wslpath", "-w", linuxPath],
+        [...buildDistroArgs(distro), "--exec", "wslpath", "-w", linuxPath],
         {
           stdin: "ignore",
           stdout: "pipe",

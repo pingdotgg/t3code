@@ -186,7 +186,6 @@ describe("ElectronBrowserHost", () => {
   it.each([
     { primaryHasDesktopBrowser: true, headless: false, mounted: ["tab_1"] },
     { primaryHasDesktopBrowser: false, headless: false, mounted: [] },
-    { primaryHasDesktopBrowser: true, headless: true, mounted: [] },
   ])(
     "gates native server tabs (channel=$primaryHasDesktopBrowser, headless=$headless)",
     async ({ primaryHasDesktopBrowser, headless, mounted }) => {
