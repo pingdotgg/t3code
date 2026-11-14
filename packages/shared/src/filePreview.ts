@@ -9,6 +9,7 @@ export {
   mediaKindFromPath,
   mediaMimeTypeFromExtension,
 } from "./mediaPreview.ts";
+import { GENERIC_MIME_TYPES } from "./image.ts";
 import { videoMimeType } from "./video.ts";
 
 export type FilePreviewKind =
@@ -41,7 +42,7 @@ export function filePreviewKind(
   const mime = file.mimeType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   const name = file.name.toLowerCase();
   const extension = name.slice(name.lastIndexOf("."));
-  const generic = !mime || mime === "application/octet-stream" || mime === "text/plain";
+  const generic = !mime || GENERIC_MIME_TYPES.has(mime) || mime === "text/plain";
   const richDocuments = options?.richDocuments !== false;
   const office = richDocuments ? officePreviewKind(file) : null;
   if (office) return office;
@@ -61,7 +62,7 @@ export function filePreviewKind(
   )
     return "font";
   if (mime.startsWith("image/")) return "image";
-  if (mime.startsWith("video/")) return "video";
+  if (mime.startsWith("video/") && !generic) return "video";
   if (mime.startsWith("audio/")) return "audio";
   if (generic) {
     if (extension === ".pdf") return "pdf";
@@ -125,7 +126,7 @@ export function binaryPreviewKind(file: {
     ].includes(mime)
   )
     return "archive";
-  if (mime && mime !== "application/octet-stream" && mime !== "text/plain") return null;
+  if (mime && !GENERIC_MIME_TYPES.has(mime) && mime !== "text/plain") return null;
   const extension = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
   const inferred = BINARY_MIME_TYPES.get(extension);
   return inferred === "application/vnd.sqlite3" ? "sqlite" : inferred ? "archive" : null;
@@ -157,7 +158,7 @@ export function officePreviewKind(file: {
     if (mime === OFFICE_MIME_TYPES[kind]) return kind;
     if (
       (!mime ||
-        mime === "application/octet-stream" ||
+        GENERIC_MIME_TYPES.has(mime) ||
         mime === "text/plain" ||
         (kind === "ipynb" && mime === "application/json")) &&
       file.name.toLowerCase().endsWith(`.${kind}`)

@@ -1,3 +1,4 @@
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as NodePath from "@effect/platform-node/NodePath";
 import {
   EDITORS,
@@ -19,23 +20,21 @@ import {
   resolveSpawnCommand,
   withPathDirectoryListings,
 } from "@t3tools/shared/shell";
-import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Ref from "effect/Ref";
-import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { makeStaleWhileRevalidate } from "../environment/staleWhileRevalidate.ts";
+import { WindowsVerbatimSpawn } from "./windowsVerbatimSpawn.ts";
 export {
   ExternalLauncherError,
   ExternalLauncherBrowserSpawnError,
@@ -141,6 +140,8 @@ function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAnd
 function resolveCommandEditorArgs(
   editor: (typeof EDITORS)[number],
   target: string,
+  isDirectory: boolean,
+  projectRoot: string | undefined,
 ): ReadonlyArray<string> {
   const parsedTarget = parseTargetPathAndPosition(target);
 
@@ -148,11 +149,15 @@ function resolveCommandEditorArgs(
     case "direct-path":
       return [target];
     case "goto":
-      return Option.isSome(parsedTarget) ? ["--goto", target] : [target];
+      if (Option.isSome(parsedTarget)) return ["--goto", target];
+      // Without a window flag, VS Code's window settings may replace the user's last active window.
+      return isDirectory ? ["--new-window", target] : [target];
     case "line-column":
       return Option.match(parsedTarget, {
         onNone: () => [target],
         onSome: ({ path, line, column }) => [
+          // Only positioned targets get the root: a folder target would open as a second project.
+          ...(projectRoot === undefined ? [] : [projectRoot]),
           "--line",
           line,
           // JetBrains IDEs count `--column` from 0; targets count columns from 1.
@@ -177,11 +182,16 @@ function encodeUtf16LeBase64(input: string): string {
 }
 
 function escapePowerShellStringLiteral(input: string): string {
-  return `'${input.replaceAll("'", "''")}'`;
+  // PowerShell also recognises typographic apostrophes as single-quote delimiters.
+  return `'${input.replace(/['\u2018-\u201b]/g, "$&$&")}'`;
+}
+
+function resolveWindowsRoot(env: NodeJS.ProcessEnv): string {
+  return env.SYSTEMROOT || env.windir || String.raw`C:\Windows`;
 }
 
 function resolvePowerShellPath(env: NodeJS.ProcessEnv = {}): string {
-  return `${env.SYSTEMROOT || env.windir || String.raw`C:\Windows`}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+  return `${resolveWindowsRoot(env)}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
 }
 
 function resolveWslPowerShellPath(): string {
@@ -446,13 +456,7 @@ const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileMana
   },
 );
 
-// Shared scans must survive caller timeouts/disconnects; monotonic expiry prevents clock rollback extending stale entries.
-const EDITOR_DISCOVERY_CACHE_TTL_NANOS = 60_000_000_000n;
-
-interface EditorDiscoveryCacheEntry {
-  readonly scan: Deferred.Deferred<ReadonlyArray<EditorId>>;
-  readonly expiresAtNanos: bigint | undefined;
-}
+const EDITOR_DISCOVERY_CACHE_TTL = "60 seconds";
 
 export class ExternalLauncher extends Context.Service<
   ExternalLauncher,
@@ -485,18 +489,28 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   }
 
   if (editorDef.commands) {
-    const { command, baseArgs } = Option.getOrElse(
-      yield* resolveEditorCommand(editorDef, env),
-      () => ({
+    const resolved = yield* resolveEditorCommand(editorDef, env);
+    if (Option.isNone(resolved)) {
+      return yield* new ExternalLauncherCommandNotFoundError({
+        editor: editorDef.id,
         command: editorDef.commands[0],
-        baseArgs: "baseArgs" in editorDef ? editorDef.baseArgs : [],
-      }),
-    );
+      });
+    }
+    const { command, baseArgs } = resolved.value;
+    const isDirectory =
+      editorDef.launchStyle === "goto" &&
+      (yield* (yield* FileSystem.FileSystem).stat(input.cwd).pipe(
+        Effect.map((info) => info.type === "Directory"),
+        Effect.orElseSucceed(() => false),
+      ));
     return {
       editor: editorDef.id,
       target: input.cwd,
       command,
-      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd)],
+      args: [
+        ...baseArgs,
+        ...resolveCommandEditorArgs(editorDef, input.cwd, isDirectory, input.projectRoot),
+      ],
     };
   }
 
@@ -509,30 +523,42 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
   }
 
+  const target = expandHomePath(input.cwd, yield* HostProcess.HomeDirectory);
   if (input.reveal === true) {
-    return yield* resolveFileManagerRevealLaunch(input.cwd, platform, env, command);
+    return yield* resolveFileManagerRevealLaunch(target, platform, env, command);
+  }
+
+  if (platform === "win32") {
+    // ShellExecute honours replacement folder handlers that explorer.exe bypasses.
+    return {
+      ...powerShellFileManagerLaunch(
+        target,
+        `Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(normalizeWindowsFileManagerPath(target))}`,
+        resolvePowerShellPath(env),
+      ),
+      detached: WINDOWS_POWERSHELL_DETACHED,
+    };
   }
 
   return {
     editor: editorDef.id,
-    target: input.cwd,
+    target,
     command,
     args:
       command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
-        ? [resolveWslFileManagerPath(input.cwd, env.WSL_DISTRO_NAME)]
-        : platform === "win32"
-          ? // Explorer interprets / as a switch and silently opens a fallback folder.
-            [normalizeWindowsFileManagerPath(input.cwd)]
-          : [input.cwd],
+        ? [resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME)]
+        : [target],
   };
 });
 
-// A replacement manager registers a default Directory shell verb; stock Windows
-// uses "none". Explorer needs its /select argument passed verbatim through
-// PowerShell because Node's argument quoting changes how Explorer parses it.
+// Replacement managers can register under Directory, Drive, or Folder. Explorer
+// needs its /select argument passed verbatim through PowerShell because Node's
+// argument quoting changes how Explorer parses it.
 function buildFileManagerRevealPowerShellSource(target: string, parent: string): string {
   const literal = escapePowerShellStringLiteral(target);
-  return `$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,"' + ${literal} + '"') }`;
+  const folderClass = /^[a-z]:\\$/i.test(parent) ? "Drive" : "Directory";
+  // Explorer's ordinary open/explore handlers may also be explicit defaults.
+  return String.raw`$ProgressPreference = 'SilentlyContinue'; $folderVerb = '${folderClass}', 'Folder' | ForEach-Object { $key = "Registry::HKEY_CLASSES_ROOT\$_\shell"; $verb = (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue).'(default)'; if ($verb -and $verb -ne 'none') { $handler = Get-ItemProperty -LiteralPath "$key\$verb\command" -ErrorAction SilentlyContinue; if ($handler.DelegateExecute -ne '{11dbb47c-a525-400b-9e80-a54615a090c0}' -and $handler.'(default)' -notmatch '^\s*"?(?:[^"]*[\\/])?explorer\.exe(?:["\s]|$)') { $verb } } }; if ($folderVerb) { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,"' + ${literal} + '"') }`;
 }
 
 function powerShellFileManagerLaunch(
@@ -656,21 +682,120 @@ const tryRevealLinuxItem = Effect.fn("externalLauncher.tryRevealLinuxItem")(
   }),
 );
 
+// Stock Windows answers "none"; any other verb may be a replacement file manager, which only
+// the PowerShell reveal honors. Reading stdout is about 600 ms faster than spawner.string here.
+const hasStockWindowsFolderVerb = Effect.fn("externalLauncher.hasStockWindowsFolderVerb")(
+  function* () {
+    const env = yield* readBrowserLaunchEnv;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(
+        `${resolveWindowsRoot(env)}\\System32\\reg.exe`,
+        ["query", "HKCR\\Directory\\shell", "/ve"],
+        { stdin: "ignore", stderr: "ignore" },
+      ),
+    );
+    const [stdout, exitCode] = yield* Effect.all(
+      [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
+      { concurrency: "unbounded" },
+    );
+    return exitCode === 0 && /REG_SZ\s+none\s*$/im.test(stdout);
+  },
+  Effect.scoped,
+  Effect.timeout("2 seconds"),
+  Effect.orElseSucceed(() => false),
+);
+
+// Explorer parses /select itself, so it needs the argument verbatim rather than Node's quoting.
+const revealWindowsItem = Effect.fn("externalLauncher.revealWindowsItem")(function* (
+  target: string,
+) {
+  const command = `${resolveWindowsRoot(yield* readBrowserLaunchEnv)}\\explorer.exe`;
+  const args = [`/select,"${normalizeWindowsFileManagerPath(target)}"`];
+  yield* (yield* WindowsVerbatimSpawn)(command, args).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ExternalLauncherEditorSpawnError({
+          editor: "file-manager",
+          target,
+          command,
+          args,
+          cause,
+        }),
+    ),
+  );
+});
+
 const launchEditor = Effect.fn("externalLauncher.launchEditor")(function* (
   input: LaunchEditorInput,
+  hasStockFolderVerb: Effect.Effect<boolean>,
 ) {
   const launch = yield* resolveEditorLaunch(input);
-  if (
-    input.editor === "file-manager" &&
-    input.reveal === true &&
-    launch.command === "xdg-open" &&
-    (yield* HostProcess.Platform) === "linux" &&
-    (yield* tryRevealLinuxItem(launch.target))
-  ) {
-    return;
+  if (input.editor === "file-manager" && input.reveal === true) {
+    const platform = yield* HostProcess.Platform;
+    if (
+      platform === "linux" &&
+      launch.command === "xdg-open" &&
+      (yield* tryRevealLinuxItem(launch.target))
+    ) {
+      return;
+    }
+    if (platform === "win32" && (yield* hasStockFolderVerb)) {
+      return yield* revealWindowsItem(launch.target);
+    }
   }
   yield* launchEditorProcess(launch);
 });
+
+const GRAPHICAL_SESSION_ENV_KEYS: ReadonlySet<string> = new Set([
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "XAUTHORITY",
+]);
+
+// The user manager's environment over D-Bus. `systemctl show-environment` would
+// shell-quote values with spaces as $'...', while this JSON carries them raw.
+const decodeManagerEnvironment = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ data: Schema.Array(Schema.String) })),
+);
+
+// Boot services miss the desktop environment imported later into the systemd user manager.
+const readGraphicalSessionEnv = Effect.fn("externalLauncher.readGraphicalSessionEnv")(
+  function* () {
+    const hostEnv = yield* HostProcess.Environment;
+    if ((yield* HostProcess.Platform) !== "linux" || hasGraphicalLinuxSession(hostEnv)) {
+      return {};
+    }
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const output = yield* spawner.string(
+      ChildProcess.make(
+        "busctl",
+        [
+          "--user",
+          "--json=short",
+          "get-property",
+          "org.freedesktop.systemd1",
+          "/org/freedesktop/systemd1",
+          "org.freedesktop.systemd1.Manager",
+          "Environment",
+        ],
+        { stdin: "ignore", stderr: "ignore" },
+      ),
+    );
+    const { data } = yield* decodeManagerEnvironment(output);
+    return Object.fromEntries(
+      data.flatMap((line) => {
+        const separator = line.indexOf("=");
+        const key = line.slice(0, separator);
+        return separator > 0 && GRAPHICAL_SESSION_ENV_KEYS.has(key)
+          ? [[key, line.slice(separator + 1)]]
+          : [];
+      }),
+    );
+  },
+  Effect.timeout("2 seconds"),
+  Effect.orElseSucceed((): NodeJS.ProcessEnv => ({})),
+);
 
 const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
   launch: ProcessLaunch,
@@ -681,7 +806,7 @@ const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
   const { ELECTRON_RUN_AS_NODE: _runAsNode, ...env } = yield* HostProcess.Environment;
   const command = ChildProcess.make(launch.command, launch.args, {
     ...launch.options,
-    env,
+    env: { ...env, ...launch.options.env },
     extendEnv: false,
   });
 
@@ -735,6 +860,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
       options: {
         detached: launch.detached ?? true,
         shell: spawnCommand.shell,
+        env: yield* readGraphicalSessionEnv(),
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
@@ -765,69 +891,33 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
 
-  const scope = yield* Scope.Scope;
-  const editorDiscoveryCache = yield* Ref.make<Option.Option<EditorDiscoveryCacheEntry>>(
-    Option.none(),
-  );
-  const runEditorDiscovery = (scan: Deferred.Deferred<ReadonlyArray<EditorId>>) =>
+  const cachedAvailableEditors = yield* makeStaleWhileRevalidate(
     provideCommandResolutionServices(resolveAvailableEditors()).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.onExit((exit) =>
-        Effect.gen(function* () {
-          const expiresAtNanos =
-            (yield* Clock.monotonicTimeNanos) + EDITOR_DISCOVERY_CACHE_TTL_NANOS;
-          yield* Ref.update(editorDiscoveryCache, (current) =>
-            Option.isNone(current) || current.value.scan !== scan
-              ? current
-              : Exit.isSuccess(exit)
-                ? Option.some({ scan, expiresAtNanos })
-                : Option.none(),
-          );
-          yield* Deferred.done(scan, exit);
-        }),
-      ),
-      Effect.interruptible,
-      Effect.forkIn(scope),
-    );
-  // Claim and start atomically; interruption between them would leave an entry waiting on no scan.
-  const acquireEditorDiscovery = Effect.gen(function* () {
-    const nowNanos = yield* Clock.monotonicTimeNanos;
-    const [scan, isNewScan] = yield* Ref.modify(
-      editorDiscoveryCache,
-      (
-        current,
-      ): [
-        [EditorDiscoveryCacheEntry["scan"], boolean],
-        Option.Option<EditorDiscoveryCacheEntry>,
-      ] => {
-        if (
-          Option.isSome(current) &&
-          (current.value.expiresAtNanos === undefined || current.value.expiresAtNanos > nowNanos)
-        ) {
-          return [[current.value.scan, false], current];
-        }
-        const scan = Deferred.makeUnsafe<ReadonlyArray<EditorId>>();
-        return [[scan, true], Option.some({ scan, expiresAtNanos: undefined })];
-      },
-    );
-    if (isNewScan) {
-      yield* runEditorDiscovery(scan);
-    }
-    return scan;
-  }).pipe(Effect.uninterruptible);
-  const cachedAvailableEditors = Effect.flatMap(acquireEditorDiscovery, Deferred.await);
+    ),
+    EDITOR_DISCOVERY_CACHE_TTL,
+  );
+  const cachedFileManagerRevealKind = yield* makeStaleWhileRevalidate(
+    provideCommandResolutionServices(resolveFileManagerRevealKind()).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    ),
+    EDITOR_DISCOVERY_CACHE_TTL,
+  );
+  const cachedStockWindowsFolderVerb = yield* makeStaleWhileRevalidate(
+    hasStockWindowsFolderVerb().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    ),
+    EDITOR_DISCOVERY_CACHE_TTL,
+  );
 
   // Forwarders retain the underlying launcher and discovery spans.
   return ExternalLauncher.of({
     resolveAvailableEditors: Effect.fnUntraced(function* () {
       return yield* cachedAvailableEditors;
     }),
-    resolveFileManagerRevealKind: Effect.fnUntraced(
-      function* () {
-        return yield* provideCommandResolutionServices(resolveFileManagerRevealKind());
-      },
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    ),
+    resolveFileManagerRevealKind: Effect.fnUntraced(function* () {
+      return yield* cachedFileManagerRevealKind;
+    }),
     launchBrowser: Effect.fnUntraced(
       function* (target) {
         return yield* launchBrowser(target);
@@ -836,7 +926,9 @@ export const make = Effect.gen(function* () {
     ),
     launchEditor: Effect.fnUntraced(
       function* (input) {
-        return yield* provideCommandResolutionServices(launchEditor(input));
+        return yield* provideCommandResolutionServices(
+          launchEditor(input, cachedStockWindowsFolderVerb),
+        );
       },
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     ),

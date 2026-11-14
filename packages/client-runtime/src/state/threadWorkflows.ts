@@ -27,6 +27,8 @@ export interface QueuedThreadRun {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly messageId: Message["id"];
   readonly context?: Message["context"];
+  /** Carries the attribution a sent message shows: automation, agent sender, or guest. */
+  readonly message?: Message;
 }
 
 export interface ThreadQueueWorkflowState {
@@ -90,6 +92,14 @@ function resolveThreadProviderSession(projection: Projection): ProviderSession |
   );
 }
 
+export function threadSteersDuringCompaction(projection: Projection | null | undefined): boolean {
+  if (projection == null) return false;
+  return (
+    resolveThreadProviderSession(projection)?.capabilities.turns.activeSteeringDuringCompaction ===
+    true
+  );
+}
+
 export function threadSupportsProviderHandoff(projection: Projection | null | undefined): boolean {
   if (projection == null) return false;
   const session = resolveThreadProviderSession(projection);
@@ -99,14 +109,14 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
   if (resolveActiveThreadRun(projection) !== null) return false;
   if (projection.thread.historyOrigin === "v1_import" || projection.runs.length === 0) return true;
 
-  // Detaching a stopped session removes it from the projection, but its native
-  // provider thread remains available for the next turn's portable handoff.
+  // Detaching a stopped session removes it from the projection. The server still
+  // hands off from saved app history, which needs the source provider thread but
+  // not its native ref.
   return projection.providerThreads.some(
     (thread) =>
       thread.id === projection.thread.activeProviderThreadId &&
       thread.appThreadId === projection.thread.id &&
-      thread.providerInstanceId === projection.thread.modelSelection.instanceId &&
-      thread.nativeThreadRef !== null,
+      thread.providerInstanceId === projection.thread.modelSelection.instanceId,
   );
 }
 
@@ -155,6 +165,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       attachments: message?.attachments ?? [],
       messageId: run.userMessageId,
       ...(message?.context ? { context: message.context } : {}),
+      ...(message ? { message } : {}),
     };
   });
 
@@ -168,6 +179,10 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       projection.thread.deletedAt == null,
     canPromoteToSteer:
       promoteSkipsCompaction ||
+      ((activeRun?.status === "preparing" || activeRun?.status === "starting") &&
+        (capabilities === undefined ||
+          capabilities.supportsActiveSteering ||
+          capabilities.supportsSteeringByInterruptRestart)) ||
       (hasSteerableProviderTurn &&
         (capabilities?.supportsActiveSteering === true ||
           capabilities?.supportsSteeringByInterruptRestart === true)),

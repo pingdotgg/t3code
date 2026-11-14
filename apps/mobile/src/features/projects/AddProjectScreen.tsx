@@ -1,5 +1,5 @@
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { NavigationRow } from "../../components/ui/NavigationRow";
@@ -17,17 +17,20 @@ import {
   getAddProjectInitialQuery,
   getCloneDestinationBrowsePath,
   getCloneDestinationPath,
+  getCloneDirectoryPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
   getNewProjectPathPreview,
   getNewProjectPublishTarget,
   getNewProjectPublishTargets,
   getNewProjectRepository,
+  githubIncompleteOwnerRepositoryMessage,
   defaultHostCloneUrl,
   normalizePastedCloneUrl,
   parseAddProjectRemoteSource,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
+  type OfferedSourceControlProviders,
   type AddProjectRemoteSource,
 } from "@t3tools/client-runtime/operations/projects";
 import {
@@ -46,6 +49,7 @@ import {
   inferProjectTitleFromPath,
   isWindowsPlatform,
 } from "@t3tools/client-runtime/state/projects";
+import { resolvePastedPath } from "@t3tools/shared/path";
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
@@ -87,13 +91,17 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { uuidv4 } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { suggestAppAccessForRemote } from "./suggestAppAccess";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import {
   useRemoteConnectionStatus,
   useRemoteEnvironmentRuntime,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
-import { resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
+import {
+  isMissingCloneParentBrowseFailure,
+  resolveAddProjectEnvironment,
+} from "./AddProjectScreen.logic";
 import {
   createNewTaskDraft,
   setComposerDraftText,
@@ -110,7 +118,8 @@ interface EnvironmentOption {
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
-  readonly supportsCloneTracking: boolean;
+  readonly ghqCloneLayout: boolean;
+  readonly offeredSourceControlProviders: OfferedSourceControlProviders | undefined;
 }
 
 const environmentOptionOrder = Order.mapInput(
@@ -278,7 +287,7 @@ function ProjectPathInput(props: {
     <TextInput
       className="h-12 min-h-12 rounded-[24px] px-4 py-0 text-base leading-snug"
       value={props.value}
-      onChangeText={props.onChangeText}
+      onChangeText={(text) => props.onChangeText(resolvePastedPath(props.value, text))}
       autoCapitalize="none"
       autoCorrect={false}
       placeholder="~/projects/my-app"
@@ -288,13 +297,17 @@ function ProjectPathInput(props: {
   );
 }
 
-function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirectoryName = "") {
+function useBrowsePathInput(
+  environment: EnvironmentOption | null,
+  pinnedDirectoryName = "",
+  cloneDirectoryPath = pinnedDirectoryName,
+) {
   const environmentId = environment?.environmentId ?? null;
   const environmentBaseDirectory = environment?.baseDirectory ?? null;
   const clonePathCaseSensitive = !isWindowsPlatform(environment?.platform ?? "");
   const seedPath = getCloneDestinationPath(
     getAddProjectInitialQuery(environmentBaseDirectory),
-    pinnedDirectoryName,
+    cloneDirectoryPath,
   );
   // Each host keeps the path last typed or browsed for it, and shows its own default until then,
   // so switching hosts and back loses nothing. With no host selected (one dropping out briefly),
@@ -366,6 +379,7 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
     return committed;
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates the browse navigation coordinator on unmount so in-flight browses do not commit
   useEffect(
     () => () => {
       browseNavigation.invalidate();
@@ -373,7 +387,26 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
     [browseNavigation],
   );
 
-  return { isBrowseNavigating, pathInput, setPathInput, navigateToBrowsePath };
+  // Registered roots are absolute and `~` expands on the host, so ask the host for its home.
+  const resolveHomePath = async (path: string): Promise<string> => {
+    if (
+      !/^~(?:[\\/]|$)/.test(path) ||
+      !environment ||
+      !readEnvironmentScope(environment.environmentId, AuthFilesystemReadScope) ||
+      !canPreloadBrowsePath(environmentRuntime?.connectionState)
+    ) {
+      return path;
+    }
+    const home = await loadBrowsePath({
+      environmentId: environment.environmentId,
+      input: { partialPath: "~" },
+    });
+    return AsyncResult.isSuccess(home) && home.value
+      ? `${home.value.parentPath.replace(/[\\/]+$/, "")}${path.slice(1)}`
+      : path;
+  };
+
+  return { isBrowseNavigating, pathInput, setPathInput, navigateToBrowsePath, resolveHomePath };
 }
 
 function useEnvironmentOptions(
@@ -400,7 +433,8 @@ function useEnvironmentOptions(
         connectionState: runtime?.connectionState ?? "available",
         connectionError: runtime?.connectionError ?? null,
         connectionErrorTraceId: runtime?.connectionErrorTraceId ?? null,
-        supportsCloneTracking: config?.environment.capabilities.projectCloneTracking === true,
+        ghqCloneLayout: config?.settings.ghqCloneLayout === true,
+        offeredSourceControlProviders: config?.settings.offeredSourceControlProviders,
       };
     });
     return Arr.sort(
@@ -637,24 +671,30 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
                 )
               }
             />
-            {(["url", ...sortAddProjectProviderSources(readiness)] as AddProjectRemoteSource[]).map(
-              (candidate) => (
-                <SourceControlRow
-                  key={candidate}
-                  source={candidate}
-                  selectedEnvironmentId={selectedEnvironment.environmentId}
-                  ready={canCloneProject && readiness(candidate).ready}
-                  hint={
-                    !canCloneProject
-                      ? "This connection cannot clone projects."
-                      : readiness(candidate).ready
-                        ? addProjectRemoteSourcePathHint(candidate)
-                        : (readiness(candidate).hint ?? "")
-                  }
-                  isFirst={false}
-                />
-              ),
-            )}
+            {(
+              [
+                "url",
+                ...sortAddProjectProviderSources(
+                  readiness,
+                  selectedEnvironment.offeredSourceControlProviders,
+                ),
+              ] as AddProjectRemoteSource[]
+            ).map((candidate) => (
+              <SourceControlRow
+                key={candidate}
+                source={candidate}
+                selectedEnvironmentId={selectedEnvironment.environmentId}
+                ready={canCloneProject && readiness(candidate).ready}
+                hint={
+                  !canCloneProject
+                    ? "This connection cannot clone projects."
+                    : readiness(candidate).ready
+                      ? addProjectRemoteSourcePathHint(candidate)
+                      : (readiness(candidate).hint ?? "")
+                }
+                isFirst={false}
+              />
+            ))}
           </ListSection>
           {discoveryState.isPending ? (
             <AppActivityIndicator colorClassName="accent-icon-muted" />
@@ -709,13 +749,76 @@ async function draftWithPrompt(
   return draftId;
 }
 
+function useOpenExistingProject(environment: EnvironmentOption | null) {
+  const openNewTaskDraft = useOpenNewTaskDraft();
+  const updateProject = useAtomCommand(projectEnvironment.update, {
+    label: "project unarchive",
+  });
+  const projects = useProjects();
+
+  return async (
+    path: string,
+    originRoute: ReturnType<typeof getActiveRoute>,
+    clone?: { readonly remoteUrl: string; readonly prompt: string | null },
+  ): Promise<boolean> => {
+    if (!environment) return false;
+    const existing = findExistingAddProject({
+      projects,
+      environmentId: environment.environmentId,
+      path,
+    });
+    if (!existing) return false;
+    // A folder holding another repository is not this clone; let the clone report it occupied.
+    if (
+      clone &&
+      existing.repositoryIdentity?.canonicalKey !==
+        sourceControlClients.repositoryKeyFromRemote(clone.remoteUrl)
+    ) {
+      return false;
+    }
+    const prompt = clone?.prompt;
+    // Adding an archived project's folder again brings the project back.
+    const unarchived =
+      existing.archivedAt == null ||
+      (
+        await updateProject({
+          environmentId: existing.environmentId,
+          input: { projectId: existing.id, archived: false },
+        })
+      )._tag === "Success";
+    Dialog.alert(
+      "Project already exists",
+      unarchived ? existing.title : `${existing.title} is still archived. Try again later.`,
+    );
+    openNewTaskDraft(
+      {
+        environmentId: existing.environmentId,
+        projectId: existing.id,
+        title: existing.title,
+        ...(prompt
+          ? await draftWithPrompt(existing.environmentId, existing.id, prompt).then(
+              (draftId) => ({ draftId }),
+              () => ({}),
+            )
+          : {}),
+      },
+      originRoute,
+    );
+    return true;
+  };
+}
+
 function useCreateProject(environment: EnvironmentOption | null) {
   const openNewTaskDraft = useOpenNewTaskDraft();
   const navigation = useNavigation();
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
-  const projects = useProjects();
+  const openExistingProject = useOpenExistingProject(environment);
 
-  return async (workspaceRoot: string, originRoute = getActiveRoute(navigation)) => {
+  return async (
+    workspaceRoot: string,
+    originRoute = getActiveRoute(navigation),
+    lookupPath = workspaceRoot,
+  ) => {
     if (
       !environment ||
       !canCreateProjectInEnvironment(environment.connectionState) ||
@@ -728,21 +831,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
       return;
     }
 
-    const existing = findExistingAddProject({
-      projects,
-      environmentId: environment.environmentId,
-      path: workspaceRoot,
-    });
-    if (existing) {
-      Dialog.alert("Project already exists", existing.title);
-      openNewTaskDraft(
-        {
-          environmentId: existing.environmentId,
-          projectId: existing.id,
-          title: existing.title,
-        },
-        originRoute,
-      );
+    if (await openExistingProject(lookupPath, originRoute)) {
       return;
     }
 
@@ -808,6 +897,11 @@ export function AddProjectRepositoryScreen(props: {
 
   const lookupRepository = async () => {
     if (!environment || repositoryInput.trim().length === 0 || isSubmitting) return;
+    const incompleteOwnerMessage = githubIncompleteOwnerRepositoryMessage(source, repositoryInput);
+    if (incompleteOwnerMessage) {
+      setError(incompleteOwnerMessage);
+      return;
+    }
     setError(null);
     setIsSubmitting(true);
     const provider = addProjectRemoteSourceProvider(source);
@@ -892,6 +986,7 @@ function FolderBrowser(props: {
     readonly selectedDirectoryName?: string;
   }) => Promise<boolean>;
   readonly pinnedDirectoryName?: string;
+  readonly cloning?: boolean;
 }) {
   const browsePath = getFilesystemBrowsePath(props.pathInput, props.environment.platform);
   const browseInput =
@@ -931,7 +1026,16 @@ function FolderBrowser(props: {
       {!canReadFiles && !fileAccess.isPending ? (
         <ErrorBanner message={fileAccess.error ?? "This connection cannot browse host folders."} />
       ) : null}
-      {browseState.error ? <ErrorBanner message={browseState.error} /> : null}
+      {browseState.error === null ? null : isMissingCloneParentBrowseFailure({
+          cloning: props.cloning === true,
+          failure: browseState.failure,
+        }) ? (
+        <Text className="text-sm text-foreground-muted">
+          This folder does not exist yet. Cloning creates it.
+        </Text>
+      ) : (
+        <ErrorBanner message={browseState.error} />
+      )}
       <ListSection>
         {fileAccess.isPending || (browseState.isPending && browseState.data === null) ? (
           <View className="items-center py-5">
@@ -998,6 +1102,10 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
   );
   const environment = resolveAddProjectEnvironment(environmentOptions, selectedEnvironmentId);
   const createNew = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
+  const checkPublishedAppAccess = useAtomCommand(sourceControlEnvironment.checkAppAccess, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
     reportFailure: false,
   });
@@ -1009,7 +1117,10 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
           input: {},
         }),
   );
-  const publishTargets = getNewProjectPublishTargets(discoveryState.data);
+  const publishTargets = getNewProjectPublishTargets(
+    discoveryState.data,
+    environment?.offeredSourceControlProviders,
+  );
   const [name, setName] = useState("");
   const [publishes, setPublishes] = useState(false);
   const [publishKind, setPublishKind] = useState<SourceControlProviderKind | null>(null);
@@ -1095,6 +1206,12 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
           Dialog.alert(
             `Could not create the ${publishTarget.definition.label} repository`,
             errorMessage(Cause.squash(publishResult.cause)),
+          );
+        } else {
+          void suggestAppAccessForRemote(
+            checkPublishedAppAccess,
+            environment.environmentId,
+            publishResult.value.remoteUrl,
           );
         }
       });
@@ -1249,8 +1366,9 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
     environment?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
+  const navigation = useNavigation();
   const createProject = useCreateProject(environment);
-  const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } =
+  const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput, resolveHomePath } =
     useBrowsePathInput(environment);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1269,7 +1387,11 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
     }
 
     setIsSubmitting(true);
-    const result = await createProject(resolved.path);
+    const originRoute = getActiveRoute(navigation);
+    const lookupPath = resolved.path.startsWith("~")
+      ? await resolveHomePath(resolved.path)
+      : resolved.path;
+    const result = await createProject(resolved.path, originRoute, lookupPath);
     if (result && AsyncResult.isFailure(result)) {
       setError(errorMessage(Cause.squash(result.cause)));
     }
@@ -1313,11 +1435,12 @@ export function AddProjectDestinationScreen(props: {
   readonly prompt?: string | string[];
 }) {
   const openNewTaskDraft = useOpenNewTaskDraft();
-  const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
-    reportFailure: false,
-  });
   const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
     reportFailure: false,
+  });
+  const checkAppAccess = useAtomCommand(sourceControlEnvironment.checkAppAccess, {
+    reportFailure: false,
+    reportDefect: false,
   });
   const navigation = useNavigation();
   const environment = useEnvironmentFromParam(props.environmentId);
@@ -1330,15 +1453,18 @@ export function AddProjectDestinationScreen(props: {
     AuthOrchestrationOperateScope,
   );
   const canCloneProject = canWriteSourceControl && canCreateProject;
-  const createProject = useCreateProject(environment);
   const remoteUrl = stringParam(props.remoteUrl);
   const repositoryTitle = stringParam(props.repositoryTitle);
   const prompt = stringParam(props.prompt);
   const repositoryName = stringParam(props.repositoryName)?.trim() ?? "";
-  const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } = useBrowsePathInput(
-    environment,
-    repositoryName,
-  );
+  const ghqDirectoryPath =
+    remoteUrl && environment?.ghqCloneLayout
+      ? getCloneDirectoryPath(remoteUrl, true, repositoryName)
+      : null;
+  const cloneDirectoryName = ghqDirectoryPath?.split("/").at(-1) ?? repositoryName;
+  const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput, resolveHomePath } =
+    useBrowsePathInput(environment, cloneDirectoryName, ghqDirectoryPath ?? repositoryName);
+  const openExistingProject = useOpenExistingProject(environment);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1366,65 +1492,56 @@ export function AddProjectDestinationScreen(props: {
 
     const originRoute = getActiveRoute(navigation);
     setIsSubmitting(true);
-    if (environment.supportsCloneTracking) {
-      const projectId = ProjectId.make(uuidv4());
-      const title = inferProjectTitleFromPath(resolved.path);
-      const startResult = await startProjectClone({
-        environmentId: environment.environmentId,
-        input: {
-          projectId,
-          title,
-          createdAt: new Date().toISOString(),
-          remoteUrl,
-          destinationPath: resolved.path,
-        },
-      });
-      if (AsyncResult.isFailure(startResult)) {
-        setError(errorMessage(Cause.squash(startResult.cause)));
-      } else {
-        // Wait for the create event; the client store otherwise falls back to the project picker and loses clone controls.
-        const project = await waitForProject(
-          { environmentId: environment.environmentId, projectId },
-          15_000,
-        );
-        if (project === null) {
-          setError(
-            "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
-          );
-        } else {
-          openNewTaskDraft(
-            {
-              environmentId: environment.environmentId,
-              projectId,
-              title,
-              cloning: "1",
-              ...(prompt
-                ? await draftWithPrompt(environment.environmentId, projectId, prompt).then(
-                    (draftId) => ({ draftId }),
-                    () => ({}),
-                  )
-                : {}),
-            },
-            originRoute,
-          );
-        }
-      }
+    if (
+      await openExistingProject(await resolveHomePath(resolved.path), originRoute, {
+        remoteUrl,
+        prompt: prompt ?? null,
+      })
+    ) {
       setIsSubmitting(false);
       return;
     }
-    const cloneResult = await cloneRepository({
+    const title = inferProjectTitleFromPath(resolved.path);
+    const startResult = await startProjectClone({
       environmentId: environment.environmentId,
       input: {
+        projectId: ProjectId.make(uuidv4()),
+        title,
+        createdAt: new Date().toISOString(),
         remoteUrl,
         destinationPath: resolved.path,
       },
     });
-    if (AsyncResult.isFailure(cloneResult)) {
-      setError(errorMessage(Cause.squash(cloneResult.cause)));
+    if (AsyncResult.isFailure(startResult)) {
+      setError(errorMessage(Cause.squash(startResult.cause)));
     } else {
-      const createResult = await createProject(cloneResult.value.cwd, originRoute);
-      if (createResult && AsyncResult.isFailure(createResult)) {
-        setError(errorMessage(Cause.squash(createResult.cause)));
+      void suggestAppAccessForRemote(checkAppAccess, environment.environmentId, remoteUrl);
+      const { projectId } = startResult.value;
+      // Wait for the create event; the client store otherwise falls back to the project picker and loses clone controls.
+      const project = await waitForProject(
+        { environmentId: environment.environmentId, projectId },
+        15_000,
+      );
+      if (project === null) {
+        setError(
+          "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+        );
+      } else {
+        openNewTaskDraft(
+          {
+            environmentId: environment.environmentId,
+            projectId,
+            title,
+            cloning: "1",
+            ...(prompt
+              ? await draftWithPrompt(environment.environmentId, projectId, prompt).then(
+                  (draftId) => ({ draftId }),
+                  () => ({}),
+                )
+              : {}),
+          },
+          originRoute,
+        );
       }
     }
     setIsSubmitting(false);
@@ -1460,7 +1577,8 @@ export function AddProjectDestinationScreen(props: {
             navigateToBrowsePath={navigateToBrowsePath}
             pathInput={pathInput}
             setPathInput={setPathInput}
-            pinnedDirectoryName={repositoryName}
+            pinnedDirectoryName={cloneDirectoryName}
+            cloning={Boolean(remoteUrl)}
           />
         </>
       ) : (

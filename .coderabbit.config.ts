@@ -27,7 +27,7 @@ export default defineConfig((ctx) => ({
         instructions: "Hold changed code to the rules in docs/internals/web-ui.md.",
       },
       {
-        path: "**/*.test.{ts,tsx}",
+        path: "**/*.test.*",
         instructions:
           "Hold changed tests to the rules in docs/internals/testing.md. Request tests only as those rules allow.",
       },

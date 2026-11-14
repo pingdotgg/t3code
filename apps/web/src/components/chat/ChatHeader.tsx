@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
+  type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -19,6 +20,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
+import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
@@ -45,6 +47,7 @@ interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   activeThreadTitle: string;
+  activeThreadLinkOrigin?: string | null | undefined;
   isServerThread: boolean;
   activeProject: EnvironmentProject | null;
   parentThreadLink: { threadId: ThreadId; title: string } | null;
@@ -52,6 +55,7 @@ interface ChatHeaderProps {
   rightPanelOpen: boolean;
   onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
+  onFindInThread?: ((threadRef: ScopedThreadRef) => void) | undefined;
 }
 
 function resolveRenameCommit(input: {
@@ -64,12 +68,11 @@ function resolveRenameCommit(input: {
   return { action: "commit", title: trimmed };
 }
 
-// Delay the input-swallowing native menu through the double-click rename interval.
-const TITLE_MENU_OPEN_DELAY_MS = 500;
 export const ChatHeader = memo(function ChatHeader({
   activeThreadEnvironmentId,
   activeThreadId,
   activeThreadTitle,
+  activeThreadLinkOrigin,
   isServerThread,
   activeProject,
   parentThreadLink,
@@ -77,6 +80,7 @@ export const ChatHeader = memo(function ChatHeader({
   rightPanelOpen,
   onNewThreadInProject,
   onOpenProjectSettings,
+  onFindInThread,
 }: ChatHeaderProps) {
   const activeProjectName = activeProject?.isScratch ? "No project" : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
@@ -112,6 +116,7 @@ export const ChatHeader = memo(function ChatHeader({
       ? renaming.title
       : null;
   const isRenamingTitle = renamingTitle !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the breadcrumb list DOM via ResizeObserver, a frame and font loads to collapse the parent title
   useEffect(() => {
     const list = breadcrumbContainerRef.current?.querySelector("ol");
     if (!list || !parentThreadLink) return;
@@ -168,7 +173,10 @@ export const ChatHeader = memo(function ChatHeader({
   const commitRename = (title: string) => {
     setRenaming(null);
     if (!readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope)) return;
-    const resolution = resolveRenameCommit({ title, originalTitle: activeThreadTitle });
+    const resolution = resolveRenameCommit({
+      title,
+      originalTitle: renamingTitle ?? activeThreadTitle,
+    });
     if (resolution.action === "reject-empty") {
       toastManager.add({ type: "warning", title: "Thread title cannot be empty" });
       return;
@@ -192,55 +200,24 @@ export const ChatHeader = memo(function ChatHeader({
     threadRef: isServerThread ? activeThreadRef : null,
     projectCwd: activeProjectCwd,
     onStartRename: startRename,
+    onFind: onFindInThread,
     canShareWithGuest,
   });
-  const titleButtonRef = useRef<HTMLButtonElement | null>(null);
-  const titleMenuTimerRef = useRef<number | null>(null);
-  const cancelPendingTitleMenu = () => {
-    if (titleMenuTimerRef.current === null) return;
-    clearTimeout(titleMenuTimerRef.current);
-    titleMenuTimerRef.current = null;
-  };
-  useEffect(
-    () => () => {
-      if (titleMenuTimerRef.current === null) return;
-      clearTimeout(titleMenuTimerRef.current);
-      titleMenuTimerRef.current = null;
-    },
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A pending title menu belongs to the thread that was clicked, so switching threads drops it.
-    [activeThreadEnvironmentId, activeThreadId],
-  );
-  const openTitleMenuNow = () => {
-    cancelPendingTitleMenu();
-    const rect = titleButtonRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    openMenu({ x: rect.left, y: rect.bottom + 4 });
-  };
   const openMenuFromTitle = (event: ReactMouseEvent<HTMLButtonElement>) => {
     if (isTrailingDoubleClick(event.detail)) return;
-    const clickedChevron =
-      (event.target as HTMLElement).closest("[data-thread-title-chevron]") !== null;
-    if (event.detail === 0 || clickedChevron || window.desktopBridge === undefined) {
-      openTitleMenuNow();
-      return;
-    }
-    cancelPendingTitleMenu();
-    titleMenuTimerRef.current = window.setTimeout(() => {
-      titleMenuTimerRef.current = null;
-      openTitleMenuNow();
-    }, TITLE_MENU_OPEN_DELAY_MS);
+    const rect = event.currentTarget.getBoundingClientRect();
+    openMenu({ x: rect.left, y: rect.bottom + 4 });
   };
+  // A native menu takes the second click, so only the in-page menu lets a double-click reach here.
   const handleTitleDoubleClick = (event: ReactMouseEvent) => {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     if ((event.target as HTMLElement).closest("[data-thread-title-chevron]") !== null) return;
-    cancelPendingTitleMenu();
     closeMenu();
     startRename();
   };
   const handleHeaderContextMenu = (event: ReactMouseEvent) => {
     if (renamingTitle !== null) return;
     if (!isServerThread && onOpenProjectSettings === undefined) return;
-    cancelPendingTitleMenu();
     event.preventDefault();
     if (!isServerThread) {
       const api = readLocalApi();
@@ -368,13 +345,11 @@ export const ChatHeader = memo(function ChatHeader({
               <TooltipTrigger
                 render={
                   <button
-                    ref={titleButtonRef}
                     type="button"
                     aria-label={`Thread actions for ${activeThreadTitle}`}
                     aria-haspopup="menu"
                     onClick={openMenuFromTitle}
                     onDoubleClick={canOperateThread ? handleTitleDoubleClick : undefined}
-                    onBlur={cancelPendingTitleMenu}
                     className="group/thread-title inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                   />
                 }
@@ -406,6 +381,16 @@ export const ChatHeader = memo(function ChatHeader({
               <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
             </Tooltip>
           )}
+          {renamingTitle === null && activeThreadLinkOrigin ? (
+            <Tooltip>
+              <TooltipTrigger render={<Badge variant="info" size="sm" />}>
+                From {activeThreadLinkOrigin}
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                Started by an agent on {activeThreadLinkOrigin} through a linked environment.
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}

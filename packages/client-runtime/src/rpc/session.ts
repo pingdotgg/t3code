@@ -4,7 +4,12 @@ import {
   WsSubscribeServerConfigRpc,
   WS_METHODS,
 } from "@t3tools/contracts";
+import {
+  joinSocketFrameParts,
+  SOCKET_FRAME_PARTS_QUERY_PARAM,
+} from "@t3tools/shared/socketFrameParts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -42,6 +47,7 @@ import {
   withoutEnvironmentThemes,
 } from "../state/serverConfigProjection.ts";
 import { environmentMismatchError } from "../connection/errors.ts";
+import { recordServerClock } from "../clock.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
 
@@ -49,7 +55,7 @@ export interface RpcSession {
   readonly client: WsRpcProtocolClient;
   readonly initialConfig: Effect.Effect<ServerConfig, ConnectionAttemptError>;
   readonly subscribeServerConfig: (
-    input: ServerConfigSubscriptionInput,
+    input?: ServerConfigSubscriptionInput,
   ) => ServerConfigSubscription;
   readonly ready: Effect.Effect<void, ConnectionAttemptError>;
   readonly probe: Effect.Effect<void, ConnectionAttemptError>;
@@ -62,6 +68,9 @@ export interface RpcSessionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
   readonly usageLimitsCommand?: boolean;
+  readonly providerCatalogsOnDemand?: boolean;
+  readonly providerCatalogDigests?: boolean;
+  readonly providerStatusDeltas?: boolean;
 }
 
 export class RpcSessionFactory extends Context.Service<
@@ -171,6 +180,9 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
     ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
     ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+    ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
+    ...(options.providerCatalogDigests === true ? { providerCatalogDigests: true } : {}),
+    ...(options.providerStatusDeltas === true ? { providerStatusDeltas: true } : {}),
   };
   // Config state merges the snapshots it fetches back in, so no subscriber needs them broadcast.
   const onDemandSnapshots = (input: ServerConfigSubscriptionInput) => ({
@@ -223,9 +235,17 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       });
       return socket;
     };
-    const layerSocket = Socket.layerWebSocket(connection.socketUrl, {
-      openTimeout: SOCKET_OPEN_TIMEOUT,
-    }).pipe(
+    const socketUrl = new URL(connection.socketUrl);
+    socketUrl.searchParams.set(SOCKET_FRAME_PARTS_QUERY_PARAM, "1");
+    const layerSocket = Layer.effect(
+      Socket.Socket,
+      Effect.map(Effect.service(Socket.Socket), joinSocketFrameParts),
+    ).pipe(
+      Layer.provide(
+        Socket.layerWebSocket(socketUrl.toString(), {
+          openTimeout: SOCKET_OPEN_TIMEOUT,
+        }),
+      ),
       Layer.provide(Layer.succeed(Socket.WebSocketConstructor, countingWebSocketConstructor)),
     );
     const layerProtocol = Layer.effect(
@@ -235,7 +255,18 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         retryTransientErrors: false,
         retryPolicy: Schedule.recurs(0),
         onPingTimeout: Ref.set(pingTimedOut, true),
-      }),
+      }).pipe(
+        // Teardown sends an interrupt per open stream, and a write to a closed
+        // socket waits out the client's 1s interrupt timeout before reconnecting.
+        // Requests still go through, so they fail with the protocol error.
+        Effect.map((protocol) => ({
+          ...protocol,
+          send: (clientId, request, transferables) =>
+            request._tag !== "Request" && Deferred.isDoneUnsafe(disconnected)
+              ? Effect.void
+              : protocol.send(clientId, request, transferables),
+        })),
+      ),
     ).pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -266,6 +297,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       reason: "remote-unavailable",
       detail: `${connection.label} config subscription ended.`,
     });
+    const configRequestedAtMs = yield* Clock.currentTimeMillis;
     const serverConfigSource = protocolClient[WS_METHODS.subscribeServerConfig](
       onDemandSnapshots(serverConfigInput),
     ).pipe(
@@ -288,17 +320,11 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
               themesEvent:
                 event.type === "environmentThemesUpdated"
                   ? event
-                  : event.type === "snapshot" &&
-                      event.config.environment.capabilities.environmentThemes !== true
-                    ? undefined
-                    : Option.getOrUndefined(current)?.themesEvent,
+                  : Option.getOrUndefined(current)?.themesEvent,
               sourcesEvent:
                 event.type === "usageLimitSourcesUpdated"
                   ? event
-                  : event.type === "snapshot" &&
-                      event.config.environment.capabilities.usageLimitSources !== true
-                    ? undefined
-                    : Option.getOrUndefined(current)?.sourcesEvent,
+                  : Option.getOrUndefined(current)?.sourcesEvent,
             } satisfies ServerConfigReplayState;
             return [
               Option.some({ event, replay: next, revision: next.revision }),
@@ -309,6 +335,16 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
             yield* PubSub.publish(serverConfigUpdates, buffered.value);
           }
           if (event.type === "snapshot") {
+            // Later snapshots may repeat the first one's serverTime. Record
+            // before readiness so the first timers already use its clock.
+            if (!(yield* Deferred.isDone(initialConfigDeferred))) {
+              const { serverTime } = event.config;
+              recordServerClock(connection.environmentId, {
+                serverTimeMs: serverTime === undefined ? undefined : Date.parse(serverTime),
+                requestedAtMs: configRequestedAtMs,
+                receivedAtMs: yield* Clock.currentTimeMillis,
+              });
+            }
             yield* Deferred.succeed(initialConfigDeferred, event.config);
           }
         }),
@@ -400,7 +436,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
           }),
       ),
     );
-    const subscribeServerConfig = (input: ServerConfigSubscriptionInput) =>
+    const subscribeServerConfig = (input: ServerConfigSubscriptionInput = serverConfigInput) =>
       Stream.unwrap(
         validatedInitialConfig.pipe(
           Effect.as(
@@ -411,11 +447,8 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         ),
       );
     const probe = initialConfig.pipe(
-      Effect.flatMap((config) =>
-        (config.environment.capabilities.connectionProbe === true
-          ? protocolClient[WS_METHODS.serverProbe]({})
-          : protocolClient[WS_METHODS.serverGetConfig]({})
-        ).pipe(Effect.mapError(mapRpcError)),
+      Effect.flatMap(() =>
+        protocolClient[WS_METHODS.serverProbe]({}).pipe(Effect.mapError(mapRpcError)),
       ),
       Effect.asVoid,
       Effect.withSpan("clientRuntime.connection.rpcSession.probe"),

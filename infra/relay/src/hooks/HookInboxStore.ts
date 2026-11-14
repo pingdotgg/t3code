@@ -26,7 +26,7 @@ const MAX_RETRY_DELAY = Duration.minutes(10);
 const MAX_COUNTED_FAILURES = 25;
 
 /** Cloudflare can take minutes to route a new tunnel; retry every 10 s for three minutes before backing off. */
-export const retrySchedule = Schedule.spaced("10 seconds").pipe(
+const retrySchedule = Schedule.spaced("10 seconds").pipe(
   Schedule.upTo({ times: 18 }),
   Schedule.concat(
     Schedule.exponential("30 seconds").pipe(
@@ -54,7 +54,7 @@ export interface HeldHook {
 
 export type DeliveryOutcome = "delivered" | "busy" | "unreachable";
 
-export const retryDelayMs = Effect.fn("HookInboxStore.retryDelayMs")(function* (failures: number) {
+const retryDelayMs = Effect.fn("HookInboxStore.retryDelayMs")(function* (failures: number) {
   const step = yield* Schedule.toStep(retrySchedule);
   let delay = MAX_RETRY_DELAY;
   for (

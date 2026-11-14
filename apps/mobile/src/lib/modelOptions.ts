@@ -3,7 +3,7 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
-import type { MenuAction } from "@react-native-menu/menu";
+
 import type {
   ModelCapabilities,
   ModelSelection,
@@ -11,12 +11,18 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
-import { isProviderDriverKind, resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
+import {
+  disallowedProviderMessage,
+  isManagedDriverAllowed,
+  isProviderDriverKind,
+  resolveProjectProviderInstanceEnabled,
+} from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
+import { resolveProvidersForCwd } from "@t3tools/client-runtime/providerSkills";
 
 export type ModelOption = {
   readonly key: string;
@@ -110,6 +116,25 @@ function isDisabledForProject(
   return provider !== undefined && !isProviderEnabledForProject(config, provider, projectId);
 }
 
+function selectionDriver(
+  config: T3ServerConfig | null | undefined,
+  instanceId: ModelSelection["instanceId"],
+): string | undefined {
+  return (
+    config?.providers.find((candidate) => candidate.instanceId === instanceId)?.driver ??
+    config?.settings?.providerInstances[instanceId]?.driver
+  );
+}
+
+/** Whether the environment's managed policy leaves this driver out; the server refuses its turns. */
+function isDriverDisallowed(config: T3ServerConfig | null | undefined, driver: string | undefined) {
+  return (
+    driver !== undefined &&
+    isProviderDriverKind(driver) &&
+    !isManagedDriverAllowed(config?.managedPolicy, driver)
+  );
+}
+
 function normalizeSelectionOptions(
   selection: ModelSelection,
   capabilities: ModelCapabilities | null,
@@ -135,6 +160,16 @@ function normalizeSelectionOptions(
       };
 }
 
+/** The config as a project at `cwd` sees it, with that project's own provider models. */
+export function serverConfigForCwd<C extends T3ServerConfig | null | undefined>(
+  config: C,
+  cwd: string | null,
+): C {
+  if (!config) return config;
+  const providers = resolveProvidersForCwd(config.providers, cwd);
+  return providers === config.providers ? config : { ...config, providers };
+}
+
 /** Require explicit projectId or null so omissions cannot bypass project provider disablement. */
 export function isModelSelectionUnavailable(
   config: T3ServerConfig | null | undefined,
@@ -152,6 +187,9 @@ export function isModelSelectionUnavailable(
   }
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
+  if (isDriverDisallowed(config, driver)) {
+    return true;
+  }
   return (
     driver === "antigravity" &&
     (!provider ||
@@ -170,6 +208,20 @@ export function describeUnavailableModelSelection(
   const provider = config?.providers.find(
     (candidate) => candidate.instanceId === selection.instanceId,
   );
+  const driver = selectionDriver(config, selection.instanceId);
+  if (isDriverDisallowed(config, driver)) {
+    const label = providerDisplayLabel({
+      driver: driver ?? selection.instanceId,
+      displayName:
+        provider?.displayName ??
+        config?.settings?.providerInstances[selection.instanceId]?.displayName,
+      instanceId: selection.instanceId,
+    });
+    return {
+      title: "Provider not allowed",
+      detail: `${disallowedProviderMessage(config?.managedPolicy?.organization, label)} Choose another model.`,
+    };
+  }
   return isDisabledForProject(config, provider, selection.instanceId, projectId)
     ? {
         title: "Model turned off for this project",
@@ -298,6 +350,7 @@ export function buildModelOptions(
   for (const provider of config?.providers ?? []) {
     if (
       !matchesLockedProvider(provider) ||
+      isDriverDisallowed(config, provider.driver) ||
       !isProviderEnabledForProject(config, provider, projectId) ||
       !provider.installed ||
       provider.auth.status === "unauthenticated" ||
@@ -445,54 +498,4 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     models: group.models,
     ...(group.updateRequired ? { updateRequired: group.updateRequired } : {}),
   }));
-}
-
-function modelMenuAction(option: ModelOption, selectedModel: ModelSelection | null): MenuAction {
-  return {
-    id: `model:${option.key}`,
-    title: option.label,
-    state:
-      option.selection.instanceId === selectedModel?.instanceId &&
-      option.selection.model === selectedModel.model
-        ? "on"
-        : undefined,
-  };
-}
-
-export function buildModelMenuActions(
-  groups: ReadonlyArray<ProviderGroup>,
-  selectedModel: ModelSelection | null,
-): MenuAction[] {
-  return groups.flatMap((group) => {
-    const currentModels = group.models.filter((model) => !model.isLegacy);
-    const legacyModels = group.models.filter((model) => model.isLegacy);
-    const selected = group.models.find(
-      (model) =>
-        model.selection.instanceId === selectedModel?.instanceId &&
-        model.selection.model === selectedModel.model,
-    );
-
-    return [
-      ...(currentModels.length > 0
-        ? [
-            {
-              id: `provider:${group.providerKey}`,
-              title: group.providerLabel,
-              subtitle: selected && !selected.isLegacy ? selected.label : undefined,
-              subactions: currentModels.map((option) => modelMenuAction(option, selectedModel)),
-            },
-          ]
-        : []),
-      ...(legacyModels.length > 0
-        ? [
-            {
-              id: `legacy-models:${group.providerKey}`,
-              title: `${group.providerLabel} legacy models`,
-              subtitle: selected?.isLegacy ? selected.label : undefined,
-              subactions: legacyModels.map((option) => modelMenuAction(option, selectedModel)),
-            },
-          ]
-        : []),
-    ];
-  });
 }
