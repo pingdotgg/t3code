@@ -91,6 +91,8 @@ const REVIEW_UNTRACKED_MAX_BYTES = 256 * 1024 * 1024;
 const UNTRACKED_TOTALS_RETRY_MIN_MS = 60_000;
 const UNTRACKED_TOTALS_RETRY_MAX_MS = 30 * 60_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+// Git's ident clean step (convert.c ident_to_git): `$Id:` up to the next `$` on the same line.
+const GIT_IDENT_KEYWORD = /\$Id:[^$\n]*\$/g;
 const REVIEW_BRANCH_COMMIT_LIMIT = 100;
 const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
 const REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES = 128 * 1024;
@@ -4166,7 +4168,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (bytes.includes(0)) {
       return yield* fileError("fs.readFile", `Cannot expand binary file '${input.newPath}'.`);
     }
-    return new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+    const contents = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+    if (!contents.includes("$Id:")) return contents;
+    // Git diffs a path with the ident attribute after collapsing its keywords, like the old blob.
+    const attribute = yield* runGitStdout(
+      "GitVcsDriver.getReviewDiffFileContents.workingTree.ident",
+      repositoryRoot,
+      ["check-attr", "-z", "ident", "--", input.newPath],
+    );
+    return attribute.split("\0")[2] === "set"
+      ? contents.replace(GIT_IDENT_KEYWORD, () => "$Id$")
+      : contents;
   });
 
   const getReviewDiffFileContents = Effect.fn("getReviewDiffFileContents")(function* (
