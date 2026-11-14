@@ -1581,10 +1581,12 @@ export const make = Effect.gen(function* () {
   // whose pipeline failed, adds no rows and leaves the detail as it was.
   const triggerJobChecks = (input: {
     readonly cwd: string;
+    readonly host?: string | undefined;
     readonly pipeline: { readonly id: number; readonly projectId: number };
   }): Effect.Effect<ReadonlyArray<PullRequestCheck>> =>
     api({
       cwd: input.cwd,
+      host: input.host,
       // `bridges` rather than `trigger_jobs`: GitLab 19.2 deprecates it but still serves it, and
       // older self-managed installs know no other name.
       path: `projects/${input.pipeline.projectId}/pipelines/${input.pipeline.id}/bridges?${query([
@@ -2275,6 +2277,7 @@ export const make = Effect.gen(function* () {
         if (stages !== null) return { ...detail, checks: stages };
         const downstream = yield* triggerJobChecks({
           cwd: input.cwd,
+          host: input.host,
           pipeline: detail.headPipeline,
         });
         return downstream.length === 0

@@ -1836,12 +1836,17 @@ layer("GitLabPullRequestCli.layer", (it) => {
         cwd: "/w",
         repository: "acme/web",
         number: 7,
+        host: "gitlab.internal",
       });
 
       expect(detail.checks.map((check) => [check.name, check.status, check.url])).toEqual([
         ["Pipeline", "success", "https://gitlab.com/bilal/web/-/pipelines/31"],
         ["deploy", "failure", "https://gitlab.com/bilal/web/-/pipelines/32"],
       ]);
+      const bridgesCall = mockedExecute.mock.calls.find(
+        ([request]) => request.args[1] === "projects/12/pipelines/31/bridges?per_page=100",
+      );
+      expect(bridgesCall?.[0].host).toBe("gitlab.internal");
     }),
   );
 
