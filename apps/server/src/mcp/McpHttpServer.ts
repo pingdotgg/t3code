@@ -15,6 +15,8 @@ import type * as Types from "effect/Types";
 import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   DeviceToolError,
   OrchestratorMcpFailure,
   PreviewAutomationError,
@@ -124,6 +126,25 @@ const unauthorized = (input: {
       headers: {
         "cache-control": "no-store",
         "www-authenticate": challenge,
+      },
+    },
+  );
+};
+
+/** RFC 6750: a valid token without the scope a tool needs gets 403 and the scope to ask for. */
+const insufficientScope = (request: HttpServerRequest.HttpServerRequest) => {
+  const metadataUrl = Option.getOrUndefined(mcpResourceMetadataUrl(request));
+  return HttpServerResponse.jsonUnsafe(
+    { error: "insufficient_scope", message: McpToolAccess.readOnlyRefusal },
+    {
+      status: 403,
+      headers: {
+        "cache-control": "no-store",
+        "www-authenticate": [
+          'Bearer error="insufficient_scope"',
+          `scope="${AuthOrchestrationReadScope} ${AuthOrchestrationOperateScope}"`,
+          ...(metadataUrl === undefined ? [] : [`resource_metadata="${metadataUrl}"`]),
+        ].join(", "),
       },
     },
   );
@@ -279,12 +300,18 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
   return Effect.fnUntraced(function* (httpEffect) {
-    const admitted = yield* authenticateRequest(yield* HttpServerRequest.HttpServerRequest);
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const admitted = yield* authenticateRequest(request);
     if (HttpServerResponse.isHttpServerResponse(admitted)) return admitted;
-    return yield* httpEffect.pipe(
+    let lacksScope = false;
+    const response = yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, admitted),
+      Effect.provideService(McpInvocationContext.InsufficientScope, () => {
+        lacksScope = true;
+      }),
       Effect.map(normalizeMcpHttpResponse),
     );
+    return lacksScope ? insufficientScope(request) : response;
   }) satisfies McpAuthMiddleware;
 }).pipe(Effect.withSpan("McpHttpServer.makeAuthMiddleware"));
 

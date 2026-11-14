@@ -1154,6 +1154,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
     Effect.gen(function* () {
       const providerToken = "providerTokenWithoutDots";
       const clientToken = "client-payload.client-signature";
+      const readOnlyToken = "reader-payload.reader-signature";
       const providerScope: McpInvocationContext.McpInvocationScope = {
         environmentId,
         requestNamespace: "provider-session",
@@ -1174,6 +1175,12 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         capabilities: new Set(["orchestration"]),
         issuedAt: 1,
       };
+      const readOnlyScope: McpInvocationContext.McpInvocationScope = {
+        ...clientScope,
+        requestNamespace: "client:session-2",
+        client: { sessionId: "session-2", label: "Reader", access: "read-only" },
+      };
+      let writes = 0;
       const seen: Array<McpInvocationContext.McpInvocationScope> = [];
       const ProbeToolkit = Toolkit.make(
         Tool.make("probe", {
@@ -1182,6 +1189,16 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           failure: OrchestratorMcpFailure,
           failureMode: "return",
           dependencies: [McpInvocationContext.McpInvocationContext],
+        }),
+        Tool.make("probe_write", {
+          description: "Changes nothing real.",
+          success: Schema.Struct({ ok: Schema.Boolean }),
+          failure: OrchestratorMcpFailure,
+          failureMode: "return",
+          dependencies: [
+            McpInvocationContext.McpInvocationContext,
+            ThreadManagementService.ThreadManagementService,
+          ],
         }),
       );
       const serverLayer = McpHttpServer.layerMcpTransport(
@@ -1194,10 +1211,17 @@ it.effect("admits provider and OAuth client credentials and points only clients 
                 Effect.as({ ok: true }),
               ),
             ),
+            probe_write: McpToolAccess.writes(() =>
+              Effect.sync(() => {
+                writes++;
+                return { ok: true };
+              }),
+            ),
           }),
         ),
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(Layer.mock(ThreadManagementService.ThreadManagementService)({})),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) =>
@@ -1212,7 +1236,11 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           Layer.succeed(McpHttpServer.McpClientAuthenticator, {
             authenticate: (request) =>
               Effect.succeed(
-                request.headers.authorization === `Bearer ${clientToken}` ? clientScope : undefined,
+                request.headers.authorization === `Bearer ${clientToken}`
+                  ? clientScope
+                  : request.headers.authorization === `Bearer ${readOnlyToken}`
+                    ? readOnlyScope
+                    : undefined,
               ),
           }),
         ),
@@ -1223,7 +1251,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         Effect.withTracer(traced.tracer),
       );
       const httpClient = yield* HttpClient.HttpClient;
-      const call = (token: string | undefined) =>
+      const call = (token: string | undefined, tool = "probe") =>
         Effect.gen(function* () {
           const headers = {
             accept: "application/json, text/event-stream",
@@ -1244,7 +1272,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
               "mcp-protocol-version": "2025-06-18",
             },
             body: HttpBody.text(
-              `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"probe","arguments":{}}}`,
+              `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"${tool}","arguments":{}}}`,
               "application/json",
             ),
           });
@@ -1271,6 +1299,12 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         "provider-session",
         "client:session-1",
       ]);
+
+      // MCP authorization answers a scope the token lacks with 403 and an insufficient_scope challenge.
+      const denied = yield* call(readOnlyToken, "probe_write");
+      expect(denied.status).toBe(403);
+      expect(denied.headers["www-authenticate"]).toContain('error="insufficient_scope"');
+      expect(writes).toBe(0);
 
       const missing = yield* call(undefined);
       expect(missing.status).toBe(401);

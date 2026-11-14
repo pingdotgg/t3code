@@ -23,6 +23,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../mcp/McpToolAccess.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
@@ -44,6 +45,16 @@ const toolkit = Toolkit.make(
     success: Result,
     failure: OrchestratorMcpFailure,
     failureMode: "return",
+  }),
+  Tool.make("change", {
+    description: "Changes nothing real.",
+    success: Result,
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies: [
+      McpInvocationContext.McpInvocationContext,
+      ThreadManagement.ThreadManagementService,
+    ],
   }),
 );
 
@@ -164,6 +175,7 @@ it.effect.each([false, true])(
         const handlers = McpToolAccess.toLayer(toolkit, {
           probe: McpToolAccess.reads(() => modes),
           refuse: McpToolAccess.reads(() => Effect.fail(refusal)),
+          change: McpToolAccess.writes(() => Effect.succeed({ modes: "" })),
           hold: McpToolAccess.reads(() =>
             Deferred.succeed(entered, undefined).pipe(
               Effect.andThen(Deferred.await(release)),
@@ -172,7 +184,12 @@ it.effect.each([false, true])(
           ),
         });
         const box = descriptorOf("environment-box", "Box");
-        const b = yield* servePeer(box, McpHttpServer.toolkitRegistration(toolkit, handlers));
+        const b = yield* servePeer(
+          box,
+          McpHttpServer.toolkitRegistration(toolkit, handlers).pipe(
+            Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+          ),
+        );
         const context = yield* Layer.build(
           layerLinkingEnvironment(descriptorOf("environment-a", "A")),
         );
@@ -215,27 +232,39 @@ it.effect("keeps a link healthy when the peer refuses a call", () =>
         probe: McpToolAccess.reads(() => Effect.succeed({ modes: "" })),
         hold: McpToolAccess.reads(() => Effect.succeed({ modes: "" })),
         refuse: McpToolAccess.reads(() => Effect.fail(refusal)),
+        change: McpToolAccess.writes(() => Effect.succeed({ modes: "" })),
       });
       const box = descriptorOf("environment-box", "Box");
-      const b = yield* servePeer(box, McpHttpServer.toolkitRegistration(toolkit, handlers));
+      const b = yield* servePeer(
+        box,
+        McpHttpServer.toolkitRegistration(toolkit, handlers).pipe(
+          Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+        ),
+      );
       const context = yield* Layer.build(
         layerLinkingEnvironment(descriptorOf("environment-a", "A")),
       );
       const links = Context.get(context, PeerLinks.PeerLinks);
       const client = Context.get(context, PeerMcpClient.PeerMcpClient);
-      yield* linkTo(links, b);
+      yield* linkTo(links, b, "read-only");
       yield* links.recordOutcome(box.environmentId, { error: "earlier outage" });
-      const refused = yield* client
-        .call({
-          environmentId: box.environmentId,
-          tool: "refuse",
-          arguments: {},
-          limits: { runtimeMode: "full-access", interactionMode: "default" },
-          success: Result,
-        })
-        .pipe(Effect.flip);
+      const call = (tool: string) =>
+        client
+          .call({
+            environmentId: box.environmentId,
+            tool,
+            arguments: {},
+            limits: { runtimeMode: "full-access", interactionMode: "default" },
+            success: Result,
+          })
+          .pipe(Effect.flip);
       // The agent hears the peer's own refusal; the link answered, so it is not failing.
-      expect(refused).toMatchObject({ code: refusal.code, message: refusal.message });
+      expect(yield* call("refuse")).toMatchObject({ code: refusal.code, message: refusal.message });
+      // The peer answers a write over a read-only link with 403 insufficient_scope.
+      expect(yield* call("change")).toMatchObject({
+        code: "capability_denied",
+        message: McpToolAccess.readOnlyRefusal,
+      });
       const link = yield* links.get(box.environmentId);
       expect(link._tag === "Some" ? link.value.lastError : "missing").toBeNull();
     }),

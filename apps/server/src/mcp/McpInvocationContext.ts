@@ -171,6 +171,15 @@ export class McpInvocationContext extends Context.Service<
 >()("t3/mcp/McpInvocationContext") {}
 
 /**
+ * Set by the /mcp transport for one request. A tool refused for a scope the
+ * credential lacks calls it, and the transport answers 403 `insufficient_scope`.
+ */
+export class InsufficientScope extends Context.Reference<(() => void) | undefined>(
+  "t3/mcp/McpInvocationContext/InsufficientScope",
+  { defaultValue: () => undefined },
+) {}
+
+/**
  * `McpSchema.EnabledWhen` for tools a delegated child must not see or call.
  * EnabledWhen only receives the MCP client profile, so read the T3 caller from the request fiber.
  */

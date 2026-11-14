@@ -111,19 +111,18 @@ export class Declaration<out Handler> {
   }
 }
 
-const refuseReadOnlyClient = McpInvocationContext.McpInvocationContext.pipe(
-  Effect.flatMap((scope) =>
-    scope.client?.access === "read-only"
-      ? Effect.fail(
-          new OrchestratorMcpFailure({
-            code: "capability_denied",
-            message:
-              "This tool changes the environment, and this MCP client was approved for read-only access.",
-          }),
-        )
-      : Effect.void,
-  ),
-);
+export const readOnlyRefusal =
+  "This tool changes the environment, and this MCP client was approved for read-only access.";
+
+const refuseReadOnlyClient = Effect.gen(function* () {
+  const scope = yield* McpInvocationContext.McpInvocationContext;
+  if (scope.client?.access !== "read-only") return;
+  (yield* McpInvocationContext.InsufficientScope)?.();
+  return yield* new OrchestratorMcpFailure({
+    code: "capability_denied",
+    message: readOnlyRefusal,
+  });
+});
 
 const writingCaller = refuseReadOnlyClient.pipe(
   Effect.andThen(loadCaller()),
