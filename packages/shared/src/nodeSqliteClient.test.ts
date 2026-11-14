@@ -15,6 +15,7 @@ import * as SqlError from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import type * as Tracer from "effect/Tracer";
 import { vi } from "vite-plus/test";
 
@@ -173,6 +174,91 @@ const makeTempDatabase = Effect.gen(function* () {
   });
   return { filename, other };
 });
+
+it.effect.each([false, true])("batches worker results without losing rows (reader=%s)", (reader) =>
+  Effect.gen(function* () {
+    const { filename } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const route = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        reader ? effect.pipe(SqliteClient.readOnly) : effect;
+      yield* route(sql`SELECT 1`);
+      const worker = startedWorkers
+        .filter((candidate) => !checkpointWorkers.includes(candidate))
+        .at(-1)!;
+      const batches: Array<ReadonlyArray<unknown>> = [];
+      const record = (reply: { rows?: ReadonlyArray<unknown> }) => {
+        if (Array.isArray(reply.rows) && reply.rows.length > 0) batches.push(reply.rows);
+      };
+      worker.prependListener("message", record);
+      yield* Effect.gen(function* () {
+        const text = "x".repeat(16 * 1024);
+        const query = sql<{ n: number; text: string }>`
+          WITH RECURSIVE sequence(n) AS (
+            SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < 300
+          ) SELECT n, ${text} AS text FROM sequence
+        `;
+        const rows = yield* reader ? route(query.values) : query;
+        assert.equal(rows.length, 300);
+        for (const [index, row] of rows.entries()) {
+          assert.deepEqual(row, reader ? [index + 1, text] : { n: index + 1, text });
+        }
+        assert.isAbove(batches.length, 1);
+        for (const batch of batches) {
+          assert.isAtMost(batch.length, 16_384);
+          assert.isAtMost(batch.length * text.length * 2, 8 * 1024 * 1024);
+        }
+        batches.length = 0;
+        const narrow = sql<{ n: number }>`
+          WITH RECURSIVE sequence(n) AS (
+            SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < 10000
+          ) SELECT n FROM sequence
+        `;
+        const narrowRows = yield* reader ? route(narrow.values) : narrow;
+        assert.equal(narrowRows.length, 10_000);
+        assert.deepEqual(narrowRows.at(-1), reader ? [10_000] : { n: 10_000 });
+        assert.equal(batches.length, 1);
+      }).pipe(Effect.ensuring(Effect.sync(() => worker.off("message", record))));
+    }).pipe(
+      Effect.provide(SqliteClient.layer({ filename, writerWorker: true, readerWorker: true })),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("reuses a worker query after an iterator constraint failure", () =>
+  Effect.gen(function* () {
+    const { filename } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE unique_entries(name TEXT UNIQUE)`;
+      const insert = (name: string) =>
+        sql<{ name: string }>`INSERT INTO unique_entries VALUES (${name}) RETURNING name`;
+      yield* insert("first");
+      const error = yield* insert("first").pipe(Effect.flip);
+      assert.equal(error.reason._tag, "UniqueViolation");
+      assert.deepEqual(yield* insert("second"), [{ name: "second" }]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("commits on the worker writer after a returning write timed out on a lock", () =>
+  Effect.gen(function* () {
+    const { filename, other } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA busy_timeout = 0`;
+      yield* Effect.sync(() => other.exec("BEGIN IMMEDIATE"));
+      const error = yield* sql`UPDATE counters SET value = 1 WHERE id = 1 RETURNING value`.pipe(
+        Effect.flip,
+      );
+      assert.equal(error.reason._tag, "LockTimeoutError");
+      yield* Effect.sync(() => other.exec("COMMIT"));
+
+      yield* sql.withTransaction(sql`UPDATE counters SET value = 2 WHERE id = 1`);
+      assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`.values, [[2]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.effect("keeps another connection from committing between a transaction's read and write", () =>
   Effect.gen(function* () {
@@ -337,6 +423,80 @@ it.effect("serves another read while a read-only transaction is open", () =>
           }),
         )
         .pipe(SqliteClient.readOnly);
+    }),
+  ),
+);
+
+it.effect("gives a queued read the first reader that frees up", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const holders = yield* Effect.forEach([0, 1, 2, 3], () =>
+        Effect.gen(function* () {
+          const held = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const fiber = yield* sql
+            .withTransaction(
+              countEntries(sql).pipe(
+                Effect.andThen(Deferred.succeed(held, undefined)),
+                Effect.andThen(Deferred.await(release)),
+              ),
+            )
+            .pipe(SqliteClient.readOnly, Effect.forkChild);
+          yield* Deferred.await(held);
+          return { fiber, release };
+        }),
+      );
+      const cancelled = yield* Effect.uninterruptibleMask((restore) =>
+        SqliteClient.readOnly(restore(sql.withTransaction(countEntries(sql)))),
+      ).pipe((effect) => Effect.forkChild(effect, { startImmediately: true }));
+      yield* Fiber.interrupt(cancelled);
+      const cancelledRead = yield* Effect.uninterruptibleMask((restore) =>
+        SqliteClient.readOnly(restore(countEntries(sql))),
+      ).pipe((effect) => Effect.forkChild(effect, { startImmediately: true }));
+      yield* Fiber.interrupt(cancelledRead);
+      const queuedSpan = yield* Deferred.make<Tracer.Span>();
+      const observeQueued: Statement.Transformer = (statement, _sql, _fiber, span) =>
+        Deferred.succeed(queuedSpan, span).pipe(Effect.as(statement));
+      const queued = yield* countEntries(sql).pipe(
+        Effect.provideService(Statement.CurrentTransformer, observeQueued),
+        Effect.provideService(Statement.SpanPropagationEnabled, true),
+        SqliteClient.readOnly,
+        (effect) => Effect.forkChild(effect, { startImmediately: true }),
+      );
+      // Masked read-only work keeps its cancellation pending and still runs once a reader frees up.
+      let maskedRan = 0;
+      const maskedRuns = yield* Effect.forEach(
+        [
+          Effect.scoped(
+            Effect.flatMap(sql.reserve, (connection) =>
+              connection.executeUnprepared("SELECT 1", [], undefined),
+            ),
+          ).pipe(Effect.asVoid),
+          sql.withTransaction(countEntries(sql)).pipe(Effect.asVoid),
+        ],
+        (effect) =>
+          effect.pipe(
+            Effect.andThen(Effect.sync(() => maskedRan++)),
+            Effect.uninterruptible,
+            SqliteClient.readOnly,
+            (masked) => Effect.forkChild(masked, { startImmediately: true }),
+          ),
+      );
+      const interrupting = yield* Effect.forEach(maskedRuns, (fiber) =>
+        Effect.forkChild(Fiber.interrupt(fiber), { startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.succeed(holders[1]!.release, undefined);
+      yield* Fiber.join(holders[1]!.fiber);
+      // Pinned to the first reader it saw, this read would wait for that reader's transaction.
+      assert.equal(yield* Fiber.join(queued), 1);
+      assert.equal((yield* Deferred.await(queuedSpan)).attributes.get("db.lock_wait_ms"), 1000);
+      for (const { fiber, release } of [holders[0]!, holders[2]!, holders[3]!]) {
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(fiber);
+      }
+      yield* Effect.forEach(interrupting, Fiber.join);
+      assert.equal(maskedRan, 2);
     }),
   ),
 );
