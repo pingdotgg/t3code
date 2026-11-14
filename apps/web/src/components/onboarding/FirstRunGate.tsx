@@ -175,7 +175,15 @@ export function FirstRunGate({
     return children;
   }
   if (decision !== "app") {
-    return stalled ? <FirstRunRecovery reason="connection" /> : null;
+    return stalled ? (
+      <FirstRunRecovery reason="connection" />
+    ) : (
+      <div id="boot-shell">
+        <div id="boot-shell-card" aria-label="T3 Code splash screen">
+          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="T3 Code" />
+        </div>
+      </div>
+    );
   }
   return children;
 }

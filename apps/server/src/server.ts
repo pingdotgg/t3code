@@ -34,6 +34,7 @@ import * as KeepAwake from "./background/KeepAwake.ts";
 import * as ServerConfig from "./config.ts";
 import { withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
+import * as ServerReadiness from "./serverReadiness.ts";
 import {
   guardHttpResponseWriteErrors,
   keepIdleConnections,
@@ -795,14 +796,6 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provide(NetService.layer),
 );
 
-const layerCommandReadiness = HttpRouter.middleware(
-  (httpEffect) =>
-    Effect.flatMap(ServerRuntimeStartup.ServerRuntimeStartup, (startup) =>
-      startup.awaitCommandReady.pipe(Effect.orDie, Effect.andThen(httpEffect)),
-    ),
-  { global: true },
-);
-
 const layerMakeRoutes = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
@@ -869,7 +862,7 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(layerServerSettings),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
-  Layer.provide(layerCommandReadiness),
+  Layer.provide(ServerReadiness.layerHttp),
   Layer.provide(ServerHttp.layerBrowserApiCors),
   Layer.provide(ServerHttp.layerHttpCompression),
 );
@@ -932,7 +925,10 @@ const layerMakeServer = Layer.unwrap(
           Effect.acquireRelease(
             Effect.gen(function* () {
               yield* Deferred.succeed(tailscaleParked, undefined).pipe(Effect.orDie);
-              yield* awaitActivation;
+              const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+              yield* startup.awaitConnectionReady.pipe(Effect.orDie);
+              // A trial must not change the Serve route before the launcher commits it.
+              if (yield* pendingServiceUpdateExists) yield* awaitActivation;
               const server = yield* HttpServer.HttpServer;
               const address = server.address;
               if (typeof address === "string" || !("port" in address)) {
@@ -1090,14 +1086,17 @@ const layerMakeServer = Layer.unwrap(
           ),
           Effect.asVoid,
         );
-        // Trials own cleanup immediately after the old server exits, retaining tunnels for commit/rollback unless explicitly stopped.
-        // Other runtimes wait for activation so failed standbys cannot tear down active tunnels.
+        // Trials own cleanup even if startup fails before the launcher commits.
         const cleanupBeforeActivation = yield* pendingServiceUpdateExists;
         if (cleanupBeforeActivation) {
           yield* Effect.addFinalizer(() => releaseManagedTunnel);
         }
-        yield* ServerActivation.forkParked(
+        yield* Effect.forkScoped(
           Effect.gen(function* () {
+            const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+            yield* startup.awaitConnectionReady;
+            // A trial must not change the relay before the launcher commits it.
+            if (cleanupBeforeActivation) yield* awaitActivation;
             if (!cleanupBeforeActivation) {
               yield* Effect.addFinalizer(() => releaseManagedTunnel);
             }
