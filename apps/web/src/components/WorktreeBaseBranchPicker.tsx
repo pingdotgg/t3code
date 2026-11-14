@@ -41,7 +41,7 @@ export function WorktreeBaseBranchPicker({
     cwd && value
       ? vcsEnvironment.listRefs({
           environmentId,
-          input: { cwd, query: value, limit: 10 },
+          input: { cwd, query: value, limit: 10, includeMatchingRemoteRefs: true },
         })
       : null,
   );
@@ -59,6 +59,9 @@ export function WorktreeBaseBranchPicker({
       })
     : "Default branch";
   const branchByName = new Map(branches.refs.map((branch) => [branch.name, branch]));
+  if (selectedRef && selectedRef.name.toLowerCase().includes(query.trim().toLowerCase())) {
+    branchByName.set(selectedRef.name, selectedRef);
+  }
   const items = [...branchByName.keys()];
   const hasNextPage = branches.data?.nextCursor != null;
   const statusText =
@@ -91,6 +94,18 @@ export function WorktreeBaseBranchPicker({
       isFetchingNextPage={branches.isFetchingNextPage}
       onLoadNext={branches.loadNext}
       statusText={statusText}
+      actions={
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            onValueChange("");
+            handleOpenChange(false);
+          }}
+        >
+          Default branch
+        </Button>
+      }
       originControl={{ checked: startFromOrigin, onCheckedChange: onStartFromOriginChange }}
       popupProps={{ align: "start", side: "bottom", className: "flex w-80 flex-col" }}
       renderItem={(name, index) => {

@@ -1521,8 +1521,14 @@ export const layer = Layer.effect(
             ? {
                 ...input.workspaceStrategy,
                 baseRef:
-                  (yield* threadLaunch.defaultWorktreeBaseRef(input.projectId)) ??
-                  input.workspaceStrategy.baseRef,
+                  (yield* threadLaunch.defaultWorktreeBaseRef(input.projectId).pipe(
+                    Effect.mapError((cause) =>
+                      taskError("Could not resolve the project default branch.", {
+                        taskId: id,
+                        cause,
+                      }),
+                    ),
+                  )) ?? input.workspaceStrategy.baseRef,
               }
             : input.workspaceStrategy;
       const scheduleUnchanged =

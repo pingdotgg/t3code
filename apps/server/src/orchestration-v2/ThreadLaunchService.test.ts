@@ -123,6 +123,7 @@ const claudeAdapter = {
 
 interface HarnessOptions {
   readonly projectRoot?: string;
+  readonly projectLookupFailure?: ProjectService.ProjectOperationError;
   readonly gitDriver?: Layer.Layer<GitVcsDriver.GitVcsDriver>;
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
@@ -201,16 +202,18 @@ function makeHarness(options: HarnessOptions = {}) {
       delete: () => Effect.die("unused"),
       listPage: () => Effect.die("unused"),
       getById: (id) =>
-        Effect.succeed(
-          id === projectId
-            ? Option.some({
-                ...project,
-                workspaceRoot: options.projectRoot ?? project.workspaceRoot,
-              })
-            : id === otherProjectId
-              ? Option.some(otherProject)
-              : Option.none(),
-        ),
+        options.projectLookupFailure
+          ? Effect.fail(options.projectLookupFailure)
+          : Effect.succeed(
+              id === projectId
+                ? Option.some({
+                    ...project,
+                    workspaceRoot: options.projectRoot ?? project.workspaceRoot,
+                  })
+                : id === otherProjectId
+                  ? Option.some(otherProject)
+                  : Option.none(),
+            ),
       getByWorkspaceRoot: () => Effect.succeedSome(project),
       workspaceScanDirectory: () => Effect.die("unused"),
       snapshot: Effect.die("unused"),
@@ -1361,6 +1364,14 @@ it.effect.each([
     saved: "origin/trunk",
   },
   {
+    name: "a failed project lookup",
+    branch: "master",
+    remote: false,
+    defaultBaseRef: true,
+    baseRef: "main",
+    saved: "master",
+  },
+  {
     name: "an explicit master",
     branch: "master",
     remote: false,
@@ -1398,7 +1409,13 @@ it.effect.each([
       yield* command(cwd, ["push", "-u", "origin", row.branch]);
       yield* command(cwd, ["remote", "set-head", "origin", row.branch]);
     }
+    const lookupFailure = new ProjectService.ProjectOperationError({
+      operation: "read-project",
+      projectId,
+      cause: "database unavailable",
+    });
     const harness = makeHarness({
+      ...(row.name === "a failed project lookup" ? { projectLookupFailure: lookupFailure } : {}),
       projectRoot: cwd,
       gitDriver: Layer.succeed(GitVcsDriver.GitVcsDriver, git),
       hasCommit: ({ refName }) =>
@@ -1429,11 +1446,19 @@ it.effect.each([
     );
     yield* Effect.gen(function* () {
       const tasks = yield* ScheduledTasks.ScheduledTaskService;
-      const { task } = yield* tasks.upsert({
+      const save = tasks.upsert({
         ...scheduledTaskInput("scheduled-task:default-base", projectId),
         workspaceStrategy: { type: "worktree", baseRef: row.baseRef, startFromOrigin: true },
         ...(row.defaultBaseRef === undefined ? {} : { defaultBaseRef: row.defaultBaseRef }),
       });
+      if (row.name === "a failed project lookup") {
+        const error = yield* Effect.flip(save);
+        assert.equal(error._tag, "ScheduledTaskError");
+        assert.equal(error.cause, lookupFailure);
+        assert.deepEqual((yield* tasks.list()).tasks, []);
+        return;
+      }
+      const { task } = yield* save;
       assert.deepEqual(task.workspaceStrategy, {
         type: "worktree",
         baseRef: row.saved,
@@ -3161,3 +3186,111 @@ it.effect("replays an accepted send after the project disables the instance", ()
     }
   }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles)));
 });
+
+it.effect.each([
+  {
+    name: "no remote, only master",
+    remote: null,
+    remoteDefault: null,
+    refs: ["refs/heads/master"],
+    baseRef: "master",
+  },
+  {
+    name: "no remote, main and master",
+    remote: null,
+    remoteDefault: null,
+    refs: ["refs/heads/master", "refs/heads/main"],
+    baseRef: "main",
+  },
+  {
+    name: "no remote, neither main nor master",
+    remote: null,
+    remoteDefault: null,
+    refs: ["refs/heads/develop"],
+    current: "develop",
+    baseRef: "develop",
+  },
+  {
+    name: "no remote, nothing conventional, detached",
+    remote: null,
+    remoteDefault: null,
+    refs: [],
+    baseRef: "main",
+  },
+  {
+    name: "no recorded HEAD, remote main and a stale local master",
+    remote: "origin",
+    remoteDefault: null,
+    refs: ["refs/heads/master", "refs/remotes/origin/main"],
+    baseRef: "origin/main",
+  },
+  {
+    name: "no recorded HEAD, master only on the remote",
+    remote: "origin",
+    remoteDefault: null,
+    refs: ["refs/remotes/origin/master"],
+    baseRef: "origin/master",
+  },
+  {
+    name: "no recorded HEAD, local main and master only on the remote",
+    remote: "origin",
+    remoteDefault: null,
+    refs: ["refs/heads/main", "refs/remotes/origin/master"],
+    baseRef: "origin/master",
+  },
+  {
+    name: "no recorded HEAD, nothing conventional on the remote, local main",
+    remote: "origin",
+    remoteDefault: null,
+    refs: ["refs/heads/main", "refs/remotes/origin/develop"],
+    baseRef: "main",
+  },
+  {
+    name: "a recorded HEAD whose branch is gone",
+    remote: "origin",
+    remoteDefault: "main",
+    refs: ["refs/heads/main", "refs/remotes/origin/master"],
+    baseRef: "origin/master",
+  },
+  {
+    name: "a remote not called origin",
+    remote: "upstream",
+    remoteDefault: "develop",
+    refs: ["refs/remotes/upstream/develop"],
+    baseRef: "upstream/develop",
+  },
+  {
+    name: "a remote not called origin, no recorded HEAD",
+    remote: "upstream",
+    remoteDefault: null,
+    refs: ["refs/remotes/upstream/main"],
+    baseRef: "upstream/main",
+  },
+])("$name defaults to $baseRef", ({ remote, remoteDefault, refs, current, baseRef }) =>
+  Effect.gen(function* () {
+    const gitFailure = (cwd: string) =>
+      new GitCommandError({
+        operation: "GitVcsDriver.test",
+        command: "git",
+        cwd,
+        detail: "Unknown revision or remote",
+      });
+    const harness = makeHarness({
+      gitDriver: Layer.mock(GitVcsDriver.GitVcsDriver)({
+        resolvePrimaryRemoteName: (cwd) =>
+          remote === null ? Effect.fail(gitFailure(cwd)) : Effect.succeed(remote),
+        resolveDefaultBranchName: () => Effect.succeed(remoteDefault),
+        resolveBranchName: () => Effect.succeed(current ?? null),
+        resolveCommit: ({ cwd, revision }) =>
+          refs.includes(revision)
+            ? Effect.succeed({ commitSha: "abc123" })
+            : Effect.fail(gitFailure(cwd)),
+      }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      assert.equal(yield* launches.defaultWorktreeBaseRef(projectId), baseRef);
+      assert.isNull(yield* launches.defaultWorktreeBaseRef(ProjectId.make("unknown")));
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);

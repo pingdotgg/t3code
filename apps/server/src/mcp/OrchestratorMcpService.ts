@@ -2015,18 +2015,6 @@ const make = Effect.gen(function* () {
       effect.pipe(Effect.timeoutOption(Duration.millis(timeoutMs)), Effect.map(Option.flatten)),
   );
 
-  const scheduledTaskWorkspaceStrategy = Effect.fn(
-    "OrchestratorMcpService.scheduledTaskWorkspaceStrategy",
-  )(function* (boundToThread: boolean, projectId: ProjectId) {
-    if (boundToThread) return { type: "root" as const };
-    const { workspaceRoot } = yield* requireProject(projectId);
-    return {
-      type: "worktree" as const,
-      baseRef: yield* ThreadLaunchService.resolveDefaultWorktreeBaseRef(gitDriver, workspaceRoot),
-      startFromOrigin: true,
-    };
-  });
-
   const scheduledTaskRunModes = Effect.fn("OrchestratorMcpService.scheduledTaskRunModes")(
     function* (task: ScheduledTask) {
       const modes = [{ runtimeMode: task.runtimeMode, interactionMode: task.interactionMode }];
@@ -2144,7 +2132,10 @@ const make = Effect.gen(function* () {
           : bindToCurrentThread
             ? "continue"
             : "new_thread",
-        workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(bindToCurrentThread, projectId),
+        workspaceStrategy: bindToCurrentThread
+          ? { type: "root" }
+          : { type: "worktree", baseRef: "main", startFromOrigin: true },
+        defaultBaseRef: !bindToCurrentThread,
         modelSelection,
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
@@ -2231,7 +2222,9 @@ const make = Effect.gen(function* () {
         const workspaceStrategy =
           (threadId === null) === (existing.threadId === null)
             ? existing.workspaceStrategy
-            : yield* scheduledTaskWorkspaceStrategy(threadId !== null, existing.projectId);
+            : threadId !== null
+              ? { type: "root" as const }
+              : { type: "worktree" as const, baseRef: "main", startFromOrigin: true };
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,
@@ -2253,6 +2246,7 @@ const make = Effect.gen(function* () {
                   ? "new_thread"
                   : "continue",
           workspaceStrategy,
+          defaultBaseRef: threadId === null && existing.threadId !== null,
           modelSelection: existing.modelSelection,
           runtimeMode: existing.runtimeMode,
           interactionMode: existing.interactionMode,

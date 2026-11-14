@@ -222,7 +222,9 @@ export class ThreadLaunchService extends Context.Service<
     /** True only when the project's folder is known not to be a Git repository. */
     readonly isNonGitProject: (projectId: ProjectId) => Effect.Effect<boolean>;
     /** The base a new worktree gets when none was chosen; null when the project is unknown. */
-    readonly defaultWorktreeBaseRef: (projectId: ProjectId) => Effect.Effect<string | null>;
+    readonly defaultWorktreeBaseRef: (
+      projectId: ProjectId,
+    ) => Effect.Effect<string | null, ProjectService.ProjectOperationError>;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
@@ -238,9 +240,9 @@ const isThreadLaunchError = Schema.is(ThreadLaunchError);
 
 /**
  * The primary remote's default branch, else a conventional `main` or `master`, else the
- * checked-out branch, as the composer picks. A detached or empty repository gets `main`.
+ * checked-out branch. A detached or empty repository gets `main`.
  */
-export const resolveDefaultWorktreeBaseRef = Effect.fn(
+const resolveDefaultWorktreeBaseRef = Effect.fn(
   "ThreadLaunchService.resolveDefaultWorktreeBaseRef",
 )(function* (
   git: Pick<
@@ -495,9 +497,7 @@ const make = Effect.gen(function* () {
 
   const defaultWorktreeBaseRef: ThreadLaunchService["Service"]["defaultWorktreeBaseRef"] =
     Effect.fn("ThreadLaunchService.defaultWorktreeBaseRef")(function* (projectId) {
-      const project = yield* projects
-        .getById(projectId)
-        .pipe(Effect.orElseSucceed(() => Option.none()));
+      const project = yield* projects.getById(projectId);
       if (Option.isNone(project)) return null;
       return yield* resolveDefaultWorktreeBaseRef(gitDriver, project.value.workspaceRoot);
     });

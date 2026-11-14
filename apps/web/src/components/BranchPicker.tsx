@@ -34,6 +34,7 @@ export function BranchPicker({
   statusText,
   notice,
   originControl,
+  actions,
   popupProps,
   renderItem,
   getItemType,
@@ -52,6 +53,7 @@ export function BranchPicker({
   onLoadNext: () => void;
   statusText: string | null;
   notice?: string | null | undefined;
+  actions?: ReactNode;
   originControl?: { checked: boolean; onCheckedChange: (checked: boolean) => void } | undefined;
   popupProps: Omit<ComponentProps<typeof ComboboxPopup>, "children">;
   renderItem: (value: string, index: number) => ReactNode;
@@ -154,6 +156,7 @@ export function BranchPicker({
               />
             </ComboboxListVirtualized>
           </div>
+          {actions}
           {originControl ? (
             <Tooltip>
               <TooltipTrigger
