@@ -293,6 +293,29 @@ describe("pools", () => {
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
 
+  it("excludes signed-out machines' cached quotas from shared account limits", () => {
+    const limits = { checkedAt, windows: [{ ...window, usedPercent: 40 }] };
+    const signedIn = provider({
+      auth: { status: "authenticated", email: "same@example.com", workspaceId: "ws-a" },
+      usageLimits: limits,
+    });
+    const signedOut = provider({
+      instanceId: ProviderInstanceId.make("codex-signed-out"),
+      auth: { status: "unauthenticated", workspaceId: "ws-a" },
+      usageLimits: { ...limits, windows: [{ ...window, usedPercent: 90 }] },
+    });
+    const accounts = collectLimitAccounts(
+      new Map([
+        [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [signedIn] } }],
+        [EnvironmentId.make("env-b"), { ...laptop, serverConfig: { providers: [signedOut] } }],
+      ]),
+    );
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(40);
+    expect(accounts[0]?.environments).toEqual([{ environmentId: "env-a", label: "Laptop" }]);
+    expect(collectProviderUsageLimits(signedOut.instanceId, [signedOut], [], now)).toBeNull();
+  });
+
   it("uses the freshest reported plan even when the newest quota has no plan", () => {
     const snapshot = (label: string | undefined, checkedAt: string, usedPercent: number) =>
       provider({
