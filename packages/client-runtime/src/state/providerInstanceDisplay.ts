@@ -27,7 +27,14 @@ export function resolveProviderInstanceDisplayName(
 }
 
 export function providerInstanceInitials(label: string): string {
-  const words = label.replace(/[_-]+/g, " ").split(/\s+/u).filter(Boolean);
+  // Punctuation separates words so "Codex (hub)" reads CH, not C(. An apostrophe
+  // inside a word stays ("Theo's Codex" is TC); a quoting one does not
+  // ("Codex 'hub'" is CH).
+  const words = label
+    .replace(/[^\P{P}'’]+/gu, " ")
+    .split(/\s+/u)
+    .map((word) => word.replace(/^['’]+|['’]+$/gu, ""))
+    .filter(Boolean);
   if (words.length === 0) return "";
   if (words.length === 1) return Array.from(words[0]!).slice(0, 2).join("").toUpperCase();
   return words
@@ -40,6 +47,18 @@ export function normalizeProviderAccentColor(value: string | undefined): string 
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
   return /^#[0-9a-fA-F]{6}$/u.test(trimmed) ? trimmed : undefined;
+}
+
+export function providerAccentForegroundColor(accentColor: string) {
+  const linearChannel = (offset: number) => {
+    const value = Number.parseInt(accentColor.slice(offset, offset + 2), 16) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance =
+    0.2126 * linearChannel(1) + 0.7152 * linearChannel(3) + 0.0722 * linearChannel(5);
+  const blackContrast = (luminance + 0.05) / 0.05;
+  const whiteContrast = 1.05 / (luminance + 0.05);
+  return blackContrast >= whiteContrast ? "#000000" : "#ffffff";
 }
 
 export function shouldShowInstanceBadge(
@@ -55,7 +74,7 @@ export function shouldShowInstanceBadge(
     readonly enabled: boolean;
   }>,
 ): boolean {
-  if (entry.accentColor) return true;
+  if (normalizeProviderAccentColor(entry.accentColor)) return true;
   let sharedProviderCount = 0;
   for (const candidate of entries) {
     if (candidate.driverKind !== entry.driverKind) continue;

@@ -5,8 +5,7 @@ import Card from "~/components/Card";
 // `GREETING` value declared in alchemy.run.ts is read the same way as on
 // any Node server.
 export default function Home() {
-  const greeting =
-    (typeof process !== "undefined" && process.env.GREETING) || "Hello!";
+  const greeting = (typeof process !== "undefined" && process.env.GREETING) || "Hello!";
   return (
     <main>
       <h1 class="text-3xl font-bold">{greeting}</h1>

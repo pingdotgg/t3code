@@ -1,4 +1,7 @@
-import type { EnvironmentShellSummary } from "@t3tools/client-runtime/state/shell";
+import {
+  EMPTY_SHELL_STATE,
+  type EnvironmentShellSummary,
+} from "@t3tools/client-runtime/state/shell";
 import {
   BearerConnectionProfile,
   BearerConnectionTarget,
@@ -7,7 +10,8 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 
-import { projectWorkspaceEnvironment, projectWorkspaceState } from "./workspaceModel";
+import { isEnvironmentShellPending, projectWorkspaceState } from "./workspaceModel";
+import { projectEnvironmentConnectionSummary as projectWorkspaceEnvironment } from "@t3tools/client-runtime/state/presentation";
 import type { EnvironmentPresentation } from "./environments";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
@@ -50,8 +54,6 @@ function environment(
 const EMPTY_SHELL_SUMMARY: EnvironmentShellSummary = {
   hasSnapshot: false,
   hasSynchronizingShell: false,
-  hasCachedShell: false,
-  hasLiveShell: false,
   firstError: null,
 };
 
@@ -59,17 +61,9 @@ const CACHED_SHELL_SUMMARY: EnvironmentShellSummary = {
   ...EMPTY_SHELL_SUMMARY,
   hasSnapshot: true,
   hasSynchronizingShell: true,
-  hasCachedShell: true,
 };
 
 describe("mobile workspace projection", () => {
-  it("preserves explicit offline state without presenting it as a connection error", () => {
-    const projected = projectWorkspaceEnvironment(ENVIRONMENT_ID, environment("offline"));
-
-    expect(projected.connectionState).toBe("offline");
-    expect(projected.connectionError).toBeNull();
-  });
-
   it("reports offline before stale connected presentations", () => {
     const environments = [projectWorkspaceEnvironment(ENVIRONMENT_ID, environment("connected"))];
     const state = projectWorkspaceState({
@@ -77,6 +71,7 @@ describe("mobile workspace projection", () => {
       networkStatus: "offline",
       environments,
       shellSummary: EMPTY_SHELL_SUMMARY,
+      hasSyncingConnectedEnvironment: false,
     });
 
     expect(state.connectionState).toBe("offline");
@@ -84,22 +79,13 @@ describe("mobile workspace projection", () => {
     expect(state.hasReadyEnvironment).toBe(false);
   });
 
-  it("projects reconnecting environments dynamically from active phases", () => {
-    const environments = [
-      projectWorkspaceEnvironment(ENVIRONMENT_ID, environment("reconnecting")),
-      projectWorkspaceEnvironment(EnvironmentId.make("environment-2"), environment("connected")),
-    ];
-    const state = projectWorkspaceState({
-      isReady: true,
-      networkStatus: "online",
-      environments,
-      shellSummary: EMPTY_SHELL_SUMMARY,
-    });
-
-    expect(state.connectingEnvironments).toHaveLength(1);
-    expect(state.connectingEnvironments[0]?.connectionState).toBe("reconnecting");
-    expect(state.hasConnectingEnvironment).toBe(true);
-    expect(state.hasReadyEnvironment).toBe(true);
+  it("waits for shell cache initialization and synchronization, but not completed reads", () => {
+    expect(isEnvironmentShellPending(EMPTY_SHELL_STATE)).toBe(true);
+    expect(isEnvironmentShellPending({ ...EMPTY_SHELL_STATE, status: "synchronizing" })).toBe(true);
+    expect(isEnvironmentShellPending({ ...EMPTY_SHELL_STATE, status: "cached" })).toBe(false);
+    expect(
+      isEnvironmentShellPending({ ...EMPTY_SHELL_STATE, error: Option.some("Cache failed.") }),
+    ).toBe(false);
   });
 
   it("keeps retained snapshots visible while reconnecting without claiming readiness", () => {
@@ -109,10 +95,12 @@ describe("mobile workspace projection", () => {
       networkStatus: "online",
       environments,
       shellSummary: CACHED_SHELL_SUMMARY,
+      hasSyncingConnectedEnvironment: false,
     });
 
     expect(state.hasLoadedShellSnapshot).toBe(true);
     expect(state.hasPendingShellSnapshot).toBe(true);
+    expect(state.hasSyncingConnectedEnvironment).toBe(false);
     expect(state.hasReadyEnvironment).toBe(false);
     expect(state.connectionState).toBe("reconnecting");
   });

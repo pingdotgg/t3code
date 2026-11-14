@@ -4,10 +4,8 @@ import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
-  PreviewAutomationControlInterruptedError,
   ProjectId,
   ProviderInstanceId,
-  SERVER_BROWSER_AUTOMATION_CLIENT_ID,
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -29,160 +27,77 @@ it.effect.each([
   { name: "project opt-in", globalAccess: false, projectAccess: true },
   { name: "project opt-out", globalAccess: true, projectAccess: false },
 ])("list and close respect the credential for a $name", ({ globalAccess, projectAccess }) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const projectId = ProjectId.make("preview-controls-project");
-      const threadId = ThreadId.make("preview-controls-thread");
-      const settings = {
-        ...DEFAULT_SERVER_SETTINGS,
-        enableAgentBrowserAccess: globalAccess,
-        projectSettingsOverrides: {
-          [projectId]: { enableAgentBrowserAccess: projectAccess },
-        },
-      };
-      const effective = resolveProjectSettings(settings, projectId).settings;
-      const scope: McpInvocationContext.McpInvocationScope = {
-        environmentId: EnvironmentId.make("preview-controls-environment"),
-        requestNamespace: "preview-controls-provider-session",
-        thread: {
-          threadId,
-          providerSessionId: "preview-controls-provider-session",
-          providerInstanceId: ProviderInstanceId.make("codex"),
-        },
-        client: undefined,
-        capabilities: new Set(effective.enableAgentBrowserAccess ? ["preview"] : []),
-        issuedAt: 0,
-      };
-      const manager = yield* Preview.make.pipe(
-        Effect.provide(
-          Layer.merge(
-            ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-controls-" }).pipe(
-              Layer.provide(NodeServices.layer),
-            ),
-            NodeCrypto.layer,
-          ),
-        ),
-      );
-      const tab = yield* manager.open({ threadId, url: "http://localhost:3000" });
-      const layerDependencies = Layer.mergeAll(
-        PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer)),
-        Layer.succeed(Preview.PreviewManager, manager),
-        Layer.succeed(McpInvocationContext.McpInvocationContext, scope),
-        McpToolAccessTestkit.liveThreadsLayer,
-        Layer.mock(ServerSettings.ServerSettingsService)({
-          getSettings: Effect.succeed(settings),
-        }),
-      );
-      const toolkit = yield* PreviewControlsToolkit.pipe(
-        Effect.provide(
-          McpToolAccess.HandlersLayer.layer(PreviewControlsHandlers.layer).pipe(
-            Layer.provide(layerDependencies),
-          ),
-        ),
-      );
-      const listed = yield* toolkit
-        .handle("t3_preview_list", {})
-        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
-      const closed = yield* toolkit
-        .handle("t3_preview_close", { tabId: tab.tabId })
-        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
-      if (projectAccess) {
-        expect(listed.at(-1)?.result).toMatchObject({ sessions: [tab], nextCursor: null });
-        expect(closed.at(-1)?.result).toEqual({});
-        expect((yield* manager.list({ threadId })).sessions).toEqual([]);
-      } else {
-        for (const result of [listed, closed]) {
-          expect(result.at(-1)?.result).toMatchObject({
-            _tag: "PreviewAutomationUnavailableError",
-            capability: "preview",
-            threadId,
-          });
-        }
-        expect((yield* manager.list({ threadId })).sessions).toEqual([tab]);
-      }
-    }),
-  ),
-);
-
-it.effect("close reports why the server browser refused to close a tab", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const threadId = ThreadId.make("preview-controls-thread");
-      const scope: McpInvocationContext.McpInvocationScope = {
-        environmentId: EnvironmentId.make("preview-controls-environment"),
-        requestNamespace: "preview-controls-provider-session",
-        thread: {
-          threadId,
-          providerSessionId: "preview-controls-provider-session",
-          providerInstanceId: ProviderInstanceId.make("codex"),
-        },
-        client: undefined,
-        capabilities: new Set(["preview"]),
-        issuedAt: 0,
-      };
-      const manager = yield* Preview.make.pipe(
-        Effect.provide(
-          Layer.merge(
-            ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-controls-" }).pipe(
-              Layer.provide(NodeServices.layer),
-            ),
-            NodeCrypto.layer,
-          ),
-        ),
-      );
-      const tab = yield* manager.open({
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("preview-controls-project");
+    const threadId = ThreadId.make("preview-controls-thread");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      enableAgentBrowserAccess: globalAccess,
+      projectSettingsOverrides: {
+        [projectId]: { enableAgentBrowserAccess: projectAccess },
+      },
+    };
+    const effective = resolveProjectSettings(settings, projectId).settings;
+    const scope: McpInvocationContext.McpInvocationScope = {
+      environmentId: EnvironmentId.make("preview-controls-environment"),
+      requestNamespace: "preview-controls-provider-session",
+      thread: {
         threadId,
-        url: "http://localhost:3000",
-        runtime: "server",
-      });
-      const layerDependencies = Layer.mergeAll(
-        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({
-          invoke: () =>
-            Effect.fail(
-              new PreviewAutomationControlInterruptedError({
-                operation: "close",
-                environmentId: scope.environmentId,
-                threadId,
-                providerSessionId: "preview-controls-provider-session",
-                providerInstanceId: ProviderInstanceId.make("codex"),
-                clientId: SERVER_BROWSER_AUTOMATION_CLIENT_ID,
-                connectionId: "server-browser-connection",
-                requestId: "close-request",
-                tabId: tab.tabId,
-                timeoutMs: 1_000,
-                remoteTag: "PreviewAutomationControlInterruptedError",
-                remoteMessageLength: 0,
-                cause: null,
-                reason: "agentMismatch",
-              }),
-            ),
-        }),
-        Layer.succeed(Preview.PreviewManager, manager),
-        Layer.succeed(McpInvocationContext.McpInvocationContext, scope),
-        McpToolAccessTestkit.liveThreadsLayer,
-        Layer.mock(ServerSettings.ServerSettingsService)({
-          getSettings: Effect.succeed({
-            ...DEFAULT_SERVER_SETTINGS,
-            enableAgentBrowserAccess: true,
-          }),
-        }),
-      );
-      const toolkit = yield* PreviewControlsToolkit.pipe(
-        Effect.provide(
-          McpToolAccess.HandlersLayer.layer(PreviewControlsHandlers.layer).pipe(
-            Layer.provide(layerDependencies),
+        providerSessionId: "preview-controls-provider-session",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      },
+      client: undefined,
+      capabilities: new Set(effective.enableAgentBrowserAccess ? ["preview"] : []),
+      issuedAt: 0,
+    };
+    const manager = yield* Preview.make.pipe(
+      Effect.provide(
+        Layer.merge(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-controls-" }).pipe(
+            Layer.provide(NodeServices.layer),
           ),
+          NodeCrypto.layer,
         ),
-      );
-
-      const closed = yield* toolkit
-        .handle("t3_preview_close", { tabId: tab.tabId })
-        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
-
-      expect(closed.at(-1)?.result).toMatchObject({
-        _tag: "PreviewAutomationControlInterruptedError",
-        reason: "agentMismatch",
-      });
-    }),
-  ),
+      ),
+    );
+    const tab = yield* manager.open({ threadId, url: "http://localhost:3000" });
+    const layerDependencies = Layer.mergeAll(
+      PreviewAutomationBroker.layer.pipe(
+        Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+      Layer.succeed(Preview.PreviewManager, manager),
+      Layer.succeed(McpInvocationContext.McpInvocationContext, scope),
+      McpToolAccessTestkit.liveThreadsLayer,
+      Layer.mock(ServerSettings.ServerSettingsService)({
+        getSettings: Effect.succeed(settings),
+      }),
+    );
+    const toolkit = yield* PreviewControlsToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(PreviewControlsHandlers.layer).pipe(
+          Layer.provide(layerDependencies),
+        ),
+      ),
+    );
+    const listed = yield* toolkit
+      .handle("t3_preview_list", {})
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+    const closed = yield* toolkit
+      .handle("t3_preview_close", { tabId: tab.tabId })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+    if (projectAccess) {
+      expect(listed.at(-1)?.result).toMatchObject({ sessions: [tab], nextCursor: null });
+      expect(closed.at(-1)?.result).toEqual({});
+      expect((yield* manager.list({ threadId })).sessions).toEqual([]);
+    } else {
+      for (const result of [listed, closed]) {
+        expect(result.at(-1)?.result).toMatchObject({
+          _tag: "PreviewAutomationUnavailableError",
+          capability: "preview",
+          threadId,
+        });
+      }
+      expect((yield* manager.list({ threadId })).sessions).toEqual([tab]);
+    }
+  }),
 );

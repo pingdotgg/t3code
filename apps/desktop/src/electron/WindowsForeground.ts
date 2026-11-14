@@ -54,7 +54,7 @@ export function activateWindowsForegroundWithApi(
   }
 }
 
-export function isWindowsShellHostedForegroundWithApi(api: WindowsForegroundApi): boolean {
+function isWindowsShellHostedForegroundWithApi(api: WindowsForegroundApi): boolean {
   const foregroundWindow = api.getForegroundWindow();
   return (
     foregroundWindow !== 0n &&

@@ -1,0 +1,1 @@
+export default { publicDir: false };

@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayLiveActivities, relayMobileDevices } from "../persistence/schema.ts";
@@ -43,15 +43,22 @@ export class LiveActivityTargetListPersistenceError extends Schema.TaggedError<L
   }
 }
 
+export class LiveActivityIdleTargetListPersistenceError extends Schema.TaggedError<LiveActivityIdleTargetListPersistenceError>()(
+  "LiveActivityIdleTargetListPersistenceError",
+  {
+    deliveredBefore: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to list idle Live Activities delivered before ${this.deliveredBefore}.`;
+  }
+}
+
 export class LiveActivityDeliveryMarkPersistenceError extends Schema.TaggedError<LiveActivityDeliveryMarkPersistenceError>()(
   "LiveActivityDeliveryMarkPersistenceError",
   {
-    operation: Schema.Literals([
-      "mark-delivery",
-      "mark-start-queued",
-      "clear-start-queued",
-      "invalidate-delivery-token",
-    ]),
+    operation: Schema.Literals(["mark-delivery", "invalidate-delivery-token"]),
     userId: Schema.String,
     deviceId: Schema.String,
     kind: Schema.NullOr(RelayDeliveryKindSchema),
@@ -97,26 +104,23 @@ export class LiveActivities extends Context.Service<
     readonly listTargets: (input: {
       readonly userId: string;
     }) => Effect.Effect<ReadonlyArray<TargetRow>, LiveActivityTargetListPersistenceError>;
+    readonly listIdleArmedTargets: (input: {
+      readonly deliveredBefore: string;
+    }) => Effect.Effect<
+      ReadonlyArray<{ readonly user_id: string; readonly device_id: string }>,
+      LiveActivityIdleTargetListPersistenceError
+    >;
     readonly markDelivery: (input: {
       readonly userId: string;
       readonly deviceId: string;
-      readonly kind: RelayDeliveryKind;
+      readonly kind: Exclude<RelayDeliveryKind, "live_activity_start">;
       readonly aggregate: RelayAgentActivityAggregateState | null;
       readonly deliveredAt: string;
-    }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
-    readonly markStartQueued: (input: {
-      readonly userId: string;
-      readonly deviceId: string;
-      readonly queuedAt: string;
-    }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
-    readonly clearStartQueued: (input: {
-      readonly userId: string;
-      readonly deviceId: string;
     }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
     readonly invalidateDeliveryToken: (input: {
       readonly userId: string;
       readonly deviceId: string;
-      readonly kind: RelayDeliveryKind;
+      readonly kind: Exclude<RelayDeliveryKind, "live_activity_start">;
       readonly invalidatedAt: string;
     }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
   }
@@ -129,7 +133,7 @@ const encodeRelayAgentActivityAggregateStateJson = Schema.encodeEffect(
   Schema.fromJsonString(RelayAgentActivityAggregateStateSchema),
 );
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
 
   return LiveActivities.of({
@@ -152,10 +156,7 @@ export const make = Effect.gen(function* () {
               eq(relayLiveActivities.deviceId, registration.deviceId),
             ),
           );
-        // The app re-registers its current card's token on every foreground.
-        // Restamping the arming time would make that card look freshly armed,
-        // and the arming grace in ApnsDeliveries would swallow the end that
-        // the registration replay owes a card whose work is gone.
+        // Foreground token refresh must retain the original arming time or grace can swallow an owed end event.
         const armedAt =
           (current?.activityPushToken === registration.activityPushToken
             ? current.remoteStartedAt
@@ -270,6 +271,32 @@ export const make = Effect.gen(function* () {
         );
     }),
 
+    listIdleArmedTargets: Effect.fn("relay.live_activities.list_idle_armed_targets")(
+      function* (input) {
+        return yield* db
+          .select({
+            user_id: relayLiveActivities.userId,
+            device_id: relayLiveActivities.deviceId,
+          })
+          .from(relayLiveActivities)
+          .where(
+            and(
+              isNotNull(relayLiveActivities.activityPushToken),
+              sql`coalesce(${relayLiveActivities.lastLiveActivityDeliveryAt}, ${relayLiveActivities.remoteStartedAt}, ${relayLiveActivities.updatedAt}) < ${input.deliveredBefore}`,
+            ),
+          )
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new LiveActivityIdleTargetListPersistenceError({
+                  deliveredBefore: input.deliveredBefore,
+                  cause,
+                }),
+            ),
+          );
+      },
+    ),
+
     markDelivery: Effect.fn("relay.live_activities.mark_delivery")(function* (input) {
       yield* Effect.annotateCurrentSpan({
         "relay.mobile.device_id": input.deviceId,
@@ -289,7 +316,7 @@ export const make = Effect.gen(function* () {
           .values({
             userId: input.userId,
             deviceId: input.deviceId,
-            remoteStartedAt: input.kind === "live_activity_start" ? input.deliveredAt : null,
+            remoteStartedAt: null,
             remoteStartQueuedAt: null,
             endedAt: input.kind === "live_activity_end" ? input.deliveredAt : null,
             lastAggregateJson: aggregateJson,
@@ -300,28 +327,19 @@ export const make = Effect.gen(function* () {
           .onConflictDoUpdate({
             target: [relayLiveActivities.userId, relayLiveActivities.deviceId],
             set: {
-              // A delivered start begins a NEW activity generation: the stored
-              // update token belongs to the previous activity (dead once a new
-              // one starts, and certainly dead after an end), so keep it only
-              // for plain updates.
               activityPushToken:
                 input.kind === "live_activity_update"
                   ? sql`${relayLiveActivities.activityPushToken}`
                   : null,
-              remoteStartedAt:
-                input.kind === "live_activity_start"
-                  ? input.deliveredAt
-                  : sql`coalesce(
+              remoteStartedAt: sql`coalesce(
                       ${relayLiveActivities.remoteStartedAt},
                       excluded.remote_started_at
                     )`,
               remoteStartQueuedAt: null,
               endedAt:
-                input.kind === "live_activity_start"
-                  ? null
-                  : input.kind === "live_activity_end"
-                    ? input.deliveredAt
-                    : relayLiveActivities.endedAt,
+                input.kind === "live_activity_end"
+                  ? input.deliveredAt
+                  : relayLiveActivities.endedAt,
               lastAggregateJson: aggregateJson,
               lastLiveActivityDeliveryAt: input.deliveredAt,
               updatedAt: input.deliveredAt,
@@ -339,73 +357,6 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-    }),
-
-    markStartQueued: Effect.fn("relay.live_activities.mark_start_queued")(function* (input) {
-      yield* Effect.annotateCurrentSpan({
-        "relay.mobile.device_id": input.deviceId,
-      });
-      yield* db
-        .insert(relayLiveActivities)
-        .values({
-          userId: input.userId,
-          deviceId: input.deviceId,
-          remoteStartQueuedAt: input.queuedAt,
-          remoteStartedAt: null,
-          endedAt: null,
-          createdAt: input.queuedAt,
-          updatedAt: input.queuedAt,
-        })
-        .onConflictDoUpdate({
-          target: [relayLiveActivities.userId, relayLiveActivities.deviceId],
-          set: {
-            remoteStartQueuedAt: sql`coalesce(
-              ${relayLiveActivities.remoteStartQueuedAt},
-              excluded.remote_start_queued_at
-            )`,
-            endedAt: null,
-            updatedAt: input.queuedAt,
-          },
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new LiveActivityDeliveryMarkPersistenceError({
-                operation: "mark-start-queued",
-                userId: input.userId,
-                deviceId: input.deviceId,
-                kind: null,
-                cause,
-              }),
-          ),
-        );
-    }),
-
-    clearStartQueued: Effect.fn("relay.live_activities.clear_start_queued")(function* (input) {
-      yield* Effect.annotateCurrentSpan({
-        "relay.mobile.device_id": input.deviceId,
-      });
-      yield* db
-        .update(relayLiveActivities)
-        .set({ remoteStartQueuedAt: null })
-        .where(
-          and(
-            eq(relayLiveActivities.userId, input.userId),
-            eq(relayLiveActivities.deviceId, input.deviceId),
-          ),
-        )
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new LiveActivityDeliveryMarkPersistenceError({
-                operation: "clear-start-queued",
-                userId: input.userId,
-                deviceId: input.deviceId,
-                kind: null,
-                cause,
-              }),
-          ),
-        );
     }),
 
     invalidateDeliveryToken: Effect.fn("relay.live_activities.invalidate_delivery_token")(
@@ -426,34 +377,6 @@ export const make = Effect.gen(function* () {
                 and(
                   eq(relayMobileDevices.userId, input.userId),
                   eq(relayMobileDevices.deviceId, input.deviceId),
-                ),
-              );
-            return;
-          }
-
-          if (input.kind === "live_activity_start") {
-            yield* db
-              .update(relayMobileDevices)
-              .set({
-                pushToStartToken: null,
-                updatedAt: input.invalidatedAt,
-              })
-              .where(
-                and(
-                  eq(relayMobileDevices.userId, input.userId),
-                  eq(relayMobileDevices.deviceId, input.deviceId),
-                ),
-              );
-            yield* db
-              .update(relayLiveActivities)
-              .set({
-                remoteStartQueuedAt: null,
-                updatedAt: input.invalidatedAt,
-              })
-              .where(
-                and(
-                  eq(relayLiveActivities.userId, input.userId),
-                  eq(relayLiveActivities.deviceId, input.deviceId),
                 ),
               );
             return;
