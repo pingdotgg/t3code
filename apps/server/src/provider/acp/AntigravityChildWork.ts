@@ -17,19 +17,22 @@ import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityPro
 import { boundAntigravityToolText, isCutAntigravityToolText } from "./AntigravityProtocol.ts";
 
 // Field numbers from the runtime's trajectory protos (exa.cortex_pb).
-const STEP_METADATA = 5;
-const METADATA_TOOL_CALL = 4;
 const STEP_PLANNER_RESPONSE = 20;
-const PLANNER_TOOL_CALLS = 7;
+const PLANNER_TEXT = 1;
+const PLANNER_THINKING = 3;
 const STEP_INVOKE_SUBAGENT = 143;
 const INVOKE_SPECS = 9;
 const INVOKE_RESULTS = 10;
 const INVOKE_SUBAGENT_STEP_TYPE = 127;
+const PLANNER_RESPONSE_STEP_TYPE = 15;
 
 // One open reads at most this much; past any bound the batch view stays as it was.
 const MAX_STEP_BYTES = 1024 * 1024;
 const MAX_INVOKE_ROWS = 200;
 const MAX_SCAN_BYTES = 8 * 1024 * 1024;
+// Numbering an auto-approved id reads the planner steps below its record.
+const MAX_PLANNER_ROWS = 2_000;
+const MAX_PLANNER_BYTES = 32 * 1024 * 1024;
 const MAX_CHILDREN = 16;
 const TRANSCRIPT_BYTE_CAP = 256 * 1024;
 const BATCH_TRANSCRIPT_BYTES = 512 * 1024;
@@ -118,7 +121,6 @@ const text = (bytes: Uint8Array | undefined, field: number) => {
 };
 
 interface InvokeRecord {
-  readonly toolCallId: string | undefined;
   readonly launches: ReadonlyArray<AntigravityChildLaunch>;
   readonly children: ReadonlyArray<{ readonly conversationId: string; readonly logUri: string }>;
 }
@@ -145,7 +147,6 @@ const decodeInvokeRecord = safely((payload): InvokeRecord | undefined => {
   }));
   if (!children.every((child) => NATIVE_ID.test(child.conversationId))) return undefined;
   return {
-    toolCallId: text(message(message(payload, STEP_METADATA), METADATA_TOOL_CALL), 1),
     launches: messages(invoke, INVOKE_SPECS).map((spec) => ({
       role: text(spec, 2) ?? "",
       prompt: text(spec, 3) ?? "",
@@ -154,13 +155,13 @@ const decodeInvokeRecord = safely((payload): InvokeRecord | undefined => {
   };
 });
 
-const plannerInvokeCallIds = safely((payload): ReadonlyArray<string> => {
+/** The runtime gives no step index to a planner response with neither text nor thinking. */
+const plannerTakesIndex = safely((payload): boolean | undefined => {
   const planner = message(payload, STEP_PLANNER_RESPONSE);
-  if (planner === undefined) return [];
-  return messages(planner, PLANNER_TOOL_CALLS).flatMap((call) => {
-    const id = text(call, 1);
-    return text(call, 2) === "invoke_subagent" && id !== undefined ? [id] : [];
-  });
+  if (planner === undefined) return undefined;
+  return [PLANNER_TEXT, PLANNER_THINKING].some(
+    (field) => (message(planner, field)?.length ?? 0) > 0,
+  );
 });
 
 const payloadOf = (row: unknown) =>
@@ -176,21 +177,64 @@ interface BatchLaunch {
   readonly prompt: string;
 }
 
-const plannerCallIdsAt = (database: NodeSqlite.DatabaseSync, plannerIdx: number) => {
-  const planner = payloadOf(
+/**
+ * Maps runtime step indexes to the idx of the invoke record that ran there. Steps take indexes in
+ * idx order, except planner responses with neither text nor thinking; an unreadable planner below
+ * leaves the numbering unproven, so the result is undefined.
+ */
+function invokeIdxAtStepIndex(
+  database: NodeSqlite.DatabaseSync,
+  stepIndexes: ReadonlySet<number>,
+): ReadonlyMap<number, number> | undefined {
+  const found = new Map<number, number>();
+  const last = Math.max(...stepIndexes);
+  let skipped = 0;
+  let planners = 0;
+  let plannerBytes = 0;
+  for (const row of database
+    .prepare(
+      // SQLite returns only in-bound planner payloads, so an oversized row never reaches this process.
+      "SELECT idx, step_type, step_format, length(step_payload) AS size, CASE WHEN step_type = ? AND length(step_payload) <= ? THEN step_payload END AS step_payload FROM steps WHERE step_type IN (?, ?) ORDER BY idx",
+    )
+    .iterate(
+      PLANNER_RESPONSE_STEP_TYPE,
+      MAX_STEP_BYTES,
+      PLANNER_RESPONSE_STEP_TYPE,
+      INVOKE_SUBAGENT_STEP_TYPE,
+    )) {
+    const idx = Number(row.idx);
+    if (row.step_type === INVOKE_SUBAGENT_STEP_TYPE) {
+      const stepIndex = idx - skipped;
+      if (stepIndexes.has(stepIndex)) found.set(stepIndex, idx);
+      if (stepIndex >= last) break;
+      continue;
+    }
+    planners += 1;
+    plannerBytes += Number(row.size ?? 0);
+    if (planners > MAX_PLANNER_ROWS || plannerBytes > MAX_PLANNER_BYTES) return undefined;
+    const payload = row.step_format === 0 ? payloadOf(row) : undefined;
+    const takesIndex = payload === undefined ? undefined : plannerTakesIndex(payload);
+    if (takesIndex === undefined) return undefined;
+    if (!takesIndex) skipped += 1;
+  }
+  return found;
+}
+
+const invokeRecordAt = (database: NodeSqlite.DatabaseSync, idx: number) => {
+  const payload = payloadOf(
     database
       .prepare(
-        "SELECT step_payload FROM steps WHERE idx = ? AND step_format = 0 AND length(step_payload) <= ?",
+        "SELECT step_payload FROM steps WHERE idx = ? AND step_type = ? AND step_format = 0 AND length(step_payload) <= ?",
       )
-      .get(plannerIdx, MAX_STEP_BYTES),
+      .get(idx, INVOKE_SUBAGENT_STEP_TYPE, MAX_STEP_BYTES),
   );
-  return planner === undefined ? undefined : plannerInvokeCallIds(planner);
+  return payload === undefined ? undefined : decodeInvokeRecord(payload);
 };
 
 /**
- * Auto-approved calls carry `<sessionId>:<plannerStep>`; the record with that planner call's id
- * is the proof. Permission prompts carry a random id, so the launch text must match one record
- * no auto-approved sibling claims, and no sibling may share the text.
+ * Auto-approved calls carry `<sessionId>:<n>`, the runtime's index of the step that ran the call,
+ * so the record at that index is the proof. Permission prompts carry a random id, so the launch
+ * text must match one record no auto-approved sibling claims, and no sibling may share the text.
  */
 function findInvokeRecord(
   database: NodeSqlite.DatabaseSync,
@@ -201,35 +245,16 @@ function findInvokeRecord(
     readonly siblings: ReadonlyArray<BatchLaunch & { readonly nativeTaskId: string }>;
   },
 ): InvokeRecord | undefined {
-  const plannerIdxOf = (nativeTaskId: string) => {
+  const stepIndexOf = (nativeTaskId: string) => {
     const stepId = /^(.+):(\d+)$/.exec(nativeTaskId);
     return stepId === null ? undefined : stepId[1] === input.rootSessionId ? Number(stepId[2]) : -1;
   };
-  const plannerIdx = plannerIdxOf(input.nativeTaskId);
-  if (plannerIdx !== undefined) {
-    if (plannerIdx < 0) return undefined;
-    const callIds = plannerCallIdsAt(database, plannerIdx) ?? [];
-    const [callId] = callIds;
-    if (callIds.length !== 1) return undefined;
-    // The record follows the planner step that issued the call.
-    let rows = 0;
-    let bytes = 0;
-    for (const row of database
-      .prepare(
-        // SQLite returns only in-bound payloads, so an oversized row never reaches this process.
-        "SELECT length(step_payload) AS size, CASE WHEN length(step_payload) <= ? THEN step_payload END AS step_payload FROM steps WHERE step_type = ? AND step_format = 0 AND idx > ? ORDER BY idx",
-      )
-      .iterate(MAX_STEP_BYTES, INVOKE_SUBAGENT_STEP_TYPE, plannerIdx)) {
-      const size = row !== null && typeof row === "object" && "size" in row ? Number(row.size) : 0;
-      rows += 1;
-      bytes += size;
-      if (rows > MAX_INVOKE_ROWS || size > MAX_STEP_BYTES || bytes > MAX_SCAN_BYTES)
-        return undefined;
-      const payload = payloadOf(row);
-      const record = payload === undefined ? undefined : decodeInvokeRecord(payload);
-      if (record !== undefined && record.toolCallId === callId) return complete(record);
-    }
-    return undefined;
+  const stepIndex = stepIndexOf(input.nativeTaskId);
+  if (stepIndex !== undefined) {
+    if (stepIndex < 0) return undefined;
+    const idx = invokeIdxAtStepIndex(database, new Set([stepIndex]))?.get(stepIndex);
+    const record = idx === undefined ? undefined : invokeRecordAt(database, idx);
+    return record === undefined ? undefined : complete(record);
   }
   const totals = database
     .prepare(
@@ -249,12 +274,12 @@ function findInvokeRecord(
   ) {
     return undefined;
   }
-  const claimed = new Set<string>();
+  const siblingStepIndexes = new Set<number>();
   for (const sibling of input.siblings) {
-    const idx = plannerIdxOf(sibling.nativeTaskId);
-    // A sibling whose launch text is missing, or cut under the same roles, or whose planner step
-    // is unreadable, cannot be ruled out.
-    if (idx === undefined) {
+    const siblingStepIndex = stepIndexOf(sibling.nativeTaskId);
+    // A sibling whose launch text is missing, or cut under the same roles, or whose step does not
+    // resolve to a record, cannot be ruled out.
+    if (siblingStepIndex === undefined) {
       if (
         sibling.title === ANTIGRAVITY_SUBAGENT_BATCH_TITLE ||
         (sibling.title !== null && isCutAntigravityToolText(sibling.title)) ||
@@ -264,20 +289,23 @@ function findInvokeRecord(
         return undefined;
       continue;
     }
-    if (idx < 0) continue;
-    const callIds = plannerCallIdsAt(database, idx);
-    if (callIds === undefined || callIds.length === 0) return undefined;
-    for (const callId of callIds) claimed.add(callId);
+    if (siblingStepIndex >= 0) siblingStepIndexes.add(siblingStepIndex);
   }
+  const claimedIdx =
+    siblingStepIndexes.size === 0
+      ? new Map<number, number>()
+      : invokeIdxAtStepIndex(database, siblingStepIndexes);
+  if (claimedIdx === undefined || claimedIdx.size !== siblingStepIndexes.size) return undefined;
+  const claimed = new Set(claimedIdx.values());
   const matches: Array<InvokeRecord> = [];
   for (const row of database
-    .prepare("SELECT step_payload FROM steps WHERE step_type = ? ORDER BY idx")
+    .prepare("SELECT idx, step_payload FROM steps WHERE step_type = ? ORDER BY idx")
     .iterate(INVOKE_SUBAGENT_STEP_TYPE)) {
     const payload = payloadOf(row);
     const record = payload === undefined ? undefined : decodeInvokeRecord(payload);
     // An unreadable record could be an identical launch, so uniqueness is unproven.
     if (record === undefined) return undefined;
-    if (record.toolCallId !== undefined && claimed.has(record.toolCallId)) continue;
+    if (claimed.has(Number(row.idx))) continue;
     // T3 stored the launch from the bounded tool payload, so bound the record the same way.
     const described = describeAntigravitySubagentLaunches(
       record.launches.map((launch) => ({
