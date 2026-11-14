@@ -3,6 +3,7 @@ import type {
   OrchestrationV2SearchThreadResult,
 } from "@t3tools/contracts";
 import type {
+  ActiveThreadListEntry,
   ProjectionRecordField,
   ProjectionRecordFilter,
   ProjectionRecords,
@@ -31,7 +32,6 @@ import {
   type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadTranscript,
-  type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   ProjectId,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -70,6 +70,7 @@ import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimi
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -85,8 +86,13 @@ export function withCreationProvenance(
 ): OrchestrationV2Command {
   switch (command.type) {
     case "thread.create": {
-      // Only the server stamps a link's origin, so a client cannot set one.
-      const { linkOrigin: _linkOrigin, delegatedFrom: _delegatedFrom, ...rest } = command;
+      // Only the server stamps a link's origin or folds in a first message, so a client cannot.
+      const {
+        linkOrigin: _linkOrigin,
+        delegatedFrom: _delegatedFrom,
+        initialMessage: _initialMessage,
+        ...rest
+      } = command;
       return { ...rest, ...provenance };
     }
     case "message.dispatch": {
@@ -321,6 +327,19 @@ export class ThreadManagementDurableRunProjectionError extends Schema.TaggedErro
   }
 }
 
+export class ThreadManagementWorktreeRestoreError extends Schema.TaggedError<ThreadManagementWorktreeRestoreError>()(
+  "ThreadManagementWorktreeRestoreError",
+  {
+    threadId: ThreadId,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    const detail = this.cause instanceof Error ? ` ${this.cause.message}` : "";
+    return `Couldn't recreate the missing workspace of thread ${this.threadId}, so the message was not sent.${detail}`;
+  }
+}
+
 export class ThreadManagementProviderInstanceDisabledError extends Schema.TaggedError<ThreadManagementProviderInstanceDisabledError>()(
   "ThreadManagementProviderInstanceDisabledError",
   {
@@ -365,6 +384,7 @@ export const ThreadManagementError = Schema.Union([
   ThreadManagementProjectThreadsListError,
   ThreadManagementDurableRunProjectionError,
   ThreadManagementProviderInstanceDisabledError,
+  ThreadManagementWorktreeRestoreError,
 ]);
 export type ThreadManagementError = typeof ThreadManagementError.Type;
 
@@ -441,7 +461,7 @@ export interface ThreadManagementServiceShape {
   readonly listProjectThreads: (input: {
     readonly projectId?: ProjectId | undefined;
     readonly includeSubagents: boolean;
-  }) => Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>, ThreadManagementError>;
+  }) => Effect.Effect<ReadonlyArray<ActiveThreadListEntry>, ThreadManagementError>;
   readonly sendToThread: (
     input: ThreadManagementSendInput,
   ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
@@ -597,6 +617,7 @@ const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+  const worktreeRestore = yield* ThreadWorktreeRestore;
 
   const assertProviderInstanceEnabled: ThreadManagementServiceShape["assertProviderInstanceEnabled"] =
     (input) =>
@@ -738,6 +759,18 @@ const make = Effect.gen(function* () {
 
   const assertDispatchTargetEnabled = (command: OrchestrationV2ServerCommand) => {
     switch (command.type) {
+      case "thread.metadata.update":
+        return command.continuation === undefined
+          ? Effect.void
+          : orchestrator.getThreadRecords(command.threadId, []).pipe(
+              Effect.flatMap((projection) =>
+                assertProviderInstanceEnabled({
+                  projectId: projection.thread.projectId,
+                  commandId: command.commandId,
+                  instanceId: projection.thread.modelSelection.instanceId,
+                }),
+              ),
+            );
       case "message.dispatch":
         return orchestrator.getThreadRecords(command.threadId, []).pipe(
           Effect.flatMap((projection) =>
@@ -812,33 +845,28 @@ const make = Effect.gen(function* () {
     );
 
   const listProjectThreads: ThreadManagementServiceShape["listProjectThreads"] = (input) =>
-    orchestrator
-      .getShellSnapshot({
-        location: "active",
-        ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new ThreadManagementProjectThreadsListError({
-              projectId: input.projectId,
-              cause,
-            }),
-        ),
-        Effect.map((snapshot) =>
-          snapshot.threads
-            .filter((thread) =>
-              input.includeSubagents
-                ? thread.lineage.sideChat !== true
-                : isListedThreadLineage(thread.lineage),
-            )
-            .toSorted(
-              (left, right) =>
-                DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
-                right.id.localeCompare(left.id),
-            ),
-        ),
-      );
+    orchestrator.listActiveThreads(input.projectId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ThreadManagementProjectThreadsListError({
+            projectId: input.projectId,
+            cause,
+          }),
+      ),
+      Effect.map((threads) =>
+        threads
+          .filter((thread) =>
+            input.includeSubagents
+              ? thread.lineage.sideChat !== true
+              : isListedThreadLineage(thread.lineage),
+          )
+          .toSorted(
+            (left, right) =>
+              DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
+              right.id.localeCompare(left.id),
+          ),
+      ),
+    );
 
   const sendToThread: ThreadManagementServiceShape["sendToThread"] = Effect.fn(
     "ThreadManagementService.sendToThread",
@@ -876,6 +904,26 @@ const make = Effect.gen(function* () {
       dispatchMode = {
         type: mode === "queue" ? "queue_after_active" : "start_immediately",
       };
+    }
+
+    // Turn start would fail on its own after the send reported success; a replay keeps its answer.
+    // A live steer starts no turn, so it needs no workspace.
+    if (dispatchMode.type !== "steer_active") {
+      yield* worktreeRestore
+        .restore(target.thread)
+        .pipe(
+          Effect.catch((cause) =>
+            hasReceipt(input.commandId).pipe(
+              Effect.flatMap((replay) =>
+                replay
+                  ? Effect.void
+                  : Effect.fail(
+                      new ThreadManagementWorktreeRestoreError({ threadId: input.threadId, cause }),
+                    ),
+              ),
+            ),
+          ),
+        );
     }
 
     const dispatched = yield* dispatch({
@@ -1724,6 +1772,12 @@ const make = Effect.gen(function* () {
   });
 });
 
+const layerThreadWorktreeRestoreNoop = Layer.succeed(ThreadWorktreeRestore, {
+  restore: Effect.fn("ThreadWorktreeRestore.restore")(function () {
+    return Effect.void;
+  }),
+});
+
 const layerLegacyV1ThreadImporterNoop = Layer.succeed(
   LegacyV1ThreadImporter.LegacyV1ThreadImporter,
   LegacyV1ThreadImporter.LegacyV1ThreadImporter.of({
@@ -1745,6 +1799,7 @@ export const layer: Layer.Layer<
   | CommandReceiptStore.CommandReceiptStoreV2
 > = Layer.effect(ThreadManagementService, make).pipe(
   Layer.provide(layerLegacyV1ThreadImporterNoop),
+  Layer.provide(layerThreadWorktreeRestoreNoop),
   Layer.provide(ThreadCommandExecutor.layer),
 );
 
@@ -1752,6 +1807,7 @@ export const layerWithLegacyImporter: Layer.Layer<
   ThreadManagementService,
   never,
   | LegacyV1ThreadImporter.LegacyV1ThreadImporter
+  | ThreadWorktreeRestore
   | Orchestrator.OrchestratorV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService

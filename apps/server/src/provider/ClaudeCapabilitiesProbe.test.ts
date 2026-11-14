@@ -14,9 +14,12 @@ import {
   buildClaudeCapabilitiesProbeQueryOptions,
   probeClaudeCapabilities,
   probeClaudeWorkspaceSnapshot,
+  spawnClaudeProbeThroughEnv,
 } from "./ClaudeProvider.ts";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
+
+const hostPath = process.env.PATH;
 
 const decodeClaudeSettings = Schema.decodeEffect(ClaudeSettings);
 
@@ -27,6 +30,7 @@ it("drops strict MCP mode, and only that, next to an administrator's managed-mcp
     environment: { HOME: "/home/user" },
     cwd: undefined,
     managedMcpConfig: true,
+    spawnThroughEnv: false,
   });
 
   // Claude exits before initializing when handed --strict-mcp-config here.
@@ -34,6 +38,29 @@ it("drops strict MCP mode, and only that, next to an administrator's managed-mcp
   assert.deepEqual(options.mcpServers, {});
   assert.equal(options.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
 });
+
+// A shell trampoline would not do: dash drops the exported function, and the launcher exits 127.
+it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "starts a Bash launcher that calls an exported function in the probe's workspace",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
+      yield* fileSystem.writeFileString(`${workspace}/claude`, '#!/bin/bash\nt3_launch "$@"\n');
+      yield* fileSystem.chmod(`${workspace}/claude`, 0o755);
+      const child = spawnClaudeProbeThroughEnv({
+        command: "claude",
+        args: ["--probe"],
+        cwd: workspace,
+        env: { PATH: `.:${hostPath}`, "BASH_FUNC_t3_launch%%": '() { echo "$PWD $@"; }' },
+        // @effect-diagnostics-next-line abortControllerInEffect:off - The launcher exits on its own.
+        signal: new AbortController().signal,
+      });
+      assert.deepEqual(child.spawnargs.slice(0, 3), ["/usr/bin/env", "-C", workspace]);
+      const output = yield* Effect.promise(() => child.stdout.setEncoding("utf8").toArray());
+      assert.equal(output.join(""), `${workspace} --probe\n`);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.effect("reports a deleted worktree's scan as finished, not pending", () =>
   Effect.gen(function* () {
