@@ -487,37 +487,32 @@ describe("V2 thread find", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("keeps its caches while Find is in use and drops them after one idle minute", () =>
+  it.effect("re-parses only the messages that events changed since the last search", () =>
     Effect.gen(function* () {
       const projection = yield* setup;
-      yield* putItems([item("one", 1, "idle needle one"), item("two", 2, "idle needle two")]);
-      const parses = () =>
+      const one = item("one", 1, "kept needle one");
+      if (one.type !== "assistant_message") return;
+      yield* putItems([one, item("two", 2, "kept needle two")]);
+      const parses = (prefix: string) =>
         vi
           .mocked(searchableMessageSegments)
-          .mock.calls.filter(([message]) => message.text.startsWith("idle needle")).length;
+          .mock.calls.filter(([message]) => message.text.startsWith(prefix)).length;
       const search = (query: string) => projection.searchThread({ threadId, query });
-      // One idle minute passes inside this search. The later counts fail if it let the caches go.
-      yield* projection.searchThreadStream({ threadId, query: "needle" }).pipe(
-        Stream.tap((frame) =>
-          frame.complete === false ? TestClock.adjust("1 minute") : Effect.void,
-        ),
-        Stream.runDrain,
-      );
-      assert.equal(parses(), 2);
-      yield* TestClock.adjust("40 seconds");
-      yield* search("idle");
-      yield* TestClock.adjust("40 seconds");
-      // A repeated query is answered from the completed scan and still counts as use.
-      const repeated = yield* projection
-        .searchThreadStream({ threadId, query: "needle" })
-        .pipe(Stream.runCollect);
-      assert.equal(repeated.length, 1);
-      yield* TestClock.adjust("40 seconds");
-      yield* search("one");
-      assert.equal(parses(), 2);
-      yield* TestClock.adjust("1 minute");
-      yield* search("needle");
-      assert.equal(parses(), 4);
+      assert.equal((yield* search("needle")).totalMatches, 2);
+      assert.equal(parses("kept needle"), 2);
+      // A new query and an idle hour reuse the parsed text.
+      yield* TestClock.adjust("1 hour");
+      assert.equal((yield* search("one")).totalMatches, 1);
+      assert.equal(parses("kept needle"), 2);
+      // A streamed delta re-parses only its own message.
+      yield* putItems([{ ...one, text: "kept needle one needle" }], "delta");
+      assert.equal((yield* search("needle")).totalMatches, 3);
+      assert.equal(parses("kept needle"), 3);
+      // A new message and a run update re-read the index but parse only the new message.
+      yield* putItems([item("three", 3, "kept needle three")], "appended");
+      yield* commit([{ ...run(threadId, runId, 1, "running"), type: "run.updated" }]);
+      assert.equal((yield* search("needle")).totalMatches, 4);
+      assert.equal(parses("kept needle"), 4);
     }).pipe(Effect.provide(layerTest)),
   );
 

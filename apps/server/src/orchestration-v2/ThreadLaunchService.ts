@@ -59,6 +59,7 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import { THREAD_HISTORY_SNAPSHOT_ROW_LIMIT } from "./threadHistoryPaging.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
@@ -1285,7 +1286,7 @@ const make = Effect.gen(function* () {
           }
         }
 
-        // Fork preparation before the full projection read; it is only part of the reply.
+        // Fork preparation before the projection read; it is only part of the reply.
         const shouldSchedule = runId === null ? Option.isNone(launchReceipt) : true;
         if (shouldSchedule && (yield* reservePreparation(input.commandId))) {
           yield* Effect.gen(function* () {
@@ -1319,8 +1320,12 @@ const make = Effect.gen(function* () {
             );
           }).pipe(Effect.onError(() => releasePreparation(input.commandId)));
         }
-        const projection = yield* threads
-          .getThreadProjection(threadId)
+        // A reused thread can hold any amount of history; the reply only describes the launched run.
+        const { projection } = yield* threads
+          .getThreadSnapshotWindow(threadId, {
+            rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+            ...(runId === null ? {} : { requiredRunId: runId }),
+          })
           .pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
 
         return {
