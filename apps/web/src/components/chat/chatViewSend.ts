@@ -151,8 +151,8 @@ export async function startFanoutThread(input: {
 }
 
 /**
- * Reverts the thread to before `message` and puts that message's text and
- * attachments back in the composer draft. Returns the restored prompt, or the
+ * Reverts the thread to before `message` and puts that message's text, mentions
+ * and attachments back in the composer draft. Returns the restored prompt, or the
  * error to show; on error the draft is untouched.
  */
 export async function rewindToMessage(input: {
