@@ -819,7 +819,6 @@ function OpenCommandPaletteDialog(props: {
       : null;
     // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
     const now = new Date().toISOString();
-    // Settled and snoozed threads are parked, so opening a project never lands on one.
     const openableThreads = threads.filter(
       (thread) => thread.settledOverride !== "settled" && !effectiveSnoozed(thread, { now }),
     );
