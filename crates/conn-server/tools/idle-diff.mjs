@@ -504,19 +504,7 @@ const showInfo = argv.includes("--info");
  * waits for its fix. The state then shows `KNOWN` and passes while its FAIL lines stay exactly
  * these. Any other line fails, and so does a known state that turns `same`: remove it here.
  */
-const KNOWN = {
-  "the background work ended (T3 wakes the agent)": {
-    reason:
-      "T3's CodexAdapterV2 asks for a continuation when a native subagent ends after the turn (codexNativeSubagentDetail: \"Subagent completed: …\"), and the server starts a run for it. conn-provider-codex has no such wake, so the thread reads completed (idle) while T3 runs the agent again (active).",
-    lines: [
-      'FAIL orbit.rows[1].activityRunStatus: T3 "running" / Conn null',
-      'FAIL orbit.rows[1].latestRunCompletedAt: T3 null / Conn "<time>"',
-      'FAIL orbit.rows[1].status: T3 "running" / Conn "completed"',
-      "FAIL orbit.rows[1].works: T3 true / Conn false",
-      "FAIL orbit.turnRuns: T3 true / Conn false",
-    ],
-  },
-};
+const KNOWN = {};
 
 /** Records one comparison and prints it; `summary` describes the T3 server's answer. */
 function record(pair, { state, lines, info, notes, summary, orbitSends = true }) {

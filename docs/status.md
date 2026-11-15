@@ -876,8 +876,8 @@ The fixture replay passes 51 of 159 variants (was 42): Codex 25 of 25 (was 17), 
 - **The provider thread's `error` status:** nothing to report. T3's Codex adapter ends every
   turn `reusable`, a crash included; a test now holds that.
 
-Not ported on purpose: the subagent wake (T3 asks for a continuation turn when a child ends
-after its parent's turn; this server has no such wake for Codex, as for background commands).
+The subagent wake and the background command wake are built since 2026-11-15 (see "Codex:
+the abandoned start and the status probe").
 
 Memory (macOS, `memory_load` 1,000 fake turns, release, run beside `main`): live heap 415 KiB at
 turn 1,000 and 346 KiB after close (`main`: 414 and 346); RSS at the end 60.8 MiB (`main`
@@ -1051,9 +1051,9 @@ on the way:
 - a SIGTERM stored a running Codex turn as interrupted, where T3 continues it on the next
   start. That was a wrong "idle" after a restart (`conn-engine/src/runner.rs`, `pump`).
 
-**Known difference:** after a Codex subagent ends, T3 wakes the agent with a new turn;
-`conn-provider-codex` does not, so Orbit reads idle there where T3 reads active. It is a
-provider feature, listed in the check's `KNOWN` list. **Reported, not counted:** a missing
+**Closed on 2026-11-15:** after a Codex subagent ends, T3 wakes the agent with a new turn;
+`conn-provider-codex` now does too (see "Codex: the abandoned start and the status probe",
+part 3), and the check's `KNOWN` list is empty: 23 comparisons, all the same. **Reported, not counted:** a missing
 protocol header answers 400 with JSON here and with an empty body in T3; Orbit always sends
 `2`. Not proven: Claude and Grok through these states, a message typed by a person,
 `blockedOnThreadWait`, a non-blocking question, archived threads, and a crash (SIGKILL).
@@ -1296,6 +1296,35 @@ commands. The README's "Status probe" lists every request, limit and failure.
   `memory-flow.mjs`, `settings-diff.mjs`, `secrets-interop.mjs`, `thread-cli-diff.mjs`. Not
   changed: `crates/conn-provider-codex/tools/conformance.mjs`.
 
+### Part 3: the Codex wakes (2026-11-15)
+
+`idle-diff` showed one state where Orbit would read idle while T3 reads active: a Codex
+subagent that ends after its root turn. T3's `CodexAdapterV2` asks for a continuation turn
+then, and for a background command that ends after its completed turn. Both are built, on the
+engine's existing path (`ProviderEvent::ContinuationRequested`, the queued agent message);
+nothing new in the engine but `ContinuationRequest.delivery`: T3's `message_text` wakes are
+the server's messages (`creationSource: "server"`), Claude's stay the provider's. The rules,
+texts and limits are in `crates/conn-provider-codex/README.md`, "Wakes". The notice builder
+(`backgroundWorkNotification`, now with exit codes) moved to
+`conn_provider_support::notification`; Claude uses it unchanged.
+
+- **Proof:** `idle-diff`: the state "the background work ended (T3 wakes the agent)" is the
+  same, and so is "after the wake turn"; its `KNOWN` entry is gone (23 of 23 the same). Codex
+  conformance: two new scenarios, `subagentWake` and `commandWake`, run T3's adapter with its
+  continuation worker on recordings with the child or the command moved behind the root
+  turn's end, plus a wake turn: T3's offers and our events are equal (text, notice,
+  delivery), and Codex gets the same wake `turn/start` from both; with our wake switched off
+  `subagentWake` reports the missing wake. The replay compares `completionWake` now (21 of
+  21). Unit tests in `replay_tests.rs` (the command wake once, none after a Stop, `thread/closed`,
+  the subagent rules) and the engine's `a_message_text_wake_is_the_servers_message`.
+- **What Codex receives on a wake:** an ordinary `turn/start` whose text is the wake's detail
+  (`Subagent completed: …`, `Background command completed …`), as from T3.
+- **Bounds:** at most 16 settled turns, each until its commands end; one offered id per
+  command of a settled turn.
+- **Not built:** capacity continuations (a turn held for a usage limit), so a wake never waits
+  for one; T3's `ThreadManagementProviderInstanceDisabledError` log when the instance is off
+  (our dispatch refuses the message the same way, with a log line).
+
 ## Faults found in the T3 server
 
 Faults that the T3 server has and this server fixes on purpose. Each is to be written up for
@@ -1427,7 +1456,7 @@ T3 Code.
    `pullRequests.*` (35), the other 5 linked pull request commands and 4 `/mcp` tools.
    Also: the Conn-only methods
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest
-   share); 67 more `/mcp` tools (11 need nothing new: `crates/conn-mcp/README.md`, "All 87 tools"); Codex subagent wakes and stop; worktree setup scripts
+   share); 67 more `/mcp` tools (11 need nothing new: `crates/conn-mcp/README.md`, "All 87 tools"); Codex subagent stop (the wakes are built, 2026-11-15); worktree setup scripts
    the T3 way (typed into a thread terminal, with a completion marker).
 7. **Small leftovers.** Done on 2026-11-14 (`docs/server-area.md`, end): the contract's
    limits on terminal environment variables and `assets.createUrl` strings (generated,

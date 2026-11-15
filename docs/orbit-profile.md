@@ -199,9 +199,9 @@ reads `id` and `title` (`ConnThreadIndex.php:187-216`), and a refusal's `reason`
 the same 14 states on the Codex stub and compares those fields, Orbit's verdicts, the HTTP
 status and content type. The same in all but one state. Fixed on the way: the shell showed
 `running` where T3 shows `queued` while a message waits, and a SIGTERM ended a running turn
-where T3 continues it on the next start. **Known difference:** T3 wakes the agent with a new
-turn when a Codex subagent ends after its turn; we do not, so Orbit reads idle where T3 reads
-active (conn-provider-codex has no such wake).
+where T3 continues it on the next start; and since 2026-11-15 a Codex subagent that ends after
+its turn wakes the agent with a new turn, as in T3 (before, Orbit read idle where T3 read
+active). No known difference is left.
 
 ### 1c. The agent itself, through `/mcp`
 

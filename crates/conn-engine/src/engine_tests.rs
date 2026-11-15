@@ -2289,6 +2289,39 @@ async fn a_steer_status_moves_the_user_item() {
     assert_eq!(steer_item, ["completed", "pending", "completed"]);
 }
 
+/// Codex's wakes carry their whole text (`delivery: "message_text"`): T3's
+/// `ProviderContinuationService` then creates the message as the server's, not the
+/// provider's, with the provider's notice, and its turn sends that text.
+#[tokio::test(flavor = "current_thread")]
+async fn a_message_text_wake_is_the_servers_message() {
+    let db = TempDb::new("continuation-text");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "background-text")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    let wake = p["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["createdBy"] == "agent" && m["role"] == "user")
+        .unwrap();
+    assert_eq!(wake["creationSource"], "server");
+    assert_eq!(wake["text"], "Subagent completed: helper");
+    assert_eq!(
+        wake["notification"]["summary"],
+        "Subagent \"helper\" finished"
+    );
+    assert!(
+        p["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["role"] == "assistant" && m["text"] == "echo: Subagent completed: helper"),
+        "the wake turn sent its text"
+    );
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn a_continuation_request_runs_a_provider_turn_after_the_run() {
     let db = TempDb::new("continuation");

@@ -217,6 +217,11 @@ Child threads report on their own `threadId`; T3 maps them in `CodexAdapterV2`
 | `turn/started` on a child thread | the child's provider turn and root node (the second and later turns reopen the task); `turn/completed` ends them, sets the child's provider thread back to `idle`, ends the `subagent` node and the task |
 | a server request on a child turn | an approval shows on the root turn under the subagent's node; a question on the child |
 
+A direct child whose turn completes or fails after its root turn ended wakes the parent: the
+next turn's text is `Subagent <status>: <label>` with its result (README, "Wakes"). A
+background command that ends after its completed turn does the same with `Background command
+completed (exit N): <command>` and its output tail.
+
 Requests T3 sends for subagents: `thread/read` `{threadId, includeTurns: false}`, then
 `thread/resume` `{threadId, excludeTurns: true}` when the read names no model (a child with
 no model yet); `turn/interrupt` to each running child turn when the root turn is stopped,

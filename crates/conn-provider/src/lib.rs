@@ -409,6 +409,11 @@ pub struct ContinuationRequest {
     /// `source`, `outcome`, `summary`). Absent: the engine's default notice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notification: Option<serde_json::Value>,
+    /// `delivery`: `Some("message_text")` when the detail is the whole wake and the provider
+    /// buffered nothing for it (Codex). The continuation message is then created by the
+    /// server (`creationSource: "server"`), else by the provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<String>,
 }
 
 /// `ProviderAdapterV2Event` `steer.updated` status.

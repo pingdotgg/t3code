@@ -2047,7 +2047,7 @@ mod tests {
     /// T3's own cases for `stderrExcerpt` (`effect-codex-app-server` `_internal/stdio.test.ts`).
     #[test]
     fn stderr_excerpts_match_t3() {
-        let cases: [(&str, String); 13] = [
+        let cases: [(&str, &str, String); 13] = [
             (
                 "node launcher",
                 [

@@ -485,7 +485,10 @@ mod tests {
             ..CodexConfig::default()
         };
         assert!(CodexProvider::detect("codex".into(), config.clone()).is_none());
-        let provider = CodexProvider::for_instance("codex".into(), config, None);
+        // The binary goes through the entry: an entry without one means `codex` on PATH.
+        let entry =
+            serde_json::json!({"driver": "codex", "config": {"binaryPath": "/nonexistent/codex"}});
+        let provider = CodexProvider::for_instance("codex".into(), config, Some(&entry));
         provider.refresh_status(None).await;
         let entry = provider.server_provider_entry("").unwrap();
         assert_eq!(entry["status"], "error");

@@ -16,6 +16,7 @@ pub mod host_files;
 pub mod ids;
 pub mod instance;
 pub mod lines;
+pub mod notification;
 pub mod probe;
 pub mod process;
 pub mod redact;

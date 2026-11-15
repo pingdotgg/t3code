@@ -29,7 +29,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo, repoRoot } from "../../../../tools/monorepo.mjs";
-import { sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
+import { cargoBuildEnv, sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
 import { GUARD_IMPORT } from "../../../../tools/no-outside-fetch.mjs";
 
 const MONOREPO = monorepo();
@@ -312,6 +312,7 @@ NodeFS.writeFileSync(
 const build = NodeChildProcess.spawnSync("cargo", ["build", "--quiet", "-p", "conn-provider-codex", "--example", "codex_probe"], {
   cwd: repoRoot,
   stdio: ["ignore", "inherit", "inherit"],
+  env: cargoBuildEnv(),
 });
 if (build.status !== 0) {
   console.error("probe-conformance: codex_probe did not build");

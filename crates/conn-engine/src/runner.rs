@@ -1089,8 +1089,8 @@ impl Inner {
                 Translated::Steer { message_id, status } => {
                     self.steer_updated(&thread_id, message_id, status).await;
                 }
-                Translated::Continuation(detail, notification) => {
-                    self.request_continuation(&thread_id, detail, notification)
+                Translated::Continuation(detail, notification, delivery) => {
+                    self.request_continuation(&thread_id, detail, notification, delivery)
                         .await;
                 }
                 Translated::Terminal(status, failure, broken) => {
@@ -1240,7 +1240,15 @@ impl Inner {
         thread_id: &str,
         detail: Option<String>,
         notification: Option<Value>,
+        delivery: Option<String>,
     ) {
+        // Only buffered wakes come from the provider; a wake whose text is the whole message
+        // (`delivery: "message_text"`, Codex) is the server's.
+        let creation_source = if delivery.as_deref() == Some("message_text") {
+            "server"
+        } else {
+            "provider"
+        };
         let message_id = format!(
             "message:provider-continuation:{}",
             crate::time::unique_suffix()
@@ -1260,7 +1268,7 @@ impl Inner {
             "attachments": [],
             "dispatchMode": {"type": "queue_after_active"},
             "createdBy": "agent",
-            "creationSource": "provider",
+            "creationSource": creation_source,
         });
         if let Err(
             crate::engine::DispatchError::Rejected(e) | crate::engine::DispatchError::Internal(e),
@@ -1860,7 +1868,7 @@ enum Translated {
         status: &'static str,
     },
     /// The provider has output with no turn running and asks for one.
-    Continuation(Option<String>, Option<Value>),
+    Continuation(Option<String>, Option<Value>, Option<String>),
     /// `subagent.updated`, then the child thread follows the subagent's model.
     Subagent(Draft, Value),
 }
@@ -2030,7 +2038,7 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
             },
         },
         ProviderEvent::ContinuationRequested(request) => {
-            Translated::Continuation(request.detail, request.notification)
+            Translated::Continuation(request.detail, request.notification, request.delivery)
         }
         // Handled before translation.
         ProviderEvent::BackgroundWorkUpdated { .. } => Translated::Ignore,

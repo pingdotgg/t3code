@@ -8,12 +8,11 @@
 
 use std::collections::VecDeque;
 
+use conn_provider_support::notification;
 use serde_json::{Value, json};
 
 /// Reports held for a wake (one per task).
 const REPORT_CAP: usize = 64;
-/// `LABEL_MAX_LENGTH`, in UTF-16 code units as JavaScript counts.
-const LABEL_MAX_LENGTH: usize = 80;
 
 /// `BackgroundWork["kind"]`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,21 +33,12 @@ impl Kind {
         }
     }
 
-    fn noun(self) -> (&'static str, &'static str) {
+    fn work_kind(self) -> notification::WorkKind {
         match self {
-            Self::Subagent => ("Subagent", "subagents"),
-            Self::Command => ("Command", "commands"),
-            Self::Monitor => ("Monitor", "monitors"),
-            Self::BackgroundTask => ("Background task", "background tasks"),
-        }
-    }
-
-    fn source(self) -> &'static str {
-        match self {
-            Self::Subagent => "subagent",
-            Self::Command => "command",
-            Self::Monitor => "monitor",
-            Self::BackgroundTask => "background_task",
+            Self::Subagent => notification::WorkKind::Subagent,
+            Self::Command => notification::WorkKind::Command,
+            Self::Monitor => notification::WorkKind::Monitor,
+            Self::BackgroundTask => notification::WorkKind::BackgroundTask,
         }
     }
 }
@@ -238,144 +228,25 @@ impl Wakes {
     }
 }
 
-/// `reportLabel`: the first line, at most 80 UTF-16 units, cut with an ellipsis.
-pub(crate) fn report_label(label: Option<&str>) -> Option<String> {
-    let first = label?.trim().split('\n').next()?.trim();
-    if first.is_empty() {
-        return None;
-    }
-    let units: usize = first.chars().map(char::len_utf16).sum();
-    if units <= LABEL_MAX_LENGTH {
-        return Some(first.to_string());
-    }
-    // JavaScript slices at 79 units and steps back one when that splits a surrogate pair.
-    let mut taken = String::new();
-    let mut used = 0;
-    for c in first.chars() {
-        let width = c.len_utf16();
-        if used + width > LABEL_MAX_LENGTH - 1 {
-            break;
-        }
-        used += width;
-        taken.push(c);
-    }
-    Some(format!("{taken}…"))
-}
-
-fn outcome_verb(kind: Kind, outcome: &str) -> &'static str {
-    match outcome {
-        "failed" => "failed",
-        "cancelled" => "was stopped",
-        "updated" if kind == Kind::Monitor => "reported new output",
-        "updated" => "updated",
-        _ => "finished",
-    }
-}
-
-fn combined_outcome(reports: &[Report]) -> &'static str {
-    let has = |o: &str| reports.iter().any(|r| r.outcome == o);
-    if has("failed") {
-        "failed"
-    } else if has("cancelled") {
-        "cancelled"
-    } else if !reports.is_empty() && reports.iter().all(|r| r.outcome == "completed") {
-        "completed"
-    } else if has("updated") {
-        "updated"
-    } else {
-        "unknown"
-    }
-}
-
-fn named(report: &Report, capitalize: bool) -> String {
-    let noun = report.kind.noun().0;
-    let noun = if capitalize {
-        noun.to_string()
-    } else {
-        noun.to_lowercase()
-    };
-    match report_label(report.label.as_deref()) {
-        Some(label) => format!("{noun} \"{label}\""),
-        None => noun,
-    }
-}
-
-fn join_names(names: &[String]) -> String {
-    match names.split_last() {
-        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
-        _ => names.join(""),
-    }
-}
-
-fn summary(reports: &[Report], outcome: &str) -> String {
-    let [first, rest @ ..] = reports else {
-        return String::new();
-    };
-    if rest.is_empty() {
-        return format!(
-            "{} {}",
-            named(first, true),
-            outcome_verb(first.kind, first.outcome)
-        );
-    }
-    let verb = match outcome {
-        "failed" => "failed",
-        "cancelled" => "were stopped",
-        "updated" => "updated",
-        _ => "finished",
-    };
-    if reports.len() > 3
-        || reports
-            .iter()
-            .all(|r| report_label(r.label.as_deref()).is_none())
-    {
-        let same = reports.iter().all(|r| r.kind == first.kind);
-        let noun = if same {
-            first.kind.noun().1
-        } else {
-            "background tasks"
-        };
-        return format!("{} {noun} {verb}", reports.len());
-    }
-    let names: Vec<String> = reports
-        .iter()
-        .enumerate()
-        .map(|(i, r)| named(r, i == 0))
-        .collect();
-    format!("{} {verb}", join_names(&names))
-}
-
-fn source(reports: &[Report]) -> Value {
-    let [first, rest @ ..] = reports else {
-        return json!({"kind": "background_task"});
-    };
-    if rest.iter().any(|r| r.kind != first.kind) {
-        return json!({"kind": "background_task"});
-    }
-    match (&first.kind, &first.child_thread_id) {
-        (Kind::Subagent, Some(child)) if rest.is_empty() => {
-            json!({"kind": "subagent", "childThreadId": child})
-        }
-        (kind, _) => json!({"kind": kind.source()}),
-    }
-}
-
 /// `backgroundWorkNotification`: `None` with no report.
 pub(crate) fn notification(reports: &[Report]) -> Option<Value> {
-    if reports.is_empty() {
-        return None;
-    }
-    let outcome = combined_outcome(reports);
-    Some(json!({
-        "source": source(reports),
-        "outcome": outcome,
-        "summary": summary(reports, outcome),
-    }))
+    let work: Vec<notification::Work> = reports
+        .iter()
+        .map(|r| notification::Work {
+            kind: r.kind.work_kind(),
+            label: r.label.clone(),
+            outcome: r.outcome,
+            child_thread_id: r.child_thread_id.clone(),
+            exit_code: None,
+        })
+        .collect();
+    notification::background_work_notification(&work)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use conn_provider_support::notification::report_label;
 
     fn report(kind: Kind, label: Option<&str>, outcome: &'static str) -> Report {
         Report {

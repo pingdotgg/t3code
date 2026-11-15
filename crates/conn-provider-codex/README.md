@@ -124,9 +124,9 @@ after. Errors carry T3's texts ("Codex CLI request timed out.", "Codex CLI comma
 
 ## Not implemented
 
-- **Subagent wakes:** when a child ends after its parent's turn, T3 asks for a continuation
-  turn on the parent (`continuationRequests`, "Subagent completed: …"); this crate does not,
-  as for background commands. Subagent stop (`stopTask`) is not built.
+- **Subagent stop** (`stopTask`) is not built.
+- **Capacity continuations** (a turn held for a usage limit, `capacityContinuations`) are not
+  built; the wakes below do not wait for one.
 - **Text generation:** T3's managed runtime (`resolveRuntime`), custom models
   (`customModels`) and the catalog's `isDefault`/`isLegacy` flags in the model fallback; the
   fallback to another provider when Codex is unusable (in the server's title code).
@@ -229,10 +229,44 @@ turn. Tests (`src/live_tests.rs`, a fake app-server, no CLI):
 `the_next_turn_waits_for_an_abandoned_start_that_reached_codex`,
 `closing_the_session_ends_an_abandoned_start`.
 
+## Wakes: work that ends after its turn (2026-11-15)
+
+As `CodexAdapterV2` asks `ProviderContinuationRequests` for a continuation turn, this crate
+emits `ProviderEvent::ContinuationRequested`, and the engine queues the wake message
+(`queue_after_active`: it runs after any active run and before nothing queued earlier; a
+released session opens again for it, as for any message). Both wakes carry `delivery:
+"message_text"`: the text is the whole wake, so the engine creates the message as the
+server's (`creationSource: "server"`), and the wake turn sends that text to Codex as an
+ordinary `turn/start`.
+
+- **A subagent that ends after its root turn** (`finalizeCodexTurn`): a direct child whose turn
+  completes or fails while no root turn runs on its parent thread, and whose root turn was not
+  stopped or failed. Text (`codexNativeSubagentDetail`): `Subagent <status>: <title, else
+  prompt, else id>`, then `\n\nResult:\n<result>` when the child answered. Notice:
+  `backgroundWorkNotification` for the subagent, with its child thread.
+- **A background command that ends after its turn**: a completed root turn with running
+  commands is kept (`settledTurns`, at most 16) while they run; their output deltas and end
+  still show. When one ends, and the turn is not being stopped, one wake per command
+  (`codexBackgroundCommandDetail`: `Background command completed (exit N): <command, 200
+  UTF-16 units>` and the last 1,000 units of its output; the notice names the command, its
+  outcome and exit code, with the command as `detail`). `thread/closed` ends a settled turn's
+  commands as interrupted, with no wake. A root turn's command rows carry `completionWake:
+  "always"`, as T3's; the replay compares it now.
+
+The notice text is `conn_provider_support::notification`, shared with Claude. Proof:
+conformance scenarios `subagentWake` and `commandWake` (T3's recordings with the child or the
+command moved behind the root turn's end, and a wake turn; T3's adapter offers are logged and
+compared with our events: text, notice, delivery; both servers send the same wake
+`turn/start`), `idle-diff` (the "background work ended" state is the same as T3's), the
+replay of all 21 recordings with `completionWake`, unit tests
+`a_command_that_ends_after_its_turn_wakes_the_agent_once`,
+`a_stopped_turns_command_asks_for_no_wake`, `a_closed_thread_ends_a_settled_turns_commands`,
+`a_subagent_wakes_its_parent_only_after_a_completed_root_turn`, and the engine's
+`a_message_text_wake_is_the_servers_message`.
+
 ## Known differences from `CodexAdapterV2`
 
 - A turn whose start Stop abandoned is stopped when it reaches Codex anyway (above).
-- Command rows carry no `completionWake`: Conn Server has no background continuation.
 - `turn.terminal` has no `failureItemOrdinal` or `retryStartedAt`: the trait has no field.
 - Capabilities switch off what is listed above.
 

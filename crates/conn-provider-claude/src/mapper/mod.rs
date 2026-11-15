@@ -3092,6 +3092,7 @@ impl<E: Env> Mapper<E> {
                 provider_thread_id: ctx.provider_thread_id.as_str().into(),
                 detail: self.wakes.detail.clone(),
                 notification: wakes::notification(&reports),
+                delivery: None,
             },
         )));
     }

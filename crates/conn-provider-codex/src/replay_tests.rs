@@ -17,7 +17,6 @@
 //! - timestamps the TS harness took from a clock (its TestClock at the epoch, or wall-clock
 //!   time on the capture day) become `<now>`; timestamps from Codex stay
 //! - the random uuid at the end of runtime request and plan ids becomes `<uuid>`
-//! - `completionWake` is dropped: Conn Server offers no background continuation
 
 use conn_contract::from_json;
 use conn_provider::{RuntimeRequestResponse, TurnInput};
@@ -188,7 +187,6 @@ pub(crate) fn normalize(event: &Value, captured_on: &str) -> Value {
 fn scrub(value: &mut Value, captured_on: &str) {
     match value {
         Value::Object(map) => {
-            map.remove("completionWake");
             for (key, v) in map.iter_mut() {
                 if let Value::String(s) = v {
                     if (key.ends_with("At") || key == "updatedAt")
@@ -651,5 +649,191 @@ fn every_codex_turn_end_leaves_the_thread_reusable() {
     assert_eq!(seen.len(), 4);
     for terminal in seen {
         assert_eq!(terminal["threadDisposition"], "reusable", "{terminal}");
+    }
+}
+
+/// The `continuation.requested` events among `outs`.
+fn wakes(outs: &[Out]) -> Vec<Value> {
+    outs.iter()
+        .filter_map(|o| match o {
+            Out::Event(e) => Some(serde_json::to_value(e).unwrap()),
+            _ => None,
+        })
+        .filter(|e| e["type"] == "continuation.requested")
+        .collect()
+}
+
+fn feed(mapper: &mut Mapper<FixedEnv>, frames: &[Value]) -> Vec<Out> {
+    frames
+        .iter()
+        .flat_map(|f| mapper.handle(Inbound::from_value(f.clone())))
+        .collect()
+}
+
+/// A root turn on `th` with command `c1` running.
+fn turn_with_command(mapper: &mut Mapper<FixedEnv>) {
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    mapper.begin_turn("th", &turn_input(&ts["startTurn"][0]));
+    let _ = mapper.turn_start_result("th", &json!({"turn": {"id": "tu", "startedAt": null}}));
+    let _ = feed(
+        mapper,
+        &[
+            json!({"method": "item/started", "params": {"threadId": "th", "turnId": "tu",
+            "item": {"type": "commandExecution", "id": "c1", "command": "npm test", "processId": "9", "status": "inProgress"}}}),
+        ],
+    );
+}
+
+/// `codexBackgroundCommandDetail` and the command wake: a command that ends after its
+/// completed turn shows its late output and end, and asks for one continuation turn.
+#[test]
+fn a_command_that_ends_after_its_turn_wakes_the_agent_once() {
+    let mut mapper = Mapper::new(FixedEnv::default());
+    turn_with_command(&mut mapper);
+    let outs = feed(
+        &mut mapper,
+        &[
+            json!({"method": "turn/completed", "params": {"threadId": "th",
+            "turn": {"id": "tu", "status": "completed", "completedAt": 3}}}),
+        ],
+    );
+    assert!(wakes(&outs).is_empty(), "no wake while the command runs");
+    let late = [
+        json!({"method": "item/commandExecution/outputDelta", "params": {"threadId": "th", "turnId": "tu",
+            "itemId": "c1", "delta": "boom\n"}}),
+        json!({"method": "item/completed", "params": {"threadId": "th", "turnId": "tu",
+            "item": {"type": "commandExecution", "id": "c1", "command": "npm test", "status": "failed",
+                "exitCode": 1, "aggregatedOutput": "boom\n"}}}),
+    ];
+    let outs = feed(&mut mapper, &late);
+    let kinds: Vec<String> = outs
+        .iter()
+        .filter_map(|o| match o {
+            Out::Event(e) => Some(
+                serde_json::to_value(e).unwrap()["type"]
+                    .as_str()?
+                    .to_owned(),
+            ),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "command_output.delta",
+            "node.updated",
+            "turn_item.updated",
+            "continuation.requested"
+        ]
+    );
+    let wake = &wakes(&outs)[0];
+    assert_eq!(
+        wake["detail"],
+        "Background command completed (exit 1): npm test\n\nOutput tail:\nboom"
+    );
+    assert_eq!(wake["delivery"], "message_text");
+    assert_eq!(
+        wake["notification"],
+        json!({"source": {"kind": "command"}, "outcome": "failed",
+            "summary": "Command \"npm test\" failed (exit 1)", "detail": "npm test"})
+    );
+    // Its turn is gone: a repeated end shows nothing and asks for nothing.
+    assert!(feed(&mut mapper, &late[1..]).is_empty());
+    assert!(mapper.state_sizes().contains(&("settled", 0)));
+}
+
+/// A stopped turn's commands end with it (`terminalizeRunningCommandItems`); no wake.
+#[test]
+fn a_stopped_turns_command_asks_for_no_wake() {
+    let mut mapper = Mapper::new(FixedEnv::default());
+    turn_with_command(&mut mapper);
+    let outs = feed(
+        &mut mapper,
+        &[
+            json!({"method": "turn/completed", "params": {"threadId": "th",
+                "turn": {"id": "tu", "status": "interrupted", "completedAt": 3}}}),
+            json!({"method": "item/completed", "params": {"threadId": "th", "turnId": "tu",
+                "item": {"type": "commandExecution", "id": "c1", "command": "npm test", "status": "completed", "exitCode": 0}}}),
+        ],
+    );
+    assert!(wakes(&outs).is_empty());
+    assert!(mapper.state_sizes().contains(&("settled", 0)));
+}
+
+/// `thread/closed`: a settled turn's running commands end as interrupted, with no wake.
+#[test]
+fn a_closed_thread_ends_a_settled_turns_commands() {
+    let mut mapper = Mapper::new(FixedEnv::default());
+    turn_with_command(&mut mapper);
+    let outs = feed(
+        &mut mapper,
+        &[
+            json!({"method": "turn/completed", "params": {"threadId": "th",
+                "turn": {"id": "tu", "status": "completed", "completedAt": 3}}}),
+            json!({"method": "thread/closed", "params": {"threadId": "th"}}),
+        ],
+    );
+    assert!(wakes(&outs).is_empty());
+    let row = outs
+        .iter()
+        .filter_map(|o| match o {
+            Out::Event(e) => Some(serde_json::to_value(e).unwrap()),
+            _ => None,
+        })
+        .find(|e| e["type"] == "turn_item.updated" && e["turnItem"]["type"] == "command_execution")
+        .expect("the command row ends");
+    assert_eq!(row["turnItem"]["status"], "interrupted");
+    assert!(mapper.state_sizes().contains(&("settled", 0)));
+}
+
+/// A subagent that ends while its root turn still runs asks for no wake: the root turn gets
+/// the result itself. Nor does one whose root turn was stopped.
+#[test]
+fn a_subagent_wakes_its_parent_only_after_a_completed_root_turn() {
+    for (root_end_first, root_status, wake) in [
+        (false, "completed", false),
+        (true, "interrupted", false),
+        (true, "completed", true),
+    ] {
+        let mut mapper = Mapper::new(FixedEnv::default());
+        let dir = env!("CARGO_MANIFEST_DIR");
+        let ts: Value =
+            serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+        mapper.begin_turn("th", &turn_input(&ts["startTurn"][0]));
+        let _ = mapper.turn_start_result("th", &json!({"turn": {"id": "tu", "startedAt": null}}));
+        let _ = feed(
+            &mut mapper,
+            &[
+                json!({"method": "item/started", "params": {"threadId": "th", "turnId": "tu",
+                    "item": {"type": "subAgentActivity", "id": "a1", "kind": "started",
+                        "agentThreadId": "child", "agentPath": "/root/helper"}}}),
+                json!({"method": "turn/started", "params": {"threadId": "child",
+                    "turn": {"id": "ct", "status": "inProgress", "startedAt": 1}}}),
+            ],
+        );
+        let root_end = json!({"method": "turn/completed", "params": {"threadId": "th",
+            "turn": {"id": "tu", "status": root_status, "completedAt": 3}}});
+        let child_end = json!({"method": "turn/completed", "params": {"threadId": "child",
+            "turn": {"id": "ct", "status": "completed", "completedAt": 4}}});
+        let frames = if root_end_first {
+            vec![root_end, child_end]
+        } else {
+            vec![child_end, root_end]
+        };
+        let found = wakes(&feed(&mut mapper, &frames));
+        assert_eq!(
+            found.len(),
+            usize::from(wake),
+            "{root_end_first} {root_status}: {found:?}"
+        );
+        if wake {
+            assert_eq!(found[0]["detail"], "Subagent completed: /root/helper");
+            assert_eq!(
+                found[0]["notification"]["summary"],
+                "Subagent \"/root/helper\" finished"
+            );
+            assert_eq!(found[0]["delivery"], "message_text");
+        }
     }
 }
