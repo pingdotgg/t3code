@@ -924,6 +924,7 @@ it.live.each([
               sessionId: AuthSessionId.make("compression-test"),
               subject,
               method: "bearer-access-token",
+              client: { deviceType: "unknown" },
               scopes: [],
             }),
         }),
