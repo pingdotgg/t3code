@@ -18,11 +18,11 @@ import {
 import {
   connectionRoutes,
   hasSavedBearerRoute,
-  connectionStatusText,
   environmentMcpUrl,
 } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
 
+import { connectionStatusCopy } from "../../lib/connectionStatusCopy";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { SettingsRow } from "./settingsLayout";
@@ -238,9 +238,9 @@ export function SavedBackendListRow({
 
   const statusTooltip = `${
     unsupported
-      ? (environment.connection.error ?? connectionStatusText(environment.connection))
+      ? (environment.connection.error ?? connectionStatusCopy(environment.connection))
       : enabled
-        ? connectionStatusText(environment.connection)
+        ? connectionStatusCopy(environment.connection)
         : t("savedEnv.switchedOff")
   }${
     versionMismatch

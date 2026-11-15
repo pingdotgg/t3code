@@ -53,5 +53,15 @@ export function planProjectRemoval<
     "This action cannot be undone.",
   ].join("\n");
 
-  return { projectThreads, isWholeGroup, targetKind, confirmationMessage };
+  return {
+    projectThreads,
+    isWholeGroup,
+    targetKind,
+    confirmationMessage,
+    /** Structured data for clients that compose a localized message (see `targetKind`). */
+    threadCount,
+    targetLabel,
+    singleMember,
+    memberCount: members.length,
+  };
 }

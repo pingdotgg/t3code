@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
+import { connectionStatusTitleCopy } from "../../lib/connectionStatusCopy";
 import { AsyncResult } from "effect/reactivity";
 import {
   ChevronDownIcon,
@@ -567,7 +567,9 @@ function ScheduledTaskEnvironmentList({
   for (const { environment, connected, tasks, error } of states) {
     const label = settingsScopeEnvironmentLabel(environment, environments);
     if (!connected) {
-      summaries.notConnected!.push(`${label} (${connectionStatusTitle(environment.connection)})`);
+      summaries.notConnected!.push(
+        `${label} (${connectionStatusTitleCopy(environment.connection)})`,
+      );
     } else if (error !== null) {
       summaries.loadFailed!.push(`${label}: ${error}`);
     } else if (!tasks) {
@@ -592,10 +594,10 @@ function ScheduledTaskEnvironmentList({
             >
               <ConnectionStatusDot
                 dotClassName={connectionPhaseDotClassName(environment.connection.phase)}
-                tooltipText={connectionStatusTitle(environment.connection)}
+                tooltipText={connectionStatusTitleCopy(environment.connection)}
               />
               <span className="text-xs text-muted-foreground">
-                {connectionStatusTitle(environment.connection)}
+                {connectionStatusTitleCopy(environment.connection)}
               </span>
             </EnvironmentRow>
             {tasks?.map((task) => (

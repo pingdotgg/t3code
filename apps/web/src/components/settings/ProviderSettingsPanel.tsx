@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { useAtomValue } from "@effect/atom-react";
-import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
+import { connectionStatusTitleCopy } from "../../lib/connectionStatusCopy";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
@@ -289,7 +289,7 @@ function EnvironmentUnavailablePlaceholder({
     ? access.reason === "permissions"
       ? t("providerPanel.checkingPermissions")
       : t("providerPanel.waitingForConfig", { label: environment.label })
-    : connectionStatusTitle(environment.connection);
+    : connectionStatusTitleCopy(environment.connection);
   const error = isLoading ? null : environment.connection.error;
   // Wedged devices can remain here indefinitely; a spinner would continuously repaint.
   return (
@@ -402,7 +402,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
           {options.map((environment) => {
             const machine = resolveEnvironmentMachineKind(environment.serverConfig);
             const detail = providerEnvironmentDetail(environment, t);
-            const statusText = connectionStatusTitle(environment.connection);
+            const statusText = connectionStatusTitleCopy(environment.connection);
             return (
               <Tooltip key={environment.environmentId}>
                 <TooltipTrigger

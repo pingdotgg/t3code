@@ -458,7 +458,19 @@
     "removeAll": "移除所有条目",
     "removeCheckoutDescription": "删除所选机器上的检出条目及其会话。其他机器和磁盘上的文件不受影响。",
     "removeAllDescription": "删除每台机器上全部 {{count}} 个检出条目及其会话。磁盘上的文件不受影响。",
-    "removeProjectDescription": "删除项目条目及其会话。磁盘上的文件不受影响。"
+    "removeProjectDescription": "删除项目条目及其会话。磁盘上的文件不受影响。",
+    "kindProject": "项目",
+    "kindCheckout": "检出",
+    "removeConfirm": "移除{{kind}}「{{name}}」？",
+    "removeConfirmThreads_other": "移除{{kind}}「{{name}}」并删除它的 {{count}} 条会话？",
+    "removePath": "路径：{{path}}",
+    "removeEnvironment": "环境：{{environment}}",
+    "removeGrouped": "这会移除 {{count}} 个分组的项目条目。",
+    "removeThreadsNote": "这些会话和任何已归档会话会从 T3 Code 中删除。提供方会话会保留。",
+    "removeArchivedNote": "任何已归档会话会从 T3 Code 中删除。提供方会话会保留。",
+    "removeEntriesOnly": "这只会移除项目条目，不会动磁盘上的文件。",
+    "removeOtherEntries": "此分组项目中的其他条目不受影响。",
+    "removeIrreversible": "此操作无法撤销。"
   },
   "addCodexAccount": {
     "title": "添加 ChatGPT 账户",
@@ -3216,6 +3228,46 @@
     "environment": "环境变量",
     "models": "模型",
     "modelsNote": "模型偏好和自定义模型保存在所选环境中，并在已连接的设备间共享。"
+  },
+  "providerSummary": {
+    "checking": "正在检查提供方状态",
+    "checkingDetail": "等待服务器返回安装和认证信息。",
+    "disabled": "已停用",
+    "disabledDetail": "该提供方已安装，但对新会话已停用。",
+    "notFound": "未找到",
+    "notFoundDetail": "未在 PATH 中检测到 CLI。",
+    "unauthenticated": "未认证",
+    "unauthenticatedLabeled": "未认证 · {{authLabel}}",
+    "antigravitySignIn": "已安装 · 未检查登录状态",
+    "warning": "需要关注",
+    "warningDetail": "该提供方已安装，但服务器无法完全验证它。",
+    "unavailable": "不可用",
+    "unavailableDetail": "该提供方启动自检失败。",
+    "authenticated": "已认证",
+    "authenticatedLabeled": "已认证 · {{authLabel}}",
+    "available": "可用"
+  },
+  "providerAdvisory": {
+    "compatGraceful": "有限支持",
+    "compatUnsupported": "版本不受支持",
+    "compatBroken": "已知损坏版本",
+    "compatUseVersion": "使用 {{version}} 以获得完整支持。",
+    "compatUpdate": "更新以获得完整支持。",
+    "updateAvailable": "有可用更新",
+    "updateVersion": "有可用更新：安装 {{version}}。",
+    "updateLatest": "有可用更新：安装最新版本的提供方。"
+  },
+  "connStatus": {
+    "available": "可用",
+    "offline": "离线",
+    "connecting": "连接中...",
+    "connected": "已连接",
+    "unsupported": "客户端不受支持",
+    "failed": "连接失败",
+    "failedReason": "连接失败。原因：{{error}}",
+    "reconnecting": "重新连接中...",
+    "reconnectingFailed": "连接失败，正在重新连接...",
+    "reconnectingFailedReason": "连接失败，正在重新连接... 原因：{{error}}"
   },
   "savedEnv": {
     "statusOff": "关闭",

@@ -4,6 +4,8 @@ import type {
   ServerProviderCompatibilityAdvisory,
 } from "@t3tools/contracts";
 
+import { translateDynamic } from "../../i18nCore";
+
 export const PROVIDER_STATUS_STYLES = {
   disabled: {
     dot: "bg-muted-foreground/50",
@@ -47,58 +49,60 @@ export function getProviderStatusKey(provider: ServerProvider | undefined): Prov
 export function getProviderSummary(provider: ServerProvider | undefined) {
   if (!provider) {
     return {
-      headline: "Checking provider status",
-      detail: "Waiting for the server to report installation and authentication details.",
+      headline: translateDynamic("providerSummary.checking"),
+      detail: translateDynamic("providerSummary.checkingDetail"),
     };
   }
   if (!provider.enabled || provider.status === "disabled") {
     return {
-      headline: "Disabled",
-      detail:
-        provider.message ?? "This provider is installed but disabled for new sessions in T3 Code.",
+      headline: translateDynamic("providerSummary.disabled"),
+      detail: provider.message ?? translateDynamic("providerSummary.disabledDetail"),
     };
   }
   if (!provider.installed) {
     return {
-      headline: "Not found",
-      detail: provider.message ?? "CLI not detected on PATH.",
+      headline: translateDynamic("providerSummary.notFound"),
+      detail: provider.message ?? translateDynamic("providerSummary.notFoundDetail"),
     };
   }
   if (provider.auth.status === "unauthenticated") {
     const authLabel = provider.auth.label ?? provider.auth.type;
     return {
-      headline: authLabel ? `Not authenticated · ${authLabel}` : "Not authenticated",
+      headline: authLabel
+        ? translateDynamic("providerSummary.unauthenticatedLabeled", { authLabel })
+        : translateDynamic("providerSummary.unauthenticated"),
       detail: provider.message ?? null,
     };
   }
   if (isAntigravitySignInUnchecked(provider)) {
     return {
-      headline: "Installed · Sign-in not checked",
+      headline: translateDynamic("providerSummary.antigravitySignIn"),
       detail: provider.message ?? null,
     };
   }
   if (provider.status === "warning") {
     return {
-      headline: "Needs attention",
-      detail:
-        provider.message ?? "The provider is installed, but the server could not fully verify it.",
+      headline: translateDynamic("providerSummary.warning"),
+      detail: provider.message ?? translateDynamic("providerSummary.warningDetail"),
     };
   }
   if (provider.status === "error") {
     return {
-      headline: "Unavailable",
-      detail: provider.message ?? "The provider failed its startup checks.",
+      headline: translateDynamic("providerSummary.unavailable"),
+      detail: provider.message ?? translateDynamic("providerSummary.unavailableDetail"),
     };
   }
   if (provider.auth.status === "authenticated") {
     const authLabel = provider.auth.label ?? provider.auth.type;
     return {
-      headline: authLabel ? `Authenticated · ${authLabel}` : "Authenticated",
+      headline: authLabel
+        ? translateDynamic("providerSummary.authenticatedLabeled", { authLabel })
+        : translateDynamic("providerSummary.authenticated"),
       detail: provider.message ?? null,
     };
   }
   return {
-    headline: "Available",
+    headline: translateDynamic("providerSummary.available"),
     detail: provider.message ?? null,
   };
 }
@@ -114,9 +118,9 @@ export function getProviderVersionLabel(version: string | null | undefined) {
 }
 
 const COMPATIBILITY_TITLES = {
-  graceful: "Limited support",
-  unsupported: "Unsupported version",
-  broken: "Known broken version",
+  graceful: "providerAdvisory.compatGraceful",
+  unsupported: "providerAdvisory.compatUnsupported",
+  broken: "providerAdvisory.compatBroken",
 } as const;
 
 export function getProviderVersionAdvisoryPresentation(
@@ -145,10 +149,12 @@ export function getProviderVersionAdvisoryPresentation(
     // Latest package versions cannot be updated into recommendations requiring another package.
     const isAlreadyLatest = advisory?.status === "current";
     return {
-      title: COMPATIBILITY_TITLES[compatibility.status],
+      title: translateDynamic(COMPATIBILITY_TITLES[compatibility.status]),
       detail:
         compatibility.message ??
-        (recommendation ? `Use ${recommendation} for full support.` : "Update for full support."),
+        (recommendation
+          ? translateDynamic("providerAdvisory.compatUseVersion", { version: recommendation })
+          : translateDynamic("providerAdvisory.compatUpdate")),
       updateCommand:
         targetVersion || latestIsIncompatible || isAlreadyLatest
           ? null
@@ -166,17 +172,16 @@ export function getProviderVersionAdvisoryPresentation(
     return null;
   }
 
-  const label = "Update available";
   const version = advisory.latestVersion;
   const versionLabel = getProviderVersionLabel(version);
 
   return {
-    title: label,
+    title: translateDynamic("providerAdvisory.updateAvailable"),
     detail:
       advisory.message ??
       (versionLabel
-        ? `${label}: install ${versionLabel}.`
-        : `${label}: install the latest provider version.`),
+        ? translateDynamic("providerAdvisory.updateVersion", { version: versionLabel })
+        : translateDynamic("providerAdvisory.updateLatest")),
     updateCommand: advisory.updateCommand,
     emphasis: "normal" as const,
     targetVersion: null,
