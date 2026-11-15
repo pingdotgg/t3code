@@ -605,12 +605,12 @@ it.effect("rejects an unknown organize target instead of archiving the calling t
   );
 });
 
-it.effect("refuses to let an agent pop its own thread out, but not another thread", () => {
+it.effect("allows an agent to pop out only its own child", () => {
   const dispatched: Array<unknown> = [];
   return Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     const otherThreadId = ThreadId.make("mcp-core-child");
-    for (const target of [undefined, threadId, otherThreadId]) {
+    for (const target of [undefined, threadId, otherThreadId, ThreadId.make("unrelated")]) {
       const result = yield* server
         .callTool({
           name: "t3_thread_organize",
@@ -636,10 +636,18 @@ it.effect("refuses to let an agent pop its own thread out, but not another threa
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
             getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
-            getProjectThreadRecords: ({ threadId: id }) =>
-              Effect.succeed(
-                McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
-              ),
+            getProjectThreadRecords: ({ threadId: id }) => {
+              const shell = McpToolAccessTestkit.liveThreadShell(id);
+              return Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection({
+                  ...shell,
+                  lineage: {
+                    ...shell.lineage,
+                    parentThreadId: id === ThreadId.make("mcp-core-child") ? threadId : null,
+                  },
+                }),
+              );
+            },
             dispatch: (command) => {
               dispatched.push(command);
               return Effect.succeed({ sequence: 1 } as never);

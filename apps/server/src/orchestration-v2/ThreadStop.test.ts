@@ -638,6 +638,13 @@ it.effect("a parent's Stop no longer reaches a child popped out of it", () =>
       },
     });
 
+    yield* orchestrator.dispatch({
+      type: "thread.stop",
+      threadId: childThreadId,
+      commandId: CommandId.make("stop-popped-stale-parent"),
+      expectedParentThreadId: parentThreadId,
+    });
+    assert.deepEqual(yield* threadState(childThreadId), before);
     yield* threads.stopDelegatedTasks({
       threadId: parentThreadId,
       commandId: CommandId.make("stop-popped-parent"),

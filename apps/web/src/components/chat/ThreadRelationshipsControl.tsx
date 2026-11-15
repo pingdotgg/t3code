@@ -792,6 +792,7 @@ export function ThreadRelationshipsPanel(props: {
             projected.filter(
               (task) => task.origin === "app_owned" && task.childThreadId === threadId,
             ),
+            projection?.runs,
           )
         : "unsupported";
     const canPopOut = popOutAvailability !== "unsupported";

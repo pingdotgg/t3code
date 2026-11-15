@@ -470,7 +470,13 @@ function ThreadRouteContent(
       confirmText: "Pop out",
       onConfirm: () =>
         void popOut({ environmentId, input: { threadId } }).then((result) => {
-          if (result._tag !== "Success") Dialog.alert("Could not pop out thread");
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            Dialog.alert(
+              "Could not pop out thread",
+              error instanceof Error ? error.message : "Try again.",
+            );
+          }
         }),
     });
   };

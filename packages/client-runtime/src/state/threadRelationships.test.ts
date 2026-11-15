@@ -256,6 +256,12 @@ describe("thread relationships", () => {
     ],
     ["a provider's own subagent", { creationSource: "provider" }, [], "unsupported"],
     [
+      "a terminal task whose spawning run is still live",
+      {},
+      [{ status: "completed", runId: "parent-run" }],
+      "blocked",
+    ],
+    [
       "a top-level thread",
       { lineage: { parentThreadId: null, relationshipToParent: null } },
       [],
@@ -275,7 +281,13 @@ describe("thread relationships", () => {
       pendingBackgroundTasks: [],
       ...overrides,
     };
-    expect(threadPopOutAvailability(thread as never, tasks as never)).toBe(expected);
+    expect(
+      threadPopOutAvailability(
+        thread as never,
+        tasks as never,
+        [{ id: "parent-run", status: "running" }] as never,
+      ),
+    ).toBe(expected);
   });
 
   it("keeps the live shell when an archived snapshot contains the same thread id", () => {

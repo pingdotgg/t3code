@@ -1611,6 +1611,11 @@ const make = Effect.gen(function* () {
   const stopDelegatedTasks: ThreadManagementServiceShape["stopDelegatedTasks"] = Effect.fn(
     "ThreadManagementService.stopDelegatedTasks",
   )(function* (input) {
+    if (input.remoteDispatch === undefined) {
+      return yield* orchestrator.withDelegatedTasksStopLock(input.threadId, (remoteDispatch) =>
+        stopDelegatedTasks({ ...input, remoteDispatch }),
+      );
+    }
     const { subagents } = yield* orchestrator.getThreadRecords(input.threadId, ["subagents"]);
     // A child popped out to top level no longer answers to this parent's Stop.
     const attachedChildThreadIds = new Set(
@@ -1673,7 +1678,11 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             const child = yield* orchestrator.getThreadRecords(threadId, []);
             if (child.thread.lineage.parentThreadId !== input.threadId) return;
-            yield* stopDelegatedTasks({ threadId, commandId: input.commandId, reason: input.reason });
+            yield* stopDelegatedTasks({
+              threadId,
+              commandId: input.commandId,
+              reason: input.reason,
+            });
           }),
         ),
         Effect.catch((error) =>

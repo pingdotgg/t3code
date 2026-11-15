@@ -4,6 +4,7 @@ import {
   isLiveSubagentShell,
   isOrchestrationV2WorkActive,
   type OrchestrationV2Subagent,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -238,10 +239,24 @@ export function threadPopOutAvailability(
     | "pendingRuntimeRequest"
     | "pendingBackgroundTasks"
   >,
-  tasks: ReadonlyArray<Pick<OrchestrationV2Subagent, "status" | "completionDelivery">> = [],
+  tasks: ReadonlyArray<
+    Pick<OrchestrationV2Subagent, "status" | "completionDelivery" | "runId">
+  > = [],
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status">> = [],
 ): ThreadPopOutAvailability {
   if (!isDelegatedChildThread(thread)) return "unsupported";
-  return isLiveSubagentShell(thread) || tasks.some((task) => !isDelegatedTaskReported(task, false))
+  return isLiveSubagentShell(thread) ||
+    tasks.some(
+      (task) =>
+        !isDelegatedTaskReported(
+          task,
+          runs.some(
+            (run) =>
+              run.id === task.runId &&
+              (run.status === "preparing" || run.status === "starting" || run.status === "running"),
+          ),
+        ),
+    )
     ? "blocked"
     : "available";
 }

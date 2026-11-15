@@ -389,6 +389,10 @@ export interface OrchestratorV2DispatchResult {
 }
 
 export interface OrchestratorV2Shape {
+  readonly withDelegatedTasksStopLock: <E, R>(
+    threadId: ThreadId,
+    walk: (dispatch: OrchestratorV2Shape["dispatch"]) => Effect.Effect<void, E, R>,
+  ) => Effect.Effect<void, E, R>;
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
   readonly recoverDelegatedTasks: Effect.Effect<void>;
   readonly recoverDelegatedTask: (
@@ -13789,7 +13793,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       command.expectedParentThreadId !== undefined &&
       projection.thread.lineage.parentThreadId !== command.expectedParentThreadId
-    ) return undefined;
+    )
+      return undefined;
     // Queued after the interrupt, since a thread's effects run in order.
     const stopDelegatedTasks =
       command.stopDelegatedTasks === false ||
@@ -16178,6 +16183,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             { messageRoles: ["user"] },
           )
           .pipe(mapDispatchError(command));
+        if (child.thread.lineage.parentThreadId !== input.parentThreadId) return;
         const followUpRun = child.runs
           .filter((run) => run.delegatedTaskId === input.taskId)
           .toSorted((a, b) => b.ordinal - a.ordinal)[0];
@@ -16234,6 +16240,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     new OrchestratorProjectionError({ threadId: ThreadId.make("thread:shell"), cause });
 
   return OrchestratorV2.of({
+    withDelegatedTasksStopLock: Effect.fn("Orchestrator.withDelegatedTasksStopLock")(
+      (threadId, walk) =>
+        threadDispatch.withLock(
+          threadId,
+          walk((command) =>
+            commandThreadId(command) === threadId
+              ? dispatchWithReceiptEffect(command)
+              : dispatchWithReceipt(command),
+          ),
+        ),
+    ),
     resumeQueuedRuns,
     recoverDelegatedTasks,
     recoverDelegatedTask,
