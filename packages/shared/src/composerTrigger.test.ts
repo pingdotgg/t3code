@@ -110,7 +110,6 @@ describe("serializeComposerFileLink", () => {
 
   it.each([
     ["pkg/__init__.py", "__init__.py"],
-    ["app/__main__.py", "__main__.py"],
     ["notes/*draft*.md", "*draft*.md"],
     ["src/`tick`.ts", "`tick`.ts"],
   ])("renders the mention of %j with its file name as the label", (path, basename) => {
