@@ -56,6 +56,13 @@ export class PortDiscovery extends Context.Service<
      * outside Effect.
      */
     readonly trackAgent: () => () => void;
+    /**
+     * Tells an agent CLI's adapter which of its commands a user stop is about to signal, so the
+     * exit is not reported to the agent as the command finishing by itself.
+     */
+    readonly watchAgentCommandStops: (
+      watcher: AgentCommandStopWatcher,
+    ) => Effect.Effect<void, never, Scope.Scope>;
     /** Stops a listed server's process group, never this server, an agent CLI, or a shell. */
     readonly stopServer: (
       input: PreviewStopLocalServerInput,
@@ -68,6 +75,14 @@ export class PortDiscovery extends Context.Service<
  * server stays attributed after its launching shell exits or the agent settles.
  */
 export const AGENT_THREAD_ENV = "T3CODE_THREAD_ID";
+
+export interface AgentCommandStopWatcher {
+  /** The variable the CLI sets on each command it starts, naming that command. */
+  readonly variable: string;
+  readonly onStop: (command: string) => Effect.Effect<void>;
+  /** The signal never reached the command, so it is still running or ended by itself. */
+  readonly onStopAbandoned: (command: string) => Effect.Effect<void>;
+}
 
 /** `0` turns off listener discovery; configured preview URLs are still probed. */
 const PORT_DISCOVERY_ENV = "T3CODE_PORT_DISCOVERY";
@@ -382,6 +397,42 @@ const parsePsEnvironmentThreads = (raw: string): ReadonlyMap<number, ThreadId | 
   return threads;
 };
 
+/** Splits `/proc/<pid>/environ` on NUL, or the environment macOS `ps -E` appends on spaces. */
+const parseEnvironmentVariables = (
+  raw: string,
+  separator: "\0" | RegExp,
+  names: ReadonlyArray<string>,
+): ReadonlyMap<string, string> => {
+  const variables = new Map<string, string>();
+  for (const entry of raw.split(separator)) {
+    const name = names.find((candidate) => entry.startsWith(`${candidate}=`));
+    if (name !== undefined && !variables.has(name)) {
+      variables.set(name, entry.slice(name.length + 1));
+    }
+  }
+  return variables;
+};
+
+/**
+ * The agent commands that signaling a group stops, by the variable naming each. A CLI starts a
+ * command as a group leader and names it in the command's environment, which the CLI itself does
+ * not carry. A job the command moved to its own group inherits the name from its parent, and
+ * stopping that job does not end the command.
+ */
+export const agentCommandsInGroup = (
+  variables: ReadonlyMap<number, ReadonlyMap<string, string>>,
+  leader: ProcessTableRow,
+): ReadonlyMap<string, string> => {
+  const commands = new Map<string, string>();
+  const parent = variables.get(leader.ppid);
+  // An unreadable parent cannot rule out an inherited name.
+  if (parent === undefined) return commands;
+  for (const [name, command] of variables.get(leader.pid) ?? []) {
+    if (command !== "" && parent.get(name) !== command) commands.set(name, command);
+  }
+  return commands;
+};
+
 const parseProcessTable = (raw: string): ReadonlyMap<number, ProcessTableRow> => {
   const rows = new Map<number, ProcessTableRow>();
   for (const line of raw.split("\n")) {
@@ -476,6 +527,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // environment, so a pid is read once while it listens. Cleared while no client retains the
   // scanner, since unscanned pids can be reused.
   const agentThreadsRef = yield* Ref.make<ReadonlyMap<number, ThreadId | null>>(new Map());
+  const agentCommandStopWatchers = new Set<AgentCommandStopWatcher>();
   let runningAgents = 0;
   // An agent that exited, or a cache cleared with a marked listener, owes one listener read: the
   // servers it left may still run. So does startup, for agents that ran before a restart.
@@ -1016,6 +1068,62 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     };
   };
 
+  const watchAgentCommandStops: PortDiscovery["Service"]["watchAgentCommandStops"] = (watcher) =>
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        agentCommandStopWatchers.add(watcher);
+      }),
+      () => Effect.sync(() => agentCommandStopWatchers.delete(watcher)),
+    );
+
+  /** Each process's launch values for `names`; a process that cannot be read is left out. */
+  const readEnvironmentVariables = Effect.fn("PortDiscovery.readEnvironmentVariables")(function* (
+    pids: ReadonlyArray<number>,
+    names: ReadonlyArray<string>,
+  ) {
+    if (hostPlatform === "linux") {
+      const read = yield* Effect.forEach(pids, (pid) =>
+        fileSystem.readFileString(`/proc/${pid}/environ`).pipe(
+          Effect.map((raw) => [pid, parseEnvironmentVariables(raw, "\0", names)] as const),
+          Effect.option,
+        ),
+      );
+      return new Map(read.flatMap(Option.toArray));
+    }
+    const result = yield* processRunner
+      .run({
+        command: "ps",
+        args: ["-E", "-ww", "-o", "pid=,command=", "-p", pids.join(",")],
+        timeout: Duration.millis(PS_TIMEOUT_MS),
+        maxOutputBytes: PS_MAX_OUTPUT_BYTES,
+      })
+      .pipe(Effect.option);
+    const variables = new Map<number, ReadonlyMap<string, string>>();
+    for (const line of Option.isSome(result) ? result.value.stdout.split("\n") : []) {
+      const match = /^\s*(\d+)\s(.*)$/.exec(line);
+      if (match) {
+        variables.set(Number(match[1]), parseEnvironmentVariables(match[2]!, /\s+/, names));
+      }
+    }
+    return variables;
+  });
+
+  const agentCommandStops = Effect.fn("PortDiscovery.agentCommandStops")(function* (
+    leader: ProcessTableRow | undefined,
+  ) {
+    const watchers = [...agentCommandStopWatchers];
+    if (leader === undefined || watchers.length === 0) return [];
+    const names = [...new Set(watchers.map((watcher) => watcher.variable))];
+    const commands = agentCommandsInGroup(
+      yield* readEnvironmentVariables([leader.pid, leader.ppid], names),
+      leader,
+    );
+    return watchers.flatMap((watcher) => {
+      const command = commands.get(watcher.variable);
+      return command === undefined ? [] : [{ watcher, command }];
+    });
+  });
+
   // Fails when `ps` does, so an empty table never reads as every process having exited.
   const readProcessTable = Effect.suspend(() =>
     processRunner.run({
@@ -1076,7 +1184,19 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             : Effect.fail(new PreviewStopLocalServerError({ reason: "signal-failed", cause }));
         }
       });
-    if (!(yield* signalGroup("SIGTERM"))) return;
+    // Told before the signal, since the CLI can report the exit before a later step runs.
+    const commandStops = yield* agentCommandStops(table.get(group));
+    yield* Effect.forEach(commandStops, ({ watcher, command }) => watcher.onStop(command), {
+      discard: true,
+    });
+    const abandonCommandStops = Effect.forEach(
+      commandStops,
+      ({ watcher, command }) => watcher.onStopAbandoned(command),
+      { discard: true },
+    );
+    if (!(yield* signalGroup("SIGTERM").pipe(Effect.tapError(() => abandonCommandStops)))) {
+      return yield* abandonCommandStops;
+    }
     // While one of the group's original members is still in it, the group has not been reused,
     // so SIGKILL goes only to the job that ignored SIGTERM.
     const members = [...table.values()].filter((row) => row.pgid === group).map((row) => row.pid);
@@ -1103,6 +1223,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     registerTerminalProcesses,
     unregisterTerminal,
     trackAgent,
+    watchAgentCommandStops,
     stopServer,
   });
 }).pipe(Effect.withSpan("PortDiscovery.make"));
@@ -1110,4 +1231,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 export const layer = Layer.effect(PortDiscovery, make);
 
 /** A scanner that tracks nothing, for tests that build provider runners without a host. */
-export const layerTest = Layer.mock(PortDiscovery)({ trackAgent: () => () => undefined });
+export const layerTest = Layer.mock(PortDiscovery)({
+  trackAgent: () => () => undefined,
+  watchAgentCommandStops: () => Effect.void,
+});
