@@ -9,7 +9,8 @@
     "dev:built": "vp build --watch",
     "build": "vp build",
     "preview": "vp preview",
-    "test": "vp test run --passWithNoTests --project unit --project browser"
+    "test": "vp test run --passWithNoTests --project unit --project browser",
+    "i18n:check": "i18next-cli extract --ci"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

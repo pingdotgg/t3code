@@ -469,6 +469,11 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   const graphql = ["apps/server", "packages/source-control-github"].filter((dir) =>
     files.some((file) => file.startsWith(`${dir}/`)),
   );
+  // en locale files must carry every key the web source uses; zh-Hans gaps fall
+  // back to en at runtime and never fail this check (see i18next.config.ts).
+  const i18nKeys = files.some(
+    (file) => file.startsWith("apps/web/src/") || file.startsWith("apps/web/locales/"),
+  );
   const filters = (names: ReadonlyArray<string>) => names.flatMap((name) => ["--filter", name]);
   const typecheckWorkers = Math.min(concurrency, affected.length);
   const command = (name: string, args: ReadonlyArray<string>) => ({ name, run: vp(args) });
@@ -488,6 +493,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     ...graphql.map((dir) =>
       command(`graphql (${dir})`, ["run", "--filter", `./${dir}`, "generate", "--check"]),
     ),
+    ...(i18nKeys ? [command("i18n en keys", ["run", "--filter", "./apps/web", "i18n:check"])] : []),
     ...(affected.length > 0
       ? [
           {
