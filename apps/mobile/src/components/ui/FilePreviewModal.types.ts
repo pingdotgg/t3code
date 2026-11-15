@@ -54,4 +54,6 @@ export interface FilePreviewViewerProps {
   readonly source: ResolvedFilePreviewSource;
   readonly onRequestClose: () => void;
   readonly onOpenError?: (error: unknown) => void;
+  /** Called once the viewer hands its file to the native presentation. */
+  readonly onPresent?: () => void;
 }

@@ -43,6 +43,7 @@ function NativeFilePreview(props: FilePreviewViewerProps) {
   const [presented] = useState(props.source);
   const delivered = useRef<(string | null | undefined)[]>([]);
   const onRequestClose = useEffectEvent(props.onRequestClose);
+  const onPresent = useEffectEvent(() => props.onPresent?.());
   const onOpenError = useEffectEvent((error: unknown) => {
     if (props.onOpenError) props.onOpenError(error);
     else Dialog.alert("Could not open preview", "The file could not be loaded. Please try again.");
@@ -72,6 +73,7 @@ function NativeFilePreview(props: FilePreviewViewerProps) {
         identifier,
       );
     }
+    onPresent();
     void presentation
       .catch((error: unknown) => {
         if (!canceled) onOpenError(error);

@@ -1,4 +1,4 @@
-import { act, useState } from "react";
+import { act, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import {
@@ -32,6 +32,9 @@ import { FilePreviewSession } from "./FilePreviewSession";
 function Viewer(props: FilePreviewViewerProps) {
   useState(() => harness.mounts++);
   harness.previews.push(props.source);
+  const { onPresent } = props;
+  // Stands in for the native presentation starting.
+  useEffect(() => onPresent?.(), [onPresent]);
   return null;
 }
 
@@ -173,15 +176,19 @@ it("names the checked path when the server cannot find the file", async () => {
 });
 
 it.each([
-  [true, 1],
-  [false, 2],
-])(
-  "a re-tap of the open item mounts a new viewer only once the native one is gone (active: %s)",
-  async (active, mounts) => {
+  ["image", true, 1],
+  ["image", false, 2],
+  // A PDF is still resolving here, so its viewer never presented and a re-render must not restart it.
+  ["pdf", false, 1],
+] as const)(
+  "a re-tap of the open %s restarts the preview only once a presented native one is gone (active: %s)",
+  async (kind, active, starts) => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     harness.mounts = 0;
-    harness.refreshAssetUrl.mockResolvedValue("https://signed.test/a.png");
-    const selected = image("https://github.com/a.png");
+    harness.refreshAssetUrl.mockReset();
+    if (kind === "image") harness.refreshAssetUrl.mockResolvedValue("https://signed.test/a.png");
+    else harness.refreshAssetUrl.mockReturnValue(new Promise(() => {}));
+    const selected: FilePreviewItem = { ...image("https://github.com/a.png"), kind };
     const root = createRoot(document.createElement("div"));
     await using _root = { [Symbol.asyncDispose]: () => act(async () => root.unmount()) };
     const render = () =>
@@ -198,6 +205,6 @@ it.each([
       );
     await render();
     await render();
-    expect(harness.mounts).toBe(mounts);
+    expect(harness.refreshAssetUrl).toHaveBeenCalledTimes(starts);
   },
 );
