@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../../test/render";
 import { MiddleTruncate } from "./middle-truncate";
@@ -37,9 +37,9 @@ describe("MiddleTruncate", () => {
       ...screen.container.querySelectorAll<HTMLElement>("[title] > span:first-child"),
     ];
 
-    await expect
-      .poll(() => heads().filter((head) => head.hasAttribute("data-overflow")).length)
-      .toBe(2);
+    await vi.waitFor(() =>
+      expect(heads().filter((head) => head.hasAttribute("data-overflow"))).toHaveLength(2),
+    );
   });
 
   it.each([
