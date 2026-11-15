@@ -42,6 +42,28 @@ const RUNTIME_MODE_RANK: Record<RuntimeMode, number> = {
 export const isRuntimeModeAbove = (mode: RuntimeMode, ceiling: RuntimeMode | undefined): boolean =>
   ceiling !== undefined && RUNTIME_MODE_RANK[mode] > RUNTIME_MODE_RANK[ceiling];
 
+/** The mode a provider actually runs a thread in, given the modes it supports (all when none). */
+export function providerRuntimeMode(
+  runtimeMode: RuntimeMode,
+  supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined,
+): RuntimeMode {
+  if (
+    supportedRuntimeModes === undefined ||
+    supportedRuntimeModes.length === 0 ||
+    supportedRuntimeModes.includes(runtimeMode)
+  ) {
+    return runtimeMode;
+  }
+  if (supportedRuntimeModes.includes("approval-required")) return "approval-required";
+  // Codex's managed requirements can forbid the read-only sandbox Supervised needs, so step down
+  // to the broadest mode it still allows rather than one it will refuse to start.
+  return (
+    RuntimeMode.literals.findLast(
+      (mode) => supportedRuntimeModes.includes(mode) && !isRuntimeModeAbove(mode, runtimeMode),
+    ) ?? runtimeMode
+  );
+}
+
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";

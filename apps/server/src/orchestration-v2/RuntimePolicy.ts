@@ -1,5 +1,6 @@
 import {
   isRuntimeModeAbove,
+  providerRuntimeMode,
   managedRuntimeModeCeilingMessage,
   ModelSelection,
   OrchestrationV2AppThread,
@@ -87,27 +88,6 @@ export const layer: Layer.Layer<RuntimePolicyV2> = Layer.succeed(RuntimePolicyV2
     });
   }),
 });
-
-function providerRuntimeMode(
-  runtimeMode: RuntimeMode,
-  supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined,
-): RuntimeMode {
-  if (
-    supportedRuntimeModes === undefined ||
-    supportedRuntimeModes.length === 0 ||
-    supportedRuntimeModes.includes(runtimeMode)
-  ) {
-    return runtimeMode;
-  }
-  if (supportedRuntimeModes.includes("approval-required")) return "approval-required";
-  // Codex's managed requirements can forbid the read-only sandbox Supervised needs, so step down
-  // to the broadest mode it still allows rather than one it will refuse to start.
-  return (
-    RuntimeMode.literals.findLast(
-      (mode) => supportedRuntimeModes.includes(mode) && !isRuntimeModeAbove(mode, runtimeMode),
-    ) ?? runtimeMode
-  );
-}
 
 const refuseAboveCeiling = (
   managedPolicy: ServerSettings.ServerSettingsService["Service"]["managedPolicy"],
