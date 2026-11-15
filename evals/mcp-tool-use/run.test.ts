@@ -751,7 +751,7 @@ it("replays earlier capability results with the model under test as the caller",
   }
 });
 
-it.each(["claude-opus-5-5", "gpt-6.1-sol"])(
+it.each(["claude-opus-5-5", "gpt-6.1-sol"] as const)(
   "untargeted delegates inherit the normalized %s caller",
   (model) => {
     const base = buildBase(template, { model, keepUserInstructions: false });
