@@ -132,7 +132,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+p", command: "thread.pin", when: "!terminalFocus" },
   { key: "mod+z", command: "thread.undo", when: "!terminalFocus && !editableFocus" },
   {
-    key: "mod+alt+o",
+    key: "mod+shift+y",
     command: "thread.openNotification",
     when: "threadNotificationOpen && !terminalFocus",
   },

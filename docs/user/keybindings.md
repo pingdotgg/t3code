@@ -185,7 +185,7 @@ seconds after the latest action. Right after an action, the shortcut works even
 in a text field such as the composer. Once you type or press another key, the
 field gets its own undo back. Terminals always keep their native shortcut.
 
-`thread.openNotification` (`mod+alt+o` by default) opens the thread from the newest
+`thread.openNotification` (`mod+shift+y` by default) opens the thread from the newest
 thread notification, and keeps working for two seconds after the notification closes.
 It works while you type in the composer.
 

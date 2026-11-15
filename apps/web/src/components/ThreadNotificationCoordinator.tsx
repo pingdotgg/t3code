@@ -110,6 +110,9 @@ export function startThreadNotifications(
       }
       openToasts.delete(key);
     }
+    for (const { toastId } of recentToasts.filter(({ key }) => shouldClose(key))) {
+      dropRecentToast(toastId);
+    }
   };
   const activeThread = () =>
     (router.state.matches.at(-1)?.params ?? {}) as {
@@ -131,9 +134,6 @@ export function startThreadNotifications(
       : null;
     const shouldClose = (key: string) => hidden.has(key) || (live !== null && !live.has(key));
     closeToasts(shouldClose);
-    for (const { toastId } of recentToasts.filter(({ key }) => shouldClose(key))) {
-      dropRecentToast(toastId);
-    }
     const count = pending.size;
     for (const [tag, entry] of pending) {
       if (!shouldClose(threadKey(entry))) continue;

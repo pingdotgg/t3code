@@ -441,8 +441,8 @@ it("opens the newest toast's thread from the shortcut until shortly after it clo
   const pressShortcut = () =>
     window.dispatchEvent(
       new KeyboardEvent("keydown", {
-        key: "o",
-        altKey: true,
+        key: "y",
+        shiftKey: true,
         ctrlKey: !mac,
         metaKey: mac,
         bubbles: true,
@@ -487,6 +487,22 @@ it("opens the newest toast's thread from the shortcut until shortly after it clo
     ]),
   );
   pressShortcut();
+  pressShortcut();
+  expect(state.navigate).toHaveBeenCalledOnce();
+
+  state.shells.set("two", shell());
+  complete("two", "2026-09-13T07:00:04.000Z");
+  toasts[4]!.onRemove();
+  app.setEnvironmentIds(["one"]);
+  pressShortcut();
+  expect(state.navigate).toHaveBeenCalledOnce();
+
+  registry.set(hiddenThreadKeysAtom, new Set());
+  state.shells.set("one", shell());
+  complete("one", "2026-09-13T07:00:05.000Z");
+  toasts[5]!.onRemove();
+  state.inApp = false;
+  app.changeSettings();
   pressShortcut();
   expect(state.navigate).toHaveBeenCalledOnce();
 });
