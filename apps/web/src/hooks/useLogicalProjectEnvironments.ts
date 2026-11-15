@@ -32,6 +32,8 @@ export function useLogicalProjectEnvironments(
   const envs: EnvironmentOption[] = [];
   const pushEnvironment = (environmentId: EnvironmentId, projectId: ProjectId | null) => {
     const environment = environmentById.get(environmentId) ?? null;
+    // The Boat cloud entry stands for every VM; only the one this draft is on shows itself.
+    if (environment?.boatCloud && environmentId !== activeProject.environmentId) return;
     envs.push({
       environmentId,
       projectId,

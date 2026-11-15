@@ -36,6 +36,12 @@ import type { DraftSessionState } from "../../composerDraftStore";
 import { loadBalancingSendWarning } from "./composerSend.logic";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
+import {
+  boatCloudReady,
+  clearBoatCloudStartProgress,
+  prepareBoatCloudProject,
+  usePrimaryBoatCloudStatus,
+} from "../../boatCloud";
 
 interface DraftEnvironmentRoutingInput {
   readonly draftId: DraftId | null;
@@ -132,7 +138,99 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     loadBalancingSettings.loadBalancingWeights,
   );
   const readRouting = useStableCallback(() => ({ input, loadBalancingCandidates }));
+  const boatCloud = usePrimaryBoatCloudStatus();
+  const carryFanoutSelections = (
+    from: {
+      readonly environmentId: EnvironmentId;
+      readonly threadId: DraftSessionState["threadId"];
+    },
+    toEnvironmentId: EnvironmentId,
+  ) => {
+    if (toEnvironmentId === from.environmentId) return;
+    appAtomRegistry.set(
+      draftFanoutSelectionsAtom(scopedThreadKey(scopeThreadRef(toEnvironmentId, from.threadId))),
+      appAtomRegistry.get(
+        draftFanoutSelectionsAtom(
+          scopedThreadKey(scopeThreadRef(from.environmentId, from.threadId)),
+        ),
+      ),
+    );
+  };
+  /**
+   * Moves the draft onto a Boat cloud VM's checkout of the same repository,
+   * keeping its model, base branch, attachments and access settings. Cloud
+   * threads always start in a new worktree.
+   */
+  const moveToBoatCloud = async () => {
+    if (!draftId) return false;
+    const originalDraft = getDraftSession(draftId);
+    if (!originalDraft) return false;
+    const warn = (title: string, description: string) => {
+      toastManager.add({ type: "warning", id: "boat-cloud-send", title, description });
+      return false;
+    };
+    if (boatCloud.holderEnvironmentId === null || !boatCloudReady(boatCloud.status)) {
+      return warn("Boat cloud is not set up", "Finish setup in Settings, Cloud.");
+    }
+    const project = allProjects.find(
+      (candidate) =>
+        candidate.environmentId === originalDraft.environmentId &&
+        candidate.id === originalDraft.projectId,
+    );
+    // A fork's own remote, where the agent can push, rather than the upstream it groups under.
+    const identity = project?.repositoryIdentity;
+    const repositoryUrl = identity?.origin?.remoteUrl ?? identity?.locator.remoteUrl;
+    if (!repositoryUrl) {
+      return warn("Boat cloud needs a git remote", "Push this project to a remote Boat can clone.");
+    }
+    if (!originalDraft.branch) {
+      return warn("Choose a base branch", "Boat cloud starts a new worktree from it.");
+    }
+    const target = await prepareBoatCloudProject({
+      draftId,
+      holderEnvironmentId: boatCloud.holderEnvironmentId,
+      repositoryUrl,
+      baseBranch: originalDraft.branch,
+    });
+    if (!target) return false;
+    const currentDraft = getDraftSession(draftId);
+    if (
+      !currentDraft ||
+      currentDraft.promotedTo ||
+      currentDraft.environmentSelection !== "cloud" ||
+      currentDraft.environmentId !== originalDraft.environmentId ||
+      currentDraft.projectId !== originalDraft.projectId
+    ) {
+      // The draft moved on while the VM started; the VM stays ready for the next send.
+      clearBoatCloudStartProgress(draftId);
+      return false;
+    }
+    carryFanoutSelections(originalDraft, target.environmentId);
+    // The send must read the VM project's composer and provider context after retargeting.
+    // Attachments stay on the draft; the send uploads them to the VM it now targets.
+    flushSync(() =>
+      setDraftThreadContext(draftId, {
+        projectRef: scopeProjectRef(target.environmentId, target.id),
+        environmentSelection: "cloud",
+        loadBalancedEnvironmentId: null,
+        envMode: "worktree",
+        branch: currentDraft.branch ?? originalDraft.branch,
+        // The VM's clone has none of this machine's local branches, so it starts from the remote one.
+        startFromOrigin: true,
+        // A checkout path on this machine does not exist on the VM.
+        worktreePath: null,
+      }),
+    );
+    return true;
+  };
+  /** The send that followed a move to Boat cloud went out, so its start is over. */
+  const onRoutedSendDispatched = () => {
+    if (draftId) clearBoatCloudStartProgress(draftId);
+  };
   const refreshBeforeSend = () => {
+    if (draftId && draftThread?.environmentSelection === "cloud" && !draftThread.promotedTo) {
+      return moveToBoatCloud();
+    }
     if (
       !automaticEnvironment ||
       !draftId ||
@@ -174,18 +272,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         return false;
       }
       const projectRef = scopeProjectRef(target.environmentId, target.projectId);
-      if (originalDraft && target.environmentId !== originalDraft.environmentId) {
-        appAtomRegistry.set(
-          draftFanoutSelectionsAtom(
-            scopedThreadKey(scopeThreadRef(target.environmentId, originalDraft.threadId)),
-          ),
-          appAtomRegistry.get(
-            draftFanoutSelectionsAtom(
-              scopedThreadKey(scopeThreadRef(originalDraft.environmentId, originalDraft.threadId)),
-            ),
-          ),
-        );
-      }
+      if (originalDraft) carryFanoutSelections(originalDraft, target.environmentId);
       // The send must read the target project's composer and provider context after retargeting.
       flushSync(() =>
         setDraftThreadContext(draftId, {
@@ -242,6 +329,35 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     });
   };
   const onAutoEnvironmentStable = useStableCallback(onAutoEnvironment);
+  const onCloudEnvironment = () => {
+    if (envLocked || !draftId || sendInFlightRef.current) return;
+    setDraftThreadContext(draftId, {
+      environmentSelection: "cloud",
+      loadBalancedEnvironmentId: null,
+      envMode: "worktree",
+      worktreePath: null,
+    });
+  };
+  const onCloudEnvironmentStable = useStableCallback(onCloudEnvironment);
+  const onLeaveCloudEnvironment = () => {
+    if (!draftId || sendInFlightRef.current) return;
+    clearBoatCloudStartProgress(draftId);
+    setDraftThreadContext(draftId, { environmentSelection: "manual" });
+  };
+  const onLeaveCloudEnvironmentStable = useStableCallback(onLeaveCloudEnvironment);
+  const cloudSelected = draftThread?.environmentSelection === "cloud";
+  // Offered on a new draft once this machine has Boat cloud ready; kept visible while chosen.
+  const cloudEnvironment =
+    draftId &&
+    !envLocked &&
+    !draftThread?.promotedTo &&
+    (cloudSelected || boatCloudReady(boatCloud.status))
+      ? {
+          selected: cloudSelected,
+          onSelect: onCloudEnvironmentStable,
+          onLeave: onLeaveCloudEnvironmentStable,
+        }
+      : undefined;
   const autoEnvironmentLabel = automaticEnvironment
     ? draftThread?.loadBalancedEnvironmentId
       ? "Auto balance"
@@ -381,8 +497,10 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     needsLoadBalancing,
     loadBalancing,
     refreshBeforeSend,
+    onRoutedSendDispatched,
     onAutoEnvironmentStable,
     autoEnvironmentLabel,
+    cloudEnvironment,
     isEnvironmentChanging,
     readPendingEnvironmentChange,
     onEnvironmentChangeStable,

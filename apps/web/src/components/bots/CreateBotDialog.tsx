@@ -142,7 +142,10 @@ type FormProps = {
 
 function CreateBotForm(props: FormProps) {
   const { environments } = useEnvironments();
-  const machines = environments.filter(isConnectedWithConfig);
+  // A Boat cloud VM stops when its threads go idle, so it cannot host a bot.
+  const machines = environments.filter(
+    (environment) => !environment.boatCloud && isConnectedWithConfig(environment),
+  );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const [name, setName] = useState("");
   const [avatar, setAvatar] = useState<AvatarChoice>({ shape: "circle", color: "teal" });

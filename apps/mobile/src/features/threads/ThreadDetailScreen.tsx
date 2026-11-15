@@ -315,6 +315,8 @@ export interface ThreadDetailScreenProps {
     onWillEnqueue?: () => void,
   ) => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
+  /** Set while the thread's Boat VM is stopped; it reads as asleep, not disconnected. */
+  readonly boatCloudSleep?: "sleeping" | "waking" | null;
   readonly canSwitchThreadProvider: boolean;
   readonly onRespondToApproval: ApprovalResponder;
   readonly onSelectUserInputOption: (
@@ -770,6 +772,7 @@ function ThreadDetailBody(
     : null;
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
+      boatCloudSleep: props.boatCloudSleep ?? null,
       connectionError: connectionRetrying ? retryConnectionError : props.connectionError,
       connectionState: props.connectionStateLabel,
       connectionAwaitingApproval: props.connectionAwaitingApproval === true,

@@ -43,7 +43,7 @@ export type FloatingWorkingStatus =
   | { readonly kind: "preparing"; readonly label: string }
   | {
       readonly kind: "connection";
-      readonly tone: "reconnecting" | "unavailable";
+      readonly tone: "reconnecting" | "unavailable" | "sleeping";
       readonly label: string;
       readonly onPress: () => void;
     };
@@ -54,8 +54,25 @@ export function connectionFloatingStatus(input: {
   readonly connectionAwaitingApproval?: boolean;
   readonly environmentLabel: string | null;
   readonly onReconnect: () => void;
+  readonly boatCloudSleep?: "sleeping" | "waking" | null;
 }): FloatingWorkingStatus | null {
   const environmentLabel = input.environmentLabel ?? "Environment";
+  if (input.boatCloudSleep === "waking") {
+    return {
+      kind: "connection",
+      tone: "reconnecting",
+      label: `Waking ${environmentLabel}...`,
+      onPress: input.onReconnect,
+    };
+  }
+  if (input.boatCloudSleep === "sleeping") {
+    return {
+      kind: "connection",
+      tone: "sleeping",
+      label: "Sleeping. Your next message wakes it.",
+      onPress: input.onReconnect,
+    };
+  }
   const unavailable = (label: string): FloatingWorkingStatus => ({
     kind: "connection",
     tone: "unavailable",

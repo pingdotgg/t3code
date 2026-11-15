@@ -488,10 +488,11 @@ export default function GitActionsControl({
     setDraftThreadContext(draftId ?? activeThreadRef, {
       branch,
       worktreePath: activeDraftThread.worktreePath,
-      environmentSelection: manualSelection
-        ? "manual"
-        : (activeDraftThread.environmentSelection ??
-          (activeDraftThread.branch ? "manual" : "auto")),
+      environmentSelection:
+        manualSelection && activeDraftThread.environmentSelection !== "cloud"
+          ? "manual"
+          : (activeDraftThread.environmentSelection ??
+            (activeDraftThread.branch ? "manual" : "auto")),
     });
   };
   const persistLiveThreadBranch = useEffectEvent((branch: string | null) => {

@@ -152,6 +152,7 @@ import {
   startNewThreadFromContext,
   threadHasStarted,
 } from "../lib/chatThreadActions";
+import { boatCloudReady, usePrimaryBoatCloudStatus } from "../boatCloud";
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
@@ -258,6 +259,8 @@ import {
   scrollCommandPaletteRowIntoView,
 } from "./CommandPaletteResults";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { BoatIcon } from "./Icons";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
@@ -523,6 +526,7 @@ function OpenCommandPaletteDialog(props: {
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
+  const boatCloud = usePrimaryBoatCloudStatus();
   const paletteRouteTarget = useThreadRouteTarget();
   const projects = useProjects();
   const referenceThreadRef =
@@ -1402,6 +1406,29 @@ function OpenCommandPaletteDialog(props: {
             activeThread: activeThread ?? undefined,
             defaultProjectRef,
             handleNewThread,
+          });
+        },
+      });
+    }
+
+    if (activeProjectTitle && contextualProjectRef && boatCloudReady(boatCloud.status)) {
+      actionItems.push({
+        kind: "action",
+        value: "action:new-boat-cloud-thread",
+        searchTerms: ["boat", "cloud", "vm", "remote", "new thread"],
+        title: "New Boat cloud thread",
+        icon: <BoatIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          const opened = await handleNewThread(contextualProjectRef, {
+            envMode: "worktree",
+            worktreePath: null,
+          });
+          if (!opened) return;
+          useComposerDraftStore.getState().setDraftThreadContext(opened.draftId, {
+            environmentSelection: "cloud",
+            loadBalancedEnvironmentId: null,
+            envMode: "worktree",
+            worktreePath: null,
           });
         },
       });

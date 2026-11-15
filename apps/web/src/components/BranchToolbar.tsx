@@ -32,6 +32,7 @@ import { shortcutLabelForCommand } from "../keybindings";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { Kbd } from "./ui/kbd";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { BoatIcon } from "./Icons";
 import { useProject, useServerConfigs, useThreadShellsForProjectRefs } from "../state/entities";
 import {
   ADD_TO_MACHINE_LABEL_CLASS,
@@ -57,7 +58,7 @@ import { ComposerContextLabel } from "./ComposerContextLabel";
 import { StartTruncatedPath } from "./StartTruncatedPath";
 import { Badge } from "./ui/badge";
 import { useRelativeTimeState } from "../hooks/useRelativeTimeState";
-import { useConnectedEnvironmentIds } from "../state/environments";
+import { BOAT_CLOUD_LABEL, useConnectedEnvironmentIds } from "../state/environments";
 import { useEnvironmentQuery } from "../state/query";
 import { vcsEnvironment } from "../state/vcs";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
@@ -123,6 +124,7 @@ interface BranchToolbarProps {
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
+  cloudEnvironment?: CloudEnvironmentOption | undefined;
   envLocked: boolean;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
@@ -160,9 +162,32 @@ interface WorkspaceMenuProps {
   onUsePreviousWorktree: () => void;
 }
 
+/** Boat cloud in the Run on menu: a VM is picked for the draft when it sends. */
+export interface CloudEnvironmentOption {
+  readonly selected: boolean;
+  readonly onSelect: () => void;
+  /** Back to the machine the draft is on now. */
+  readonly onLeave: () => void;
+}
+
+function BoatCloudRadioItem({ envLocked, compact }: { envLocked: boolean; compact: boolean }) {
+  return (
+    <MenuRadioItem value="cloud" disabled={envLocked} closeOnClick>
+      <span className={cn("flex min-w-0 items-center", compact ? "gap-1.5" : "gap-2")}>
+        <BoatIcon
+          aria-hidden
+          className={cn("shrink-0 text-muted-foreground", compact ? "size-3" : "size-4")}
+        />
+        <span className="min-w-0 truncate">{BOAT_CLOUD_LABEL}</span>
+      </span>
+    </MenuRadioItem>
+  );
+}
+
 interface MachineMenuProps {
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
+  cloudEnvironment?: CloudEnvironmentOption | undefined;
   envLocked: boolean;
   environmentId: EnvironmentId;
   availableEnvironments: readonly EnvironmentOption[] | undefined;
@@ -412,6 +437,7 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
 const MachineMenu = memo(function MachineMenu({
   autoEnvironmentLabel,
   onAutoEnvironment,
+  cloudEnvironment,
   envLocked,
   environmentId,
   availableEnvironments,
@@ -428,12 +454,19 @@ const MachineMenu = memo(function MachineMenu({
   const activeEnvironment = availableEnvironments?.find(
     (env) => env.environmentId === environmentId,
   );
-  const environmentLabel = autoEnvironmentLabel ?? activeEnvironment?.label ?? environmentId;
-  const canPickEnvironment = (showEnvironmentPicker && !envLocked) || addTargets.length > 0;
+  const cloudSelected = cloudEnvironment?.selected === true;
+  const environmentLabel = cloudSelected
+    ? BOAT_CLOUD_LABEL
+    : (autoEnvironmentLabel ?? activeEnvironment?.label ?? environmentId);
+  const canPickEnvironment =
+    ((showEnvironmentPicker || cloudEnvironment !== undefined) && !envLocked) ||
+    addTargets.length > 0;
   const hostShortcut = canPickEnvironment
     ? shortcutLabelForCommand(keybindings, "composer.host")
     : null;
-  const icon = autoEnvironmentLabel ? (
+  const icon = cloudSelected ? (
+    <BoatIcon aria-hidden className="size-3 shrink-0" />
+  ) : autoEnvironmentLabel ? (
     <ScaleIcon aria-hidden className="size-3 shrink-0" />
   ) : (
     <EnvironmentMachineIcon
@@ -522,12 +555,13 @@ const MachineMenu = memo(function MachineMenu({
         <MenuGroup>
           <MenuGroupLabel>Run on</MenuGroupLabel>
           <MenuRadioGroup
-            value={autoEnvironmentLabel ? "auto" : environmentId}
-            onValueChange={(value) =>
-              value === "auto"
-                ? onAutoEnvironment?.()
-                : onEnvironmentChange?.(value as EnvironmentId)
-            }
+            value={cloudSelected ? "cloud" : autoEnvironmentLabel ? "auto" : environmentId}
+            onValueChange={(value) => {
+              if (value === "cloud") return cloudEnvironment?.onSelect();
+              if (cloudSelected) cloudEnvironment?.onLeave();
+              if (value === "auto") onAutoEnvironment?.();
+              else onEnvironmentChange?.(value as EnvironmentId);
+            }}
           >
             {availableEnvironments?.map((env) => (
               <MenuRadioItem
@@ -570,6 +604,7 @@ const MachineMenu = memo(function MachineMenu({
                 </span>
               </MenuRadioItem>
             )}
+            {cloudEnvironment ? <BoatCloudRadioItem envLocked={envLocked} compact={false} /> : null}
           </MenuRadioGroup>
           {addTargets.length > 0 ? (
             <MenuSub>
@@ -636,6 +671,7 @@ interface RunContextSelectorProps {
   forceNewWorktree: boolean;
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
+  cloudEnvironment?: CloudEnvironmentOption | undefined;
   envLocked: boolean;
   envModeLocked: boolean;
   environmentId: EnvironmentId;
@@ -665,6 +701,7 @@ const RunContextSelector = memo(function RunContextSelector({
   forceNewWorktree,
   autoEnvironmentLabel,
   onAutoEnvironment,
+  cloudEnvironment,
   envLocked,
   envModeLocked,
   environmentId,
@@ -685,6 +722,10 @@ const RunContextSelector = memo(function RunContextSelector({
   const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
+  const cloudSelected = cloudEnvironment?.selected === true;
+  const machineLabel = cloudSelected
+    ? BOAT_CLOUD_LABEL
+    : (autoEnvironmentLabel ?? activeEnvironment?.label);
   const WorkspaceIcon = noProject
     ? FolderIcon
     : effectiveEnvMode === "worktree"
@@ -709,7 +750,9 @@ const RunContextSelector = memo(function RunContextSelector({
       : (activeWorktreePath ?? workspaceRoot);
   const runOnEnvironments =
     section !== "workspace" &&
-    ((showEnvironmentPicker && onEnvironmentChange) || addTargets.length > 0)
+    ((showEnvironmentPicker && onEnvironmentChange) ||
+      addTargets.length > 0 ||
+      cloudEnvironment !== undefined)
       ? availableEnvironments
       : undefined;
   const showWorkspaceGroup = section !== "machine";
@@ -719,8 +762,8 @@ const RunContextSelector = memo(function RunContextSelector({
     section === "workspace"
       ? `Workspace: ${workspaceLabel}`
       : section === "machine"
-        ? `Run on: ${autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}`
-        : `Run context: ${[autoEnvironmentLabel ?? activeEnvironment?.label, workspaceLabel].filter(Boolean).join(", ")}`;
+        ? `Run on: ${machineLabel ?? "Run on"}`
+        : `Run context: ${[machineLabel, workspaceLabel].filter(Boolean).join(", ")}`;
   const handleContextMenu = (event: ReactMouseEvent) => {
     if (isPanel && workspacePath) {
       showWorkspaceContextMenu(event, workspacePath);
@@ -743,7 +786,12 @@ const RunContextSelector = memo(function RunContextSelector({
   const environmentIcon = (
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        {autoEnvironmentLabel ? (
+        {cloudSelected ? (
+          <BoatIcon
+            className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"}
+            aria-hidden="true"
+          />
+        ) : autoEnvironmentLabel ? (
           <ScaleIcon
             className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"}
             aria-hidden="true"
@@ -758,7 +806,7 @@ const RunContextSelector = memo(function RunContextSelector({
           />
         )}
       </TooltipTrigger>
-      <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+      <TooltipPopup>{machineLabel ?? "Run on"}</TooltipPopup>
     </Tooltip>
   );
   const icon = showEnvironmentIndicator ? environmentIcon : workspaceIcon;
@@ -767,6 +815,8 @@ const RunContextSelector = memo(function RunContextSelector({
       {isPanel ? (
         section === "workspace" ? (
           <WorkspaceIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+        ) : cloudSelected ? (
+          <BoatIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
         ) : autoEnvironmentLabel ? (
           <ScaleIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
         ) : (
@@ -781,10 +831,12 @@ const RunContextSelector = memo(function RunContextSelector({
       <ComposerContextLabel displayMode={displayMode}>
         {section === "workspace"
           ? workspaceLabel
-          : (autoEnvironmentLabel ??
-            (isPanel || showEnvironmentIndicator
-              ? (activeEnvironment?.label ?? "Run on")
-              : workspaceLabel))}
+          : cloudSelected
+            ? BOAT_CLOUD_LABEL
+            : (autoEnvironmentLabel ??
+              (isPanel || showEnvironmentIndicator
+                ? (activeEnvironment?.label ?? "Run on")
+                : workspaceLabel))}
       </ComposerContextLabel>
     </>
   );
@@ -872,12 +924,13 @@ const RunContextSelector = memo(function RunContextSelector({
             <MenuGroup>
               <MenuGroupLabel>Run on</MenuGroupLabel>
               <MenuRadioGroup
-                value={autoEnvironmentLabel ? "auto" : environmentId}
-                onValueChange={(value) =>
-                  value === "auto"
-                    ? onAutoEnvironment?.()
-                    : onEnvironmentChange?.(value as EnvironmentId)
-                }
+                value={cloudSelected ? "cloud" : autoEnvironmentLabel ? "auto" : environmentId}
+                onValueChange={(value) => {
+                  if (value === "cloud") return cloudEnvironment?.onSelect();
+                  if (cloudSelected) cloudEnvironment?.onLeave();
+                  if (value === "auto") onAutoEnvironment?.();
+                  else onEnvironmentChange?.(value as EnvironmentId);
+                }}
               >
                 {onAutoEnvironment && (
                   <MenuRadioItem
@@ -911,6 +964,7 @@ const RunContextSelector = memo(function RunContextSelector({
                     </span>
                   </MenuRadioItem>
                 ))}
+                {cloudEnvironment ? <BoatCloudRadioItem envLocked={envLocked} compact /> : null}
               </MenuRadioGroup>
               {addTargets.length > 0 ? (
                 <MenuSub>
@@ -1176,7 +1230,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   layout = "composer",
   onOpenWorkspaceDetails,
   panelSection = "all",
-  forceNewWorktree = false,
+  forceNewWorktree: forceNewWorktreeProp = false,
   ref,
   environmentId,
   threadId,
@@ -1193,6 +1247,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   onStartFromOriginChange,
   autoEnvironmentLabel,
   onAutoEnvironment,
+  cloudEnvironment,
   envLocked,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
@@ -1211,6 +1266,8 @@ export const BranchToolbar = memo(function BranchToolbar({
   const activeProjectRef = scopeProjectRef(environmentId, projectId);
   const activeProject = useProject(activeProjectRef);
   const scratchWorkspaceRoot = useServerConfigs().get(environmentId)?.scratchWorkspaceRoot;
+  // A Boat cloud thread always starts in a new worktree on its VM; only the base branch is a choice.
+  const forceNewWorktree = forceNewWorktreeProp || cloudEnvironment?.selected === true;
   const activeWorktreePath = forceNewWorktree ? null : worktreePath;
   const effectiveEnvMode = forceNewWorktree ? "worktree" : envMode;
   const envModeLocked = envLocked || (isServerThread && activeWorktreePath !== null);
@@ -1295,6 +1352,7 @@ export const BranchToolbar = memo(function BranchToolbar({
                   forceNewWorktree={forceNewWorktree}
                   autoEnvironmentLabel={autoEnvironmentLabel}
                   onAutoEnvironment={onAutoEnvironment}
+                  cloudEnvironment={cloudEnvironment}
                   envLocked={envLocked}
                   envModeLocked={envModeLocked || !showGitControls}
                   environmentId={environmentId}
@@ -1346,7 +1404,8 @@ export const BranchToolbar = memo(function BranchToolbar({
   const showMachineChip =
     activeEnvironmentOption?.isPrimary !== true ||
     environmentUnavailable ||
-    hasMultipleEnvironments;
+    hasMultipleEnvironments ||
+    cloudEnvironment !== undefined;
   const workspaceMenuProps = {
     forceNewWorktree,
     envModeLocked,
@@ -1362,6 +1421,7 @@ export const BranchToolbar = memo(function BranchToolbar({
     <MachineMenu
       autoEnvironmentLabel={autoEnvironmentLabel}
       onAutoEnvironment={onAutoEnvironment}
+      cloudEnvironment={cloudEnvironment}
       envLocked={envLocked}
       environmentId={environmentId}
       availableEnvironments={availableEnvironments}

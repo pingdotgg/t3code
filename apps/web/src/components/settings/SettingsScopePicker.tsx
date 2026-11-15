@@ -165,7 +165,8 @@ function ScopePopover({
   const visibleEnvironments = environments
     .filter(
       (environment) =>
-        memberEnvironmentIds === null || memberEnvironmentIds.has(environment.environmentId),
+        (memberEnvironmentIds === null || memberEnvironmentIds.has(environment.environmentId)) &&
+        (!environment.boatCloud || environment.environmentId === environmentValue),
     )
     .map((environment) => {
       const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);

@@ -400,6 +400,17 @@ import {
   BotUpdateInput,
 } from "./bot.ts";
 import {
+  BoatCloudAcquireInput,
+  BoatCloudConfigureEnvironmentInput,
+  BoatCloudConnectInput,
+  BoatCloudEmptyInput,
+  BoatCloudError,
+  BoatCloudSession,
+  BoatCloudStatus,
+  BoatCloudSubscribeInput,
+  BoatCloudWakeInput,
+} from "./boatCloud.ts";
+import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
   ProjectCloneListEvent,
@@ -581,6 +592,14 @@ export const WS_METHODS = {
   botsDelete: "bots.delete",
   botsGenerateAvatar: "bots.generateAvatar",
   botsPreviews: "bots.previews",
+
+  boatCloudSubscribe: "boatCloud.subscribe",
+  boatCloudConnect: "boatCloud.connect",
+  boatCloudDisconnect: "boatCloud.disconnect",
+  boatCloudRunSetup: "boatCloud.runSetup",
+  boatCloudConfigureEnvironment: "boatCloud.configureEnvironment",
+  boatCloudAcquire: "boatCloud.acquire",
+  boatCloudWake: "boatCloud.wake",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2116,6 +2135,51 @@ const WsBotsPreviewsRpc = Rpc.make(WS_METHODS.botsPreviews, {
   error: Schema.Union([BotError, EnvironmentAuthorizationError]),
 });
 
+const BoatCloudErrors = Schema.Union([BoatCloudError, EnvironmentAuthorizationError]);
+
+const WsBoatCloudSubscribeRpc = Rpc.make(WS_METHODS.boatCloudSubscribe, {
+  payload: BoatCloudSubscribeInput,
+  success: BoatCloudStatus,
+  error: BoatCloudErrors,
+  stream: true,
+});
+
+const WsBoatCloudConnectRpc = Rpc.make(WS_METHODS.boatCloudConnect, {
+  payload: BoatCloudConnectInput,
+  success: BoatCloudStatus,
+  error: BoatCloudErrors,
+});
+
+const WsBoatCloudDisconnectRpc = Rpc.make(WS_METHODS.boatCloudDisconnect, {
+  payload: BoatCloudEmptyInput,
+  success: BoatCloudStatus,
+  error: BoatCloudErrors,
+});
+
+const WsBoatCloudRunSetupRpc = Rpc.make(WS_METHODS.boatCloudRunSetup, {
+  payload: BoatCloudEmptyInput,
+  success: BoatCloudStatus,
+  error: BoatCloudErrors,
+});
+
+const WsBoatCloudConfigureEnvironmentRpc = Rpc.make(WS_METHODS.boatCloudConfigureEnvironment, {
+  payload: BoatCloudConfigureEnvironmentInput,
+  success: BoatCloudStatus,
+  error: BoatCloudErrors,
+});
+
+const WsBoatCloudAcquireRpc = Rpc.make(WS_METHODS.boatCloudAcquire, {
+  payload: BoatCloudAcquireInput,
+  success: BoatCloudSession,
+  error: BoatCloudErrors,
+});
+
+const WsBoatCloudWakeRpc = Rpc.make(WS_METHODS.boatCloudWake, {
+  payload: BoatCloudWakeInput,
+  success: BoatCloudSession,
+  error: BoatCloudErrors,
+});
+
 const WsGuestShareCreateRpc = Rpc.make(WS_METHODS.guestShareCreate, {
   payload: GuestShareCreateInput,
   success: GuestShareCreateResult,
@@ -2239,6 +2303,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsBotsDeleteRpc,
   WsBotsGenerateAvatarRpc,
   WsBotsPreviewsRpc,
+  WsBoatCloudSubscribeRpc,
+  WsBoatCloudConnectRpc,
+  WsBoatCloudDisconnectRpc,
+  WsBoatCloudRunSetupRpc,
+  WsBoatCloudConfigureEnvironmentRpc,
+  WsBoatCloudAcquireRpc,
+  WsBoatCloudWakeRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

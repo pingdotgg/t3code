@@ -17,7 +17,9 @@ export function useAccessEnvironment(requested: EnvironmentId | null) {
     (environment) =>
       environment.environmentId === primaryEnvironmentId ||
       environment.environmentId === requested ||
-      (environment.entry.enabled && !isDesktopLocalConnectionTarget(environment.entry.target)),
+      (environment.entry.enabled &&
+        !environment.boatCloud &&
+        !isDesktopLocalConnectionTarget(environment.entry.target)),
   );
   const environmentId = resolveAccessEnvironmentId({
     primaryEnvironmentId,

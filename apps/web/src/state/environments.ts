@@ -5,7 +5,7 @@ import {
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import { Discovery } from "@t3tools/client-runtime/relay";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { type EnvironmentId, isBoatCloudHttpBaseUrl } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import { environmentCatalog } from "../connection/catalog";
@@ -24,18 +24,28 @@ export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly label: string;
   readonly displayUrl: string | null;
   readonly relayManaged: boolean;
+  /**
+   * A Boat cloud VM. Lists of machines leave these out, since the one Boat
+   * cloud entry stands for all of them, and they all go by that name.
+   */
+  readonly boatCloud: boolean;
 }
+
+export const BOAT_CLOUD_LABEL = "Boat cloud";
 
 function projectEnvironmentPresentation(
   environmentId: EnvironmentId,
   presentation: BaseEnvironmentPresentation,
 ): EnvironmentPresentation {
+  const displayUrl = connectionCatalogDisplayUrl(presentation.entry);
+  const boatCloud = isBoatCloudHttpBaseUrl(displayUrl);
   return {
     ...presentation,
     environmentId,
-    label: presentation.entry.target.label,
-    displayUrl: connectionCatalogDisplayUrl(presentation.entry),
+    label: boatCloud ? BOAT_CLOUD_LABEL : presentation.entry.target.label,
+    displayUrl,
     relayManaged: hasRelayRoute(presentation.entry),
+    boatCloud,
   };
 }
 

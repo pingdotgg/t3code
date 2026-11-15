@@ -48,6 +48,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { createModelSelection } from "@t3tools/shared/model";
 import { type SetStateAction, useLayoutEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
@@ -224,6 +225,9 @@ interface ComposerSendInput {
   readonly needsLoadBalancing: boolean;
   readonly loadBalancing: DraftEnvironmentRouting["loadBalancing"];
   readonly refreshBeforeSend: DraftEnvironmentRouting["refreshBeforeSend"];
+  /** Turns the thread's sleeping Boat VM back on before the send; null when it is not asleep. */
+  readonly wakeBeforeSend: (() => Promise<boolean>) | null;
+  readonly onRoutedSendDispatched: DraftEnvironmentRouting["onRoutedSendDispatched"];
   readonly readPendingEnvironmentChange: DraftEnvironmentRouting["readPendingEnvironmentChange"];
   readonly pendingApprovals: PendingThreadRequests["pendingApprovals"];
   readonly respondingRequestIds: PendingThreadRequests["respondingRequestIds"];
@@ -322,6 +326,8 @@ export function useComposerSend(input: ComposerSendInput) {
     needsLoadBalancing,
     loadBalancing,
     refreshBeforeSend,
+    wakeBeforeSend,
+    onRoutedSendDispatched,
     readPendingEnvironmentChange,
     pendingApprovals,
     respondingRequestIds,
@@ -1614,13 +1620,17 @@ export function useComposerSend(input: ComposerSendInput) {
     const refresh =
       args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null
         ? null
-        : refreshBeforeSend();
+        : (wakeBeforeSend?.() ?? refreshBeforeSend());
     if (refresh === null) return onSend(...args);
     sendInFlightRef.current = true;
     const ready = await refresh.finally(() => {
       sendInFlightRef.current = false;
     });
-    if (ready) return onSendLatest(...args);
+    if (!ready) return;
+    // A woken VM's connection lands in a store update; commit it so the send reads it.
+    flushSync(() => {});
+    await onSendLatest(...args);
+    onRoutedSendDispatched();
   };
   return {
     onSend: onSendWithRouting,

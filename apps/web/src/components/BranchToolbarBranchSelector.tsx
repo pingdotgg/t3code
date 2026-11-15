@@ -331,7 +331,11 @@ export function BranchToolbarBranchSelector({
       branch,
       worktreePath,
       envMode: nextDraftEnvMode,
-      environmentSelection: automatic ? (draftThread?.environmentSelection ?? "auto") : "manual",
+      // Boat cloud takes the branch along to its VM, so a branch pick keeps it.
+      environmentSelection:
+        automatic || draftThread?.environmentSelection === "cloud"
+          ? (draftThread?.environmentSelection ?? "auto")
+          : "manual",
       projectRef: scopeProjectRef(environmentId, activeProject.id),
     });
     return true;

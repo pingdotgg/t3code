@@ -578,6 +578,18 @@
     "./speech": {
       "types": "./src/speech.ts",
       "import": "./src/speech.ts"
+    },
+    "./boatCloudApi": {
+      "types": "./src/boatCloudApi.ts",
+      "import": "./src/boatCloudApi.ts"
+    },
+    "./boatCloudStart": {
+      "types": "./src/boatCloudStart.ts",
+      "import": "./src/boatCloudStart.ts"
+    },
+    "./boatCloudVm": {
+      "types": "./src/boatCloudVm.ts",
+      "import": "./src/boatCloudVm.ts"
     }
   },
   "scripts": {

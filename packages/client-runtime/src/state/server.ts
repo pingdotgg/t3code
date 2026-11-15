@@ -1499,6 +1499,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:scheduled-tasks:live",
       tag: WS_METHODS.scheduledTasksSubscribe,
     }),
+    boatCloudStatus: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:boat-cloud:status",
+      tag: WS_METHODS.boatCloudSubscribe,
+    }),
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan. With
     // nothing to show yet, the server's last scan answers first, then a plain
@@ -1757,6 +1761,36 @@ export function createServerEnvironmentAtoms<R, E>(
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,
+    }),
+    connectBoatCloud: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:boat-cloud:connect",
+      tag: WS_METHODS.boatCloudConnect,
+    }),
+    disconnectBoatCloud: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:boat-cloud:disconnect",
+      tag: WS_METHODS.boatCloudDisconnect,
+    }),
+    runBoatCloudSetup: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:boat-cloud:run-setup",
+      tag: WS_METHODS.boatCloudRunSetup,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    configureBoatCloudEnvironment: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:boat-cloud:configure-environment",
+      tag: WS_METHODS.boatCloudConfigureEnvironment,
+    }),
+    acquireBoatCloud: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:boat-cloud:acquire",
+      tag: WS_METHODS.boatCloudAcquire,
+    }),
+    // Opening a thread and reconnecting can both ask to wake the same VM.
+    wakeBoatCloud: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:boat-cloud:wake",
+      tag: WS_METHODS.boatCloudWake,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.environmentId}`,
+      },
     }),
     createBot: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:bot:create",

@@ -1248,11 +1248,12 @@ export function VoiceSettingsPanel() {
 
   const order = microphoneOrder(settings);
   const selectedMicrophone = preferredMicrophoneId(order, microphones);
-  const environmentChoices = environments.map((environment) => ({
+  const choosableEnvironments = environments.filter((environment) => !environment.boatCloud);
+  const environmentChoices = choosableEnvironments.map((environment) => ({
     environment,
     value: JSON.stringify(["environment", environment.environmentId]),
   }));
-  const cloudGroups = environments
+  const cloudGroups = choosableEnvironments
     .filter(
       (environment) => environment.serverConfig?.environment.capabilities.cloudVoiceTranscription,
     )
