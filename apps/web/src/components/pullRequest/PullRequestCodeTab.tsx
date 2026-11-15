@@ -2,6 +2,7 @@ import {
   parsePullRequestAnchor,
   pullRequestDiffPathMatches,
   pullRequestLinkCommit,
+  resolvePullRequestAnchorRange,
 } from "@t3tools/shared/pullRequestAnchor";
 import {
   capitalizeTerm,
@@ -347,6 +348,18 @@ interface DraftAnchor {
 export interface PullRequestAgentSelectionInput {
   readonly comment: ReviewCommentContext;
   readonly request: string;
+}
+
+function isRemovedLine(fileDiff: FileDiffMetadata, oldLine: number): boolean {
+  return fileDiff.hunks.some((hunk) => {
+    let next = hunk.deletionStart;
+    return hunk.hunkContent.some((content) => {
+      const count = content.type === "context" ? content.lines : content.deletions;
+      const removed = content.type === "change" && oldLine >= next && oldLine < next + count;
+      next += count;
+      return removed;
+    });
+  });
 }
 
 function PullRequestCodeTab({
@@ -1023,9 +1036,13 @@ function PullRequestCodeTab({
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
     onPostRender: codeViewReveal.flush,
-    // Find may repeat requests before render; only unfold, never toggle.
-    onRevealSearchMatch: (item: CodeViewItem<ReviewAnnotationGroup>) =>
-      setFoldChoices((current) => withFileDiffFold(current, item.id, false)),
+    onItemCollapsedChange: (
+      _item: CodeViewItem<ReviewAnnotationGroup>,
+      nextItem: CodeViewItem<ReviewAnnotationGroup>,
+    ) =>
+      setFoldChoices((current) =>
+        withFileDiffFold(current, nextItem.id, nextItem.collapsed === true),
+      ),
   };
 
   const runThreadCommand = async (
@@ -1556,7 +1573,12 @@ function PullRequestCodeTab({
     answeredLink.current = key;
     setRevealedLink({ scope: scopeKey, path: pendingLinkPath });
     onRevealSettled?.(revealUrl);
-    const range = linkAnchor.range;
+    const range =
+      linkAnchor.range &&
+      resolvePullRequestAnchorRange(
+        linkAnchor.range,
+        (line) => linkFile !== undefined && isRemovedLine(linkFile, line),
+      );
     revealFile(
       pendingLinkPath,
       range

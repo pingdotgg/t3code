@@ -1,4 +1,5 @@
 export const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
+export const TO_LOCAL_BACKEND_PATH_CHANNEL = "desktop:to-local-backend-path";
 export const SET_NOTIFICATION_BADGE_CHANNEL = "desktop:set-notification-badge";
 export const PICK_PROJECT_FAVICON_CHANNEL = "desktop:pick-project-favicon";
 export const PICK_THEME_FILES_CHANNEL = "desktop:pick-theme-files";
@@ -113,6 +114,7 @@ export const PREVIEW_SET_AUDIO_MUTED_CHANNEL = "desktop:preview-set-audio-muted"
 export const PREVIEW_FIND_IN_PAGE_CHANNEL = "desktop:preview-find-in-page";
 export const PREVIEW_STOP_FIND_IN_PAGE_CHANNEL = "desktop:preview-stop-find-in-page";
 export const PREVIEW_SET_SHOWN_CHANNEL = "desktop:preview-set-shown";
+export const PREVIEW_SET_CAPTURE_DRAWN_CHANNEL = "desktop:preview-set-capture-drawn";
 export const PREVIEW_OPEN_DEVTOOLS_CHANNEL = "desktop:preview-open-devtools";
 export const PREVIEW_CLEAR_COOKIES_CHANNEL = "desktop:preview-clear-cookies";
 export const PREVIEW_CLEAR_CACHE_CHANNEL = "desktop:preview-clear-cache";

@@ -19,6 +19,7 @@ import {
   type PreviewAutomationResizeResult,
   type PreviewAutomationSetColorSchemeResult,
   type PreviewAutomationSnapshot,
+  type PreviewAutomationSnapshotMetadata,
   type PreviewAutomationStatus,
   type PreviewTabId,
 } from "@t3tools/contracts";
@@ -242,12 +243,14 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview");
       const autofill = yield* CredentialAutofill.CredentialAutofill;
-      // Output selection and saving are MCP-only; the browser still produces a complete snapshot.
-      const { includeImage: _includeImage, save, ...operationInput } = input ?? {};
+      const { includeImage, save, ...operationInput } = input ?? {};
       // The saved file is for people, so it keeps the resolution the agent's image is capped below.
-      const snapshot = yield* invokeTargeted<PreviewAutomationSnapshot>("snapshot", {
+      const snapshot = yield* invokeTargeted<
+        PreviewAutomationSnapshot | PreviewAutomationSnapshotMetadata
+      >("snapshot", {
         ...operationInput,
         ...(save === true ? { fullScreenshot: true } : {}),
+        ...(includeImage === true || save === true ? {} : { pixelsRequired: false }),
       });
       // Asked after the capture, so a fill that lands during it is still caught.
       if (!(yield* autofill.isScriptLocked(scope, input?.tabId))) return snapshot;

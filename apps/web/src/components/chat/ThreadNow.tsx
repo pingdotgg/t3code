@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 
 import { threadSyncLabel, type ThreadSyncPhase } from "../../threadSync";
 import { cn } from "~/lib/utils";
-import { NoticeText } from "./ComposerBannerStack";
 
 /** A line of thread state for the end of the timeline. */
 export interface ThreadNowItem {
@@ -42,14 +41,7 @@ function ThreadNowLine({
       <span aria-hidden className="flex size-3.5 shrink-0 self-center items-center justify-center">
         {item.icon}
       </span>
-      {/* Title and detail read as one line that gives way before the actions, so Stop stays
-          reachable; when it is cut, its details button shows all of it. */}
-      <NoticeText
-        detailsLabel={
-          typeof item.title === "string" ? `Show details: ${item.title}` : "Show details"
-        }
-        className="min-w-0 truncate"
-      >
+      <span className="min-w-0 truncate">
         {item.title}
         {item.description ? (
           <>
@@ -59,7 +51,7 @@ function ThreadNowLine({
             </span>
           </>
         ) : null}
-      </NoticeText>
+      </span>
       {item.actions ? (
         <span className="ms-1.5 flex shrink-0 items-baseline gap-2.5">{item.actions}</span>
       ) : null}

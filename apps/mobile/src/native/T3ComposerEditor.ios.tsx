@@ -1,4 +1,3 @@
-import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import { PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES } from "@t3tools/client-runtime/text-paste";
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
@@ -15,7 +14,7 @@ import {
   type Ref,
 } from "react";
 import type { NativeSyntheticEvent, StyleProp, ViewProps, ViewStyle } from "react-native";
-import { StyleSheet, useWindowDimensions } from "react-native";
+import { StyleSheet } from "react-native";
 
 import {
   composerChipSizeSuffix,
@@ -28,6 +27,7 @@ import { contextChipIconUri, modelChipIcon, modelChipIconUri } from "../lib/cont
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
 import { SANS_FONT_FAMILY } from "../lib/fonts";
+import { useComposerTextRole } from "../features/settings/appearance/useScaledTextRole";
 import {
   acknowledgeComposerNativeEvent,
   assumeComposerControlledState,
@@ -156,8 +156,7 @@ export function ComposerEditor({
   readResetGeneration = NO_RESET,
   ...props
 }: ComposerEditorProps) {
-  const bodyText = useScaledTextRole("body");
-  const { fontScale } = useWindowDimensions();
+  const bodyText = useComposerTextRole();
   const nativeRef = useRef<NativeComposerEditorRef>(null);
   const mostRecentEventCountRef = useRef(0);
   const [mostRecentEventCount, setMostRecentEventCount] = useState(0);
@@ -355,8 +354,8 @@ export function ComposerEditor({
           ? resolvedTextStyle.fontFamily
           : SANS_FONT_FAMILY
       }
-      fontSize={bodyText.fontSize * fontScale}
-      lineHeight={bodyText.lineHeight * fontScale}
+      fontSize={bodyText.fontSize}
+      lineHeight={bodyText.lineHeight}
       contentInsetVertical={contentInsetVertical}
       singleLineCentered={props.singleLineCentered ?? false}
       editable={props.editable ?? true}

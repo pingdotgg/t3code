@@ -17,6 +17,7 @@ import {
   PreviewAutomationSetColorSchemeInput,
   PreviewAutomationSetColorSchemeResult,
   PreviewAutomationSnapshot,
+  PreviewAutomationSnapshotMetadata,
   PreviewAutomationStatus,
   PreviewAutomationTabTargetInput,
   PreviewAutomationWaitForInput,
@@ -153,7 +154,7 @@ export const PreviewSnapshotTool = safeBrowserTool(
         }),
       ),
     }),
-    success: PreviewAutomationSnapshot,
+    success: Schema.Union([PreviewAutomationSnapshot, PreviewAutomationSnapshotMetadata]),
     failure: PreviewToolFailure,
     // The credential service decides whether the screenshot may leave the server.
     dependencies: [...dependencies, CredentialAutofill.CredentialAutofill],
