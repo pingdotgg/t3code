@@ -30,6 +30,7 @@ import {
   hasProviderUsageLimits,
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
+import { parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
@@ -80,7 +81,12 @@ import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { fileRoutePathSegments } from "../files/filePath";
-import { ComposerActionButton, ComposerToolbarRow } from "../../components/ComposerToolbar";
+import {
+  ComposerActionButton,
+  ComposerInlineControl,
+  ComposerToolbarRow,
+} from "../../components/ComposerToolbar";
+import { formatTokens } from "@t3tools/shared/usageFormat";
 import { ComposerModelControl } from "../../components/ComposerModelControl";
 import {
   composerStripAttachments,
@@ -91,7 +97,7 @@ import {
   isModelSelectionUnavailable,
   serverConfigForCwd,
 } from "../../lib/modelOptions";
-import { useScaledTextRole, type ScaledTextRole } from "../settings/appearance/useScaledTextRole";
+import { useComposerTextRole, type ScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { Menu } from "../../components/ui/Menu";
@@ -219,12 +225,20 @@ export interface ThreadComposerProps {
   readonly selectedThread: EnvironmentThreadShell;
   readonly reportedModelSelection?: ModelSelection | null;
   readonly hasCompactableConversation: boolean;
+  /** Set while the next send compacts the thread first. */
+  readonly compactBeforeSend?: {
+    readonly tokens: number;
+    readonly keepFullHistory: boolean;
+    readonly toggleKeepFullHistory: () => void;
+  } | null;
   /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
   readonly onFreshSession?: () => void;
   readonly offersSideChat?: boolean;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
+  /** Sending declines a pending approval and redirects the agent, so `/side` is plain text. */
+  readonly redirectsApproval: boolean;
   readonly canStopThread: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
@@ -421,7 +435,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const composerPanel = materialTheme["--color-composer-panel"];
   const navigation = useNavigation();
   const foregroundColor = useUniwindTheme()["--color-foreground"];
-  const bodyText = useScaledTextRole("body");
+  const bodyText = useComposerTextRole();
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
@@ -488,7 +502,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     });
   const sendPresentation = resolveComposerSendPresentation({
     editingQueuedMessage: queuedEdit !== null,
-    running: props.activeThreadBusy,
+    // A side-chat command starts a side chat; it never queues or steers the running turn.
+    running:
+      props.activeThreadBusy &&
+      (props.redirectsApproval || parseSideChatCommand(draftMessage) === null),
     canSteer: props.canSteerActiveTurn,
     followUpBehavior: props.followUpBehavior,
     deliveryDeferred:
@@ -819,6 +836,32 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     </View>
   );
 
+  const compactBeforeSend =
+    props.compactBeforeSend && !showResumeAction && queuedEdit === null
+      ? props.compactBeforeSend
+      : null;
+  const compactTokens = compactBeforeSend ? formatTokens(compactBeforeSend.tokens) : null;
+  const compactControl =
+    compactBeforeSend && compactTokens !== null ? (
+      <ComposerInlineControl
+        size={usesLargeControls ? "large" : "regular"}
+        icon="arrow.down.right.and.arrow.up.left"
+        label={compactTokens}
+        selected={!compactBeforeSend.keepFullHistory}
+        showChevron={false}
+        disabled={!props.canOperateThread}
+        accessibilityLabel={
+          compactBeforeSend.keepFullHistory
+            ? `Next send keeps all ${compactTokens} tokens of history`
+            : `Next send compacts ${compactTokens} tokens of history first`
+        }
+        accessibilityHint={
+          compactBeforeSend.keepFullHistory ? "Compacts first" : "Keeps the full history"
+        }
+        onPress={compactBeforeSend.toggleKeepFullHistory}
+      />
+    ) : null;
+
   return (
     <Animated.View
       onLayout={(event) => props.onHeightChange?.(event.nativeEvent.layout.height)}
@@ -1099,6 +1142,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
                 }
               >
+                {compactControl}
                 {modelControl}
                 <ComposerDictationStartAction
                   size={usesLargeControls ? "large" : "regular"}

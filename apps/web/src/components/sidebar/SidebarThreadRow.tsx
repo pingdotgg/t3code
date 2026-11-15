@@ -638,7 +638,7 @@ function ThreadRenameInput(props: {
       }}
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
-      className="min-w-0 flex-1 rounded-sm border border-input bg-card px-1 text-sm font-medium text-card-foreground outline-none focus:border-foreground"
+      className="-mx-1 min-w-0 flex-1 rounded-sm bg-card px-1 text-sm font-medium text-card-foreground outline-none ring-1 ring-inset ring-input focus:ring-foreground"
     />
   );
 }
@@ -1231,7 +1231,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           sortable?.isDragging && "relative z-20",
         )}
       >
-        <Tooltip disabled={sortable?.isDragging}>
+        <Tooltip disabled={isRenaming || sortable?.isDragging}>
           <TooltipTrigger
             render={
               <div
@@ -1391,7 +1391,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             onClick={handleSettleClick}
                             onPointerDown={handleActionPointerDown}
                             className={cn(
-                              "pointer-events-none absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                              "pointer-events-none absolute inset-y-0 right-0 -mr-2 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
                               isWoke && "group-any-hover/sidebar-row:static",
                             )}
                           />
@@ -1428,7 +1428,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         sortable?.isDragging && "relative z-20",
       )}
     >
-      <Tooltip disabled={snoozeMenuOpen || sortable?.isDragging}>
+      <Tooltip disabled={isRenaming || snoozeMenuOpen || sortable?.isDragging}>
         <TooltipTrigger
           render={
             <div
