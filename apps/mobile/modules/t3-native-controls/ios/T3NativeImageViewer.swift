@@ -14,7 +14,12 @@ final class T3NativeImageViewer: NSObject {
   private var urls: [URL?] = []
   /// The original bytes on disk, kept for sharing.
   private var files: [URL?] = []
+  private var placeholders: [UIImage?] = []
   private var loads: [Int: Task<Void, Never>] = [:]
+  private var decodes: [Int: Task<Void, Never>] = [:]
+  /// Pages showing their decoded original; only the current page and its neighbours keep one.
+  private var decoded: Set<Int> = []
+  private var currentIndex = 0
   private var controller: T3ImageViewerController?
   private var finished = false
 
@@ -32,17 +37,18 @@ final class T3NativeImageViewer: NSObject {
     self.urls = urls
     self.titles = titles
     files = Array(repeating: nil, count: urls.count)
+    currentIndex = selectedIndex
     let viewer = T3ImageViewerController(titles: titles, selectedIndex: selectedIndex)
     viewer.sourceView = { [weak self] index in self?.sourceView(index) }
     viewer.fileForPage = { [weak self] index in self?.file(at: index) }
     viewer.onRetry = { [weak self] index in self?.load(index, retry: true) }
     viewer.onDismissed = { [weak self] in self?.finish() }
+    viewer.onPageChange = { [weak self] index in self?.show(page: index) }
     controller = viewer
     viewer.loadViewIfNeeded()
-    for index in urls.indices {
-      if let placeholder = sourceView(index).flatMap(Self.thumbnail(of:)) {
-        viewer.setImage(placeholder, at: index, full: false)
-      }
+    placeholders = urls.indices.map { sourceView($0).flatMap(Self.thumbnail(of:)) }
+    for (index, placeholder) in placeholders.enumerated() {
+      if let placeholder { viewer.setImage(placeholder, at: index, full: false) }
     }
     presenter.present(viewer, animated: false) { viewer.animateIn() }
     for index in urls.indices { load(index, retry: false) }
@@ -85,7 +91,6 @@ final class T3NativeImageViewer: NSObject {
     guard !finished, urls.indices.contains(index), let url = urls[index], loads[index] == nil else { return }
     if retry { controller?.setLoading(at: index) }
     let title = titles[index]
-    let source = sourceView(index)
     loads[index] = Task { @MainActor [self] in
       defer { loads[index] = nil }
       do {
@@ -93,16 +98,44 @@ final class T3NativeImageViewer: NSObject {
         guard !finished, !Task.isCancelled else { Self.remove(file); return }
         if let previous = files[index] { Self.remove(previous) }
         files[index] = file
-        let image = await Task.detached(priority: .userInitiated) { Self.decode(file) }.value
-        guard !finished else { return }
-        // ImageIO cannot read SVG; the thumbnail is vector, so redraw it at full-screen size.
-        if let image = image ?? source.flatMap(Self.render(_:)) {
-          controller?.setImage(image, at: index, full: true)
-        } else {
-          controller?.setFailed(at: index, retryable: false)
-        }
+        decoded.remove(index)
+        if isNearCurrent(index) { decode(index) }
       } catch {
         guard !finished, !Task.isCancelled else { return }
+        controller?.setFailed(at: index, retryable: true)
+      }
+    }
+  }
+
+  /// Every original downloads up front, but a decoded one costs far more memory than its file,
+  /// so only pages next to the current one decode, and pages further away fall back to their thumbnail.
+  private func show(page index: Int) {
+    currentIndex = index
+    for other in decoded where !isNearCurrent(other) {
+      decoded.remove(other)
+      decodes[other]?.cancel()
+      decodes[other] = nil
+      controller?.release(at: other, placeholder: placeholders[other])
+    }
+    for near in files.indices where isNearCurrent(near) { decode(near) }
+  }
+
+  private func isNearCurrent(_ index: Int) -> Bool { abs(index - currentIndex) <= 1 }
+
+  private func decode(_ index: Int) {
+    guard !finished, let file = file(at: index), !decoded.contains(index), decodes[index] == nil else { return }
+    let source = sourceView(index)
+    decodes[index] = Task { @MainActor [self] in
+      defer { decodes[index] = nil }
+      let image = await Task.detached(priority: .userInitiated) { Self.decode(file) }.value
+      guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
+      // ImageIO cannot read SVG; the thumbnail is vector, so redraw it at full-screen size.
+      let isSVG = file.pathExtension.lowercased() == "svg"
+      if let image = image ?? (isSVG ? source.flatMap(Self.render(_:)) : nil) {
+        decoded.insert(index)
+        controller?.setImage(image, at: index, full: true)
+      } else {
+        // A corrupt download or an SVG whose thumbnail is scrolled away; retrying downloads it again.
         controller?.setFailed(at: index, retryable: true)
       }
     }
@@ -113,6 +146,8 @@ final class T3NativeImageViewer: NSObject {
     finished = true
     for task in loads.values { task.cancel() }
     loads.removeAll()
+    for task in decodes.values { task.cancel() }
+    decodes.removeAll()
     for file in files.compactMap({ $0 }) { Self.remove(file) }
     files.removeAll()
     controller = nil
@@ -173,14 +208,18 @@ final class T3NativeImageViewer: NSObject {
     // Every frame stays decoded while it plays, so an animation over this budget shows its first frame.
     if count > 1, let first = CGImageSourceCreateThumbnailAtIndex(source, 0, animationOptions as CFDictionary),
       first.bytesPerRow * first.height * count <= animationByteBudget {
-      var frames = [UIImage(cgImage: first)]
-      var duration = frameDuration(source, 0)
+      var frames: [(image: UIImage, delay: Double)] = [(UIImage(cgImage: first), frameDuration(source, 0))]
       for index in 1..<count {
         guard let frame = CGImageSourceCreateThumbnailAtIndex(source, index, animationOptions as CFDictionary) else { continue }
-        frames.append(UIImage(cgImage: frame))
-        duration += frameDuration(source, index)
+        frames.append((UIImage(cgImage: frame), frameDuration(source, index)))
       }
-      if frames.count > 1 { return UIImage.animatedImage(with: frames, duration: duration) }
+      // UIKit plays frames evenly, so a longer delay repeats its frame; the repeats share one bitmap.
+      let tick = max(0.02, frames.map(\.delay).min() ?? 0.1)
+      let timeline = frames.flatMap { frame in
+        Array(repeating: frame.image, count: min(50, max(1, Int((frame.delay / tick).rounded()))))
+      }
+      let duration = frames.reduce(0) { $0 + $1.delay }
+      if frames.count > 1 { return UIImage.animatedImage(with: timeline, duration: duration) }
     }
     return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary).map { UIImage(cgImage: $0) }
   }
@@ -282,6 +321,16 @@ private final class T3ImageViewerPage: UIView, UIScrollViewDelegate {
     setNeedsLayout()
   }
 
+  /// Gives back a far-away page's decoded original, keeping the thumbnail until it returns.
+  func release(to placeholder: UIImage?) {
+    guard isFull else { return }
+    isFull = false
+    imageView.image = placeholder
+    laidOutSize = .zero
+    setNeedsLayout()
+    setLoading()
+  }
+
   func setLoading() {
     failure.isHidden = true
     imageView.alpha = 1
@@ -376,6 +425,7 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   var sourceView: (Int) -> UIView? = { _ in nil }
   var fileForPage: (Int) -> URL? = { _ in nil }
   var onRetry: (Int) -> Void = { _ in }
+  var onPageChange: (Int) -> Void = { _ in }
   var onDismissed: () -> Void = {}
 
   private let titles: [String]
@@ -588,6 +638,8 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
 
   func setLoading(at index: Int) { pages[safe: index]?.setLoading() }
 
+  func release(at index: Int, placeholder: UIImage?) { pages[safe: index]?.release(to: placeholder) }
+
   func setFailed(at index: Int, retryable: Bool) {
     pages[safe: index]?.setFailed(retryable: retryable)
   }
@@ -786,6 +838,7 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
     pages[currentIndex].resetZoom(animated: false)
     currentIndex = index
     updateTitle()
+    onPageChange(index)
   }
 
   private func scroll(to index: Int) {
@@ -796,23 +849,37 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   // MARK: Share, keyboard and accessibility
 
   private func save() {
-    let file = fileForPage(currentIndex)
     let image = pages[currentIndex].isFull ? pages[currentIndex].image : nil
-    guard file != nil || image != nil else { return }
-    // Original bytes keep the format and metadata; an SVG only has its rendered image.
-    let decodable = file.flatMap { CGImageSourceCreateWithURL($0 as CFURL, nil) }.map { CGImageSourceGetCount($0) > 0 } ?? false
+    // Original bytes keep the format and metadata; an SVG only has its rendered image. The copy
+    // belongs to this save, since closing the viewer deletes its files before Photos may read them.
+    let original = fileForPage(currentIndex).flatMap { file -> URL? in
+      guard let source = CGImageSourceCreateWithURL(file as CFURL, nil), CGImageSourceGetCount(source) > 0 else { return nil }
+      let copy = FileManager.default.temporaryDirectory.appendingPathComponent("t3-save-\(UUID().uuidString)")
+        .appendingPathComponent(file.lastPathComponent)
+      do {
+        try FileManager.default.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: file, to: copy)
+        return copy
+      } catch {
+        return nil
+      }
+    }
+    guard original != nil || image != nil else { return }
+    let cleanUp = { if let original { try? FileManager.default.removeItem(at: original.deletingLastPathComponent()) } }
     PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
       guard status == .authorized || status == .limited else {
+        cleanUp()
         DispatchQueue.main.async { self?.showSaveError("Allow T3 Code to add photos in Settings.") }
         return
       }
       PHPhotoLibrary.shared().performChanges({
-        if let file, decodable {
-          PHAssetCreationRequest.forAsset().addResource(with: .photo, fileURL: file, options: nil)
+        if let original {
+          PHAssetCreationRequest.forAsset().addResource(with: .photo, fileURL: original, options: nil)
         } else if let image {
           PHAssetChangeRequest.creationRequestForAsset(from: image)
         }
       }, completionHandler: { saved, error in
+        cleanUp()
         DispatchQueue.main.async {
           if saved {
             self?.confirmSaved()
