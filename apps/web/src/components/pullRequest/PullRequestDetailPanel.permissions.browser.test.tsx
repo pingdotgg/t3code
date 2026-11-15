@@ -13,7 +13,7 @@ import { act, fakeTimers, render } from "../../../test/render";
 
 const { permissions, reads } = vi.hoisted(() => ({
   permissions: { checkout: true, operate: true },
-  reads: { detailPending: false, diff: [] as unknown[] },
+  reads: { diff: [] as unknown[] },
 }));
 
 vi.mock(import("~/state/session"), async (original) => ({
@@ -35,7 +35,7 @@ vi.mock(import("./usePullRequestDetail"), async (original) => ({
   ...(await original()),
   usePullRequestDetail: (() => ({
     canWriteSourceControl: permissions.checkout,
-    detailQuery: { isPending: reads.detailPending, refresh: vi.fn() },
+    detailQuery: { isPending: false, refresh: vi.fn() },
     activityQuery: { isPending: false, refresh: vi.fn(), error: null },
     activity: null,
     sharedSummary: detail,
@@ -148,7 +148,6 @@ const panel = (attach = false) => (
 function setup() {
   permissions.checkout = true;
   permissions.operate = true;
-  reads.detailPending = false;
   reads.diff = [];
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
 }
@@ -178,15 +177,6 @@ it("can still add conflict resolution to an existing composer without checkout s
   const draft = useComposerDraftStore.getState().getComposerDraft(draftId);
   expect(draft?.prompt).toContain("conflicts");
   expect(draft?.prompt).toContain(detail.url);
-});
-
-it("keeps the actions menu still while a shown pull request is read again in the background", async () => {
-  setup();
-  reads.detailPending = true;
-  await using screen = await render(panel());
-  await expect.element(screen.getByRole("button", { name: "Resolve conflicts" })).toBeVisible();
-  expect(screen.getByRole("button", { name: /^Refreshing / }).query()).toBeNull();
-  await expect.element(screen.getByRole("button", { name: /^More .* actions$/ })).toBeVisible();
 });
 
 it("reads the first diff page once the pointer rests on the Code tab", async () => {

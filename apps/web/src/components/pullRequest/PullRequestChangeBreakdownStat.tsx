@@ -63,6 +63,8 @@ export function PullRequestChangeBreakdownStat({
         <TooltipPopup side="bottom">
           <ChangeBreakdownGrid breakdown={breakdown} total={{ additions, deletions }} />
         </TooltipPopup>
+      ) : query.isPending ? (
+        <TooltipPopup side="bottom">Loading breakdown</TooltipPopup>
       ) : null}
     </Tooltip>
   );

@@ -1,6 +1,5 @@
 import type { ProjectId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
 import {
-  capitalizeTerm,
   sourceControlClients,
   UNKNOWN_SOURCE_CONTROL_CLIENT,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -159,7 +158,7 @@ function LinkRowImpl({
       {depth > 0 ? <span aria-hidden className="-ml-2 h-6 w-px shrink-0 bg-border/70" /> : null}
       {snapshot === null ? (
         <PullRequestGlyph.pullRequest
-          aria-label={capitalizeTerm(linkHost.changeRequest.singular)}
+          aria-label="Waiting for host state"
           className="size-4 shrink-0 text-muted-foreground"
         />
       ) : (
