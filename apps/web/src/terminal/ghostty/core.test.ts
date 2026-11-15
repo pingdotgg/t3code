@@ -485,3 +485,84 @@ describe("GhosttyTerminalCore scrollback", () => {
     }
   });
 });
+
+describe("GhosttyTerminalCore mouse encoding", () => {
+  // The default 13px font measures a fractional 7.82666015625px cell; rows are 18px.
+  const cellWidth = 7.82666015625;
+  const cellHeight = 18;
+
+  it.each([
+    {
+      name: "a press inside rendered column 28",
+      modes: "\x1b[?1002h\x1b[?1006h",
+      x: 218.5,
+      y: 140,
+      mods: 0,
+      paddingTop: 4,
+      expected: "\x1b[<0;28;8M",
+    },
+    {
+      name: "a Shift+Ctrl press inside the last rendered column",
+      modes: "\x1b[?1002h\x1b[?1006h",
+      x: 4 + 53.5 * cellWidth,
+      y: 140,
+      mods: 1 | (1 << 1),
+      paddingTop: 4,
+      expected: "\x1b[<20;54;8M",
+    },
+    {
+      name: "a press just below a row boundary with a fractional top origin",
+      modes: "\x1b[?1002h\x1b[?1006h",
+      x: 10,
+      y: 4.5 + cellHeight + 0.2,
+      mods: 0,
+      paddingTop: 4.5,
+      expected: "\x1b[<0;1;2M",
+    },
+    {
+      name: "an SGR pixel press, which reports surface pixels from the grid origin",
+      modes: "\x1b[?1002h\x1b[?1006h\x1b[?1016h",
+      x: 218.5,
+      y: 140.6,
+      mods: 0,
+      paddingTop: 4,
+      expected: "\x1b[<0;215;137M",
+    },
+  ])("encodes $name on the rendered grid", async (row) => {
+    const core = await GhosttyTerminalCore.create(
+      54,
+      15,
+      cellWidth,
+      cellHeight,
+      {
+        foreground: { r: 255, g: 255, b: 255 },
+        background: { r: 0, g: 0, b: 0 },
+        cursor: { r: 255, g: 255, b: 255 },
+      },
+      () => {},
+    );
+    try {
+      core.write(row.modes);
+      expect(
+        core.encodeMouse({
+          action: "press",
+          button: 1,
+          mods: row.mods,
+          x: row.x,
+          y: row.y,
+          screenWidth: 437,
+          screenHeight: 279,
+          cellWidth,
+          cellHeight,
+          paddingLeft: 4,
+          paddingRight: 4,
+          paddingTop: row.paddingTop,
+          paddingBottom: 279 - row.paddingTop - 15 * cellHeight,
+          anyButtonPressed: true,
+        }),
+      ).toBe(row.expected);
+    } finally {
+      core.dispose();
+    }
+  });
+});
