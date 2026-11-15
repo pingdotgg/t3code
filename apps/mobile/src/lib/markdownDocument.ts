@@ -538,7 +538,8 @@ export function markdownWithSvgImagesAsText(markdown: string): string {
     const standalone = hostsSlots && node.type === "paragraph" && children.length === 1;
     const childrenHostSlots = node.type === "root" || (hostsSlots && node.type === "blockquote");
     children.forEach((child, index) => {
-      const text = standalone ? null : altText(child);
+      if (standalone && (child.type === "image" || child.type === "imageReference")) return;
+      const text = altText(child);
       const gone = text === "" || (text === null && vanishes(child));
       let start = child.position?.start.offset;
       let end = child.position?.end.offset;

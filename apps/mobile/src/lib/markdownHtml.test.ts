@@ -32,6 +32,8 @@ describe("HTML in native Markdown", () => {
     // An image alone in its paragraph is drawn by the React image renderer, quoted or not.
     ["![Diagram](https://example.com/d.svg)", "![Diagram](https://example.com/d.svg)"],
     ["> ![Diagram](https://example.com/d.svg?v=2)", "> ![Diagram](https://example.com/d.svg?v=2)"],
+    ["![](https://example.com/d.svg)", "![](https://example.com/d.svg)"],
+    ["> ![](https://example.com/d.svg)", "> ![](https://example.com/d.svg)"],
     ["- ![In list](https://example.com/d.svg)", "- In list"],
     ["- ![](https://example.com/d.svg)\n- ![a [b]](https://example.com/d.svg)", "- \n- a \\[b\\]"],
     [
