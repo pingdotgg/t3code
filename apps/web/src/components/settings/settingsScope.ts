@@ -6,6 +6,8 @@ import type {
 } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
 
+import { translateDynamic } from "../../i18nCore";
+
 export interface SettingsScopeSearch {
   project?: string | undefined;
   machine?: string | undefined;
@@ -66,24 +68,24 @@ export function resolveSettingsScope(
   ): ResolvedSettingsScope => ({
     kind: "unavailable",
     reason,
-    label: "Unavailable selection",
+    label: translateDynamic("scope.unavailableSelection"),
     message,
     members: [],
     environmentIds: [],
   });
 
   if (search.checkout && !search.project) {
-    return unavailable("project-required", "Select a project to choose one of its checkouts.");
+    return unavailable("project-required", translateDynamic("scope.selectProjectForCheckout"));
   }
 
   const environment = environments.find((candidate) => candidate.environmentId === search.machine);
   if (search.machine && !environment) {
-    return unavailable("environment-missing", "This environment is no longer available.");
+    return unavailable("environment-missing", translateDynamic("scope.environmentMissing"));
   }
 
   if (search.project) {
     const group = groups.find((candidate) => candidate.projectKey === search.project);
-    if (!group) return unavailable("project-missing", "This project is no longer available.");
+    if (!group) return unavailable("project-missing", translateDynamic("scope.projectMissing"));
     const members = group.memberProjects.filter(
       (member) =>
         (search.machine === undefined || member.environmentId === search.machine) &&
@@ -93,8 +95,8 @@ export function resolveSettingsScope(
       return unavailable(
         "checkout-missing",
         search.checkout
-          ? "This checkout is no longer available in the selected project and environment."
-          : "This project has no checkout on this environment.",
+          ? translateDynamic("scope.checkoutMissing")
+          : translateDynamic("scope.noCheckoutOnEnvironment"),
       );
     }
     if (search.checkout) {
@@ -105,7 +107,7 @@ export function resolveSettingsScope(
       if (!checkoutEnvironment) {
         return unavailable(
           "environment-missing",
-          "This checkout's environment is no longer available.",
+          translateDynamic("scope.checkoutEnvironmentMissing"),
         );
       }
       const sharesEnvironment = group.memberProjects.some(
@@ -127,7 +129,7 @@ export function resolveSettingsScope(
       kind: "project",
       group,
       environmentId: environment?.environmentId ?? null,
-      label: `${group.displayName} / ${environment?.label ?? "All checkouts"}`,
+      label: `${group.displayName} / ${environment?.label ?? translateDynamic("scope.allCheckouts")}`,
       members,
       environmentIds: [...new Set(members.map((member) => member.environmentId))],
     };
@@ -143,7 +145,7 @@ export function resolveSettingsScope(
   }
   return {
     kind: "all",
-    label: "All environments",
+    label: translateDynamic("scope.allEnvironments"),
     members: [],
     environmentIds: environments.map((candidate) => candidate.environmentId),
   };

@@ -344,14 +344,39 @@ function ProjectDetail({
     const api = readLocalApi();
     if (!api) return;
 
-    const { projectThreads, isWholeGroup, confirmationMessage } = planProjectRemoval({
-      members,
-      groupMemberCount: group.memberProjects.length,
-      hasOtherMembers,
-      displayName: group.displayName,
-      threads,
-      unloadedThreadCount: readUnloadedThreadCount(members, threads),
-    });
+    const { projectThreads, isWholeGroup, targetKind, threadCount, targetLabel, singleMember } =
+      planProjectRemoval({
+        members,
+        groupMemberCount: group.memberProjects.length,
+        hasOtherMembers,
+        displayName: group.displayName,
+        threads,
+        unloadedThreadCount: readUnloadedThreadCount(members, threads),
+      });
+    const kindLabel =
+      targetKind === "checkout" ? t("project.kindCheckout") : t("project.kindProject");
+    const confirmationMessage = [
+      threadCount > 0
+        ? t("project.removeConfirmThreads", {
+            kind: kindLabel,
+            name: targetLabel,
+            count: threadCount,
+          })
+        : t("project.removeConfirm", { kind: kindLabel, name: targetLabel }),
+      ...(singleMember
+        ? [
+            t("project.removePath", { path: singleMember.workspaceRoot }),
+            ...(singleMember.environmentLabel
+              ? [t("project.removeEnvironment", { environment: singleMember.environmentLabel })]
+              : []),
+          ]
+        : [t("project.removeGrouped", { count: members.length })]),
+      ...(threadCount > 0 ? [t("project.removeThreadsNote")] : [t("project.removeArchivedNote")]),
+      isWholeGroup && !hasOtherMembers
+        ? t("project.removeEntriesOnly")
+        : t("project.removeOtherEntries"),
+      t("project.removeIrreversible"),
+    ].join("\n");
     const confirmed = await settlePromise(() =>
       api.dialogs.confirm(confirmationMessage, { variant: "destructive" }),
     );
