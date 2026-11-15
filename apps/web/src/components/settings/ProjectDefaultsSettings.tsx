@@ -327,9 +327,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             ) : null}
           </div>
         ) : (
-          <span className="text-sm text-muted-foreground">
-            {t("projectDefaults.noProviders")}
-          </span>
+          <span className="text-sm text-muted-foreground">{t("projectDefaults.noProviders")}</span>
         )
       }
     />

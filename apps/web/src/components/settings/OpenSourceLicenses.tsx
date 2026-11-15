@@ -49,9 +49,10 @@ const licenseManifestAtom = Atom.make(
       try: () => decodeThirdPartyLicenseManifest(body),
       catch: (error) =>
         new LicenseManifestLoadError({
-          message: error instanceof Error
-            ? error.message
-            : translateDynamic("openSourceLicenses.errCannotLoad"),
+          message:
+            error instanceof Error
+              ? error.message
+              : translateDynamic("openSourceLicenses.errCannotLoad"),
         }),
     });
   }).pipe(
@@ -64,8 +65,8 @@ const licenseManifestAtom = Atom.make(
       orElse: () =>
         Effect.fail(
           new LicenseManifestLoadError({
-          message: translateDynamic("openSourceLicenses.errTooSlow"),
-        }),
+            message: translateDynamic("openSourceLicenses.errTooSlow"),
+          }),
         ),
     }),
     Effect.provide(FetchHttpClient.layer),
