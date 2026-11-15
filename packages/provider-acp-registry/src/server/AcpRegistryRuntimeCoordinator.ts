@@ -17,9 +17,14 @@ import * as Stream from "effect/Stream";
 
 import type { AcpRegistryAvailableCommands, AcpRegistryLiveConfiguration } from "./probe.ts";
 
+/** `revision` changes on every publication, including one that repeats another cwd's list. */
+export interface AcpRegistryInstanceCommands extends AcpRegistryAvailableCommands {
+  readonly revision: number;
+}
+
 interface AvailableCommandsUpdate {
   readonly instanceId: ProviderInstanceId;
-  readonly commands: AcpRegistryAvailableCommands;
+  readonly commands: AcpRegistryInstanceCommands;
 }
 
 interface LiveConfigurationUpdate {
@@ -58,13 +63,18 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
     readonly publishAvailableCommands: (
       instanceId: ProviderInstanceId,
       commands: AcpRegistryAvailableCommands,
+      cwd?: string | null,
     ) => Effect.Effect<void>;
     readonly getAvailableCommands: (
       instanceId: ProviderInstanceId,
+    ) => Effect.Effect<Option.Option<AcpRegistryInstanceCommands>>;
+    readonly getAvailableCommandsForCwd: (
+      instanceId: ProviderInstanceId,
+      cwd: string,
     ) => Effect.Effect<Option.Option<AcpRegistryAvailableCommands>>;
     readonly watchAvailableCommands: (
       instanceId: ProviderInstanceId,
-      onUpdate: (commands: AcpRegistryAvailableCommands) => Effect.Effect<void>,
+      onUpdate: (commands: AcpRegistryInstanceCommands) => Effect.Effect<void>,
     ) => Effect.Effect<void>;
     readonly clearLiveConfiguration: (instanceId: ProviderInstanceId) => Effect.Effect<void>;
     readonly publishLiveConfiguration: (
@@ -100,7 +110,12 @@ const make = Effect.gen(function* () {
   const activeForegroundCounts = yield* Ref.make(new Map<string, number>());
   const availableCommandsUpdates = yield* PubSub.unbounded<AvailableCommandsUpdate>();
   const availableCommandsByInstance = yield* Ref.make(
-    new Map<ProviderInstanceId, AcpRegistryAvailableCommands>(),
+    new Map<ProviderInstanceId, AcpRegistryInstanceCommands>(),
+  );
+  const availableCommandsRevision = yield* Ref.make(0);
+  // Agents scope project commands to a session's cwd, so each workspace keeps its own list.
+  const availableCommandsByWorkspace = yield* Ref.make(
+    new Map<ProviderInstanceId, ReadonlyMap<string, AcpRegistryAvailableCommands>>(),
   );
   const liveConfigurationUpdates = yield* PubSub.unbounded<LiveConfigurationUpdate>();
   const liveConfigurationByInstance = yield* Ref.make(
@@ -164,28 +179,48 @@ const make = Effect.gen(function* () {
         const next = new Map(current);
         next.delete(instanceId);
         return next;
-      });
-
-  const publishAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["publishAvailableCommands"] =
-    (instanceId, commands) =>
-      Ref.update(availableCommandsByInstance, (current) => {
-        const next = new Map(current);
-        next.set(instanceId, commands);
-        return next;
       }).pipe(
         Effect.andThen(
-          PubSub.publish(availableCommandsUpdates, {
-            instanceId,
-            commands,
+          Ref.update(availableCommandsByWorkspace, (current) => {
+            const next = new Map(current);
+            next.delete(instanceId);
+            return next;
           }),
         ),
-        Effect.asVoid,
       );
+
+  const publishAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["publishAvailableCommands"] =
+    Effect.fn("AcpRegistryRuntimeCoordinator.publishAvailableCommands")(
+      function* (instanceId, available, cwd) {
+        // The cwd list is stored first: the revision below makes clients rescan that cwd.
+        if (cwd) {
+          yield* Ref.update(availableCommandsByWorkspace, (current) => {
+            const next = new Map(current);
+            next.set(instanceId, new Map(current.get(instanceId)).set(cwd, available));
+            return next;
+          });
+        }
+        const revision = yield* Ref.updateAndGet(availableCommandsRevision, (value) => value + 1);
+        const commands = { ...available, revision };
+        yield* Ref.update(availableCommandsByInstance, (current) => {
+          const next = new Map(current);
+          next.set(instanceId, commands);
+          return next;
+        });
+        yield* PubSub.publish(availableCommandsUpdates, { instanceId, commands });
+      },
+    );
 
   const getAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["getAvailableCommands"] =
     Effect.fn("AcpRegistryRuntimeCoordinator.getAvailableCommands")(function* (instanceId) {
       return Option.fromNullishOr((yield* Ref.get(availableCommandsByInstance)).get(instanceId));
     });
+
+  const getAvailableCommandsForCwd: AcpRegistryRuntimeCoordinator["Service"]["getAvailableCommandsForCwd"] =
+    (instanceId, cwd) =>
+      Ref.get(availableCommandsByWorkspace).pipe(
+        Effect.map((current) => Option.fromNullishOr(current.get(instanceId)?.get(cwd))),
+      );
 
   const watchAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["watchAvailableCommands"] =
     (instanceId, onUpdate) =>
@@ -342,6 +377,7 @@ const make = Effect.gen(function* () {
     clearAvailableCommands,
     publishAvailableCommands,
     getAvailableCommands,
+    getAvailableCommandsForCwd,
     watchAvailableCommands,
     clearLiveConfiguration,
     publishLiveConfiguration,

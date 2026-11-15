@@ -124,11 +124,12 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         {
           slashCommands: [{ name: "status" }],
           skills: [{ name: "workspace-skill", path: "acp://skill/workspace-skill", enabled: true }],
+          revision: 1,
         },
-        { slashCommands: [], skills: [] },
+        { slashCommands: [], skills: [], revision: 3 },
       ]);
       expect(yield* coordinator.getAvailableCommands(kilo)).toEqual(
-        Option.some({ slashCommands: [{ name: "review" }], skills: [] }),
+        Option.some({ slashCommands: [{ name: "review" }], skills: [], revision: 2 }),
       );
       yield* coordinator.clearAvailableCommands(codex);
       expect(Option.isNone(yield* coordinator.getAvailableCommands(codex))).toBe(true);

@@ -1285,6 +1285,13 @@ describe("server state projection", () => {
         fetched,
       ).providers[0]?.workspaceSnapshots,
     ).toBeUndefined();
+    // So does a new workspace revision, even when the machine commands repeat.
+    expect(
+      withFetchedWorkspaceSnapshots(
+        configWith(true, [{ ...provider(claude), workspaceSnapshotsRevision: 2 }]),
+        fetched,
+      ).providers[0]?.workspaceSnapshots,
+    ).toBeUndefined();
 
     // A catalog digest stands for the lists: loading them keeps the snapshot, a new digest retires it.
     const digested = (catalogDigest: string, slashCommands: ReadonlyArray<{ name: string }> = []) =>
