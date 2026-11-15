@@ -1189,6 +1189,7 @@ it.effect(
       const parentId = ThreadId.make("side-chat-archive-parent");
       const busy = ThreadId.make("side-chat-archive-busy");
       const archivedFirst = ThreadId.make("side-chat-archive-archived-first");
+      const delegating = ThreadId.make("side-chat-archive-delegating");
       yield* createParent(parentId);
       yield* writeParentRun({
         threadId: parentId,
@@ -1200,6 +1201,7 @@ it.effect(
       });
       yield* forkSideChat("side-chat-archive-fork-busy", parentId, busy);
       yield* forkSideChat("side-chat-archive-fork-archived-first", parentId, archivedFirst);
+      yield* forkSideChat("side-chat-archive-fork-delegating", parentId, delegating);
       const runningRunId = RunId.make("side-chat-archive-busy-running");
       const queuedRunId = RunId.make("side-chat-archive-busy-queued");
       yield* writeParentRun({
@@ -1243,6 +1245,46 @@ it.effect(
           ],
         });
       }
+      const delegatingRunId = RunId.make("side-chat-archive-delegating-run");
+      yield* writeParentRun({
+        threadId: delegating,
+        runId: delegatingRunId,
+        ordinal: 1,
+        status: "completed",
+        text: "Delegate a review",
+      });
+      const taskId = NodeId.make("side-chat-archive-delegated-task");
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${taskId}:running`),
+            type: "subagent.updated",
+            threadId: delegating,
+            occurredAt: now,
+            payload: {
+              id: taskId,
+              threadId: delegating,
+              runId: delegatingRunId,
+              parentNodeId: NodeId.make("side-chat-archive-delegating-node"),
+              origin: "app_owned",
+              createdBy: "agent",
+              driver,
+              providerInstanceId: instanceId,
+              providerThreadId: null,
+              childThreadId: ThreadId.make("side-chat-archive-delegated-child"),
+              nativeTaskRef: null,
+              prompt: "Review the changes",
+              title: null,
+              model: null,
+              status: "running",
+              result: null,
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+            },
+          },
+        ],
+      });
       // A guest share on the busy side chat ends with the parent's archive, as on any archived thread.
       const shareId = GuestShareId.make("side-chat-archive-share");
       yield* orchestrator.dispatch({
@@ -1280,6 +1322,8 @@ it.effect(
       assert.isEmpty(archivedBusy.providerSessions);
       assert.isNull(archivedBusy.thread.guestShare ?? null);
       assert.deepEqual(yield* archivedAt(archivedFirst), childArchivedAt);
+      // Archive refuses a thread still waiting on delegated tasks, so the cascade leaves it active.
+      assert.isNull(yield* archivedAt(delegating));
       // The side chat's session is detached the way the parent's is.
       const stopEffects = (commandId: string) =>
         outbox
