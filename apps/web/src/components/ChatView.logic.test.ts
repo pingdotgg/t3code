@@ -1,4 +1,5 @@
 import {
+  prepareRevertedMessageAttachments,
   boundAttachmentIds,
   buildExpiredTerminalContextToastCopy,
   mergeDirectPreviewAnnotation,
@@ -40,11 +41,12 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
 
 import type { Thread } from "../types";
+import { DraftId, hydrateImagesFromPersisted, useComposerDraftStore } from "../composerDraftStore";
 import { derivePhase } from "../session-logic";
 import { makeThreadFixture, makeThreadProjectionFixture } from "../test-fixtures";
 import {
@@ -1497,5 +1499,60 @@ describe("deriveThreadPendingBackgroundTasks", () => {
         }),
       ),
     ).toEqual([{ taskId: "task-1", kind: "background_task" }]);
+  });
+});
+
+describe("prepareRevertedMessageAttachments", () => {
+  it("suppresses a repeated image after restoring a rewound message", async () => {
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(new Uint8Array([1, 2, 3])));
+    const [file] = await prepareRevertedMessageAttachments({
+      message: {
+        id: MessageId.make("rewound"),
+        role: "user",
+        text: "",
+        runId: null,
+        streaming: false,
+        createdAt: now,
+        updatedAt: now,
+        attachments: [
+          { type: "image", id: "restored", name: "image.png", mimeType: "image/png", sizeBytes: 3 },
+        ],
+      },
+      environmentId: EnvironmentId.make("rewind-images"),
+      httpBaseUrl: "http://localhost",
+      createAssetUrl: async () =>
+        AsyncResult.success({ relativeUrl: "/attachment/image.png", expiresAt: 0 }),
+    });
+    const target = DraftId.make("rewind-image-repeat");
+    const store = useComposerDraftStore.getState();
+    using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+    store.addImages(
+      target,
+      [
+        {
+          type: "image",
+          id: "restored",
+          name: file!.name,
+          mimeType: file!.type,
+          sizeBytes: file!.size,
+          file: file!,
+          previewUrl: "data:image/png;base64,AQID",
+        },
+      ],
+      { allowDuplicates: true },
+    );
+    const repeat = hydrateImagesFromPersisted([
+      {
+        id: "repeat",
+        name: "image.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+        dataUrl: "data:image/png;base64,AQID",
+      },
+    ]);
+    expect(store.addImages(target, repeat)).toEqual([]);
+    expect(store.getComposerDraft(target)?.images.map(({ id }) => id)).toEqual(["restored"]);
   });
 });
