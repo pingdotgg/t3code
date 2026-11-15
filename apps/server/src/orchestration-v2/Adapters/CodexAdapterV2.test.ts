@@ -801,70 +801,10 @@ function codexReplayPreamble(input: {
   ];
 }
 
-const CODEX_THREAD_REQUEST_METHODS = new Set(["thread/start", "thread/resume", "thread/fork"]);
-
-/** Each turn/start and a session's first thread request follow a config/read; inserts it and shifts later ids. */
 function withConfigReadBeforeTurnStart(
   entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
 ): Array<CodexReplay.CodexAppServerReplayEntry> {
-  const result: Array<CodexReplay.CodexAppServerReplayEntry> = [];
-  let offset = 0;
-  let clientIds = new Map<number, number>();
-  let sessionConfigRead = false;
-  for (const entry of entries) {
-    const frame = entry.type === "runtime_exit" ? undefined : entry.frame;
-    if (!Predicate.isObject(frame) || typeof frame.id !== "number") {
-      result.push(entry);
-      continue;
-    }
-    if (entry.type === "expect_outbound" && typeof frame.method === "string") {
-      if (frame.method === "initialize") {
-        offset = 0;
-        clientIds = new Map();
-        sessionConfigRead = false;
-      }
-      const previous = result.at(-2);
-      const threadRequest = CODEX_THREAD_REQUEST_METHODS.has(frame.method);
-      if (
-        (frame.method === "turn/start" || (threadRequest && !sessionConfigRead)) &&
-        !(previous?.type === "expect_outbound" && previous.label === "config/read")
-      ) {
-        const id = frame.id + offset;
-        const params = Predicate.isObject(frame.params) ? frame.params : {};
-        result.push(
-          {
-            type: "expect_outbound",
-            label: "config/read",
-            frame: {
-              id,
-              method: "config/read",
-              params:
-                frame.method === "turn/start"
-                  ? { cwd: params.cwd, includeLayers: false }
-                  : { includeLayers: false },
-            },
-          },
-          {
-            type: "emit_inbound",
-            label: "config/read",
-            frame: { id, result: { config: {}, origins: {} } },
-          },
-        );
-        offset += 1;
-      }
-      if (threadRequest) sessionConfigRead = true;
-      clientIds.set(frame.id, frame.id + offset);
-      result.push(withReplayRequestId(entry, frame.id + offset));
-      continue;
-    }
-    const mapped = clientIds.get(frame.id);
-    result.push(
-      entry.type === "emit_inbound" && frame.method === undefined && mapped !== undefined
-        ? withReplayRequestId(entry, mapped)
-        : entry,
-    );
-  }
-  return result;
+  return CodexAdapterV2Testkit.withCodexConfigReads(entries, { turnStart: true });
 }
 
 function withConfigReads(
