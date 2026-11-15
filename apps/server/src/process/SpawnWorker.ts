@@ -60,10 +60,26 @@ type FromWorker =
     }
   | { readonly type: "close"; readonly id: number };
 
+// Windows makes a child's stdio pipes inheritable for the length of its CreateProcess, so a child
+// another worker launches meanwhile inherits them and holds the first child's output open. Every
+// pool's workers take this lock around spawn(); it holds the owning worker's threadId.
+const windowsSpawnLock = new Int32Array(new SharedArrayBuffer(4));
+
 // Inline source runs from bundles, asar archives and single-executable builds without module files.
 const workerSource = `
-const { parentPort } = require("node:worker_threads");
+const { parentPort, threadId, workerData } = require("node:worker_threads");
 const { spawn } = require("node:child_process");
+const { lock } = workerData;
+const locked = (launch) => {
+  if (lock === undefined) return launch();
+  while (Atomics.compareExchange(lock, 0, 0, threadId) !== 0) Atomics.wait(lock, 0, Atomics.load(lock, 0));
+  try {
+    return launch();
+  } finally {
+    Atomics.store(lock, 0, 0);
+    Atomics.notify(lock, 0, 1);
+  }
+};
 const children = new Map();
 const post = (message, transfer) => parentPort.postMessage(message, transfer);
 const serialize = (error) => {
@@ -78,7 +94,7 @@ parentPort.on("message", (request) => {
   if (request.type === "spawn") {
     let child;
     try {
-      child = spawn(request.command, request.args, request.options);
+      child = locked(() => spawn(request.command, request.args, request.options));
     } catch (error) {
       post({ type: "error", id, error: serialize(error) });
       return;
@@ -296,7 +312,10 @@ class SpawnWorker {
 
   constructor(pool: SpawnWorkerPool) {
     this.pool = pool;
-    this.worker = new NodeWorkerThreads.Worker(workerSource, { eval: true });
+    this.worker = new NodeWorkerThreads.Worker(workerSource, {
+      eval: true,
+      workerData: { lock: pool.platform === "win32" ? windowsSpawnLock : undefined },
+    });
     this.worker.on("message", (message: FromWorker) => this.onMessage(message));
     this.worker.on("error", (error) => this.fail(error));
     this.worker.on("exit", () => this.fail(new Error("The process launcher thread exited.")));
@@ -426,7 +445,12 @@ class SpawnWorker {
     if (this.closed) return;
     this.closed = true;
     this.pool.workers.delete(this);
-    void this.worker.terminate();
+    const { threadId } = this.worker;
+    void this.worker.terminate().then(() => {
+      // A thread terminated between taking the lock and releasing it never releases it.
+      if (Atomics.compareExchange(windowsSpawnLock, 0, threadId, 0) === threadId)
+        Atomics.notify(windowsSpawnLock, 0, 1);
+    });
   }
 }
 
