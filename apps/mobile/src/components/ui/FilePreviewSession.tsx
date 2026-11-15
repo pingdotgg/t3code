@@ -25,8 +25,6 @@ interface FilePreviewSessionOptions {
   /** Opens before every image resolves; the viewer takes later URLs as they arrive. */
   readonly progressiveGallery: boolean;
   readonly Viewer: ComponentType<FilePreviewViewerProps>;
-  /** Whether the native viewer is still loading or on screen; omitted when JS owns the viewer. */
-  readonly isViewerActive?: () => boolean;
 }
 
 class PreviewResolutionError extends Schema.TaggedError<PreviewResolutionError>()(
@@ -99,7 +97,7 @@ function ResolvedFilePreview(
     readonly source: FilePreviewSource;
     readonly onRequestClose: () => void;
     readonly onOpenError?: (error: unknown) => void;
-    readonly onPresent: () => void;
+    readonly onPresent: (isFinished: () => boolean) => void;
   },
 ) {
   const { progressiveGallery, Viewer } = props;
@@ -227,24 +225,30 @@ export function FilePreviewSession(props: FilePreviewModalProps & FilePreviewSes
   usePreviewPresentation(source && filePreviewKey(source), props.onRequestClose);
   // A tap can land after the native viewer closed but before its close reached the caller, which
   // still holds the same item; that tap only opens a new viewer under a new key.
-  // A viewer still resolving its file has not presented yet, so a re-render then never reopens.
-  const [opening, setOpening] = useState({ source: props.source, count: 0, presented: false });
+  // Only a viewer that presented and has since closed reopens; one still resolving never does.
+  const [opening, setOpening] = useState<{
+    readonly source: FilePreviewModalProps["source"];
+    readonly count: number;
+    readonly presented: { readonly isFinished: () => boolean } | null;
+  }>({ source: props.source, count: 0, presented: null });
   if (opening.source !== props.source) {
     const sameItem =
       opening.source !== null &&
       props.source !== null &&
       filePreviewKey(opening.source) === filePreviewKey(props.source);
-    const reopened = opening.presented && sameItem && props.isViewerActive?.() === false;
+    const reopened = sameItem && opening.presented?.isFinished() === true;
     setOpening({
       source: props.source,
       count: opening.count + (reopened ? 1 : 0),
-      presented: opening.presented && sameItem && !reopened,
+      presented: sameItem && !reopened ? opening.presented : null,
     });
   }
   const { count } = opening;
-  const onPresent = () =>
+  const onPresent = (isFinished: () => boolean) =>
     setOpening((current) =>
-      current.count === count && !current.presented ? { ...current, presented: true } : current,
+      current.count === count && current.presented === null
+        ? { ...current, presented: { isFinished } }
+        : current,
     );
 
   if (!source) return null;

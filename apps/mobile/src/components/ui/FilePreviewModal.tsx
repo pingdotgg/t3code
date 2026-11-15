@@ -31,7 +31,7 @@ const NativeControls = requireNativeModule<{
   ): Promise<void>;
   updateFile(identifier: string, index: number, uri: string | null): Promise<void>;
   dismissFile(identifier: string): Promise<void>;
-  isFilePreviewActive(): boolean;
+  isFilePreviewFinished(identifier: string): boolean;
 }>("T3NativeControls");
 
 // Null tells the viewer an image failed; undefined means its URL has not arrived yet.
@@ -43,7 +43,7 @@ function NativeFilePreview(props: FilePreviewViewerProps) {
   const [presented] = useState(props.source);
   const delivered = useRef<(string | null | undefined)[]>([]);
   const onRequestClose = useEffectEvent(props.onRequestClose);
-  const onPresent = useEffectEvent(() => props.onPresent?.());
+  const onPresent = useEffectEvent((isFinished: () => boolean) => props.onPresent?.(isFinished));
   const onOpenError = useEffectEvent((error: unknown) => {
     if (props.onOpenError) props.onOpenError(error);
     else Dialog.alert("Could not open preview", "The file could not be loaded. Please try again.");
@@ -73,7 +73,7 @@ function NativeFilePreview(props: FilePreviewViewerProps) {
         identifier,
       );
     }
-    onPresent();
+    onPresent(() => NativeControls.isFilePreviewFinished(identifier));
     void presentation
       .catch((error: unknown) => {
         if (!canceled) onOpenError(error);
@@ -103,12 +103,5 @@ function NativeFilePreview(props: FilePreviewViewerProps) {
 
 /** Shows images, PDFs and documents full screen in the native viewer (Android: FilePreviewModal.android.tsx). */
 export function FilePreviewModal(props: FilePreviewModalProps) {
-  return (
-    <FilePreviewSession
-      {...props}
-      progressiveGallery
-      Viewer={NativeFilePreview}
-      isViewerActive={() => NativeControls.isFilePreviewActive()}
-    />
-  );
+  return <FilePreviewSession {...props} progressiveGallery Viewer={NativeFilePreview} />;
 }

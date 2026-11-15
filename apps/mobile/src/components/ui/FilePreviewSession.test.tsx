@@ -14,6 +14,7 @@ const harness = vi.hoisted(() => ({
   alert: vi.fn(),
   previews: [] as unknown[],
   mounts: 0,
+  presentationFinished: false,
 }));
 
 vi.mock("../../state/assets", () => ({ refreshAssetUrl: harness.refreshAssetUrl }));
@@ -34,7 +35,7 @@ function Viewer(props: FilePreviewViewerProps) {
   harness.previews.push(props.source);
   const { onPresent } = props;
   // Stands in for the native presentation starting.
-  useEffect(() => onPresent?.(), [onPresent]);
+  useEffect(() => onPresent?.(() => harness.presentationFinished), [onPresent]);
   return null;
 }
 
@@ -176,14 +177,16 @@ it("names the checked path when the server cannot find the file", async () => {
 });
 
 it.each([
-  ["image", true, 1],
-  ["image", false, 2],
+  // Handed to native but not yet started there, or still on screen.
+  ["image", false, 1],
+  ["image", true, 2],
   // A PDF is still resolving here, so its viewer never presented and a re-render must not restart it.
-  ["pdf", false, 1],
+  ["pdf", true, 1],
 ] as const)(
-  "a re-tap of the open %s restarts the preview only once a presented native one is gone (active: %s)",
-  async (kind, active, starts) => {
+  "a re-tap of the open %s restarts the preview only once its native viewer closed (closed: %s)",
+  async (kind, finished, starts) => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    harness.presentationFinished = finished;
     harness.mounts = 0;
     harness.refreshAssetUrl.mockReset();
     if (kind === "image") harness.refreshAssetUrl.mockResolvedValue("https://signed.test/a.png");
@@ -199,7 +202,6 @@ it.each([
             onRequestClose={() => {}}
             progressiveGallery
             Viewer={Viewer}
-            isViewerActive={() => active}
           />,
         ),
       );
@@ -211,6 +213,7 @@ it.each([
 
 it("does not carry a presented viewer over to a different item that is still resolving", async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  harness.presentationFinished = true;
   harness.refreshAssetUrl.mockReset();
   harness.refreshAssetUrl.mockImplementation((_environmentId, resource) =>
     resource.url.endsWith("a.png")
@@ -229,7 +232,6 @@ it("does not carry a presented viewer over to a different item that is still res
           onRequestClose={() => {}}
           progressiveGallery
           Viewer={Viewer}
-          isViewerActive={() => false}
         />,
       ),
     );
