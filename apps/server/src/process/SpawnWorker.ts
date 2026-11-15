@@ -307,6 +307,8 @@ class SpawnWorker {
   readonly worker: NodeWorkerThreads.Worker;
   readonly children = new Map<number, WorkerChild>();
   readonly pool: SpawnWorkerPool;
+  /** Node sets `worker.threadId` to -1 once the thread exits, so keep the id the lock holds. */
+  readonly threadId: number;
   /** Launches sent but not yet answered; the worker is inside CreateProcess for one of them. */
   launching = 0;
   closed = false;
@@ -317,6 +319,7 @@ class SpawnWorker {
       eval: true,
       workerData: { lock: pool.platform === "win32" ? windowsSpawnLock : undefined },
     });
+    this.threadId = this.worker.threadId;
     this.worker.on("message", (message: FromWorker) => this.onMessage(message));
     this.worker.on("error", (error) => this.fail(error));
     this.worker.on("exit", () => this.fail(new Error("The process launcher thread exited.")));
@@ -446,11 +449,11 @@ class SpawnWorker {
     if (this.closed) return;
     this.closed = true;
     this.pool.workers.delete(this);
-    const { threadId } = this.worker;
     void this.worker.terminate().then(() => {
-      // A thread terminated between taking the lock and releasing it never releases it.
-      if (Atomics.compareExchange(windowsSpawnLock, 0, threadId, 0) === threadId)
-        Atomics.notify(windowsSpawnLock, 0, 1);
+      // The thread may have died holding the lock, or between its unlock and notify, or after
+      // a notify woke it: free the lock and wake every waiter so none sleeps on a free lock.
+      Atomics.compareExchange(windowsSpawnLock, 0, this.threadId, 0);
+      Atomics.notify(windowsSpawnLock, 0);
     });
   }
 }
