@@ -10,7 +10,7 @@ read by the marketplace.
 
 ## What was taken
 
-Every skill in upstream's plugin manifest. From `skills/engineering/`: `ask-matt`, `code-review`,
+Every skill in upstream's plugin manifest. From `skills/engineering/`: `ask-matt`, `code-review` (now `diff-review`),
 `codebase-design`, `diagnosing-bugs`, `domain-modeling`, `grill-with-docs`, `implement`,
 `implement-spec`, `improve-codebase-architecture`, `pr`, `prototype`, `research`, `retro`,
 `setup-matt-pocock-skills`, `tdd`, `to-spec`, `to-tickets`, `triage`, `wayfinder`, and `wizard`. From
@@ -33,12 +33,32 @@ and `writing-for-agents`.
   `AGENT-BRIEF.md` are unchanged.
 - Sixteen skills had `disable-model-invocation` removed, for the same reason as the pstack set: the
   agent should reach for a skill when the situation comes up. The fork carried this change already.
+- `code-review` is `diff-review`, including its frontmatter name and every reference in `ask-matt`,
+  `implement`, `implement-spec`, and `tdd`. Claude Code ships a built-in `code-review` skill, and
+  providers see one flat list of names.
+- Claude Code-only wording is provider-neutral, so every provider T3 Code runs can follow these
+  skills:
+  - "Call the Skill tool with X" (and "call the Skill tool twice, for X and Y") reads "use the X
+    skill" in `grill-me`, `grill-with-docs`, `handoff`, `implement`, `implement-spec`,
+    `improve-codebase-architecture`, `retro`, `tdd`, `triage-issues`, and `wayfinder`.
+  - Where a skill hands work to a subagent, it names T3 Code's `delegate_task` in parentheses:
+    `diff-review`, `implement-spec`, `improve-codebase-architecture`, `grilling`, `research`,
+    `wayfinder`, and `codebase-design/DESIGN-IT-TWICE.md`. Workers that commit on their own branch
+    (`implement-spec` implementers, `wayfinder` research subagents) get `isolation: "worktree"`.
+    Read-only workers (the two `diff-review` reviewers, design-it-twice designers) share the
+    checkout, because a fresh worktree would miss uncommitted work and gains nothing.
+  - `retro` finds past sessions with `t3_thread_search` and `t3_thread_read` instead of searching
+    session logs on disk.
+  - Slash names in `ask-matt` (`/clear`, `/compact`, `/grill-me` and the rest) are unchanged. They
+    tell the user what to type, and the main harnesses share them.
+  - `CLAUDE.md` mentions in `setup-matt-pocock-skills`, `retro`, and `writing-for-agents` are
+    unchanged. They mean the repo's instruction file, which is real for Claude projects.
 
 ## Upstream sync
 
 Last synced against `mattpocock/skills` commit `4ae2317` (2026-10-31). To sync again, run a three-way
 merge per file with the previous sync commit as the base, so local changes survive and upstream
-prose comes across, mapping `triage` to `triage-issues`.
+prose comes across, mapping `triage` to `triage-issues` and `code-review` to `diff-review`.
 
 ## The two vendored shell templates
 

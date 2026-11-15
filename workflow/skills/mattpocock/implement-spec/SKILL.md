@@ -11,11 +11,11 @@ The goal is the entire spec implemented on a single **integration branch**, with
 
 The tickets are not a list of steps. They are a **task graph** with blocking relationships between them. This means there is always a **frontier** of tickets which are ready to be grabbed.
 
-Start every subagent with a fresh context window.
+Start every subagent with a fresh context window (in T3 Code: `delegate_task`, which starts each child with only its brief).
 
 Communication to and from subagents should be sparse. Communicate primarily through **context pointers**: to the spec, tickets, research notes, and previous commits. Don't duplicate information already available via pointers.
 
-**Implementer subagents** should be run in the background where possible for maximum concurrency.
+**Implementer subagents** should be run in the background where possible for maximum concurrency (`delegate_task` runs in the background by default and reports back when the child finishes).
 
 ## Steps
 
@@ -25,16 +25,16 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 
 3. Create the integration branch. If the issue tracker closes work through PRs, or the user asks for one, open a draft PR after the first merge in step 5 (a branch with no commits ahead of main can't open one), marked as closing the spec and tickets.
 
-4. Use a fresh **implementer subagent** for each ticket, each in its own worktree on its own branch. Each implementer subagent:
+4. Use a fresh **implementer subagent** for each ticket, each in its own worktree on its own branch (in T3 Code: `delegate_task` with `isolation: "worktree"`, which checks out the parent's current commit, so commit the integration branch tip first; uncommitted edits stay behind). Each implementer subagent:
    - confirms its worktree is based on the integration branch before starting, and resets onto it if not;
-   - calls the Skill tool with `tdd` to build the ticket;
+   - uses the `tdd` skill to build the ticket;
    - merges the integration branch tip into its own branch before reporting done
 
 5. Once an **implementer subagent** completes, merge its work to the integration branch with a **merger subagent**.
 
 6. If this changes the **frontier** of available tickets, kick off more **implementer subagents** to work on the new tickets. This allows for maximum concurrency.
 
-7. Once all tickets are complete, call the Skill tool with `code-review` on the integration branch. Fix all issues raised by the code review in a single fresh **implementer subagent**.
+7. Once all tickets are complete, use the `diff-review` skill on the integration branch. Fix all issues raised by the code review in a single fresh **implementer subagent**.
 
 8. If a draft PR exists, mark it ready for review. Otherwise, resolve each ticket the way the issue tracker closes work, and report the integration branch.
 

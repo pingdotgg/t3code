@@ -7,9 +7,9 @@ The user has asked for a **retrospective**. You are suggesting improvements to t
 
 ## Steps
 
-1. Call the Skill tool with `writing-for-agents` for the writing style guide.
+1. Use the `writing-for-agents` skill for the writing style guide.
 
-2. Read the primary sources for the session the user specifies. This may mean searching through session logs on this machine. If the user doesn't specify a session, default to the current one.
+2. Read the primary sources for the session the user specifies. This may mean searching through past sessions (in T3 Code: `t3_thread_search` to find the thread, `t3_thread_read` to read it). If the user doesn't specify a session, default to the current one.
 
 3. Look for candidates for improvement in these categories.
 
