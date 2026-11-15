@@ -414,6 +414,20 @@ import {
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 import {
+  MemoryVaultError,
+  MemoryVaultManageInput,
+  MemoryVaultManageResult,
+  MemoryVaultOverview,
+  MemoryVaultOverviewInput,
+  MemoryVaultReadInput,
+  MemoryVaultReadResult,
+  MemoryVaultSearchInput,
+  MemoryVaultSearchResult,
+  MemoryVaultSelectInput,
+  MemoryVaultSettingsPatch,
+  MemoryVaultWriteInput,
+} from "./memoryVault.ts";
+import {
   OllamaDeleteModelInput,
   OllamaError,
   OllamaInstallEvent,
@@ -568,6 +582,14 @@ export const WS_METHODS = {
   ollamaPullModel: "ollama.pullModel",
   ollamaDeleteModel: "ollama.deleteModel",
   ollamaSetAgentIntegration: "ollama.setAgentIntegration",
+
+  memoryVaultsOverview: "memoryVaults.overview",
+  memoryVaultsUpdateSettings: "memoryVaults.updateSettings",
+  memoryVaultsManage: "memoryVaults.manage",
+  memoryVaultsReadFile: "memoryVaults.readFile",
+  memoryVaultsWriteFile: "memoryVaults.writeFile",
+  memoryVaultsSearch: "memoryVaults.search",
+  memoryVaultsSelect: "memoryVaults.select",
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
@@ -1043,6 +1065,42 @@ const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSummary, {
   payload: UsageSummaryInput,
   success: UsageSummary,
   error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
+});
+
+const MemoryVaultRpcError = Schema.Union([MemoryVaultError, EnvironmentAuthorizationError]);
+const WsMemoryVaultsOverviewRpc = Rpc.make(WS_METHODS.memoryVaultsOverview, {
+  payload: MemoryVaultOverviewInput,
+  success: MemoryVaultOverview,
+  error: MemoryVaultRpcError,
+});
+const WsMemoryVaultsUpdateSettingsRpc = Rpc.make(WS_METHODS.memoryVaultsUpdateSettings, {
+  payload: MemoryVaultSettingsPatch,
+  success: MemoryVaultOverview,
+  error: MemoryVaultRpcError,
+});
+const WsMemoryVaultsManageRpc = Rpc.make(WS_METHODS.memoryVaultsManage, {
+  payload: MemoryVaultManageInput,
+  success: MemoryVaultManageResult,
+  error: MemoryVaultRpcError,
+});
+const WsMemoryVaultsReadFileRpc = Rpc.make(WS_METHODS.memoryVaultsReadFile, {
+  payload: MemoryVaultReadInput,
+  success: MemoryVaultReadResult,
+  error: MemoryVaultRpcError,
+});
+const WsMemoryVaultsWriteFileRpc = Rpc.make(WS_METHODS.memoryVaultsWriteFile, {
+  payload: MemoryVaultWriteInput,
+  error: MemoryVaultRpcError,
+});
+const WsMemoryVaultsSearchRpc = Rpc.make(WS_METHODS.memoryVaultsSearch, {
+  payload: MemoryVaultSearchInput,
+  success: MemoryVaultSearchResult,
+  error: MemoryVaultRpcError,
+});
+const WsMemoryVaultsSelectRpc = Rpc.make(WS_METHODS.memoryVaultsSelect, {
+  payload: MemoryVaultSelectInput,
+  success: MemoryVaultOverview,
+  error: MemoryVaultRpcError,
 });
 
 const OllamaRpcError = Schema.Union([OllamaError, EnvironmentAuthorizationError]);
@@ -2233,6 +2291,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsOllamaPullModelRpc,
   WsOllamaDeleteModelRpc,
   WsOllamaSetAgentIntegrationRpc,
+  WsMemoryVaultsOverviewRpc,
+  WsMemoryVaultsUpdateSettingsRpc,
+  WsMemoryVaultsManageRpc,
+  WsMemoryVaultsReadFileRpc,
+  WsMemoryVaultsWriteFileRpc,
+  WsMemoryVaultsSearchRpc,
+  WsMemoryVaultsSelectRpc,
   WsServerSignalProcessRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,

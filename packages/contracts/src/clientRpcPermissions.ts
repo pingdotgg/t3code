@@ -84,6 +84,11 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.ollamaPullModel]: AuthProvidersManageScope,
   [WS_METHODS.ollamaDeleteModel]: AuthProvidersManageScope,
   [WS_METHODS.ollamaSetAgentIntegration]: AuthProvidersManageScope,
+  // Vault notes reach every agent that uses the vault.
+  [WS_METHODS.memoryVaultsUpdateSettings]: AuthSettingsWriteScope,
+  [WS_METHODS.memoryVaultsManage]: AuthSettingsWriteScope,
+  [WS_METHODS.memoryVaultsWriteFile]: AuthSettingsWriteScope,
+  [WS_METHODS.memoryVaultsSelect]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

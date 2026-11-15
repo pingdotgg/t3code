@@ -198,6 +198,7 @@ import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { GuestPendingMessages } from "./chat/GuestShareControls";
 import { useDeviceState } from "~/state/device";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
+import { MemoryVaultPicker } from "./chat/MemoryVaultPicker";
 import { ComposerContextPermissions } from "./ComposerContextPermissions";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
@@ -3847,6 +3848,12 @@ export default function ChatView(props: ChatViewProps) {
                                 />
                               </div>
                             )}
+                            <div className="pointer-events-auto flex justify-end px-2 pt-1">
+                              <MemoryVaultPicker
+                                environmentId={activeThread.environmentId}
+                                threadId={activeThread.id}
+                              />
+                            </div>
                           </div>
                         </div>
                       </ComposerSurface.Shell>

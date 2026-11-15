@@ -28,6 +28,7 @@ export type SettingsPath =
   | "/settings/snap-shot"
   | "/settings/providers"
   | "/settings/local-models"
+  | "/settings/memory-vaults"
   | "/settings/threads"
   | "/settings/browser"
   | "/settings/devices"
@@ -104,6 +105,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/snap-shot": msg("SnapShots"),
   "/settings/providers": msg("Providers"),
   "/settings/local-models": msg("Local models"),
+  "/settings/memory-vaults": msg("Memory vaults"),
   "/settings/threads": msg("Threads"),
   "/settings/browser": msg("Browser"),
   "/settings/devices": msg("Devices"),
@@ -144,6 +146,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     paths: [
       "/settings/providers",
       "/settings/local-models",
+      "/settings/memory-vaults",
       "/settings/threads",
       "/settings/browser",
       "/settings/devices",
@@ -337,6 +340,54 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Glass opacity",
     to: "/settings/appearance",
     searchTerms: ["transparent transparency solid menus dialogs composer"],
+  },
+  {
+    id: "setting-memory-vaults-enabled",
+    title: "Use memory vaults",
+    to: "/settings/memory-vaults",
+    searchTerms: ["memory vault notes markdown knowledge remember"],
+  },
+  {
+    id: "setting-memory-vaults-auto-create",
+    title: "Create vaults automatically",
+    to: "/settings/memory-vaults",
+    searchTerms: ["memory vault project automatic new"],
+  },
+  {
+    id: "setting-memory-vaults-auto-update",
+    title: "Update vaults automatically",
+    to: "/settings/memory-vaults",
+    searchTerms: ["memory vault agent write record"],
+  },
+  {
+    id: "setting-memory-vaults-default",
+    title: "Default memory vault",
+    to: "/settings/memory-vaults",
+    searchTerms: ["memory vault default"],
+  },
+  {
+    id: "setting-memory-vaults-access",
+    title: "Default vault access",
+    to: "/settings/memory-vaults",
+    searchTerms: ["memory vault read write permission reference"],
+  },
+  {
+    id: "setting-memory-vaults-detail",
+    title: "Memory detail level",
+    to: "/settings/memory-vaults",
+    searchTerms: ["memory vault detail concise detailed"],
+  },
+  {
+    id: "setting-memory-vaults-retrieval",
+    title: "Memory context retrieval",
+    to: "/settings/memory-vaults",
+    searchTerms: ["memory vault context tokens relevant whole"],
+  },
+  {
+    id: "setting-memory-vaults-location",
+    title: "Memory vault location",
+    to: "/settings/memory-vaults",
+    searchTerms: ["memory vault folder storage path"],
   },
   {
     id: "setting-ollama-runtime",
@@ -1413,6 +1464,7 @@ const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id,
 const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScope | null>> = {
   "/settings/diagnostics": "environment",
   "/settings/local-models": null,
+  "/settings/memory-vaults": null,
   "/settings/projects": "project",
   "/settings/general": null,
   "/settings/voice": null,

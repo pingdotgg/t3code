@@ -248,6 +248,7 @@ import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
 import type { TelemetryOwner } from "./telemetry/Identify.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as OllamaService from "./ollama/OllamaService.ts";
+import * as MemoryVaultService from "./memoryVaults/MemoryVaultService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -1503,6 +1504,7 @@ export const layerWsRpc = (
             );
       const usage = yield* UsageService.UsageService;
       const ollama = yield* OllamaService.OllamaService;
+      const memoryVaults = yield* MemoryVaultService.MemoryVaultService;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
@@ -2695,6 +2697,18 @@ export const layerWsRpc = (
           resourceTelemetry.readHistory(input),
         [WS_METHODS.serverGetUsageSummary]: (input) => usage.readSummary(input),
         [WS_METHODS.serverRefreshUsageRates]: (_input) => usage.refreshRates,
+        [WS_METHODS.memoryVaultsOverview]: (input) => memoryVaults.overview(input.threadId),
+        [WS_METHODS.memoryVaultsUpdateSettings]: (input) => memoryVaults.updateSettings(input),
+        [WS_METHODS.memoryVaultsManage]: (input) => memoryVaults.manage(input),
+        [WS_METHODS.memoryVaultsReadFile]: (input) =>
+          memoryVaults
+            .readFile(input.vaultId, input.path)
+            .pipe(Effect.map((content) => ({ content }))),
+        [WS_METHODS.memoryVaultsWriteFile]: (input) =>
+          memoryVaults.writeFile(input.vaultId, input.path, input.content),
+        [WS_METHODS.memoryVaultsSearch]: (input) =>
+          memoryVaults.search(input.query, input.vaultId).pipe(Effect.map((hits) => ({ hits }))),
+        [WS_METHODS.memoryVaultsSelect]: (input) => memoryVaults.select(input),
         [WS_METHODS.ollamaGetOverview]: (_input) => ollama.overview,
         [WS_METHODS.ollamaInstall]: (_input) =>
           Stream.callback<OllamaInstallEvent, OllamaError>((queue) =>

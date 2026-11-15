@@ -8,6 +8,10 @@ const DIRECT_TOOLS: ReadonlySet<string> = new Set([
   "orchestrator_capabilities",
   "delegate_task",
   "task_status",
+  // A thread's memory vault is useful from its first turn, before any search.
+  "continuum_memory_search",
+  "continuum_memory_read",
+  "continuum_memory_update",
   TOOL_SEARCH,
 ]);
 

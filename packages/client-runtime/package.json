@@ -570,6 +570,10 @@
     "./state/ollama": {
       "types": "./src/state/ollama.ts",
       "default": "./src/state/ollama.ts"
+    },
+    "./state/memoryVaults": {
+      "types": "./src/state/memoryVaults.ts",
+      "default": "./src/state/memoryVaults.ts"
     }
   },
   "scripts": {

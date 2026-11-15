@@ -35,6 +35,7 @@ import {
 } from "./Adapters/ClaudeAdapterV2.ts";
 import { withTurnStartReservation, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as MemoryVaultService from "../memoryVaults/MemoryVaultService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -192,6 +193,8 @@ export const layer: Layer.Layer<
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const projects = yield* ProjectService.ProjectService;
+    // Optional so hosts and tests without vaults build this service unchanged.
+    const memoryVaults = yield* Effect.serviceOption(MemoryVaultService.MemoryVaultService);
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
@@ -1732,7 +1735,19 @@ export const layer: Layer.Layer<
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          const context = [delivery.context, sideChatContext, restartNote]
+          // The thread's memory vault is chosen apart from its project and never changes it.
+          const memoryContext =
+            compact || goalCommand || Option.isNone(memoryVaults)
+              ? ""
+              : yield* memoryVaults.value.contextForTurn({
+                  threadId: projection.thread.id,
+                  userText,
+                  projectName: yield* projects.getById(projection.thread.projectId).pipe(
+                    Effect.map((project) => Option.getOrNull(project)?.title ?? null),
+                    Effect.orElseSucceed(() => null),
+                  ),
+                });
+          const context = [delivery.context, sideChatContext, restartNote, memoryContext]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
