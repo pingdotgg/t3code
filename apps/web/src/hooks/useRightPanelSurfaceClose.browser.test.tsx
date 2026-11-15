@@ -37,6 +37,7 @@ vi.mock("../state/entities", () => ({
   useQuietThreadShell: () => null,
   useProject: () => null,
   readThreadShell: () => null,
+  readEnvironmentHasDesktopBrowser: () => false,
 }));
 vi.mock("../state/terminalSessions", () => ({ useKnownTerminalSessions: () => null }));
 vi.mock("../composerDraftStore", async () => {
