@@ -10451,6 +10451,31 @@ it.layer(layerThreadProjectMoveTest)("moving a thread to another project", (it) 
       assert.isNull((yield* orchestrator.getThreadRecords(raced.threadId, [])).thread.archivedAt);
       const busy = yield* service.exportThread(raced.threadId).pipe(Effect.flip);
       assert.equal(busy.message, "The thread still has work in progress. Finish or stop it first.");
+
+      // Native subagents get messages outside runs, which the revision can't track.
+      const subagentId = ThreadId.make("machine-move-native-subagent");
+      yield* (yield* EventSink.EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("machine-move-native-subagent-created"),
+            type: "thread.created",
+            threadId: subagentId,
+            occurredAt: yield* DateTime.now,
+            payload: {
+              ...imported,
+              id: subagentId,
+              creationSource: "provider",
+              lineage: {
+                parentThreadId: threadId,
+                rootThreadId: threadId,
+                relationshipToParent: "subagent",
+              },
+            },
+          },
+        ],
+      });
+      const subagent = yield* service.exportThread(subagentId).pipe(Effect.flip);
+      assert.equal(subagent.message, "Subagent threads stay with the thread that started them.");
     }),
   );
 });

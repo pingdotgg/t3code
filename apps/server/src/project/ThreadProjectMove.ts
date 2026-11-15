@@ -1,6 +1,7 @@
 import {
   CommandId,
   EventId,
+  isProviderNativeSubagentThread,
   isRuntimeModeAbove,
   type ModelSelection,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -211,6 +212,12 @@ const make = Effect.gen(function* () {
     const records = yield* threads
       .getThreadRecords(threadId, ["runs", "runtimeRequests"])
       .pipe(Effect.mapError(fail("Could not read the thread.")));
+    // Their messages arrive outside runs, so the move revision can't see them change.
+    if (isProviderNativeSubagentThread(records.thread)) {
+      return yield* new ThreadProjectMoveError({
+        reason: "Subagent threads stay with the thread that started them.",
+      });
+    }
     if (threadHasUnfinishedWork(records)) {
       return yield* new ThreadProjectMoveError({
         reason: "The thread still has work in progress. Finish or stop it first.",
