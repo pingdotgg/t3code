@@ -208,7 +208,7 @@ const make = Effect.gen(function* () {
     return yield* watches.setWatching({ threadId, target: input, watching }).pipe(
       Effect.catchTags({
         PullRequestWatchThreadNotFoundError: (error) =>
-          threadNotFound(engine, error.threadId, error.message),
+          threadNotFound(engine, scope, error.threadId, error.message),
       }),
     );
   });
