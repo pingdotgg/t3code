@@ -332,7 +332,7 @@ describe("scan cache round trip", () => {
     expect(decodeScanCache(current, TEST_FORMAT_MAP).get("/codex.jsonl")).toEqual(entry);
   });
 
-  it.each([11, 12, 13, 14, 15, 16])(
+  it.each([11, 12, 13, 14, 15, 16, 17])(
     "re-parses v%s Claude transcripts for corrected attempt usage",
     (version) => {
       const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
@@ -343,6 +343,29 @@ describe("scan cache round trip", () => {
         ...original.get("/claude.jsonl"),
         size: -1,
         position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+      });
+    },
+  );
+
+  it.each(["s:p:grok-4.5", "s:p:1786000000000:grok-4.5"])(
+    "re-parses v16 Grok transcripts with key %s",
+    (dedupeKey) => {
+      const original = cacheWith([
+        ["/grok/updates.jsonl", 100, [record({ provider: "grok", model: "grok-4.5", dedupeKey })]],
+      ]);
+      original.set("/grok/updates.jsonl", {
+        ...original.get("/grok/updates.jsonl")!,
+        provider: "grok",
+      });
+      const encoded = parse(makeScanCacheWriter()(original, {}));
+      const restored = decodeScanCache({ ...encoded, version: 16 }, TEST_FORMAT_MAP);
+      expect(restored.get("/grok/updates.jsonl")).toEqual({
+        ...original.get("/grok/updates.jsonl"),
+        size: -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+        records: [
+          record({ provider: "grok", model: "grok-4.5", dedupeKey: "s:p:1786000000000:grok-4.5" }),
+        ],
       });
     },
   );

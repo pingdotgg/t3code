@@ -723,26 +723,51 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
     // An id filter reads by primary key, not every row of the thread.
     const byId = traceSqlStatements();
     const found = yield* store
-      .getThreadRecords(threadId, ["runs", "nodes", "subagents", "messages"], {
-        runIds: [RunId.make("run:idle-compaction:4")],
-        nodeIds: [nodeId],
-        subagentIds: [nodeId],
-        messageIds: [MessageId.make("message:idle-compaction:4")],
-      })
+      .getThreadRecords(
+        threadId,
+        ["runs", "nodes", "subagents", "messages", "attempts", "providerTurns"],
+        {
+          runIds: [RunId.make("run:idle-compaction:4")],
+          nodeIds: [nodeId],
+          subagentIds: [nodeId],
+          messageIds: [MessageId.make("message:idle-compaction:4")],
+          attemptIds: [RunAttemptId.make("attempt:idle-compaction")],
+          providerTurnIds: [ProviderTurnId.make("turn:idle-old")],
+        },
+      )
       .pipe(Effect.withTracer(byId.tracer));
     assert.deepEqual(
       found.runs.map((run) => run.id),
       ["run:idle-compaction:4"],
     );
-    for (const table of ["runs", "nodes", "subagents", "messages"]) {
-      const query = byId.statements.find((statement) =>
-        statement.includes(`FROM orchestration_v2_projection_${table}`),
+    assert.deepEqual(
+      found.providerTurns.map((turn) => turn.id),
+      ["turn:idle-old"],
+    );
+    // A task's turn item and a child thread's tasks are found through their own indexes.
+    yield* store
+      .getThreadRecords(threadId, ["subagents", "turnItems"], {
+        subagentChildThreadIds: [threadId],
+        turnItemNodeIds: [nodeId],
+      })
+      .pipe(Effect.withTracer(byId.tracer));
+    for (const [table, index] of [
+      ...["runs", "nodes", "subagents", "messages", "run_attempts", "provider_turns"].map(
+        (name) => [name, `sqlite_autoindex_orchestration_v2_projection_${name}_1`] as const,
+      ),
+      ["subagents", "orchestration_v2_projection_subagents_child_thread_idx"],
+      ["turn_items", "orchestration_v2_projection_turn_items_node_ordinal_idx"],
+    ] as const) {
+      const plans = yield* Effect.forEach(
+        byId.statements.filter((statement) =>
+          statement.includes(`FROM orchestration_v2_projection_${table}`),
+        ),
+        (query) => sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`),
       );
-      assert.isDefined(query);
-      const plan = (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`))
-        .map((row) => row.detail)
-        .join("\n");
-      assert.include(plan, `USING INDEX sqlite_autoindex_orchestration_v2_projection_${table}_1`);
+      assert.isTrue(
+        plans.some((plan) => plan.some((row) => row.detail.includes(`USING INDEX ${index}`))),
+        `${table} is not read through ${index}`,
+      );
     }
     // The filters every command reads with seek the rows they keep, not every row of the thread.
     const command = traceSqlStatements();
@@ -1286,17 +1311,8 @@ it.effect("record reads filter notification sources without dropping matching me
       .pipe(Effect.withTracer(tracer));
     assert.lengthOf(userMessages.messages, 3);
     const ordinalLookup = statements.find((statement) => statement.includes("MIN(ordinal)"));
-    assert.isDefined(ordinalLookup);
-    const sql = yield* SqlClient.SqlClient;
-    const plan = (yield* sql.unsafe<{ readonly detail: string }>(
-      `EXPLAIN QUERY PLAN ${ordinalLookup}`,
-      [threadId, "[]"],
-    )).map((row) => row.detail);
-    // User-only reads must stay on a type-bounded index instead of scanning every turn item.
-    assert.isTrue(
-      plan.some((detail) => /turn_items_(user_message|thread_type)_idx/.test(detail)),
-      plan.join("\n"),
-    );
+    // User-only reads must seek the message-ordinal index instead of scanning every turn item.
+    yield* assertReadsThroughMessageOrdinalIndex(ordinalLookup, ["thread_id=?", "<expr>=?"]);
     // With every user item loaded, the items give the order and the lookup does not run.
     const withItems = traceSqlStatements();
     const ordered = yield* store
@@ -2587,6 +2603,192 @@ const subagentRecordsSelectById = Effect.gen(function* () {
   assert.deepEqual(yield* read([ids[1]!]), [ids[1]]);
   assert.deepEqual(yield* read([]), []);
 });
+
+const recordsAt = (second: number) => DateTime.makeUnsafe(Date.UTC(2026, 0, 1, 0, 0, second));
+const recordsThreadCreated = (threadId: ThreadId) =>
+  ({
+    id: EventId.make(`event:${threadId}:created`),
+    type: "thread.created",
+    threadId,
+    providerInstanceId,
+    occurredAt: recordsAt(0),
+    payload: {
+      createdBy: "user",
+      creationSource: "web",
+      id: threadId,
+      projectId: ProjectId.make("project:records"),
+      title: threadId,
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: recordsAt(0),
+      updatedAt: recordsAt(0),
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+  }) as never;
+
+const queryPlan = Effect.fn("queryPlan")(function* (statement: string | undefined) {
+  assert.isDefined(statement);
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${statement}`);
+  return rows.map((row) => row.detail);
+});
+
+// SQLite's plan wording changes between versions, so only the index search, the keys it seeks
+// and the absence of a temporary B-tree are pinned.
+const assertReadsThroughMessageOrdinalIndex = Effect.fn("assertReadsThroughMessageOrdinalIndex")(
+  function* (statement: string | undefined, keys: ReadonlyArray<string>) {
+    const plan = yield* queryPlan(statement);
+    const search = plan.find((detail) =>
+      detail.includes("orchestration_v2_projection_turn_items_message_ordinal_idx"),
+    );
+    assert.isDefined(search, plan.join("\n"));
+    for (const key of keys) assert.include(search, key);
+    assert.isFalse(
+      plan.some((detail) => detail.includes("TEMP B-TREE")),
+      plan.join("\n"),
+    );
+  },
+);
+
+// Each message's first item orders it, not the stored message order (the assistant reply is stored
+// first); the message-ordinal statement reads those ordinals through migration 94's index.
+const messageOrdinalsReadThroughTheirIndex = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const threadId = ThreadId.make("thread:message-ordinals");
+  yield* store.apply(recordsThreadCreated(threadId));
+  const conversation = (name: string, firstOrdinal: number) => {
+    const runId = RunId.make(`run:${name}`);
+    const nodeId = NodeId.make(`node:${name}:root`);
+    const user = MessageId.make(`message:${name}:user`);
+    const assistant = MessageId.make(`message:${name}:assistant`);
+    const item = (index: number) => ({
+      id: TurnItemId.make(`item:${name}:${index}`),
+      threadId,
+      runId,
+      nodeId,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: firstOrdinal + index,
+      status: "completed",
+      title: null,
+      startedAt: recordsAt(2),
+      completedAt: recordsAt(2),
+      updatedAt: recordsAt(2),
+    });
+    const message = (id: MessageId, role: "user" | "assistant", second: number) => ({
+      id: EventId.make(`event:${id}`),
+      type: "message.updated",
+      threadId,
+      occurredAt: recordsAt(second),
+      payload: {
+        createdBy: role === "user" ? "user" : "agent",
+        creationSource: role === "user" ? "web" : "provider",
+        id,
+        threadId,
+        runId,
+        nodeId,
+        role,
+        text: `${name} ${role}`,
+        attachments: [],
+        streaming: false,
+        createdAt: recordsAt(second),
+        updatedAt: recordsAt(second),
+      },
+    });
+    const turnItem = (index: number, payload: object) => ({
+      id: EventId.make(`event:item:${name}:${index}`),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: recordsAt(2),
+      payload: { ...item(index), ...payload },
+    });
+    const events = [
+      message(assistant, "assistant", 1),
+      message(user, "user", 2),
+      turnItem(0, {
+        type: "user_message",
+        createdBy: "user",
+        creationSource: "web",
+        messageId: user,
+        inputIntent: "turn_start",
+        text: `${name} user`,
+        attachments: [],
+      }),
+      // A message streamed over two items keeps its first ordinal.
+      ...[1, 2].map((index) =>
+        turnItem(index, {
+          type: "assistant_message",
+          messageId: assistant,
+          text: `${name} assistant ${index}`,
+          streaming: false,
+        }),
+      ),
+      turnItem(3, {
+        type: "dynamic_tool",
+        toolName: "tool",
+        input: {},
+        output: { messageId: user },
+      }),
+    ];
+    return { events, user, assistant };
+  };
+  const first = conversation("first", 1);
+  const second = conversation("second", 10);
+  for (const event of [...first.events, ...second.events]) yield* store.apply(event as never);
+
+  const { statements, tracer } = traceSqlStatements();
+  const indexed = yield* store
+    .getThreadRecords(threadId, ["messages"])
+    .pipe(Effect.withTracer(tracer));
+  yield* assertReadsThroughMessageOrdinalIndex(
+    statements.find((statement) => statement.includes("MIN(ordinal) AS ordinal")),
+    ["thread_id=?"],
+  );
+  assert.deepEqual(
+    indexed.messages.map((message) => message.id),
+    [first.user, first.assistant, second.user, second.assistant],
+  );
+  // A narrow read (ids, runs or one role) seeks only its own messages in the same index.
+  const narrowReads = [
+    {
+      filter: { messageIds: [second.assistant, first.user] },
+      loaded: [first.user, second.assistant],
+    },
+    { filter: { messageRunIds: [RunId.make("run:first")] }, loaded: [first.user, first.assistant] },
+    { filter: { messageRoles: ["user" as const] }, loaded: [first.user, second.user] },
+  ];
+  for (const { filter, loaded } of narrowReads) {
+    const narrow = traceSqlStatements();
+    const narrowed = yield* store
+      .getThreadRecords(threadId, ["messages"], filter)
+      .pipe(Effect.withTracer(narrow.tracer));
+    assert.deepEqual(
+      narrowed.messages.map((message) => message.id),
+      loaded,
+    );
+    const bounded = narrow.statements.find((statement) =>
+      statement.includes("MIN(ordinal) AS ordinal"),
+    );
+    yield* assertReadsThroughMessageOrdinalIndex(bounded, ["thread_id=?", "<expr>=?"]);
+  }
+});
+
+it.effect("reads message ordinals through their index", () =>
+  messageOrdinalsReadThroughTheirIndex.pipe(Effect.provide(layerTest)),
+);
 
 const assertProjectScopedShells = Effect.fn("assertProjectScopedShells")(function* (
   suffix: string,
@@ -10562,6 +10764,26 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ["local", targetThreadId, "command_execution"],
         ],
       );
+
+      const sourceThread = (yield* projectionStore.getThreadProjection(sourceThreadId)).thread;
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:source-deleted"),
+        type: "thread.deleted",
+        threadId: sourceThreadId,
+        occurredAt: now,
+        payload: { ...sourceThread, deletedAt: now },
+      });
+      const afterSourceDeleted = yield* projectionStore.getShellSnapshot();
+      assert.isUndefined(afterSourceDeleted.threads.find((thread) => thread.id === sourceThreadId));
+      for (const forkId of [targetThreadId, nestedThreadId]) {
+        const expected = (yield* projectionStore.getThreadProjection(forkId)).visibleTurnItems
+          .length;
+        assert.equal((yield* projectionStore.getThreadShell(forkId))?.visibleItemCount, expected);
+        assert.equal(
+          afterSourceDeleted.threads.find((thread) => thread.id === forkId)?.visibleItemCount,
+          expected,
+        );
+      }
     }),
   );
 
