@@ -217,8 +217,8 @@ export class TerminalManager extends Context.Service<
     ) => Effect.Effect<() => void, TerminalError>;
 
     /**
-     * Query replies (`reply`) from attached viewers other than the one answering for the
-     * PTY are dropped, so a query gets one answer however many clients render it.
+     * Attached viewers share one reply owner per PTY until it detaches. Marked replies
+     * from other or detached viewer IDs are dropped; identity-free writes do not claim ownership.
      */
     readonly write: (
       input: TerminalWriteInput,
