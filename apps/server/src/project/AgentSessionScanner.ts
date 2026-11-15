@@ -649,7 +649,7 @@ function parseAgentSessionRecords(
     });
   }
 
-  if (messages.length === 0) return "empty";
+  if (messages.length === 0 && droppedMessageCount === 0) return "empty";
   const visibleMessages = messages.map(
     ({ codexResponseUser: _codexResponseUser, ...message }) => message,
   );
