@@ -292,7 +292,7 @@ interface OpenCodeRelease {
 /**
  * Only the newest active release of each model line within a sub-provider stays
  * current. One `family` can span lines (`gemini-4-carbon`, `gemini-4-hydrogen`),
- * so a line is the family plus the model id without its version numbers.
+ * so a line is the family plus the model id with its numbers removed.
  */
 function markOpenCodeLegacy(
   entries: ReadonlyArray<{
@@ -301,12 +301,7 @@ function markOpenCodeLegacy(
   }>,
 ): Array<ServerProviderModel> {
   const lineKey = ({ providerID, id, family }: OpenCodeRelease) =>
-    family
-      ? `${providerID}/${family}/${id
-          .split("-")
-          .filter((part) => !/^[\d.]+$/.test(part))
-          .join("-")}`
-      : undefined;
+    family ? `${providerID}/${family}/${id.replace(/\d+(?:\.\d+)*/g, "")}` : undefined;
   const newest = new Map<string, number>();
   for (const { release } of entries) {
     const key = lineKey(release);

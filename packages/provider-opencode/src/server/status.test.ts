@@ -909,6 +909,8 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         ["opencode", "gemini-4-argon", "gemini", "2026-10-13", "active"],
         ["opencode", "gemini-4-carbon", "gemini", "2026-11-10", "active"],
         ["opencode", "gemini-4-hydrogen", "gemini", "2026-11-12", "active"],
+        ["opencode", "qwen3.5-plus", "qwen", "2026-02-16", "active"],
+        ["opencode", "qwen3.6-plus", "qwen", "2026-04-02", "active"],
         ["openrouter", "opus-4-5", "claude-opus", "2025-11-24", "active"],
       ] as const;
       const legacySlugs = (
@@ -918,7 +920,7 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
           .filter((model) => model.isLegacy)
           .map((model) => model.slug)
           .toSorted();
-      const expected = ["opencode/opus-4-5", "opencode/opus-preview"];
+      const expected = ["opencode/opus-4-5", "opencode/opus-preview", "opencode/qwen3.5-plus"];
 
       runtimeMock.state.inventory = {
         providerList: {
