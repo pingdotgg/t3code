@@ -95,6 +95,29 @@ describe("previewWindowOpenAction", () => {
     }
   });
 
+  it("keeps the opener for a same-origin window.open that Chromium reports as a tab", () => {
+    for (const disposition of ["foreground-tab", "background-tab"] as const) {
+      expect(
+        PreviewManager.previewWindowOpenAction(
+          details({
+            url: "https://vdid.sbigeneral.in/appremote/#/client/CAMS_VDI-2",
+            disposition,
+          }),
+          "https://vdid.sbigeneral.in/",
+        ),
+      ).toBe("popup");
+    }
+  });
+
+  it("still opens a cross-origin target=_blank link in a preview tab", () => {
+    expect(
+      PreviewManager.previewWindowOpenAction(
+        details({ disposition: "foreground-tab" }),
+        "https://vdid.sbigeneral.in/",
+      ),
+    ).toBe("new-tab");
+  });
+
   it("keeps a form POST with a body on the in-place path", () => {
     const postBody = { data: [], contentType: "application/x-www-form-urlencoded" };
     expect(
@@ -102,6 +125,18 @@ describe("previewWindowOpenAction", () => {
         ...details({ disposition: "foreground-tab" }),
         postBody,
       }),
+    ).toBe("navigate");
+    expect(
+      PreviewManager.previewWindowOpenAction(
+        {
+          ...details({
+            url: "https://vdid.sbigeneral.in/submit",
+            disposition: "foreground-tab",
+          }),
+          postBody,
+        },
+        "https://vdid.sbigeneral.in/",
+      ),
     ).toBe("navigate");
   });
 
