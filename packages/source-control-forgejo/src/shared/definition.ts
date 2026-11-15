@@ -1,4 +1,5 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import { canonicalRepositoryPath } from "@t3tools/shared/git";
 import {
   buildCommitUrl,
   changeRequestUrlBelow,
@@ -16,7 +17,7 @@ import {
 } from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
 
-const CHECKOUT_COMMAND = /^tea\s+(?:pr|pulls)\s+checkout\s+(.+)$/i;
+const CHECKOUT_COMMAND = /^tea\s+(?:pr|pulls?)\s+(?:checkout|co)\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
   /^https?:\/\/[^/\s]+\/(?:[^/\s]+\/)+[^/\s]+\/pulls\/(\d+)(?:[/?#].*)?$/i;
 
@@ -130,7 +131,8 @@ export const definition = defineSourceControl({
       return isChangeRequestInProjectRepository(changeRequestHost(identity), identity, link);
     return (
       web.host.toLowerCase() === (link.authority ?? link.host).toLowerCase() &&
-      web.pathname.replace(/^\/+|\/+$/g, "").toLowerCase() === link.repository.toLowerCase()
+      canonicalRepositoryPath(web.pathname.replace(/^\/+|\/+$/g, "")) ===
+        canonicalRepositoryPath(link.repository)
     );
   },
   // A server mounted below a path serves only repositories under that mount.
