@@ -1709,5 +1709,90 @@
     "createLinkHint": "Create a link on {{label}}: Settings → Connections → Create link, then paste its code here.",
     "cancel": "Cancel",
     "linking": "Linking…"
+  },
+  "loadBalancing": {
+    "prefer": "Prefer",
+    "normal": "Normal",
+    "lessOften": "Less often",
+    "manualOnly": "Manual only",
+    "off": "Off",
+    "toggleAria": "Automatically balance load",
+    "description": "New threads in shared projects start on the machine with the most free CPU and memory, weighted by each machine's preference.",
+    "preferenceAria": "{{label}} load preference",
+    "summaryPrefer": "prefer",
+    "summaryNormal": "normal",
+    "summaryLessOften": "less often",
+    "summaryManualOnly": "manual only"
+  },
+  "localEnv": {
+    "descriptionOn": "Run agents on this computer. Turn off to use T3 Code only with remote environments.",
+    "descriptionOff": "Turned off. Agents only run in remote environments.",
+    "aria": "Local environment",
+    "turnOffTitle": "Turn off local environment?",
+    "turnOnTitle": "Turn on local environment?",
+    "confirmOff": "T3 Code will restart without running a server on this computer. Any agents and terminals running here will stop, and other devices will no longer be able to connect to this computer. Your projects, history, and remote environments are unaffected.",
+    "confirmOn": "T3 Code will restart and start running a server on this computer again.",
+    "cancel": "Cancel",
+    "restarting": "Restarting…",
+    "restartOff": "Restart and turn off",
+    "restartOn": "Restart and turn on",
+    "notChanged": "Couldn't change this setting."
+  },
+  "micTest": {
+    "testMicrophone": "Test microphone",
+    "unavailable": "Microphone testing is unavailable in this browser. Use HTTPS or the desktop app.",
+    "noAudio": "No audio was recorded. Try again.",
+    "recordFailed": "Could not record microphone audio. Try again.",
+    "disconnected": "The microphone disconnected.",
+    "accessFailed": "Could not access the microphone.",
+    "cancelAria": "Cancel microphone test",
+    "recordingTimeAria": "Recording time",
+    "levelAria": "Microphone input level",
+    "opening": "Opening microphone…",
+    "stopAria": "Stop recording",
+    "pauseAria": "Pause recording",
+    "playAria": "Play recording",
+    "positionAria": "Recording playback position",
+    "againAria": "Record again",
+    "doneAria": "Done",
+    "playbackFailed": "Could not play this recording. Try recording again."
+  },
+  "mobileApp": {
+    "description": "Connect to your server from your phone or tablet.",
+    "iphoneIpad": "iPhone and iPad",
+    "scanHint": "Scan with your phone camera.",
+    "storeLinkAria": "{{store}} link",
+    "openStore": "Open {{store}}",
+    "android": "Android"
+  },
+  "multipleAccounts": {
+    "note": "We do not recommend managing multiple {{provider}} accounts in T3 Code.",
+    "moreInfo": "More info"
+  },
+  "processSignals": {
+    "sendAria": "Send {{signal}}"
+  },
+  "providerWizardAuth": {
+    "accountTitle": "Account",
+    "discovering": "Discovering sign-in methods…",
+    "noInAppSignIn": "No in-app sign-in advertised. Follow the provider's docs to finish setup.",
+    "signIn": "Sign in",
+    "openDocs": "Open docs",
+    "done": "Done",
+    "skipForNow": "Skip for now"
+  },
+  "prRouting": {
+    "off": "Off",
+    "read": "Read PRs",
+    "readWrite": "Read and act",
+    "summaryReadWrite": "read and act",
+    "summaryRead": "read PRs",
+    "description": "Machines you trust here can read PR data through each other's source control access. Enable both machines. Read and act may use broader permissions than the machine that owns them. This applies only to this device.",
+    "saveFailed": "Could not save pull request routing permission",
+    "selectAria": "{{label}} pull request routing"
+  },
+  "secretInput": {
+    "storedPlaceholder": "Stored secret, enter a new value to replace",
+    "notSet": "Not set"
   }
 }

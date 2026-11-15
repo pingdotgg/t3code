@@ -1700,5 +1700,90 @@
     "createLinkHint": "在 {{label}} 上创建链接：设置 → 连接 → 创建链接，然后把它的配对码粘贴到这里。",
     "cancel": "取消",
     "linking": "正在连接…"
+  },
+  "loadBalancing": {
+    "prefer": "优先",
+    "normal": "正常",
+    "lessOften": "较少",
+    "manualOnly": "仅手动",
+    "off": "关闭",
+    "toggleAria": "自动均衡负载",
+    "description": "共享项目中的新线程会在空闲 CPU 和内存最多的机器上启动，并按各机器的偏好加权。",
+    "preferenceAria": "{{label}} 的负载偏好",
+    "summaryPrefer": "优先",
+    "summaryNormal": "正常",
+    "summaryLessOften": "较少",
+    "summaryManualOnly": "仅手动"
+  },
+  "localEnv": {
+    "descriptionOn": "在这台电脑上运行 Agent。关闭后，T3 Code 只搭配远程环境使用。",
+    "descriptionOff": "已关闭。Agent 只在远程环境中运行。",
+    "aria": "本地环境",
+    "turnOffTitle": "关闭本地环境？",
+    "turnOnTitle": "开启本地环境？",
+    "confirmOff": "T3 Code 将重启，并不再在这台电脑上运行服务器。正在运行的 Agent 和终端会停止，其他设备也将无法再连接这台电脑。你的项目、历史和远程环境不受影响。",
+    "confirmOn": "T3 Code 将重启，并重新在这台电脑上运行服务器。",
+    "cancel": "取消",
+    "restarting": "重启中…",
+    "restartOff": "重启并关闭",
+    "restartOn": "重启并开启",
+    "notChanged": "无法更改此设置。"
+  },
+  "micTest": {
+    "testMicrophone": "测试麦克风",
+    "unavailable": "此浏览器无法测试麦克风。请使用 HTTPS 或桌面应用。",
+    "noAudio": "没有录到音频，请重试。",
+    "recordFailed": "无法录制麦克风音频，请重试。",
+    "disconnected": "麦克风已断开。",
+    "accessFailed": "无法访问麦克风。",
+    "cancelAria": "取消麦克风测试",
+    "recordingTimeAria": "录制时长",
+    "levelAria": "麦克风输入电平",
+    "opening": "正在打开麦克风…",
+    "stopAria": "停止录制",
+    "pauseAria": "暂停播放",
+    "playAria": "播放录音",
+    "positionAria": "录音播放位置",
+    "againAria": "重新录制",
+    "doneAria": "完成",
+    "playbackFailed": "无法播放这段录音，请重新录制。"
+  },
+  "mobileApp": {
+    "description": "用手机或平板连接你的服务器。",
+    "iphoneIpad": "iPhone 和 iPad",
+    "scanHint": "用手机相机扫码。",
+    "storeLinkAria": "{{store}} 链接",
+    "openStore": "打开 {{store}}",
+    "android": "Android"
+  },
+  "multipleAccounts": {
+    "note": "不建议在 T3 Code 中管理多个 {{provider}} 账号。",
+    "moreInfo": "了解更多"
+  },
+  "processSignals": {
+    "sendAria": "发送 {{signal}}"
+  },
+  "providerWizardAuth": {
+    "accountTitle": "账号",
+    "discovering": "正在探索登录方式…",
+    "noInAppSignIn": "提供商未声明应用内登录。请按其文档完成设置。",
+    "signIn": "登录",
+    "openDocs": "打开文档",
+    "done": "完成",
+    "skipForNow": "暂时跳过"
+  },
+  "prRouting": {
+    "off": "关闭",
+    "read": "读取 PR",
+    "readWrite": "读取并操作",
+    "summaryReadWrite": "读取并操作",
+    "summaryRead": "读取 PR",
+    "description": "你在此信任的机器可以通过彼此的源代码管理访问读取 PR 数据。需要在两台机器上都开启。“读取并操作”使用的权限可能比拥有这些权限的机器更宽。只对此设备生效。",
+    "saveFailed": "无法保存 pull request 路由权限",
+    "selectAria": "{{label}} 的 pull request 路由"
+  },
+  "secretInput": {
+    "storedPlaceholder": "已存储密钥，输入新值即可替换",
+    "notSet": "未设置"
   }
 }
