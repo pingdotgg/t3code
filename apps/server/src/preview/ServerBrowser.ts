@@ -548,7 +548,10 @@ const make = Effect.gen(function* () {
   >();
 
   const closedPendingTabs = new Set<string>();
-  const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
+  const adoptedPages = new Map<
+    string,
+    { readonly page: Page; readonly openerTabId: string; readonly native: boolean }
+  >();
   const closedSessions = new Set<string>();
   let hostConnectionId: string | null = null;
   let viewerResizeOrder = 0;
@@ -924,15 +927,19 @@ const make = Effect.gen(function* () {
   ): Promise<ServerTab> => {
     const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
     adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
-    const desktop =
+    const connection =
       adopted === undefined && (await desktopRenders(snapshot))
         ? await connectDesktop(snapshot)
         : null;
-    if (desktop) opened.push(desktop.close);
+    if (connection) opened.push(connection.close);
+    // A desktop popup window shares its opener's connection, so closing it closes only its page.
+    const desktop =
+      connection ??
+      (adopted?.native ? { page: adopted.page, close: () => adopted.page.close() } : null);
     // Attaching over CDP emulates a light scheme; a tab on System follows the desktop's.
     if (desktop) await desktop.page.emulateMedia({ colorScheme: null });
     // Otherwise a desktop that attaches late, or has no channel to draw it, shows its own page.
-    if (!desktop) {
+    if (!connection) {
       await runPromise(
         manager
           .markHeadless({ threadId: ThreadId.make(snapshot.threadId), tabId: snapshot.tabId })
@@ -1088,7 +1095,7 @@ const make = Effect.gen(function* () {
       if (!desktop) void recordFrameCopies(tab, frame);
     });
     // An adopted popup's frames may have loaded before the tab listened.
-    if (adopted) for (const frame of page.frames()) void recordFrameCopies(tab, frame);
+    if (adopted && !desktop) for (const frame of page.frames()) void recordFrameCopies(tab, frame);
     page.on("requestfailed", (request) => {
       const errorText = request.failure()?.errorText ?? "";
       pushBounded(tab.networkEntries, {
@@ -1496,8 +1503,10 @@ const make = Effect.gen(function* () {
   };
 
   const adoptPopup = async (opener: ServerTab, popup: Page) => {
+    // A native desktop window is the person's too; a refused adoption leaves it open.
+    const native = opener.desktop !== null;
     if (opener.closing) {
-      await popup.close().catch(constVoid);
+      if (!native) await popup.close().catch(constVoid);
       return;
     }
     const url = popup.url();
@@ -1514,10 +1523,13 @@ const make = Effect.gen(function* () {
         ...(opener.control.agentId === null
           ? {}
           : { automationOwner: opener.control.agentId, reveal: false }),
+        // The popup's page already exists; a desktop webview for the tab would load it again.
+        ...(native ? { headless: true } : {}),
         beforePublish: (snapshot) =>
           adoptedPages.set(tabKey(snapshot.threadId, snapshot.tabId), {
             page: popup,
             openerTabId: opener.tabId,
+            native,
           }),
       }),
     ).then(
@@ -1525,7 +1537,7 @@ const make = Effect.gen(function* () {
         if (opener.control.agentId === null) controller?.push({ _tag: "popup", tabId: tab.tabId });
       },
       async () => {
-        await popup.close().catch(constVoid);
+        if (!native) await popup.close().catch(constVoid);
       },
     );
   };
