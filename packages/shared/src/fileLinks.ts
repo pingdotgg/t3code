@@ -105,7 +105,7 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
     }
   } else if (!isAbsolutePath(path)) {
     const separator: "/" | "\\" = isWindowsPathStyle(cwd) ? "\\" : "/";
-    resolvedPath = joinPath(cwd, path, separator);
+    resolvedPath = joinPath(cwd, path.replace(/^(?:\.\/)+/, ""), separator);
   }
 
   return formatFilePathPosition({ ...position, path: resolvedPath });

@@ -33,6 +33,9 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("https://github.com/T3Tools/T3Code.git#section")).toBe(
       "github.com/t3tools/t3code",
     );
+    expect(normalizeGitRemoteUrl("https://code.example.test/team/%C3%84pp.git")).toBe(
+      normalizeGitRemoteUrl("git@code.example.test:team/Äpp.git"),
+    );
     expect(normalizeGitRemoteUrl("ssh://git@code.example.test/owner/repo.git.git")).toBe(
       normalizeGitRemoteUrl("git@code.example.test:owner/repo.git.git"),
     );
