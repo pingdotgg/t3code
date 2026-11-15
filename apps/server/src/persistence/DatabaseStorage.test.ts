@@ -45,7 +45,7 @@ it.effect("a new database returns freed pages online without losing data", () =>
     yield* sql`CREATE TABLE retained (value TEXT)`;
     yield* sql`INSERT INTO retained VALUES ('keep')`;
     yield* sql`CREATE TABLE discarded (value BLOB)`;
-    yield* sql`INSERT INTO discarded VALUES (zeroblob(6291456))`;
+    yield* sql`INSERT INTO discarded VALUES (zeroblob(3145728))`;
     yield* sql`DROP TABLE discarded`;
     const before = yield* freePages;
     assert.isAbove(before, 1024);
