@@ -732,9 +732,9 @@ const ComposerChipSelectionExtension = Extension.create({
         props: {
           decorations: (state) => ChipSelectionPluginKey.getState(state),
           handleDOMEvents: {
-            // Chrome's IME keeps a selection bounded by an uneditable chip, or composes inside it.
+            // Chrome's IME skips deleting a range bounded by a user-select: none chip.
             compositionstart: (view) => {
-              if (ChipSelectionPluginKey.getState(view.state) !== DecorationSet.empty) {
+              if (ChipSelectionPluginKey.getState(view.state)?.find().length) {
                 view.dispatch(markAsCompositionReplace(view.state.tr.deleteSelection()));
               }
               return false;
