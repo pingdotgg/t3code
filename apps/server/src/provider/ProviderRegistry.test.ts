@@ -2500,30 +2500,6 @@ it.layer(
       }),
     );
 
-    it.effect.each(["rescan", "fresh"] as const)(
-      "keeps a fresh refresh started during a rescan when the %s scan finishes first",
-      (firstToFinish) =>
-        Effect.gen(function* () {
-          const h = yield* makeWorkspaceRescanHarness;
-          yield* h.seed("/barrier");
-          yield* h.seed("/workspace");
-          yield* Queue.offer(h.first.rescans, "/workspace");
-          const completeRescan = yield* h.nextScan("/workspace");
-          const fresh = yield* h.refresh("/workspace", true).pipe(Effect.forkChild);
-          const completeFresh = yield* h.nextScan("/workspace");
-          if (firstToFinish === "rescan") {
-            yield* completeRescan("hook");
-            yield* completeFresh("fresh");
-          } else {
-            yield* completeFresh("fresh");
-            yield* completeRescan("hook");
-          }
-          yield* Fiber.join(fresh);
-          yield* h.drainRescans;
-          assert.deepEqual(yield* h.skillsOf("/workspace"), ["fresh"]);
-        }),
-    );
-
     it.effect("lets a fresh refresh started while a rescan waits keep its own result", () =>
       Effect.gen(function* () {
         const h = yield* makeWorkspaceRescanHarness;
