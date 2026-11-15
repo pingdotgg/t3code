@@ -207,6 +207,25 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
     try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
   }
 
+  /// Writes the bytes behind a file, data or http(s) URL to `destination`, returning the MIME type it declares.
+  nonisolated private static func copyOriginal(_ url: URL, to destination: URL) async throws -> String? {
+    if url.isFileURL {
+      try FileManager.default.copyItem(at: url, to: destination)
+      return nil
+    }
+    if url.scheme == "data" {
+      try Data(contentsOf: url).write(to: destination, options: .atomic)
+      return url.absoluteString.lowercased().hasPrefix("data:image/svg+xml") ? "image/svg+xml" : nil
+    }
+    guard ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { throw URLError(.unsupportedURL) }
+    let (temporaryFile, response) = try await URLSession.shared.download(from: url)
+    guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
+      throw URLError(.badServerResponse)
+    }
+    try FileManager.default.moveItem(at: temporaryFile, to: destination)
+    return response.mimeType
+  }
+
   /// Copy original bytes so preview and sharing do not mutate a draft or workspace file.
   nonisolated static func prepareFile(url: URL, title: String) async throws -> URL {
     try Task.checkCancellation()
@@ -214,23 +233,7 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     do {
       let download = directory.appendingPathComponent("original")
-      var mimeType: String?
-      if url.isFileURL {
-        try FileManager.default.copyItem(at: url, to: download)
-      } else if url.scheme == "data" {
-        if url.absoluteString.lowercased().hasPrefix("data:image/svg+xml") { mimeType = "image/svg+xml" }
-        try Data(contentsOf: url).write(to: download, options: .atomic)
-      } else {
-        guard ["https", "http"].contains(url.scheme?.lowercased() ?? "") else {
-          throw URLError(.unsupportedURL)
-        }
-        let (temporaryFile, response) = try await URLSession.shared.download(from: url)
-        guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
-          throw URLError(.badServerResponse)
-        }
-        mimeType = response.mimeType
-        try FileManager.default.moveItem(at: temporaryFile, to: download)
-      }
+      let mimeType = try await copyOriginal(url, to: download)
       try Task.checkCancellation()
       // Detect images and PDFs by content; preserve other extensions so Quick Look can decide support.
       let filename = URL(fileURLWithPath: title).lastPathComponent as NSString
