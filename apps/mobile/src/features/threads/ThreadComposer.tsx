@@ -46,6 +46,7 @@ import {
 import Animated, {
   FadeIn,
   FadeOut,
+  interpolate,
   type LayoutAnimationFunction,
   ReduceMotion,
   useAnimatedStyle,
@@ -148,11 +149,10 @@ function collapsedEditorInset(text: ScaledTextRole): number {
   return Math.max(0, Math.round(COLLAPSED_EDITOR_DEFAULT_INSET - shift));
 }
 
-function useCompactComposerEditor(text: ScaledTextRole, value: string) {
+function useCompactComposerEditor(text: ScaledTextRole, value: string, rowWidth: number) {
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const [compactWidth, setCompactWidth] = useState(0);
   const contentHeight = contentSize.height;
-  const rowWidth = useSharedValue(0);
   const editorX = useSharedValue(0);
   const editorWidth = useSharedValue(0);
   const inset =
@@ -169,29 +169,41 @@ function useCompactComposerEditor(text: ScaledTextRole, value: string) {
     (contentHeight > text.lineHeight * 1.5 ||
       (compactWidth > 0 && contentSize.width > compactWidth));
   const compactRowHeight = Math.max(44, minimum);
-  const isRTL = I18nManager.isRTL;
-  const editorStyle = useAnimatedStyle(() => ({
-    position: "absolute",
-    overflow: "hidden",
-    height,
-    ...(isExpanded
-      ? { left: 14, right: 14 }
-      : compactEditorInsets({
-          slotX: editorX.value,
-          slotWidth: editorWidth.value,
-          rowWidth: rowWidth.value,
-          isRTL,
-        })),
-    // The full-width editor must move above the controls in the same frame it widens.
-    bottom: isExpanded ? 52 : (compactRowHeight - minimum) / 2,
+  const animatesLayout = Platform.OS === "ios";
+  const expansion = useDerivedValue(() =>
+    animatesLayout ? withTiming(Number(isExpanded), COMPOSER_TIMING) : Number(isExpanded),
+  );
+  const editorHeight = useDerivedValue(() =>
+    animatesLayout ? withTiming(height, COMPOSER_TIMING) : height,
+  );
+  const containerStyle = useAnimatedStyle(() => ({
+    height: interpolate(expansion.value, [0, 1], [compactRowHeight, editorHeight.value + 52]),
   }));
+  const isRTL = I18nManager.isRTL;
+  const editorStyle = useAnimatedStyle(() => {
+    const compact = compactEditorInsets({
+      slotX: editorX.value,
+      slotWidth: editorWidth.value,
+      rowWidth,
+      isRTL,
+    });
+    // Open the text viewport sideways once the draft has lifted clear of the toolbar.
+    const horizontal = Math.max(0, (expansion.value - 0.6) / 0.4);
+    return {
+      position: "absolute",
+      overflow: "hidden",
+      height: editorHeight.value,
+      left: interpolate(horizontal, [0, 1], [compact.left, 14]),
+      right: interpolate(horizontal, [0, 1], [compact.right, 14]),
+      bottom: interpolate(expansion.value, [0, 1], [(compactRowHeight - minimum) / 2, 52]),
+    };
+  });
+  // Measure wrapping at the destination width while the surrounding viewport moves.
+  const inputWidth = isExpanded ? rowWidth - 28 : compactWidth;
   return {
     isExpanded,
-    containerStyle: { height: isExpanded ? height + 52 : compactRowHeight },
+    containerStyle,
     editorStyle,
-    onRowLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
-      rowWidth.set(event.nativeEvent.layout.width);
-    },
     onEditorLayout: (event: { nativeEvent: { layout: { x: number; width: number } } }) => {
       // The expanded toolbar gives this slot to the model control. Keep the
       // compact geometry for the return transition, rather than recording zero.
@@ -208,7 +220,7 @@ function useCompactComposerEditor(text: ScaledTextRole, value: string) {
       onContentSizeChange: (size: { width: number; height: number }) => {
         setContentSize(size);
       },
-      style: { flex: 1 },
+      style: { flex: 1, width: animatesLayout && inputWidth > 0 ? inputWidth : undefined },
     },
   };
 }
@@ -276,13 +288,27 @@ export interface ThreadComposerProps {
 
 // Android KeyboardStickyView tracks the IME; concurrent timed layout morphs cause jitter.
 const COMPOSER_TRANSITION_DURATION_MS = 220;
+const COMPOSER_TIMING = {
+  duration: COMPOSER_TRANSITION_DURATION_MS,
+  reduceMotion: ReduceMotion.System,
+};
+const modelControlIsRTL = I18nManager.isRTL;
+const modelControlTransition: LayoutAnimationFunction = (values) => {
+  "worklet";
+  // Anchor the trailing edge beside the microphone even as the toolbar changes its own origin.
+  const fromX =
+    values.targetOriginX + (modelControlIsRTL ? 0 : values.targetWidth - values.currentWidth);
+  return {
+    initialValues: { originX: fromX, width: values.currentWidth },
+    animations: {
+      originX: withTiming(values.targetOriginX, COMPOSER_TIMING),
+      width: withTiming(values.targetWidth, COMPOSER_TIMING),
+    },
+  };
+};
 // Side panes animate dock width; nested horizontal transitions would make the surface trail the toolbar.
 const composerHeightTransition: LayoutAnimationFunction = (values) => {
   "worklet";
-  const timing = {
-    duration: COMPOSER_TRANSITION_DURATION_MS,
-    reduceMotion: ReduceMotion.System,
-  };
   return {
     initialValues: {
       originX: values.targetOriginX,
@@ -292,9 +318,9 @@ const composerHeightTransition: LayoutAnimationFunction = (values) => {
     },
     animations: {
       originX: values.targetOriginX,
-      originY: withTiming(values.targetOriginY, timing),
+      originY: withTiming(values.targetOriginY, COMPOSER_TIMING),
       width: values.targetWidth,
-      height: withTiming(values.targetHeight, timing),
+      height: withTiming(values.targetHeight, COMPOSER_TIMING),
     },
   };
 };
@@ -621,7 +647,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const surfacePaddingVertical = usesLargeControls ? 9 : floatingSidebarComposer ? 6 : 2;
   const [compactRowWidth, setCompactRowWidth] = useState(0);
   const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
-  const compactEditor = useCompactComposerEditor(bodyText, draftMessage);
+  const compactEditor = useCompactComposerEditor(bodyText, draftMessage, compactRowWidth);
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
   const hasEditingAttachments =
@@ -822,7 +848,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   ) : null;
 
   const modelControl = (
-    <View className="min-w-0 shrink">
+    <Animated.View
+      className="min-w-0 shrink"
+      layout={Platform.OS === "ios" ? modelControlTransition : undefined}
+    >
       <ComposerModelControl
         size={usesLargeControls ? "large" : "regular"}
         modelOption={currentModelOption}
@@ -834,7 +863,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         iconOnly={!compactEditor.isExpanded}
         onPress={openSettings}
       />
-    </View>
+    </Animated.View>
   );
 
   const compactBeforeSend =
@@ -947,7 +976,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           {isExpanded ? editingAttachments : null}
           <View
             onLayout={(event) => {
-              compactEditor.onRowLayout(event);
               setCompactRowWidth(event.nativeEvent.layout.width);
             }}
           >
