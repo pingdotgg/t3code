@@ -1325,13 +1325,22 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       expect(yield* publish("model-c")).toBe(
         "model-e:,model-a:effort,model-b:effort,model-c:,model-d:",
       );
+      expect(yield* publish("model-e", "depth")).toBe(
+        "model-e:depth,model-a:effort,model-b:effort,model-c:,model-d:depth",
+      );
       expect(yield* publish("model-b", "thinking")).toBe(
-        "model-e:,model-a:effort,model-b:thinking,model-c:,model-d:thinking",
+        "model-e:depth,model-a:effort,model-b:thinking,model-c:,model-d:thinking",
       );
 
+      // The probe still reports model-e without options; what its live session reported wins.
+      const replayed = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.nativeSessions !== undefined),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
       yield* instance.snapshot.refresh;
-      expect(effortBySlug(yield* instance.snapshot.getSnapshot)).toBe(
-        "model-e:,model-a:effort,model-b:thinking,model-c:,model-d:thinking",
+      expect(Option.map(yield* Fiber.join(replayed), effortBySlug)).toEqual(
+        Option.some("model-e:depth,model-a:effort,model-b:thinking,model-c:,model-d:thinking"),
       );
     }),
   );
