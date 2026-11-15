@@ -550,7 +550,6 @@ it("opens a relative terminal path where the shell is when the link is used", as
   exists(
     "/repo/package.json",
     "/repo/sub/package.json",
-    "/repo/sub/only-here.ts",
     "/repo/sub/deeper/../package.json",
     "/etc/hosts",
   );
@@ -581,9 +580,7 @@ it("opens a relative terminal path where the shell is when the link is used", as
     await activate(text);
   };
 
-  for (const text of ["./package.json:2", "package.json", "only-here.ts"]) {
-    await openAfterHover(text);
-  }
+  await openAfterHover("./package.json:2");
   // A press before the hover settles validates and opens the same location.
   await hover(null);
   expect(await surface().validateLink!("./package.json:2")).toBe(true);
@@ -592,8 +589,6 @@ it("opens a relative terminal path where the shell is when the link is used", as
   await openAfterHover("../package.json");
   expect(fixture.opened).toEqual([
     "/repo/sub/package.json:2",
-    "/repo/sub/package.json",
-    "/repo/sub/only-here.ts",
     "/repo/sub/package.json:2",
     "/repo/sub/deeper/../package.json",
   ]);

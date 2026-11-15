@@ -42,7 +42,7 @@ const interactiveBash = Effect.fn("test.interactiveBash")(function* (cwd: string
 
 describe("foregroundProcessCwd", () => {
   it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
-    "follows the shell and whatever it runs in the foreground",
+    "follows the foreground process of a live shell, and has no answer for a gone one",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -67,16 +67,9 @@ describe("foregroundProcessCwd", () => {
 
           assert.strictEqual(yield* foregroundProcessCwd(shell.pid, "darwin"), null);
           assert.strictEqual(yield* foregroundProcessCwd(shell.pid, "win32"), null);
+          // Linux caps pids well below 2^31, so this one never exists.
+          assert.strictEqual(yield* foregroundProcessCwd(2_147_483_646, "linux"), null);
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
-    "has no answer for a process that is gone",
-    () =>
-      Effect.gen(function* () {
-        // Linux caps pids well below 2^31, so this one never exists.
-        assert.strictEqual(yield* foregroundProcessCwd(2_147_483_646, "linux"), null);
-      }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

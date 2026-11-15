@@ -162,11 +162,9 @@ export function isTerminalUrl(value: string): boolean {
   return /^https?:\/\//iu.test(value);
 }
 
-/** Whether `text` resolves against the shell's working directory instead of naming its own place. */
+/** Whether `resolveTerminalLinkTarget` joins `text` onto its `cwd`. */
 export function isCwdRelativeTerminalPath(text: string): boolean {
-  if (/^file:\/\//iu.test(text)) return false;
-  const { path } = splitFilePathPosition(text);
-  return !isHostPath(path) && !path.startsWith("~\\");
+  return !/^file:\/\//iu.test(text) && !isHostPath(splitFilePathPosition(text).path);
 }
 
 /** Explicit OSC 8 targets may be `file://` URIs; everything else is a path relative to `cwd`. */

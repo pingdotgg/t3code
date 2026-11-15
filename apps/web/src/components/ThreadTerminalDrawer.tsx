@@ -490,10 +490,6 @@ interface TerminalLinkLocation {
   readonly target: string;
 }
 
-function terminalLinkLocation(text: string, cwd: string): TerminalLinkLocation {
-  return { text, cwd, target: resolveTerminalLinkTarget(text, cwd) };
-}
-
 interface TerminalLaunchLocation {
   readonly cwd: string;
   readonly worktreePath?: string | null;
@@ -609,25 +605,25 @@ function TerminalSessionViewport({
   const runForegroundCwd = useAtomCommand(terminalEnvironment.foregroundCwd, {
     reportFailure: false,
   });
-  const shellCwdFor = useEffectEvent((text: string): string | Promise<string> => {
+  const linkLocationFor = useEffectEvent(async (text: string): Promise<TerminalLinkLocation> => {
     const pid = readTerminalSession().pid;
-    if (pid === null || !isCwdRelativeTerminalPath(text)) return cwd;
-    return runForegroundCwd({ environmentId, input: { threadId, terminalId, pid } }).then(
-      // Older servers, other platforms and ended or replaced shells have no answer, and
-      // the launch directory is then the best guess left.
-      (result) => (result._tag === "Success" && result.value !== null ? result.value : cwd),
-    );
+    let shellCwd = cwd;
+    if (pid !== null && isCwdRelativeTerminalPath(text)) {
+      const result = await runForegroundCwd({
+        environmentId,
+        input: { threadId, terminalId, pid },
+      });
+      // Older servers, other platforms and ended or replaced shells fall back to the launch cwd.
+      if (result._tag === "Success" && result.value !== null) shellCwd = result.value;
+    }
+    return { text, cwd: shellCwd, target: resolveTerminalLinkTarget(text, shellCwd) };
   });
   const hoverTerminalLink = useEffectEvent((text: string | null) => {
     const request = ++linkLocationRequestRef.current;
-    if (text === null || isTerminalUrl(text)) return showLinkLocation(null);
-    const shellCwd = shellCwdFor(text);
-    if (typeof shellCwd === "string") return showLinkLocation(terminalLinkLocation(text, shellCwd));
     showLinkLocation(null);
-    void shellCwd.then((resolved) => {
-      if (request === linkLocationRequestRef.current) {
-        showLinkLocation(terminalLinkLocation(text, resolved));
-      }
+    if (text === null || isTerminalUrl(text)) return;
+    void linkLocationFor(text).then((location) => {
+      if (request === linkLocationRequestRef.current) showLinkLocation(location);
     });
   });
   const metadataThreadRef = useContext(FileMetadataThreadContext);
@@ -655,7 +651,7 @@ function TerminalSessionViewport({
     )
       return false;
     const request = ++linkLocationRequestRef.current;
-    const location = terminalLinkLocation(text, await shellCwdFor(text));
+    const location = await linkLocationFor(text);
     const query = getFileMetadataQueryAtom(
       environmentId,
       location.target,
