@@ -250,7 +250,7 @@ private final class ComposerTextView: UITextView {
         return
       }
     }
-    // Native paste inserts every text item back to back, not only the first.
+    // Native paste inserts every text item, not only the first (smart insert may space them).
     if !bypassTextPasteInterception,
        let text = pasteboard.strings?.joined(), shouldInterceptTextPaste(text) {
       onPasteText?(text, selectedRange)
