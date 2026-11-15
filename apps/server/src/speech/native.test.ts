@@ -1,10 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off - verifies isolated native worker processes and their exit events.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { expect, it } from "vite-plus/test";
 
 import { loadNativeSpeechModel } from "./native.ts";
 
 const fixture = (transcribe: string, maxAudioMs = 0, supportsVocabulary = false) =>
-  `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false, maxAudioMs: ${maxAudioMs} }, supports: (feature) => feature === "vocabulary" && ${supportsVocabulary}, transcribe: ${transcribe} }) };`)}`;
+  `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false, maxAudioMs: ${maxAudioMs}, languages: ["en-US", "de-DE"] }, supports: (feature) => feature === "vocabulary" && ${supportsVocabulary}, transcribe: ${transcribe} }) };`)}`;
 
 const fixtureWithUnrelatedIpcMessage = () =>
   `data:text/javascript,${encodeURIComponent(`
@@ -38,6 +42,7 @@ it("returns transcription from an isolated process and disposes it", async () =>
     fixture("async (pcm) => ({ text: String(pcm[0]) })"),
   );
   try {
+    expect(model.languages).toEqual(["en-US", "de-DE"]);
     expect(
       await model.transcribe(
         new Float32Array([0.25]),
@@ -154,6 +159,37 @@ it("kills a hung streaming feed without waiting for native cleanup", async () =>
   await model.dispose();
   await rejected;
 });
+
+it("skips process exit teardown when the backend dies during native inference", async () => {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-speech-orphan-"));
+  const marker = NodePath.join(directory, "exit-teardown");
+  // The exit hook stands in for native atexit teardown; the interval for the threadpool call.
+  const model = await loadNativeSpeechModel(
+    "unused.gguf",
+    new AbortController().signal,
+    streamingFixture(`async () => {
+      const { writeFileSync } = process.getBuiltinModule("node:fs");
+      process.once("exit", () => writeFileSync(${JSON.stringify(marker)}, "ran"));
+      setInterval(() => {}, 1 << 30);
+      process.disconnect();
+      return await new Promise(() => {});
+    }`),
+  );
+  try {
+    await model.begin({ timestamps: "none" }, false);
+    await expect(model.feed(new Float32Array(512).fill(0.25))).rejects.toThrow(
+      "Speech process exited",
+    );
+    expect(
+      NodeFS.existsSync(marker),
+      "orphaned worker ran exit teardown while native inference was in flight",
+    ).toBe(false);
+  } finally {
+    await model.dispose();
+    NodeFS.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 const vadFixture = ({
   streaming = false,
   failVad = false,
