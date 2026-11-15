@@ -958,27 +958,23 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       <div data-user-message-attribution={userMessage.attribution}>
         <MessageAuthorHeading>{senderLabel}</MessageAuthorHeading>
         <WorkLogRow
-          role="button"
-          tabIndex={0}
-          aria-label={`${senderLabel}: ${foldSummary}`}
-          aria-expanded={expanded}
-          data-scroll-anchor-ignore
           onClick={toggleExpanded}
-          onKeyDown={(event) => {
-            if (
-              event.target === event.currentTarget &&
-              (event.key === "Enter" || event.key === " ")
-            ) {
-              event.preventDefault();
-              toggleExpanded();
-            }
-          }}
           icon={<MessagesSquareIcon className="size-4 shrink-0 stroke-2 text-icon-muted" />}
           label={
-            <span className="flex min-w-0 items-baseline gap-1.5">
+            <button
+              type="button"
+              aria-label={`${senderLabel}: ${foldSummary}`}
+              aria-expanded={expanded}
+              data-scroll-anchor-ignore
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleExpanded();
+              }}
+              className="flex w-full min-w-0 cursor-pointer items-baseline gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+            >
               <span className="max-w-1/2 shrink-0 truncate text-foreground/80">{senderLabel}</span>
               <span className="min-w-0 truncate">{foldSummary}</span>
-            </span>
+            </button>
           }
           trailing={
             <>
