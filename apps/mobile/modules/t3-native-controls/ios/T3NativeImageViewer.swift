@@ -363,6 +363,20 @@ private final class T3ImageViewerPage: UIView, UIScrollViewDelegate {
   }
 }
 
+private final class T3ImageViewerScrim: UIView {
+  override class var layerClass: AnyClass { CAGradientLayer.self }
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    guard let gradient = layer as? CAGradientLayer else { return }
+    gradient.colors = [0.55, 0.3, 0].map { UIColor(white: 0, alpha: $0).cgColor }
+    gradient.locations = [0, 0.55, 1]
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { nil }
+}
+
 final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIGestureRecognizerDelegate {
   var sourceView: (Int) -> UIView? = { _ in nil }
   var fileForPage: (Int) -> URL? = { _ in nil }
@@ -470,6 +484,11 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
     bar.alignment = .center
     bar.spacing = 12
     bar.translatesAutoresizingMaskIntoConstraints = false
+    // A scrim like Photos', so the title stays readable over light images.
+    let scrim = T3ImageViewerScrim()
+    scrim.isUserInteractionEnabled = false
+    scrim.translatesAutoresizingMaskIntoConstraints = false
+    chrome.addSubview(scrim)
     chrome.addSubview(bar)
     let guide = view.safeAreaLayoutGuide
     NSLayoutConstraint.activate([
@@ -477,6 +496,10 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
       chrome.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       chrome.trailingAnchor.constraint(equalTo: view.trailingAnchor),
       chrome.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
+      scrim.topAnchor.constraint(equalTo: chrome.topAnchor),
+      scrim.leadingAnchor.constraint(equalTo: chrome.leadingAnchor),
+      scrim.trailingAnchor.constraint(equalTo: chrome.trailingAnchor),
+      scrim.bottomAnchor.constraint(equalTo: chrome.bottomAnchor, constant: 48),
       bar.topAnchor.constraint(equalTo: guide.topAnchor, constant: 8),
       bar.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 16),
       bar.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
