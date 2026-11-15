@@ -301,6 +301,7 @@ export type OrchestratorMcpCreatedThreadStatus = typeof OrchestratorMcpCreatedTh
 export const OrchestratorMcpCreatedThread = Schema.Struct({
   threadId: ThreadId,
   link: Schema.optional(Schema.String),
+  projectId: ProjectId,
   runId: Schema.NullOr(RunId),
   status: OrchestratorMcpCreatedThreadStatus,
   title: Schema.String,
