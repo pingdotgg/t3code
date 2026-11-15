@@ -222,7 +222,7 @@ class ReviewDiffGeometryTest {
         texts.clear()
         drawing.configureCodePaint(Color.BLACK, 0, style)
         drawing.drawWordDiffRanges(canvas, row, tokens, 10f, 0, 40, lines, style)
-        drawing.drawCode(canvas, content, tokens, 10f, 28f, style, lines)
+        drawing.drawCode(canvas, row, tokens, 10f, 28f, style, lines)
         val box = boxes.single()
         val case = "weight=$weight prefix=$prefix"
         assertEquals("$case left", requireNotNull(texts["1.27.3"]), box.left, 0.5f)
