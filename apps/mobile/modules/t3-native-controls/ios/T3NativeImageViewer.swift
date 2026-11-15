@@ -139,9 +139,14 @@ final class T3NativeImageViewer: NSObject {
       guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
       let image = await Task.detached(priority: .userInitiated) { Self.decode(file) }.value
       guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
-      settled = true
       // ImageIO cannot read SVG; the thumbnail is vector, so redraw it at full-screen size.
       let isSVG = file.pathExtension.lowercased() == "svg"
+      if image == nil, isSVG {
+        // The open transition hides the thumbnail, which would draw blank until it is back.
+        await controller?.untilRevealed()
+        guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
+      }
+      settled = true
       if let image = image ?? (isSVG ? source.flatMap(Self.render(_:)) : nil) {
         decoded.insert(index)
         controller?.setImage(image, at: index, full: true)
@@ -486,6 +491,8 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   private var transitioning = true
   private var closeRequested = false
   private var closing = false
+  private var revealed = false
+  private var revealWaiters: [CheckedContinuation<Void, Never>] = []
   private var laidOutSize = CGSize.zero
   private var isLayingOut = false
   private lazy var saveItem = UIBarButtonItem(
@@ -662,6 +669,12 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
     return transition
   }
 
+  /// Returns once the open transition has finished and the thumbnails are on screen again.
+  func untilRevealed() async {
+    guard !revealed else { return }
+    await withCheckedContinuation { revealWaiters.append($0) }
+  }
+
   func animateIn() {
     view.layoutIfNeeded()
     let page = pages[currentIndex]
@@ -669,6 +682,9 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
       guard let self else { return }
       self.pager.isHidden = false
       self.transitioning = false
+      self.revealed = true
+      for waiter in self.revealWaiters { waiter.resume() }
+      self.revealWaiters.removeAll()
       self.setNeedsStatusBarAppearanceUpdate()
       UIAccessibility.post(notification: .screenChanged, argument: page.imageView)
       if self.closeRequested { self.close() }
