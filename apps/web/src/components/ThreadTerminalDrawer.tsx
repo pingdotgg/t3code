@@ -723,7 +723,7 @@ function TerminalSessionViewport({
         theme: terminalThemeFromApp(mount),
         font: terminalFontOptions(setupFont.family, setupFont.size),
         onData: (data) => handleData(data),
-        onBinary: (data) => handleBinary(data),
+        onBinary: (data) => void sendTerminalInput(data, "Terminal write failed", true),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => {},
         beforeKey: (event) => handleBeforeKey(event),
@@ -1088,10 +1088,6 @@ function TerminalSessionViewport({
 
       function handleData(data: string): void {
         void sendTerminalInput(data, "Terminal write failed");
-      }
-
-      function handleBinary(data: string): void {
-        void sendTerminalInput(data, "Terminal write failed", true);
       }
 
       const themeObserver = new MutationObserver(() => {

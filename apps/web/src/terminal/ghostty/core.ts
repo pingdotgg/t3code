@@ -167,7 +167,7 @@ export interface GhosttyMouseInput {
 // keypad-transmit mode (smkx), so that mode marks a terminfo reader; raw parsers never set it.
 const MODIFIED_F3 = /^\x1b\[13;(\d+)~$/;
 /** Mouse report input: UTF-8 text, or one UTF-16 code unit per byte when `binary`. */
-export interface GhosttyMouseReport {
+interface GhosttyMouseReport {
   readonly data: string;
   readonly binary: boolean;
 }
