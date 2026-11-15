@@ -1275,7 +1275,11 @@ commands. The README's "Status probe" lists every request, limit and failure.
   without a home, ChatGPT with and without the cache refresh, an API key with custom models,
   Orbit's router, a failed `skills/list`, a model list that never answers, a failed usage read,
   instance settings with a `~` binary and launch arguments from the environment): 17 of 17
-  SAME, entry and every run (argv, environment, folder, stdin lines, end of input and signals).
+  SAME, entry and every run (argv, environment, folder, stdin lines with the concurrent reads
+grouped by method, and signals). A first full run showed two timing races, both fixed: our
+concurrent reads now poll in T3's order (`biased`), so a failed `skills/list` ends the model
+list as in T3; and whether the stub sees end of input before SIGTERM is timing on both sides,
+so it is not compared. Then 3 runs in a row and 2 at once: all SAME.
   Sealed: T3's side in `sealedNodeEnv` with the fetch guard; both sides probe with
   `PATH=/usr/bin:/bin` (checked to hold no provider CLI). `instances-flow.mjs`: its Codex
   instance has a probed `ready` entry, the probe ran with the instance's environment and home,

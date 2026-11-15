@@ -16,7 +16,8 @@
 // 2. Ours: `cargo run --example codex_probe`: `status::check` with the same environment.
 // 3. Compared: the entry (`checkedAt` stamps aside), and per CLI run the argv, the
 //    environment, the working folder (each side's server folder as `<server>`), every stdin
-//    line (request ids aside) and how the run ended (end of input, signals), in order.
+//    line (request ids aside; the concurrent reads after `account/read` grouped by method) and
+//    how the run ended (end of input, signals), in order.
 //
 // Sealed: T3's side runs with `sealedNodeEnv` and a throwaway HOME, imports the fetch guard,
 // and both sides probe with PATH=/usr/bin:/bin, which holds no provider CLI (checked).
@@ -348,6 +349,21 @@ const stripStamps = (entry, side, scenario) => {
   if (copy.usageLimits) copy.usageLimits.checkedAt = "<checkedAt>";
   return canonical(copy);
 };
+/**
+ * Both servers send `skills/list`, `model/list`, `config/read` and `account/rateLimits/read`
+ * at once (T3's `Effect.all`), so their order against each other depends on timing on either
+ * side. The lines up to `account/read` stay in order; the later ones are grouped by method,
+ * in order within each method (a model list's pages).
+ */
+const concurrentByMethod = (stdin) => {
+  const cut = stdin.findIndex((line) => line?.method === "account/read") + 1;
+  if (cut === 0) return stdin;
+  const rest = stdin.slice(cut);
+  const methods = [...new Set(rest.map((line) => line?.method ?? ""))].toSorted();
+  return [...stdin.slice(0, cut), ...methods.flatMap((m) => rest.filter((line) => (line?.method ?? "") === m))];
+};
+// How a run ended: the signals it got. Both servers close stdin and send SIGTERM at once, so
+// whether the stub saw the end of input first is timing on either side; it is not compared.
 const runs = (scenario, side) => {
   const dir = NodePath.join(scenario.dir, side, "records");
   if (!NodeFS.existsSync(dir)) return [];
@@ -360,7 +376,7 @@ const runs = (scenario, side) => {
         const { id: _id, ...rest } = line;
         return rest;
       });
-      return scrub({ argv: r.argv, env: r.env, cwd: r.cwd, stdin, ended: r.ended }, scenario, side);
+      return scrub({ argv: r.argv, env: r.env, cwd: r.cwd, stdin: concurrentByMethod(stdin), ended: r.ended.filter((e) => e !== "EOF") }, scenario, side);
     });
 };
 

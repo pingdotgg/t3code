@@ -1592,10 +1592,13 @@ async fn probe_app_server(
         (config, native_usage, rate_limits)
     };
     // `Effect.all`: the first failure ends the others.
-    let (skills, models, (config, native_usage, rate_limits)) =
-        tokio::try_join!(async { skills.await.transpose() }, models, async {
-            Ok::<_, ProbeError>(config_and_usage.await)
-        },)?;
+    let (skills, models, (config, native_usage, rate_limits)) = tokio::try_join!(
+        // In T3's order every time: a failed read ends the others before they send more.
+        biased;
+        async { skills.await.transpose() },
+        models,
+        async { Ok::<_, ProbeError>(config_and_usage.await) },
+    )?;
     let cyber = config.as_ref().and_then(decode_cyber_access);
     let api_key = account["account"]["type"] == "apiKey";
     Ok(Snapshot {

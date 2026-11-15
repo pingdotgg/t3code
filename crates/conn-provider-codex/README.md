@@ -186,7 +186,9 @@ path and a bare name on a PATH without it), an old CLI without `app-server`, a h
 an API key with custom models, Orbit's router, a failed `skills/list`, a model list that
 never answers, a failed usage read, and an instance with a `~` binary, launch arguments from
 its environment, a sensitive variable and an identity. All equal: the entry, and per run the
-argv, environment, folder, every stdin line (ids aside) and how it ended. Both sides are
+argv, environment, folder, every stdin line (ids aside; the concurrent reads after
+`account/read` grouped by method, since their order is timing on both sides) and the signals
+it got. Both sides are
 sealed (T3's in `sealedNodeEnv` with the fetch guard; both probe with `PATH=/usr/bin:/bin`).
 `check-copies.mjs` holds the plan and effort labels and the preferred default models;
 `gen-model-catalog.mjs --check` the catalog.
