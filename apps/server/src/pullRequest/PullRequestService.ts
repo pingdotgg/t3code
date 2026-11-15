@@ -128,6 +128,11 @@ const FILTERED_LIST_READS = 5;
 const LIST_CACHE_TTL = Duration.seconds(30);
 const DETAIL_CACHE_TTL = Duration.seconds(60);
 const MERGED_DETAIL_CACHE_TTL = Duration.minutes(10);
+
+const urlNamesRepository = (entry: PullRequestListEntry) =>
+  URL.canParse(entry.url) &&
+  new URL(entry.url).pathname.toLowerCase().startsWith(`/${entry.repository.toLowerCase()}/`);
+
 const detailTimeToLive = (state: PullRequestState | undefined) =>
   state === "merged" ? MERGED_DETAIL_CACHE_TTL : DETAIL_CACHE_TTL;
 const CHECKS_CACHE_TTL = Duration.seconds(15);
@@ -1642,7 +1647,11 @@ export const make = Effect.gen(function* () {
     for (const batch of batches) {
       if (batch.nextCursor !== null) nextCursors[batch.key] = batch.nextCursor;
       for (const entry of batch.entries) {
-        if (!entriesByUrl.has(entry.url)) entriesByUrl.set(entry.url, entry);
+        const held = entriesByUrl.get(entry.url);
+        // A renamed repository lists each pull request under every name; keep the current one.
+        if (held === undefined || (!urlNamesRepository(held) && urlNamesRepository(entry))) {
+          entriesByUrl.set(entry.url, entry);
+        }
       }
     }
     const entries = [...entriesByUrl.values()].toSorted((left, right) =>

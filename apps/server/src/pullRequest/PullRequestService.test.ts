@@ -604,13 +604,14 @@ it.effect("lists renamed repository PRs once without losing other repositories o
   Effect.gen(function* () {
     const service = yield* makeService({
       projects: [
+        // Read first, so the current name has to win over read order.
+        project({ id: "old", title: "old", workspaceRoot: "/b", repository: "wrymn/Solus" }),
         project({
           id: "current",
           title: "current",
           workspaceRoot: "/a",
           repository: "wrymn/Hellforged",
         }),
-        project({ id: "old", title: "old", workspaceRoot: "/b", repository: "wrymn/Solus" }),
         project({ id: "other", title: "other", workspaceRoot: "/c", repository: "acme/other" }),
         project({
           id: "enterprise",
@@ -619,12 +620,32 @@ it.effect("lists renamed repository PRs once without losing other repositories o
           repository: "wrymn/Hellforged",
           host: "github.example.com",
         }),
+        // A project moved into a parent group: its old path is a suffix of the new one.
+        project({
+          id: "moved",
+          title: "moved",
+          workspaceRoot: "/e",
+          repository: "team/repo",
+          host: "gitlab.example.com",
+        }),
+        project({
+          id: "parent",
+          title: "parent",
+          workspaceRoot: "/f",
+          repository: "parent/team/repo",
+          host: "gitlab.example.com",
+        }),
       ],
       providers: [
         fakePullRequestProvider(SourceControlProviderKind.make("github"), {
           listChangeRequests: ({ repository, host, cursor }) => {
             const number = cursor === undefined ? 137 : 136;
-            const canonical = repository === "wrymn/Solus" ? "wrymn/Hellforged" : repository;
+            const canonical =
+              repository === "wrymn/Solus"
+                ? "wrymn/Hellforged"
+                : repository === "team/repo"
+                  ? "parent/team/repo"
+                  : repository;
             return Effect.succeed({
               items: [
                 {
@@ -647,9 +668,14 @@ it.effect("lists renamed repository PRs once without losing other repositories o
         "https://github.com/wrymn/Hellforged/pull/137",
         "https://github.com/acme/other/pull/137",
         "https://github.example.com/wrymn/Hellforged/pull/137",
+        "https://gitlab.example.com/parent/team/repo/pull/137",
       ],
     );
-    assert.strictEqual(Object.keys(first.nextCursors).length, 4);
+    assert.deepStrictEqual(
+      [first.entries[0]!.repository, first.entries[3]!.repository],
+      ["wrymn/Hellforged", "parent/team/repo"],
+    );
+    assert.strictEqual(Object.keys(first.nextCursors).length, 6);
 
     const next = yield* service.list({ state: "open", cursors: first.nextCursors });
     assert.deepStrictEqual(
@@ -658,6 +684,7 @@ it.effect("lists renamed repository PRs once without losing other repositories o
         "https://github.com/wrymn/Hellforged/pull/136",
         "https://github.com/acme/other/pull/136",
         "https://github.example.com/wrymn/Hellforged/pull/136",
+        "https://gitlab.example.com/parent/team/repo/pull/136",
       ],
     );
     assert.deepStrictEqual(next.nextCursors, {});

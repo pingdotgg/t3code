@@ -468,16 +468,16 @@ export function partitionPullRequestsWithPriority<Entry extends PullRequestListE
   authored: ReadonlyArray<Entry>,
   reviewRequested: ReadonlyArray<Entry>,
 ): ReadonlyArray<PullRequestGroup<Entry>> {
-  const authoredByKey = new Map(authored.map((entry) => [pullRequestUrlKey(entry), entry]));
+  const authoredByKey = new Map(authored.map((entry) => [pullRequestEntryKey(entry), entry]));
   const reviewByKey = new Map(
     reviewRequested.flatMap((entry) => {
-      const key = pullRequestUrlKey(entry);
+      const key = pullRequestEntryKey(entry);
       return authoredByKey.has(key) ? [] : [[key, entry] as const];
     }),
   );
   const others: Entry[] = [];
   for (const entry of entries) {
-    const key = pullRequestUrlKey(entry);
+    const key = pullRequestEntryKey(entry);
     if (authoredByKey.has(key)) {
       authoredByKey.set(key, entry);
     } else if (reviewByKey.has(key)) {
