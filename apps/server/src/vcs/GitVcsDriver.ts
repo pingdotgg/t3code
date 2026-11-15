@@ -1965,13 +1965,30 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       yield* resetIndex;
 
       // A submodule without this ref was not captured, and restoring it to HEAD would lose edits.
-      for (const cwd of yield* listSubmodules(input.cwd)) {
-        yield* checkpoints.restoreCheckpoint({
-          cwd,
-          checkpointRef: input.checkpointRef,
-          fallbackToHead: false,
-        });
-      }
+      // The root is already restored, so a failing submodule must not hide that from the caller.
+      yield* listSubmodules(input.cwd).pipe(
+        Effect.flatMap((submodules) =>
+          Effect.forEach(
+            submodules,
+            (cwd) =>
+              checkpoints
+                .restoreCheckpoint({
+                  cwd,
+                  checkpointRef: input.checkpointRef,
+                  fallbackToHead: false,
+                })
+                .pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("submodule checkpoint restore failed", { cwd, cause }),
+                  ),
+                ),
+            { discard: true },
+          ),
+        ),
+        Effect.catch((cause) =>
+          Effect.logWarning("submodule checkpoint restore failed", { cwd: input.cwd, cause }),
+        ),
+      );
 
       return true;
     }, Effect.scoped),
