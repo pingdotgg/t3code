@@ -52,3 +52,11 @@ export function remapFileCommentAnnotations(
     },
   }));
 }
+
+/** Drafts and the comments still in the prompt; sent or removed ones are not shown or re-added. */
+export function promptFileCommentEntries(
+  entries: ReadonlyArray<FileCommentAnnotationEntry>,
+  promptCommentIds: ReadonlySet<string>,
+): FileCommentAnnotationEntry[] {
+  return entries.filter((entry) => entry.kind === "draft" || promptCommentIds.has(entry.id));
+}
