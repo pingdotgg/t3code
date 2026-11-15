@@ -267,6 +267,31 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.restoreAllMocks();
   });
 
+  it("reports focus transitions only while DEC 1004 is enabled", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create();
+    const blur = () => surface.input.dispatchEvent(new Event("blur"));
+    const reports = () => harness.onData.mock.calls.map(([data]) => data);
+
+    surface.focus();
+    blur();
+    expect(reports()).toEqual([]);
+
+    surface.write("\x1b[?1004h");
+    surface.focus();
+    surface.focus();
+    blur();
+    blur();
+    expect(reports()).toEqual(["\x1b[I", "\x1b[O"]);
+
+    harness.onData.mockClear();
+    surface.write("\x1b[?1004l");
+    surface.focus();
+    blur();
+    expect(reports()).toEqual([]);
+  });
+
   it("preserves shell Ctrl+A and ordinary application navigation", async () => {
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });
     const harness = createHarness();

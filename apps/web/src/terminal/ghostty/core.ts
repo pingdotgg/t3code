@@ -633,6 +633,22 @@ export class GhosttyTerminalCore {
     return encoded;
   }
 
+  /** Empty unless the program enabled DEC 1004 focus reporting. */
+  encodeFocus(focused: boolean): string {
+    this.ensureActive();
+    this.runtime.bytes(this.scratch, 1)[0] = 0;
+    const reporting =
+      this.runtime.call("ghostty_terminal_mode_get", this.terminal, 1004, this.scratch) ===
+        GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0;
+    if (!reporting) return "";
+    const written = this.runtime.call("ghostty_wasm_alloc_usize");
+    const encoded = this.encodeOutput(written, (output, outputSize) =>
+      this.runtime.call("ghostty_focus_encode", focused ? 0 : 1, output, outputSize, written),
+    );
+    this.runtime.call("ghostty_wasm_free_usize", written);
+    return encoded;
+  }
+
   encodeMouse(input: GhosttyMouseInput): string {
     this.ensureActive();
     this.runtime.call(
