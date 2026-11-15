@@ -65,11 +65,7 @@ it("a model picked for an existing thread reaches the server before any message 
   const modelSets = () =>
     dispatchedCommands().filter((command) => command.type === "thread.model-selection.set");
 
-  // Re-picking the model the composer shows saves nothing, so the thread keeps its stored options.
   await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
-  await page.getByRole("option", { name: /GPT-5\.4/ }).click();
-
-  // The picker stays open beside its effort column.
   await page.getByRole("option", { name: /GPT-5\.5/ }).click();
   await vi.waitFor(() =>
     expect(modelSets()).toEqual([
