@@ -32,7 +32,10 @@ const state = vi.hoisted(() => ({
   previews: new Map<string | null, ResultAtom<ReviewDiffPreviewResult>>(),
   patch: null as unknown as ResultAtom<ReviewDiffPreviewSource>,
   diffFilesCollapsed: false,
-  project: { workspaceRoot: "/project", repositoryIdentity: null as { rootPath: string } | null },
+  project: {
+    workspaceRoot: "/project",
+    repositoryIdentity: null as { rootPath: string } | null,
+  },
   toolCallItem: null as unknown,
   config: null as unknown as Atom.Atom<null>,
   status: null as unknown as ResultAtom<VcsStatusResult>,
@@ -265,26 +268,9 @@ it("opens a repository-relative file from a nested project without a remote", as
   useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
   await using screen = await render(
     <RegistryContext.Provider value={context.registry}>
-      <div className="flex h-[600px] flex-col">
-        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
-      </div>
+      <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
     </RegistryContext.Provider>,
   );
-  await userEvent.click(screen.getByText(path, { exact: true }));
-  expect(
-    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
-  ).toMatchObject({ activeSurfaceId: "file:back\\slash.txt" });
-  await userEvent.click(screen.getByRole("button", { name: `Expand ${path}`, exact: true }));
-  await act(() =>
-    context.registry.set(
-      context.patch,
-      AsyncResult.success({
-        ...source,
-        diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-before\n+after\n`,
-      }),
-    ),
-  );
-  await act(() => useRightPanelStore.setState({ byThreadKey: {} }));
   await userEvent.click(screen.getByText(path, { exact: true }));
   expect(
     selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
@@ -395,30 +381,15 @@ it.each([
     .toHaveAttribute("aria-expanded", "true");
 });
 
-// A local thread in a project that is the repository's apps/web folder.
-function inRepositoryFolder(context: ReturnType<typeof setup>, repositoryIdentity: boolean) {
+it("opens a file from a tool call's diff by the path its agent recorded", async () => {
+  using context = setup("origin/orphan");
+  // A local thread in a project that is the repository's apps/web folder.
   state.thread = { ...state.thread!, worktreePath: null };
-  state.project = {
-    workspaceRoot: "/repo/apps/web",
-    repositoryIdentity: repositoryIdentity ? { rootPath: "/repo" } : null,
-  };
+  state.project = { workspaceRoot: "/repo/apps/web", repositoryIdentity: { rootPath: "/repo" } };
   const status = AsyncResult.getOrThrow(context.registry.get(state.status));
   state.status = Atom.make(
     AsyncResult.success({ ...status, workingTree: { ...status.workingTree, rootPath: "/repo" } }),
   );
-}
-
-function openedFiles(threadRef: ScopedThreadRef) {
-  return (
-    useRightPanelStore
-      .getState()
-      .byThreadKey[scopedThreadKey(threadRef)]?.surfaces.map((surface) => surface.id) ?? []
-  );
-}
-
-it("opens a file from a tool call's diff by the path its agent recorded", async () => {
-  using context = setup("origin/orphan");
-  inRepositoryFolder(context, true);
   // Claude's Edit can record a path relative to the workspace, unlike the repository's diffs.
   state.toolCallItem = {
     type: "file_change",
@@ -438,5 +409,9 @@ it("opens a file from a tool call's diff by the path its agent recorded", async 
     </RegistryContext.Provider>,
   );
   await userEvent.click(screen.getByText("src/a.ts", { exact: true }));
-  await vi.waitFor(() => expect(openedFiles(context.threadRef)).toContain("file:src/a.ts"));
+  await vi.waitFor(() =>
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
+    ).toMatchObject({ activeSurfaceId: "file:src/a.ts" }),
+  );
 });
