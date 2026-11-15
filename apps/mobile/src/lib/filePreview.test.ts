@@ -113,6 +113,7 @@ vi.mock("../components/ui/Button", () => ({
     createElement("button", { onClick: props.onPress, disabled: props.disabled }, props.label),
 }));
 vi.mock("expo", () => ({
+  requireNativeModule: () => ({ is24HourFormat: () => true }),
   useEvent: (_player: unknown, _event: unknown, initial: unknown) => initial,
   useReleasingSharedObjectWithLifecycle: (
     lifecycle: {
@@ -182,6 +183,9 @@ vi.mock("../state/entities", () => ({
 vi.mock("../state/use-thread-selection", () => ({
   useThreadSelection: () => ({ selectedThread: null }),
 }));
+vi.mock("../state/presentation", () => ({
+  useEnvironmentPresentation: () => ({ isReady: true, presentation: null }),
+}));
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/use-atom-command", () => ({}));
 vi.mock("../state/v2-item-support", () => ({}));
@@ -237,6 +241,7 @@ vi.mock("../components/ui/Menu", () => ({
 }));
 vi.mock("../components/ui/FilePreviewGallery", () => ({
   FilePreviewGallery: ({ children }: { children?: ReactNode }) => children,
+  useFilePreviewGallery: () => (source: unknown) => source,
 }));
 vi.mock("../components/ui/FilePreviewModal", () => ({
   FilePreviewModal: (props: { source: { name: string } | null }) =>
@@ -293,6 +298,10 @@ vi.mock("../features/threads/useFileChipShare", () => ({ useFileChipShare: () =>
 vi.mock("../features/threads/ThreadMarkdownImage", async () => {
   const { createContext } = await import("react");
   return { MarkdownImageAvailableWidthContext: createContext(390) };
+});
+vi.mock("../features/threads/ZoomableImagePressable", async () => {
+  const { Pressable } = await import("react-native");
+  return { ZoomableImagePressable: Pressable };
 });
 vi.mock("../features/review/ReviewCommentCard", () => ({ useReviewCommentColors: () => ({}) }));
 vi.mock("../features/prompt-links/prompt-link-actions", () => ({}));

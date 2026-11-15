@@ -15,6 +15,7 @@ import {
   isProviderWorkspaceSnapshotScanning,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
+  resolveProvidersForCwd,
 } from "./providerSkills.ts";
 
 const provider = {
@@ -120,6 +121,30 @@ describe("workspace provider snapshots", () => {
     expect(hasCompleteProviderWorkspaceSnapshot(undefined, "/workspace/project-a")).toBe(false);
     expect(hasCompleteProviderWorkspaceSnapshot(provider, null)).toBe(false);
   });
+
+  it("lists a project's own models only for that project", () => {
+    const projectModel = {
+      slug: "uni/medium-gpt",
+      name: "Medium GPT",
+      isCustom: false,
+      capabilities: null,
+    } satisfies ServerProvider["models"][number];
+    const withProjectModels = {
+      ...provider,
+      workspaceSnapshots: provider.workspaceSnapshots.map((snapshot) => ({
+        ...snapshot,
+        models: [projectModel],
+      })),
+    } satisfies ServerProvider;
+    const providers = [provider, withProjectModels];
+
+    expect(resolveProvidersForCwd(providers, "/workspace/project-a").map((p) => p.models)).toEqual([
+      [],
+      [projectModel],
+    ]);
+    expect(resolveProvidersForCwd(providers, "/workspace/project-a")[0]).toBe(provider);
+    expect(resolveProvidersForCwd(providers, "/workspace/project-b")).toBe(providers);
+  });
 });
 
 describe("provider workspace snapshot refresh atom", () => {
@@ -151,16 +176,25 @@ describe("provider workspace snapshot refresh atom", () => {
     | null
     | Promise<ReadonlyArray<ServerProvider> | null>;
 
-  function setup(initialProviders: ReadonlyArray<ServerProvider>, initialResponses?: Response[]) {
+  function setup(
+    initialProviders: ReadonlyArray<ServerProvider>,
+    initialResponses?: Response[],
+    // The client drops a reply whose provider changed while it was in flight.
+    options?: { readonly droppedReplies?: number },
+  ) {
+    let droppedReplies = options?.droppedReplies ?? 0;
     const providersAtom = Atom.make<ReadonlyArray<ServerProvider> | null>(initialProviders);
     const responses: Response[] = [...(initialResponses ?? [])];
     const run = vi.fn(async () => {
       const providers = await (responses.shift() ?? (() => null))();
-      return providers === null
-        ? AsyncResult.failure<{ providers: ReadonlyArray<ServerProvider> }, string>(
-            Cause.fail("offline"),
-          )
-        : AsyncResult.success({ providers });
+      if (providers === null) {
+        return AsyncResult.failure<{ providers: ReadonlyArray<ServerProvider> }, string>(
+          Cause.fail("offline"),
+        );
+      }
+      if (droppedReplies > 0) droppedReplies -= 1;
+      else registry.set(providersAtom, providers);
+      return AsyncResult.success({ providers });
     });
     const family = createProviderWorkspaceSnapshotRefreshAtomFamily({
       providers: () => providersAtom,
@@ -218,6 +252,20 @@ describe("provider workspace snapshot refresh atom", () => {
     },
   );
 
+  it("asks again at once when the client dropped a complete reply", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const scanned = withSnapshot("2026-01-01T00:00:00.000Z");
+    const { registry, atom, run, unmount } = setup(noSnapshot, [() => scanned, () => scanned], {
+      droppedReplies: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(isProviderWorkspaceSnapshotScanning(registry.get(atom))).toBe(false);
+    registry.refresh(atom);
+    expect(run).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+
   it("keeps the TTL guard for a newly scanned catalog when the client clock is ahead", async () => {
     vi.useFakeTimers({ now: Date.parse("2026-01-01T01:00:00.000Z") });
     const { registry, atom, run, unmount } = setup(withSnapshot("2026-01-01T00:00:00.000Z"), [
@@ -271,6 +319,22 @@ describe("provider workspace snapshot refresh atom", () => {
     await vi.advanceTimersByTimeAsync(20_000);
     expect(run).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("rescans a current snapshot whose commands are complete but models are pending", () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const [current] = withSnapshot("2026-01-01T00:00:00.000Z");
+    const { run, unmount } = setup([
+      {
+        ...current!,
+        workspaceSnapshots: current!.workspaceSnapshots!.map((snapshot) => ({
+          ...snapshot,
+          modelsPending: true,
+        })),
+      },
+    ]);
+    expect(run).toHaveBeenCalledTimes(1);
+    unmount();
   });
 
   it("stops retrying after three failed scans until the TTL lapses", async () => {

@@ -83,6 +83,18 @@ describe("resolvePendingUserInputAnswer", () => {
     ).toBe("Node.js");
   });
 
+  it("lets an optional text question stay blank", () => {
+    const textQuestion = { id: "notes", options: [] };
+    expect(resolvePendingUserInputAnswer({ ...textQuestion, required: false }, undefined)).toBe("");
+    expect(
+      resolvePendingUserInputAnswer({ ...textQuestion, required: false }, { customAnswer: " " }),
+    ).toBe("");
+    expect(resolvePendingUserInputAnswer(textQuestion, { customAnswer: " " })).toBeNull();
+    expect(
+      resolvePendingUserInputAnswer({ ...textQuestion, required: true }, { customAnswer: "" }),
+    ).toBeNull();
+  });
+
   it("accepts ready attachment-only answers while preserving selected options", () => {
     expect(resolvePendingUserInputAnswer(singleSelectQuestion, { attachmentCount: 1 })).toBe("");
     expect(
