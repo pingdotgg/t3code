@@ -145,16 +145,22 @@ it("keeps a pending image reference as text inside a code block", () => {
   }
 });
 
-it.each(["first", "second"] as const)(
-  "keeps two pastes at one caret in paste order when the %s image prepares first",
-  (finishesFirst) => {
+it.each([
+  { finishesFirst: "first", before: "Before ", after: "" },
+  { finishesFirst: "second", before: "Before ", after: "" },
+  { finishesFirst: "first", before: "Compare", after: " screenshots" },
+])(
+  "keeps two pastes at $before|$after in paste order when the $finishesFirst image prepares first",
+  ({ finishesFirst, before, after }) => {
     const editor = createEditor({
       type: "doc",
-      content: [{ type: "paragraph", content: [{ type: "text", text: "Before " }] }],
+      content: [{ type: "paragraph", content: [{ type: "text", text: before + after }] }],
     });
     try {
       using _alive = vi.spyOn(editor, "isDestroyed", "get").mockReturnValue(false);
-      editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atEnd(editor.state.doc)));
+      editor.view.dispatch(
+        editor.state.tr.setSelection(TextSelection.create(editor.state.doc, before.length + 1)),
+      );
       const firstImage = { ...image, contextId: "image_first", label: "first.png" };
       const secondImage = { ...image, contextId: "image_second", label: "second.png" };
       const first = captureComposerAttachmentInsertion(editor);
@@ -164,7 +170,7 @@ it.each(["first", "second"] as const)(
       if (finishesFirst === "first") expect(second.insert([secondImage])).toBe(true);
 
       expect(serializeEditorDoc(editor.state.doc).value).toBe(
-        `Before ${formatInlineContextReference(firstImage)} ${formatInlineContextReference(secondImage)} `,
+        `${before.trimEnd()} ${formatInlineContextReference(firstImage)} ${formatInlineContextReference(secondImage)} ${after.trimStart()}`,
       );
     } finally {
       editor.destroy();

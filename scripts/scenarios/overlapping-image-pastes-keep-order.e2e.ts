@@ -28,7 +28,7 @@ const copyWidePng = (browser: Browser, noise: boolean) =>
   }, noise);
 
 test(
-  "An image pasted while an earlier pasted image prepares lands after it in the prompt",
+  "An image pasted while an earlier pasted image prepares lands after it before a space in the prompt",
   WEB,
   async ({ t3, app, browser, screen }) => {
     await holdImageCompression(browser);
@@ -38,7 +38,11 @@ test(
     await expect(screen.getByText("first fixture turn complete", { exact: false })).toBeVisible();
 
     const composer = screen.getByRole("textbox");
-    await composer.fill("Compare");
+    await composer.fill("Compare screenshots");
+    await browser.keyboard.press("Home");
+    for (let index = 0; index < "Compare".length; index++) {
+      await browser.keyboard.press("ArrowRight");
+    }
     await copyWidePng(browser, false);
     await browser.keyboard.press("ControlOrMeta+V");
     await expectHeldImageCompressions(browser, 1);
