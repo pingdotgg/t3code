@@ -1,0 +1,39 @@
+cask "continuum-ide" do
+  arch arm: "arm64", intel: "x64"
+
+  version "@VERSION@"
+  sha256 arm:   "@ARM_SHA256@",
+         intel: "@X64_SHA256@"
+
+  url "@URL_BASE@/Continuum-IDE-#{version}-#{arch}.dmg"
+  name "Continuum IDE"
+  desc "Desktop app for running AI coding agents with your own subscriptions"
+  homepage "https://github.com/SwashX-dev/continuum-ide"
+
+  livecheck do
+    url "https://github.com/SwashX-dev/continuum-ide/releases"
+    strategy :github_releases
+  end
+
+  depends_on macos: ">= :monterey"
+
+  app "Continuum IDE.app"
+  binary "#{appdir}/Continuum IDE.app/Contents/Resources/bin/contin"
+
+  # Continuum IDE is signed ad hoc, not notarized by Apple, so macOS would refuse to open it
+  # after a download. Removing the quarantine flag trusts this tap's build of the app.
+  postflight do
+    system_command "/usr/bin/xattr",
+                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Continuum IDE.app"]
+  end
+
+  uninstall quit: "io.github.swashxdev.continuumide"
+
+  zap trash: [
+    "~/.continuum",
+    "~/Library/Application Support/continuum-ide",
+    "~/Library/Caches/io.github.swashxdev.continuumide",
+    "~/Library/Preferences/io.github.swashxdev.continuumide.plist",
+    "~/Library/Saved Application State/io.github.swashxdev.continuumide.savedState",
+  ]
+end

@@ -57,6 +57,16 @@ jobs:
             platform: win
             target: nsis
             arch: x64
+          - label: macOS Apple silicon (dmg, zip)
+            runner: macos-15
+            platform: mac
+            target: dmg
+            arch: arm64
+          - label: macOS Intel (dmg, zip)
+            runner: macos-15-intel
+            platform: mac
+            target: dmg
+            arch: x64
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -141,6 +151,24 @@ jobs:
           test -f release/Continuum-IDE-Setup-x64.exe
           if [ -f release/latest.yml ]; then grep -q "Continuum-IDE-Setup-x64.exe" release/latest.yml; fi
 
+      # Installs this build through the same Homebrew cask users get (pointed at the local
+      # file), launches it with `contin`, and uninstalls it. A failure blocks publishing.
+      - name: Verify the macOS app installs and launches through Homebrew
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -l release
+          version="${{ steps.version.outputs.version }}"
+          dmg="release/Continuum-IDE-${version}-${{ matrix.arch }}.dmg"
+          test -f "$dmg"
+          test -f "release/Continuum-IDE-${version}-${{ matrix.arch }}.zip"
+          sha="$(shasum -a 256 "$dmg" | cut -d' ' -f1)"
+          packaging/homebrew/render-cask.sh "$version" "$sha" "$sha" "file://$PWD/release" > "$RUNNER_TEMP/continuum-ide.rb"
+          packaging/homebrew/verify-macos-install.sh "$RUNNER_TEMP/continuum-ide.rb"
+          # Both Mac builds write latest-mac.yml; keep each and merge them when publishing.
+          if [ -f release/latest-mac.yml ]; then mv release/latest-mac.yml "release/latest-mac-${{ matrix.arch }}.yml"; fi
+
       - name: Upload installers
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -150,6 +178,8 @@ jobs:
             release/*.deb
             release/*.rpm
             release/*.exe
+            release/*.dmg
+            release/*.zip
             release/*.blockmap
             release/latest*.yml
           if-no-files-found: error
@@ -172,6 +202,26 @@ jobs:
           pattern: continuum-*
           path: dist
           merge-multiple: true
+
+      - name: Merge the macOS update manifests
+        run: |
+          set -euo pipefail
+          cd dist
+          if [ -f latest-mac-arm64.yml ] && [ -f latest-mac-x64.yml ]; then
+            node -e '
+              const fs = require("fs");
+              const read = (f) => fs.readFileSync(f, "utf8");
+              const files = (text) => text.split("\n").filter((l) => /^  [- ] /.test(l) || /^  - /.test(l));
+              const arm = read("latest-mac-arm64.yml");
+              const head = arm.split("\nfiles:\n")[0];
+              const tail = arm.split("\nfiles:\n")[1].split("\npath:")[1];
+              const armFiles = arm.split("\nfiles:\n")[1].split("\npath:")[0];
+              const x64Files = read("latest-mac-x64.yml").split("\nfiles:\n")[1].split("\npath:")[0];
+              fs.writeFileSync("latest-mac.yml", `${head}\nfiles:\n${armFiles}\n${x64Files}\npath:${tail}`);
+            '
+            rm latest-mac-arm64.yml latest-mac-x64.yml
+            cat latest-mac.yml
+          fi
 
       - name: Write checksums
         run: |
