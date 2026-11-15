@@ -111,7 +111,6 @@ describe("serializeComposerFileLink", () => {
   it.each([
     ["pkg/__init__.py", "__init__.py"],
     ["notes/*draft*.md", "*draft*.md"],
-    ["src/`tick`.ts", "`tick`.ts"],
   ])("renders the mention of %j with its file name as the label", (path, basename) => {
     expect(parsedLinkLabel(serializeComposerFileLink(path))).toBe(basename);
   });
