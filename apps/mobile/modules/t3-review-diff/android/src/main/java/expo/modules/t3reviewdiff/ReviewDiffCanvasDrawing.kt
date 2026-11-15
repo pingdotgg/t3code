@@ -438,7 +438,10 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
         if (lineBaseline + textPaint.fontMetrics.descent >= canvas.clipBounds.top &&
           lineBaseline + textPaint.fontMetrics.ascent <= canvas.clipBounds.bottom
         ) {
-          x += drawCodeSegment(canvas, run.content, start, end, x, lineBaseline, note)
+          val segmentWidth = textPaint.measureText(run.content, start, end)
+          fillNote(canvas, note, x, x + segmentWidth, lineBaseline)
+          canvas.drawText(run.content, start, end, x, lineBaseline, textPaint)
+          x += segmentWidth
         }
         start = end
       }
@@ -452,31 +455,13 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
   fun noticeFill(row: DiffRow): Int =
     if (row.tone == "warning") theme.warningBackground else theme.background
 
-  /** Draws one wrapped segment of a color run and returns its width. */
-  @Suppress("LongParameterList")
-  private fun drawCodeSegment(
-    canvas: Canvas,
-    text: String,
-    start: Int,
-    end: Int,
-    x: Float,
-    baseline: Float,
-    note: Boolean
-  ): Float {
-    val segmentWidth = textPaint.measureText(text, start, end)
-    if (note) {
-      backgroundPaint.color = theme.warningBackground
-      val metrics = textPaint.fontMetrics
-      canvas.drawRect(
-        x,
-        baseline + metrics.ascent,
-        x + segmentWidth,
-        baseline + metrics.descent,
-        backgroundPaint,
-      )
-    }
-    canvas.drawText(text, start, end, x, baseline, textPaint)
-    return segmentWidth
+  /** Fills behind a segment of a cut line's note; other segments are left alone. */
+  private fun fillNote(canvas: Canvas, note: Boolean, left: Float, right: Float, baseline: Float) {
+    if (!note) return
+    backgroundPaint.color = theme.warningBackground
+    val metrics = textPaint.fontMetrics
+    val top = baseline + metrics.ascent
+    canvas.drawRect(left, top, right, baseline + metrics.descent, backgroundPaint)
   }
 
   fun drawFileHeaderPathScrollFades(

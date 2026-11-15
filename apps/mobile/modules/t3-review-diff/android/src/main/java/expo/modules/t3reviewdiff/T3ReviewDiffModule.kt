@@ -64,7 +64,7 @@ class T3ReviewDiffModule : Module() {
         view.setInitialFileId(fileId)
       }
 
-      Events(*REVIEW_DIFF_EVENTS)
+      Events(REVIEW_DIFF_EVENTS)
 
       AsyncFunction("scrollToFile") { view: T3ReviewDiffView, fileId: String, animated: Boolean ->
         view.scrollToFile(fileId, animated)
