@@ -1,6 +1,6 @@
+import * as NodeHttp from "node:http";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as NodeHttp from "node:http";
 import { getAddress, toConnectableHost } from "../../internal/get-address.ts";
 
 const listen = (host?: string) =>
@@ -29,9 +29,7 @@ describe("toConnectableHost", () => {
     expect(toConnectableHost("0.0.0.0")).toBe("127.0.0.1");
     expect(toConnectableHost("::")).toBe("127.0.0.1");
     expect(toConnectableHost("::0")).toBe("127.0.0.1");
-    expect(toConnectableHost("0000:0000:0000:0000:0000:0000:0000:0000")).toBe(
-      "127.0.0.1",
-    );
+    expect(toConnectableHost("0000:0000:0000:0000:0000:0000:0000:0000")).toBe("127.0.0.1");
   });
 
   it("passes concrete hosts through unchanged", () => {
@@ -43,24 +41,20 @@ describe("toConnectableHost", () => {
 });
 
 describe("getAddress", () => {
-  it.effect(
-    "maps a server bound to 0.0.0.0 to a 127.0.0.1 connect target",
-    () =>
-      Effect.gen(function* () {
-        const server = yield* listen("0.0.0.0");
-        const address = yield* getAddress(server);
-        expect(address).toMatch(/^127\.0\.0\.1:\d+$/);
-      }),
+  it.effect("maps a server bound to 0.0.0.0 to a 127.0.0.1 connect target", () =>
+    Effect.gen(function* () {
+      const server = yield* listen("0.0.0.0");
+      const address = yield* getAddress(server);
+      expect(address).toMatch(/^127\.0\.0\.1:\d+$/);
+    }),
   );
 
-  it.effect(
-    "maps a server bound with no host (dual-stack) to a 127.0.0.1 connect target",
-    () =>
-      Effect.gen(function* () {
-        const server = yield* listen();
-        const address = yield* getAddress(server);
-        expect(address).toMatch(/^127\.0\.0\.1:\d+$/);
-      }),
+  it.effect("maps a server bound with no host (dual-stack) to a 127.0.0.1 connect target", () =>
+    Effect.gen(function* () {
+      const server = yield* listen();
+      const address = yield* getAddress(server);
+      expect(address).toMatch(/^127\.0\.0\.1:\d+$/);
+    }),
   );
 
   it.effect("keeps an explicit 127.0.0.1 bind unchanged", () =>

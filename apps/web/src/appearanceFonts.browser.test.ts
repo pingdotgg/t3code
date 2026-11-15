@@ -52,4 +52,40 @@ describe("applyAppearanceFontVariables", () => {
       else root.setAttribute("style", style);
     }
   });
+
+  it("widens the numbered-list gutter only when the interface font's marker would clip", () => {
+    const root = document.documentElement;
+    const style = root.getAttribute("style");
+    const gutter = (sans: string) => {
+      applyAppearanceFontVariables(root, {
+        sans,
+        code: "",
+        composer: "",
+        sizeInterface: 16,
+        sizePrompt: 14,
+        sizeCode: 13,
+        smoothing: true,
+        separate: false,
+      });
+      const markdown = document.createElement("div");
+      markdown.className = "chat-markdown";
+      markdown.style.fontSize = "14px";
+      const list = document.createElement("ol");
+      markdown.append(list);
+      document.body.append(markdown);
+      try {
+        return Number.parseFloat(getComputedStyle(list).paddingInlineStart);
+      } finally {
+        markdown.remove();
+      }
+    };
+    try {
+      // `0. ` in a 14px monospace font is about 25px, past the 20px default.
+      expect(gutter("monospace")).toBeGreaterThan(24);
+      expect(gutter("sans-serif")).toBe(20);
+    } finally {
+      if (style === null) root.removeAttribute("style");
+      else root.setAttribute("style", style);
+    }
+  });
 });

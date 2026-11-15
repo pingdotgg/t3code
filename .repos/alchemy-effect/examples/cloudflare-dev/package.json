@@ -18,6 +18,8 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@alchemy.run/sql": "workspace:*",
     "@cloudflare/puppeteer": "catalog:",
     "@cloudflare/workers-types": "catalog:",
     "@effect/platform-bun": "catalog:",
@@ -26,6 +28,6 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "alchemy-test": "workspace:*"
+    "@alchemy.run/test": "workspace:*"
   }
 }

@@ -1,5 +1,5 @@
 import type { SecretProviderKind } from "@t3tools/contracts";
-import type * as Crypto from "effect/Crypto";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -11,7 +11,7 @@ import type { SecretProviderDefinition } from "../shared/definition.ts";
 export type SecretProviderDriverServices =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
-  | Crypto.Crypto;
+  | SecureRandom.SecureRandom;
 
 export interface SecretProviderDriver {
   readonly kind: SecretProviderKind;

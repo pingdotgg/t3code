@@ -1,4 +1,8 @@
-import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  buildProjectGroups,
+  pickableProjectGroups,
+  resolveScratchProjectScopeKey,
+} from "@t3tools/client-runtime/state/project-grouping";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -68,6 +72,24 @@ export function buildHomeProjectScopes(input: {
       archived: group.archived,
     };
   });
+}
+
+/** The scope the thread list's project filter shows; an archived or unknown key shows all projects. */
+export function resolveHomeProjectFilterScope(
+  scopes: ReadonlyArray<HomeProjectScope>,
+  projects: ReadonlyArray<EnvironmentProject>,
+  options: {
+    readonly selectedProjectKey: string | null;
+    readonly projectGroupingMode: SidebarProjectGroupingMode;
+  },
+): HomeProjectScope | null {
+  // A legacy per-environment scratch key resolves here; the stored value is only
+  // rewritten when the user picks a filter.
+  const key = resolveScratchProjectScopeKey(options.selectedProjectKey, projects, {
+    sidebarProjectGroupingMode: options.projectGroupingMode,
+    sidebarProjectGroupingOverrides: {},
+  });
+  return pickableProjectGroups(scopes).find((scope) => scope.key === key) ?? null;
 }
 
 export function findHomeProjectScope(

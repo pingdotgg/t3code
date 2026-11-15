@@ -1,5 +1,6 @@
 import type {
   RelayAgentActivityAggregateState,
+  RelayAgentActivityState,
   RelayAgentAwarenessPreferences,
   RelayDeliveryKind,
   RelayDeliveryResult,
@@ -9,20 +10,24 @@ import {
   RelayAgentAwarenessPreferences as RelayAgentAwarenessPreferencesSchema,
   RelayDeliveryKind as RelayDeliveryKindSchema,
 } from "@t3tools/contracts/relay";
+import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import {
+  isExpiredAgentActivityState,
   notificationForActivity,
   sanitizeAgentActivityAggregateState,
   sanitizeApnsNotificationPayload,
 } from "./agentActivityPayloads.ts";
-import { makeAggregateState } from "./agentActivityAggregate.ts";
+import { makeAggregateState, statusForPhase } from "./agentActivityAggregate.ts";
 import * as Apns from "./ApnsClient.ts";
 import {
   ApnsDeliveryJobLiveActivityAggregateMissing,
@@ -31,7 +36,6 @@ import {
   type ApnsLiveActivityAlert,
   type ApnsNotificationPayload,
   SignedApnsDeliveryJob,
-  isApnsDeliveryJobVerificationError,
   verifySignedApnsDeliveryJob,
   type ApnsDeliveryJobVerificationError,
 } from "./apnsDeliveryJobs.ts";
@@ -130,6 +134,7 @@ const decodeRelayAgentAwarenessPreferencesJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayAgentAwarenessPreferencesSchema),
 );
 const decodeSignedApnsDeliveryJob = Schema.decodeUnknownEffect(SignedApnsDeliveryJob);
+const decodeSignedApnsDeliveryJobOption = Schema.decodeUnknownOption(SignedApnsDeliveryJob);
 
 function parseAggregate(value: string | null): RelayAgentActivityAggregateState | null {
   if (!value) {
@@ -185,26 +190,19 @@ function shouldUpdateLiveActivity(input: {
   );
 }
 
-// Restart replays of old completions must not ring again.
-
-function notificationForAggregate(input: {
+// Aggregate rows may belong to unrelated threads; fallback pushes use the published state.
+function notificationForState(input: {
   readonly target: LiveActivities.TargetRow;
-  readonly aggregate: RelayAgentActivityAggregateState | null;
+  readonly state?: RelayAgentActivityState | null;
   readonly nowMs: number;
 }): ApnsNotificationPayload | null {
-  if (!input.target.push_token || input.aggregate === null) {
+  const state = input.state;
+  if (!input.target.push_token || !state || isExpiredAgentActivityState(state, input.nowMs)) {
     return null;
   }
   const preferences = parsePreferences(input.target.preferences_json);
-  if (!preferences?.notificationsEnabled) {
-    return null;
-  }
-  const activity = input.aggregate.activities[0];
-  if (!activity) {
-    return null;
-  }
-  if (!shouldAlertForActivity({ ...activity, preferences, nowMs: input.nowMs })) return null;
-  return notificationForActivity(activity);
+  if (!shouldAlertForActivity({ ...state, preferences, nowMs: input.nowMs })) return null;
+  return notificationForActivity({ ...state, status: statusForPhase(state.phase) });
 }
 
 // Suppressed Live Activity updates must not fall back to alert pushes or unchanged replays would ring.
@@ -279,6 +277,7 @@ function chooseLiveActivityDelivery(input: {
 function chooseDelivery(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
+  readonly state?: RelayAgentActivityState | null;
   readonly nowMs: number;
   readonly replay?: boolean;
 }): ChosenDelivery | null {
@@ -289,7 +288,7 @@ function chooseDelivery(input: {
   if (liveActivityDelivery) {
     return liveActivityDelivery;
   }
-  const notification = input.replay ? null : notificationForAggregate(input);
+  const notification = input.replay ? null : notificationForState(input);
   return notification && input.target.push_token
     ? {
         kind: "push_notification",
@@ -484,12 +483,9 @@ export class ApnsDeliveries extends Context.Service<
     readonly sendForTarget: (input: {
       readonly target: LiveActivities.TargetRow;
       readonly aggregate: RelayAgentActivityAggregateState | null;
+      readonly state?: RelayAgentActivityState | null;
       readonly nowMs: number;
       readonly replay?: boolean;
-    }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
-    readonly sendPushNotificationForTarget: (input: {
-      readonly target: LiveActivities.TargetRow;
-      readonly aggregate: RelayAgentActivityAggregateState | null;
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
     readonly sendLiveActivity: (
       input: SendLiveActivityDeliveryInput,
@@ -497,6 +493,9 @@ export class ApnsDeliveries extends Context.Service<
     readonly processSignedJob: (
       body: unknown,
     ) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
+    readonly processBatch: (
+      stream: Stream.Stream<{ readonly body: unknown }>,
+    ) => Effect.Effect<void, Arr.NonEmptyArray<ApnsDeliveryError>>;
     readonly sendPushNotification: (input: {
       readonly target: LiveActivityDeliveryTarget;
       readonly token: string;
@@ -511,6 +510,7 @@ const make = Effect.gen(function* () {
   const liveActivities = yield* LiveActivities.LiveActivities;
   const deliveryQueue = yield* ApnsDeliveryQueue.ApnsDeliveryQueue;
   const config = yield* RelayConfiguration.RelayConfiguration;
+  const mac = yield* Mac.Mac;
   const apns = yield* Apns.ApnsClient;
   const activityRows = yield* AgentActivityRows.AgentActivityRows;
 
@@ -934,14 +934,11 @@ const make = Effect.gen(function* () {
       ),
     );
     const now = yield* DateTime.now;
-    const payload = verifySignedApnsDeliveryJob({
+    const payload = yield* verifySignedApnsDeliveryJob({
       secret: config.apnsDeliveryJobSigningSecret,
       job: signedJob,
       nowMs: now.epochMilliseconds,
-    });
-    if (isApnsDeliveryJobVerificationError(payload)) {
-      return yield* payload;
-    }
+    }).pipe(Effect.provideService(Mac.Mac, mac));
     yield* Effect.annotateCurrentSpan({
       "relay.mobile.device_id": payload.target.deviceId,
       "relay.delivery.kind": payload.kind,
@@ -1012,38 +1009,40 @@ const make = Effect.gen(function* () {
     }).pipe(withSpanAttributes({ "user.id": payload.target.userId }));
   });
 
+  const processBatch: ApnsDeliveries["Service"]["processBatch"] = Effect.fn(
+    "relay.apn_delivery_queue.process_batch",
+  )(function* (stream) {
+    const messages = yield* Stream.runCollect(stream);
+    const groups = Arr.groupBy(messages, (message) => {
+      const job = decodeSignedApnsDeliveryJobOption(message.body);
+      return Option.isSome(job)
+        ? JSON.stringify([job.value.payload.target.userId, job.value.payload.target.deviceId])
+        : "";
+    });
+    // Finish other devices before surfacing failures so their in-flight sends aren't cancelled.
+    yield* Effect.validate(
+      Object.values(groups),
+      (group) =>
+        Effect.forEach(
+          group,
+          (message) =>
+            processSignedJob(message.body).pipe(
+              Effect.withSpan("relay.apn_delivery_queue.process_message"),
+            ),
+          { discard: true },
+        ),
+      { concurrency: 10, discard: true },
+    );
+  });
+
   return ApnsDeliveries.of({
     sendLiveActivity,
     sendPushNotification,
     processSignedJob,
-    sendPushNotificationForTarget: Effect.fnUntraced(function* (input) {
-      if (!config.apns) return null;
-      const now = yield* DateTime.now;
-      const notification = notificationForAggregate({
-        target: input.target,
-        aggregate: input.aggregate,
-        nowMs: now.epochMilliseconds,
-      });
-      const token = input.target.push_token;
-      return yield* notification && token
-        ? deliveryQueue.enqueuePushNotification({
-            userId: input.target.user_id,
-            deviceId: input.target.device_id,
-            token,
-            bundleId: input.target.bundle_id,
-            apsEnvironment: input.target.aps_environment,
-            notification,
-          })
-        : Effect.succeed(null);
-    }),
+    processBatch,
     sendForTarget: Effect.fnUntraced(function* (input) {
       if (!config.apns) return null;
-      const delivery = chooseDelivery({
-        target: input.target,
-        aggregate: input.aggregate,
-        nowMs: input.nowMs,
-        replay: input.replay ?? false,
-      });
+      const delivery = chooseDelivery(input);
       if (!delivery) {
         return null;
       }
@@ -1058,13 +1057,7 @@ const make = Effect.gen(function* () {
         });
         return result;
       }
-      const notification = input.replay
-        ? null
-        : notificationForAggregate({
-            target: input.target,
-            aggregate: input.aggregate,
-            nowMs: input.nowMs,
-          });
+      const notification = input.replay ? null : notificationForState(input);
       // Use the end alert only when no companion notification will ring, preserving feedback for Live-Activity-only users.
       const alert = input.replay
         ? null
