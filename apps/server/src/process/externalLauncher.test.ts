@@ -205,6 +205,8 @@ it.effect.skipIf(windowsHost)("opens a colon line range at its start line", () =
       yield* fileSystem.chmod(commandPath, 0o755);
     }
 
+    const rangeDirectory = path.join(binDir, "build:2026-2027");
+    yield* fileSystem.makeDirectory(rangeDirectory);
     const spawned: ChildProcess.StandardCommand[] = [];
     yield* Effect.gen(function* () {
       const launcher = yield* ExternalLauncher.ExternalLauncher;
@@ -218,6 +220,9 @@ it.effect.skipIf(windowsHost)("opens a colon line range at its start line", () =
       yield* launcher.launchEditor({ editor: "vscode", cwd: "/workspace/file.ts:12:4" });
       yield* launcher.launchEditor({ editor: "file-manager", cwd: "/workspace/file.py:67-69" });
       yield* launcher.launchEditor({ editor: "file-manager", cwd: "/workspace/file.ts:12:4" });
+      yield* launcher.launchEditor({ editor: "vscode", cwd: rangeDirectory });
+      yield* launcher.launchEditor({ editor: "zed", cwd: rangeDirectory });
+      yield* launcher.launchEditor({ editor: "file-manager", cwd: rangeDirectory });
     }).pipe(
       Effect.provide(
         layerTest({
@@ -245,6 +250,9 @@ it.effect.skipIf(windowsHost)("opens a colon line range at its start line", () =
         ["code", ["--goto", "/workspace/file.ts:12:4"]],
         ["xdg-open", ["/workspace/file.py"]],
         ["xdg-open", ["/workspace/file.ts:12:4"]],
+        ["code", ["--new-window", rangeDirectory]],
+        ["zeditor", [rangeDirectory]],
+        ["xdg-open", [rangeDirectory]],
       ],
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

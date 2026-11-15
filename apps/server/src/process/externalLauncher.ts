@@ -148,7 +148,7 @@ function resolveCommandEditorArgs(
   const parsedTarget = parseTargetPathAndPosition(target);
   // Editors take `file:line` or `file:line:column`. A colon range opens at its start line.
   const launchTarget =
-    Option.isSome(parsedTarget) && Option.isSome(parsedTarget.value.endLine)
+    !isDirectory && Option.isSome(parsedTarget) && Option.isSome(parsedTarget.value.endLine)
       ? `${parsedTarget.value.path}:${parsedTarget.value.line}`
       : target;
   const parsedLaunchTarget = parseTargetPathAndPosition(launchTarget);
@@ -497,6 +497,15 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
   }
 
+  const rangeTarget = parseTargetPathAndPosition(input.cwd);
+  const hasRange = Option.isSome(rangeTarget) && Option.isSome(rangeTarget.value.endLine);
+  const isDirectory =
+    (editorDef.launchStyle === "goto" || hasRange) &&
+    (yield* (yield* FileSystem.FileSystem).stat(input.cwd).pipe(
+      Effect.map((info) => info.type === "Directory"),
+      Effect.orElseSucceed(() => false),
+    ));
+
   if (editorDef.commands) {
     const resolved = yield* resolveEditorCommand(editorDef, env);
     if (Option.isNone(resolved)) {
@@ -506,12 +515,6 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       });
     }
     const { command, baseArgs } = resolved.value;
-    const isDirectory =
-      editorDef.launchStyle === "goto" &&
-      (yield* (yield* FileSystem.FileSystem).stat(input.cwd).pipe(
-        Effect.map((info) => info.type === "Directory"),
-        Effect.orElseSucceed(() => false),
-      ));
     return {
       editor: editorDef.id,
       target: input.cwd,
@@ -539,7 +542,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 
   const parsedTarget = parseTargetPathAndPosition(target);
   const fileManagerTarget =
-    Option.isSome(parsedTarget) && Option.isSome(parsedTarget.value.endLine)
+    !isDirectory && Option.isSome(parsedTarget) && Option.isSome(parsedTarget.value.endLine)
       ? parsedTarget.value.path
       : target;
 
