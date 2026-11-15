@@ -9254,6 +9254,21 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
         const cut = (yield* runFor("cut"))!;
         yield* write("cut:cancelled", { ...cut, status: "cancelled" });
+        yield* eventSink.writeWithEffects({
+          events: [],
+          effects: [
+            {
+              id: `effect:restart-continuation:${cut.id}`,
+              commandId: CommandId.make(`${threadId}:crash-recovery`),
+              threadId,
+              request: {
+                type: "provider-runtime.continue",
+                sourceRunId: cut.id,
+                processLossCount: 2,
+              },
+            },
+          ],
+        });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           createdBy: "agent",
@@ -9337,6 +9352,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         );
         yield* worker.drain();
         assert.deepEqual(yield* retriesOf, [], "the retry waits out its backoff");
+        const retryIntent = yield* (yield* EffectOutbox.EffectOutboxV2).get(
+          `effect:restart-continuation:${continuation.id}`,
+        );
+        assert.deepEqual(Option.getOrUndefined(retryIntent)?.request, {
+          type: "provider-runtime.continue",
+          sourceRunId: continuation.id,
+          processLossCount: 2,
+        });
         if (stopped) {
           yield* orchestrator.dispatch({
             type: "thread.stop",
