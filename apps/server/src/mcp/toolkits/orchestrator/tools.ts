@@ -97,7 +97,8 @@ const DelegateTaskTool = Tool.make("delegate_task", {
 })
   .annotate(Tool.Title, "Delegate a child task")
   .annotate(Tool.Destructive, true)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const TaskStatusTool = Tool.make("task_status", {
   description:
@@ -111,7 +112,8 @@ const TaskStatusTool = Tool.make("task_status", {
   .annotate(Tool.Title, "Get delegated task status")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const TaskCancelTool = Tool.make("task_cancel", {
   description:
@@ -123,7 +125,8 @@ const TaskCancelTool = Tool.make("task_cancel", {
   dependencies,
 })
   .annotate(Tool.Title, "Cancel delegated task")
-  .annotate(Tool.Destructive, true);
+  .annotate(Tool.Destructive, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const WorkflowStopTool = Tool.make("t3_workflow_stop", {
   description:
@@ -161,7 +164,8 @@ const BackgroundWaitTool = Tool.make("t3_background_wait", {
   .annotate(Tool.Title, "Wait on background work")
   // Only marks which tasks keep the thread Working; Claude Plan mode blocks tools without this.
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ScheduleTaskTool = Tool.make("schedule_task", {
   description:
@@ -214,7 +218,8 @@ const RequestSecretTool = Tool.make("request_secret", {
   .annotate(Tool.Title, "Request a secret from the user")
   .annotate(Tool.Destructive, false)
   // Claude Code defers MCP tools behind ToolSearch; agents that never load this one ask in chat.
-  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
+  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true })
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const CreateThreadsTool = Tool.make("create_threads", {
   description:
@@ -227,7 +232,8 @@ const CreateThreadsTool = Tool.make("create_threads", {
 })
   .annotate(Tool.Title, "Create T3 threads")
   .annotate(Tool.Destructive, true)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ThreadListTool = Tool.make("t3_thread_list", {
   description:
