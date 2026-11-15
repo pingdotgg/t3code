@@ -22,7 +22,6 @@ import {
   getChangedRanges,
   type Command,
   type Editor,
-  Extension,
   InputRule,
   markInputRule,
   markPasteRule,
@@ -373,20 +372,6 @@ export const ComposerStrikeExtension = Strike.extend({
 });
 
 /**
- * Mod+B bolds selected text only. Without a selection Tiptap would toggle bold
- * for the next typed text, which users hit by accident when they mean the
- * sidebar toggle. Runs ahead of the Bold extension and swallows the chord.
- */
-export const ComposerBoldSelectionOnlyExtension = Extension.create({
-  name: "composerBoldSelectionOnly",
-  priority: 1000,
-  addKeyboardShortcuts() {
-    const ignoreWithoutSelection = () => this.editor.state.selection.empty;
-    return { "Mod-b": ignoreWithoutSelection, "Mod-B": ignoreWithoutSelection };
-  },
-});
-
-/**
  * Tiptap's block chords can nest blocks inside quotes that the serializer cannot write,
  * silently dropping their text from stored drafts.
  */
@@ -501,7 +486,8 @@ const ComposerListItemExtension = ListItem.extend({
   addKeyboardShortcuts() {
     return {
       ...withoutBlockChords(this.parent?.(), LIST_NESTING_KEYS),
-      Backspace: () => backspaceAcrossList(this.editor),
+      // Replacing Tiptap's Backspace drops its undoInputRule, which keeps a just-typed "+ " literal.
+      Backspace: () => this.editor.commands.undoInputRule() || backspaceAcrossList(this.editor),
       Delete: () => deleteAcrossList(this.editor),
     };
   },
@@ -1091,7 +1077,12 @@ export function buildTiptapContent(
     });
     openQuote = null;
   };
-  for (const entry of entries) {
+  const isProseLine = (entry: (typeof entries)[number] | undefined, empty: boolean) =>
+    entry !== undefined &&
+    "line" in entry &&
+    !entry.line.list &&
+    (entry.line.inline.length === 0) === empty;
+  for (const [entryIndex, entry] of entries.entries()) {
     if ("quote" in entry) {
       flushLists();
       if (openQuote && openQuote.prefix !== entry.quote.prefix) flushQuote();
@@ -1099,7 +1090,11 @@ export function buildTiptapContent(
       openQuote.content.push(entry.quote.inline);
       continue;
     }
+    // The serializer separates a quote from the prose after it with one blank line; it is not an empty paragraph.
+    const quoteSeparator =
+      openQuote !== null && isProseLine(entry, true) && isProseLine(entries[entryIndex + 1], false);
     flushQuote();
+    if (quoteSeparator) continue;
     if ("code" in entry) {
       flushLists();
       blocks.push(entry.code);

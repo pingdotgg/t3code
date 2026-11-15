@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   AcpRegistryListProvidersResult,
   AcpRegistryOperationError,
@@ -42,8 +43,7 @@ const MAX_ID_LENGTH = 128;
 const MAX_NAME_LENGTH = 160;
 const MAX_DESCRIPTION_LENGTH = 1_024;
 const MAX_COMMAND_LINE_LENGTH = 2_048;
-const PROBE_TIMEOUT_SECONDS = 60;
-const PROBE_TIMEOUT = `${PROBE_TIMEOUT_SECONDS} seconds`;
+const PROBE_TIMEOUT_MS = 60_000;
 const COMMAND_ADVERTISEMENT_GRACE = "500 millis";
 const PROBE_SESSION_DELETE_TIMEOUT = "5 seconds";
 
@@ -52,6 +52,39 @@ const boundedText = (value: string, maximumLength: number): string =>
 
 const boundedOpaqueValue = (value: string, maximumLength: number): string | undefined =>
   value.length > 0 && value === value.trim() && value.length <= maximumLength ? value : undefined;
+
+/**
+ * The session's reasoning option with the levels a model advertises in `_meta`, in the
+ * shape Grok uses. Null when the model has none, undefined when it says nothing.
+ */
+function advertisedReasoningEffort(
+  option: EffectAcpSchema.SessionConfigOption | undefined,
+  meta: Readonly<Record<string, unknown>> | null | undefined,
+): AcpRegistryProbeModel["reasoningEffort"] {
+  if (option?.type !== "select" || meta == null) return undefined;
+  if (meta.supportsReasoningEffort === false) return null;
+  if (!Array.isArray(meta.reasoningEfforts)) return undefined;
+  const options = meta.reasoningEfforts.flatMap((level: unknown) =>
+    typeof level === "object" &&
+    level !== null &&
+    "value" in level &&
+    typeof level.value === "string"
+      ? [
+          {
+            value: level.value,
+            name: "label" in level && typeof level.label === "string" ? level.label : level.value,
+          },
+        ]
+      : [],
+  );
+  const currentValue = typeof meta.reasoningEffort === "string" ? meta.reasoningEffort : "";
+  return (
+    acpProviderOptionDescriptors({
+      configOptions: [{ ...option, options, currentValue }],
+      modeState: undefined,
+    })[0] ?? null
+  );
+}
 
 export function normalizeAcpRegistryWebUrl(value: string): string | undefined {
   if (value.length > 2_048 || !URL.canParse(value)) return undefined;
@@ -168,6 +201,7 @@ export interface AcpRegistryLiveConfiguration {
   readonly models: ReadonlyArray<AcpRegistryProbeModel>;
   readonly currentModelId: string | null;
   readonly configOptions: AcpRegistryProbeResult["configOptions"];
+  readonly modelOptionIds?: NonNullable<AcpRegistryProbeResult["modelOptionIds"]>;
 }
 
 export function normalizeAcpRegistryLiveConfiguration(
@@ -194,13 +228,29 @@ export function normalizeAcpRegistryLiveConfiguration(
     currentModelId === undefined
       ? null
       : (boundedOpaqueValue(currentModelId, MAX_ID_LENGTH) ?? null);
-  const models = normalizeModels(candidates, boundedCurrentModelId);
+  const effortOption = configOptions.find((option) => option.category === "thought_level");
+  const models = normalizeModels(candidates, boundedCurrentModelId).map((model) => {
+    const reasoningEffort = advertisedReasoningEffort(
+      effortOption,
+      modelState?.availableModels.find((info) => info.modelId === model.id)?._meta,
+    );
+    return reasoningEffort === undefined ? model : { ...model, reasoningEffort };
+  });
+  const descriptors = acpProviderOptionDescriptors({ configOptions, modeState });
+  const modelOptionIds = new Set(
+    configOptions
+      .filter((option) => option.category === "thought_level" || option.category === "model_config")
+      .map((option) => option.id),
+  );
   return {
     models,
     currentModelId: models.some((model) => model.id === boundedCurrentModelId)
       ? boundedCurrentModelId
       : null,
-    configOptions: acpProviderOptionDescriptors({ configOptions, modeState }),
+    configOptions: descriptors,
+    modelOptionIds: descriptors
+      .filter((descriptor) => modelOptionIds.has(descriptor.id))
+      .map((descriptor) => descriptor.id),
   };
 }
 
@@ -322,6 +372,11 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
     | SecureRandom.SecureRandom
   > {
     const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
+    const probeTimeoutMs = resolveProviderProbeTimeoutMs(
+      "acp_registry",
+      PROBE_TIMEOUT_MS,
+      input.environment,
+    );
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const random = yield* SecureRandom.SecureRandom;
     const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
@@ -434,12 +489,12 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
     }).pipe(
       Effect.scoped,
       Effect.timeoutOrElse({
-        duration: PROBE_TIMEOUT,
+        duration: probeTimeoutMs,
         orElse: () =>
           Effect.fail(
             new AcpRegistryOperationError({
               reason: "probe_failed",
-              message: `The ACP agent did not resolve and create a test session within ${PROBE_TIMEOUT_SECONDS} seconds. Package installation or agent startup may be slow; this check retries on the next provider refresh.`,
+              message: `The ACP agent did not resolve and create a test session within ${probeTimeoutMs / 1_000} seconds. Package installation or agent startup may be slow; this check retries on the next provider refresh.`,
             }),
           ),
       }),
