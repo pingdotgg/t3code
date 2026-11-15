@@ -993,7 +993,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           }),
           onReadinessFailure: Effect.fn("desktop.backendInstance.onReadinessFailure")(
             function* (error) {
-              if (isRunningDatabaseMigrations(yield* Ref.get(outputTail))) {
+              if (
+                (yield* Ref.get(migrationProgress)) !== null ||
+                isRunningDatabaseMigrations(yield* Ref.get(outputTail))
+              ) {
                 yield* logInstanceWarning("backend is still migrating its database; waiting", {
                   error: error.message,
                 });

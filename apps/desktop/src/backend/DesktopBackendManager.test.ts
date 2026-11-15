@@ -778,6 +778,10 @@ describe("DesktopBackendManager", () => {
         Deferred.succeed(migrated, undefined).pipe(Effect.asVoid),
         Stream.fromQueue(output),
       );
+      yield* writeOutput(`INFO ${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n`);
+      yield* TestClock.adjust(Duration.minutes(3));
+      assert.isNull(progress.at(-1));
+      assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
       yield* writeOutput(
         // Enough progress lines that the start line scrolls out of the output tail.
         `INFO ${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n` +
@@ -795,6 +799,8 @@ describe("DesktopBackendManager", () => {
       assert.deepStrictEqual(progress.at(-1), { current: 80, total: 80 });
       yield* writeOutput(noise);
       assert.deepStrictEqual(progress.at(-1), { current: 80, total: 80 });
+      yield* TestClock.adjust(Duration.minutes(3));
+      assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
       yield* writeOutput(`${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n${noise}`);
       assert.isNull(progress.at(-1));
       yield* writeOutput(`${DATABASE_MIGRATION_PROGRESS_MESSAGE} (1 of 2)\n${noise}`);
