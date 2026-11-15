@@ -300,6 +300,28 @@ export function resolveProviderLimitPool(
   return collectLimitPools([...accounts.values()], now)[0];
 }
 
+/** Why a custom endpoint provider has no pool: nothing linked reports accounts for its driver. */
+export function limitPoolNotice(
+  instanceId: ProviderInstanceId,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+): string | null {
+  const selected = providers.find((provider) => provider.instanceId === instanceId);
+  if (
+    !selected ||
+    selected.auth.type !== "customEndpoint" ||
+    accountKey(selected.driver, selected.auth.email, selected.usageLimits) ||
+    sources.some((source) => source.accounts.some((account) => account.driver === selected.driver))
+  ) {
+    return null;
+  }
+  const failed = sources.find((source) => source.error);
+  if (failed) return `${failed.label}: ${failed.error}`;
+  const name =
+    selected.displayName?.trim() || PROVIDER_DISPLAY_NAMES[selected.driver] || selected.driver;
+  return `${name} runs through a custom endpoint. Add its usage provider in Settings → Providers → Usage providers to see the limits of the accounts behind it.`;
+}
+
 // Include every enabled login, even unreadable workspaces.
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
@@ -1161,5 +1183,7 @@ export function collectProviderUsageLimits(
       notices.push(`${source.label}: ${source.error}`);
     }
   }
+  const poolNotice = limitPoolNotice(instanceId, providers, sources);
+  if (poolNotice && !notices.includes(poolNotice)) notices.push(poolNotice);
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
 }

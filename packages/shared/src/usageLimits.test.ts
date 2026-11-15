@@ -13,6 +13,7 @@ import {
   displayLimitWindows,
   cursorUsageWindowDetails,
   collectProviderUsageLimits,
+  limitPoolNotice,
   resolveProviderLimitPool,
   resolveProviderUsageLimits,
   sameUsageLimitCommandCoverage,
@@ -167,6 +168,33 @@ describe("selected provider usage limits", () => {
     ]);
     expect(pool?.windows.map((pooled) => [pooled.label, pooled.remainingPercent])).toEqual([
       ["Session", 40],
+    ]);
+  });
+
+  it("says why a provider with no login of its own has no pooled limits", () => {
+    const endpoint = provider({
+      driver: ProviderDriverKind.make("claudeAgent"),
+      auth: { status: "authenticated", type: "customEndpoint", workspaceId: "work" },
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [],
+        unavailable: { reason: "unsupported" },
+      },
+    });
+    const notice = (sources: Parameters<typeof limitPoolNotice>[2]) =>
+      limitPoolNotice(endpoint.instanceId, [endpoint], sources);
+    expect(notice([])).toBe(
+      "Claude runs through a custom endpoint. Add its usage provider in Settings → Providers → Usage providers to see the limits of the accounts behind it.",
+    );
+    expect(notice([{ ...source, accounts: [], error: "Invalid management key." }])).toBe(
+      "Accounts: Invalid management key.",
+    );
+    expect(
+      notice([{ ...source, accounts: [{ ...source.accounts[0]!, driver: endpoint.driver }] }]),
+    ).toBeNull();
+    expect(limitPoolNotice(native.instanceId, [native], [])).toBeNull();
+    expect(collectProviderUsageLimits(endpoint.instanceId, [endpoint], [], 0)?.notices).toEqual([
+      notice([]),
     ]);
   });
 
