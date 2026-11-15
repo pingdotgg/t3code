@@ -72,7 +72,8 @@ const { spawn } = require("node:child_process");
 const { lock } = workerData;
 const locked = (launch) => {
   if (lock === undefined) return launch();
-  while (Atomics.compareExchange(lock, 0, 0, threadId) !== 0) Atomics.wait(lock, 0, Atomics.load(lock, 0));
+  // Wait on the owner compareExchange saw: an unlock after it changes the value, so no wakeup is lost.
+  for (let owner; (owner = Atomics.compareExchange(lock, 0, 0, threadId)) !== 0; ) Atomics.wait(lock, 0, owner);
   try {
     return launch();
   } finally {
