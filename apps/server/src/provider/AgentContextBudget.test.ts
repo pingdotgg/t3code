@@ -158,6 +158,7 @@ const THREAD_BOUND_TOOLS = [
   "preview_status",
   "preview_wait_for",
   "request_secret",
+  "send_to_user",
   "t3_background_wait",
   "t3_preview_close",
   "t3_preview_list",
