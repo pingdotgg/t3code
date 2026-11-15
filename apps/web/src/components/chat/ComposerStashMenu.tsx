@@ -13,10 +13,14 @@ function missingImageCount(entry: PromptStashEntry): number {
   return entry.droppedImageNames.length + (entry.unreadableImageNames?.length ?? 0);
 }
 
-function stashEntrySnippet(entry: PromptStashEntry): string {
+export function stashEntrySnippet(entry: PromptStashEntry): string {
   const trimmed = assistantCitationsToPlainText(entry.prompt).trim().replace(/\s+/g, " ");
   if (trimmed.length > 0) {
-    return trimmed.length > SNIPPET_MAX_CHARS ? `${trimmed.slice(0, SNIPPET_MAX_CHARS)}…` : trimmed;
+    if (trimmed.length <= SNIPPET_MAX_CHARS) return trimmed;
+    // Never end on a lone high surrogate, the first half of an emoji.
+    const last = trimmed.charCodeAt(SNIPPET_MAX_CHARS - 1);
+    const end = last >= 0xd800 && last <= 0xdbff ? SNIPPET_MAX_CHARS - 1 : SNIPPET_MAX_CHARS;
+    return `${trimmed.slice(0, end)}…`;
   }
   const imageCount = entry.attachments.length + entry.droppedImageNames.length;
   const fileCount = entry.files?.length ?? 0;
@@ -124,7 +128,11 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   }, []);
 
   return (
-    <ComposerBanner.Root ref={drawerRef} data-composer-stash-drawer="true">
+    <ComposerBanner.Root
+      ref={drawerRef}
+      className="flex min-h-0 flex-col after:shrink-0"
+      data-composer-stash-drawer="true"
+    >
       <ComposerBanner.Row
         render={<button type="button" />}
         aria-label="Close stash"
@@ -141,7 +149,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
           <ComposerBanner.ToggleIcon expanded />
         </ComposerBanner.Actions>
       </ComposerBanner.Row>
-      <ComposerBanner.Scroll>
+      <ComposerBanner.Scroll className="flex flex-col">
         <ComposerBanner.Children render={<ul role="list" />} aria-label="Stashed prompts">
           {entries.length === 0 ? (
             <ComposerBanner.Row render={<li />}>
