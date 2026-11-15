@@ -89,7 +89,10 @@
       "completed": "已完成",
       "failed": "失败",
       "cancelled": "已停止",
-      "interrupted": "已停止"
+      "interrupted": "已停止",
+      "queued": "排队中",
+      "idleResumable": "空闲 · 可恢复",
+      "stopped": "已停止"
     },
     "outcome": {
       "completed": "已完成",
@@ -97,7 +100,26 @@
       "cancelled": "已停止",
       "updated": "已更新",
       "unknown": "已完成"
-    }
+    },
+    "unsettleFailed": "取消收起线程失败",
+    "wakeFailed": "唤醒线程失败",
+    "checkoutFailed": "切换检出失败",
+    "checkoutNotUpdated": "检出已切换，但线程未能更新",
+    "stopBackgroundFailed": "停止后台工作失败。",
+    "threadGone": "此线程已不可用",
+    "snoozedWithTime": "已打盹，还剩 {{time}}",
+    "snoozed": "已打盹",
+    "waking": "唤醒中…",
+    "wakeNow": "立即唤醒",
+    "settledAt": "已收起 {{time}}",
+    "settled": "已收起",
+    "unsettling": "取消收起中…",
+    "unsettle": "取消收起",
+    "dismiss": "忽略",
+    "settleFailed": "收起线程失败",
+    "unpinFailed": "取消置顶线程失败",
+    "pinFailed": "置顶线程失败",
+    "regenerateTitleFailed": "重新生成线程标题失败"
   },
   "approval": {
     "moreOptions": "更多审批选项",
@@ -261,5 +283,50 @@
     "disableLineWrap": "关闭自动换行",
     "runInTerminal": "在终端运行",
     "actionsA11y": "代码块操作"
+  },
+  "plan": {
+    "copyFailed": "无法复制计划",
+    "copyErrorGeneric": "复制时发生错误。",
+    "fallbackTitle": "拟议计划",
+    "workspaceUnavailable": "工作区路径不可用",
+    "workspaceUnavailableDetail": "此线程没有可保存的工作区路径。",
+    "enterPath": "请输入工作区路径",
+    "saved": "计划已保存到工作区",
+    "saveFailed": "无法保存计划",
+    "saveErrorGeneric": "保存时发生错误。",
+    "badge": "计划",
+    "actions": "计划操作",
+    "copied": "已复制！",
+    "copyToClipboard": "复制到剪贴板",
+    "downloadMarkdown": "下载为 Markdown",
+    "collapse": "折叠计划",
+    "expand": "展开计划",
+    "saveDialogTitle": "把计划保存到工作区",
+    "workspacePath": "工作区路径",
+    "saving": "保存中…",
+    "save": "保存"
+  },
+  "mcp": {
+    "requestFailed": "请求失败。",
+    "cannotCallTool": "此应用无法调用该工具。",
+    "declinedByUser": "已被用户拒绝。",
+    "messagesUnavailable": "此处不能使用消息。",
+    "exitFullScreen": "退出全屏"
+  },
+  "find": {
+    "searching": "搜索中…",
+    "failed": "搜索失败",
+    "title": "在线程中查找",
+    "previous": "上一个匹配",
+    "next": "下一个匹配",
+    "close": "关闭查找"
+  },
+  "automations": {
+    "updateFailed": "无法更新自动化",
+    "runFailed": "无法运行自动化",
+    "title": "自动化",
+    "manageScheduledTasks": "管理定时任务",
+    "edit": "编辑自动化",
+    "runNow": "立即运行"
   }
 }

@@ -4,7 +4,7 @@ import { NewThreadLinkView } from "../components/promptLinks/NewThreadLinkView";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset } from "../components/ui/sidebar";
 
-import { translateDynamic } from "../../i18nCore";
+import { translateDynamic } from "../i18nCore";
 
 const td = (key: string, options?: Record<string, unknown>) =>
   translateDynamic(`shell:${key}`, options);

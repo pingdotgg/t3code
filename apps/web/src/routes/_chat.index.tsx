@@ -21,7 +21,7 @@ import {
 } from "../state/entities";
 import { useEnvironments } from "../state/environments";
 
-import { translateDynamic } from "../../i18nCore";
+import { translateDynamic } from "../i18nCore";
 
 const td = (key: string, options?: Record<string, unknown>) =>
   translateDynamic(`shell:${key}`, options);

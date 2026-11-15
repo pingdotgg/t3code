@@ -4,7 +4,7 @@ import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import { ProviderSettingsPanel } from "../components/settings/ProviderSettingsPanel";
 import { useSettingsScope } from "../components/settings/SettingsScopeContext";
 
-import { translateDynamic } from "../../i18nCore";
+import { translateDynamic } from "../i18nCore";
 
 const td = (key: string, options?: Record<string, unknown>) =>
   translateDynamic(`shell:${key}`, options);

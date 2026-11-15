@@ -89,7 +89,10 @@
       "completed": "Completed",
       "failed": "Failed",
       "cancelled": "Stopped",
-      "interrupted": "Stopped"
+      "interrupted": "Stopped",
+      "queued": "Queued",
+      "idleResumable": "Idle · resumable",
+      "stopped": "Stopped"
     },
     "outcome": {
       "completed": "Finished",
@@ -97,7 +100,26 @@
       "cancelled": "Stopped",
       "updated": "Updated",
       "unknown": "Finished"
-    }
+    },
+    "unsettleFailed": "Failed to un-settle thread",
+    "wakeFailed": "Failed to wake thread",
+    "checkoutFailed": "Failed to switch checkout",
+    "checkoutNotUpdated": "Checkout switched, but the thread could not be updated",
+    "stopBackgroundFailed": "Failed to stop background work.",
+    "threadGone": "This thread is no longer available",
+    "snoozedWithTime": "Snoozed, {{time}} left",
+    "snoozed": "Snoozed",
+    "waking": "Waking...",
+    "wakeNow": "Wake now",
+    "settledAt": "Settled {{time}}",
+    "settled": "Settled",
+    "unsettling": "Un-settling...",
+    "unsettle": "Un-settle",
+    "dismiss": "Dismiss",
+    "settleFailed": "Failed to settle thread",
+    "unpinFailed": "Failed to unpin thread",
+    "pinFailed": "Failed to pin thread",
+    "regenerateTitleFailed": "Failed to regenerate thread title"
   },
   "approval": {
     "moreOptions": "More approval options",
@@ -262,5 +284,50 @@
     "disableLineWrap": "Disable line wrap",
     "runInTerminal": "Run in terminal",
     "actionsA11y": "Code block actions"
+  },
+  "plan": {
+    "copyFailed": "Could not copy plan",
+    "copyErrorGeneric": "An error occurred while copying.",
+    "fallbackTitle": "Proposed plan",
+    "workspaceUnavailable": "Workspace path is unavailable",
+    "workspaceUnavailableDetail": "This thread does not have a workspace path to save into.",
+    "enterPath": "Enter a workspace path",
+    "saved": "Plan saved to workspace",
+    "saveFailed": "Could not save plan",
+    "saveErrorGeneric": "An error occurred while saving.",
+    "badge": "Plan",
+    "actions": "Plan actions",
+    "copied": "Copied!",
+    "copyToClipboard": "Copy to clipboard",
+    "downloadMarkdown": "Download as markdown",
+    "collapse": "Collapse plan",
+    "expand": "Expand plan",
+    "saveDialogTitle": "Save plan to workspace",
+    "workspacePath": "Workspace path",
+    "saving": "Saving...",
+    "save": "Save"
+  },
+  "mcp": {
+    "requestFailed": "Request failed.",
+    "cannotCallTool": "This app cannot call that tool.",
+    "declinedByUser": "Declined by the user.",
+    "messagesUnavailable": "Messages are not available here.",
+    "exitFullScreen": "Exit full screen"
+  },
+  "find": {
+    "searching": "Searching…",
+    "failed": "Search failed",
+    "title": "Find in thread",
+    "previous": "Previous match",
+    "next": "Next match",
+    "close": "Close find"
+  },
+  "automations": {
+    "updateFailed": "Could not update automation",
+    "runFailed": "Could not run automation",
+    "title": "Automations",
+    "manageScheduledTasks": "Manage scheduled tasks",
+    "edit": "Edit automation",
+    "runNow": "Run now"
   }
 }

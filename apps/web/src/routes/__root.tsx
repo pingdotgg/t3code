@@ -59,7 +59,7 @@ import { readProject } from "../state/entities";
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 
-import { translateDynamic } from "../../i18nCore";
+import { translateDynamic } from "../i18nCore";
 
 const td = (key: string, options?: Record<string, unknown>) =>
   translateDynamic(`shell:${key}`, options);
