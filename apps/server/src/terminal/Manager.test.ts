@@ -989,6 +989,7 @@ it.layer(
 
       yield* TestClock.adjust("10 minutes");
       expect(yield* activity).toEqual(["node"]);
+      expect(queries).toBeGreaterThanOrEqual(115);
       expect(queries).toBeLessThanOrEqual(125);
 
       table = [...table, { pid: 201, ppid: 200, name: "esbuild" }];
