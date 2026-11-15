@@ -8,12 +8,15 @@ import {
 import { useAtomRefresh } from "@effect/atom-react";
 import { useLayoutEffect, useMemo, useState } from "react";
 
+import type { ReviewParsedDiff } from "../review/reviewModel";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { usePullToRefresh } from "../../state/use-pull-to-refresh";
 import {
+  findWithheldFile,
   getCachedPullRequestDiffPages,
   retainPullRequestDiffPage,
+  withWithheldFile,
   type PullRequestDiffPage,
 } from "./pullRequestDiffPages";
 
@@ -145,6 +148,7 @@ export function usePullRequestDiff(
     ...query,
     refresh,
     parsed,
+    withheldFilesReadable: pages[0]?.result.withheldFilesReadable === true,
     patch,
     nextCursor,
     canLoadMore,
@@ -152,4 +156,35 @@ export function usePullRequestDiff(
     refreshing,
     onPullRefresh,
   };
+}
+
+/** Reads the opened file's diff when the paged diff withheld it, in place of its notice. */
+export function usePullRequestWithheldFile(
+  params: PullRequestDiffParams,
+  parsed: ReviewParsedDiff,
+  path: string | undefined,
+  readable: boolean,
+) {
+  const withheld = findWithheldFile(parsed, path, readable);
+  const reference = pullRequestTarget(params);
+  const { data, error, refresh } = useEnvironmentQuery(
+    withheld
+      ? composerPullRequests.diff({
+          ...reference,
+          input: {
+            ...reference.input,
+            ...(params.commit ? { commit: params.commit } : {}),
+            path: withheld.path,
+          },
+        })
+      : null,
+  );
+  const withFile = useMemo(
+    () =>
+      withheld
+        ? withWithheldFile(parsed, withheld, { patch: data?.patch ?? null, failed: error !== null })
+        : parsed,
+    [parsed, withheld, data, error],
+  );
+  return { parsed: withFile, refresh: withheld ? refresh : () => {} };
 }

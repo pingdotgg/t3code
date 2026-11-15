@@ -477,6 +477,7 @@ export interface GitHubPullRequestDiffSlice {
   readonly truncated: boolean;
   readonly nextCursor: string | null;
   readonly omittedFileStats?: ReadonlyArray<PullRequestOmittedFileStat>;
+  readonly withheldFilesReadable?: boolean;
 }
 
 export interface GitHubPullRequestFilesViewed {
@@ -2299,16 +2300,25 @@ export const make = Effect.gen(function* () {
           ? Effect.fail(new GitHubDiffCursorError({ cwd: input.cwd }))
           : filesPage(page);
       }
+      // A withheld file is read from the whole diff, so it is readable unless GitHub refused that.
+      const readableFirstPage = () =>
+        filesPage(1).pipe(
+          Effect.map((slice): GitHubPullRequestDiffSlice => ({
+            ...slice,
+            withheldFilesReadable: true,
+          })),
+        );
       if (input.commit !== undefined) {
-        return filesPage(1);
+        return readableFirstPage();
       }
       return fullDiff(DIFF_MAX_OUTPUT_BYTES).pipe(
         Effect.flatMap((response) =>
           response.truncated
-            ? filesPage(1)
+            ? readableFirstPage()
             : Effect.succeed({ patch: response.body, truncated: false, nextCursor: null }),
         ),
-        // Above 300 changed files, GitHub returns 406; use the paged files API.
+        // Above 300 changed files (or about 20,000 lines), GitHub returns 406; use the paged
+        // files API. That refusal also covers a single file's read, so none is offered.
         Effect.catchTags({
           GitHubApiResponseError: (error) => filesPage(1).pipe(Effect.mapError(() => error)),
         }),

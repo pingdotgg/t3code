@@ -3099,6 +3099,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
       assert.isFalse(diff.truncated);
       assert.isNull(diff.nextCursor);
+      // The refusal covers one file's read too.
+      assert.isUndefined(diff.withheldFilesReadable);
       expect(diff.patch).toContain("diff --git a/src/file1.ts b/src/file1.ts");
       expect(diff.patch).toContain("diff --git a/src/file2.ts b/src/file2.ts");
       assert.strictEqual(callAt(1).host, "github.acme.dev");
@@ -4019,6 +4021,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.strictEqual(pathAt(1), "repos/acme/web/pulls/7/files?per_page=100&page=1");
       expect(slice.patch).toContain("src/file1.ts");
       expect(slice.patch).not.toContain("diff --git a/a b/a");
+      assert.isTrue(slice.withheldFilesReadable);
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
     }),
   );

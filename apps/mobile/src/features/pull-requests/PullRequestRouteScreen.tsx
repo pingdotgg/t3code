@@ -104,6 +104,7 @@ import {
   pullRequestTarget as requestTarget,
   usePullRequestDiff,
   usePullRequestDiffEntry,
+  usePullRequestWithheldFile,
   type PullRequestDiffParams,
   type PullRequestParams,
 } from "./usePullRequestDiff";
@@ -986,8 +987,15 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       ? result.parsed.files.find((file) => pullRequestDiffPathMatches(linkAnchor.digest, file.path))
           ?.path
       : undefined;
-  const filter = usePullRequestFileFilter(
+  const [pickedPath, setJumpPath] = useState<string | null>(null);
+  const withheldFile = usePullRequestWithheldFile(
+    route.params,
     result.parsed,
+    pickedPath ?? linkPath ?? route.params.path,
+    result.withheldFilesReadable,
+  );
+  const filter = usePullRequestFileFilter(
+    withheldFile.parsed,
     linkPath ?? (route.params.focus ? route.params.path : undefined),
   );
   const { refresh: refreshDetail } = detail;
@@ -1060,7 +1068,6 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       code: row.content ?? "",
     });
   };
-  const [pickedPath, setJumpPath] = useState<string | null>(null);
   const jumpPath = pickedPath ?? linkPath ?? route.params.path;
   const requestedFile =
     result.parsed.kind === "files"
@@ -1275,6 +1282,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
             label="Reload changes"
             onPress={() => {
               result.refresh();
+              withheldFile.refresh();
               setDiffHead({ scopeKey, sha: detail.data?.headSha ?? null });
               jumpedUnder.current = null;
               setSelectedRowId(null);
@@ -1300,7 +1308,10 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
                 {...pullRequestDiffInitialPosition(targetFile?.id, focusIndex)}
                 nativeViewRef={nativeView}
                 refreshing={result.refreshing}
-                onPullToRefresh={result.onPullRefresh}
+                onPullToRefresh={() => {
+                  result.onPullRefresh();
+                  withheldFile.refresh();
+                }}
                 style={StyleSheet.absoluteFill}
                 rowsJson={bridge.rowsJson}
                 themeJson={bridge.themeJson}

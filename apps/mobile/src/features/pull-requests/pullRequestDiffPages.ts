@@ -1,6 +1,10 @@
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import type { PullRequestDiffResult } from "@t3tools/contracts";
-import { buildReviewParsedDiff, type ReviewParsedDiff } from "../review/reviewModel";
+import {
+  buildReviewParsedDiff,
+  type ReviewParsedDiff,
+  type ReviewRenderableFile,
+} from "../review/reviewModel";
 
 export interface PullRequestDiffPage {
   readonly cursor: string | null;
@@ -61,6 +65,7 @@ export function retainPullRequestDiffPage(
     (previous?.patch === result.patch &&
       previous.truncated === result.truncated &&
       previous.nextCursor === result.nextCursor &&
+      previous.withheldFilesReadable === result.withheldFilesReadable &&
       JSON.stringify(previous.omittedFileStats ?? []) ===
         JSON.stringify(result.omittedFileStats ?? []))
   )
@@ -116,4 +121,41 @@ export function combinePullRequestDiffPages(
         ? `Some file contents are unavailable. Open the ${terminology.singular} on its provider to see the full changes.`
         : null,
   };
+}
+
+/** The withheld file the reader opened, if it can be read on its own. */
+export function findWithheldFile(
+  parsed: ReviewParsedDiff,
+  path: string | undefined,
+  readable: boolean,
+): ReviewRenderableFile | undefined {
+  if (!readable || !path || parsed.kind !== "files") return undefined;
+  return parsed.files.find((file) => file.path === path && file.rows.length === 0 && file.notice);
+}
+
+/** Puts the withheld file's own read in its place, or says why it is still missing. */
+export function withWithheldFile(
+  parsed: ReviewParsedDiff,
+  withheld: ReviewRenderableFile,
+  read: { readonly patch: string | null; readonly failed: boolean },
+): ReviewParsedDiff {
+  if (parsed.kind !== "files") return parsed;
+  // A failed refetch still carries the earlier patch; show the failure instead of stale code.
+  const loaded =
+    read.patch !== null && !read.failed
+      ? buildReviewParsedDiff(read.patch, `withheld:${withheld.path}`)
+      : null;
+  const first = loaded?.kind === "files" ? loaded.files[0] : undefined;
+  const file =
+    first && first.rows.length > 0
+      ? first
+      : {
+          ...withheld,
+          notice: read.failed
+            ? "Couldn't load this diff."
+            : loaded
+              ? "No text diff for this file."
+              : "Loading diff…",
+        };
+  return { ...parsed, files: parsed.files.map((entry) => (entry === withheld ? file : entry)) };
 }

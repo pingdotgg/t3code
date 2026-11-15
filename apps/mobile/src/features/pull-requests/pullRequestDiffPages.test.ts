@@ -5,8 +5,10 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import * as reviewModel from "../review/reviewModel";
 import {
   combinePullRequestDiffPages,
+  findWithheldFile,
   getCachedPullRequestDiffPages,
   retainPullRequestDiffPage,
+  withWithheldFile,
 } from "./pullRequestDiffPages";
 
 const GITHUB = sourceControlClients.get("github").changeRequest;
@@ -109,6 +111,18 @@ describe("paged mobile pull request diffs", () => {
     const cached = combinePullRequestDiffPages(pages, cache, "pr", GITHUB);
     if (cached.kind !== "files") throw new Error("Expected structured diff");
     expect(cached.files[0]).toBe(parsed.files[0]);
+
+    expect(findWithheldFile(parsed, "large.ts", false)).toBeUndefined();
+    const withheld = findWithheldFile(parsed, "large.ts", true);
+    if (!withheld) throw new Error("Expected the withheld file");
+    const patch = diff("large.ts").patch;
+    const loaded = withWithheldFile(parsed, withheld, { patch, failed: false });
+    if (loaded.kind !== "files") throw new Error("Expected structured diff");
+    expect(loaded.files[0]?.rows.length).toBeGreaterThan(0);
+    // A failed refetch keeps its earlier patch, which must not show as current.
+    const failed = withWithheldFile(parsed, withheld, { patch, failed: true });
+    if (failed.kind !== "files") throw new Error("Expected structured diff");
+    expect(failed.files[0]).toMatchObject({ rows: [], notice: "Couldn't load this diff." });
   });
 
   it("combines normal and withheld pages and refreshes counts with unchanged patch text", () => {
