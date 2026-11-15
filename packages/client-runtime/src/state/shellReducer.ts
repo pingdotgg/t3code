@@ -7,11 +7,12 @@ import {
   type OrchestrationV2ShellStreamItem,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { lazySchemaEquivalence } from "./schemaEquivalence.ts";
 
-const sameThreadShell = Schema.toEquivalence(OrchestrationV2ThreadShell);
-const sameProjectShell = Schema.toEquivalence(OrchestrationProjectShell);
-const sameLinks = Schema.toEquivalence(Schema.UndefinedOr(Schema.Array(ThreadPullRequestLink)));
-const sameRepositoryIdentity = Schema.toEquivalence(
+const sameThreadShell = lazySchemaEquivalence(OrchestrationV2ThreadShell);
+const sameProjectShell = lazySchemaEquivalence(OrchestrationProjectShell);
+const sameLinks = lazySchemaEquivalence(Schema.UndefinedOr(Schema.Array(ThreadPullRequestLink)));
+const sameRepositoryIdentity = lazySchemaEquivalence(
   Schema.UndefinedOr(Schema.NullOr(RepositoryIdentity)),
 );
 

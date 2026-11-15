@@ -1,6 +1,5 @@
 import type {
   DesktopAppBranding,
-  DesktopAppStageLabel,
   DesktopRuntimeArch,
   DesktopRuntimeInfo,
 } from "@t3tools/contracts";
@@ -15,7 +14,7 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
-import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
+import { resolveDesktopAppBranding } from "./desktopBranding.ts";
 import type { OtlpProtocol } from "@t3tools/shared/observability";
 
 export interface MakeDesktopEnvironmentInput {
@@ -84,31 +83,6 @@ export class DesktopEnvironment extends Context.Service<
     readonly resolveResourcePathCandidates: (fileName: string) => readonly string[];
   }
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
-
-const APP_BASE_NAME = "T3 Code";
-
-function resolveDesktopAppStageLabel(input: {
-  readonly isDevelopment: boolean;
-  readonly appVersion: string;
-}): DesktopAppStageLabel {
-  if (input.isDevelopment) {
-    return "Dev";
-  }
-
-  return isNightlyDesktopVersion(input.appVersion) ? "Nightly" : "Beta";
-}
-
-export function resolveDesktopAppBranding(input: {
-  readonly isDevelopment: boolean;
-  readonly appVersion: string;
-}): DesktopAppBranding {
-  const stageLabel = resolveDesktopAppStageLabel(input);
-  return {
-    baseName: APP_BASE_NAME,
-    stageLabel,
-    displayName: `${APP_BASE_NAME} (${stageLabel})`,
-  };
-}
 
 function normalizeDesktopArch(arch: string): DesktopRuntimeArch {
   if (arch === "arm64") return "arm64";

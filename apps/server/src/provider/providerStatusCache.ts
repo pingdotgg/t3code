@@ -137,8 +137,19 @@ export const writeProviderStatusCache = (input: {
   readonly provider: ServerProvider;
 }) => {
   const { updateState: _updateState, ...cacheableProvider } = input.provider;
-  return writeFileStringAtomically({
+  const write = writeFileStringAtomically({
     filePath: input.filePath,
     contents: `${JSON.stringify(cacheableProvider, null, 2)}\n`,
+  });
+  return Effect.flatMap(FileSystem.FileSystem, (fs) => {
+    // Keep uninstall transitions in existing caches; missing CLIs have no discovered state to restore.
+    if (
+      !input.provider.installed &&
+      input.provider.auth.status === "unknown" &&
+      input.provider.version === null
+    ) {
+      return Effect.flatMap(fs.exists(input.filePath), (exists) => (exists ? write : Effect.void));
+    }
+    return write;
   });
 };

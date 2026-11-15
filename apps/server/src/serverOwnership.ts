@@ -189,7 +189,8 @@ const openOwnershipLock = (stateDir: string) =>
       const db = new NodeSqlite.DatabaseSync(lockPath);
       try {
         // An idle service launcher probes this lock for a moment; wait out that probe.
-        db.exec("PRAGMA busy_timeout = 250; BEGIN EXCLUSIVE;");
+        // This database holds only a lock, so there is nothing to roll back.
+        db.exec("PRAGMA busy_timeout = 250; PRAGMA journal_mode = MEMORY; BEGIN EXCLUSIVE;");
         const identity = NodeFS.statSync(lockPath, { bigint: true });
         return {
           db,

@@ -12,6 +12,7 @@ import * as ProcessGroup from "@t3tools/provider-core/server/processGroup";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Duration from "effect/Duration";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -93,7 +94,7 @@ const layerLsofScanner = (input: {
         layerNoProc,
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: () =>
-            Effect.succeed({
+            Effect.sync(() => ({
               stdout: input.stdout?.() ?? `p${input.pid()}\ncnode\nn*:${LSOF_TEST_PORT}\n`,
               stderr: "",
               code: null,
@@ -102,7 +103,7 @@ const layerLsofScanner = (input: {
               stderrTruncated: false,
               stdoutInvalidUtf8: false,
               stderrInvalidUtf8: false,
-            }),
+            })),
         }),
         Layer.succeed(HostProcess.Platform, "linux"),
         FetchHttpClient.layer.pipe(
@@ -111,6 +112,42 @@ const layerLsofScanner = (input: {
       ),
     ),
   );
+
+effectIt.effect("parks polling without retainers and resumes immediately on retention", () => {
+  let scans = 0;
+  const layer = layerLsofScanner({
+    pid: () => 1234,
+    stdout: () => {
+      scans++;
+      return "";
+    },
+    fetch: (() => Promise.resolve(new Response("app"))) as typeof globalThis.fetch,
+  });
+  return Effect.gen(function* () {
+    const clock = yield* Clock.Clock;
+    using sleeps = vi.spyOn(clock, "sleep");
+    const pollSleeps = () =>
+      sleeps.mock.calls.filter(([duration]) => Duration.toMillis(duration) === 3000).length;
+    yield* Effect.gen(function* () {
+      const scanner = yield* ownedScanner();
+      yield* TestClock.adjust("30 seconds");
+      expect(pollSleeps()).toBe(0);
+      const retained = yield* Scope.make();
+      yield* scanner.retain.pipe(Effect.provideService(Scope.Scope, retained));
+      expect(scans).toBeGreaterThan(0);
+      yield* TestClock.adjust("3 seconds");
+      expect(scans).toBeGreaterThan(1);
+      yield* Scope.close(retained, Exit.void);
+      const beforeRelease = scans;
+      const sleepsBeforeRelease = pollSleeps();
+      yield* TestClock.adjust("30 seconds");
+      expect(scans).toBe(beforeRelease);
+      expect(pollSleeps()).toBe(sleepsBeforeRelease);
+      yield* scanner.retain;
+      expect(scans).toBeGreaterThan(beforeRelease);
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  });
+});
 
 effectIt.effect("keeps a full configured URL when the discovered server root fails", () => {
   const requests: string[] = [];

@@ -181,6 +181,7 @@ describe("server ownership", () => {
       yield* Effect.scoped(
         Effect.gen(function* () {
           const owner = yield* ServerOwnership.acquireServerOwnership(statePath);
+          assert.isFalse(yield* fs.exists(path.join(root, "server-owner.sqlite-journal")));
           yield* owner.publish(state);
           const before = yield* fs.readFileString(statePath);
           const refused = yield* ServerOwnership.acquireServerOwnership(statePath).pipe(

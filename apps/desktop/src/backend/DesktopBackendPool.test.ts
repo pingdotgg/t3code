@@ -459,6 +459,13 @@ describe("DesktopBackendPool", () => {
     Effect.gen(function* () {
       const id = DesktopBackendPool.BackendInstanceId("wsl:Ubuntu");
       const pool = yield* DesktopBackendPool.DesktopBackendPool;
+      const additions = yield* Stream.toQueue(
+        pool.changes.pipe(
+          Stream.mapEffect(() => pool.list),
+          Stream.filter((instances) => instances.some((instance) => instance.id === id)),
+        ),
+        { capacity: "unbounded" },
+      );
       const instance = yield* pool.register({
         id,
         label: Effect.succeed("WSL (Ubuntu)"),
@@ -467,10 +474,25 @@ describe("DesktopBackendPool", () => {
           preflightFailure: Option.some({ reason: "WSL starting", fatal: false }),
         }),
       });
+      assert.equal(
+        (yield* Queue.take(additions)).some((entry) => entry.id === id),
+        true,
+      );
       yield* instance.start;
       assert.equal((yield* instance.snapshot).restartScheduled, true);
 
+      const removals = yield* Stream.toQueue(
+        pool.changes.pipe(
+          Stream.mapEffect(() => pool.list),
+          Stream.filter((instances) => instances.every((instance) => instance.id !== id)),
+        ),
+        { capacity: "unbounded" },
+      );
       yield* pool.unregister(id);
+      assert.equal(
+        (yield* Queue.take(removals)).some((entry) => entry.id === id),
+        false,
+      );
 
       const stopped = yield* instance.snapshot;
       assert.equal(stopped.desiredRunning, false);

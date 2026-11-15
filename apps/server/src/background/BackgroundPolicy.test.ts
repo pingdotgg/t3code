@@ -6,10 +6,13 @@ import {
   type ClientActivityReportInput,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import { vi } from "vite-plus/test";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as BackgroundPolicy from "./BackgroundPolicy.ts";
@@ -71,19 +74,27 @@ function layerFor(
 describe("BackgroundPolicy", () => {
   it.effect("removes all leases for a disconnected websocket connection", () =>
     Effect.gen(function* () {
-      const policy = yield* BackgroundPolicy.BackgroundPolicy;
-      yield* policy.reportClientActivity(
-        AuthSessionId.make("session-1"),
-        RpcClientId.make(1),
-        makeReport(),
-      );
-      yield* policy.removeRpcClient(AuthSessionId.make("session-1"), RpcClientId.make(1));
+      const clock = yield* Clock.Clock;
+      using sleeps = vi.spyOn(clock, "sleep");
+      yield* Effect.gen(function* () {
+        const policy = yield* BackgroundPolicy.BackgroundPolicy;
+        yield* TestClock.adjust("30 seconds");
+        assert.equal(sleeps.mock.calls.length, 0);
+        yield* policy.reportClientActivity(
+          AuthSessionId.make("session-1"),
+          RpcClientId.make(1),
+          makeReport(),
+        );
+        yield* policy.removeRpcClient(AuthSessionId.make("session-1"), RpcClientId.make(1));
 
-      const snapshot = yield* policy.snapshot;
-      assert.equal(snapshot.activeForegroundLeaseCount, 0);
-      assert.deepStrictEqual(snapshot.activeScopeKeys, []);
-      assert.equal(snapshot.shouldRunOpportunisticWork, false);
-    }).pipe(Effect.provide(layerFor(nominalHostPower))),
+        const snapshot = yield* policy.snapshot;
+        assert.equal(snapshot.activeForegroundLeaseCount, 0);
+        assert.deepStrictEqual(snapshot.activeScopeKeys, []);
+        assert.equal(snapshot.shouldRunOpportunisticWork, false);
+        yield* TestClock.adjust("30 seconds");
+        assert.equal(sleeps.mock.calls.length, 0);
+      }).pipe(Effect.provide(layerFor(nominalHostPower)));
+    }),
   );
 
   it.effect("keeps leases from another session when rpc client ids are reused", () =>
@@ -107,6 +118,9 @@ describe("BackgroundPolicy", () => {
       assert.equal(snapshot.activeForegroundLeaseCount, 1);
       assert.equal(snapshot.leases[0]?.sessionId, AuthSessionId.make("session-2"));
       assert.equal(snapshot.leases[0]?.clientId, "client-2");
+      yield* TestClock.adjust("46 seconds");
+      assert.deepEqual((yield* policy.snapshot).leases, []);
+      assert.equal(yield* policy.shouldRunOpportunisticWork, false);
     }).pipe(Effect.provide(layerFor(nominalHostPower))),
   );
 

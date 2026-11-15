@@ -26,7 +26,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SpawnWorker from "../process/SpawnWorker.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
-  query as claudeQuery,
   type ModelInfo as ClaudeModelInfo,
   type Options as ClaudeQueryOptions,
   type SlashCommand as ClaudeSlashCommand,
@@ -519,6 +518,7 @@ const probeClaudeCapabilities = (
           : undefined;
     return yield* Effect.tryPromise({
       try: async () => {
+        const { query: claudeQuery } = await import("@anthropic-ai/claude-agent-sdk");
         const q = claudeQuery({
           // oxlint-disable-next-line require-yield -- never yields, so no prompt reaches the API
           prompt: (async function* (): AsyncGenerator<SDKUserMessage> {

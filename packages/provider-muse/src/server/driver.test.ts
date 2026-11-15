@@ -142,7 +142,7 @@ it.layer(layerTest)("MuseDriver usage", (it) => {
           environment: [],
           config: { ...MuseDriver.defaultConfig(), binaryPath: process.execPath },
         });
-        yield* Stream.take(instance.snapshot.streamChanges, 1).pipe(Stream.runDrain);
+        yield* instance.snapshot.ensureReady!;
         expect((yield* instance.snapshot.getSnapshot).status).toBe("ready");
         expect((yield* instance.snapshot.getSnapshot).usageLimits).toBeUndefined();
         const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({

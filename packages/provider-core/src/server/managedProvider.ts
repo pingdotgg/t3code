@@ -4,7 +4,9 @@ import {
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Fiber from "effect/Fiber";
@@ -88,6 +90,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const recheckPendingRef = yield* Ref.make(false);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
   const scope = yield* Effect.scope;
+  const discoveryStarted = yield* Deferred.make<void>();
+  let lastCheckedAt: number | undefined;
 
   const publishEnrichedSnapshot = Effect.fn("publishEnrichedSnapshot")(function* (
     generation: number,
@@ -176,9 +180,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return state.snapshot;
     }
 
+    yield* Deferred.succeed(discoveryStarted, undefined);
     // A probe without usage must not erase a report published while its I/O was in flight.
     const usageBeforeProbe = (yield* Ref.get(snapshotStateRef)).snapshot.usageLimits;
     const probedSnapshot = yield* input.checkProvider;
+    lastCheckedAt = yield* Clock.currentTimeMillis;
     // One failed periodic check over a ready provider is often transient; recheck before showing it.
     if (
       options?.deferFailure === true &&
@@ -290,6 +296,19 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     const nextSettings = yield* input.getSettings;
     return yield* applySnapshot(nextSettings, { forceRefresh: true });
   });
+
+  const ensureReady = Effect.fn("ManagedServerProvider.ensureReady")(function* () {
+    if (lastCheckedAt !== undefined) {
+      const now = yield* Clock.currentTimeMillis;
+      const interval = Duration.toMillis(Duration.fromInputUnsafe(yield* getRefreshInterval));
+      const freshness =
+        interval > 0 ? interval : Duration.toMillis(DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL);
+      if (now - lastCheckedAt < freshness) {
+        return yield* Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot));
+      }
+    }
+    return yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true });
+  }, refreshSemaphore.withPermits(1));
 
   const refreshUsage = Effect.fn("ManagedServerProvider.refreshUsage")(function* () {
     const { snapshot } = yield* Ref.get(snapshotStateRef);
@@ -407,7 +426,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     Effect.asVoid(applySnapshot(nextSettings)).pipe(Effect.ignoreCause({ log: true })),
   ).pipe(Effect.forkScoped);
 
-  yield* Effect.forever(
+  const refreshLoop = Effect.forever(
     Effect.all([getRefreshInterval, Ref.getAndSet(recheckPendingRef, false)]).pipe(
       Effect.flatMap(([configuredInterval, recheckPending]) => {
         const refreshInterval = recheckPending ? FAILED_CHECK_RECHECK_DELAY : configuredInterval;
@@ -435,18 +454,21 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       }),
       Effect.ignoreCause({ log: true }),
     ),
-  ).pipe(Effect.forkScoped);
+  );
+  yield* Deferred.await(discoveryStarted).pipe(Effect.andThen(refreshLoop), Effect.forkScoped);
 
   // Probes spawn provider CLIs; starting them during server startup slows the first client load.
   yield* (host.awaitServerReady ?? Effect.void).pipe(
     Effect.andThen(
-      // Read under the lock, so a settings check in flight cannot be overwritten with older settings.
-      refreshSemaphore.withPermits(1)(
-        Ref.get(settingsRef).pipe(
-          Effect.flatMap((settings) => applySnapshotBase(settings, { forceRefresh: true })),
-        ),
-      ),
+      Effect.all([
+        host.shouldRunBackgroundWork({ type: "provider-status" }),
+        host.shouldRunBackgroundWork({
+          type: "provider-status",
+          instanceId: initialSnapshot.instanceId,
+        }),
+      ]),
     ),
+    Effect.flatMap((demand) => (demand.some(Boolean) ? ensureReady() : Effect.void)),
     Effect.ignoreCause({ log: true }),
     Effect.forkScoped,
   );
@@ -455,9 +477,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     resolveMaintenance: input.resolveMaintenance,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
     isAwaitingFirstCheck: Ref.get(snapshotStateRef).pipe(Effect.map((state) => !state.checked)),
-    refresh: input
-      .resolveMaintenance({ fresh: true })
-      .pipe(Effect.andThen(refreshSnapshot), Effect.tapError(Effect.logError), Effect.orDie),
+    ensureReady: ensureReady().pipe(Effect.tapError(Effect.logError), Effect.orDie),
+    refresh: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
     applyUsageLimits,
     refreshUsage: refreshUsage(),
     get streamChanges() {

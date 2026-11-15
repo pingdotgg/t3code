@@ -70,6 +70,7 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
     return ProviderAdapterRegistryV2.of({
       get: Effect.fn("ProviderAdapterRegistryV2.get")(function (instanceId) {
         return instances.getInstance(instanceId).pipe(
+          Effect.tap((instance) => instance?.snapshot.ensureReady ?? Effect.void),
           Effect.flatMap((instance) => {
             if (instance === undefined)
               return new ProviderAdapterRegistryLookupError({ instanceId });

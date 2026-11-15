@@ -411,6 +411,74 @@ it.effect("lets the writer commit while a read-only transaction is open", () =>
   ),
 );
 
+it.effect("retires surplus idle readers without ending a held read transaction", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const opened = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const held = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* countEntries(sql);
+            yield* Deferred.succeed(opened, undefined);
+            yield* Deferred.await(release);
+            assert.equal(yield* countEntries(sql), 1);
+          }),
+        )
+        .pipe(SqliteClient.readOnly, Effect.forkChild);
+      yield* Deferred.await(opened);
+      const first = startedWorkers.at(-1)!;
+      assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 1);
+      const surplus = startedWorkers.at(-1)!;
+      assert.notStrictEqual(first, surplus);
+      using retired = vi.spyOn(surplus, "terminate");
+      yield* TestClock.adjust("5 seconds");
+      assert.equal(retired.mock.calls.length, 0);
+      assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 1);
+      assert.strictEqual(startedWorkers.at(-1), surplus);
+      yield* TestClock.adjust("5 seconds");
+      assert.equal(retired.mock.calls.length, 0);
+      yield* TestClock.adjust("10 seconds");
+      assert.equal(retired.mock.calls.length, 1);
+      yield* Effect.promise(() => retired.mock.results[0]!.value);
+      assert.equal(surplus.threadId, -1);
+      assert.notEqual(first.threadId, -1);
+      const reopened = yield* Deferred.make<void>();
+      const releaseSurplus = yield* Deferred.make<void>();
+      const surplusTransaction = yield* sql
+        .withTransaction(
+          countEntries(sql).pipe(
+            Effect.andThen(Deferred.succeed(reopened, undefined)),
+            Effect.andThen(Deferred.await(releaseSurplus)),
+            Effect.andThen(countEntries(sql)),
+          ),
+        )
+        .pipe(SqliteClient.readOnly, Effect.forkChild);
+      yield* Deferred.await(reopened);
+      const replacement = startedWorkers.at(-1)!;
+      assert.notStrictEqual(replacement, surplus);
+      const workerCount = startedWorkers.length;
+      const cancelled = yield* countEntries(sql).pipe(SqliteClient.readOnly, (effect) =>
+        Effect.forkChild(effect, { startImmediately: true }),
+      );
+      const queued = yield* countEntries(sql).pipe(SqliteClient.readOnly, (effect) =>
+        Effect.forkChild(effect, { startImmediately: true }),
+      );
+      assert.equal(startedWorkers.length, workerCount);
+      yield* Fiber.interrupt(cancelled);
+      yield* TestClock.adjust("1 minute");
+      assert.notEqual(replacement.threadId, -1);
+      yield* Deferred.succeed(releaseSurplus, undefined);
+      assert.equal(yield* Fiber.join(surplusTransaction), 1);
+      assert.equal(yield* Fiber.join(queued), 1);
+      assert.equal(startedWorkers.length, workerCount);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(held);
+      assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 1);
+    }),
+  ),
+);
+
 it.effect("serves another read while a read-only transaction is open", () =>
   withReaderClient((sql) =>
     Effect.gen(function* () {
@@ -435,7 +503,7 @@ it.effect("serves another read while a read-only transaction is open", () =>
 it.effect("gives a queued read the first reader that frees up", () =>
   withReaderClient((sql) =>
     Effect.gen(function* () {
-      const holders = yield* Effect.forEach([0, 1, 2, 3], () =>
+      const holders = yield* Effect.forEach([0, 1], () =>
         Effect.gen(function* () {
           const held = yield* Deferred.make<void>();
           const release = yield* Deferred.make<void>();
@@ -496,10 +564,8 @@ it.effect("gives a queued read the first reader that frees up", () =>
       // Pinned to the first reader it saw, this read would wait for that reader's transaction.
       assert.equal(yield* Fiber.join(queued), 1);
       assert.equal((yield* Deferred.await(queuedSpan)).attributes.get("db.lock_wait_ms"), 1000);
-      for (const { fiber, release } of [holders[0]!, holders[2]!, holders[3]!]) {
-        yield* Deferred.succeed(release, undefined);
-        yield* Fiber.join(fiber);
-      }
+      yield* Deferred.succeed(holders[0]!.release, undefined);
+      yield* Fiber.join(holders[0]!.fiber);
       yield* Effect.forEach(interrupting, Fiber.join);
       assert.equal(maskedRan, 2);
     }),

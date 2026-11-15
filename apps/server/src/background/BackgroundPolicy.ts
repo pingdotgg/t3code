@@ -203,12 +203,15 @@ export const make = Effect.fn("background.policy.make")(function* () {
   );
 
   const snapshot = Effect.gen(function* () {
-    const [hostPower, leases, now, settings] = yield* Effect.all([
+    const [hostPower, now, settings] = yield* Effect.all([
       hostPowerMonitor.snapshot,
-      Ref.get(leasesRef),
       DateTime.now,
       backgroundActivitySettings,
     ]);
+    const leases = yield* Ref.modify(leasesRef, (current) => {
+      const active = new Map([...current].filter(([, lease]) => isLeaseActive(lease, now)));
+      return [active, active];
+    });
     return computeSnapshot({ hostPower, leases, now, settings, updatedAt: now });
   });
 
@@ -265,25 +268,6 @@ export const make = Effect.fn("background.policy.make")(function* () {
     snapshot,
     (current) => current.shouldRunOpportunisticWork,
   );
-
-  yield* Effect.forever(
-    Effect.sleep("15 seconds").pipe(
-      Effect.andThen(
-        Effect.gen(function* () {
-          const now = yield* DateTime.now;
-          yield* Ref.update(leasesRef, (leases) => {
-            const next = new Map(leases);
-            for (const [key, lease] of next) {
-              if (!isLeaseActive(lease, now)) {
-                next.delete(key);
-              }
-            }
-            return next;
-          });
-        }),
-      ),
-    ),
-  ).pipe(Effect.forkScoped);
 
   return BackgroundPolicy.of({
     reportClientActivity,

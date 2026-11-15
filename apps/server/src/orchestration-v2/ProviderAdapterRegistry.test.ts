@@ -7,6 +7,7 @@ import {
   ProviderSessionId,
   ThreadId,
   ProviderSetupError,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -80,6 +81,58 @@ it.effect("routes two configured instances of the same driver independently", ()
     assert.strictEqual(yield* registry.get(workId), workAdapter);
     assert.deepEqual(yield* registry.list(), [personalId, workId]);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("waits for live discovery before returning an execution adapter", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const released = yield* Deferred.make<ServerProvider>();
+    let returned = false;
+    const instance = {
+      ...instances[0],
+      snapshot: {
+        ...instances[0].snapshot,
+        ensureReady: Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(released)),
+        ),
+      },
+    };
+    const registry = yield* Effect.service(ProviderAdapterRegistry.ProviderAdapterRegistryV2).pipe(
+      Effect.provide(
+        ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+          Layer.provide(
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              getInstance: () => Effect.succeed(instance),
+            }),
+          ),
+        ),
+      ),
+    );
+    const pending = yield* registry.get(personalId).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          returned = true;
+        }),
+      ),
+      Effect.forkChild,
+    );
+    yield* Deferred.await(started);
+    assert.isFalse(returned);
+    yield* Deferred.succeed(released, {
+      instanceId: personalId,
+      driver,
+      enabled: true,
+      installed: true,
+      status: "ready",
+      auth: { status: "authenticated" },
+      version: "0.156.1",
+      checkedAt: "2026-10-31T00:00:00.000Z",
+      models: [],
+      skills: [],
+      slashCommands: [],
+    });
+    assert.strictEqual(yield* Fiber.join(pending), personalAdapter);
+  }),
 );
 
 it.effect(

@@ -201,7 +201,9 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
             Effect.ignore,
           ),
         ),
-        Effect.map(({ installation }) => installation.changes),
+        Effect.flatMap(({ installation }) =>
+          installation.state.pipe(Effect.as(installation.changes)),
+        ),
       ),
     );
 

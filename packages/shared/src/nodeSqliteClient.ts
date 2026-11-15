@@ -5,6 +5,7 @@ import * as NodeWorkerThreads from "node:worker_threads";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Exit from "effect/Exit";
@@ -348,7 +349,9 @@ const failedWith = (
 const endsReadTransaction = (sql: string) => /^\s*ROLLBACK\b|^\s*COMMIT\b/i.test(sql);
 
 // WAL readers run concurrently; one worker serialized every read behind the slowest transaction.
-const READER_POOL_SIZE = 4;
+const READER_POOL_SIZE = 2;
+// Keep the first reader for liveness reads; release surplus workers after a burst.
+const READER_IDLE_TIMEOUT = Duration.seconds(15);
 const READER_STARTUP_TIMEOUT = Duration.seconds(10);
 const READER_RETRY_DELAY = Duration.seconds(1);
 const READER_RETRY_MAX_DELAY = Duration.minutes(1);
@@ -367,6 +370,7 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
         readonly worker: NodeWorkerThreads.Worker;
         readonly connection: Connection;
         readonly started: Promise<WorkerStartup>;
+        readonly awaitIdle: Effect.Effect<void>;
       }
     | undefined;
   let nextRequestId = 0;
@@ -374,6 +378,7 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
   let writerStopped: string | undefined;
 
   const start = () => {
+    let idle: Deferred.Deferred<void> | undefined;
     const worker = new NodeWorkerThreads.Worker(workerSource, {
       eval: true,
       workerData: {
@@ -411,6 +416,7 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
         );
       }
       pending.clear();
+      if (idle) Deferred.doneUnsafe(idle, Effect.void);
     };
     worker.on("message", (reply: WorkerReply | WorkerStartup) => {
       if ("type" in reply) {
@@ -427,7 +433,10 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
         return;
       }
       pending.delete(reply.id);
-      if (pending.size === 0) worker.unref();
+      if (pending.size === 0) {
+        worker.unref();
+        if (idle) Deferred.doneUnsafe(idle, Effect.void);
+      }
       options.onReply?.();
       if ("rows" in reply && request.rows.length > 0) {
         for (const row of reply.rows) request.rows.push(row);
@@ -465,7 +474,10 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
                   : Effect.fail(failedWith(reply.error, reply.error.operation)),
               ),
           });
-          if (pending.size === 1) worker.ref();
+          if (pending.size === 1) {
+            idle = Deferred.makeUnsafe<void>();
+            worker.ref();
+          }
           const cached = input.cached && !hasLargeBinding(input.params);
           // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
           worker.postMessage({ id, safeIntegers, ...input, cached, received });
@@ -505,7 +517,12 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
         return Stream.die(new UnsupportedNodeSqliteOperationError());
       },
     });
-    current = { worker, connection, started };
+    current = {
+      worker,
+      connection,
+      started,
+      awaitIdle: Effect.suspend(() => (idle ? Deferred.await(idle) : Effect.void)),
+    };
     return current;
   };
 
@@ -530,7 +547,7 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
     void worker.terminate();
   };
 
-  return Effect.suspend((): Effect.Effect<Connection, SqlError> => {
+  const acquire = Effect.suspend((): Effect.Effect<Connection, SqlError> => {
     if (current === undefined && writerStopped !== undefined) {
       return Effect.fail(failedWith({ message: writerStopped }, "execute"));
     }
@@ -571,6 +588,17 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
       },
     );
   });
+  return {
+    acquire,
+    retire: Effect.gen(function* () {
+      const reader = current;
+      if (!reader) return;
+      yield* reader.awaitIdle;
+      if (current !== reader) return;
+      current = undefined;
+      yield* Effect.promise(() => reader.worker.terminate());
+    }),
+  };
 });
 
 const startFailure = (error: SqlError) => {
@@ -584,7 +612,11 @@ const startFailure = (error: SqlError) => {
 // A reader that cannot start turns off the whole pool, so routing never picks a dead slot, until
 // one background retry starts it again.
 const makeReader = Effect.fnUntraced(function* (filename: string, pool: { unavailable: boolean }) {
-  const acquire = yield* makeWorkerConnection({ filename, role: "reader", readOnly: true });
+  const { acquire, retire } = yield* makeWorkerConnection({
+    filename,
+    role: "reader",
+    readOnly: true,
+  });
   const scope = yield* Effect.scope;
   const context = yield* Effect.context<never>();
 
@@ -611,7 +643,7 @@ const makeReader = Effect.fnUntraced(function* (filename: string, pool: { unavai
       }),
     );
 
-  return Effect.suspend((): Effect.Effect<Connection | undefined> =>
+  const acquireReader = Effect.suspend((): Effect.Effect<Connection | undefined> =>
     pool.unavailable
       ? Effect.undefined
       : acquire.pipe(
@@ -633,6 +665,7 @@ const makeReader = Effect.fnUntraced(function* (filename: string, pool: { unavai
           }),
         ),
   );
+  return { acquire: acquireReader, retire };
 });
 
 // A checkpoint copies WAL pages into the database and syncs it. On the writer's thread every
@@ -895,12 +928,12 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const writerWorker = options.writerWorker === true && isFileDatabase;
   let checkpointAfterWrite: (() => void) | undefined;
   const writerConnection: Effect.Effect<Connection, SqlError> = writerWorker
-    ? yield* makeWorkerConnection({
+    ? (yield* makeWorkerConnection({
         filename: options.filename,
         role: "writer",
         readOnly: options.readonly ?? false,
         onReply: () => checkpointAfterWrite?.(),
-      })
+      })).acquire
     : Effect.succeed(yield* makeConnection);
   // Opening now fails the layer for a file that is not a database, not its first query.
   const opened = yield* writerConnection;
@@ -916,15 +949,17 @@ const make = Effect.fn("makeWithDatabase")(function* (
     }
   }
   const readerPool = { unavailable: false };
+  const readerScope = yield* Effect.scope;
   const readers =
     options.readerWorker && isFileDatabase
       ? yield* Effect.forEach(Array.from({ length: READER_POOL_SIZE }), () =>
           Effect.map(
             Effect.all([makeReader(options.filename, readerPool), Semaphore.make(1)]),
-            ([acquire, lock]) => ({
-              acquire,
+            ([reader, lock]) => ({
+              ...reader,
               lock,
               claimed: false,
+              retirement: undefined as Fiber.Fiber<void> | undefined,
             }),
           ),
         )
@@ -959,13 +994,28 @@ const make = Effect.fn("makeWithDatabase")(function* (
           // Holding a permit leaves a slot idle; the lowest wins, so idle slots never start a worker.
           const reader = readers.find((slot) => !slot.claimed)!;
           reader.claimed = true;
+          const retirement = reader.retirement;
+          reader.retirement = undefined;
           const release = Effect.andThen(
-            Effect.sync(() => {
+            Effect.suspend(() => {
               reader.claimed = false;
+              // The first reader stays warm; surplus readers end after a quiet period.
+              if (reader === readers[0]) return Effect.void;
+              return Effect.sleep(READER_IDLE_TIMEOUT).pipe(
+                Effect.andThen(reader.retire),
+                Effect.interruptible,
+                Effect.forkIn(readerScope),
+                Effect.map((fiber) => {
+                  reader.retirement = fiber;
+                }),
+              );
             }),
             readerAdmission.release(1),
           );
-          return Effect.as(claimed(release), reader);
+          return Effect.andThen(
+            claimed(release),
+            Effect.as(retirement ? Fiber.interrupt(retirement) : Effect.void, reader),
+          );
         }),
       );
       return Effect.flatMap(

@@ -36,7 +36,7 @@ const itemSupportAtomFamily = Atom.family((key: string) => {
   const ref = scopeThreadRef(target.environmentId, target.threadId);
   let previous = EMPTY_V2_ITEM_SUPPORT;
   return Atom.make((get): V2ItemSupport => {
-    const scoped = get(environmentThreadDetails.threadAtom(ref));
+    const scoped = get(environmentThreadDetails.structureThreadAtom(ref));
     if (scoped === null) return EMPTY_V2_ITEM_SUPPORT;
     const next = resolveV2ItemSupport(scoped.projection, target.itemId);
     if (v2ItemSupportEqual(previous, next)) return previous;

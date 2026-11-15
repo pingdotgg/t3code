@@ -61,5 +61,14 @@ describe("useLiveRefresh", () => {
 
     expect(periodic).toHaveBeenCalledTimes(5);
     expect(untimed).not.toHaveBeenCalled();
+
+    await act(() => vi.advanceTimersByTime(60_000));
+    expect(vi.getTimerCount()).toBe(0);
+
+    await act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "a" })));
+    expect(periodic).toHaveBeenCalledTimes(6);
+    expect(untimed).toHaveBeenCalledTimes(1);
+    await act(() => vi.advanceTimersByTime(60_000));
+    expect(periodic).toHaveBeenCalledTimes(7);
   });
 });

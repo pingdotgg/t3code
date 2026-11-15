@@ -75,7 +75,8 @@ const makeLayerSetup = <E, R>(migrate: Effect.Effect<unknown, E, R>) =>
       const tables = yield* sql<{
         readonly count: number;
       }>`SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table'`;
-      if (tables[0]?.count === 0) yield* sql`PRAGMA auto_vacuum = INCREMENTAL;`;
+      const fresh = tables[0]?.count === 0;
+      if (fresh) yield* sql`PRAGMA page_size = 2048;`;
       yield* sql`PRAGMA journal_mode = WAL;`;
       // FULL fsyncs every event commit; NORMAL syncs only at WAL checkpoints.
       // App crashes lose nothing; OS crashes or power loss can roll back post-checkpoint commits without corruption.
@@ -87,6 +88,11 @@ const makeLayerSetup = <E, R>(migrate: Effect.Effect<unknown, E, R>) =>
       yield* sql`PRAGMA temp_store = MEMORY;`;
       // PASSIVE checkpoints retain peak WAL size until the last connection closes.
       yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
+      if (fresh) {
+        // WAL initializes the header before auto_vacuum; rebuilding the empty header avoids a separate rollback-journal sync.
+        yield* sql`PRAGMA auto_vacuum = INCREMENTAL;`;
+        yield* sql`VACUUM;`;
+      }
       yield* migrate;
       // Collecting stats scans every page, and stale small-table stats cause scans after growth; use indexes by default.
       // Connections cache stats; reload after deleting them.
@@ -95,6 +101,7 @@ const makeLayerSetup = <E, R>(migrate: Effect.Effect<unknown, E, R>) =>
         yield* sql`DELETE FROM sqlite_stat1;`;
         yield* sql`ANALYZE sqlite_schema;`;
       }
+      if (fresh) yield* sql`PRAGMA wal_checkpoint(TRUNCATE);`;
     }).pipe(Effect.withSpan("Sqlite.setup")),
   );
 

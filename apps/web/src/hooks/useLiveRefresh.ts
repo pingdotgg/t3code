@@ -104,6 +104,7 @@ export function useLiveRefresh(
     if (!enabled) return;
     const read = (now: number) => runRefresh(viewId, now);
     const visible = () => document.visibilityState === "visible";
+    let timer: ReturnType<typeof setInterval> | undefined;
     const onArrival = () => {
       const now = Date.now();
       if (now - lastInteractedAt >= LIVE_REFRESH_IDLE_AFTER_MS) return;
@@ -116,16 +117,25 @@ export function useLiveRefresh(
     };
     const onInterval = () => {
       const now = Date.now();
+      if (now - lastInteractedAt >= LIVE_REFRESH_IDLE_AFTER_MS) {
+        clearInterval(timer);
+        timer = undefined;
+        return;
+      }
       const lastRefreshedAt = lastRefreshedAtByView.get(viewId) ?? now;
       if (shouldRefreshOnInterval({ visible: visible(), now, lastRefreshedAt, lastInteractedAt })) {
         read(now);
       }
     };
 
-    let timer: ReturnType<typeof setInterval> | undefined;
     const syncTimer = () => {
       clearInterval(timer);
-      timer = visible() && intervalMs !== null ? setInterval(onInterval, intervalMs) : undefined;
+      timer =
+        visible() &&
+        intervalMs !== null &&
+        Date.now() - lastInteractedAt < LIVE_REFRESH_IDLE_AFTER_MS
+          ? setInterval(onInterval, intervalMs)
+          : undefined;
     };
     const onVisibilityChange = () => {
       onArrival();

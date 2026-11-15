@@ -72,6 +72,48 @@ const layerTestFor = (platform: NodeJS.Platform = "win32") =>
 
 const layerTest = layerTestFor();
 
+it.effect("loads the native module once when concurrent terminals first spawn", () =>
+  Effect.gen(function* () {
+    const load = vi.fn(() => Promise.resolve(fakeNodePty));
+    yield* Effect.gen(function* () {
+      const adapter = yield* PtyAdapter.PtyAdapter;
+      assert.equal(load.mock.calls.length, 0);
+      yield* Effect.all([adapter.spawn(spawnInput), adapter.spawn(spawnInput)], {
+        concurrency: 2,
+      });
+      assert.equal(load.mock.calls.length, 1);
+    }).pipe(
+      Effect.provide(
+        NodePtyAdapter.layer.pipe(
+          Layer.provide(NodeServices.layer),
+          Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+          Layer.provide(Layer.succeed(NodePtyAdapter.NodePtyModuleLoaderRef, load)),
+        ),
+      ),
+    );
+  }),
+);
+
+it.effect("reports a native module that fails to load as a spawn failure", () =>
+  Effect.gen(function* () {
+    const adapter = yield* PtyAdapter.PtyAdapter;
+    const error = yield* adapter.spawn(spawnInput).pipe(Effect.flip);
+    assert.equal(error._tag, "PtySpawnError");
+  }).pipe(
+    Effect.provide(
+      NodePtyAdapter.layer.pipe(
+        Layer.provide(NodeServices.layer),
+        Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+        Layer.provide(
+          Layer.succeed(NodePtyAdapter.NodePtyModuleLoaderRef, () =>
+            Promise.reject(new Error("missing prebuild")),
+          ),
+        ),
+      ),
+    ),
+  ),
+);
+
 it.effect("waits for the Windows PID without requiring output", () =>
   Effect.gen(function* () {
     const { nativeProcess, subscribed } = preparePendingProcess();

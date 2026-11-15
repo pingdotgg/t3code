@@ -56,6 +56,7 @@ export class ProviderRegistry extends Context.Service<
   ProviderRegistry,
   {
     readonly getProviders: Effect.Effect<ReadonlyArray<ServerProvider>>;
+    readonly discoverProviders: Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     readonly refresh: (
       provider?: ProviderDriverKind,
@@ -621,7 +622,7 @@ export const layer = Layer.effect(
         });
       }
       const providers = yield* upsertProviders([provider], options);
-      yield* refreshCompatibility;
+      if (provider.version !== null) yield* refreshCompatibility;
       return providers;
     });
 
@@ -1198,8 +1199,34 @@ export const layer = Layer.effect(
       }
     });
 
+    const discoverProviders = Effect.fn("ProviderRegistry.discoverProviders")(function* () {
+      const instances = yield* instanceRegistry.listInstances;
+      // One provider's failed probe must not fail discovery for the rest.
+      yield* Effect.forEach(
+        instances,
+        (instance) =>
+          Effect.gen(function* () {
+            if (!instance.snapshot.ensureReady) return;
+            const provider = yield* correlateSnapshotWithSource(
+              buildSnapshotSource(instance),
+              yield* instance.snapshot.ensureReady,
+            );
+            if ((yield* instanceRegistry.getInstance(instance.instanceId)) === instance) {
+              yield* syncProvider(provider);
+            }
+          }).pipe(Effect.ignoreCause({ log: true })),
+        { concurrency: "unbounded", discard: true },
+      );
+      return yield* Ref.get(providersRef);
+    });
+
     return {
-      getProviders: Ref.get(providersRef),
+      discoverProviders: discoverProviders(),
+      getProviders: discoverProviders().pipe(
+        Effect.ignoreCause({ log: true }),
+        Effect.forkIn(serviceScope),
+        Effect.andThen(Ref.get(providersRef)),
+      ),
       refresh: (provider?: ProviderDriverKind) =>
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>

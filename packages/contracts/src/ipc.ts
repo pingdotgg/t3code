@@ -1081,6 +1081,7 @@ export interface DesktopBridge {
   /** False when the OS turned off middle-click PRIMARY paste (`gtk-enable-primary-paste`). */
   getPrimaryPasteEnabled?: () => boolean;
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];
+  onLocalEnvironmentBootstrapsChanged?: (listener: () => void) => () => void;
   getLocalEnvironmentEnabled: () => boolean;
   setLocalEnvironmentEnabled: (enabled: boolean) => Promise<void>;
   /** The environment ID recorded in this app's T3 home, such as its own machine's background service. */

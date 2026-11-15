@@ -58,9 +58,11 @@ export function ConfirmDialogHost() {
     readConfirmDialogState,
   );
 
-  const copy = resolveConfirmDialogCopy(state.status === "idle" ? "" : state.message);
-  const confirmVariant = state.status === "idle" ? "default" : state.variant;
-  const focusConfirm = state.status !== "idle" && state.initialFocus === "confirm";
+  if (state.status === "idle") return null;
+
+  const copy = resolveConfirmDialogCopy(state.message);
+  const confirmVariant = state.variant;
+  const focusConfirm = state.initialFocus === "confirm";
   const onCancel = () => respondToConfirmDialog(false);
   const onConfirm = () => respondToConfirmDialog(true);
 

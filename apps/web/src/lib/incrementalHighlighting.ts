@@ -6,6 +6,8 @@ import {
   type TokensResult,
 } from "@pierre/diffs";
 
+const LINE_BREAK = { type: "text" as const, value: "\n" };
+
 function highlightedDocument(
   result: TokensResult,
   lines = renderTokenLines(result.tokens, {}),
@@ -35,9 +37,7 @@ function highlightedDocument(
             type: "element" as const,
             tagName: "code",
             properties: {},
-            children: lines.flatMap((line, index) =>
-              index === 0 ? [line] : [{ type: "text" as const, value: "\n" }, line],
-            ),
+            children: lines.flatMap((line, index) => (index === 0 ? [line] : [LINE_BREAK, line])),
           },
         ],
       },

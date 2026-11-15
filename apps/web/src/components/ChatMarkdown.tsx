@@ -200,7 +200,7 @@ import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
 import { createMarkdownRenderer } from "./chat/markdownRenderer";
-import { splitMarkdownBlocks } from "./chat/markdownStreamBlocks";
+import { createMarkdownBlockSplitter } from "./chat/markdownStreamBlocks";
 import { MarkdownMermaidCodeBlock } from "./chat/MarkdownMermaidCodeBlock";
 import { MarkdownTable } from "./chat/MarkdownTable";
 import { MarkdownDetails } from "./chat/MarkdownDetails";
@@ -467,11 +467,7 @@ const markdownServerConfigFieldsAtom = Atom.family((environmentId: EnvironmentId
   }).pipe(Atom.withLabel("markdown-server-config-fields")),
 );
 
-function fileLinkSourcesKey(
-  text: string,
-  cwd: string | undefined,
-  imageBaseDir: string | undefined,
-): string {
+function fileLinkSources(text: string, cwd: string | undefined, imageBaseDir: string | undefined) {
   const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
     .filter((href) => !parseComposerContextHref(href))
     .map(decodeMarkdownLinkEscapes)
@@ -480,7 +476,34 @@ function fileLinkSourcesKey(
   const spans = extractInlineCodeSpans(text).filter((span) =>
     resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd),
   );
-  return JSON.stringify([[...new Set(hrefs)], [...new Set(spans)]]);
+  return { hrefs, spans };
+}
+
+function createFileLinkSourcesKey() {
+  let previous = new Map<string, ReturnType<typeof fileLinkSources>>();
+  let previousCwd: string | undefined;
+  let previousBaseDir: string | undefined;
+  return (
+    sources: readonly string[],
+    cwd: string | undefined,
+    imageBaseDir: string | undefined,
+  ) => {
+    if (cwd !== previousCwd || imageBaseDir !== previousBaseDir) previous.clear();
+    previousCwd = cwd;
+    previousBaseDir = imageBaseDir;
+    const next = new Map<string, ReturnType<typeof fileLinkSources>>();
+    const hrefs = new Set<string>();
+    const spans = new Set<string>();
+    for (const source of sources) {
+      const links = previous.get(source) ?? fileLinkSources(source, cwd, imageBaseDir);
+      next.set(source, links);
+      for (const href of links.hrefs) hrefs.add(href);
+      for (const span of links.spans) spans.add(span);
+    }
+    // Keep only this render's blocks, never the growing prefixes of the open tail.
+    previous = next;
+    return JSON.stringify([[...hrefs], [...spans]]);
+  };
 }
 
 function resolveFileLinkSources(
@@ -506,27 +529,29 @@ function resolveFileLinkSources(
   return { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath };
 }
 
-function useChatMarkdownState({
-  text,
-  inline = false,
-  cwd,
-  agentDirectories,
-  threadRef,
-  pullRequestPanelRef,
-  environmentId: explicitEnvironmentId,
-  onTaskListChange,
-  isStreaming = false,
-  skills = EMPTY_MARKDOWN_SKILLS,
-  onUseArtifactTemplate,
-  onRunShellCommand,
-  imageBaseDir,
-  workspaceMutationId,
-  onImageExpand,
-  renderContextReference,
-  headingLevelOffset = 0,
-  sourceControlMedia = false,
-  sourceControlMediaRepository,
-}: ChatMarkdownProps) {
+function useChatMarkdownState(
+  {
+    inline = false,
+    cwd,
+    agentDirectories,
+    threadRef,
+    pullRequestPanelRef,
+    environmentId: explicitEnvironmentId,
+    onTaskListChange,
+    isStreaming = false,
+    skills = EMPTY_MARKDOWN_SKILLS,
+    onUseArtifactTemplate,
+    onRunShellCommand,
+    imageBaseDir,
+    workspaceMutationId,
+    onImageExpand,
+    renderContextReference,
+    headingLevelOffset = 0,
+    sourceControlMedia = false,
+    sourceControlMediaRepository,
+  }: ChatMarkdownProps,
+  sources: readonly string[],
+) {
   const resolvedTheme = useRenderedAppearance();
   const markdownRef = useRef<HTMLElement>(null);
   const mediaRequestId = useRef(0);
@@ -704,7 +729,8 @@ function useChatMarkdownState({
   // Keyed by the file links found, not the text, so streamed text that adds none keeps the
   // renderer context, and every block reading it, unchanged.
   // A template literal marks the key as a string, so the compiler memoizes the maps on its value.
-  const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir)}`;
+  const [fileLinkSourcesKey] = useState(createFileLinkSourcesKey);
+  const fileLinksKey = `${fileLinkSourcesKey(sources, cwd, imageBaseDir)}`;
   const { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath } =
     resolveFileLinkSources(fileLinksKey, cwd, imageBaseDir);
   const resolveThreadPullRequest = (
@@ -1841,17 +1867,19 @@ function ChatMarkdown({
   renderInsights = false,
   ...props
 }: ChatMarkdownProps) {
-  const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
-    useChatMarkdownState({ text, inline, ...props });
   const hasInsights = renderInsights && text.includes("★ Insight");
   // Streaming re-renders only the last block; offsets for task edits need the whole text.
+  const [splitStream] = useState(createMarkdownBlockSplitter);
   const streamingBlocks =
     props.isStreaming === true &&
     !inline &&
     extraRemarkPlugins.length === 0 &&
     !props.onTaskListChange
-      ? splitMarkdownBlocks(text)
+      ? splitStream(text)
       : null;
+  const blocks = streamingBlocks ?? [text];
+  const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
+    useChatMarkdownState({ text, inline, ...props }, blocks);
   const incrementalParsing =
     props.isStreaming === true &&
     !hasInsights &&
@@ -1882,7 +1910,6 @@ function ChatMarkdown({
           : sharedRemarkPlugins,
         extraRemarkPlugins,
       );
-  const blocks = streamingBlocks ?? [text];
 
   return (
     <Root

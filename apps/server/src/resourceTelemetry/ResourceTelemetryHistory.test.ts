@@ -136,12 +136,19 @@ describe("buildResourceTelemetryHistory", () => {
       bucketMs: 10_000,
       sampleIntervalMs: 1_000,
       serverPid: SERVER_PID,
-      sidecarPid: Option.some(400),
+      sidecarPid: Option.some(500),
       desktopSnapshot: Option.some(desktopSnapshot()),
       snapshots: [
         snapshot(1, STARTED_AT_MS, 100, 1_000),
         snapshot(2, STARTED_AT_MS + 1_000, 350, 5_000),
-      ],
+      ].map((sample) => ({
+        ...sample,
+        sidecarPid: 400,
+        processes: [
+          ...sample.processes,
+          processSample({ pid: 400, ppid: SERVER_PID, startTimeMs: 40 }),
+        ],
+      })),
       health,
     });
 
@@ -152,6 +159,9 @@ describe("buildResourceTelemetryHistory", () => {
     expect(child?.ioWriteBytes).toBe(4_000);
     expect(electron?.category).toBe("electron-main");
     expect(electron?.currentRssBytes).toBe(1_024);
+    expect(history.topProcesses.find((process) => process.identity.pid === 400)?.category).toBe(
+      "resource-monitor",
+    );
     expect(history.buckets.reduce((total, bucket) => total + bucket.ioWriteBytes, 0)).toBe(4_000);
   });
 

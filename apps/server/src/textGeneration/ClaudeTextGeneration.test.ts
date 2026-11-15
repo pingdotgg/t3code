@@ -4,6 +4,8 @@ import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -20,6 +22,7 @@ import {
 } from "../provider/ClaudeModelCatalog.testFixtures.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import { sanitizeThreadTitle } from "@t3tools/provider-core/server/textGenerationUtils";
+import { makeLazyTextGeneration } from "./lazyTextGeneration.ts";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
@@ -110,6 +113,45 @@ function withFakeClaudeEnv<A, E, R>(
 }
 
 it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
+  it.effect("shares lazy construction across concurrent requests and cancellation", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const ready = yield* Deferred.make<void>();
+      let constructions = 0;
+      const textGeneration = yield* makeLazyTextGeneration(
+        Effect.gen(function* () {
+          constructions++;
+          yield* Deferred.succeed(started, undefined);
+          yield* Deferred.await(ready);
+          return {
+            generateCommitMessage: () => Effect.succeed({ subject: "commit", body: "" }),
+            generatePrContent: () => Effect.succeed({ title: "pr", body: "" }),
+            generateBranchName: () => Effect.succeed({ branch: "feature" }),
+            generateThreadTitle: () => Effect.succeed({ title: "thread" }),
+            generateReviewGuide: () => Effect.die("unused"),
+            generateTranscriptionPostProcessing: () => Effect.die("unused"),
+          };
+        }),
+      );
+      expect(constructions).toBe(0);
+      const input = {
+        cwd: process.cwd(),
+        message: "hello",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          SYNTHETIC_CLAUDE_STANDARD_MODEL,
+        ),
+      };
+      const first = yield* textGeneration.generateThreadTitle(input).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      const second = yield* textGeneration.generateThreadTitle(input).pipe(Effect.forkChild);
+      yield* Fiber.interrupt(first);
+      yield* Deferred.succeed(ready, undefined);
+      expect(yield* Fiber.join(second)).toEqual({ title: "thread" });
+      expect(yield* textGeneration.generateBranchName(input)).toEqual({ branch: "feature" });
+      expect(constructions).toBe(1);
+    }).pipe(Effect.scoped),
+  );
   it.effect(
     "keeps canonical built-in capabilities when a custom model collides with its alias",
     () =>

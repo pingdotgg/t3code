@@ -621,6 +621,7 @@ const PREFLIGHT_PRIMARY_STATES = [
   "not installed, fallback disabled for project",
   "signed out",
   "signed out, fallback failed",
+  "probe failed",
   "cannot generate text",
   "model cannot generate text",
 ] as const;
@@ -641,6 +642,7 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       options: [{ id: "thinking", value: false }],
     };
     const calls: ModelSelection[] = [];
+    const discovered = new Set<ProviderInstanceId>();
     const instances: ProviderInstance[] = [primary, fallback].map((instanceId) => {
       const driver = ProviderDriverKind.make(instanceId === primary ? "codex" : "claudeAgent");
       const snapshot: ServerProvider = {
@@ -698,7 +700,16 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         continuationIdentity: { driverKind: driver, continuationKey: instanceId },
         displayName: undefined,
         enabled: true,
-        snapshot: { getSnapshot: Effect.succeed(snapshot) } as ProviderInstance["snapshot"],
+        snapshot: {
+          getSnapshot: Effect.succeed({ ...snapshot, installed: false, usageLimits: undefined }),
+          ensureReady:
+            primaryState === "probe failed" && instanceId === primary
+              ? Effect.die("probe failed")
+              : Effect.sync(() => {
+                  discovered.add(instanceId);
+                  return snapshot;
+                }),
+        } as ProviderInstance["snapshot"],
         orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
         textGeneration: TextGeneration.TextGeneration.of({
           generateCommitMessage: () => Effect.die("unused"),
@@ -759,10 +770,19 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       primaryState === "ready" ||
       primaryState === "pending" ||
       primaryState === "not installed, fallback disabled for project" ||
-      primaryState === "signed out, fallback failed"
+      primaryState === "signed out, fallback failed" ||
+      primaryState === "probe failed"
         ? selection
         : threadDefault,
     ]);
+    // The primary is always probed; others only when the primary cannot be used.
+    // A failed probe falls back to the stored snapshot.
+    const expectedDiscovered = {
+      ready: [primary],
+      pending: [primary],
+      "probe failed": [],
+    }[primaryState as string] ?? [primary, fallback];
+    expect([...discovered]).toEqual(expectedDiscovered);
   }),
 );
 

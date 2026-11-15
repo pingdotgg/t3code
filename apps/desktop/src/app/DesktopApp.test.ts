@@ -137,6 +137,7 @@ it.effect.each([false, true])(
           }),
           Effect.provideService(DesktopClerk.DesktopClerk, {
             configure: Effect.void,
+            registerProtocolClient: Effect.void,
           } as DesktopClerk.DesktopClerk["Service"]),
           Effect.provideService(ElectronSafeStorage.ElectronSafeStorage, {
             selectedStorageBackend: Effect.succeedNone,
@@ -171,6 +172,7 @@ it.effect.each([false, true])(
             quitting,
           } as DesktopState.DesktopState["Service"]),
           Effect.provideService(DesktopWindow.DesktopWindow, {
+            createMain: record("create window"),
             ensureMain: record("window").pipe(
               Effect.andThen(Deferred.succeed(windowStarted, undefined)),
             ),
@@ -260,10 +262,11 @@ it.effect.each([false, true])(
       yield* Deferred.await(registrationStarted);
       yield* Deferred.await(windowStarted);
       yield* Deferred.await(tokenRequested);
-      // The backend spawns before menus, and its token is minted without waiting for the renderer.
+      // The window opens before the backend spawns, the backend before menus, and its token is
+      // minted without waiting for the renderer.
       assert.deepEqual(
         events.filter((event) => event !== "token"),
-        ["identity", "ready", "identity", "backend", "menu", "window"],
+        ["identity", "ready", "identity", "create window", "backend", "menu", "window"],
       );
       assert.isAbove(events.indexOf("token"), events.indexOf("backend"));
       assert.isFalse(yield* Deferred.isDone(registrationStopped));

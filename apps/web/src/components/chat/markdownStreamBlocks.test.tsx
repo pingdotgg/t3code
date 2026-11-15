@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown from "react-markdown";
 import { describe, expect, it } from "vite-plus/test";
 
-import { splitMarkdownBlocks } from "./markdownStreamBlocks";
+import { createMarkdownBlockSplitter, splitMarkdownBlocks } from "./markdownStreamBlocks";
 
 // Whitespace between top-level blocks collapses in the rendered message.
 const html = (source: string) =>
@@ -34,14 +34,18 @@ describe("splitMarkdownBlocks", () => {
     "Setext\n===\n\nnext\n---\n\n- [ ] task\n- [x] done",
     "- a\n\n  ```\n  x\n\n```\n\nb",
     "- a\n\n  ```\n  x\n\ny\n\n  ```\n\nb",
+    "# Title\n\nLead\n\n- item\n\n- another\n\n1. first\n\n2. second\n\nTail",
+    "Before\n\n```md\n[ref]: /x\n\n<details>\n$$\n[^n]\n```\n\nAfter",
     "```a``` is inline.\n\nprose\n\n```\none\n\ntwo\n```\n\nafter",
     "intro\n\n★ Insight ─────\nfirst\n\n```\n─────\n```\n\n- point\n─────\n\nafter\n\n`★ Insight ─────`\nsecond\n`─────`\n\nend",
   ])("renders each block as the whole text renders it, at every streamed prefix: %j", (text) => {
+    const splitStream = createMarkdownBlockSplitter();
     for (let end = 0; end <= text.length; end++) {
       const source = text.slice(0, end);
       const blocks = splitMarkdownBlocks(source);
       expect(blocks?.join("")).toBe(source);
       expect(blocks!.map(html).join("")).toBe(html(source));
+      expect(splitStream(source)).toEqual(blocks);
     }
   });
 
@@ -55,12 +59,33 @@ describe("splitMarkdownBlocks", () => {
 
   it.each([
     "[ref]\n\n[ref]: /later",
+    "```bad`info\n\n[ref]\n\n[ref]: /later",
     "a[^x]\n\n[^x]: note",
     "<details>\n\nbody\n\n</details>",
     ":::note\n\ncontent\n\n:::",
     "$$\na\n\nb\n$$",
     "a\r\n\r\nb",
+    "first\n\nsecond\n\nthird\n\n[ref]\n\n[ref]: /later",
+    "first\n\nsecond\n\nthird\n\ninternal\uFEFFmark",
   ])("keeps text with document-wide syntax whole: %j", (text) => {
     expect(splitMarkdownBlocks(text)).toBeNull();
+    const splitStream = createMarkdownBlockSplitter();
+    for (let end = 0; end <= text.length; end++) {
+      const source = text.slice(0, end);
+      expect(splitStream(source)).toEqual(splitMarkdownBlocks(source));
+    }
+  });
+
+  it("resets when the reply is edited or replaced after closing blocks", () => {
+    const splitStream = createMarkdownBlockSplitter();
+    for (const text of [
+      "a\n\nb\n\nc\n\nd",
+      "a\n\nb\n\nc\n\n-",
+      "a\n\nb\n\nc\n\n- item",
+      "[x]: /x",
+      "new\n\nreply",
+    ]) {
+      expect(splitStream(text)).toEqual(splitMarkdownBlocks(text));
+    }
   });
 });

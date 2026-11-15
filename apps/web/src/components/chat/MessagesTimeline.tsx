@@ -995,7 +995,16 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const rememberPosition = (followingEnd: boolean) => {
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || state?.data !== rows) return;
-    const isAtEnd = resolveTimelineIsAtEnd(state);
+    const viewport = listRef.current?.getScrollableNode();
+    const isAtEnd = resolveTimelineIsAtEnd(
+      viewport?.querySelector("[data-imperative-live]")
+        ? {
+            contentLength: viewport.scrollHeight,
+            scroll: viewport.scrollTop,
+            scrollLength: viewport.clientHeight,
+          }
+        : state,
+    );
     const position = state.data.length ? resolveWorkGroupScrollAnchor(state) : undefined;
     if (position && isAtEnd !== undefined) {
       const index = state.indexByKey(position.rowId);
@@ -1060,7 +1069,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (laidOutData === rows) {
       setSettlingListIdentity((current) => (current === listIdentityKey ? null : current));
     }
-    handleScroll();
+    if (!listRef.current?.getScrollableNode()?.querySelector("[data-imperative-live]"))
+      handleScroll();
   });
   // The content lane only changes width with the viewport or the chat width
   // setting, never with streamed content; measuring per content frame would
@@ -1104,6 +1114,19 @@ const ConversationTimeline = memo(function ConversationTimeline({
     citationRequest: readyCitationRequest,
     onReplyToResponse,
     listRef,
+    liveFollowEnabled,
+    imperativeLiveRowId:
+      !findActive &&
+      !citationPositioning &&
+      !anchoredEndSpace &&
+      lastMessageRow?.kind === "message" &&
+      lastMessageRow.message.role === "assistant" &&
+      lastMessageRow.message.streaming &&
+      rows
+        .slice(rows.indexOf(lastMessageRow) + 1)
+        .every((row) => row.kind === "working" || row.kind === "thinking")
+        ? lastMessageRow.id
+        : undefined,
     timestampFormat,
     routeThreadKey,
     threadRef: citationThreadRef,
@@ -1354,7 +1377,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       >
         <div
           ref={observeLaneWidth}
-          className="chat-content-lane overflow-x-clip"
+          className="chat-content-lane overflow-x-clip contain-layout contain-style"
           data-timeline-root="true"
         >
           <AudioPreviewUnmountContext value={onAudioUnmount}>
@@ -1374,7 +1397,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       {unmatchedPendingApprovals.length > 0 ? (
         <TimelineRowCtx value={sharedState}>
           <div className="messages-timeline-row-frame">
-            <div className="chat-content-lane overflow-x-clip" data-timeline-root="true">
+            <div
+              className="chat-content-lane overflow-x-clip contain-layout contain-style"
+              data-timeline-root="true"
+            >
               <WorkLogBlock>
                 {unmatchedPendingApprovals.map((approval) => (
                   <TimelinePendingApprovalRow key={approval.requestId} approval={approval} />
@@ -1474,7 +1500,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               tabIndex={-1}
               data-workspace-focus-default
               className={cn(
-                "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
+                "messages-timeline-scroll scrollbar-gutter-both contain-strict h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
                 topFadeEnabled && "topbar-scroll-fade",
               )}
               ListHeaderComponent={listHeader}

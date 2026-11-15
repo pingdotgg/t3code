@@ -41,7 +41,6 @@ import {
   parseAntigravityCliRelease,
   type AntigravityCliReleaseAsset,
 } from "./antigravityCliRelease.ts";
-import { openZipArchive } from "../zipArchive.ts";
 import { makeAntigravityAcpRuntime } from "./acp/AntigravityAcpSupport.ts";
 import {
   buildAntigravityAcpSpawnInput,
@@ -751,6 +750,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         }
       } else
         yield* Effect.gen(function* () {
+          const { openZipArchive } = yield* Effect.promise(() => import("../zipArchive.ts"));
           const archive = yield* openZipArchive(archivePath, (detail, cause) =>
             installationError("extract", detail, cause),
           );

@@ -54,6 +54,8 @@ export interface TimelineRowSharedState {
   /** Absent hides "Reply", as in the guest view. */
   onReplyToResponse: ((response: ResponseContextRecord) => boolean) | undefined;
   listRef: React.RefObject<LegendListRef | null>;
+  imperativeLiveRowId?: string | undefined;
+  liveFollowEnabled?: boolean | undefined;
   timestampFormat: TimestampFormat;
   routeThreadKey: string;
   threadRef: ScopedThreadRef | null;

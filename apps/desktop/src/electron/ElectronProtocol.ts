@@ -107,37 +107,12 @@ function withContentSecurityPolicy(response: Response, policy: string): Response
   });
 }
 
-// Must run synchronously before Electron emits ready.
-function registerDesktopSchemePrivilegesSync(): void {
-  Electron.protocol.registerSchemesAsPrivileged([
-    {
-      scheme: DESKTOP_PRODUCTION_SCHEME,
-      privileges: {
-        standard: true,
-        secure: true,
-        supportFetchAPI: true,
-        corsEnabled: true,
-        stream: true,
-        // Custom schemes must opt into V8 caching; dev URLs serve changing code.
-        codeCache: true,
-      },
-    },
-    {
-      scheme: DESKTOP_DEVELOPMENT_SCHEME,
-      privileges: {
-        standard: true,
-        secure: true,
-        supportFetchAPI: true,
-        corsEnabled: true,
-        stream: true,
-      },
-    },
-  ]);
-}
+import { registerDesktopSchemePrivilegesSync } from "./schemePrivileges.ts";
+import { desktopBootState } from "../app/desktopBootState.ts";
 
-const registerDesktopSchemePrivileges = Effect.sync(registerDesktopSchemePrivilegesSync).pipe(
-  Effect.withSpan("desktop.electron.protocol.registerSchemePrivileges"),
-);
+const registerDesktopSchemePrivileges = Effect.sync(() => {
+  if (!desktopBootState()) registerDesktopSchemePrivilegesSync();
+}).pipe(Effect.withSpan("desktop.electron.protocol.registerSchemePrivileges"));
 
 export const layerSchemePrivileges = Layer.effectDiscard(registerDesktopSchemePrivileges);
 
@@ -225,20 +200,53 @@ const serveDesktopAsset = Effect.fn("desktop.protocol.serveAsset")(function* (
   }
   const stat = yield* fileSystem.stat(assetPath).pipe(Effect.orElseSucceed(() => null));
   let filePath = assetPath;
+  let encoding: "br" | "gzip" | undefined;
   if (stat?.type !== "File") {
+    for (const [suffix, coding] of [
+      ["br", "br"],
+      ["gz", "gzip"],
+    ] as const) {
+      const compressed = yield* fileSystem.stat(`${assetPath}.${suffix}`).pipe(
+        Effect.map((info) => info.type === "File"),
+        Effect.orElseSucceed(() => false),
+      );
+      if (compressed) {
+        encoding = coding;
+        break;
+      }
+    }
+  }
+  if (stat?.type !== "File" && !encoding) {
     const wantsHtml = request.headers.get("accept")?.includes("text/html") ?? false;
     if (path.extname(assetPath) !== "" && !wantsHtml) {
       return new Response(null, { status: 404 });
     }
     filePath = path.join(root, "index.html");
+    const fallback = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
+    if (fallback?.type !== "File") return new Response(null, { status: 404 });
   }
-  const contents = yield* fileSystem.readFile(filePath).pipe(Effect.orElseSucceed(() => null));
+  const headers = {
+    "content-type": Option.getOrElse(Mime.getType(filePath), () => "application/octet-stream"),
+  };
+  if (request.method === "HEAD") return new Response(null, { headers });
+  const contents = yield* fileSystem
+    .readFile(encoding ? `${filePath}.${encoding === "br" ? "br" : "gz"}` : filePath)
+    .pipe(Effect.orElseSucceed(() => null));
   if (contents === null) return new Response(null, { status: 404 });
-  return new Response(request.method === "HEAD" ? null : new Uint8Array(contents), {
-    headers: {
-      "content-type": Option.getOrElse(Mime.getType(filePath), () => "application/octet-stream"),
+  // A byte-array Response or Blob copies the asset; a stream keeps the original buffer.
+  const stream = new ReadableStream<BufferSource>({
+    start(controller) {
+      controller.enqueue(contents as Uint8Array<ArrayBuffer>);
+      controller.close();
     },
   });
+  const body = encoding
+    ? stream.pipeThrough(
+        // Electron's Node supports brotli; the DOM type only lists browser formats.
+        new DecompressionStream((encoding === "br" ? "brotli" : "gzip") as CompressionFormat),
+      )
+    : stream;
+  return new Response(body, { headers });
 });
 
 /** @public */

@@ -204,7 +204,10 @@ describe("OrchestratorMcpService", () => {
             ),
         }),
         ServerSettings.layerTest(),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+          discoverProviders: Effect.succeed([]),
+        }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
@@ -312,7 +315,10 @@ describe("OrchestratorMcpService", () => {
           dispatch: () => Ref.update(dispatched, (count) => count + 1).pipe(Effect.as({} as never)),
         }),
         ServerSettings.layerTest(),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+          discoverProviders: Effect.succeed([]),
+        }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
@@ -406,7 +412,10 @@ describe("OrchestratorMcpService", () => {
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection()),
         }),
         ServerSettings.layerTest(),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+          discoverProviders: Effect.succeed([]),
+        }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
@@ -504,7 +513,10 @@ describe("OrchestratorMcpService", () => {
           dispatch: () => Effect.succeed({} as never),
         }),
         ServerSettings.layerTest(),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+          discoverProviders: Effect.succeed([]),
+        }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
@@ -600,7 +612,10 @@ describe("OrchestratorMcpService", () => {
             ),
         }),
         ServerSettings.layerTest(),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+          discoverProviders: Effect.succeed([]),
+        }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
@@ -702,7 +717,10 @@ describe("OrchestratorMcpService", () => {
               ),
           }),
           ServerSettings.layerTest(),
-          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([]),
+            discoverProviders: Effect.succeed([]),
+          }),
           Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
             list: () => Effect.succeed([]),
           }),
@@ -811,7 +829,10 @@ describe("OrchestratorMcpService", () => {
             ),
         }),
         ServerSettings.layerTest(),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+          discoverProviders: Effect.succeed([]),
+        }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
@@ -908,7 +929,10 @@ describe("OrchestratorMcpService", () => {
             ),
         }),
         ServerSettings.layerTest(),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+          discoverProviders: Effect.succeed([]),
+        }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
@@ -1002,7 +1026,10 @@ describe("OrchestratorMcpService", () => {
                 : Effect.succeed({} as never),
           }),
           ServerSettings.layerTest(),
-          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([]),
+            discoverProviders: Effect.succeed([]),
+          }),
           Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
             list: () => Effect.succeed([]),
           }),
@@ -1094,7 +1121,10 @@ describe("OrchestratorMcpService", () => {
             ),
         }),
         ServerSettings.layerTest(),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+          discoverProviders: Effect.succeed([]),
+        }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
@@ -1284,7 +1314,10 @@ describe("OrchestratorMcpService", () => {
             }),
         }),
         ServerSettings.layerTest(),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+          discoverProviders: Effect.succeed([]),
+        }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
@@ -1403,6 +1436,7 @@ describe("OrchestratorMcpService provider resolution", () => {
   const providerRegistryLayer = (providers: ReadonlyArray<ServerProvider>) =>
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(providers),
+      discoverProviders: Effect.succeed(providers),
       refreshInstance: () => Effect.succeed(providers),
     });
 
@@ -1870,6 +1904,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           }),
           Layer.mock(ProviderRegistry.ProviderRegistry)({
             getProviders: Effect.sync(() => providers),
+            discoverProviders: Effect.sync(() => providers),
           }),
           adapterRegistryLayer([
             codexInstanceId,
@@ -2213,6 +2248,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           ServerSettings.layerTest(),
           Layer.mock(ProviderRegistry.ProviderRegistry)({
             getProviders: Effect.succeed([
+              provider(availability === "already advertised" ? model : "muse-spark-1.3"),
+            ]),
+            discoverProviders: Effect.succeed([
               provider(availability === "already advertised" ? model : "muse-spark-1.3"),
             ]),
             refreshInstance: (instanceId) =>
@@ -3373,7 +3411,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                 Effect.succeed(threadId === boundThreadId ? boundThread : null),
             }),
             ServerSettings.layerTest(),
-            Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({
+              getProviders: Effect.succeed([]),
+              discoverProviders: Effect.succeed([]),
+            }),
             Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
               list: () => Effect.succeed([]),
             }),
@@ -3515,6 +3556,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                   ServerSettings.layerTest(),
                   Layer.mock(ProviderRegistry.ProviderRegistry)({
                     getProviders: Effect.succeed([]),
+                    discoverProviders: Effect.succeed([]),
                   }),
                   Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
                     list: () => Effect.succeed([]),
@@ -3597,7 +3639,10 @@ describe("OrchestratorMcpService provider resolution", () => {
               getThreadShell: () => Effect.succeed(null),
             }),
             ServerSettings.layerTest(),
-            Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({
+              getProviders: Effect.succeed([]),
+              discoverProviders: Effect.succeed([]),
+            }),
             Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
               list: () => Effect.succeed([]),
             }),
@@ -4290,7 +4335,10 @@ describe("OrchestratorMcpService provider resolution", () => {
               ),
           }),
           ServerSettings.layerTest(),
-          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([]),
+            discoverProviders: Effect.succeed([]),
+          }),
           Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
             list: () => Effect.succeed([]),
           }),
@@ -4371,7 +4419,10 @@ describe("OrchestratorMcpService thread lookup", () => {
             ...overrides,
           }),
           ServerSettings.layerTest(),
-          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([]),
+            discoverProviders: Effect.succeed([]),
+          }),
           Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
             list: () => Effect.succeed([]),
           }),
@@ -4595,7 +4646,10 @@ describe("OrchestratorMcpService thread list", () => {
           },
         }),
         ServerSettings.layerTest(),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+          discoverProviders: Effect.succeed([]),
+        }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
@@ -4832,7 +4886,10 @@ describe("OrchestratorMcpService thread stop", () => {
             NodeCrypto.layer,
             layerAdapters,
             ServerSettings.layerTest(),
-            Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({
+              getProviders: Effect.succeed([]),
+              discoverProviders: Effect.succeed([]),
+            }),
             Layer.mock(ProjectService.ProjectService)({}),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),

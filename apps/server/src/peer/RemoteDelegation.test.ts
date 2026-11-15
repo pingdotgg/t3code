@@ -567,6 +567,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
     Layer.provide(
       Layer.mock(ProviderRegistry.ProviderRegistry)({
         getProviders: Effect.succeed([boxClaude]),
+        discoverProviders: Effect.succeed([boxClaude]),
       }),
     ),
     Layer.provide(

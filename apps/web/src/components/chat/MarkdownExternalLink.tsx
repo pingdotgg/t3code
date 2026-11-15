@@ -53,6 +53,80 @@ function leadingExternalLinkTextLength(text: string): number {
   return Array.from(text.slice(0, 2))[0]?.length ?? 0;
 }
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+// lucide-react's GlobeIcon, built without React for links streamed outside a React root.
+const GLOBE_ICON_NODES: ReadonlyArray<readonly [string, Record<string, string>]> = [
+  ["circle", { cx: "12", cy: "12", r: "10" }],
+  ["path", { d: "M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" }],
+  ["path", { d: "M2 12h20" }],
+];
+
+function createGlobeIcon(className: string): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  for (const [name, value] of Object.entries({
+    xmlns: SVG_NS,
+    width: "24",
+    height: "24",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    "stroke-width": "2",
+    "stroke-linecap": "round",
+    "stroke-linejoin": "round",
+    class: className,
+    "aria-hidden": "true",
+  }))
+    svg.setAttribute(name, value);
+  for (const [tag, attributes] of GLOBE_ICON_NODES) {
+    const child = document.createElementNS(SVG_NS, tag);
+    for (const [name, value] of Object.entries(attributes)) child.setAttribute(name, value);
+    svg.append(child);
+  }
+  return svg;
+}
+
+export function createLiveExternalLinkContent(host: string, text: string): DocumentFragment | null {
+  if (sourceControlClients.findByPublicDomain(host)) return null;
+  const result = document.createDocumentFragment();
+  const leading = document.createElement("span");
+  leading.className = "whitespace-nowrap";
+  const icon = document.createElement("span");
+  icon.className = "ms-[0.25em] me-[0.2em]";
+  icon.setAttribute("aria-hidden", "true");
+  const globe = () => createGlobeIcon(`lucide lucide-globe ${MARKDOWN_LINK_FAVICON_CLASS_NAME}`);
+  const favicon = failedFaviconHosts.has(host) ? null : faviconUrlForOrigin(`https://${host}`);
+  if (favicon) {
+    const image = document.createElement("img");
+    image.src = favicon;
+    image.alt = "";
+    image.loading = "lazy";
+    image.draggable = false;
+    image.className = `${MARKDOWN_LINK_FAVICON_CLASS_NAME} rounded-sm`;
+    image.addEventListener(
+      "error",
+      () => {
+        failedFaviconHosts.add(host);
+        icon.replaceChildren(globe());
+      },
+      { once: true },
+    );
+    icon.append(image);
+  } else icon.append(globe());
+  const length = leadingExternalLinkTextLength(text);
+  leading.append(icon, text.slice(0, length));
+  result.append(leading);
+  for (const word of text.slice(length).match(/\s+|\S+/g) ?? []) {
+    if (word.length <= 16) result.append(word);
+    else {
+      const span = document.createElement("span");
+      span.className = "[overflow-wrap:anywhere]";
+      span.textContent = word;
+      result.append(span);
+    }
+  }
+  return result;
+}
+
 // Keep short labels such as PR numbers intact in narrow table columns.
 function breakableExternalLinkText(text: string): ReactNode[] {
   return Array.from(text.matchAll(/\s+|\S+/g), ({ 0: word, index: start }) =>

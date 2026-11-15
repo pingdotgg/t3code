@@ -193,6 +193,13 @@ const startLocalBackend = Effect.gen(function* () {
     yield* (yield* DesktopAppIdentity.DesktopAppIdentity).resolveUserDataPath,
   );
 
+  if (
+    !(yield* Ref.get(state.quitting)) &&
+    !(settings.localEnvironmentEnabled && settings.wslOnly && settings.wslBackendEnabled)
+  ) {
+    yield* desktopWindow.createMain;
+  }
+
   if (!settings.localEnvironmentEnabled) {
     yield* logBootstrapInfo("bootstrap skipping local environment (disabled in settings)");
     return false;
@@ -286,7 +293,7 @@ const bootstrap = Effect.fn("desktop.bootstrap")(function* (backendStarted: bool
     return;
   }
 
-  yield* snapShot.initialize;
+  yield* Effect.forkScoped(snapShot.initialize);
   // Only the user's own login shell PATH shows every t3 a new terminal runs; a fresh install has
   // no cached one. Without it, the command is left to Settings.
   const installCli = (yield* DesktopCliCommand.DesktopCliCommand).installOnFirstLaunch;
@@ -340,7 +347,10 @@ const startup = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const previewPasskeys = yield* PreviewPasskeys.PreviewPasskeys;
 
-  yield* shellEnvironment.installIntoProcess;
+  // Linux needs shell desktop/session variables before selecting its password store.
+  if (environment.platform === "linux") {
+    yield* shellEnvironment.installIntoProcess;
+  }
   const hasCommandLinePasswordStore =
     preReadyElectronOptions.linuxPasswordStoreCommandLine !== null;
   const linuxElectronOptions =
@@ -402,6 +412,9 @@ const startup = Effect.gen(function* () {
   const backendStarted = yield* startLocalBackend.pipe(
     Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)),
   );
+  if (environment.platform !== "linux") {
+    yield* Effect.forkScoped(shellEnvironment.installIntoProcess);
+  }
   yield* previewPasskeys.configure;
   yield* applicationMenu.configure;
   // Portal identity is prepared pre-ready; MIME helpers must not gate the backend or window.

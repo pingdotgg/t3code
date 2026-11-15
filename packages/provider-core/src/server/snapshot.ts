@@ -21,6 +21,8 @@ export interface ManagedServerProvider {
     readonly fresh?: boolean;
   }) => Effect.Effect<ProviderMaintenanceCapabilities>;
   readonly getSnapshot: Effect.Effect<ServerProvider>;
+  /** Await live discovery before using a persisted snapshot to select a provider. */
+  readonly ensureReady?: Effect.Effect<ServerProvider>;
   /** True while getSnapshot still returns the placeholder from before the first completed check. */
   readonly isAwaitingFirstCheck?: Effect.Effect<boolean>;
   readonly refresh: Effect.Effect<ServerProvider>;
