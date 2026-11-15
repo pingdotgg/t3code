@@ -292,20 +292,24 @@ describe("UsageAggregator", () => {
 
 describe("resolveModelAliases", () => {
   it("follows chains to the final model and drops chains that enter a loop", () => {
-    expect(
-      resolveModelAliases({
+    expect([
+      ...resolveModelAliases({
         "preview[1m]": "preview",
         preview: "example-model",
+        shared: "preview",
+        intoLoop: "loop",
         loop: "back",
         back: "loop",
-        intoLoop: "loop",
+        laterIntoLoop: "back",
+        deepIntoLoop: "intoLoop",
         self: "self",
+        validAfterLoops: "shared",
       }),
-    ).toEqual(
-      new Map([
-        ["preview[1m]", "example-model"],
-        ["preview", "example-model"],
-      ]),
-    );
+    ]).toEqual([
+      ["preview[1m]", "example-model"],
+      ["preview", "example-model"],
+      ["shared", "example-model"],
+      ["validAfterLoops", "example-model"],
+    ]);
   });
 });
