@@ -146,6 +146,21 @@ do {
   check(view.editor.accessibilityLabel == "Ask anything", "VoiceOver label: \(String(describing: view.editor.accessibilityLabel))")
 }
 
+// Cutting a chip is undoable: Undo restores the chip and tells the parent, Redo removes it again.
+do {
+  let view = makeEditor("hi @README.md ok", tokensJson: mention("README.md", at: 3))
+  view.editor.selectedRange = NSRange(location: 3, length: 2)
+  view.editor.cut(nil)
+  check(view.text == "hi ok", "Cut left the selection behind: \(view.text)")
+  check(view.onComposerChange.payloads.last?["value"] as? String == "hi ok", "Cut did not emit the new value")
+  view.editor.undoManager?.undo()
+  check(view.text == "hi @README.md ok", "Undo did not restore the cut text: \(view.text)")
+  check(view.chip(at: 3) is ComposerTextAttachment, "Undo did not restore the cut chip")
+  check(view.onComposerChange.payloads.last?["value"] as? String == "hi @README.md ok", "Undo did not emit the restored value")
+  view.editor.undoManager?.redo()
+  check(view.text == "hi ok", "Redo did not cut again: \(view.text)")
+}
+
 print("composer editor tests passed")
 
 private let dropEditor = ComposerTextView()
