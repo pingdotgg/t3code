@@ -32,7 +32,7 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
+import { PROJECT_FAVICON_EXTENSIONS, isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 import { scoreSubsequenceMatch } from "@t3tools/shared/searchRanking";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -41,6 +41,14 @@ import { type IgnoreDecision, type IgnoreFile, parseIgnoreFile } from "./IgnoreP
 // fff-node's native library stays external; single-executables require disk packages instead of importing them.
 const requireForFff = NodeModule.createRequire(import.meta.url);
 const { FileFinder } = requireForFff("@ff-labs/fff-node") as typeof import("@ff-labs/fff-node");
+
+// A glob intersects existing extension constraints; fff ORs bare `*.ext` constraints together.
+const IMAGE_SEARCH_CONSTRAINT = `**/*.{${PROJECT_FAVICON_EXTENSIONS.map((extension) =>
+  extension.slice(1).replace(/[a-z]/g, (letter) => `[${letter}${letter.toUpperCase()}]`),
+).join(",")}}`;
+
+// fff 0.11 disables filename fallback above this match count per base/overflow segment.
+const FFF_FILENAME_FALLBACK_MAX_MATCHES = 15_000;
 
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
@@ -173,6 +181,14 @@ function toFileEntry(item: FileItem, hostIsWindows: boolean): ProjectEntry | nul
 function toDirectoryEntry(item: DirItem, hostIsWindows: boolean): ProjectEntry | null {
   const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath, hostIsWindows));
   return normalizedPath ? { path: normalizedPath, kind: "directory" } : null;
+}
+
+function isLoneFuzzyPath(query: string): boolean {
+  const trimmed = query.trim();
+  return (
+    !/\s/u.test(trimmed) &&
+    (trimmed.startsWith("/") || (trimmed.endsWith("/") && !/^[*!\\]/u.test(trimmed)))
+  );
 }
 
 type SearchPage<I> = { readonly items: ReadonlyArray<I>; readonly totalMatched: number };
@@ -841,13 +857,13 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   });
 
   // Grows the first page until hidden entries can no longer crowd visible ones out of it.
-  const searchVisible = Effect.fn("WorkspaceSearchIndex.searchVisible")(function* <I>(
+  const searchVisible = Effect.fn("WorkspaceSearchIndex.searchVisible")(function* <I, Metadata>(
     query: string,
     pageSize: number,
     operation: "directorySearch" | "fileSearch" | "mixedSearch",
-    execute: (pageSize: number) => Promise<Result<SearchPage<I>>>,
+    execute: (pageSize: number) => Promise<Result<SearchPage<I> & Metadata>>,
     pathOf: (item: I) => string,
-  ): Effect.fn.Return<SearchPage<I>, WorkspaceSearchIndexSearchFailed> {
+  ): Effect.fn.Return<SearchPage<I> & Metadata, WorkspaceSearchIndexSearchFailed> {
     let size = pageSize;
     while (true) {
       const fetchSize = size;
@@ -862,6 +878,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         fetchSize >= WORKSPACE_INDEX_PAGE_SIZE
       ) {
         return {
+          ...result,
           items,
           totalMatched: result.totalMatched - (result.items.length - items.length),
         };
@@ -945,17 +962,40 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     );
     // Index results that are filtered-out links get dropped in the merge, so fetch past them.
     const indexLimit = limit + linkPaths.size - symlinks.length;
-    const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, indexLimit + 1);
+    const pageSize = Math.max(1, indexLimit + 1);
     const merge = (indexed: ProjectSearchEntriesResult) =>
       mergeSymlinkMatches(indexed, linkPaths, symlinks, query, limit);
     if (kind === "file" || imageOnly) {
-      const result = yield* searchVisible(
-        query,
+      const searchFiles = (fileQuery: string, size: number) =>
+        searchVisible(
+          query,
+          size,
+          "fileSearch",
+          (fetchSize) => finder.fileSearchAsync(fileQuery, { pageSize: fetchSize }),
+          (item: FileItem) => item.relativePath,
+        );
+      // Adding a constraint changes fff's lone-path parse; offset pages can skip tied matches.
+      if (imageOnly && isLoneFuzzyPath(query)) {
+        const result = yield* searchFiles(query, WORKSPACE_INDEX_PAGE_SIZE);
+        return merge(mapFileSearchResult(result, indexLimit, hostIsWindows, true));
+      }
+      let result = yield* searchFiles(
+        imageOnly ? `${query} ${IMAGE_SEARCH_CONSTRAINT}` : query,
         pageSize,
-        "fileSearch",
-        (size) => finder.fileSearchAsync(query, { pageSize: size }),
-        (item) => item.relativePath,
       );
+      if (
+        imageOnly &&
+        query.trim() &&
+        result.totalFiles > FFF_FILENAME_FALLBACK_MAX_MATCHES &&
+        result.totalMatched > 0
+      ) {
+        const unfiltered = yield* runSearch(query, 1, "fileSearch", () =>
+          finder.fileSearchAsync(query, { pageSize: 1 }),
+        );
+        if (unfiltered.totalMatched > FFF_FILENAME_FALLBACK_MAX_MATCHES) {
+          result = yield* searchFiles(query, WORKSPACE_INDEX_PAGE_SIZE);
+        }
+      }
       return merge(mapFileSearchResult(result, indexLimit, hostIsWindows, imageOnly));
     }
     if (kind === "directory") {
