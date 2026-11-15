@@ -1,0 +1,7 @@
+# Every binary that cargo runs in this workspace (tests, examples, benches, `cargo run`) runs
+# sealed: a throwaway HOME, only the variables it needs, a PATH without provider or host CLIs
+# (tools/cargo-runner.mjs). `cfg(all())` matches every target. `CONN_UNSEALED=1` is the loud
+# way out (AGENTS.md, "Safety"). A `CARGO_TARGET_<TRIPLE>_RUNNER` variable wins over this one;
+# tools/check.sh sets one for the canary.
+[target.'cfg(all())']
+runner = "tools/cargo-runner"

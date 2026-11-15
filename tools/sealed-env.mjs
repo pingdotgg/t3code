@@ -183,6 +183,74 @@ export function cargoBuildEnv(dir) {
 }
 
 /**
+ * What cargo sets for a binary it runs, and what libtest and std read: these pass the cargo
+ * runner (`tools/cargo-runner.mjs`). No `CARGO_HOME`, no registry token.
+ */
+const CARGO_RUN_VARIABLE =
+  /^(CARGO|CARGO_(PKG_\w+|BIN_\w+|CRATE_NAME|MANIFEST_DIR|MANIFEST_PATH|PRIMARY_PACKAGE|TARGET_TMPDIR)|RUST_(BACKTRACE|LIB_BACKTRACE|LOG|MIN_STACK|TEST_\w+)|DYLD_FALLBACK_LIBRARY_PATH|LD_LIBRARY_PATH)$/;
+
+/**
+ * Knobs that our tests and examples read from the environment, set by hand
+ * (`RSS_TURNS=5 cargo run --example rss`): they pass the cargo runner.
+ */
+export const RUN_KNOBS = [
+  "ACP_FIXTURE", "ACP_DUMP", "CONN_CONTRACT_REAL_PAYLOADS",
+  "RSS_TURNS", "RSS_SETTINGS", "STREAM", "REOPEN", "IDLE_MS", "CHECKPOINTS",
+];
+
+/** What the cargo runner sets itself, whatever the shell has. */
+export const RUN_SET = [
+  "HOME", "PATH", "SHELL", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM",
+  "CONN_CLAUDE_STATUS_PROBE", "CONN_CODEX_STATUS_PROBE", "CONN_MODEL_MANIFEST_URL",
+];
+
+/**
+ * Variables our Rust code reads that the cargo runner never passes: they point at a real
+ * login, a real home or the real machine. A run that needs one uses `CONN_UNSEALED=1`.
+ * `tools/sealed-run-check.mjs` fails when the code reads a variable in none of these lists.
+ */
+export const RUN_DROPPED = [
+  "CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDE_BIN", "CAFE_TOKEN", "T3_ACP_MCP_ENDPOINT",
+  "T3_ACP_MCP_AUTHORIZATION", "PROGRAMDATA", "HOSTNAME", "GIT_CONFIG_COUNT",
+];
+
+/** The prefix of the cargo runner's temp folders: `conn-run-<runner pid>-XXXXXX`. */
+export const RUN_DIR_PREFIX = "conn-run-";
+
+/**
+ * The environment for a binary that cargo runs (tests, examples, benches, `cargo run`), built
+ * by `tools/cargo-runner.mjs`: `RUNTIME_VARIABLES` and the canary's variables, what cargo and
+ * libtest set (`CARGO_RUN_VARIABLE`), `RUN_KNOBS`; then a fresh HOME, a stand-in shell, a
+ * `PATH` without provider or host CLIs, no global or system git configuration, the status
+ * probes and the model manifest fetch off. `dir` must be a fresh temp folder.
+ */
+export function sealedRunEnv(dir, env = process.env) {
+  const passed = Object.fromEntries(
+    Object.entries(env).filter(
+      ([name, value]) =>
+        value !== undefined &&
+        (RUNTIME_VARIABLES.includes(name) || CARGO_RUN_VARIABLE.test(name) || RUN_KNOBS.includes(name)),
+    ),
+  );
+  const canary = env.CONN_CANARY_ROOT
+    ? Object.fromEntries(CANARY_VARIABLES.flatMap((name) => (env[name] === undefined ? [] : [[name, env[name]]])))
+    : {};
+  return {
+    ...passed,
+    ...canary,
+    PATH: sealedPath(dir, env.PATH ?? "/usr/bin:/bin"),
+    HOME: freshHome(dir),
+    SHELL: standInShell(dir),
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    CONN_CLAUDE_STATUS_PROBE: "off",
+    CONN_CODEX_STATUS_PROBE: "off",
+    CONN_MODEL_MANIFEST_URL: "off",
+  };
+}
+
+/**
  * The environment for a `git` run that a tool makes: the tool's own, with no global or
  * system git configuration, so no user setting, credential helper or identity of this
  * machine reaches the run. Pass `env` to start from another environment.
