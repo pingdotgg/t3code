@@ -145,8 +145,9 @@ describe("installSubscriptionUsageRefresh", () => {
       unmount = registry.mount(limitsAutoRefreshSetAtom(environmentIdsKey([connected])));
       await vi.advanceTimersByTimeAsync(0);
       expect(fixture.refreshed).toEqual([connected, failed, syncing]);
+      // At five minutes the widget interval refreshes every connection; Limits shares connected's read.
       await vi.advanceTimersByTimeAsync(60_000);
-      expect(fixture.refreshed).toEqual([connected, failed, syncing, connected]);
+      expect(fixture.refreshed).toEqual([connected, failed, syncing, connected, syncing, failed]);
     } finally {
       unmount?.();
       dispose();

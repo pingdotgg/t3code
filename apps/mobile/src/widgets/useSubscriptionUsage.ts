@@ -30,9 +30,12 @@ const refreshableEnvironmentsAtom = Atom.make((get) =>
     .map(([environmentId]) => environmentId),
 );
 
+// Keeps the published reading well inside the widget snapshot's 15-minute expiry.
+const WIDGET_REFRESH_INTERVAL = 5 * 60_000;
+
 /**
  * App-lifetime worker that keeps provider quotas fresh for the usage widget:
- * on resume and connection changes; periodic reads belong to visible usage UI.
+ * on resume, on connection changes, and on a fixed interval while active.
  */
 export function installSubscriptionUsageRefresh(): () => void {
   let lastConnections = "";
@@ -58,9 +61,14 @@ export function installSubscriptionUsageRefresh(): () => void {
     immediate: true,
   });
   const unsubscribeAppState = subscribeAppState(update);
+  const timer = setInterval(() => {
+    lastConnections = "";
+    update();
+  }, WIDGET_REFRESH_INTERVAL);
   return () => {
     unsubscribeCatalog();
     unsubscribeEnvironments();
     unsubscribeAppState();
+    clearInterval(timer);
   };
 }
