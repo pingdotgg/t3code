@@ -41,9 +41,11 @@ import {
   disabledServiceTask,
   serviceTaskIsDisabled,
   serviceUnitBaseDirOf as bootServiceBaseDirOf,
+  serviceUnitEnvironmentValueOf,
   parseServiceState,
   serviceStateActiveVersion,
   serviceStateHasPendingUpdate,
+  systemdUnitDirectoryOf,
   type ServiceState,
 } from "./serviceProtocol.ts";
 
@@ -84,12 +86,21 @@ export interface BootServicePlan {
   readonly baseDir: string;
   readonly logPath: string;
   readonly unitPath: string;
+  readonly installBinDir?: string;
   /** The manager accepted a detached install; its outcome is written to `logPath`. */
   readonly handedOff?: boolean;
 }
 
+// systemd refuses an executable with a quote, backslash or control character even when
+// quoted. The executable lives under the T3 home, so this also catches a home with a newline.
+const systemdUnsafeValue = (plan: BootServicePlan) =>
+  /[\x00-\x1f\x7f"'\\]/.test(plan.program[0] ?? "");
+
 /** Service units cannot rely on the user's shell or PATH. */
 export function renderBootServiceUnit(plan: BootServicePlan): string {
+  if (systemdUnsafeValue(plan)) {
+    throw new BootServiceBaseDirUnsupportedError({ baseDir: plan.baseDir });
+  }
   // The user manager has no reliable network-online target; server networking retries itself.
   return [
     "[Unit]",
@@ -101,6 +112,9 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "Type=simple",
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
+    ...(plan.installBinDir === undefined
+      ? []
+      : [`Environment=T3CODE_INSTALL_BIN_DIR=${quoteSystemdValue(plan.installBinDir)}`]),
     `Environment=${SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark an explicit stop before it signals the server.
@@ -159,6 +173,12 @@ export function renderBootServicePlist(
     `    <string>${escapeXmlText(options.environmentPath)}</string>`,
     `    <key>T3CODE_HOME</key>`,
     `    <string>${escapeXmlText(plan.baseDir)}</string>`,
+    ...(plan.installBinDir === undefined
+      ? []
+      : [
+          `    <key>T3CODE_INSTALL_BIN_DIR</key>`,
+          `    <string>${escapeXmlText(plan.installBinDir)}</string>`,
+        ]),
     `    <key>${SERVICE_UNIT_ENV}</key>`,
     `    <string>${BOOT_SERVICE_PLIST_FILE}</string>`,
     `  </dict>`,
@@ -294,6 +314,13 @@ function systemdManager(input: {
   readonly unitDir: string;
 }): BootServiceManager {
   const unitPath = input.path.join(input.unitDir, BOOT_SERVICE_UNIT_FILE);
+  // Once StartLimitBurst trips, systemd refuses every start until the failed state is cleared.
+  const resetFailed = {
+    step: "clearing the service's failed state",
+    optional: true,
+    command: "systemctl",
+    args: ["--user", "reset-failed", BOOT_SERVICE_UNIT_FILE],
+  };
   const prepareActivation = [
     {
       step: "reloading systemd user units",
@@ -305,6 +332,7 @@ function systemdManager(input: {
       command: "systemctl",
       args: ["--user", "enable", BOOT_SERVICE_UNIT_FILE],
     },
+    resetFailed,
   ];
   return {
     kind: "systemd",
@@ -327,6 +355,7 @@ function systemdManager(input: {
       },
     ],
     restart: [
+      resetFailed,
       {
         step: "restarting the service after a failed update",
         command: "systemctl",
@@ -539,7 +568,7 @@ const decodeSystemdUnitPaths = Schema.decodeUnknownEffect(
 
 // The manager may not share the installer's environment; JSON preserves spaces in its paths.
 const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit_directory")(
-  function* (runner: ProcessRunner.ProcessRunner["Service"], path: Path.Path) {
+  function* (runner: ProcessRunner.ProcessRunner["Service"]) {
     const result = yield* runner.run({
       command: "busctl",
       args: [
@@ -555,14 +584,7 @@ const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit
     });
     if (result.code !== 0) return undefined;
     const { data } = yield* decodeSystemdUnitPaths(result.stdout);
-    // The persistent control directory identifies the manager's config root despite UnitPath overrides.
-    const controlDirectory = data.find(
-      (directory) =>
-        path.isAbsolute(directory) &&
-        directory.endsWith("/systemd/user.control") &&
-        data.includes(directory.slice(0, -".control".length)),
-    );
-    return controlDirectory?.slice(0, -".control".length);
+    return systemdUnitDirectoryOf(data);
   },
   Effect.orElseSucceed(() => undefined),
 );
@@ -580,7 +602,7 @@ export const bootServiceUnitPath = Effect.fn("cloud.boot_service.unit_path")(fun
   }
   if (platform !== "linux") return undefined;
   const unitDir =
-    (yield* readSystemdUnitDirectory(yield* ProcessRunner.ProcessRunner, path)) ??
+    (yield* readSystemdUnitDirectory(yield* ProcessRunner.ProcessRunner)) ??
     defaultSystemdUnitDir(path, homeDir, (yield* HostProcess.Environment).XDG_CONFIG_HOME ?? "");
   return path.join(unitDir, BOOT_SERVICE_UNIT_FILE);
 });
@@ -630,7 +652,13 @@ const BootServiceProblem = Schema.Literals([
 ]);
 type BootServiceProblem = typeof BootServiceProblem.Type;
 
-export function formatBootServiceProblem(problem: BootServiceProblem): string {
+export function formatBootServiceProblem(
+  problem: BootServiceProblem,
+  commands: { readonly install: string; readonly restart: string } = {
+    install: "t3 service install",
+    restart: "t3 service restart",
+  },
+): string {
   switch (problem) {
     case "user-manager-unavailable":
       return "Cannot reach the systemd user manager. Run `systemctl --user status` in a login session for the service user. Install your distribution's systemd user-session support if it is missing; do not run T3 with sudo.";
@@ -639,11 +667,11 @@ export function formatBootServiceProblem(problem: BootServiceProblem): string {
     case "linger-disabled":
       return 'Lingering is disabled. T3 Code will stop when your last login session ends and will not start at boot. Run `sudo loginctl enable-linger "$(id -un)"` on this machine, then retry the service command as your normal user.';
     case "service-disabled":
-      return "The service is not enabled to start automatically. Run `t3 service install` to repair it.";
+      return `The service is not enabled to start automatically. Run \`${commands.install}\` to repair it.`;
     case "service-stopped":
-      return "The service is not running. Check the service log (on Linux, also `systemctl --user status t3code.service`), then run `t3 service install`.";
+      return `The service is not running. Check the service log (on Linux, also \`systemctl --user status t3code.service\`), then run \`${commands.install}\`.`;
     case "restart-pending":
-      return "A newer version is installed but the service is still running the previous one. Run `t3 service restart` to switch.";
+      return `A newer version is installed but the service is still running the previous one. Run \`${commands.restart}\` to switch.`;
   }
 }
 
@@ -700,8 +728,22 @@ export class BootServiceOtherBaseDirError extends Schema.TaggedError<BootService
   }
 }
 
+export class BootServiceBaseDirUnsupportedError extends Schema.TaggedError<BootServiceBaseDirUnsupportedError>()(
+  "BootServiceBaseDirUnsupportedError",
+  { baseDir: Schema.String },
+) {
+  override get message(): string {
+    return `systemd cannot run T3 Code from ${JSON.stringify(this.baseDir)}: the path contains a quote, backslash or control character. Choose another T3 home with --base-dir.`;
+  }
+
+  override get [CliError.userMessage]() {
+    return this.message;
+  }
+}
+
 export type BootServiceError =
   | BootServiceUnsupportedError
+  | BootServiceBaseDirUnsupportedError
   | BootServiceOtherBaseDirError
   | BootServiceCommandError
   | BootServiceInstallError
@@ -772,6 +814,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   );
   const xdgConfigHome = yield* Config.String("XDG_CONFIG_HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
+  const installBinDir = Option.getOrUndefined(
+    yield* Config.String("T3CODE_INSTALL_BIN_DIR").pipe(Config.option),
+  );
   const xdgRuntimeDir = yield* Config.String("XDG_RUNTIME_DIR").pipe(Config.withDefault(""));
   // Root under sudo must not reach or start a separate root service.
   const rootUnderSudo =
@@ -958,8 +1003,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     };
     return { manager, unitPath, plan };
   };
-  let systemdUnitDir =
-    platform === "linux" ? yield* readSystemdUnitDirectory(runner, path) : undefined;
+  let systemdUnitDir = platform === "linux" ? yield* readSystemdUnitDirectory(runner) : undefined;
   let { manager: detectedManager, unitPath, plan } = resolveTarget(systemdUnitDir);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
@@ -989,6 +1033,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         );
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+  const planForUnit = (unit: string): BootServicePlan => {
+    const effectiveInstallBinDir =
+      installBinDir || serviceUnitEnvironmentValueOf(unit, "T3CODE_INSTALL_BIN_DIR");
+    return effectiveInstallBinDir ? { ...plan, installBinDir: effectiveInstallBinDir } : plan;
+  };
   const requireManager = Effect.suspend(() =>
     detectedManager === undefined
       ? new BootServiceUnsupportedError({ platform })
@@ -1162,6 +1211,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     readonly start?: boolean;
   }) {
     let manager = yield* requireManager;
+    if (manager.kind === "systemd" && systemdUnsafeValue(plan)) {
+      return yield* new BootServiceBaseDirUnsupportedError({ baseDir: input.baseDir });
+    }
     // The unit is per user. Rewriting one that serves another home moves the
     // service onto this home's data, which looks like every thread vanished.
     const refuseOtherBaseDir = Effect.gen(function* () {
@@ -1186,7 +1238,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       // Without a session the manager was unreachable at construction, and the one lingering
       // started may use another config root than this shell's XDG_CONFIG_HOME.
       if (systemdUnitDir === undefined) {
-        systemdUnitDir = yield* readSystemdUnitDirectory(runner, path);
+        systemdUnitDir = yield* readSystemdUnitDirectory(runner);
         ({ manager: detectedManager, unitPath, plan } = resolveTarget(systemdUnitDir));
         manager = yield* requireManager;
         yield* refuseOtherBaseDir;
@@ -1270,7 +1322,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         input.baseDir.replaceAll("$", () => "$$"),
         ...(options?.allowDowngrade === true ? ["--allow-downgrade"] : []),
       ]);
-      return { ...plan, handedOff: true };
+      const unit = yield* fs
+        .readFileString(unitPath)
+        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+      return { ...planForUnit(unit), handedOff: true };
     }
     // Task Scheduler restarts the task itself, so the files are written as for a deferred
     // restart while this launcher keeps running, then the restart is handed to the manager.
@@ -1281,7 +1336,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
     // State first, then unit. The launcher acquires only one at a time, and a
     // failure to lock the unit must never prevent its durable update commit.
-    yield* withSelectionLock(
+    const installedPlan = yield* withSelectionLock(
       statePath,
       withSelectionLock(
         unitPath,
@@ -1323,6 +1378,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
             .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
           // Files can match the new version even when activation fails; keep that install retryable.
           yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
+          const plan = planForUnit(currentlyInstalled ? yield* fs.readFileString(unitPath) : "");
           yield* writeDurably(
             statePath,
             // @effect-diagnostics-next-line globalJsonInEffect:off - fixed launcher-owned document.
@@ -1344,10 +1400,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           const unit = manager.render(plan);
           yield* writeDurably(unitPath, unit);
           if (!start && manager.kind === "schtasks") yield* refreshWindowsTask(unit);
+          return plan;
         }),
       ),
     ).pipe(
-      Effect.andThen(
+      Effect.tap(
         Effect.gen(function* () {
           if (handOff) {
             yield* runSteps(manager.handoff ?? []);
@@ -1375,7 +1432,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           : Effect.void,
       ),
     );
-    return handOff ? { ...plan, handedOff: true } : plan;
+    return handOff ? { ...installedPlan, handedOff: true } : installedPlan;
   });
 
   const restart: BootService["Service"]["restart"] = Effect.gen(function* () {
@@ -1520,7 +1577,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       problems,
       current:
         problems.length === 0 &&
-        normalizeUnit(unit) === normalizeUnit(manager.render(plan)) &&
+        !(manager.kind === "systemd" && systemdUnsafeValue(planForUnit(unit))) &&
+        normalizeUnit(unit) === normalizeUnit(manager.render(planForUnit(unit))) &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&
