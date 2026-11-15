@@ -211,6 +211,51 @@ describe("attachmentUploadQueue", () => {
     vi.unstubAllGlobals();
   });
 
+  it("reuploads a size-mismatched image before sending, keeping the other upload", async () => {
+    const images = [makeImage("first"), makeImage("second")];
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        first: { status: "ready", environmentId: firstEnvironment, attachmentId: "pending-first" },
+        second: {
+          status: "ready",
+          environmentId: firstEnvironment,
+          attachmentId: "pending-second",
+        },
+      },
+    });
+    mocks.executeAtomQuery.mockImplementation(
+      async (_registry, target: { input: { resource: { attachmentId: string } } }) => ({
+        _tag: "Success",
+        value: { sizeBytes: target.input.resource.attachmentId === "pending-first" ? 4 : 3 },
+      }),
+    );
+    const refresh = refreshExpiredAttachmentUploads({ environmentId: firstEnvironment, images });
+    await vi.waitFor(() => expect(TestXmlHttpRequest.requests).toHaveLength(1));
+    TestXmlHttpRequest.requests[0]!.complete();
+    await refresh;
+    const uploaded = getUploadedAttachments({ environmentId: firstEnvironment, images });
+    expect(uploaded?.[0]?.id).not.toBe("pending-first");
+    expect(uploaded?.[1]?.id).toBe("pending-second");
+  });
+
+  it("marks a damaged restored document as failed when local bytes are unavailable", async () => {
+    const file = { ...makeFile("restored-damaged"), file: null };
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        [file.id]: {
+          status: "ready",
+          environmentId: firstEnvironment,
+          attachmentId: "pending-original",
+        },
+      },
+    });
+    mocks.executeAtomQuery.mockResolvedValue({ _tag: "Success", value: { sizeBytes: 4 } });
+    await refreshExpiredAttachmentUploads({ environmentId: firstEnvironment, images: [file] });
+    expect(readAttachmentUpload(file.id)).toMatchObject({ status: "failed" });
+    expect(getUploadedAttachments({ environmentId: firstEnvironment, images: [file] })).toBeNull();
+    expect(TestXmlHttpRequest.requests).toHaveLength(0);
+  });
+
   it("reuploads an expired image while retaining other ready images", async () => {
     const images = [makeImage("first"), makeImage("second")].map((image) => ({
       ...image,

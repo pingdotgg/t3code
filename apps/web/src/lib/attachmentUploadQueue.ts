@@ -181,6 +181,7 @@ async function runUpload(job: UploadJob): Promise<void> {
       createAssetUrl: assetEnvironment.createUrl,
       environmentId: job.environmentId,
       attachmentId: job.persistedAttachmentId,
+      expectedSizeBytes: job.image.sizeBytes,
     });
     if (job.cancelled) {
       return;
@@ -217,8 +218,8 @@ async function runUpload(job: UploadJob): Promise<void> {
         status: "failed",
         environmentId: job.environmentId,
         reason:
-          verification.status === "missing"
-            ? "Uploaded file expired. Remove it and attach it again."
+          verification.status === "missing" || verification.status === "mismatched"
+            ? "Uploaded file is unavailable or damaged. Remove it and attach it again."
             : "Uploaded file could not be verified. Retry when the server reconnects.",
         ...(job.previous ? { previous: job.previous } : {}),
       });
@@ -576,12 +577,16 @@ export function retryAttachmentUpload(input: {
 export function verifyStashedAttachmentUpload(input: {
   readonly environmentId: EnvironmentId;
   readonly attachmentId: string;
+  readonly expectedSizeBytes?: number;
 }): Promise<PersistedAttachmentVerification> {
   return verifyPersistedAttachmentUpload({
     registry: appAtomRegistry,
     createAssetUrl: assetEnvironment.createUrl,
     environmentId: input.environmentId,
     attachmentId: input.attachmentId,
+    ...(input.expectedSizeBytes !== undefined
+      ? { expectedSizeBytes: input.expectedSizeBytes }
+      : {}),
   });
 }
 
@@ -621,11 +626,15 @@ export async function refreshExpiredAttachmentUploads(input: {
       const verification = await verifyStashedAttachmentUpload({
         environmentId: input.environmentId,
         attachmentId: upload.attachmentId,
+        expectedSizeBytes: image.sizeBytes,
       }).catch((error: unknown): PersistedAttachmentVerification => ({ status: "failed", error }));
       // The user may have removed or replaced the attachment while verification was in flight.
       if (readAttachmentUpload(image.id) !== upload) return;
       if (verification.status === "verified") return;
-      if (verification.status === "missing" && image.file) {
+      if (
+        (verification.status === "missing" || verification.status === "mismatched") &&
+        image.file
+      ) {
         clearUploadState(image.id);
         startAttachmentUpload({
           environmentId: input.environmentId,
@@ -640,8 +649,8 @@ export async function refreshExpiredAttachmentUploads(input: {
         environmentId: input.environmentId,
         previous: upload,
         reason:
-          verification.status === "missing"
-            ? "Uploaded attachment expired. Remove it and attach it again."
+          verification.status === "missing" || verification.status === "mismatched"
+            ? "Uploaded attachment is unavailable or damaged. Remove it and attach it again."
             : "Uploaded attachment could not be verified. Retry when the server reconnects.",
       });
     }),
