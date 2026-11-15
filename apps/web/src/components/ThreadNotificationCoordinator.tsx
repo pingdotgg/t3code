@@ -450,7 +450,12 @@ export function startThreadNotifications(
         latest.open();
       },
     },
-    { capture: true, context: () => ({ threadNotificationOpen: recentToasts.length > 0 }) },
+    {
+      capture: true,
+      when: (event) =>
+        !(event.target instanceof HTMLElement && event.target.closest("[data-keybinding-capture]")),
+      context: () => ({ threadNotificationOpen: recentToasts.length > 0 }),
+    },
   );
 
   const onSettings = () => {

@@ -473,6 +473,12 @@ it("opens the newest toast's thread from the shortcut until shortly after it clo
   complete("one");
   complete("two");
   expect(toasts).toHaveLength(2);
+  listeners.defer(() => document.body.removeAttribute("data-keybinding-capture"));
+  document.body.setAttribute("data-keybinding-capture", "");
+  pressShortcut();
+  document.body.removeAttribute("data-keybinding-capture");
+  expect(state.navigate).not.toHaveBeenCalled();
+  competingShortcut.mockClear();
   toasts[1]!.onRemove();
   pressShortcut();
   expect(state.navigate).toHaveBeenCalledExactlyOnceWith(opened("two"));
