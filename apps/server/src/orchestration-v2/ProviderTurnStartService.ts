@@ -870,6 +870,18 @@ export const layer: Layer.Layer<
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork);
+      // The thread's memory vault is chosen apart from its project and never changes it.
+      const memoryContext =
+        goalCommand || Option.isNone(memoryVaults)
+          ? ""
+          : yield* memoryVaults.value.contextForTurn({
+              threadId: projection.thread.id,
+              userText,
+              projectName: yield* projects.getById(projection.thread.projectId).pipe(
+                Effect.map((project) => Option.getOrNull(project)?.title ?? null),
+                Effect.orElseSucceed(() => null),
+              ),
+            });
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );
@@ -1735,19 +1747,12 @@ export const layer: Layer.Layer<
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          // The thread's memory vault is chosen apart from its project and never changes it.
-          const memoryContext =
-            compact || goalCommand || Option.isNone(memoryVaults)
-              ? ""
-              : yield* memoryVaults.value.contextForTurn({
-                  threadId: projection.thread.id,
-                  userText,
-                  projectName: yield* projects.getById(projection.thread.projectId).pipe(
-                    Effect.map((project) => Option.getOrNull(project)?.title ?? null),
-                    Effect.orElseSucceed(() => null),
-                  ),
-                });
-          const context = [delivery.context, sideChatContext, restartNote, memoryContext]
+          const context = [
+            delivery.context,
+            sideChatContext,
+            restartNote,
+            compact || turnInput.resume ? "" : memoryContext,
+          ]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -1826,6 +1831,7 @@ export const layer: Layer.Layer<
         retryHandoff.length === 0 &&
         sideChatHandoff === undefined &&
         restartNote === "" &&
+        memoryContext === "" &&
         !noteContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);

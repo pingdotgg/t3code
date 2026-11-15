@@ -53,6 +53,7 @@ import {
 } from "../workspace/restoreMissingWorktree.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
+import * as MemoryVaultService from "../memoryVaults/MemoryVaultService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -390,6 +391,7 @@ it.each([
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly memoryContext?: string;
   readonly manualContinuation?: boolean;
   readonly nativeResumeUnsupported?: boolean;
   readonly steeringRestart?: boolean;
@@ -1229,6 +1231,9 @@ function makeLocalCommandHarness(input: {
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.mock(MemoryVaultService.MemoryVaultService)({
+          contextForTurn: () => Effect.succeed(input.memoryContext ?? ""),
+        }),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff: (handoff) =>
             input.sideChat?.nativeForkFrom === undefined
@@ -2095,6 +2100,20 @@ effectIt.effect(
       expect(harness.projection().runs.at(-1)?.status).toBe("running");
       expect(harness.startRootRun).toHaveBeenCalledOnce();
     }),
+);
+
+effectIt.effect("adds the thread's memory vault notes to an ordinary turn", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "What is the release code word?",
+      memoryContext: "VAULT_NOTES",
+      sideChat: { contextRun: "delivered" },
+    });
+    yield* harness.start;
+    const text = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
+    expect(text.includes("VAULT_NOTES")).toBe(true);
+    expect(text.endsWith("What is the release code word?")).toBe(true);
+  }),
 );
 
 effectIt.effect("sends new steering text when restarting a manual continuation", () =>
