@@ -93,6 +93,15 @@
   },
   "citation": {
     "addCommentAria": "为引用添加备注",
+    "comment": {
+      "ariaLabel": "给选中文本添加备注",
+      "cancel": "取消",
+      "charLimit": "备注最多可包含 {{limit}} 个字符。",
+      "editorAria": "按 Enter 保存引用备注；Command/Ctrl+Enter 保存并发送；Shift+Enter 换行。",
+      "placeholder": "添加可选备注…",
+      "save": "保存",
+      "shorten": "缩短备注"
+    },
     "editCommentAria": "编辑引用备注",
     "goToSource": "转到来源"
   },

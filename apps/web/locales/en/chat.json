@@ -93,6 +93,15 @@
   },
   "citation": {
     "addCommentAria": "Add comment to citation",
+    "comment": {
+      "ariaLabel": "Comment on selected text",
+      "cancel": "Cancel",
+      "charLimit": "Comments can contain up to {{limit}} characters.",
+      "editorAria": "Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line.",
+      "placeholder": "Add an optional comment...",
+      "save": "Save",
+      "shorten": "Shorten comment"
+    },
     "editCommentAria": "Edit citation comment",
     "goToSource": "Go to source"
   },
