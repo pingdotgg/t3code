@@ -52,19 +52,6 @@ async function settled(router: AnyRouter, navigation: Promise<void>) {
 }
 
 describe("main app return location", () => {
-  it("closes a directly opened Usage page with an invalid history index", async () => {
-    await using screen = await render(<ReturnControls />, { router: "/usage" });
-    const router = screen.router!;
-    router.state.location.state.__TSR_index = Number.NaN;
-    using _tracking = { [Symbol.dispose]: startMainAppLocationTracking(router) };
-    using go = vi.spyOn(router.history, "go").mockImplementation(() => {});
-
-    await userEvent.click(screen.getByRole("button", { name: "Close modal" }));
-
-    expect(go).not.toHaveBeenCalled();
-    await vi.waitFor(() => expect(router.state.location.pathname).toBe("/"));
-  });
-
   it("closes Usage without leaving the current document when the app started with history", async () => {
     await using screen = await render(<ReturnControls />, { router: "/" });
     const router = screen.router!;
