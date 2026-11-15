@@ -3141,11 +3141,19 @@ it.effect("a loaded tab the desktop does not take back reopens on its page", () 
       desktopTabs.delete(tabId);
       desktopDetaches.emit("detach", { threadId: scope.thread.threadId, tabId });
       yield* Effect.promise(() => desktopReleased.promise);
+      const reloading = Promise.withResolvers<void>();
+      const reloaded = Promise.withResolvers<void>();
+      initialNavigation = () => {
+        reloading.resolve();
+        return reloaded.promise;
+      };
       const pending = yield* broker
         .invoke<PreviewAutomationStatus>({ scope, operation: "status", input: {} })
         .pipe(Effect.forkScoped);
       yield* Effect.promise(() => desktopAttachWaiting.promise);
       yield* TestClock.adjust("10 seconds");
+      yield* Effect.promise(() => reloading.promise);
+      reloaded.resolve();
 
       expect(yield* Fiber.join(pending)).toMatchObject({
         available: true,

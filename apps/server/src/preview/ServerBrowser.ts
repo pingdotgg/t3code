@@ -1337,7 +1337,11 @@ const make = Effect.gen(function* () {
       const initialUrl = URL.parse(navStatus.url);
       if (initialUrl) initialUrl.hash = "";
       tab.pendingInitialRequestUrl = initialUrl?.href ?? null;
-      const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
+      const options = {
+        // A reloaded page stands in for one that had loaded, so actions wait until it has too.
+        waitUntil: navStatus._tag === "Success" ? "load" : "commit",
+        timeout: NAVIGATION_TIMEOUT_MS,
+      } as const;
       tab.initialNavigation = (
         (desktop || adopted) && page.url() === navStatus.url
           ? page.reload(options)
@@ -2471,8 +2475,8 @@ const make = Effect.gen(function* () {
   ): Promise<unknown> => {
     const input = request.input;
     switch (request.operation) {
-      case "status":
-        return statusWithTitle(
+      case "status": {
+        const tab =
           request.tabId === undefined
             ? latestThreadTab(request.threadId, request.agentSessionId)
             : ((await runPromise(
@@ -2481,9 +2485,11 @@ const make = Effect.gen(function* () {
                     ServerBrowserTabNotFoundError: () => Effect.void,
                   }),
                 ),
-              )) ?? undefined),
-          request.agentSessionId,
-        );
+              )) ?? undefined);
+        // A recovered tab reports its page, not the blank one its reload starts from.
+        await tab?.initialNavigation?.catch(constVoid);
+        return statusWithTitle(tab, request.agentSessionId);
+      }
       case "open": {
         if (!request.agentSessionId)
           throw new BrowserControlInterrupted({
