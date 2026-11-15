@@ -115,34 +115,40 @@ type ProjectClonesAtom = Atom.Atom<
 function waitForProjectClone(
   registry: AtomRegistry.AtomRegistry,
   clonesAtom: ProjectClonesAtom,
+  sessionGenerationAtom: Atom.Atom<number>,
   projectId: ProjectId,
 ) {
   return new Promise<ProjectCloneSnapshot | null>((resolve) => {
     let seen = false;
-    // The server lists a clone before `start` replies and sends every new subscription the
-    // current list, so absence is trustworthy once seen or after a resubscribe; a cached
-    // list from before the start is not.
-    let resubscribed = false;
+    // The server lists a clone before `start` replies and sends each new subscription the
+    // current list, so a missing clone is gone once it was seen, or on the first list after
+    // the subscription restarted or a new session came up. The cached list predates the start.
+    let freshList = false;
     let settled = false;
-    let unsubscribe: (() => void) | null = null;
+    const unsubscribes: Array<() => void> = [];
     const check = (
       clones: AsyncResult.AsyncResult<ReadonlyArray<ProjectCloneSnapshot>, unknown>,
     ) => {
       if (settled) return;
       if (clones._tag !== "Success") {
-        resubscribed = true;
+        freshList = true;
         return;
       }
       const clone = clones.value.find((candidate) => candidate.projectId === projectId);
       if (clone) seen = true;
-      const gone = !clone && (seen || resubscribed);
+      const gone = !clone && (seen || freshList);
       const result = clone?.phase === "done" ? clone : gone ? null : undefined;
       if (result === undefined) return;
       settled = true;
-      unsubscribe?.();
+      for (const unsubscribe of unsubscribes) unsubscribe();
       resolve(result);
     };
-    unsubscribe = registry.subscribe(clonesAtom, check);
+    unsubscribes.push(
+      registry.subscribe(sessionGenerationAtom, () => {
+        freshList = true;
+      }),
+      registry.subscribe(clonesAtom, check),
+    );
     check(registry.get(clonesAtom));
   });
 }
@@ -157,6 +163,8 @@ export async function writeProjectFilesAfterClone(
   input: {
     /** The target's clone subscription; only lists the server sent are trusted. */
     readonly clonesAtom: ProjectClonesAtom;
+    /** The target's established-session count; a new session means a fresh clone list. */
+    readonly sessionGenerationAtom: Atom.Atom<number>;
     readonly environmentId: EnvironmentId;
     readonly projectId: ProjectId;
     /** The clone's top folder on the target machine. */
@@ -166,7 +174,12 @@ export async function writeProjectFilesAfterClone(
     readonly reads: ReadonlyArray<ProjectFileRead>;
   },
 ): Promise<ReadonlyArray<string>> {
-  const clone = await waitForProjectClone(registry, input.clonesAtom, input.projectId);
+  const clone = await waitForProjectClone(
+    registry,
+    input.clonesAtom,
+    input.sessionGenerationAtom,
+    input.projectId,
+  );
   // The server drops a finished clone after a short while, so a device that was away can miss it.
   if (!clone) {
     return input.reads.map(

@@ -85,6 +85,7 @@ import * as Order from "effect/Order";
 import { AsyncResult } from "effect/reactivity";
 import { cn } from "../../lib/cn";
 import { formatBytes } from "../../lib/formatBytes";
+import { environmentCatalog } from "../../connection/catalog";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { setProjectFilesCopying } from "../../state/projectClones";
 import { useProjects, useServerConfigs, waitForProject } from "../../state/entities";
@@ -1660,6 +1661,9 @@ export function AddProjectDestinationScreen(props: {
             environmentId: environment.environmentId,
             input: {},
           }),
+          sessionGenerationAtom: environmentCatalog.sessionGenerationAtom(
+            environment.environmentId,
+          ),
           ...cloneRef,
           cwd: startResult.value.cwd,
           subdirectory: stringParam(props.sourceSubdirectory) ?? "",

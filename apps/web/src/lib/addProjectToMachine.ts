@@ -7,6 +7,7 @@ import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
 import { create } from "zustand";
 
+import { environmentCatalog } from "../connection/catalog";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
 import { silenceProjectCloneToasts } from "../state/projectClones";
@@ -111,6 +112,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
       environmentId: input.target.environmentId,
       input: {},
     }),
+    sessionGenerationAtom: environmentCatalog.sessionGenerationAtom(input.target.environmentId),
     environmentId: input.target.environmentId,
     projectId,
     cwd: started.value.cwd,

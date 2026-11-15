@@ -59,6 +59,7 @@ describe("copying files to a cloned project", () => {
   function setup() {
     const registry = AtomRegistry.make();
     const clonesAtom = Atom.make<Clones>(AsyncResult.initial());
+    const sessionGenerationAtom = Atom.make(1);
     const writes: Array<ProjectWriteFileInput> = [];
     const writeFile = {
       label: "write",
@@ -75,6 +76,7 @@ describe("copying files to a cloned project", () => {
         { writeFile },
         {
           clonesAtom,
+          sessionGenerationAtom,
           environmentId,
           projectId,
           cwd: "/srv/repo",
@@ -86,7 +88,7 @@ describe("copying files to a cloned project", () => {
           ],
         },
       );
-    return { registry, clonesAtom, writes, copy };
+    return { registry, clonesAtom, sessionGenerationAtom, writes, copy };
   }
 
   it("reads each file, reporting the ones that cannot be copied whole", async () => {
@@ -161,5 +163,14 @@ describe("copying files to a cloned project", () => {
     resubscribed.registry.set(resubscribed.clonesAtom, list([]));
     expect(await missed).toHaveLength(3);
     expect(resubscribed.writes).toEqual([]);
+
+    // A durable subscription keeps Success across a session replacement.
+    const reconnected = setup();
+    reconnected.registry.set(reconnected.clonesAtom, list([]));
+    const away = reconnected.copy("");
+    reconnected.registry.set(reconnected.sessionGenerationAtom, 2);
+    reconnected.registry.set(reconnected.clonesAtom, list([]));
+    expect(await away).toHaveLength(3);
+    expect(reconnected.writes).toEqual([]);
   });
 });
