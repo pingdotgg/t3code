@@ -147,6 +147,12 @@ describe("startup agent activity", () => {
           latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:00:01.000Z"),
         }),
         shell({
+          id: ThreadId.make("completed-before-wake"),
+          status: "completed",
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:00:01.000Z"),
+          lastSnoozeWakeAt: DateTime.makeUnsafe("2026-09-04T12:00:02.000Z"),
+        }),
+        shell({
           id: oldFailed,
           status: "failed",
           latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T11:59:00.000Z"),
@@ -832,7 +838,10 @@ describe("AgentAwarenessRelay", () => {
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
 
-      yield* Ref.set(currentShell, shell(completed));
+      yield* Ref.set(
+        currentShell,
+        shell({ ...completed, lastSnoozeWakeAt: DateTime.makeUnsafe("2026-09-04T12:02:00.000Z") }),
+      );
       yield* relay.publishThread(THREAD_ID);
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
