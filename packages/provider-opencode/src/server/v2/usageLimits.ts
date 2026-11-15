@@ -171,6 +171,8 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
     const usageURL = URL.parse(workspace.usageURL);
     return {
       ...makeUsageLimits({ checkedAt, windows }),
+      // Go and Console limits belong to the workspace, so environments sharing it share one bar.
+      ...(workspace.id.trim() ? { credentialFingerprint: `workspace:${workspace.id.trim()}` } : {}),
       ...(usageURL?.protocol === "http:" || usageURL?.protocol === "https:"
         ? { externalUsage: { label: workspace.name?.trim() || workspace.id, url: usageURL.href } }
         : {}),
