@@ -1,6 +1,7 @@
 import {
   CommandId,
   type OrchestrationProjectShell,
+  type PullRequestState,
   type OrchestrationV2ThreadShell,
   type ThreadId,
   type ThreadPullRequestLink,
@@ -72,18 +73,39 @@ function entryOf(
   };
 }
 
+const PULL_REQUEST_LIST_PAGE_SIZE = 50;
+
+// A total order that survives unlinking: the cursor names a position, not an index, so removing
+// PRs already returned cannot skip later ones. PRs linked in one call share `linkedAt`.
+function pullRequestListPosition(link: ThreadPullRequestLink): string {
+  return [link.linkedAt, link.host, link.repository, String(link.number).padStart(10, "0")].join(
+    " ",
+  );
+}
+
 export function listThreadPullRequests(
   thread: Pick<OrchestrationV2ThreadShell, "pullRequests">,
+  cursor?: string,
+  states?: ReadonlyArray<PullRequestState>,
 ): ListThreadPullRequestsResult {
   const chains = resolveThreadPullRequestChains(thread.pullRequests ?? []);
+  const after = visibleThreadPullRequests(thread.pullRequests ?? [])
+    .filter((link) => states === undefined || states.includes(link.snapshot?.state ?? "open"))
+    .map((link) => ({ link, position: pullRequestListPosition(link) }))
+    .filter(({ position }) => cursor === undefined || position > cursor)
+    .toSorted((left, right) => (left.position < right.position ? -1 : 1));
+  const page = after.slice(0, PULL_REQUEST_LIST_PAGE_SIZE);
+  const pageKeys = new Set(page.map(({ link }) => threadPullRequestKeyOf(link)));
   return {
-    pullRequests: visibleThreadPullRequests(thread.pullRequests ?? []).map((link) =>
-      entryOf(link, chains),
-    ),
-    chains: chains.map((chain) => ({
-      kind: chain.kind,
-      numbers: chain.layers.map((layer) => layer.number),
-    })),
+    pullRequests: page.map(({ link }) => entryOf(link, chains)),
+    // Stacks with a pull request on this page, whole.
+    chains: chains
+      .filter((chain) => chain.layers.some((layer) => pageKeys.has(threadPullRequestKeyOf(layer))))
+      .map((chain) => ({
+        kind: chain.kind,
+        numbers: chain.layers.map((layer) => layer.number),
+      })),
+    nextCursor: after.length > page.length ? page.at(-1)!.position : null,
   };
 }
 
@@ -152,7 +174,7 @@ const make = Effect.gen(function* () {
       Effect.mapError((cause) => new Failure({ cause })),
     );
     if (Option.isNone(thread) || thread.value.deletedAt !== null) {
-      return yield* threadNotFound(engine, threadId, `Thread ${threadId} was not found.`);
+      return yield* threadNotFound(engine, scope, threadId, `Thread ${threadId} was not found.`);
     }
     return thread.value;
   });
@@ -186,7 +208,7 @@ const make = Effect.gen(function* () {
     return yield* watches.setWatching({ threadId, target: input, watching }).pipe(
       Effect.catchTags({
         PullRequestWatchThreadNotFoundError: (error) =>
-          threadNotFound(engine, error.threadId, error.message),
+          threadNotFound(engine, scope, error.threadId, error.message),
       }),
     );
   });
@@ -222,10 +244,17 @@ const make = Effect.gen(function* () {
           input,
           target,
           project: projectForPullRequest(known, target, callerProject),
+          callerProject,
           failure: null,
         })),
         Effect.catch((error) =>
-          Effect.succeed({ input, target: null, project: undefined, failure: error.message }),
+          Effect.succeed({
+            input,
+            target: null,
+            project: undefined,
+            callerProject,
+            failure: error.message,
+          }),
         ),
       ),
     );
@@ -407,7 +436,7 @@ const make = Effect.gen(function* () {
     ),
     list_thread_pull_requests: McpToolAccess.reads((input) =>
       requireThread(PullRequestListFailedError, input.threadId).pipe(
-        Effect.map(listThreadPullRequests),
+        Effect.map((thread) => listThreadPullRequests(thread, input.cursor, input.states)),
       ),
     ),
     watch_pull_request: writesThread((input) => setWatching(input, true)),
@@ -470,18 +499,26 @@ const make = Effect.gen(function* () {
         if (entry !== undefined && entry.target === null) {
           return yield* new PullRequestGuideFailedError({ detail: entry.failure ?? "" });
         }
-        if (entry === undefined || entry.target === null || entry.project === undefined) {
+        // Hosts readable without a checkout (GitHub, Bitbucket, Forgejo) are read through the
+        // caller's project; PullRequestService decides whether the host allows that.
+        const project = entry?.project ?? entry?.callerProject;
+        if (entry === undefined || entry.target === null || project === undefined) {
           return yield* new PullRequestProjectNotFoundError({
             repository: entry?.target.repository ?? input.repository ?? "",
           });
         }
-        const result = yield* reviewGuides.get(guideReference(entry.project, entry.target)).pipe(
-          Effect.mapError(
-            (error) =>
-              new PullRequestGuideFailedError({
-                detail: guideFailureDetail(error),
-                cause: error,
-              }),
+        const target = entry.target;
+        const result = yield* reviewGuides.get(guideReference(project, target)).pipe(
+          Effect.mapError((error) =>
+            entry.project === undefined &&
+            error._tag === "PullRequestUnavailableError" &&
+            (error.reason === "provider-unsupported" ||
+              error.reason === "repository-without-project")
+              ? new PullRequestProjectNotFoundError({ repository: target.repository })
+              : new PullRequestGuideFailedError({
+                  detail: guideFailureDetail(error),
+                  cause: error,
+                }),
           ),
         );
         return {

@@ -32,6 +32,7 @@ import {
   LOCAL_DEVICE_HOST_LABEL,
   type ThreadId,
 } from "@t3tools/contracts";
+import { extractPng } from "@t3tools/shared/png";
 import { SshCommandError } from "@t3tools/ssh/errors";
 import * as FileSystem from "effect/FileSystem";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
@@ -95,7 +96,7 @@ const sshProbePrerequisites = new Map([
     "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.",
   ],
   [
-    "Node 22 or newer is required on the device host.",
+    "Node 22.12 or newer is required on the device host.",
     "Connected over SSH, but this host's Node is older than 22. Install Node 22 or newer.",
   ],
   [
@@ -105,6 +106,7 @@ const sshProbePrerequisites = new Map([
 ]);
 
 const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
+  if (SshDeviceHost.isSshConnectError(error.cause)) return error.cause.message;
   const windows = SshDeviceHost.isSshWindowsHostError(error.cause) ? error.cause : null;
   const cause = windows ? windows.cause : error.cause;
   if (
@@ -178,7 +180,7 @@ export class DeviceService extends Context.Service<
     readonly testHost: (
       config: SshDeviceHostConfig,
     ) => Effect.Effect<DeviceHostSummary, DeviceError>;
-    /** Who an Expo credential signs in as and which EAS projects it can run sessions under. */
+    /** Who an Expo credential signs in as and which Expo projects it can run sessions under. */
     readonly easAccount: (
       input: DeviceEasAccountInput,
     ) => Effect.Effect<DeviceEasAccount, DeviceEasAccountError>;
@@ -613,7 +615,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             ),
             ...devices.filter((device) => !incompletePlatforms.includes(device.platform)),
           ],
-          // A host that ends devices itself (EAS stops sessions at their limits)
+          // A host that ends devices itself (Expo stops sessions at their limits)
           // leaves sessions on devices it no longer lists with nothing to stream.
           // Other hosts can miss a device for one listing, so theirs stay.
           sessions: ready.devices.endsDevices
@@ -1009,7 +1011,16 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const screenshot: DeviceService["Service"]["screenshot"] = Effect.fn("DeviceService.screenshot")(
     function* (input) {
       const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId);
-      return { device, png: yield* ready.devices.screenshot(device) };
+      const bytes = yield* ready.devices.screenshot(device);
+      const png = extractPng(bytes);
+      if (png === undefined) {
+        return yield* new DeviceOperationError({
+          operation: "screenshot",
+          reason: "hub_rejected",
+          cause: `The hub returned ${bytes.length} bytes without a complete PNG.`,
+        });
+      }
+      return { device, png };
     },
   );
 
@@ -1133,7 +1144,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       easAccount: Effect.fn("DeviceService.easAccount")(function () {
         return Effect.fail(
           new DeviceEasAccountError({
-            reason: "EAS accounts are unavailable in this device service.",
+            reason: "Expo accounts are unavailable in this device service.",
           }),
         );
       }),
@@ -1412,7 +1423,10 @@ export const make = Effect.gen(function* () {
         return yield* SshDeviceHost.probe(host).pipe(Effect.provide(probeContext));
       }).pipe(
         Effect.mapError((error) =>
-          error._tag === "DeviceHostError" && error.step === "probe"
+          error._tag === "DeviceHostError" &&
+          (isSshCommandError(error.cause) ||
+            SshDeviceHost.isSshConnectError(error.cause) ||
+            SshDeviceHost.isSshWindowsHostError(error.cause))
             ? new DeviceHostUnavailableError({
                 hostId: host.id,
                 hostLabel: host.label,
@@ -1436,8 +1450,9 @@ export const make = Effect.gen(function* () {
           (cause) =>
             new DeviceOperationError({
               operation: "update device tool",
-              reason: "command_failed",
-              // Only the exit code goes into the shown message; npm's stderr can carry registry credentials.
+              reason:
+                cause.reason === "npm_not_found" ? "package_manager_missing" : "command_failed",
+              // npm's stderr can carry registry credentials; expose only the reason and exit code.
               ...(cause.exitCode !== undefined ? { exitCode: cause.exitCode } : {}),
               cause,
             }),
