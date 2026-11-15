@@ -9,8 +9,7 @@
     }
   },
   "scripts": {
-    "typecheck": "effect-tsgo tsrs --noEmit",
-    "test": "vp test run --config ../../vite.config.ts --dir ."
+    "typecheck": "effect-tsgo tsrs --noEmit"
   },
   "devDependencies": {
     "@types/node": "catalog:",

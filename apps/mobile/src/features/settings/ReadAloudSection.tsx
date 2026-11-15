@@ -120,12 +120,14 @@ export function ReadAloudSection() {
   const [installing, setInstalling] = useState(false);
   const downloading =
     installing || install?.state === "downloading" || install?.state === "verifying";
+  // Waits for the catalog request in flight; refreshing again would abort it.
+  const refreshing = catalogState.version !== catalogVersion;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Poll the environment's download progress while it runs.
   useEffect(() => {
-    if (!downloading) return;
-    const timer = setInterval(() => setCatalogVersion((value) => value + 1), 1_000);
-    return () => clearInterval(timer);
-  }, [downloading]);
+    if (!downloading || refreshing) return;
+    const timer = setTimeout(() => setCatalogVersion((value) => value + 1), 1_000);
+    return () => clearTimeout(timer);
+  }, [downloading, refreshing]);
   const changeInstall = (action: "download" | "cancel" | "remove") => {
     if (!prepared || !selectedModel) return;
     setInstalling(action === "download");

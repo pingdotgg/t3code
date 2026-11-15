@@ -126,10 +126,13 @@ const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 function LocalSpeechModel({
   prepared,
   model,
+  refreshing,
   onChanged,
 }: {
   prepared: PreparedConnection;
   model: SpeechSynthesisCatalog["models"][number];
+  /** A catalog request is in flight; polling waits for it rather than aborting it. */
+  refreshing: boolean;
   onChanged: () => void;
 }) {
   const canManage = useEnvironmentScope(prepared.environmentId, AuthSettingsWriteScope);
@@ -139,10 +142,10 @@ function LocalSpeechModel({
   const downloading = install?.state === "downloading" || install?.state === "verifying";
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Poll the environment's download progress while it runs.
   useEffect(() => {
-    if (!downloading && !requesting) return;
-    const timer = window.setInterval(onChanged, 1_000);
-    return () => window.clearInterval(timer);
-  }, [downloading, requesting, onChanged]);
+    if ((!downloading && !requesting) || refreshing) return;
+    const timer = window.setTimeout(onChanged, 1_000);
+    return () => window.clearTimeout(timer);
+  }, [downloading, requesting, refreshing, onChanged]);
   if (!install) return null;
   const run = async (action: "download" | "cancel" | "remove") => {
     setRequesting(true);
@@ -415,6 +418,7 @@ export function ReadAloudSettingsSection() {
               key={`${prepared.environmentId}:${localModel.id}`}
               prepared={prepared}
               model={localModel}
+              refreshing={catalogState.version !== catalogVersion}
               onChanged={refreshCatalog}
             />
           )}
