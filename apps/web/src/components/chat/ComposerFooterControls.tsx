@@ -67,7 +67,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
                   size={size}
                   // Mirrors the model trigger's trailing pe-1 so the gaps on both sides of the chip match.
                   className="ps-1.5"
-                  aria-label={`Permissions: ${runtimeModeOption.label}`}
+                  aria-label={t("permissions.modeAria", { mode: runtimeModeOption.label })}
                 />
               }
             />

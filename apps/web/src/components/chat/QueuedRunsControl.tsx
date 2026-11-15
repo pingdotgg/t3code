@@ -262,7 +262,10 @@ export function QueuedRunsControl({
           return (
             <li
               key={item.key}
-              aria-label={`Queued message ${position + 1} of ${items.length}, not sent`}
+              aria-label={t("composer.queuedPositionAria", {
+                position: position + 1,
+                total: items.length,
+              })}
               aria-posinset={position + 1}
               aria-setsize={items.length}
               aria-current={isEditing ? "true" : undefined}

@@ -295,7 +295,8 @@
     "agent": "Agent",
     "cancel": "Cancel",
     "openThread": "Open thread",
-    "openAutomation": "Open automation"
+    "openAutomation": "Open automation",
+    "queuedPositionAria": "Queued message {{position}} of {{total}}, not sent"
   },
   "codeBlock": {
     "copyCode": "Copy code",
@@ -394,7 +395,8 @@
     "lineageRunning": "Lineage · {{count}} running",
     "moreThreadActions": "More thread actions",
     "sideChats": "Side chats",
-    "sideChatsRunning": "Side chats · {{count}} running"
+    "sideChatsRunning": "Side chats · {{count}} running",
+    "stopSubagentAria": "Stop subagent {{title}}"
   },
   "header": {
     "noProject": "No project",
@@ -404,7 +406,10 @@
     "breadcrumb": "Thread breadcrumb",
     "titleAria": "Thread title",
     "from": "From {{origin}}",
-    "fromDetail": "Started by an agent on {{origin}} through a linked environment."
+    "fromDetail": "Started by an agent on {{origin}} through a linked environment.",
+    "newThreadInAria": "New thread in {{name}}",
+    "openParentAria": "Open parent thread: {{title}}",
+    "threadActionsAria": "Thread actions for {{title}}"
   },
   "prRow": {
     "conflictsWith": "Merge conflicts with {{branch}}",
@@ -422,7 +427,8 @@
     "watching": "Watching: the agent wakes when checks finish, someone comments, or the branch conflicts. Click to stop.",
     "mergeTitle": "Merge {{term}}?",
     "mergeDetail": "This merges #{{number}} using {{method}}.",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "stopWatchingAria": "Stop watching #{{number}}"
   },
   "draftHero": {
     "addProject": "Add project",
@@ -518,7 +524,8 @@
     "downloadModel": "Download model",
     "askAdmin": "Ask an environment admin to download",
     "customize": "Customize in Voice settings",
-    "startDictating": "Start dictating"
+    "startDictating": "Start dictating",
+    "stepAria": "{{step}}, step {{index}}{{summary}}"
   },
   "chatSurface": {
     "subagentWork": "Subagent work",
@@ -553,7 +560,8 @@
   },
   "permissions": {
     "tooltip": "Permissions: {{mode}}. {{description}}",
-    "aria": "Permissions"
+    "aria": "Permissions",
+    "modeAria": "Permissions: {{mode}}"
   },
   "attachments": {
     "imageAttachment": "Image attachment",
@@ -563,7 +571,12 @@
     "attachAgain": "Attach again",
     "removeToSend": "Remove to send",
     "attachFiles": "Attach files",
-    "draft": "Draft"
+    "draft": "Draft",
+    "previewAria": "Preview {{name}}",
+    "retryUploadAria": "Retry upload for {{name}}",
+    "removeAria": "Remove {{name}}",
+    "playAria": "Play {{name}}",
+    "showMoreAria": "Show {{count}} more image attachments"
   },
   "stash": {
     "empty": "(empty)",

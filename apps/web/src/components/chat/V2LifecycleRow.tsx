@@ -535,7 +535,7 @@ function SubagentTimelineLink(props: {
             <button
               type="button"
               data-v2-item-type="subagent"
-              aria-label={`Open ${props.title}`}
+              aria-label={t("lifecycle.openChatA11y", { title: props.title })}
               aria-description={statusLabel}
               onClick={open}
               className={cn(

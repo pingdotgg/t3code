@@ -382,7 +382,7 @@ export function ThreadDetailsPrRow({
               size="sm"
               part={part}
               className="group/watch"
-              aria-label={`Stop watching #${number}`}
+              aria-label={t("prRow.stopWatchingAria", { number })}
               onClick={onStopWatching}
             />
           }

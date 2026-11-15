@@ -294,7 +294,8 @@
     "agent": "代理",
     "cancel": "取消",
     "openThread": "打开线程",
-    "openAutomation": "打开定时任务"
+    "openAutomation": "打开定时任务",
+    "queuedPositionAria": "排队消息 {{position}}/{{total}}，未发送"
   },
   "codeBlock": {
     "copyCode": "复制代码",
@@ -393,7 +394,8 @@
     "lineageRunning": "谱系 · {{count}} 个运行中",
     "moreThreadActions": "更多线程操作",
     "sideChats": "旁路对话",
-    "sideChatsRunning": "旁路对话 · {{count}} 个运行中"
+    "sideChatsRunning": "旁路对话 · {{count}} 个运行中",
+    "stopSubagentAria": "停止子代理 {{title}}"
   },
   "header": {
     "noProject": "无项目",
@@ -403,7 +405,10 @@
     "breadcrumb": "线程面包屑",
     "titleAria": "线程标题",
     "from": "来自 {{origin}}",
-    "fromDetail": "由代理在 {{origin}} 上通过已关联的环境启动。"
+    "fromDetail": "由代理在 {{origin}} 上通过已关联的环境启动。",
+    "newThreadInAria": "在 {{name}} 中新建线程",
+    "openParentAria": "打开父线程：{{title}}",
+    "threadActionsAria": "线程操作：{{title}}"
   },
   "prRow": {
     "conflictsWith": "与 {{branch}} 存在合并冲突",
@@ -421,7 +426,8 @@
     "watching": "监视中：检查完成、有人评论或分支出现冲突时，代理会被唤醒。点击以停止。",
     "mergeTitle": "合并{{term}}？",
     "mergeDetail": "将使用 {{method}} 合并 #{{number}}。",
-    "cancel": "取消"
+    "cancel": "取消",
+    "stopWatchingAria": "停止监视 #{{number}}"
   },
   "draftHero": {
     "addProject": "添加项目",
@@ -517,7 +523,8 @@
     "downloadModel": "下载模型",
     "askAdmin": "请环境管理员下载",
     "customize": "在语音设置中自定义",
-    "startDictating": "开始听写"
+    "startDictating": "开始听写",
+    "stepAria": "{{step}}，第 {{index}} 步{{summary}}"
   },
   "chatSurface": {
     "subagentWork": "子代理工作",
@@ -552,7 +559,8 @@
   },
   "permissions": {
     "tooltip": "权限：{{mode}}。{{description}}",
-    "aria": "权限"
+    "aria": "权限",
+    "modeAria": "权限：{{mode}}"
   },
   "attachments": {
     "imageAttachment": "图片附件",
@@ -562,7 +570,12 @@
     "attachAgain": "重新附加",
     "removeToSend": "移除后再发送",
     "attachFiles": "附加文件",
-    "draft": "草稿"
+    "draft": "草稿",
+    "previewAria": "预览 {{name}}",
+    "retryUploadAria": "重试上传 {{name}}",
+    "removeAria": "移除 {{name}}",
+    "playAria": "播放 {{name}}",
+    "showMoreAria": "显示其余 {{count}} 张图片附件"
   },
   "stash": {
     "empty": "（空）",

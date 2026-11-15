@@ -61,6 +61,7 @@ import {
   UnplugIcon,
 } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -408,6 +409,7 @@ export function ThreadRelationshipsPanel(props: {
   readonly showLineage: boolean;
   readonly showSideChats: boolean;
 }) {
+  const { t } = useTranslation("chat");
   const ref = scopeThreadRef(props.environmentId, props.threadId);
   const projection = useThreadProjection(ref)?.projection ?? null;
   const providersByEnvironment = useEnvironmentProviders();
@@ -928,7 +930,7 @@ export function ThreadRelationshipsPanel(props: {
                     variant="ghost"
                     part="icon"
                     tone="destructive"
-                    aria-label={`Stop subagent ${threadTitle}`}
+                    aria-label={t("relations.stopSubagentAria", { title: threadTitle })}
                     disabled={stoppingId !== null}
                     onClick={() => void stopSubagent(threadId, agent)}
                   />
