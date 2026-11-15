@@ -16,6 +16,7 @@ import {
 import { useClosedViewStore } from "~/closedViewStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
+import * as entities from "~/state/entities";
 
 import { closePreviewSession } from "./closePreviewSession";
 
@@ -90,26 +91,34 @@ describe("closePreviewSession", () => {
     expect(closePreview).toHaveBeenCalledWith({ threadId: "thread-1", tabId: "tab-1" });
   });
 
-  it("keeps a tab this desktop renders mounted until the server has closed it", async () => {
-    setPrimaryEnvironment(threadRef.environmentId);
-    const desktopSnapshot = { ...snapshot, runtime: "server" as const };
-    applyPreviewServerSnapshot(threadRef, desktopSnapshot);
-    let finishClose: (() => void) | undefined;
-    const closing = closePreviewSession({
-      closePreview: () =>
-        new Promise<ReturnType<typeof AsyncResult.success<void>>>((resolve) => {
-          finishClose = () => resolve(AsyncResult.success(undefined));
-        }),
-      snapshot: desktopSnapshot,
-      tabId: desktopSnapshot.tabId,
-      threadRef,
-    });
+  it.each([true, false])(
+    "keeps a native tab mounted during close only with a desktop channel (%s)",
+    async (hasDesktopBrowser) => {
+      using _desktopBrowser = vi
+        .spyOn(entities, "readEnvironmentHasDesktopBrowser")
+        .mockReturnValue(hasDesktopBrowser);
+      setPrimaryEnvironment(threadRef.environmentId);
+      const desktopSnapshot = { ...snapshot, runtime: "server" as const };
+      applyPreviewServerSnapshot(threadRef, desktopSnapshot);
+      let finishClose: (() => void) | undefined;
+      const closing = closePreviewSession({
+        closePreview: () =>
+          new Promise<ReturnType<typeof AsyncResult.success<void>>>((resolve) => {
+            finishClose = () => resolve(AsyncResult.success(undefined));
+          }),
+        snapshot: desktopSnapshot,
+        tabId: desktopSnapshot.tabId,
+        threadRef,
+      });
 
-    expect(readThreadPreviewState(threadRef).sessions).toEqual({ "tab-1": desktopSnapshot });
-    finishClose?.();
-    await closing;
-    expect(readThreadPreviewState(threadRef).sessions).toEqual({});
-    applyPreviewServerSnapshot(threadRef, desktopSnapshot);
-    expect(readThreadPreviewState(threadRef).sessions).toEqual({});
-  });
+      expect(readThreadPreviewState(threadRef).sessions).toEqual(
+        hasDesktopBrowser ? { "tab-1": desktopSnapshot } : {},
+      );
+      finishClose?.();
+      await closing;
+      expect(readThreadPreviewState(threadRef).sessions).toEqual({});
+      applyPreviewServerSnapshot(threadRef, desktopSnapshot);
+      expect(readThreadPreviewState(threadRef).sessions).toEqual({});
+    },
+  );
 });

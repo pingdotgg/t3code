@@ -11,6 +11,7 @@ import { useClosedViewStore } from "~/closedViewStore";
 import { beginPreviewSessionClose, cancelPreviewSessionClose } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
+import { readEnvironmentHasDesktopBrowser } from "~/state/entities";
 
 interface ClosePreviewSessionInput<E> {
   readonly closePreview: (input: {
@@ -27,9 +28,11 @@ export async function closePreviewSession<E>(
 ): Promise<AtomCommandResult<void, E>> {
   // Unmounting a webview destroys its page, so a tab this window renders stays mounted until the
   // server has unloaded it.
+  const primaryEnvironmentId = appAtomRegistry.get(primaryEnvironmentIdAtom);
   const keepMounted = rendersServerTabNatively(
     input.threadRef.environmentId,
-    appAtomRegistry.get(primaryEnvironmentIdAtom),
+    primaryEnvironmentId,
+    readEnvironmentHasDesktopBrowser(primaryEnvironmentId),
     input.snapshot,
   );
   if (!keepMounted) beginPreviewSessionClose(input.threadRef, input.tabId);
