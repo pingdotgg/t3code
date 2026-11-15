@@ -376,6 +376,21 @@ it("retries a failed transcription on the same chosen environment", async () => 
   expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
 });
 
+it("keeps an in-progress recording when the chosen environment reconnects", async () => {
+  setup({ destination: "env-a" });
+  await using screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.state.phase).toBe("recording");
+  mocks.connected.delete("env-a");
+  mocks.prepared.delete("env-a");
+  await screen.rerender(<Probe />);
+  mocks.connected.add("env-a");
+  await screen.rerender(<Probe />);
+  expect(mocks.voice.state.phase).toBe("recording");
+  await act(() => mocks.voice.stop());
+  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
+});
+
 it("reopens setup after reconnecting during a download and ignores its stale completion", async () => {
   setup({ destination: "env-a" });
   mocks.modelState = "missing-model";
