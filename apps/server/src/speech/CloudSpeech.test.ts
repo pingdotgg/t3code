@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { expect, vi } from "vite-plus/test";
 import * as ServerSettings from "../serverSettings.ts";
@@ -95,6 +96,45 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
       reason: "unreadable-key",
     });
     expect(upstream).toHaveBeenCalledTimes(3);
+  }),
+);
+
+it.effect("stops a long reply when its vault-backed key locks between pieces", () =>
+  Effect.gen(function* () {
+    const reference = { provider: SecretProviderId.make("work"), reference: "op://Work/Voice/key" };
+    let secret: string | undefined = "vault-key";
+    const upstream = vi.fn<typeof fetch>(async () => {
+      secret = undefined;
+      return new Response(Uint8Array.of(0xff, 0xfb), { headers: { "content-type": "audio/mpeg" } });
+    });
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(NodeServices.layer),
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(
+            Layer.mock(SecretResolver.SecretResolver)({
+              read: () => Effect.sync(() => [secret]),
+              label: () => Effect.succeed("Work"),
+              invalidate: () => Effect.void,
+            }),
+          ),
+        ),
+      ),
+    );
+    yield* service.setKey("openai", reference);
+    const failure = yield* service
+      .stream("openai", {
+        text: "Read this sentence aloud. ".repeat(200),
+        model: "",
+        voice: "",
+        speed: 1,
+        language: "en",
+      })
+      .pipe(Stream.runDrain, Effect.flip, Effect.provideService(FetchHttpClient.Fetch, upstream));
+    expect(failure).toMatchObject({ reason: "unreadable-key" });
+    expect(upstream).toHaveBeenCalledTimes(1);
   }),
 );
 

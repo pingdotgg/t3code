@@ -262,10 +262,11 @@ const make = Effect.gen(function* () {
     const model = yield* findModel(modelId);
     if (!installs.length)
       return yield* new LocalSynthesisInstallError({ reason: "unsupported-platform" });
+    // Read before the checks below: no yield may separate them from claiming `transfer`.
+    const missing = yield* missingRuntimes;
     if (transfer && transfer.modelId !== modelId)
       return yield* new LocalSynthesisInstallError({ reason: "busy" });
     if (!transfer) {
-      const missing = yield* missingRuntimes;
       const state: Transfer = {
         modelId,
         size: missing.reduce((size, install) => size + install.file.size, model.file.size),

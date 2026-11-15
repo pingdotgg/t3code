@@ -490,16 +490,17 @@ export const layer = Layer.effect(
       );
     });
     const synthesizePiece = Effect.fn("CloudSpeech.synthesizePiece")(
-      function* (
-        provider: CloudSpeechProvider,
-        source: SettingsSecretValue | undefined,
-        key: string,
-        input: SpeechSynthesisRequest,
-      ) {
+      function* (provider: CloudSpeechProvider, input: SpeechSynthesisRequest) {
         const unavailable = (cause?: unknown) =>
           isSynthesisError(cause)
             ? cause
             : new SpeechSynthesisError({ provider, reason: "unavailable", cause });
+        // Resolved per piece, so a long reply stops when its key is locked, removed, or replaced.
+        const source = (yield* credentials)[provider];
+        const key = yield* resolveKey(
+          source,
+          (reason, cause) => new SpeechSynthesisError({ provider, reason, cause }),
+        );
         const backend: SynthesisBackend = synthesisBackends[provider];
         const synthesisRequest = yield* backend.request(input);
         const current = (yield* credentials)[provider];
@@ -542,24 +543,12 @@ export const layer = Layer.effect(
           }),
         ),
     );
+    // Pieces play back to back as one stream; each is requested once the last one ends.
     const stream = (provider: CloudSpeechProvider, request: SpeechSynthesisRequest) =>
-      Stream.unwrap(
-        Effect.gen(function* () {
-          const source = (yield* credentials)[provider];
-          const key = yield* resolveKey(
-            source,
-            (reason, cause) => new SpeechSynthesisError({ provider, reason, cause }),
-          );
-          // Pieces play back to back as one stream; each is requested once the last one ends.
-          return Stream.fromIterable(
-            splitReadAloudText(request.text, CLOUD_SYNTHESIS_TEXT_LIMIT),
-          ).pipe(
-            Stream.flatMap((text) =>
-              Stream.unwrap(synthesizePiece(provider, source, key, { ...request, text })),
-            ),
-          );
-        }),
-      ).pipe(Stream.withSpan("CloudSpeech.stream"));
+      Stream.fromIterable(splitReadAloudText(request.text, CLOUD_SYNTHESIS_TEXT_LIMIT)).pipe(
+        Stream.flatMap((text) => Stream.unwrap(synthesizePiece(provider, { ...request, text }))),
+        Stream.withSpan("CloudSpeech.stream"),
+      );
     const setKey = Effect.fn("CloudSpeech.setKey")(function* (
       provider: CloudSpeechProvider,
       key: Redacted.Redacted<string> | SecretReference | null,
