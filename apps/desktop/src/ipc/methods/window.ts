@@ -436,9 +436,7 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
   result: Schema.Array(EditorId),
   handler: Effect.fn("desktop.ipc.window.probeRemoteEditors")(function* () {
     const env = yield* HostProcess.Environment;
-    // Cache PATH directory listings for this probe so each editor does not re-stat
-    // every PATH entry x PATHEXT candidate (same approach as the server's resolveAvailableEditors).
-    // forEach keeps input order, so the result order matches the serial loop.
+    // Shared listings stop each editor re-stating every PATH entry x PATHEXT candidate on Windows.
     const resolved = yield* Effect.forEach(
       REMOTE_CAPABLE_EDITOR_IDS,
       (editorId) => {
@@ -449,8 +447,7 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
       },
       { concurrency: REMOTE_EDITOR_PROBE_CONCURRENCY },
     ).pipe(withPathDirectoryListings);
-    const available = REMOTE_CAPABLE_EDITOR_IDS.filter((_, index) => resolved[index]);
-    return available;
+    return REMOTE_CAPABLE_EDITOR_IDS.filter((_, index) => resolved[index]);
   }),
 });
 

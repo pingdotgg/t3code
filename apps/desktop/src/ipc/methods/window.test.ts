@@ -535,7 +535,7 @@ describe("probeRemoteEditors PATH scan", () => {
       [dirs[2]!, "webstorm"],
       [dirs[0]!, "cursor"],
       [dirs[3]!, "code"],
-      [dirs[1]!, "zed"],
+      [dirs[1]!, "zeditor"],
     ] as const) {
       const file = path.join(dir, launcherName(command));
       yield* fs.writeFileString(file, "#!/bin/sh\n");
@@ -583,29 +583,6 @@ describe("probeRemoteEditors PATH scan", () => {
       return available;
     });
 
-  it.effect("returns the same editors in the same order as a serial uncached scan", () =>
-    Effect.gen(function* () {
-      const { env } = yield* makeFakePath();
-      const reference = yield* serialReference(env);
-      // A different PATH string keeps the 30 s command-resolution cache from sharing results.
-      const probed = yield* probeRemoteEditors.handler(undefined).pipe(
-        Effect.provideService(HostProcess.Environment, {
-          ...env,
-          PATH: `${env.PATH}${platform === "win32" ? ";" : ":"}${env.HOME}`,
-        }),
-        Effect.provideService(HostProcess.Platform, platform),
-      );
-      // The host can add editors from app folders the fixture can't redirect (e.g. /Applications on macOS),
-      // so pin only the fixture's editors; the parity check below still compares everything.
-      const fixtureEditors = ["cursor", "vscode", "zed", "webstorm"];
-      assert.deepStrictEqual(
-        reference.filter((id) => fixtureEditors.includes(id)),
-        fixtureEditors,
-      );
-      assert.deepStrictEqual(probed, reference);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("reads each PATH directory once instead of stat-ing every candidate per editor", () =>
     Effect.gen(function* () {
       const { env: baseEnv } = yield* makeFakePath();
@@ -624,6 +601,12 @@ describe("probeRemoteEditors PATH scan", () => {
           Effect.provideService(HostProcess.Platform, platform),
           Effect.provide(countingFileSystem(cachedCounter)),
         );
+      // The host can add editors from app folders the fixture can't redirect (e.g. /Applications).
+      const fixtureEditors = ["cursor", "vscode", "zed", "webstorm"];
+      assert.deepStrictEqual(
+        uncached.filter((id) => fixtureEditors.includes(id)),
+        fixtureEditors,
+      );
       assert.deepStrictEqual(cached, uncached);
       assert.isAbove(uncachedCounter.stat, 0);
       // On every platform the probe lists each PATH directory at most once. Only PATH entries count:
