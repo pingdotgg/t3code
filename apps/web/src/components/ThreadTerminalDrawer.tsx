@@ -13,13 +13,7 @@ import {
   type TerminalOutputUpdate,
   type TerminalSessionState,
 } from "@t3tools/client-runtime/state/terminal";
-import {
-  Plus,
-  SquareSplitHorizontal,
-  SquareSplitVertical,
-  SquareTerminal,
-  Trash2,
-} from "lucide-react";
+import { Plus, SquareTerminal } from "lucide-react";
 import {
   AuthPreviewOperateScope,
   AuthFilesystemReadScope,
@@ -33,7 +27,6 @@ import {
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import { terminalTabTitle } from "../layout/surfaceTabLabels";
-import { PanelTabActions, useInPanelTabBar } from "./PanelTabBreadcrumb";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -81,11 +74,7 @@ import {
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "../keybindings";
-import {
-  DEFAULT_THREAD_TERMINAL_HEIGHT,
-  MAX_TERMINALS_PER_GROUP,
-  type ThreadTerminalGroup,
-} from "../types";
+import { DEFAULT_THREAD_TERMINAL_HEIGHT, type ThreadTerminalGroup } from "../types";
 import { readLocalApi } from "~/localApi";
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "~/lib/terminalCloseConfirm";
 import { getTerminalFocusOwner } from "~/lib/terminalFocus";
@@ -1244,8 +1233,6 @@ interface ThreadTerminalDrawerProps {
   onSplitTerminal: () => void;
   onSplitTerminalVertical: () => void;
   onNewTerminal: () => void;
-  splitShortcutLabel?: string | undefined;
-  splitVerticalShortcutLabel?: string | undefined;
   newShortcutLabel?: string | undefined;
   closeShortcutLabel?: string | undefined;
   onActiveTerminalChange: (terminalId: string) => void;
@@ -1353,43 +1340,33 @@ function TerminalSplitPanes({
 interface TerminalActionButtonProps {
   label: string;
   onClick: () => void;
-  /** Keeps the tooltip reachable (it explains the limit), unlike `disabled`. */
   unavailable?: boolean;
   children: ReactNode;
-  disabled?: boolean;
   /** "bare" for the notch's "+", which matches the chat tab strip's. */
   variant?: "ghost-muted" | "bare";
 }
 
 /**
  * The terminal pane's tabs: in a layout pane they sit in the pane's notch with
- * "+" as its last child, like a chat's tabs, and the split and close actions
- * sit in the mirrored right notch. The drawer keeps a plain row.
+ * "+" as its last child, like a chat's tabs. The drawer keeps a plain row.
  */
 function TerminalTabsNotch({
   notch,
   newTerminalButton,
-  actions,
   children,
 }: {
   notch: boolean;
   newTerminalButton: ReactNode;
-  actions: ReactNode;
   children: ReactNode;
 }) {
   if (!notch) return children;
   return (
-    <>
-      <PaneNotch>
-        <LayoutPaneTabStrip>{children}</LayoutPaneTabStrip>
-        <span data-pane-notch-add="" className="flex shrink-0">
-          {newTerminalButton}
-        </span>
-      </PaneNotch>
-      <PaneNotch side="right" className="ms-auto shrink-0">
-        {actions}
-      </PaneNotch>
-    </>
+    <PaneNotch>
+      <LayoutPaneTabStrip>{children}</LayoutPaneTabStrip>
+      <span data-pane-notch-add="" className="flex shrink-0">
+        {newTerminalButton}
+      </span>
+    </PaneNotch>
   );
 }
 
@@ -1485,8 +1462,6 @@ export default function ThreadTerminalDrawer({
   onSplitTerminal,
   onSplitTerminalVertical,
   onNewTerminal,
-  splitShortcutLabel,
-  splitVerticalShortcutLabel,
   newShortcutLabel,
   closeShortcutLabel,
   onActiveTerminalChange,
@@ -1502,7 +1477,6 @@ export default function ThreadTerminalDrawer({
   const canOperateTerminal = useEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
   const terminalArea = workspaceAreaProps("terminal", 5, "Terminal");
   const isPanel = mode === "panel";
-  const inPanelTabBar = useInPanelTabBar();
   const fillsContainer = mode !== "drawer";
   const terminalOwner = mode === "panel" ? "right-panel" : "drawer";
   // As a pane, this is a layout tab: dragging one of its terminals moves it.
@@ -1655,31 +1629,9 @@ export default function ThreadTerminalDrawer({
       ...(worktreePath !== undefined ? { worktreePath } : {}),
       ...(runtimeEnv ? { runtimeEnv } : {}),
     };
-  const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
-  const splitTerminalActionLabel = hasReachedSplitLimit
-    ? `Split Terminal Horizontally (max ${MAX_TERMINALS_PER_GROUP} per group)`
-    : splitShortcutLabel
-      ? `Split Terminal Horizontally (${splitShortcutLabel})`
-      : "Split Terminal Horizontally";
-  const splitTerminalVerticalActionLabel = hasReachedSplitLimit
-    ? `Split Terminal Vertically (max ${MAX_TERMINALS_PER_GROUP} per group)`
-    : splitVerticalShortcutLabel
-      ? `Split Terminal Vertically (${splitVerticalShortcutLabel})`
-      : "Split Terminal Vertically";
-  const onSplitTerminalAction = () => {
-    if (!canOperateTerminal || hasReachedSplitLimit) return;
-    onSplitTerminal();
-  };
-  const onSplitTerminalVerticalAction = () => {
-    if (!canOperateTerminal || hasReachedSplitLimit) return;
-    onSplitTerminalVertical();
-  };
   const newTerminalActionLabel = newShortcutLabel
     ? `New Terminal (${newShortcutLabel})`
     : "New Terminal";
-  const closeTerminalActionLabel = closeShortcutLabel
-    ? `Close Terminal (${closeShortcutLabel})`
-    : "Close Terminal";
   const onNewTerminalAction = () => {
     if (!canOperateTerminal) return;
     onNewTerminal();
@@ -1868,42 +1820,6 @@ export default function ThreadTerminalDrawer({
     </TerminalActionButton>
   );
 
-  const splitButtons = (
-    <>
-      <TerminalActionButton
-        label={splitTerminalActionLabel}
-        onClick={onSplitTerminalAction}
-        unavailable={!canOperateTerminal || hasReachedSplitLimit}
-      >
-        <SquareSplitHorizontal className="size-3.5" />
-      </TerminalActionButton>
-      <TerminalActionButton
-        label={splitTerminalVerticalActionLabel}
-        onClick={onSplitTerminalVerticalAction}
-        unavailable={!canOperateTerminal || hasReachedSplitLimit}
-      >
-        <SquareSplitVertical className="size-3.5" />
-      </TerminalActionButton>
-    </>
-  );
-  const closeButton = (
-    <TerminalActionButton
-      label={closeTerminalActionLabel}
-      onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
-      unavailable={!canOperateTerminal}
-    >
-      <Trash2 className="size-3.5" />
-    </TerminalActionButton>
-  );
-  // Keep every terminal action in the header so controls never cover shell output.
-  const terminalActions = (
-    <div className="flex items-center gap-0.5">
-      {splitButtons}
-      {newTerminalButton}
-      {closeButton}
-    </div>
-  );
-
   return (
     <aside
       ref={drawerRef}
@@ -1916,22 +1832,12 @@ export default function ThreadTerminalDrawer({
     >
       {resizeHandle}
 
-      {isPanel ? (
-        inPanelTabBar ? (
-          <PanelTabActions>{terminalActions}</PanelTabActions>
-        ) : (
-          <div className="flex h-8 shrink-0 items-center justify-end border-b border-border surface-card px-1.5">
-            {terminalActions}
-          </div>
-        )
-      ) : (
+      {isPanel ? null : (
         // The terminal pane's header (pen bKxd4): one tab per terminal, "+"
         // after the last tab.
         <div
           className={cn(
             "flex h-11 shrink-0 items-center gap-1",
-            // A layout pane's tabs sit in its notch (pen hRbzg) from the pane's
-            // left edge, its actions in the mirrored notch, as a panel pane's do.
             mode === "pane" ? "relative ps-1.5 pe-2 md:ps-0" : "px-1.5 pt-1",
             mode === "pane" && leadingEdge && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             mode === "pane" && trailingEdge && "wco:pr-(--workspace-native-controls-inset)",
@@ -1952,12 +1858,6 @@ export default function ThreadTerminalDrawer({
               >
                 <Plus />
               </TerminalActionButton>
-            }
-            actions={
-              <div className="flex items-center gap-0.5">
-                {splitButtons}
-                {closeButton}
-              </div>
             }
           >
             {mode === "pane"
@@ -2051,7 +1951,7 @@ export default function ThreadTerminalDrawer({
                   );
                 }),
               )}
-              {mode === "pane" ? null : terminalActions}
+              {mode === "pane" ? null : newTerminalButton}
             </TerminalTabStrip>
             {mode === "pane"
               ? siblingTabs.after.map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)

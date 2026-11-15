@@ -101,8 +101,6 @@ interface PersistentThreadTerminalDrawerProps {
   threadId: ThreadId;
   active: boolean;
   launchContext: PersistentTerminalLaunchContext | null;
-  splitShortcutLabel: string | undefined;
-  splitVerticalShortcutLabel: string | undefined;
   newShortcutLabel: string | undefined;
   closeShortcutLabel: string | undefined;
   keybindings: ResolvedKeybindingsConfig;
@@ -118,8 +116,6 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   threadId,
   active,
   launchContext,
-  splitShortcutLabel,
-  splitVerticalShortcutLabel,
   newShortcutLabel,
   closeShortcutLabel,
   keybindings,
@@ -378,8 +374,6 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
       onSplitTerminal={splitTerminal}
       onSplitTerminalVertical={splitTerminalVertical}
       onNewTerminal={createNewTerminal}
-      splitShortcutLabel={visible ? splitShortcutLabel : undefined}
-      splitVerticalShortcutLabel={visible ? splitVerticalShortcutLabel : undefined}
       newShortcutLabel={visible ? newShortcutLabel : undefined}
       closeShortcutLabel={visible ? closeShortcutLabel : undefined}
       keybindings={keybindings}
@@ -424,8 +418,6 @@ interface PersistentThreadTerminalPanelProps {
   onNewTerminal: () => void;
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string, threadRef?: ScopedThreadRef) => void;
-  splitShortcutLabel?: string | undefined;
-  splitVerticalShortcutLabel?: string | undefined;
   newShortcutLabel?: string | undefined;
   closeShortcutLabel?: string | undefined;
 }
@@ -442,8 +434,6 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
   onNewTerminal,
   onActiveTerminalChange,
   onCloseTerminal,
-  splitShortcutLabel,
-  splitVerticalShortcutLabel,
   newShortcutLabel,
   closeShortcutLabel,
 }: PersistentThreadTerminalPanelProps) {
@@ -540,8 +530,6 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
       onSplitTerminal={onSplitTerminal}
       onSplitTerminalVertical={onSplitTerminalVertical}
       onNewTerminal={onNewTerminal}
-      splitShortcutLabel={splitShortcutLabel}
-      splitVerticalShortcutLabel={splitVerticalShortcutLabel}
       newShortcutLabel={newShortcutLabel}
       closeShortcutLabel={closeShortcutLabel}
       onActiveTerminalChange={onActiveTerminalChange}
