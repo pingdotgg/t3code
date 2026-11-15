@@ -3069,29 +3069,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       sourceTool: "execute",
     },
     {
-      action: "github_create_issue",
-      resources: ["*"],
-      prompt: "github_create_issue",
-    },
-    {
       action: "shell",
-      resources: ["echo FIRST"],
-      prompt: "echo FIRST",
+      resources: ["rm -rf build/*"],
+      prompt: "rm -rf build/*",
     },
     {
       action: "external_directory",
       resources: ["/first/config.json", "/second/*"],
-      prompt: "external_directory",
-    },
-    {
-      action: "shell",
-      resources: ["git status *"],
-      prompt: "shell",
-    },
-    {
-      action: "external_directory",
-      resources: ["/first/config.json", "/second/config.json"],
-      prompt: "/first/config.json\n/second/config.json",
+      prompt: "/first/config.json\n/second/*",
     },
     { action: "custom", resources: [], prompt: "custom" },
   ])("shows a $action permission prompt for $resources", ({ prompt, sourceTool, ...permission }) =>

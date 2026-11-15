@@ -2581,10 +2581,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         {
           type: "approval_request",
           requestKind: openCodePermissionRequestKind(data.action, toolName),
-          prompt:
-            data.resources.length === 0 || data.resources.some((resource) => resource.includes("*"))
-              ? data.action
-              : data.resources.join("\n"),
+          // MCP tools ask with a bare "*" resource; the action is the tool name.
+          prompt: data.resources.every((resource) => resource === "*")
+            ? data.action
+            : data.resources.join("\n"),
           options: [
             { decision: "cancel", label: "Cancel" },
             { decision: "decline", label: "Decline" },
