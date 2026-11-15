@@ -77,6 +77,8 @@ const LOOKAHEAD: usize = 256;
 #[derive(Clone)]
 struct ActiveRun {
     run_id: String,
+    /// The run's ordinal, which its turn's terminal names.
+    ordinal: u64,
     root_node_id: String,
     provider_turn_id: Option<ProviderTurnId>,
 }
@@ -779,6 +781,7 @@ impl Inner {
                 });
             state.active = Some(ActiveRun {
                 run_id: run_id.to_owned(),
+                ordinal: context.run["ordinal"].as_u64().unwrap_or(1),
                 root_node_id: root.clone(),
                 provider_turn_id: None,
             });
@@ -2083,6 +2086,13 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
         }
         // The pump sends live command output to the hub before it translates.
         ProviderEvent::CommandOutputDelta { .. } => Translated::Ignore,
+        // An earlier run's terminal that comes late (an abandoned start's) ends that turn only:
+        // T3 routes a terminal to the run whose turn it ends, never to the next one.
+        ProviderEvent::TurnTerminal(terminal)
+            if active.is_some_and(|a| a.ordinal != u64::from(terminal.run_ordinal)) =>
+        {
+            Translated::Ignore
+        }
         ProviderEvent::TurnTerminal(terminal) => {
             let status = status_name(terminal.status);
             let failure = match (&terminal.status, terminal.failure) {
