@@ -706,10 +706,9 @@ export const make = Effect.gen(function* () {
     const reportOf = (target: WatchTarget) =>
       evaluatePullRequestWatch(target.watch, detail, remarks, now);
     // A wake lists the open review threads, so a pass that skipped them reads them before waking.
-    const holds = (target: WatchTarget) =>
-      target.thread.busy && target.watch.awaitingBaseline === undefined;
+    const holds = (target: WatchTarget) => target.thread.busy;
     const wakes = (target: WatchTarget) => !holds(target) && reportOf(target).changes.length > 0;
-    if (Option.isNone(activity) && group.targets.some(wakes)) {
+    if (!plan.activity && Option.isNone(activity) && group.targets.some(wakes)) {
       activity = yield* pullRequests.activity(reference).pipe(
         Effect.asSome,
         Effect.catch((error) =>
@@ -753,7 +752,19 @@ export const make = Effect.gen(function* () {
       // A pass that sets the check baseline is recorded, or every later read would stay one.
       if (report.changes.length > 0 && holds(target)) {
         deferred.add(lifeKey(target));
-        const held = holdFailures(target.watch, report);
+        const baseline =
+          target.watch.awaitingBaseline === undefined
+            ? target.watch
+            : {
+                ...report.next,
+                remarksThrough: target.watch.remarksThrough,
+                remarkIds: target.watch.remarkIds,
+                conflicting: target.watch.conflicting,
+                rebaseRequired: target.watch.rebaseRequired,
+                mergeQueueRemovalId: target.watch.mergeQueueRemovalId,
+                wakes: target.watch.wakes,
+              };
+        const held = holdFailures(baseline, report);
         return watchesEqual(held, target.watch) ? Effect.void : record(target, held);
       }
       if (report.changes.length > 0) {

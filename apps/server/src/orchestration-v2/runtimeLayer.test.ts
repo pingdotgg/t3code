@@ -4660,13 +4660,23 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       status = "success";
       yield* TestClock.adjust("10 minutes");
       yield* reactor.sweep;
+      const before = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+      assert.isEmpty(before.messages.filter((message) => message.notification !== undefined));
       yield* finishRuns(threadId);
       yield* reactor.sweep;
       const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+      assert.lengthOf(
+        messages.filter((message) => message.notification !== undefined),
+        1,
+      );
       const summaries = messages.flatMap((message) => message.notification?.summary ?? []);
       assert.isTrue(
         summaries.some((summary) => summary.includes("checks failed")),
         summaries.join("; "),
+      );
+      assert.include(
+        messages.find((message) => message.notification !== undefined)?.text ?? "",
+        "Thanks, looking now.",
       );
       yield* watch(false, "end");
     }),

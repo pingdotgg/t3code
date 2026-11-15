@@ -876,6 +876,7 @@ describe("evaluatePullRequestWatch", () => {
       baseBranch: "main",
       headSha: null,
       report,
+      state: { checks: [], reviewThreads: null },
     });
     assert.include(text, `: "${quoted}" `);
   });
