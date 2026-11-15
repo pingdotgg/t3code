@@ -18,7 +18,7 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { CalendarRangeIcon, GaugeIcon, Minimize2Icon, TimerIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -34,10 +34,7 @@ import { ContextWindowSegments } from "./ContextWindowMeter";
 import { contextWindowSegments } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
-// The canvas reserves the same icon, label, meter, percent and trailing columns in every row.
-// The trailing column is only as wide as the section's longest reset label, so meters fill the row.
-const USAGE_ROW_CLASS =
-  "grid grid-cols-[1rem_3.625rem_minmax(0,1fr)_var(--usage-value,2.25rem)_var(--usage-trailing,1.5rem)] items-center gap-x-2 ps-3 pe-2 text-meta";
+const USAGE_ROW_CLASS = "col-span-full grid grid-cols-subgrid items-center gap-x-1 text-meta";
 
 const PACE_LABEL: Record<LimitPace, string> = {
   ahead: "Ahead of pace",
@@ -88,21 +85,11 @@ export function ThreadDetailsUsage({
           tooltip={notice ?? "No usage windows reported."}
         />
       ) : (
-        <div
-          className="contents"
-          style={
-            {
-              "--usage-trailing": `${Math.max(
-                0,
-                ...rows.map(({ window }) => resetLabel(window, now)?.length ?? 0),
-              )}ch`,
-            } as CSSProperties
-          }
-        >
+        <>
           {rows.map(({ window, accounts }) => (
             <LimitRow key={window.id} window={window} now={now} pooledAccounts={accounts} />
           ))}
-        </div>
+        </>
       )}
     </ThreadDetailsSection>
   );
@@ -146,9 +133,12 @@ export function ThreadDetailsContext({
       : `${formatContextWindowTokens(usage.usedTokens)} tokens`;
   return (
     <ThreadDetailsSection title="Context window" variant="usage">
-      <Collapsible open={!collapsed} onOpenChange={(open) => setCollapsed(!open)}>
-        {/* One row, so the percentage hugs its text and the bar takes the rest. */}
-        <div className={cn(USAGE_ROW_CLASS, "h-8 [--usage-value:max-content]")}>
+      <Collapsible
+        className="col-span-full grid grid-cols-subgrid"
+        open={!collapsed}
+        onOpenChange={(open) => setCollapsed(!open)}
+      >
+        <div className={cn(USAGE_ROW_CLASS, "h-8")}>
           <CollapsibleTrigger
             render={<ThreadDetailsControl part="usage" />}
             aria-label={`Context: ${tokens}${maxTokens !== null ? " tokens" : ""}${used !== null ? `, ${Math.round(used)}% used` : " used"}`}
@@ -160,7 +150,7 @@ export function ThreadDetailsContext({
               {used !== null ? `${Math.round(used)}%` : ""}
             </span>
           </CollapsibleTrigger>
-          <span className="flex">
+          <span className="flex justify-end">
             {onCompact ? (
               <Tooltip>
                 <TooltipTrigger
@@ -183,7 +173,7 @@ export function ThreadDetailsContext({
             ) : null}
           </span>
         </div>
-        <CollapsiblePanel>
+        <CollapsiblePanel className="col-span-full">
           <div className="px-0.5 pb-0.5">
             <div className="surface-composer rounded-lg p-0.5">
               <dl className="text-meta">
@@ -272,7 +262,7 @@ function LimitRow({
       ariaValue={`${left}% left`}
       trailing={
         reset ? (
-          <span className="truncate text-caption text-dim-foreground">{reset}</span>
+          <span className="whitespace-nowrap text-caption text-dim-foreground">{reset}</span>
         ) : undefined
       }
       tooltip={
@@ -328,14 +318,14 @@ function UsageRow({
               tabIndex={0}
               aria-label={`${label}: ${ariaValue}`}
               className={cn(
-                "grid min-w-0 cursor-default grid-cols-subgrid items-center gap-x-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                "grid min-w-0 cursor-default grid-cols-subgrid items-center gap-x-1 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                 fill === null ? "col-span-5" : "col-span-4",
               )}
             />
           }
         >
           <span className="shrink-0 text-muted-foreground [&>svg]:size-4">{icon}</span>
-          <span className="truncate">{label}</span>
+          <span className="whitespace-nowrap">{label}</span>
           {fill !== null ? (
             <span className="relative h-1 min-w-0 flex-1 rounded-full bg-muted-foreground/20">
               {fill > 0 ? (
