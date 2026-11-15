@@ -68,8 +68,8 @@ export async function wheelSuggestions(browser: Browser, direction: "up" | "down
 }
 
 /**
- * The first suggestion or last file row, and a point where `elementFromPoint`
- * lands on that row, or `null` when no part of it can be hit.
+ * The first suggestion or last file row, and its center when the whole row is visible
+ * and a click there lands on it, otherwise `null`.
  */
 export const findHittableRow = (browser: Browser, which: "first" | "last-file") =>
   browser.evaluate(
@@ -87,14 +87,13 @@ export const findHittableRow = (browser: Browser, which: "first" | "last-file") 
       const text = row.textContent ?? "";
       const label = names.find((name) => text.startsWith(name)) ?? text;
       const rect = row.getBoundingClientRect();
-      const x = rect.left + rect.width / 2;
-      for (let y = Math.ceil(rect.top) + 1; y < rect.bottom - 1; y += 2) {
-        if (y < 0 || y >= window.innerHeight) continue;
-        if (document.elementFromPoint(x, y)?.closest('[role="option"]') === row) {
-          return { label, point: { x, y } };
-        }
-      }
-      return { label, point: null };
+      const viewport = row.closest('[data-slot="scroll-area-viewport"]')?.getBoundingClientRect();
+      const top = Math.max(0, viewport?.top ?? 0);
+      const bottom = Math.min(window.innerHeight, viewport?.bottom ?? window.innerHeight);
+      if (rect.top < top - 1 || rect.bottom > bottom + 1) return { label, point: null };
+      const point = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      const hit = document.elementFromPoint(point.x, point.y)?.closest('[role="option"]') === row;
+      return { label, point: hit ? point : null };
     },
     { which, names: [...FILE_NAMES, "README.md"] },
   );

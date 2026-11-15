@@ -50,11 +50,14 @@ export function ComposerCommandMenuLayer(props: {
       }
       const composerOverlap = rootFontSizePx + 1;
       const spaceAbove = rect.top + composerOverlap;
+      const bottom = window.innerHeight - spaceAbove;
       const floorHeight = Math.max(96, spaceAbove - 24);
+      const maxHeight = canOverflowTop ? floorHeight : Math.min(floorHeight, window.innerHeight);
       const next = {
-        bottom: window.innerHeight - spaceAbove,
+        // With too little room above, the menu slides down over the composer instead of past the window top.
+        bottom: canOverflowTop ? bottom : Math.min(bottom, window.innerHeight - maxHeight),
         left: rect.left + drawerInset,
-        maxHeight: canOverflowTop ? floorHeight : Math.max(0, Math.min(spaceAbove, floorHeight)),
+        maxHeight,
         width,
       };
       setPosition((current) =>

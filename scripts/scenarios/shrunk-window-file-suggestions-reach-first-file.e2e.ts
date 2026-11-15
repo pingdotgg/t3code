@@ -16,6 +16,9 @@ test(
     await browser.setViewport({ width: 375, height: 500 });
     await openThreadWithManyFiles(t3);
     await openFileSuggestionsUnderTallDraft(browser, screen);
+    await browser.keyboard.press("Escape");
+    await browser.keyboard.press("Backspace");
+    await browser.keyboard.type("@");
 
     await browser.setViewport({ width: 375, height: 300 });
     await wheelSuggestions(browser, "up");
