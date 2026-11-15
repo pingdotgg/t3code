@@ -8,6 +8,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import { AccountFallback } from "./CommandPolicy.ts";
 import {
   type ApplicationStoredEvent,
   CheckpointId,
@@ -1771,18 +1772,30 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
 
       const steerCommandId = CommandId.make("runtime-delivery-intent-auto");
       const steerMessageId = MessageId.make("runtime-delivery-intent-auto");
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: steerCommandId,
-        threadId,
-        messageId: steerMessageId,
-        text: "Include this in the active work.",
-        attachments: [],
-        dispatchMode: { type: "start_immediately" },
-        deliveryIntent: "auto",
-      });
+      yield* orchestrator
+        .dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: steerCommandId,
+          threadId,
+          messageId: steerMessageId,
+          text: "Include this in the active work.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          deliveryIntent: "auto",
+          modelSelection: {
+            ...modelSelection,
+            instanceId: ProviderInstanceId.make("exhausted-fallback"),
+          },
+        })
+        .pipe(
+          Effect.provideService(AccountFallback, {
+            commandId: steerCommandId,
+            threadSelection: modelSelection,
+            requestedSelection: undefined,
+          }),
+        );
       const steered = yield* orchestrator.getThreadProjection(threadId);
       assert.lengthOf(steered.runs, 1);
       assert.equal(
@@ -11821,6 +11834,32 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* orchestrator.dispatch(freshResume!);
         yield* orchestrator.dispatch(freshResume!);
         assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+      }
+      if (["stop", "settled", "archive", "replacement"].includes(scenario)) {
+        const switchId = CommandId.make(`account-switch:${scenario}`);
+        const result = yield* orchestrator
+          .dispatch({
+            type: "message.dispatch",
+            commandId: switchId,
+            threadId,
+            messageId: MessageId.make(switchId),
+            manualContinuationOfRunId: run.id,
+            text: "Continue where you left off.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "server",
+          })
+          .pipe(
+            Effect.provideService(AccountFallback, {
+              commandId: switchId,
+              threadSelection: modelSelection,
+              requestedSelection: undefined,
+            }),
+            Effect.exit,
+          );
+        assert.equal(result._tag, "Failure");
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
       }
       const before = yield* orchestrator.getThreadProjection(threadId);
       if (resume !== null) {

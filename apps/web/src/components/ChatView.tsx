@@ -2641,10 +2641,7 @@ export default function ChatView(props: ChatViewProps) {
               fallbackModelName:
                 fallbackProvider?.models.find((model) => model.slug === fallbackSelection.model)
                   ?.name ?? fallbackSelection.model,
-              fallbackProviderName:
-                fallbackProvider?.displayName ??
-                fallbackProvider?.driver ??
-                fallbackSelection.instanceId,
+              fallbackProviderName: `${fallbackProvider?.displayName?.trim() || fallbackProvider?.driver || "Account"} [${fallbackSelection.instanceId}]`,
               defaultProviderName: fallback.provider.displayName ?? fallback.provider.driver,
               defaultModelName:
                 fallback.provider.models.find((model) => model.slug === defaultSelection.model)

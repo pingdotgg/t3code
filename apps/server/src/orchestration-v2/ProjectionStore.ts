@@ -4666,16 +4666,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND json_extract(t.payload_json, '$.archivedAt') IS NULL
             AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
             AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
-            AND json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
-            AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
             AND (
               (
                 ${booleanInt(options.switchAccountsSince !== undefined)}
                 AND julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt'))) >= julianday(${DateTime.formatIso(options.switchAccountsSince ?? options.now)})
-                AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)})
+                AND (
+                  json_extract(item.payload_json, '$.failure.resetAt') IS NULL
+                  OR julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)})
+                )
+                AND NOT EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_threads parent
+                  WHERE json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+                    AND parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
+                    AND (
+                      json_extract(parent.payload_json, '$.settledOverride') = 'settled'
+                      OR json_extract(parent.payload_json, '$.archivedAt') IS NOT NULL
+                      OR parent.deleted_at IS NOT NULL
+                    )
+                )
               )
               OR (
-                json_extract(t.payload_json, '$.limitRecovery.runId') IS r.run_id
+                julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
+                AND json_extract(t.payload_json, '$.limitRecovery.runId') IS r.run_id
                 AND json_extract(t.payload_json, '$.limitRecovery.resetAt') IS json_extract(item.payload_json, '$.failure.resetAt')
                 AND json_extract(t.payload_json, '$.limitRecovery.autoResume') = 1
                 AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) <= julianday(${DateTime.formatIso(options.now)})
@@ -4685,6 +4697,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 )
               )
               OR (
+                julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
+                AND
                 (
                   json_extract(t.payload_json, '$.limitRecovery.runId') IS NOT r.run_id
                   OR json_extract(t.payload_json, '$.limitRecovery.resetAt') IS NOT json_extract(item.payload_json, '$.failure.resetAt')

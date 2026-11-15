@@ -483,13 +483,11 @@ it.effect("sends on another account of the same provider when the chosen one is 
         Layer.mergeAll(
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             dispatch: layerFailingDispatchHandler(captured),
-            getThreadSnapshotWindow: () =>
+            getThreadRecords: () =>
               Effect.succeed({
-                projection: {
-                  thread: {
-                    projectId: ProjectId.make("project-limited"),
-                    modelSelection: selection,
-                  },
+                thread: {
+                  projectId: ProjectId.make("project-limited"),
+                  modelSelection: selection,
                 },
               } as never),
           }),

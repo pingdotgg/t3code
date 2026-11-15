@@ -165,6 +165,49 @@ describe("new thread model fallback", () => {
         },
       ],
       [
+        "the requested model before a same-provider default with more headroom",
+        [
+          { ...codexAccount("codex_other", 0), models: [model("gpt-6.1-luna", true)] },
+          codexAccount("codex_same", 80),
+        ],
+        {
+          instanceId: ProviderInstanceId.make("codex_same"),
+          model: selection.model,
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      ],
+      [
+        "an account whose stored window already reset",
+        [
+          {
+            ...codexAccount("codex_reset", 100),
+            usageLimits: {
+              ...limits(100),
+              windows: [{ ...window, usedPercent: 100, resetsAt: "2026-09-03T11:00:00.000Z" }],
+            },
+          },
+          codexAccount("codex_partial", 20),
+        ],
+        { instanceId: ProviderInstanceId.make("codex_reset"), model: selection.model },
+      ],
+      [
+        "headroom for the candidate model instead of unrelated pools",
+        [
+          {
+            ...codexAccount("codex_model", 0),
+            usageLimits: {
+              ...limits(0),
+              windows: [
+                { ...window, usedPercent: 0, modelIds: [selection.model] },
+                { ...window, id: "other", usedPercent: 100, modelIds: ["gpt-6.1-luna"] },
+              ],
+            },
+          },
+          codexAccount("codex_partial", 20),
+        ],
+        { instanceId: ProviderInstanceId.make("codex_model"), model: selection.model },
+      ],
+      [
         "another provider's default model when every same-provider account is spent",
         [codexAccount("codex_a", 100), claude],
         { instanceId: claude.instanceId, model: "claude-opus-5-5" },

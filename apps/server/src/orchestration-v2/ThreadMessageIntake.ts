@@ -18,6 +18,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
+import { AccountFallback } from "./CommandPolicy.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
@@ -119,28 +120,39 @@ const withAvailableAccount = Effect.fn("ThreadMessageIntake.withAvailableAccount
     command.usageLimitContinuationOfRunId !== undefined ||
     command.restartContinuationOfRunId !== undefined
   ) {
-    return command;
+    return { command, fallback: undefined };
   }
   const choose = yield* readAccountChoice();
-  if (choose === null) return command;
+  if (choose === null) return { command, fallback: undefined };
   const threads = yield* ThreadManagement.ThreadManagementService;
-  const window = yield* threads
-    .getThreadSnapshotWindow(command.threadId, { rowLimit: 1 })
+  const records = yield* threads
+    .getThreadRecords(command.threadId, [])
     .pipe(Effect.orElseSucceed(() => null));
-  if (window === null) return command;
-  const { thread } = window.projection;
+  if (records === null) return { command, fallback: undefined };
+  const { thread } = records;
   const selection = command.modelSelection ?? thread.modelSelection;
   const next = choose(selection, thread.projectId);
-  return next === selection ? command : { ...command, modelSelection: next };
+  return {
+    command: next === selection ? command : { ...command, modelSelection: next },
+    fallback:
+      next === selection
+        ? undefined
+        : {
+            commandId: command.commandId,
+            threadSelection: thread.modelSelection,
+            requestedSelection: command.modelSelection,
+          },
+  };
 });
 
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
   incoming: OrchestrationV2Command,
 ) {
-  const command =
+  const prepared =
     incoming.type === "message.dispatch"
       ? yield* withAvailableAccount(yield* withGuestAttachments(incoming))
-      : incoming;
+      : { command: incoming, fallback: undefined };
+  const { command } = prepared;
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
@@ -210,7 +222,9 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
     command.type !== "message.dispatch" &&
     (command.type !== "queued-run.edit" || command.attachments === undefined)
   )
-    return yield* threads.dispatch(command);
+    return yield* threads
+      .dispatch(command)
+      .pipe(Effect.provideService(AccountFallback, prepared.fallback));
   // An accepted edit's retry replays its receipt even if a later cleanup removed its files.
   if (command.type === "queued-run.edit" && !(yield* threads.hasReceipt(command.commandId))) {
     const config = yield* ServerConfig.ServerConfig;

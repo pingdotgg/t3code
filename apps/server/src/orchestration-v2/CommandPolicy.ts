@@ -1,5 +1,6 @@
 import {
   type ChatAttachment,
+  type ModelSelection,
   CommandId,
   type OrchestrationV2Command,
   OrchestrationV2ProviderCapabilities,
@@ -15,6 +16,16 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+
+// Account choice is preflighted outside the dispatch lock; a raced user action wins.
+export const AccountFallback = Context.Reference<
+  | {
+      readonly commandId: CommandId;
+      readonly threadSelection: ModelSelection;
+      readonly requestedSelection: ModelSelection | undefined;
+    }
+  | undefined
+>("t3/orchestration-v2/AccountFallback", { defaultValue: () => undefined });
 
 export const SteeringExecutionPolicyV2 = Schema.Literals(["active_steering", "interrupt_restart"]);
 export type SteeringExecutionPolicyV2 = typeof SteeringExecutionPolicyV2.Type;

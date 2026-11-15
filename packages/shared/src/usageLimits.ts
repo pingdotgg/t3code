@@ -26,33 +26,19 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-export function exhaustedUsageWindow(
-  provider: ServerProvider | undefined,
-  now: number,
-  model?: string,
-) {
+function modelUsageWindows(provider: ServerProvider | undefined, model: string) {
   const windows = provider?.usageLimits?.windows ?? [];
-  const exhausted = windows.filter(
-    (window) =>
-      (window.usedPercent ?? 0) >= 100 &&
-      (model === undefined || window.modelIds === undefined || window.modelIds.includes(model)) &&
-      (model === undefined ||
-        window.providerIds === undefined ||
-        window.providerIds.includes(model.split("/")[0] ?? "")) &&
-      (!window.resetsAt ||
-        !Number.isFinite(Date.parse(window.resetsAt)) ||
-        Date.parse(window.resetsAt) > now),
-  );
-  if (model === undefined) return exhausted[0];
-  switch (provider?.driver) {
-    case "cursor": {
-      const api = exhausted.find((window) => window.id === "apiPercentUsed");
-      const auto = exhausted.find((window) => window.id === "autoPercentUsed");
-      return /^(auto|default|grok|composer)/.test(model) ? auto && api : api;
-    }
-    case "antigravity": {
-      const family = model.match(/^(gemini|claude|gpt)-/)?.[1];
-      return exhausted.find((window) => {
+  return windows.filter((window) => {
+    if (window.modelIds && !window.modelIds.includes(model)) return false;
+    if (window.providerIds && !window.providerIds.includes(model.split("/")[0] ?? "")) return false;
+    switch (provider?.driver) {
+      case "cursor":
+        return (
+          window.id === "apiPercentUsed" ||
+          (/^(auto|default|grok|composer)/.test(model) && window.id === "autoPercentUsed")
+        );
+      case "antigravity": {
+        const family = model.match(/^(gemini|claude|gpt)-/)?.[1];
         const pool = window.id.match(/^(gemini|claude|gpt|3p)-/)?.[1];
         return (
           pool === undefined ||
@@ -60,22 +46,48 @@ export function exhaustedUsageWindow(
           pool === family ||
           (pool === "3p" && (family === "claude" || family === "gpt"))
         );
-      });
+      }
+      case "codex":
+        // Seat-based plans spend credits only past their plan windows.
+        return (
+          window.id !== "individual" ||
+          !windows.some((entry) => entry.id === "primary" || entry.id === "secondary")
+        );
+      case "opencode":
+        return !window.id.startsWith("go_") || model.startsWith("opencode-go/");
+      default:
+        return true;
     }
-    case "codex": {
-      // Seat-based plans spend credits only past their plan windows, so the credit cap blocks only plans without them.
-      const hasPlanWindows = windows.some(
-        (window) => window.id === "primary" || window.id === "secondary",
-      );
-      return exhausted.find((window) => window.id !== "individual" || !hasPlanWindows);
-    }
-    case "opencode":
-      return exhausted.find(
-        (window) => !window.id.startsWith("go_") || model.startsWith("opencode-go/"),
-      );
-    default:
-      return exhausted[0];
+  });
+}
+
+export function exhaustedUsageWindow(
+  provider: ServerProvider | undefined,
+  now: number,
+  model?: string,
+) {
+  const windows =
+    model === undefined
+      ? (provider?.usageLimits?.windows ?? [])
+      : modelUsageWindows(provider, model);
+  const exhausted = windows.filter(
+    (window) =>
+      (window.usedPercent ?? 0) >= 100 &&
+      (!window.resetsAt ||
+        !Number.isFinite(Date.parse(window.resetsAt)) ||
+        Date.parse(window.resetsAt) > now),
+  );
+  if (
+    provider?.driver === "cursor" &&
+    model !== undefined &&
+    /^(auto|default|grok|composer)/.test(model)
+  ) {
+    return (
+      exhausted.find((window) => window.id === "autoPercentUsed") &&
+      exhausted.find((window) => window.id === "apiPercentUsed")
+    );
   }
+  return exhausted[0];
 }
 
 interface AccountChoiceInput {
@@ -118,8 +130,8 @@ export function availableAccountSelection(
     return null;
   }
   return (
-    automaticFallbackSelections(input.selection, provider, input.providers).find((candidate) =>
-      isUsableSelection(candidate, input),
+    automaticFallbackSelections(input.selection, provider, input.providers, input.now).find(
+      (candidate) => isUsableSelection(candidate, input),
     ) ?? null
   );
 }
@@ -153,19 +165,24 @@ function automaticFallbackSelections(
   selection: ModelSelection,
   exhausted: ServerProvider,
   providers: readonly ServerProvider[],
+  now: number,
 ): ModelSelection[] {
   // Only accounts that report limits: an unknown balance could be pay-per-use or already spent.
-  const headroom = (entry: ServerProvider) => {
-    const windows = entry.usageLimits?.unavailable ? [] : (entry.usageLimits?.windows ?? []);
-    return windows.length === 0 ? null : Math.min(...windows.map(remainingPercent));
+  const headroom = (entry: ServerProvider, model: string) => {
+    const windows = entry.usageLimits?.unavailable ? [] : modelUsageWindows(entry, model);
+    if (windows.length === 0) return null;
+    const left = windows.map((window) =>
+      window.resetsAt && Date.parse(window.resetsAt) <= now ? 100 : remainingPercent(window),
+    );
+    return entry.driver === "cursor" && /^(auto|default|grok|composer)/.test(model)
+      ? Math.max(...left)
+      : Math.min(...left);
   };
   const exhaustedLogin = exhausted.usageLimits?.credentialFingerprint;
   return providers
     .flatMap((entry) => {
-      const left = headroom(entry);
       if (
         entry.instanceId === exhausted.instanceId ||
-        left === null ||
         // Two instances signed in to the same login share one quota.
         (exhaustedLogin !== undefined &&
           entry.usageLimits?.credentialFingerprint === exhaustedLogin)
@@ -178,13 +195,20 @@ function automaticFallbackSelections(
         entry.models.find((item) => item.isDefault) ??
         entry.models[0];
       if (!model) return [];
-      const candidate: ModelSelection =
-        sameDriver && model.slug === selection.model
-          ? { ...selection, instanceId: entry.instanceId }
-          : { instanceId: entry.instanceId, model: model.slug };
-      return [{ candidate, sameDriver, left }];
+      const left = headroom(entry, model.slug);
+      if (left === null) return [];
+      const keepsModel = sameDriver && model.slug === selection.model;
+      const candidate: ModelSelection = keepsModel
+        ? { ...selection, instanceId: entry.instanceId }
+        : { instanceId: entry.instanceId, model: model.slug };
+      return [{ candidate, sameDriver, keepsModel, left }];
     })
-    .sort((a, b) => Number(b.sameDriver) - Number(a.sameDriver) || b.left - a.left)
+    .sort(
+      (a, b) =>
+        Number(b.sameDriver) - Number(a.sameDriver) ||
+        Number(b.keepsModel) - Number(a.keepsModel) ||
+        b.left - a.left,
+    )
     .map(({ candidate }) => candidate);
 }
 

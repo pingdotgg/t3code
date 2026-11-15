@@ -17,6 +17,7 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { AccountFallback } from "./CommandPolicy.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -196,6 +197,11 @@ const makeSweep = Effect.gen(function* () {
           Number.isFinite(resetMs) ? resetMs : nowMs + ACCOUNT_SWITCH_WINDOW_MS,
         );
         yield* threads.dispatch(switchCommand).pipe(
+          Effect.provideService(AccountFallback, {
+            commandId: switchCommand.commandId,
+            threadSelection: thread.modelSelection,
+            requestedSelection: undefined,
+          }),
           Effect.catchCause((cause) =>
             Effect.logWarning("orchestration-v2.limit-recovery.account-switch-failed", {
               threadId: thread.id,
