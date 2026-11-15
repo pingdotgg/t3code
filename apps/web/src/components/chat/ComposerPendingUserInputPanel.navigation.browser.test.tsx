@@ -299,3 +299,41 @@ it("isolates drafts by environment, thread and request and discards only resolve
     );
   }
 });
+
+it("keeps the pending request arrays while the projection changes around them", async () => {
+  const environmentId = EnvironmentId.make("stable-requests-environment");
+  const base = questionProjection(threadRef.threadId);
+  const approvalRequest = {
+    ...base.runtimeRequests[0]!,
+    id: RuntimeRequestId.make("approval"),
+    kind: "command" as const,
+  };
+  const projection = { ...base, runtimeRequests: [...base.runtimeRequests, approvalRequest] };
+  await using screen = await render(
+    <PendingRequestsProbe environmentId={environmentId} projection={projection} />,
+  );
+  const { pendingApprovals, pendingUserInputs } = requests;
+  expect(pendingApprovals.map((approval) => approval.requestId)).toEqual([approvalRequest.id]);
+  // A new run is a structural change that leaves every pending request as it was.
+  await screen.rerender(
+    <PendingRequestsProbe
+      environmentId={environmentId}
+      projection={{ ...projection, runtimeRequests: [...projection.runtimeRequests] }}
+    />,
+  );
+  expect(requests.pendingApprovals).toBe(pendingApprovals);
+  expect(requests.pendingUserInputs).toBe(pendingUserInputs);
+  await screen.rerender(
+    <PendingRequestsProbe
+      environmentId={environmentId}
+      projection={{
+        ...projection,
+        runtimeRequests: projection.runtimeRequests.map((request) =>
+          request.id === approvalRequest.id ? { ...request, status: "resolved" as const } : request,
+        ),
+      }}
+    />,
+  );
+  expect(requests.pendingApprovals).toEqual([]);
+  expect(requests.pendingUserInputs).toEqual(pendingUserInputs);
+});
