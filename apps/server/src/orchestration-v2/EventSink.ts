@@ -827,6 +827,7 @@ const layerBase: Layer.Layer<
                   resultSequence: yield* eventStore.latestSequence({ threadId: input.threadId }),
                   status: "rejected",
                   error: "Cannot fork a missing or deleted thread.",
+                  resultMetadata: null,
                 };
                 yield* commandReceipts.upsert(receipt);
                 return {
@@ -940,6 +941,7 @@ const layerBase: Layer.Layer<
             resultSequence: sequence,
             status: "rejected",
             error: input.error,
+            resultMetadata: null,
           };
           const inserted = yield* commandReceipts.insertIfAbsent(receipt);
           if (inserted) {
