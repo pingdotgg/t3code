@@ -1921,7 +1921,10 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         wakeUpsRail &&
           "relative ps-6 before:absolute before:start-[11px] before:top-0 before:w-px before:bg-border",
         wakeUpsRail === "body" && "before:bottom-0",
-        wakeUpsRail === "end" && "before:bottom-3",
+        wakeUpsRail === "end" &&
+          (row.kind === "turn-fold" && !row.expanded && row.ending === "worked"
+            ? "before:bottom-1.5 before:w-[13px] before:rounded-bl-md before:border-b before:border-s before:border-border before:bg-transparent"
+            : "before:bottom-3"),
       )}
       data-superseded-content={row.superseded || undefined}
       data-timeline-row-id={row.id}
