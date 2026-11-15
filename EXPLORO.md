@@ -38,6 +38,18 @@ developer runs themselves:
 cd apps/server && sudo env "PATH=$PATH" node src/bin.ts browser setup --base-dir ~/.exploro/dev
 ```
 
+## QA skill
+
+`skills/exploro-qa/SKILL.md` is the QA method agents follow. Threads without a project run in a
+fresh scratch folder, so the skill has to be installed at user level for providers to find it:
+
+```bash
+cp -r skills/exploro-qa ~/.claude/skills/
+cp -r skills/exploro-qa ~/.agents/skills/
+```
+
+Claude reads `~/.claude/skills`. Codex reads `~/.agents/skills`.
+
 ## Workflow
 
 - Work is tracked as GitHub issues on `imavinashsingh/exploro`: one issue per user story with
