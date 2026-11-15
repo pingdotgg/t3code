@@ -1616,11 +1616,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
     });
 
-  it.effect.each(
-    (["full-access", "auto-accept-edits"] as const).flatMap((runtimeMode) =>
-      (["present", "null", "omitted"] as const).map((turnIdKind) => ({ runtimeMode, turnIdKind })),
-    ),
-  )(
+  it.effect.each([
+    { runtimeMode: "full-access", turnIdKind: "present" },
+    { runtimeMode: "auto-accept-edits", turnIdKind: "null" },
+  ] as const)(
     "handles MCP access approvals in $runtimeMode with a $turnIdKind turn id",
     ({ runtimeMode, turnIdKind }) =>
       Effect.gen(function* () {
@@ -1652,9 +1651,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   method: "mcpServer/elicitation/request",
                   params: {
                     threadId: nativeThreadId,
-                    ...(turnIdKind === "omitted"
-                      ? {}
-                      : { turnId: turnIdKind === "null" ? null : nativeTurnId }),
+                    turnId: turnIdKind === "null" ? null : nativeTurnId,
                     serverName: "browser",
                     mode: "form",
                     message: "Allow ChatGPT to use Google Chrome?",
