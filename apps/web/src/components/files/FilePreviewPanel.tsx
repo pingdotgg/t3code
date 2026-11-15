@@ -884,9 +884,10 @@ function EditableFileSurface({
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
   const promptCommentIds = new Set(
-    useComposerDraftStore(
-      (store) =>
-        store.getComposerDraft(composerDraftTarget)?.reviewComments ?? EMPTY_REVIEW_COMMENTS,
+    useComposerDraftStore((store) =>
+      composerDraftTarget
+        ? (store.getComposerDraft(composerDraftTarget)?.reviewComments ?? EMPTY_REVIEW_COMMENTS)
+        : EMPTY_REVIEW_COMMENTS,
     ).map((comment) => comment.id),
   );
   const [lineAnnotations, setLineAnnotations] = useState<FileCommentLineAnnotation[]>([]);
