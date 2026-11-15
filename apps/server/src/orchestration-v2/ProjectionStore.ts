@@ -6408,14 +6408,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         `;
         const afterRun = (ordinal: number | null) => (ordinal === null ? -1 : ordinal + 1);
         const own = yield* lastRunsShownByLiveForks(threadId, threadId);
-        const released = yield* Effect.forEach(options?.includeShownByLiveFork ? [] : deletedSources, ({ thread_id: source }) =>
-          lastRunsShownByLiveForks(source, threadId).pipe(
-            Effect.flatMap((shown) =>
-              shown.with_fork === null
-                ? Effect.succeed([])
-                : runAttachmentIds(source, afterRun(shown.without_fork), shown.with_fork),
+        const released = yield* Effect.forEach(
+          options?.includeShownByLiveFork ? [] : deletedSources,
+          ({ thread_id: source }) =>
+            lastRunsShownByLiveForks(source, threadId).pipe(
+              Effect.flatMap((shown) =>
+                shown.with_fork === null
+                  ? Effect.succeed([])
+                  : runAttachmentIds(source, afterRun(shown.without_fork), shown.with_fork),
+              ),
             ),
-          ),
         );
         // A guest's waiting files are pending uploads that no message row holds yet.
         const guestFiles = yield* sql<{ id: string }>`
