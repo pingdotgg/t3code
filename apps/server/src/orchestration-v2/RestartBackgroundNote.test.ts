@@ -156,6 +156,16 @@ it("names a lost subagent by the id the agent resumes it with", () => {
     )?.label,
     "Audit (id agent-thread)",
   );
+  assert.equal(
+    cancelledTurnItemWork({
+      id: "item-3",
+      type: "subagent",
+      origin: "provider_native",
+      title: "Lost",
+      nativeItemRef: { driver: "claudeAgent", nativeId: null, strength: "strong" },
+    } as never)?.label,
+    "Lost",
+  );
 });
 
 it("keeps separate cancelled tasks that share a kind and label", () => {
