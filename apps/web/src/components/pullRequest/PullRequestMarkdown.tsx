@@ -177,7 +177,9 @@ function PullRequestBodySegmentView({
     >
       <PaperclipIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 truncate">
-        Open attachment on {hostMedia?.definition.label ?? new URL(segment.url).hostname}
+        {td("markdown.openAttachmentOn", {
+          host: hostMedia?.definition.label ?? new URL(segment.url).hostname,
+        })}
       </span>
       <ExternalLinkIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
     </a>

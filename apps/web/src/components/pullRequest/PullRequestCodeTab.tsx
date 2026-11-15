@@ -65,6 +65,11 @@ import {
 } from "@t3tools/client-runtime/pull-request-editing";
 import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
+
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
 import {
   buildFileDiffRenderKey,
   fnv1a32,
@@ -1174,7 +1179,9 @@ function PullRequestCodeTab({
                   onClick={() => setVisibleCommitCount((count) => count + COMMIT_PAGE_SIZE)}
                 >
                   <span className="text-muted-foreground">
-                    Show more ({orderedCommits.length - visibleCommitCount} left)
+                    {td("code.showMoreCommits", {
+                      count: orderedCommits.length - visibleCommitCount,
+                    })}
                   </span>
                 </DropdownMenuItem>
               ) : null}
@@ -1188,7 +1195,7 @@ function PullRequestCodeTab({
           </span>
           {hiddenTestFileCount > 0 ? (
             <Button type="button" size="xs" variant="link" onClick={() => setHideTestFiles(false)}>
-              {hiddenTestFileCount} test {hiddenTestFileCount === 1 ? "file" : "files"} hidden
+              {td("code.hiddenTestFiles", { count: hiddenTestFileCount })}
             </Button>
           ) : null}
           {filesViewed.enabled && files.length > 0 ? (

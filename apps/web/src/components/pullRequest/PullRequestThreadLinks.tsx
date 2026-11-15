@@ -244,7 +244,7 @@ function ThreadPicker({
       <CommandList className="max-h-80 overflow-y-auto">
         {candidates.length === 0 ? (
           <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-            No active threads found.
+            {td("links.noActiveThreads")}
           </div>
         ) : (
           candidates.map((thread) => {

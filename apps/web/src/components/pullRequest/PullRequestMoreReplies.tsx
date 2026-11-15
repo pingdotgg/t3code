@@ -1,5 +1,10 @@
 import type { PullRequestReplyAvailability } from "./pullRequestDetail.logic";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 export function PullRequestMoreReplies({
   moreReplies,
   hasMoreReplies,
@@ -20,7 +25,7 @@ export function PullRequestMoreReplies({
           rel="noopener noreferrer"
           className="hover:text-foreground hover:underline"
         >
-          View on host
+          {td("replies.viewOnHost")}
         </a>
       ) : null}
     </div>

@@ -490,7 +490,7 @@ function ReviewThreadEvent({
           onClick={() => setExpanded((current) => !current)}
         >
           {thread.path === null ? (
-            <span className="min-w-0 truncate">Overview</span>
+            <span className="min-w-0 truncate">{td("timeline.overview")}</span>
           ) : (
             <>
               <FileCode2Icon aria-hidden className="size-3 shrink-0" />
@@ -502,11 +502,15 @@ function ReviewThreadEvent({
           {thread.isResolved ? (
             <span className="inline-flex shrink-0 items-center gap-1 font-medium text-success-foreground">
               <CircleCheckIcon aria-hidden className="size-3" />
-              Resolved
+              {td("thread.resolved")}
             </span>
           ) : null}
-          {dismissed ? <span className="shrink-0 font-medium">Review dismissed</span> : null}
-          {thread.isOutdated ? <span className="shrink-0 font-medium">Outdated</span> : null}
+          {dismissed ? (
+            <span className="shrink-0 font-medium">{td("reviewOutcome.dismissed")}</span>
+          ) : null}
+          {thread.isOutdated ? (
+            <span className="shrink-0 font-medium">{td("common.outdated")}</span>
+          ) : null}
           {expanded ? null : (
             <span className="shrink-0">
               · {event.actor?.login ?? "ghost"}
@@ -689,7 +693,9 @@ function ReviewVerdictEvent({
                 }
               >
                 {pullRequestReviewOutcomeLabel(outcome)}
-                {stale ? <span className="sr-only">, before the latest commits</span> : null}
+                {stale ? (
+                  <span className="sr-only">{td("timeline.beforeLatestCommits")}</span>
+                ) : null}
               </TooltipTrigger>
               <TooltipPopup>{pullRequestReviewOutcomeStaleLabel(outcome)}</TooltipPopup>
             </Tooltip>
@@ -890,7 +896,7 @@ export function PullRequestTimelineTab({
       <div ref={scrollerRef} className="scrollbar-gutter-both h-full overflow-y-auto px-4 py-5">
         <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
           <PullRequestGlyph.pullRequest className="mb-2 size-5" />
-          <p className="text-xs">No activity yet.</p>
+          <p className="text-xs">{td("timeline.noActivity")}</p>
         </div>
       </div>
     );
@@ -914,7 +920,7 @@ export function PullRequestTimelineTab({
       ListHeaderComponent={
         anchor !== null && targetIndex < 0 && revealUrl === undefined ? (
           <p role="status" className="py-4 text-xs text-muted-foreground">
-            The linked item is not in the loaded activity.
+            {td("timeline.itemNotInLoadedActivity")}
           </p>
         ) : (
           <div className="h-5" />

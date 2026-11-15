@@ -441,14 +441,11 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
         <PullRequestGlyph.link aria-hidden className="size-6 text-muted-foreground/60" />
-        <p className="text-sm font-medium">No linked pull requests</p>
-        <p className="max-w-60 text-xs text-muted-foreground">
-          Pull requests the agent opens from this thread land here. Link one yourself from a URL or
-          a number.
-        </p>
+        <p className="text-sm font-medium">{td("panel.noLinked")}</p>
+        <p className="max-w-60 text-xs text-muted-foreground">{td("panel.noLinkedDetail")}</p>
         <Button size="sm" variant="outline" onClick={openLinkDialog}>
           <PlusIcon className="size-3.5" />
-          Link pull request
+          {td("link.title")}
         </Button>
       </div>
     );
@@ -485,17 +482,18 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
         />
         <footer className="flex items-center justify-between border-t border-border/60 px-2 py-1.5 text-2xs text-muted-foreground">
           <span>
-            {openCount} open · {linkCount} linked
+            {td("panel.footerCounts", { openCount, linkCount })}
             {lastSynced ? (
               <>
-                {" · synced "}
+                {" "}
+                {td("panel.synced")}
                 <RelativeTime timestamp={lastSynced} />
               </>
             ) : null}
           </span>
           <Button size="xs" variant="ghost" onClick={openLinkDialog}>
             <PlusIcon className="size-3.5" />
-            Link
+            {td("link.link")}
           </Button>
         </footer>
       </div>

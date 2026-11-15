@@ -65,6 +65,7 @@
     "behindBy": " by {{formatted}} {{count, plural, one {commit} other {commits}}}",
     "behindBy_one": " by {{formatted}} commit",
     "behindBy_other": " by {{formatted}} commits",
+    "cleanMerge": "Changes can be cleanly merged.",
     "outOfDate": "This branch is out-of-date with {{branch}}{{behind}}.",
     "stackedOn": "Stacked on {{branch}}",
     "updateBranch": "Update branch",
@@ -88,10 +89,14 @@
     "notConfirmedTitle": "Checked out, but not confirmed on the latest commit"
   },
   "checks": {
+    "counter": "{{done}}/{{total}} checks",
+    "details": "Details",
+    "failedCount": "{{count}} failed",
     "loading": "Loading checks…",
     "noChecksReported": "No checks reported",
     "openWithSummary": "Open checks: {{summary}}",
     "outOfDate": "Check details are out of date.",
+    "outOfDateDetail": "Check details are out of date. Refresh the pull request to update them.",
     "showAll": "Show all",
     "showLess": "Show less",
     "title": "Checks",
@@ -130,6 +135,8 @@
     "expandAllFiles": "Expand all files",
     "expandDiff": "Expand diff",
     "fixInThread": "Fix in a thread",
+    "hiddenTestFiles_one": "{{count}} test file hidden",
+    "hiddenTestFiles_other": "{{count}} test files hidden",
     "hideFileTree": "Hide file tree",
     "hideTestFiles": "Hide test files",
     "hideWhitespace": "Hide whitespace changes",
@@ -144,6 +151,7 @@
     "restOfDiffNotLoaded": "The rest of this diff could not be loaded.",
     "reviewSectionTitle": "PR #{{number}} review",
     "showFileTree": "Show file tree",
+    "showMoreCommits": "Show more ({{count}} left)",
     "showTestFiles": "Show test files",
     "showWhitespace": "Show whitespace changes",
     "splitView": "Split diff view",
@@ -176,7 +184,11 @@
     "titleWithCount": "Comments ({{count}})"
   },
   "common": {
+    "cancel": "Cancel",
+    "outdated": "Outdated",
+    "outdatedLower": "outdated",
     "retry": "Retry",
+    "technicalDetails": "Technical details",
     "tryAgain": "Try again."
   },
   "composer": {
@@ -204,6 +216,7 @@
     "branchNameCopied": "Branch name copied",
     "checkoutCommand": "Copy checkout command",
     "checkoutCommandCopied": "Checkout command copied",
+    "copied": "Copied",
     "termBranch": "Copy {{term}} branch"
   },
   "counts": {
@@ -224,6 +237,7 @@
   },
   "editor": {
     "mode": "Markdown editor mode",
+    "nothingToPreview": "Nothing to preview.",
     "preview": "Preview",
     "write": "Write"
   },
@@ -242,8 +256,10 @@
     }
   },
   "emptyState": {
+    "addProject": "Add project",
     "checkAgain": "Check again",
     "checking": "Checking...",
+    "clearSearch": "Clear search",
     "loading": "Loading...",
     "loadMore": "Load more pull requests",
     "noProjects": "No projects in this workspace",
@@ -306,9 +322,9 @@
   "guide": {
     "addComment": "Add a comment…",
     "alsoInStop": "Also in this stop",
+    "askAboutThisStop": "Ask about this stop",
     "askAgent": "Ask agent",
     "askAgentAboutLines": "Ask the agent about these lines…",
-    "askAboutThisStop": "Ask about this stop",
     "askAnAgentPrefix": "Ask an agent: ",
     "attention": {
       "accessibility": "An accessibility call",
@@ -330,8 +346,8 @@
     "nextStopWithTitle": "Next: {{title}}",
     "noFilesToTour": "This change has no files to tour.",
     "noneYet": "No review guide yet",
-    "notInDiffLines": "lines {{start}}-{{end}} are not in the loaded diff.",
     "notesOnThisStop": "Notes on this stop",
+    "notInDiffLines": "lines {{start}}-{{end}} are not in the loaded diff.",
     "openFileInCode": "Open in Code",
     "openInCode": "Open {{path}} in Code",
     "previousStop": "Previous stop",
@@ -381,6 +397,7 @@
     "linkedThreads": "Linked threads",
     "linkToThisThread": "Link to this thread",
     "linkToThread": "Link to thread",
+    "noActiveThreads": "No active threads found.",
     "searchThreads": "Search threads or projects...",
     "untitledThread": "Untitled thread"
   },
@@ -390,6 +407,7 @@
     "allServers": "All servers",
     "any": "Any",
     "anyone": "Anyone",
+    "author": "Author",
     "breadcrumb": "Pull requests breadcrumb",
     "checks": {
       "failing": "Failing",
@@ -420,6 +438,7 @@
       "authored": "Authored",
       "reviewing": "Reviewing"
     },
+    "mergesLoaded": "{{count}} merges loaded",
     "noAuthors": "No authors found",
     "noLabels": "No labels found",
     "refresh": "Refresh pull requests",
@@ -450,12 +469,14 @@
       "merged": "Merged",
       "open": "Open"
     },
-    "title": "Pull requests"
+    "title": "Pull requests",
+    "unavailableDot": "· Unavailable"
   },
   "loading": {
     "termDiff": "Loading {{term}} diff..."
   },
   "markdown": {
+    "openAttachmentOn": "Open attachment on {{host}}",
     "video": "Pull request video"
   },
   "menu": {
@@ -510,6 +531,7 @@
     "loadingMore": "Loading more",
     "narrowSearch": "Narrow your search to find more pull requests.",
     "selectFirst": "Select a pull request first",
+    "showingLoaded": "Showing the last pull requests loaded.",
     "sortPullRequests": "Sort pull requests",
     "termLink": "{{term}} link",
     "unavailable": "Pull requests unavailable",
@@ -521,11 +543,15 @@
     "chainedByBase": "{{count}} {{term}} chained by base branch.",
     "createdFromThread": "Created from this thread",
     "dismissed": "Dismissed",
+    "footerCounts": "{{openCount}} open · {{linkCount}} linked",
     "foundInStack": "Found in the stack",
     "hostStack": "{{host}} stack of {{count}}: merging a layer lands the ones below it.",
     "linkedByAgent": "Linked by the agent",
     "linkedByYou": "Linked by you",
+    "noLinked": "No linked pull requests",
+    "noLinkedDetail": "Pull requests the agent opens from this thread land here. Link one yourself from a URL or a number.",
     "stopWatching": "Stop watching",
+    "synced": "· synced",
     "unavailable": "Linked pull requests unavailable",
     "unsupported": "This environment does not support multiple linked pull requests.",
     "waitingForHost": "Waiting for host state",
@@ -543,7 +569,12 @@
     "requestTakenBack": "Review request to {{login}} taken back",
     "searchFailed": "Only the people already listed are matched: the host search failed. {{error}}",
     "searchPeople": "Search people with access",
+    "team": "team",
     "tooManyMatches": "More people match than the host returned. Keep typing to narrow it down."
+  },
+  "previewLink": {
+    "commented": "commented",
+    "opened": "opened"
   },
   "quickToast": {
     "autoMergeDisabled": "Auto-merge disabled",
@@ -561,6 +592,9 @@
   },
   "reactions": {
     "add": "Add a reaction"
+  },
+  "replies": {
+    "viewOnHost": "View on host"
   },
   "reviewDecision": {
     "approved": "Approved",
@@ -586,6 +620,9 @@
     "dismissed": "Review dismissed",
     "earlierChanges": "{{outcome}} earlier changes"
   },
+  "row": {
+    "matchedInDescription": "matched in the description"
+  },
   "speed": {
     "actionFor": "{{label}} #{{number}}",
     "actionImmediately": "{{label}} immediately",
@@ -597,14 +634,17 @@
     "reopen": "Reopen"
   },
   "stack": {
+    "headerLabel": "Stack #{{number}}",
     "merge": "Merge stack",
     "mergeCompleted": "Stack merge request completed",
     "mergeFailed": "Could not merge the stack",
+    "mergeRequirement": "Every layer being merged must be open and ready for review.",
     "merging": "Merging stack...",
     "rebase": "Rebase stack",
     "rebased": "Stack rebased",
     "rebaseFailed": "Could not rebase the stack",
     "rebasing": "Rebasing stack...",
+    "retryLookup": "Retry stack lookup",
     "retryRefresh": "Retry stack refresh"
   },
   "state": {
@@ -616,6 +656,10 @@
   "summary": {
     "describeTerm": "Describe this {{term}}",
     "editDescription": "Edit description",
+    "noCommentsYet": "No comments yet.",
+    "partiallyLoaded": "This conversation is only partially loaded. {{count, plural, one {# comment is} other {# comments are}}} loaded; open it on the host to read the rest.",
+    "showOlderConversations": "Show {{count}} older conversation{{hiddenCount, plural, one { ({{hiddenCount}} hidden)} other {s ({{hiddenCount}} hidden)}}}",
+    "showOnlyRecent": "Show only {{count}} recent conversations",
     "termDescription": "{{term}} description"
   },
   "tabs": {
@@ -631,9 +675,14 @@
     "unresolve": "Unresolve"
   },
   "timeline": {
+    "beforeLatestCommits": ", before the latest commits",
+    "itemNotInLoadedActivity": "The linked item is not in the loaded activity.",
+    "loadActivityFailed": "Could not load {{term}} activity",
     "newestFirst": "Newest first",
+    "noActivity": "No activity yet.",
     "oldestFirst": "Oldest first",
     "openActivityOnHost": "Open activity on host",
+    "overview": "Overview",
     "showNewest": "Show newest activity first",
     "showOldest": "Show oldest activity first",
     "termClosed": "{{title}} closed",

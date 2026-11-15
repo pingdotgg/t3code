@@ -25,6 +25,11 @@ import {
 } from "./PullRequestListRow";
 import { PullRequestLabelChip, PullRequestReviewDecisionGlyph } from "./pullRequestPresentation";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 const LABEL_SLOTS = [
   { overflow: "@xl/pr-row-meta:hidden" },
   { overflow: "@3xl/pr-row-meta:hidden" },
@@ -216,13 +221,13 @@ function PullRequestRowImpl({
                       <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-3xs" />
                     }
                   >
-                    <span className="sr-only">matched in the description</span>
+                    <span className="sr-only">{td("row.matchedInDescription")}</span>
                     <SearchIcon aria-hidden className="size-3 shrink-0" />
                     <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
-                      matched in the description
+                      {td("row.matchedInDescription")}
                     </span>
                   </TooltipTrigger>
-                  <TooltipPopup side="top">Matched in the description</TooltipPopup>
+                  <TooltipPopup side="top">{td("row.matchedInDescription")}</TooltipPopup>
                 </Tooltip>
               ) : null}
               {showProvider ? (

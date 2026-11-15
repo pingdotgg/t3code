@@ -64,6 +64,7 @@
   "base": {
     "behindBy": "，落后 {{formatted}} 个提交",
     "behindBy_other": "，落后 {{formatted}} 个提交",
+    "cleanMerge": "更改可以干净地合并。",
     "outOfDate": "此分支落后于 {{branch}}{{behind}}。",
     "stackedOn": "堆叠在 {{branch}} 之上",
     "updateBranch": "更新分支",
@@ -87,10 +88,14 @@
     "notConfirmedTitle": "已检出，但未确认在最新提交上"
   },
   "checks": {
+    "counter": "{{done}}/{{total}} 项检查",
+    "details": "详情",
+    "failedCount": "{{count}} 项失败",
     "loading": "正在加载检查…",
     "noChecksReported": "未报告任何检查",
     "openWithSummary": "打开检查：{{summary}}",
     "outOfDate": "检查信息已过期。",
+    "outOfDateDetail": "检查信息已过期。刷新此拉取请求以更新。",
     "showAll": "显示全部",
     "showLess": "收起",
     "title": "检查",
@@ -129,6 +134,7 @@
     "expandAllFiles": "展开所有文件",
     "expandDiff": "展开差异",
     "fixInThread": "在线程中修复",
+    "hiddenTestFiles_other": "已隐藏 {{count}} 个测试文件",
     "hideFileTree": "隐藏文件树",
     "hideTestFiles": "隐藏测试文件",
     "hideWhitespace": "隐藏空白更改",
@@ -143,6 +149,7 @@
     "restOfDiffNotLoaded": "差异的其余部分无法加载。",
     "reviewSectionTitle": "PR #{{number}} 审查",
     "showFileTree": "显示文件树",
+    "showMoreCommits": "显示更多（剩 {{count}} 个）",
     "showTestFiles": "显示测试文件",
     "showWhitespace": "显示空白更改",
     "splitView": "左右分栏视图",
@@ -175,7 +182,11 @@
     "titleWithCount": "评论（{{count}}）"
   },
   "common": {
+    "cancel": "取消",
+    "outdated": "已过期",
+    "outdatedLower": "已过期",
     "retry": "重试",
+    "technicalDetails": "技术详情",
     "tryAgain": "请重试。"
   },
   "composer": {
@@ -202,6 +213,7 @@
     "branchNameCopied": "分支名已复制",
     "checkoutCommand": "复制检出命令",
     "checkoutCommandCopied": "检出命令已复制",
+    "copied": "已复制",
     "termBranch": "复制{{term}}分支"
   },
   "counts": {
@@ -222,6 +234,7 @@
   },
   "editor": {
     "mode": "Markdown 编辑器模式",
+    "nothingToPreview": "没有可预览的内容。",
     "preview": "预览",
     "write": "编辑"
   },
@@ -240,8 +253,10 @@
     }
   },
   "emptyState": {
+    "addProject": "添加项目",
     "checkAgain": "再查一次",
     "checking": "检查中…",
+    "clearSearch": "清除搜索",
     "loading": "加载中…",
     "loadMore": "加载更多变更请求",
     "noProjects": "此工作区中没有项目",
@@ -304,9 +319,9 @@
   "guide": {
     "addComment": "添加评论…",
     "alsoInStop": "此站点的其他位置",
+    "askAboutThisStop": "就此站提问",
     "askAgent": "询问代理",
     "askAgentAboutLines": "让代理解释这些行…",
-    "askAboutThisStop": "就此站提问",
     "askAnAgentPrefix": "询问代理：",
     "attention": {
       "accessibility": "无障碍相关的提醒",
@@ -328,8 +343,8 @@
     "nextStopWithTitle": "下一站：{{title}}",
     "noFilesToTour": "此变更没有可导览的文件。",
     "noneYet": "尚无审查导读",
-    "notInDiffLines": "第 {{start}}-{{end}} 行不在已加载的差异中。",
     "notesOnThisStop": "此站的笔记",
+    "notInDiffLines": "第 {{start}}-{{end}} 行不在已加载的差异中。",
     "openFileInCode": "在代码视图中打开",
     "openInCode": "在代码视图中打开 {{path}}",
     "previousStop": "上一站",
@@ -379,6 +394,7 @@
     "linkedThreads": "已关联的线程",
     "linkToThisThread": "关联到此线程",
     "linkToThread": "关联到线程",
+    "noActiveThreads": "未找到活跃的线程。",
     "searchThreads": "搜索线程或项目…",
     "untitledThread": "未命名线程"
   },
@@ -388,6 +404,7 @@
     "allServers": "全部服务器",
     "any": "不限",
     "anyone": "任何人",
+    "author": "作者",
     "breadcrumb": "变更请求面包屑",
     "checks": {
       "failing": "失败",
@@ -418,6 +435,7 @@
       "authored": "我发起的",
       "reviewing": "审查中"
     },
+    "mergesLoaded": "已加载 {{count}} 次合并",
     "noAuthors": "未找到作者",
     "noLabels": "未找到标签",
     "refresh": "刷新变更请求",
@@ -448,12 +466,14 @@
       "merged": "已合并",
       "open": "打开"
     },
-    "title": "变更请求"
+    "title": "变更请求",
+    "unavailableDot": "· 不可用"
   },
   "loading": {
     "termDiff": "正在加载{{term}}的差异…"
   },
   "markdown": {
+    "openAttachmentOn": "在 {{host}} 打开附件",
     "video": "变更请求视频"
   },
   "menu": {
@@ -508,6 +528,7 @@
     "loadingMore": "加载更多",
     "narrowSearch": "缩小搜索范围以找到更多变更请求。",
     "selectFirst": "请先选择一个变更请求",
+    "showingLoaded": "显示的是最后已加载的变更请求。",
     "sortPullRequests": "排序变更请求",
     "termLink": "{{term}}链接",
     "unavailable": "变更请求不可用",
@@ -519,11 +540,15 @@
     "chainedByBase": "{{count}} 个{{term}}通过基分支串联。",
     "createdFromThread": "从此线程创建",
     "dismissed": "已忽略",
+    "footerCounts": "{{openCount}} 个打开 · {{linkCount}} 个已关联",
     "foundInStack": "在堆叠中发现",
     "hostStack": "{{host}}堆叠共 {{count}} 层：合并一层会连带合并其下的层。",
     "linkedByAgent": "由代理关联",
     "linkedByYou": "由你关联",
+    "noLinked": "没有关联的变更请求",
+    "noLinkedDetail": "代理从此线程打开的变更请求会显示在这里。你也可以用 URL 或编号自行关联一个。",
     "stopWatching": "停止关注",
+    "synced": "· 已同步",
     "unavailable": "关联的变更请求不可用",
     "unsupported": "此环境不支持多个关联的变更请求。",
     "waitingForHost": "等待托管平台状态",
@@ -541,7 +566,12 @@
     "requestTakenBack": "已撤回对 {{login}} 的审查请求",
     "searchFailed": "仅匹配列表中已有的人：托管平台搜索失败。{{error}}",
     "searchPeople": "搜索有权限的人",
+    "team": "团队",
     "tooManyMatches": "匹配的人多于托管平台返回的数量。继续输入以缩小范围。"
+  },
+  "previewLink": {
+    "commented": "评论了",
+    "opened": "打开了"
   },
   "quickToast": {
     "autoMergeDisabled": "已关闭自动合并",
@@ -559,6 +589,9 @@
   },
   "reactions": {
     "add": "添加表情回应"
+  },
+  "replies": {
+    "viewOnHost": "在托管平台查看"
   },
   "reviewDecision": {
     "approved": "已批准",
@@ -584,6 +617,9 @@
     "dismissed": "审查已撤回",
     "earlierChanges": "{{outcome}}了更早的更改"
   },
+  "row": {
+    "matchedInDescription": "匹配于描述中"
+  },
   "speed": {
     "actionFor": "{{label}} #{{number}}",
     "actionImmediately": "立即{{label}}",
@@ -595,14 +631,17 @@
     "reopen": "重新打开"
   },
   "stack": {
+    "headerLabel": "堆叠 #{{number}}",
     "merge": "合并堆叠",
     "mergeCompleted": "堆叠合并请求已完成",
     "mergeFailed": "无法合并堆叠",
+    "mergeRequirement": "参与合并的每一层都必须处于打开且可请求审查的状态。",
     "merging": "正在合并堆叠…",
     "rebase": "变基堆叠",
     "rebased": "堆叠已变基",
     "rebaseFailed": "无法变基堆叠",
     "rebasing": "正在变基堆叠…",
+    "retryLookup": "重试查找堆叠",
     "retryRefresh": "重试刷新堆叠"
   },
   "state": {
@@ -614,6 +653,10 @@
   "summary": {
     "describeTerm": "描述此{{term}}",
     "editDescription": "编辑描述",
+    "noCommentsYet": "还没有评论。",
+    "partiallyLoaded": "此会话只加载了一部分。已加载 {{count}} 条评论；请在托管平台上打开以阅读其余内容。",
+    "showOlderConversations": "显示更早的 {{count}} 个会话（共 {{hiddenCount}} 个被隐藏）",
+    "showOnlyRecent": "只显示最近 {{count}} 个会话",
     "termDescription": "{{term}}描述"
   },
   "tabs": {
@@ -629,9 +672,14 @@
     "unresolve": "取消解决"
   },
   "timeline": {
+    "beforeLatestCommits": "，早于最新提交",
+    "itemNotInLoadedActivity": "链接的条目不在已加载的动态中。",
+    "loadActivityFailed": "无法加载{{term}}动态",
     "newestFirst": "最新在前",
+    "noActivity": "还没有动态。",
     "oldestFirst": "最早在前",
     "openActivityOnHost": "在托管平台打开动态",
+    "overview": "概览",
     "showNewest": "先显示最新的动态",
     "showOldest": "先显示最早的动态",
     "termClosed": "{{title}}已关闭",
