@@ -16,7 +16,9 @@ export function NotificationSettings() {
   const { t } = useTranslation();
   const mode = useScopedSettings((settings) => settings.notificationMode);
   const updateSettings = useUpdateScopedSettings();
-  const [permissionMessage, setPermissionMessage] = useState<string | null>(null);
+  const [permissionMessage, setPermissionMessage] = useState<
+    "needBrowserOrDesktop" | "unavailableBrowser" | "notGranted" | null
+  >(null);
   const [requesting, setRequesting] = useState(false);
   const modeLabels = {
     off: t("notifications.modeOff"),
@@ -28,7 +30,9 @@ export function NotificationSettings() {
   return (
     <SettingsRow
       {...searchableSetting("thread-notifications")}
-      description={permissionMessage ?? t("notifications.description")}
+      description={
+        permissionMessage ? t(`notifications.${permissionMessage}`) : t("notifications.description")
+      }
       control={
         <Select
           value={mode}
@@ -45,18 +49,18 @@ export function NotificationSettings() {
             if (hasNotificationSound(value)) unlockNotificationAudio();
             if (hasDesktopNotifications(value)) {
               if (typeof Notification === "undefined" || !window.isSecureContext) {
-                setPermissionMessage(t("notifications.needBrowserOrDesktop"));
+                setPermissionMessage("needBrowserOrDesktop");
                 return;
               }
               setRequesting(true);
               const permission = await settlePromise(() => Notification.requestPermission());
               setRequesting(false);
               if (permission._tag === "Failure") {
-                setPermissionMessage(t("notifications.unavailableBrowser"));
+                setPermissionMessage("unavailableBrowser");
                 return;
               }
               if (permission.value !== "granted") {
-                setPermissionMessage(t("notifications.notGranted"));
+                setPermissionMessage("notGranted");
                 return;
               }
             }
