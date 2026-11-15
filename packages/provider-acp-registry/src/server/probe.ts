@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   AcpRegistryListProvidersResult,
   AcpRegistryOperationError,
@@ -42,8 +43,7 @@ const MAX_ID_LENGTH = 128;
 const MAX_NAME_LENGTH = 160;
 const MAX_DESCRIPTION_LENGTH = 1_024;
 const MAX_COMMAND_LINE_LENGTH = 2_048;
-const PROBE_TIMEOUT_SECONDS = 60;
-const PROBE_TIMEOUT = `${PROBE_TIMEOUT_SECONDS} seconds`;
+const PROBE_TIMEOUT_MS = 60_000;
 const COMMAND_ADVERTISEMENT_GRACE = "500 millis";
 // Agents that fetch their catalog after session setup (Qoder CLI, OpenCode)
 // settle it in seconds, not milliseconds; commands arrive much sooner.
@@ -55,6 +55,39 @@ const boundedText = (value: string, maximumLength: number): string =>
 
 const boundedOpaqueValue = (value: string, maximumLength: number): string | undefined =>
   value.length > 0 && value === value.trim() && value.length <= maximumLength ? value : undefined;
+
+/**
+ * The session's reasoning option with the levels a model advertises in `_meta`, in the
+ * shape Grok uses. Null when the model has none, undefined when it says nothing.
+ */
+function advertisedReasoningEffort(
+  option: EffectAcpSchema.SessionConfigOption | undefined,
+  meta: Readonly<Record<string, unknown>> | null | undefined,
+): AcpRegistryProbeModel["reasoningEffort"] {
+  if (option?.type !== "select" || meta == null) return undefined;
+  if (meta.supportsReasoningEffort === false) return null;
+  if (!Array.isArray(meta.reasoningEfforts)) return undefined;
+  const options = meta.reasoningEfforts.flatMap((level: unknown) =>
+    typeof level === "object" &&
+    level !== null &&
+    "value" in level &&
+    typeof level.value === "string"
+      ? [
+          {
+            value: level.value,
+            name: "label" in level && typeof level.label === "string" ? level.label : level.value,
+          },
+        ]
+      : [],
+  );
+  const currentValue = typeof meta.reasoningEffort === "string" ? meta.reasoningEffort : "";
+  return (
+    acpProviderOptionDescriptors({
+      configOptions: [{ ...option, options, currentValue }],
+      modeState: undefined,
+    })[0] ?? null
+  );
+}
 
 export function normalizeAcpRegistryWebUrl(value: string): string | undefined {
   if (value.length > 2_048 || !URL.canParse(value)) return undefined;
@@ -171,12 +204,9 @@ export interface AcpRegistryLiveConfiguration {
   readonly models: ReadonlyArray<AcpRegistryProbeModel>;
   readonly currentModelId: string | null;
   readonly configOptions: AcpRegistryProbeResult["configOptions"];
-  /**
-   * True when the models were enumerated by an explicit model select option
-   * rather than the session's model state. A single-model select is then the
-   * agent's deliberate statement (for example an entitlement change), not a
-   * cold-start fallback, and reconciliation must honor it.
-   */
+  readonly modelOptionIds?: NonNullable<AcpRegistryProbeResult["modelOptionIds"]>;
+  // A single model from an explicit select is the agent's deliberate catalog
+  // (e.g. an entitlement change), not a cold-start placeholder.
   readonly modelsFromModelSelect: boolean;
 }
 
@@ -204,13 +234,29 @@ export function normalizeAcpRegistryLiveConfiguration(
     currentModelId === undefined
       ? null
       : (boundedOpaqueValue(currentModelId, MAX_ID_LENGTH) ?? null);
-  const models = normalizeModels(candidates, boundedCurrentModelId);
+  const effortOption = configOptions.find((option) => option.category === "thought_level");
+  const models = normalizeModels(candidates, boundedCurrentModelId).map((model) => {
+    const reasoningEffort = advertisedReasoningEffort(
+      effortOption,
+      modelState?.availableModels.find((info) => info.modelId === model.id)?._meta,
+    );
+    return reasoningEffort === undefined ? model : { ...model, reasoningEffort };
+  });
+  const descriptors = acpProviderOptionDescriptors({ configOptions, modeState });
+  const modelOptionIds = new Set(
+    configOptions
+      .filter((option) => option.category === "thought_level" || option.category === "model_config")
+      .map((option) => option.id),
+  );
   return {
     models,
     currentModelId: models.some((model) => model.id === boundedCurrentModelId)
       ? boundedCurrentModelId
       : null,
-    configOptions: acpProviderOptionDescriptors({ configOptions, modeState }),
+    configOptions: descriptors,
+    modelOptionIds: descriptors
+      .filter((descriptor) => modelOptionIds.has(descriptor.id))
+      .map((descriptor) => descriptor.id),
     modelsFromModelSelect: modelOption !== undefined,
   };
 }
@@ -228,20 +274,6 @@ export function acpRegistryAdvertisesModelCatalog(
   return (
     (modelOption !== undefined && flattenSelectChoices(modelOption.options).length > 1) ||
     (modelState?.availableModels?.length ?? 0) > 1
-  );
-}
-
-export function resolveAcpRegistryProbeLiveConfiguration(input: {
-  readonly notifiedConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined;
-  readonly runtimeConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
-  readonly modeState: Parameters<typeof normalizeAcpRegistryLiveConfiguration>[1];
-  readonly modelState: Parameters<typeof normalizeAcpRegistryLiveConfiguration>[2];
-}): AcpRegistryLiveConfiguration {
-  // config_option_update replaces the full option set, so an empty notice is authoritative.
-  return normalizeAcpRegistryLiveConfiguration(
-    input.notifiedConfigOptions ?? input.runtimeConfigOptions,
-    input.modeState,
-    input.modelState,
   );
 }
 
@@ -361,6 +393,11 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
     | SecureRandom.SecureRandom
   > {
     const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
+    const probeTimeoutMs = resolveProviderProbeTimeoutMs(
+      "acp_registry",
+      PROBE_TIMEOUT_MS,
+      input.environment,
+    );
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const random = yield* SecureRandom.SecureRandom;
     const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
@@ -500,13 +537,12 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         { concurrency: "unbounded" },
       );
 
-      const liveConfiguration = resolveAcpRegistryProbeLiveConfiguration({
-        notifiedConfigOptions: yield* Ref.get(configOptionsRef),
-        runtimeConfigOptions: yield* runtime.getConfigOptions,
-        modeState:
-          (yield* runtime.getModeState) ?? parseSessionModeState(started.sessionSetupResult),
-        modelState: started.sessionSetupResult.models,
-      });
+      // config_option_update replaces the full option set, so an empty notice is authoritative.
+      const liveConfiguration = normalizeAcpRegistryLiveConfiguration(
+        (yield* Ref.get(configOptionsRef)) ?? (yield* runtime.getConfigOptions),
+        (yield* runtime.getModeState) ?? parseSessionModeState(started.sessionSetupResult),
+        started.sessionSetupResult.models,
+      );
 
       return {
         resolved,
@@ -517,12 +553,12 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
     }).pipe(
       Effect.scoped,
       Effect.timeoutOrElse({
-        duration: PROBE_TIMEOUT,
+        duration: probeTimeoutMs,
         orElse: () =>
           Effect.fail(
             new AcpRegistryOperationError({
               reason: "probe_failed",
-              message: `The ACP agent did not resolve and create a test session within ${PROBE_TIMEOUT_SECONDS} seconds. Package installation or agent startup may be slow; this check retries on the next provider refresh.`,
+              message: `The ACP agent did not resolve and create a test session within ${probeTimeoutMs / 1_000} seconds. Package installation or agent startup may be slow; this check retries on the next provider refresh.`,
             }),
           ),
       }),
