@@ -1,4 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off - only node:perf_hooks exposes the event loop delay histogram, and node:os the load average.
+// @effect-diagnostics nodeBuiltinImport:off - only node:perf_hooks exposes the event loop delay histogram, node:os the load average, and the sampler reads /proc/stat synchronously.
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePerfHooks from "node:perf_hooks";
 
@@ -17,11 +18,7 @@ import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
-import {
-  cpuBusyBetween,
-  loadAverageCountsDiskWait,
-  readCpu,
-} from "../resourceTelemetry/HostResources.ts";
+import { cpuBusyBetween, linuxCpu } from "../resourceTelemetry/HostResources.ts";
 import * as Metrics from "./Metrics.ts";
 
 // Subtract the histogram's timer resolution; this can undercount stalls by up to RESOLUTION_MS.
@@ -68,6 +65,16 @@ export interface EventLoopReadings {
   readonly cpuCount: number;
 }
 
+// Only Linux counts disk wait in the load average, so elsewhere busy time cannot explain a high load.
+const readHostCpu = (platform: NodeJS.Platform) => {
+  if (platform !== "linux") return null;
+  try {
+    return linuxCpu(NodeFS.readFileSync("/proc/stat", "utf8"));
+  } catch {
+    return null;
+  }
+};
+
 // Node skips the first gap after a reset, so a stall right at a sample boundary can be missed.
 const makeNodeSampler = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
@@ -82,10 +89,10 @@ const makeNodeSampler = Effect.gen(function* () {
   let elu = NodePerfHooks.performance.eventLoopUtilization();
   let usage = process.resourceUsage();
   let sampledAt = NodePerfHooks.performance.now();
-  let cpu = readCpu(platform);
+  let cpu = readHostCpu(platform);
 
   return Effect.sync(() => {
-    const nextCpu = readCpu(platform);
+    const nextCpu = readHostCpu(platform);
     const busy = cpu === null || nextCpu === null ? null : cpuBusyBetween(cpu, nextCpu);
     const cpuCount = NodeOS.availableParallelism();
     const nextElu = NodePerfHooks.performance.eventLoopUtilization();
@@ -110,12 +117,8 @@ const makeNodeSampler = Effect.gen(function* () {
       elapsedMs: nextSampledAt - sampledAt,
       // Windows has no load average and reports 0, which a running process never sees elsewhere.
       loadAverage: NodeOS.loadavg()[0] || undefined,
-      // Host-wide busy time says nothing about the cores an affinity mask or quota leaves us,
-      // and a load average without disk wait leaves idle cores with no other cause to name.
-      cpuBusy:
-        loadAverageCountsDiskWait(platform) && nextCpu?.count === cpuCount
-          ? (busy ?? undefined)
-          : undefined,
+      // Host-wide busy time says nothing about the cores an affinity mask or quota leaves us.
+      cpuBusy: nextCpu?.count === cpuCount ? (busy ?? undefined) : undefined,
       cpuCount,
     };
     histogram.reset();

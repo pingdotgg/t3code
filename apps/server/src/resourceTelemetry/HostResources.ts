@@ -1,9 +1,8 @@
-// @effect-diagnostics nodeBuiltinImport:off - iowait exists only in /proc/stat, which must be read at the same instant as os.cpus() and has no Effect equivalent.
-import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import type { HostResourcesSnapshot } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -16,29 +15,16 @@ export class HostResources extends Context.Service<
   { readonly read: Effect.Effect<HostResourcesSnapshot> }
 >()("t3/resourceTelemetry/HostResources") {}
 
-/**
- * Core time from a /proc/stat "cpu" line, in the milliseconds os.cpus() reports: disk wait
- * counts as idle, and softirq and steal as work. os.cpus() leaves all three out of the total,
- * so a core blocked on a disk or spent on interrupts reads as the wrong one of the two.
- */
-export function parseLinuxCpu(stat: string): { idle: number; total: number } | null {
-  const end = stat.indexOf("\n");
-  // cpu user nice system idle iowait irq softirq steal guest guest_nice
-  const ticks = (end === -1 ? stat : stat.slice(0, end)).split(/\s+/).slice(1, 9).map(Number);
-  if (ticks.length !== 8 || !ticks.every(Number.isFinite)) return null;
-  const [user = 0, nice = 0, system = 0, idle = 0, ioWait = 0, irq = 0, softirq = 0, steal = 0] =
-    ticks;
-  // libuv turns these 100 Hz counters into the milliseconds os.cpus() reports.
-  const idleMs = (idle + ioWait) * 10;
-  const busyMs = (user + nice + system + irq + softirq + steal) * 10;
-  return { idle: idleMs, total: idleMs + busyMs };
+// Linux CPU list syntax, as in Cpus_allowed_list: "0-3,8,10-11".
+function parseCpuList(list: string): ReadonlySet<number> | null {
+  const cpus = new Set<number>();
+  for (const range of list.split(",")) {
+    const match = /^(\d+)(?:-(\d+))?$/.exec(range.trim());
+    if (!match) return null;
+    for (let cpu = Number(match[1]); cpu <= Number(match[2] ?? match[1]); cpu++) cpus.add(cpu);
+  }
+  return cpus;
 }
-
-/**
- * A load average above the core count can mean disk wait on Linux alone:
- * macOS counts runnable threads only, and Windows reports no load average.
- */
-export const loadAverageCountsDiskWait = (platform: NodeJS.Platform) => platform === "linux";
 
 export interface CpuTimes {
   readonly idle: number;
@@ -46,27 +32,21 @@ export interface CpuTimes {
   readonly count: number;
 }
 
-/** Cumulative core time, or nothing when this platform's counters cannot tell work from its absence. */
-export function readCpu(platform: NodeJS.Platform): CpuTimes | null {
-  const cpus = NodeOS.cpus();
-  if (platform === "linux") {
-    try {
-      const parsed = parseLinuxCpu(NodeFS.readFileSync("/proc/stat", "utf8"));
-      return parsed === null ? null : { ...parsed, count: cpus.length };
-    } catch {
-      return null;
-    }
+// os.cpus() leaves iowait, softirq and steal out, so disk wait would read as busy.
+// Its indices are compacted online CPUs, not CPU ids; /proc/stat lines are keyed.
+export function linuxCpu(stat: string, allowed?: ReadonlySet<number>): CpuTimes | null {
+  const cpu = { idle: 0, total: 0, count: 0 };
+  for (const [, id, fields] of stat.matchAll(/^cpu(\d+) (.+)$/gm)) {
+    if (allowed && !allowed.has(Number(id))) continue;
+    const counters = (fields ?? "").trim().split(/\s+/).map(Number);
+    const at = (index: number) => counters[index] ?? 0;
+    // user nice system idle iowait irq softirq steal
+    const idle = at(3) + at(4);
+    cpu.idle += idle;
+    cpu.total += idle + at(0) + at(1) + at(2) + at(5) + at(6) + at(7);
+    cpu.count++;
   }
-  return {
-    ...cpus.reduce(
-      (sum, { times }) => ({
-        idle: sum.idle + times.idle,
-        total: sum.total + times.user + times.nice + times.sys + times.idle + times.irq,
-      }),
-      { idle: 0, total: 0 },
-    ),
-    count: cpus.length,
-  };
+  return cpu.count > 0 ? cpu : null;
 }
 
 /** Share of core time spent running work between two readings, null if they are not comparable. */
@@ -76,6 +56,18 @@ export function cpuBusyBetween(previous: CpuTimes, next: CpuTimes): number | nul
   return previous.count === next.count && totalDelta > 0 && idleDelta >= 0
     ? Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
     : null;
+}
+
+function osCpu(): CpuTimes {
+  const cpus = NodeOS.cpus();
+  const cpu = cpus.reduce(
+    (sum, { times }) => ({
+      idle: sum.idle + times.idle,
+      total: sum.total + times.user + times.nice + times.sys + times.idle + times.irq,
+    }),
+    { idle: 0, total: 0 },
+  );
+  return { ...cpu, count: cpus.length };
 }
 
 function darwinAvailableMemory(output: string): number | null {
@@ -89,24 +81,79 @@ function darwinAvailableMemory(output: string): number | null {
   return Number.isSafeInteger(available) && Number(pageSize) > 0 ? available : null;
 }
 
+function cgroupNumber(text: string, pattern: RegExp): number | null {
+  const value = pattern.exec(text)?.[1];
+  return value === undefined ? null : Number(value);
+}
+
 const make = Effect.fn("makeHostResources")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcess.Platform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
+  const readFile = (path: string) => fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
+
   const sample = Effect.fn("HostResources.sample")(function* () {
-    const previousCpu = readCpu(platform);
+    // cgroup v2 only; limits of the server's own cgroup, which is `/` inside a container.
+    const cgroupPath =
+      platform === "linux"
+        ? /^0::(\/.*)$/m.exec(yield* readFile("/proc/self/cgroup"))?.[1]
+        : undefined;
+    const cgroup =
+      cgroupPath === undefined ? null : `/sys/fs/cgroup${cgroupPath.replace(/\/$/, "")}`;
+    const cpuMax = cgroup
+      ? /^(\d+) (\d+)$/.exec((yield* readFile(`${cgroup}/cpu.max`)).trim())
+      : null;
+    const readCpuUsage = () =>
+      cpuMax
+        ? Effect.map(readFile(`${cgroup}/cpu.stat`), (stat) =>
+            cgroupNumber(stat, /^usage_usec (\d+)$/m),
+          )
+        : Effect.succeed(null);
+    // Affinity (cpuset) pins the server to some CPUs; idle CPUs outside it are of no use.
+    const allowedCpus =
+      platform === "linux"
+        ? parseCpuList(
+            /^Cpus_allowed_list:\s*(\S+)$/m.exec(yield* readFile("/proc/self/status"))?.[1] ?? "",
+          )
+        : null;
+
+    const sampleCpu = () =>
+      allowedCpus
+        ? Effect.map(readFile("/proc/stat"), (stat) => linuxCpu(stat, allowedCpus) ?? osCpu())
+        : Effect.sync(osCpu);
+
+    const previousCpu = yield* sampleCpu();
+    const previousUsage = yield* readCpuUsage();
+    const startedAt = yield* Clock.currentTimeMillis;
     yield* Effect.sleep("200 millis");
-    const cpu = readCpu(platform);
-    const cpuUtilization =
-      previousCpu === null || cpu === null ? null : cpuBusyBetween(previousCpu, cpu);
-    const totalMemoryBytes = NodeOS.totalmem();
+    const cpu = yield* sampleCpu();
+    const usage = yield* readCpuUsage();
+    const elapsedMicros = ((yield* Clock.currentTimeMillis) - startedAt) * 1000;
+    let cpuCount = cpu.count;
+    const hostUtilization = cpuBusyBetween(previousCpu, cpu);
+    let cpuUtilization = hostUtilization;
+    if (cpuMax) {
+      const capacity = Math.min(Number(cpuMax[1]) / Number(cpuMax[2]), cpu.count);
+      cpuCount = Math.max(1, Math.floor(capacity));
+      const cgroupIdle =
+        previousUsage !== null && usage !== null && elapsedMicros > 0
+          ? capacity - (usage - previousUsage) / elapsedMicros
+          : null;
+      // Agents can run in sibling cgroups (agentScope.ts), so a busy host still counts.
+      const hostIdle = hostUtilization === null ? null : cpu.count * (1 - hostUtilization);
+      const idle =
+        cgroupIdle === null || hostIdle === null
+          ? (cgroupIdle ?? hostIdle)
+          : Math.min(cgroupIdle, hostIdle);
+      cpuUtilization = idle === null ? null : Math.min(1, Math.max(0, 1 - idle / capacity));
+    }
+
+    let totalMemoryBytes = NodeOS.totalmem();
     // On Windows libuv returns GlobalMemoryStatusEx.ullAvailPhys, including standby memory.
     let availableMemoryBytes = NodeOS.freemem();
     if (platform === "linux") {
-      const meminfo = yield* fs
-        .readFileString("/proc/meminfo")
-        .pipe(Effect.orElseSucceed(() => ""));
+      const meminfo = yield* readFile("/proc/meminfo");
       const available = /^MemAvailable:\s+(\d+)\s+kB$/m.exec(meminfo)?.[1];
       if (available) availableMemoryBytes = Number(available) * 1024;
     } else if (platform === "darwin") {
@@ -118,10 +165,28 @@ const make = Effect.fn("makeHostResources")(function* () {
         );
       availableMemoryBytes = darwinAvailableMemory(output) ?? availableMemoryBytes;
     }
+    const memoryMax = cgroup
+      ? cgroupNumber(yield* readFile(`${cgroup}/memory.max`), /^(\d+)$/m)
+      : null;
+    const memoryCurrent =
+      memoryMax === null
+        ? null
+        : cgroupNumber(yield* readFile(`${cgroup}/memory.current`), /^(\d+)$/m);
+    // Without usage, a capped total would read as a near-empty cgroup; keep host values instead.
+    if (memoryMax !== null && memoryCurrent !== null) {
+      totalMemoryBytes = Math.min(totalMemoryBytes, memoryMax);
+      // inactive_file is page cache the kernel reclaims before hitting memory.max.
+      const stat = yield* readFile(`${cgroup}/memory.stat`);
+      const reclaimable = cgroupNumber(stat, /^inactive_file (\d+)$/m) ?? 0;
+      availableMemoryBytes = Math.min(
+        availableMemoryBytes,
+        memoryMax - (memoryCurrent - reclaimable),
+      );
+    }
     return {
       sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
       cpuUtilization,
-      cpuCount: cpu?.count ?? NodeOS.cpus().length,
+      cpuCount,
       availableMemoryBytes: Math.min(totalMemoryBytes, Math.max(0, availableMemoryBytes)),
       totalMemoryBytes,
     };

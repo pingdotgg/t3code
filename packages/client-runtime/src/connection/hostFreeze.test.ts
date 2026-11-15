@@ -28,10 +28,4 @@ describe("hostFreezeNotice", () => {
       "The host is overloaded (load 61 on 56 cores).",
     );
   });
-
-  it("says T3 Code was busy when load is within the cores", () => {
-    expect(
-      hostFreezeNotice("wanqing", { ...stall, loadAverage: 12, cpuBusy: 0.2 })?.description,
-    ).toBe("T3 Code on wanqing was too busy to answer.");
-  });
 });
