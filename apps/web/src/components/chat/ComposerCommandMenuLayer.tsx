@@ -54,7 +54,7 @@ export function ComposerCommandMenuLayer(props: {
       const next = {
         bottom: window.innerHeight - spaceAbove,
         left: rect.left + drawerInset,
-        maxHeight: canOverflowTop ? floorHeight : Math.min(spaceAbove, floorHeight),
+        maxHeight: canOverflowTop ? floorHeight : Math.max(0, Math.min(spaceAbove, floorHeight)),
         width,
       };
       setPosition((current) =>
