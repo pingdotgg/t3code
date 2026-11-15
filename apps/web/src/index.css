@@ -1935,6 +1935,23 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
 }
 
 @layer base {
+  [data-citation-highlighted="response"] {
+    position: relative;
+    isolation: isolate;
+  }
+  [data-citation-highlighted="response"]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    border-radius: var(--radius-row);
+    background-color: color-mix(
+      in oklab,
+      var(--primary) calc(var(--assistant-citation-highlight-opacity) * 100%),
+      transparent
+    );
+  }
   ::highlight(t3-assistant-citation) {
     background-color: color-mix(
       in oklab,
@@ -5403,12 +5420,14 @@ body {
   a:not(
     .chat-markdown-file-link,
     :has([data-slot="context-chip-label"]),
+    [data-response-card],
     [data-markdown-image-link]
   ):hover,
 .chat-markdown
   a:not(
     .chat-markdown-file-link,
     :has([data-slot="context-chip-label"]),
+    [data-response-card],
     [data-markdown-image-link]
   ):focus-visible {
   background-image: radial-gradient(circle, currentcolor 0.75px, transparent 1px);
