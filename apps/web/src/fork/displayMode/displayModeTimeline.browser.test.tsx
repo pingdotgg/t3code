@@ -13,6 +13,7 @@ import { MESSAGES_ONLY_DISPLAY_MODE, NORMAL_DISPLAY_MODE } from "@t3tools/shared
 import * as DateTime from "effect/DateTime";
 import { createRef, type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
@@ -21,6 +22,7 @@ import { MessagesTimeline } from "../../components/chat/MessagesTimeline";
 import { deriveMessagesTimelineRows } from "../../components/chat/MessagesTimeline.logic";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
+import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { applyDisplayMode } from "./displayModeTimeline";
 
 const threadId = ThreadId.make("display-mode-thread");
@@ -290,8 +292,10 @@ describe("Messages only timeline", () => {
       input: { text: "The build is red." },
       output: { ok: true, message: "Shown to the user." },
     };
+    const editedAt = new Date(Date.UTC(2026, 10, 3, 0, 47, 0)).toISOString();
     const replace = (id: string, status: "completed" | "running"): OrchestrationV2TurnItem => ({
       ...base(id, 3),
+      completedAt: DateTime.makeUnsafe(editedAt),
       status,
       type: "dynamic_tool",
       toolName: "mcp__t3-code__replace_send_to_user",
@@ -304,11 +308,19 @@ describe("Messages only timeline", () => {
     });
     const sent = entriesOf([userMessage("rewrite-ask", 0, "Is the build green?"), send]);
 
-    it("redraws the send's row with the new text when the rewrite arrives", async () => {
+    it("redraws the send's row with the new text and time when the rewrite arrives", async () => {
       await using screen = await renderTimeline([
         ...applyDisplayMode(MESSAGES_ONLY_DISPLAY_MODE, sent),
       ]);
+      const shownTime = (at: string) => formatDayAwareTimestamp(at, "locale");
+      const rowOf = (text: string) =>
+        page.elementLocator(
+          screen.getByText(text).element().closest('[data-timeline-row-kind="message"]')!,
+        );
       await expect.element(screen.getByText("The build is red.")).toBeVisible();
+      await expect
+        .element(rowOf("The build is red.").getByText(shownTime(time(1)), { exact: true }))
+        .toBeVisible();
       const rewritten = [...sent, ...entriesOf([replace("rewrite-call", "completed")])];
       await screen.rerender(
         <MessagesTimeline
@@ -319,6 +331,14 @@ describe("Messages only timeline", () => {
       );
       await expect.element(screen.getByText("The build is green again.")).toBeVisible();
       expect(screen.container.textContent ?? "").not.toContain("The build is red.");
+      const reply = rowOf("The build is green again.");
+      const shown = reply.getByText(shownTime(editedAt), { exact: true });
+      await expect.element(shown).toBeVisible();
+      expect(reply.element().textContent).not.toContain(shownTime(time(1)));
+      await userEvent.hover(shown);
+      await expect
+        .element(page.getByText(formatChatTimestampTooltip(editedAt, "locale"), { exact: true }))
+        .toBeVisible();
     });
 
     it("draws no row for a replace call in any mode, running or done", () => {
