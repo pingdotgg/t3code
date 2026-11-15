@@ -19,9 +19,9 @@ Open a todolist with one entry per phase before starting.
 
 ## Phase A: Ground the problem
 
-Build a real mental model of every system the new code touches. Run the **how** skill over the relevant subsystems.
+Build a real mental model of every system the new code touches. Trace the relevant subsystems.
 
-Naming a file isn't grounding. Produce the traced model `how` prescribes. If the design redefines ownership or layering, dig up why the existing shape is the way it is before you overrule it. Read the git history on the files you are about to restructure, the PRs that introduced them, and any ADRs or design notes the repo keeps. The rationale you find is a constraint. What you cannot find is a risk you should name in the sketch rather than assume away.
+Naming a file isn't grounding. Write an architectural explanation of each. If the design redefines ownership or layering, dig up why the existing shape is the way it is before you overrule it. Read the git history on the files you are about to restructure, the PRs that introduced them, and any ADRs or design notes the repo keeps. The rationale you find is a constraint. What you cannot find is a risk you should name in the sketch rather than assume away.
 
 Skip Phase A only when the work is genuinely greenfield with no surrounding system to integrate.
 
@@ -74,7 +74,7 @@ Use judgment. A few edge cases don't condemn an architecture. Some problems are 
 
 When you scrap:
 
-1. Re-run the **how** skill over what's been built.
+1. Trace what's been built.
 2. Redesign as if the new constraints had been day-one assumptions, per redesign-from-first-principles.
 3. Subtract before adding, per the **subtract-before-you-add** principle skill. The new sketch should be smaller than the old one before it grows.
 4. Return to Phase B and re-run the design runners.

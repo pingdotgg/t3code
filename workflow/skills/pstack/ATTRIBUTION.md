@@ -57,8 +57,6 @@ equivalents. Where a skill got reviewer or candidate diversity by mixing model v
 diversity now comes from an assigned lens or a distinct starting constraint, because one vendor
 is all this plugin has. Beyond that:
 
-- `how` moved from Cursor's subagent API to Claude Code's. Its Explore spawns name model tiers in
-  one line at the top of the skill.
 - `interrogate` follows upstream's rewrite: adversaries run through `arena`'s Phase A steps 3 and 4
   and Phase B, and only findings proven by a run survive. Its four reference files went with the
   old reviewer flow. Adversaries spawn as `general-purpose`, and the `pstack-models.mdc` role line
@@ -78,10 +76,9 @@ is all this plugin has. Beyond that:
   rather than six), and the worked example changed from `poteto-mode` to this plugin's `caveman`.
 - `reflect` was ported the same way, including its skill-detection paths, and its substantive-edit
   branch now hands off to `writing-for-agents` instead of `create-skill`.
-- `why` gained an untrusted-input guard. Its investigators fan out across Slack, Linear, Notion,
-  Sentry, Datadog, and Databricks, and upstream's investigator prompt had no instruction to treat
-  what comes back as data. The reviewer prompts in `reflect` already carried that guard; `why` now
-  matches them.
+- `why` carries an untrusted-input guard. Upstream has no instruction to treat what it reads in
+  commits, PRs, and other sources as data. The reviewer prompts in `reflect` already carried that
+  guard; `why` now matches them, as one sentence since upstream cut `why` to a single paragraph.
 - `figure-it-out` lost its citation of `principle-never-block-on-the-human` and its instruction to
   read poteto-mode's principles index, which point at things not vendored here.
 - `teach` was renamed `explain-work`. Its job is explaining a body of work in this codebase, which
@@ -96,8 +93,9 @@ is all this plugin has. Beyond that:
   trail from `show-me-your-work` is most valuable on exactly the long unattended runs where nobody
   is around to ask for it. `automate-me` still tells the mode skills it writes to set the flag,
   because those are a user's personal register and should not switch on by themselves.
-- `how` lost its Critique mode along with `critic-prompt.md` and `critique-rubric.md`, following
-  upstream, which dropped them in favour of `interrogate` and `architect`.
+- `how` and `why` follow upstream down to one file each. `how` spawns one read-only explainer and
+  `why` reads the record itself, so their `references/` folders are gone, and `architect`,
+  `blast-radius`, `no-comments`, `recall`, and `explain-work` no longer point into them.
 - `no-comments` spawned `subagent_type: "Comment Sicko"`, which never resolved after the agent was
   renamed. It now spawns `ak:comment-sicko`.
 - `reflect` routed new skills and description tuning to Cursor's `create-skill`. Both now go to
@@ -105,7 +103,6 @@ is all this plugin has. Beyond that:
 - `ketchup-video` keeps `disable-model-invocation: true` because rendering a video is too costly to
   start unasked. `ketchup` lost its references to `/visualize`, a skill from another plugin, and
   just asks for a chart.
-- `why`'s investigator prompt takes upstream's shorter posture and keeps the untrusted-input guard.
 - `swarm` lost its last two references to Cursor's cloud workers.
 - `correct` also keeps `disable-model-invocation: true`. It reads the
   history, then commits lint rules, CI checks, type changes, and edits to the agent instruction file,
@@ -119,8 +116,8 @@ is all this plugin has. Beyond that:
 
 ## Upstream sync
 
-Last synced against `cursor/plugins` commit `ae5650f` (2026-10-31). Earlier syncs were taken at
-`ccb5507` (2026-10-06), `12d587d` (2026-09-23), and the first import at `63d938c` (2026-08-13). Each sync is a three-way merge per file with the previous sync commit as
+Last synced against `cursor/plugins` commit `bf0c7cd` (2026-11-14). Earlier syncs were taken at
+`ae5650f` (2026-10-31), `ccb5507` (2026-10-06), `12d587d` (2026-09-23), and the first import at `63d938c` (2026-08-13). Each sync is a three-way merge per file with the previous sync commit as
 the base, so local ports survive and upstream prose changes come across. Upstream changes that only
 touch model slugs, the `pstack-models.mdc` rule, or Cursor's Task tool are dropped in the merge,
 since the ports above already replace them.
@@ -175,8 +172,9 @@ ports above were replaced with provider-neutral wording:
 - `no-comments` delegates to a subagent that follows the `comment-sicko` skill instead of spawning
   the `ak:comment-sicko` agent, and names `how`, `why`, and `architect` as skills instead of slash
   commands.
-- `why` searches the tool list with "your harness's tool search" instead of ToolSearch. Its
-  evidence-source discovery stays generic.
+- `recall`'s shared-record sweep, which upstream now spells out inline instead of borrowing `why`'s
+  investigators, delegates its investigators as general subagents (in T3 Code: `delegate_task`)
+  instead of Cursor's agent-mode Task spawns.
 - `create-verification-skill` and `maintain-verification-skill` write and find `verify-<app>/` in
   whichever project skill folder the repo already uses (`.agents/skills/` or `.claude/skills/`)
   instead of always `.claude/skills/`.
