@@ -1,8 +1,30 @@
 import { expect, it, vi } from "vite-plus/test";
 import { requestMicrophone } from "./requestMicrophone";
 
+function setup(input: {
+  readonly getUserMedia: ReturnType<typeof vi.fn>;
+  readonly platform?: string;
+  readonly restartAudioService?: () => Promise<boolean>;
+}) {
+  const navigator = vi.spyOn(globalThis, "navigator", "get").mockReturnValue({
+    mediaDevices: { getUserMedia: input.getUserMedia },
+  } as unknown as Navigator);
+  vi.stubGlobal("window", {
+    desktopBridge: {
+      getClientPlatform: () => input.platform ?? "linux",
+      ...(input.restartAudioService ? { restartAudioService: input.restartAudioService } : {}),
+    },
+  });
+  return {
+    [Symbol.dispose]() {
+      navigator.mockRestore();
+      vi.unstubAllGlobals();
+    },
+  };
+}
+
 it.each(["NotFoundError", "NotReadableError"])(
-  "reopens the Linux desktop microphone after %s without restarting the app",
+  "reopens the Linux desktop microphone once after %s",
   async (name) => {
     const stream = {} as MediaStream;
     const getUserMedia = vi
@@ -10,89 +32,34 @@ it.each(["NotFoundError", "NotReadableError"])(
       .mockRejectedValueOnce(new DOMException("Disconnected", name))
       .mockResolvedValue(stream);
     const restartAudioService = vi.fn().mockResolvedValue(true);
-    using _navigator = vi
-      .spyOn(globalThis, "navigator", "get")
-      .mockReturnValue({ mediaDevices: { getUserMedia } } as unknown as Navigator);
-    vi.stubGlobal("window", {
-      desktopBridge: { getClientPlatform: () => "linux", restartAudioService },
-    });
-    try {
-      expect(await requestMicrophone("")).toBe(stream);
-      expect(getUserMedia.mock.calls).toEqual([[{ audio: true }], [{ audio: true }]]);
-      expect(restartAudioService).toHaveBeenCalledOnce();
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  },
-);
-
-it.each(["NotAllowedError", "OverconstrainedError"])(
-  "preserves %s without restarting audio",
-  async (name) => {
-    const error = new DOMException("Unavailable", name);
-    const getUserMedia = vi.fn().mockRejectedValue(error);
-    const restartAudioService = vi.fn();
-    using _navigator = vi
-      .spyOn(globalThis, "navigator", "get")
-      .mockReturnValue({ mediaDevices: { getUserMedia } } as unknown as Navigator);
-    vi.stubGlobal("window", {
-      desktopBridge: { getClientPlatform: () => "linux", restartAudioService },
-    });
-    try {
-      await expect(requestMicrophone("")).rejects.toBe(error);
-      expect(restartAudioService).not.toHaveBeenCalled();
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    using _env = setup({ getUserMedia, restartAudioService });
+    expect(await requestMicrophone("")).toBe(stream);
+    expect(getUserMedia.mock.calls).toEqual([[{ audio: true }], [{ audio: true }]]);
+    expect(restartAudioService).toHaveBeenCalledOnce();
   },
 );
 
 it.each([
-  { platform: "darwin", recovered: true },
-  { platform: "win32", recovered: true },
-  { platform: "linux", recovered: false },
-  { platform: "linux", recovered: undefined },
+  { name: "NotAllowedError", platform: "linux", recovered: true, calls: 1 },
+  { name: "OverconstrainedError", platform: "linux", recovered: true, calls: 1 },
+  { name: "NotFoundError", platform: "darwin", recovered: true, calls: 1 },
+  { name: "NotFoundError", platform: "linux", recovered: false, calls: 1 },
+  { name: "NotFoundError", platform: "linux", recovered: undefined, calls: 1 },
+  { name: "NotReadableError", platform: "linux", recovered: true, calls: 2 },
 ])(
-  "preserves the failure when recovery is unavailable ($platform, $recovered)",
-  async ({ platform, recovered }) => {
-    const error = new DOMException("Missing microphone", "NotFoundError");
+  "keeps $name on $platform (recovered: $recovered)",
+  async ({ name, platform, recovered, calls }) => {
+    const error = new DOMException("Unavailable", name);
     const getUserMedia = vi.fn().mockRejectedValue(error);
-    using _navigator = vi
-      .spyOn(globalThis, "navigator", "get")
-      .mockReturnValue({ mediaDevices: { getUserMedia } } as unknown as Navigator);
-    vi.stubGlobal("window", {
-      desktopBridge: {
-        getClientPlatform: () => platform,
-        ...(recovered === undefined ? {} : { restartAudioService: async () => recovered }),
-      },
+    using _env = setup({
+      getUserMedia,
+      platform,
+      ...(recovered === undefined ? {} : { restartAudioService: async () => recovered }),
     });
-    try {
-      await expect(requestMicrophone("")).rejects.toBe(error);
-      expect(getUserMedia).toHaveBeenCalledOnce();
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    await expect(requestMicrophone("")).rejects.toBe(error);
+    expect(getUserMedia).toHaveBeenCalledTimes(calls);
   },
 );
-
-it("only retries capture once after recovery", async () => {
-  const error = new DOMException("Still unavailable", "NotReadableError");
-  const getUserMedia = vi.fn().mockRejectedValue(error);
-  const restartAudioService = vi.fn().mockResolvedValue(true);
-  using _navigator = vi
-    .spyOn(globalThis, "navigator", "get")
-    .mockReturnValue({ mediaDevices: { getUserMedia } } as unknown as Navigator);
-  vi.stubGlobal("window", {
-    desktopBridge: { getClientPlatform: () => "linux", restartAudioService },
-  });
-  try {
-    await expect(requestMicrophone("")).rejects.toBe(error);
-    expect(getUserMedia).toHaveBeenCalledTimes(2);
-    expect(restartAudioService).toHaveBeenCalledOnce();
-  } finally {
-    vi.unstubAllGlobals();
-  }
-});
 
 it("keeps the system-default fallback across one Linux audio recovery", async () => {
   const missing = new DOMException("Disconnected", "NotFoundError");
@@ -104,22 +71,13 @@ it("keeps the system-default fallback across one Linux audio recovery", async ()
     .mockRejectedValueOnce(missing)
     .mockResolvedValueOnce(stream);
   const restartAudioService = vi.fn().mockResolvedValue(true);
-  using _navigator = vi
-    .spyOn(globalThis, "navigator", "get")
-    .mockReturnValue({ mediaDevices: { getUserMedia } } as unknown as Navigator);
-  vi.stubGlobal("window", {
-    desktopBridge: { getClientPlatform: () => "linux", restartAudioService },
-  });
-  try {
-    expect(await requestMicrophone("missing-mic")).toBe(stream);
-    expect(getUserMedia.mock.calls).toEqual([
-      [{ audio: { deviceId: { exact: "missing-mic" } } }],
-      [{ audio: true }],
-      [{ audio: { deviceId: { exact: "missing-mic" } } }],
-      [{ audio: true }],
-    ]);
-    expect(restartAudioService).toHaveBeenCalledOnce();
-  } finally {
-    vi.unstubAllGlobals();
-  }
+  using _env = setup({ getUserMedia, restartAudioService });
+  expect(await requestMicrophone("missing-mic")).toBe(stream);
+  expect(getUserMedia.mock.calls).toEqual([
+    [{ audio: { deviceId: { exact: "missing-mic" } } }],
+    [{ audio: true }],
+    [{ audio: { deviceId: { exact: "missing-mic" } } }],
+    [{ audio: true }],
+  ]);
+  expect(restartAudioService).toHaveBeenCalledOnce();
 });
