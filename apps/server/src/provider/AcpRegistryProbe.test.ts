@@ -383,6 +383,7 @@ describe("ACP Registry probe", () => {
     );
     expect(rewriteDevinSkillMention("$missing", skills)).toBe("$missing");
     expect(rewriteDevinSkillMention("$research.md notes", skills)).toBe("$research.md notes");
+    expect(rewriteDevinSkillMention("$research.v2", skills)).toBe("$research.v2");
     expect(rewriteDevinSkillMention("use $research later", skills)).toBe("use $research later");
   });
 
