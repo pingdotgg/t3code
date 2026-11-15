@@ -51,6 +51,8 @@ const xAiSessionNotificationMethods = [
 ] as const;
 
 const XAI_TASK_COMPLETED_PROMPT_ID_PREFIX = "task-completed-";
+const XAI_INTERJECT_FALLBACK_PROMPT_ID_PREFIX = "interject-fallback-";
+const XAI_T3_PROMPT_ID_PREFIX = "t3-xai-prompt-";
 
 export function xAiPromptCompleteFromSessionUpdate(
   notification: XAiSessionUpdateNotification,
@@ -73,13 +75,56 @@ export function xAiPromptCompleteFromSessionUpdate(
   };
 }
 
-/** Background command wakes use their own task-completed-* prompt IDs. */
-export function isXAiTaskCompletedWakeNotification(
-  notification: EffectAcpSchema.SessionNotification,
-): boolean {
+/**
+ * Turns Grok starts itself: background command wakes (`task-completed-*`), and
+ * `interject-fallback-*` for an interjection that arrived after its turn ended.
+ */
+export function isXAiWakeNotification(notification: EffectAcpSchema.SessionNotification): boolean {
   const promptId = notification._meta?.promptId;
-  return typeof promptId === "string" && promptId.startsWith(XAI_TASK_COMPLETED_PROMPT_ID_PREFIX);
+  return (
+    typeof promptId === "string" &&
+    (promptId.startsWith(XAI_TASK_COMPLETED_PROMPT_ID_PREFIX) ||
+      promptId.startsWith(XAI_INTERJECT_FALLBACK_PROMPT_ID_PREFIX))
+  );
 }
+
+const XAI_INTERJECT_METHOD = "_x.ai/interject";
+const XAiInterjectResult = Schema.Struct({
+  result: Schema.Struct({ status: Schema.Literal("queued") }),
+});
+const isXAiInterjectResult = Schema.is(XAiInterjectResult);
+
+/**
+ * `_x.ai/interject` adds a message to the running prompt without cancelling its tools; Grok
+ * reads it at its next step. Grok reports no read event: one that lands after the prompt
+ * ends starts an `interject-fallback-*` turn instead, so the acknowledgment is the delivery.
+ * One sent before Grok starts the prompt runs as a fallback turn ahead of it.
+ */
+export const xAiInterjectSteering = {
+  isPromptStart: (notification: EffectAcpSchema.SessionNotification) => {
+    const promptId = notification._meta?.promptId;
+    return typeof promptId === "string" && promptId.startsWith(XAI_T3_PROMPT_ID_PREFIX);
+  },
+  send: (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+    sessionId: string,
+    text: string,
+  ) =>
+    runtime.request(XAI_INTERJECT_METHOD, { sessionId, text }).pipe(
+      Effect.flatMap((result) =>
+        isXAiInterjectResult(result)
+          ? Effect.undefined
+          : Effect.fail(
+              new EffectAcpErrors.AcpRequestError({
+                code: -32603,
+                errorMessage: "Grok did not queue the interjection.",
+                method: XAI_INTERJECT_METHOD,
+                data: result,
+              }),
+            ),
+      ),
+    ),
+};
 
 interface PendingXAiPromptCompletion {
   readonly sessionId: string;
@@ -1482,7 +1527,7 @@ export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletion
     let nextPromptFallbackId = 0;
     const allocatePromptFallbackId = Effect.sync(() => {
       nextPromptFallbackId += 1;
-      return `t3-xai-prompt-${nextPromptFallbackId}`;
+      return `${XAI_T3_PROMPT_ID_PREFIX}${nextPromptFallbackId}`;
     });
     const pendingXAiPromptCompletionsRef = yield* Ref.make<
       ReadonlyArray<PendingXAiPromptCompletion>

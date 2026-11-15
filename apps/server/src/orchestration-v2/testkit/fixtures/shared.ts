@@ -225,6 +225,8 @@ export type OrchestratorFixtureInputStep =
       readonly text: string;
       readonly attachments?: ReadonlyArray<ChatAttachment>;
       readonly targetRunIndex: number;
+      /** Steers once the target run shows a turn item of this type. */
+      readonly waitForTurnItemType?: OrchestrationV2TurnItem["type"];
     }
   | {
       readonly type: "restart";
@@ -751,6 +753,14 @@ export function materializeFixtureInput(input: {
             threadId: ids.threadId,
             runId: runIdFor(step.targetRunIndex),
           });
+          if (step.waitForTurnItemType !== undefined) {
+            steps.push({
+              type: "await_run_turn_item",
+              threadId: ids.threadId,
+              runId: runIdFor(step.targetRunIndex),
+              itemType: step.waitForTurnItemType,
+            });
+          }
           pushDispatch(
             dispatchMessageCommand({
               commandId: yield* idAllocator.allocate.command({

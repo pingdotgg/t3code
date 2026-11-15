@@ -501,16 +501,19 @@ export interface AcpAdapterV2Flavor {
   /**
    * Native steering: `send` queues a message into the running turn and returns the
    * agent's id for it, which `injectedSteerId` reads from the update that delivers it.
+   * Without `injectedSteerId`, the agent's acknowledgment is the delivery.
    */
   readonly steering?: {
     readonly send: (
       runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
       sessionId: string,
       text: string,
-    ) => Effect.Effect<string, EffectAcpErrors.AcpError>;
-    readonly injectedSteerId: (
+    ) => Effect.Effect<string | undefined, EffectAcpErrors.AcpError>;
+    readonly injectedSteerId?: (
       notification: EffectAcpSchema.SessionNotification,
     ) => string | undefined;
+    /** Holds a steer until an update shows the agent started the prompt; else it waits a turn. */
+    readonly isPromptStart?: (notification: EffectAcpSchema.SessionNotification) => boolean;
   };
   /**
    * Native fork from an earlier turn. `nativeTurnId` reads the agent's id for a running
@@ -700,6 +703,8 @@ export interface AcpAdapterV2Options {
     readonly onDeferredFinalizeScheduled?: (debounce: Duration.Input) => Effect.Effect<void>;
     /** `cancelAfterPromptStarts`: Stop is holding `session/cancel` until the prompt starts. */
     readonly onCancelHeld?: () => Effect.Effect<void>;
+    /** `steering.isPromptStart`: a steer is holding until the prompt starts. */
+    readonly onSteerHeld?: () => Effect.Effect<void>;
     readonly afterPromptWireSettled?: () => Effect.Effect<void>;
     readonly afterPromptSettledWithBackgroundWork?: () => Effect.Effect<void>;
     readonly afterPromptCallback?: () => Effect.Effect<void>;
@@ -6618,11 +6623,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           notification: EffectAcpSchema.SessionNotification,
         ) {
           const promptStarts = flavor.cancelAfterPromptStarts?.isStart;
-          if (promptStarts === undefined) return;
+          const steerablePromptStarts = flavor.steering?.isPromptStart;
+          if (promptStarts === undefined && steerablePromptStarts === undefined) return;
           const context = yield* Ref.get(activeTurn);
           if (context === null || context.nativeThreadId !== notification.sessionId) return;
           if (!(yield* Deferred.isDone(context.promptDispatched))) return;
-          if (!promptStarts(notification.update)) return;
+          if (
+            promptStarts?.(notification.update) !== true &&
+            steerablePromptStarts?.(notification) !== true
+          ) {
+            return;
+          }
           yield* Deferred.succeed(context.promptStarted, undefined);
         });
         const projectAcpRuntimeSessionUpdateEffect =
@@ -6638,7 +6649,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   context.nativePromptId ??= nativePromptId;
                 }
               }
-              const injectedSteerId = flavor.steering?.injectedSteerId(rawNotification);
+              const injectedSteerId = flavor.steering?.injectedSteerId?.(rawNotification);
               if (injectedSteerId !== undefined) {
                 yield* Deferred.succeed(steerInjection(injectedSteerId), undefined);
               }
@@ -9262,8 +9273,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           steerTurn: Effect.fn("AcpAdapterV2.steerTurn")(
             function* (turnInput) {
               const steering = flavor.steering;
-              // The agent takes text only, so a steer with attachments waits for the next turn.
-              if (steering === undefined || turnInput.message.attachments.length > 0) {
+              if (steering === undefined) {
                 return yield* new ProviderAdapter.ProviderAdapterSteerRunUnsupportedError({
                   driver,
                   providerThreadId: turnInput.providerThread.id,
@@ -9280,6 +9290,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   detail: `Provider turn ${turnInput.providerTurnId} is not active and cannot be steered.`,
                 });
               }
+              const declined = new ProviderAdapter.ProviderAdapterSteerDeclinedError({
+                driver,
+                providerThreadId: turnInput.providerThread.id,
+                providerTurnId: turnInput.providerTurnId,
+              });
+              // The agent takes text only, so a steer with attachments waits for the next turn,
+              // as does one after the prompt ended while the turn waits on background work.
+              if (
+                turnInput.message.attachments.length > 0 ||
+                (yield* Deferred.isDone(context.promptWireSettled))
+              ) {
+                return yield* declined;
+              }
               // An agent that drops an early cancel drops an early steer too.
               const startHold = flavor.cancelAfterPromptStarts;
               if (startHold !== undefined) {
@@ -9287,11 +9310,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   Effect.timeoutOption(startHold.bound),
                 );
               }
-              const steerId = yield* steering.send(
-                runtime,
-                context.nativeThreadId,
-                turnInput.message.text,
-              );
+              if (steering.isPromptStart !== undefined) {
+                if (!(yield* Deferred.isDone(context.promptStarted))) {
+                  yield* options.testHooks?.onSteerHeld?.() ?? Effect.void;
+                }
+                const started = yield* Effect.raceFirst(
+                  Deferred.await(context.promptStarted).pipe(Effect.as(true)),
+                  Deferred.await(context.promptWireSettled).pipe(Effect.as(false)),
+                ).pipe(Effect.timeoutOption(STEER_DELIVERY_BOUND));
+                if (!Option.contains(started, true)) return yield* declined;
+              }
+              const steerId = yield* steering
+                .send(runtime, context.nativeThreadId, turnInput.message.text)
+                .pipe(
+                  // An agent version without the steering method takes the message next turn.
+                  Effect.catchIf(
+                    (error) => error._tag === "AcpRequestError" && error.code === -32601,
+                    () => Effect.fail(declined),
+                  ),
+                );
+              if (steering.injectedSteerId === undefined || steerId === undefined) return;
               const injected = steerInjection(steerId);
               // The agent reads a steer at its next step. One that lands after the last
               // step is dropped, and the turn settles right after; the orchestrator then
@@ -9311,7 +9349,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             (effect, turnInput) =>
               effect.pipe(
                 Effect.mapError((cause) =>
-                  cause._tag === "ProviderAdapterSteerRunUnsupportedError"
+                  cause._tag === "ProviderAdapterSteerRunUnsupportedError" ||
+                  cause._tag === "ProviderAdapterSteerDeclinedError"
                     ? cause
                     : new ProviderAdapter.ProviderAdapterSteerRunError({
                         driver,

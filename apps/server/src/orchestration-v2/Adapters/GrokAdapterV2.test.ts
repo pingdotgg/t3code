@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  type ChatAttachment,
   ProjectId,
   MessageId,
   NodeId,
@@ -10,6 +11,7 @@ import {
   type OrchestrationV2RuntimeRequest,
   ProviderInstanceId,
   ProviderSessionId,
+  type ProviderTurnId,
   type RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
@@ -19,9 +21,13 @@ import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as EffectAcpErrors from "effect-acp/errors";
 import { xAiRateLimitedErrorCode } from "@t3tools/provider-grok/testing";
 import { assert, describe, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
@@ -39,6 +45,14 @@ import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegist
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import {
+  ProviderAdapterSteerDeclinedError,
+  type ProviderAdapterV2Error,
+} from "@t3tools/provider-core/server/ProviderAdapter";
+import {
+  makeProviderReplayGate,
+  type ProviderReplayGate,
+} from "@t3tools/provider-testing/replayGate";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
@@ -50,7 +64,12 @@ import {
   GROK_ACP_INITIALIZE_META,
 } from "@t3tools/provider-grok/testing";
 
-import { makeAcpReplayRuntime, type AcpReplayTranscript } from "./AcpAdapterV2.testkit.ts";
+import {
+  makeAcpReplayCompletenessAssertion,
+  makeAcpReplayRuntime,
+  makeTurnInput,
+  type AcpReplayTranscript,
+} from "./AcpAdapterV2.testkit.ts";
 
 const LAUNCH_TEST_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({
   binaryPath: "grok-launch-test",
@@ -598,5 +617,288 @@ describe("Grok native questions", () => {
       });
       yield* Deferred.await(terminal);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+});
+
+describe("Grok native steering", () => {
+  const SESSION_ID = "grok-steer-session";
+  const layerTest = Layer.mergeAll(
+    NodeServices.layer,
+    NodeCrypto.layer,
+    IdAllocator.layer,
+    McpProviderSessions.layer,
+    TestProviderHost.layer().pipe(
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+  );
+  type Entry = AcpReplayTranscript["entries"][number];
+  const openSessionAndPrompt: ReadonlyArray<Entry> = [
+    {
+      type: "expect_outbound",
+      label: "initialize",
+      frame: { kind: "request", method: "initialize", params: "<any>" },
+    },
+    {
+      type: "emit_inbound",
+      label: "initialized",
+      frame: {
+        kind: "response",
+        method: "initialize",
+        result: {
+          protocolVersion: 1,
+          agentCapabilities: { loadSession: true, promptCapabilities: { image: false } },
+          authMethods: [{ id: "replay", name: "Replay" }],
+        },
+      },
+    },
+    {
+      type: "expect_outbound",
+      label: "session.new",
+      frame: { kind: "request", method: "session/new", params: "<any>" },
+    },
+    {
+      type: "emit_inbound",
+      label: "session.created",
+      frame: {
+        kind: "response",
+        method: "session/new",
+        result: {
+          sessionId: SESSION_ID,
+          models: {
+            currentModelId: "grok-build",
+            availableModels: [{ modelId: "grok-build", name: "Grok Build" }],
+          },
+        },
+      },
+    },
+    {
+      type: "expect_outbound",
+      label: "prompt",
+      frame: { kind: "request", method: "session/prompt", params: "<any>" },
+    },
+  ];
+  // Grok tags every update of a prompt it runs with that prompt's id.
+  const promptStarted: Entry = {
+    type: "emit_inbound",
+    label: "started",
+    frame: {
+      kind: "notification",
+      method: "session/update",
+      params: {
+        sessionId: SESSION_ID,
+        update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Hm" } },
+        _meta: { promptId: "t3-xai-prompt-1" },
+      },
+    },
+  };
+  const steerText = "Also say hi";
+  const interject: Entry = {
+    type: "expect_outbound",
+    label: "interject",
+    frame: {
+      kind: "request",
+      method: "_x.ai/interject",
+      params: { sessionId: SESSION_ID, text: steerText },
+    },
+  };
+  const promptEnded: Entry = {
+    type: "emit_inbound",
+    label: "ended",
+    frame: { kind: "response", method: "session/prompt", result: { stopReason: "end_turn" } },
+  };
+
+  const runGrokSteering = (input: {
+    readonly scenario: string;
+    readonly entries: ReadonlyArray<Entry>;
+    readonly gates: ReadonlyArray<string>;
+    readonly drive: (turn: {
+      readonly replayGate: ProviderReplayGate;
+      readonly steerHeld: Deferred.Deferred<void>;
+      readonly steer: (
+        attachments?: ReadonlyArray<ChatAttachment>,
+      ) => Effect.Effect<void, ProviderAdapterV2Error>;
+    }) => Effect.Effect<void, ProviderAdapterV2Error>;
+  }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: `grok-${input.scenario}-` });
+      const statusPath = path.join(workspace, "status.json");
+      const transcript: AcpReplayTranscript = {
+        provider: GROK_PROVIDER,
+        protocol: "acp.ndjson-jsonrpc",
+        version: "1",
+        scenario: input.scenario,
+        entries: [...openSessionAndPrompt, ...input.entries],
+      };
+      const replayGate = makeProviderReplayGate(input.gates);
+      yield* Effect.addFinalizer(() => Effect.sync(() => replayGate.releaseAll()));
+      const steerHeld = yield* Deferred.make<void>();
+      const instanceId = ProviderInstanceId.make(`grok-${input.scenario}`);
+      const threadId = ThreadId.make(`grok-${input.scenario}-thread`);
+      const adapter = yield* makeGrokAdapterV2({
+        instanceId,
+        settings: LAUNCH_TEST_GROK_SETTINGS,
+        environment: {},
+        hostPlatform: "darwin",
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: makeAcpReplayRuntime({
+          transcript,
+          statusPath,
+          scriptPath: yield* path.fromFileUrl(
+            new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+          ),
+          childProcessSpawner,
+          fileSystem: fs,
+          initializeMeta: GROK_ACP_INITIALIZE_META,
+          replayGate,
+        }),
+        testHooks: {
+          onSteerHeld: () => Deferred.succeed(steerHeld, undefined).pipe(Effect.asVoid),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const modelSelection = { instanceId, model: "grok-build" };
+      yield* Effect.gen(function* () {
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`grok-${input.scenario}-session`),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const running = yield* Deferred.make<ProviderTurnId>();
+        const terminal = yield* Deferred.make<void>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => {
+            if (event.type === "provider_turn.updated" && event.providerTurn.status === "running")
+              return Deferred.succeed(running, event.providerTurn.id);
+            if (event.type === "turn.terminal") return Deferred.succeed(terminal, undefined);
+            return Effect.void;
+          }),
+          Effect.forkScoped,
+        );
+        const turnInput = makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          modelSelection,
+        });
+        yield* runtime.startTurn(turnInput);
+        const providerTurnId = yield* Deferred.await(running);
+        yield* input.drive({
+          replayGate,
+          steerHeld,
+          steer: (attachments = []) =>
+            runtime.steerTurn({
+              threadId,
+              runId: turnInput.runId,
+              providerThread,
+              providerTurnId,
+              message: {
+                ...turnInput.message,
+                messageId: MessageId.make(`steer:${input.scenario}`),
+                text: steerText,
+                attachments,
+              },
+            }),
+        });
+        yield* Deferred.await(terminal);
+      }).pipe(Effect.scoped);
+      yield* makeAcpReplayCompletenessAssertion(fs, statusPath, transcript);
+    }).pipe(Effect.scoped, Effect.provide(layerTest));
+
+  const isSteerDeclined = Schema.is(ProviderAdapterSteerDeclinedError);
+  const declined = (exit: Exit.Exit<void, ProviderAdapterV2Error>) =>
+    Exit.isFailure(exit) && isSteerDeclined(Cause.squash(exit.cause));
+
+  // regression: #37326 an interjection sent before Grok starts the prompt runs ahead of it
+  it.effect("holds a steer until Grok starts the prompt, then interjects", () =>
+    runGrokSteering({
+      scenario: "steer-after-start",
+      gates: ["started"],
+      entries: [
+        promptStarted,
+        interject,
+        {
+          type: "emit_inbound",
+          label: "queued",
+          frame: {
+            kind: "response",
+            method: "_x.ai/interject",
+            result: { result: { status: "queued" } },
+          },
+        },
+        promptEnded,
+      ],
+      drive: ({ replayGate, steerHeld, steer }) =>
+        Effect.gen(function* () {
+          const steering = yield* steer().pipe(Effect.exit, Effect.forkChild);
+          yield* Deferred.await(steerHeld);
+          replayGate.release("started");
+          // Grok's acknowledgment is the delivery: it reports no read event.
+          assert.isTrue(Exit.isSuccess(yield* Fiber.join(steering)));
+        }),
+    }),
+  );
+
+  it.effect("takes a steer Grok has not started within 2 s as the next turn's message", () =>
+    runGrokSteering({
+      scenario: "steer-never-started",
+      gates: ["ended"],
+      entries: [promptEnded],
+      drive: ({ replayGate, steerHeld, steer }) =>
+        Effect.gen(function* () {
+          const steering = yield* steer().pipe(Effect.exit, Effect.forkChild);
+          yield* Deferred.await(steerHeld);
+          yield* TestClock.adjust("2 seconds");
+          assert.isTrue(declined(yield* Fiber.join(steering)));
+          replayGate.release("ended");
+        }),
+    }),
+  );
+
+  it.effect("takes a steer with images, or on a Grok without interjection, next turn", () =>
+    runGrokSteering({
+      scenario: "steer-declined",
+      gates: [],
+      entries: [
+        promptStarted,
+        interject,
+        {
+          type: "emit_inbound",
+          label: "method-not-found",
+          frame: {
+            kind: "response",
+            method: "_x.ai/interject",
+            error: { code: -32601, message: "Method not found" },
+          },
+        },
+        promptEnded,
+      ],
+      drive: ({ steer }) =>
+        Effect.gen(function* () {
+          const image: ChatAttachment = {
+            type: "image",
+            id: "grok-steer-image",
+            name: "screen.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+          };
+          assert.isTrue(declined(yield* steer([image]).pipe(Effect.exit)));
+          assert.isTrue(declined(yield* steer().pipe(Effect.exit)));
+        }),
+    }),
   );
 });

@@ -41,6 +41,8 @@ import { kiroCompactionInput } from "./kiro_compaction/input.ts";
 import { kiroForkFromTurnInput } from "./kiro_fork_from_turn/input.ts";
 import { assertKiroForkFromTurnOutput } from "./kiro_fork_from_turn/output.ts";
 import { kiroMessageSteeringInput } from "./kiro_message_steering/input.ts";
+import { grokMessageSteeringInput } from "./grok_message_steering/input.ts";
+import { assertGrokNativeMessageSteeringOutput } from "./grok_message_steering/output.ts";
 import { assertKiroMessageSteeringOutput } from "./kiro_message_steering/output.ts";
 import { assertKiroCompactionOutput } from "./kiro_compaction/output.ts";
 import { KIRO_EFFORT_LEVEL, KIRO_EFFORT_MODEL, kiroEffortInput } from "./kiro_effort/input.ts";
@@ -553,6 +555,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: KIRO_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
         assertOutput: assertToolCallReadOnlyOnRequestKiroOutput,
+      },
+    ],
+  },
+  {
+    name: "grok_message_steering",
+    buildInput: grokMessageSteeringInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("grok"),
+        transcriptFile: new URL("./grok_message_steering/grok_transcript.ndjson", import.meta.url),
+        modelSelection: GROK_MODEL_SELECTION,
+        assertOutput: assertGrokNativeMessageSteeringOutput,
       },
     ],
   },

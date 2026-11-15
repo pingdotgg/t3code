@@ -1,7 +1,8 @@
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   XAiPromptFailureText,
-  isXAiTaskCompletedWakeNotification,
+  isXAiWakeNotification,
+  xAiInterjectSteering,
   xAiRateLimitedErrorCode,
 } from "./xaiAcpExtension.ts";
 import { discoverGrokSkills, leadingGrokSkillMention } from "./skills.ts";
@@ -117,8 +118,13 @@ const GrokProviderCapabilitiesV2 = {
     ...AcpProviderCapabilitiesV2.checkpointing,
     providerCanReadConversationSnapshot: true,
   },
-  // Cancelling a Grok prompt kills its running foreground tool.
-  turns: { ...AcpProviderCapabilitiesV2.turns, supportsSteeringByInterruptRestart: false },
+  // Cancelling a Grok prompt kills its running foreground tool; `_x.ai/interject` leaves it running.
+  turns: {
+    ...AcpProviderCapabilitiesV2.turns,
+    supportsActiveSteering: true,
+    activeSteeringInterruptsTools: false,
+    supportsSteeringByInterruptRestart: false,
+  },
 } satisfies OrchestrationV2ProviderCapabilities;
 
 export interface GrokAdapterV2Options {
@@ -409,7 +415,8 @@ export function makeGrokAcpAdapterFlavor(
       ...extractXAiKilledBackgroundTasks(toolCall),
     ],
     isPersistentBackgroundTool: isXAiPersistentMonitor,
-    isProviderWakeNotification: isXAiTaskCompletedWakeNotification,
+    isProviderWakeNotification: isXAiWakeNotification,
+    steering: xAiInterjectSteering,
     deferFinalizeForBackgroundWork: true,
     enablePostSettleContinuation: true,
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),

@@ -212,26 +212,26 @@ it("queues a steer for a provider that cannot steer either way", () => {
   );
 });
 
+const grokCapabilities = makeGrokAcpAdapterFlavor(
+  { makeRuntime: () => Effect.never } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0],
+  "/home/ada",
+).capabilities;
+
 // regression: #27014 a Grok follow-up cancels the foreground tool the user wanted to finish
-it("does not steer a Grok follow-up by interrupting its running turn", () => {
-  const grok = makeGrokAcpAdapterFlavor(
-    { makeRuntime: () => Effect.never } as unknown as Parameters<
-      typeof makeGrokAcpAdapterFlavor
-    >[0],
-    "/home/ada",
-  ).capabilities;
-  const projection = dispatchProjection(grok);
+// regression: #37326 Grok follow-ups can no longer join the running turn
+it("steers a Grok follow-up natively, never by interrupting its running turn", () => {
+  const projection = dispatchProjection(grokCapabilities);
   for (const deliveryIntent of ["auto", "steer"] as const) {
-    const mode = CommandPolicy.resolveMessageDispatchIntent(
-      projection,
-      { type: "start_immediately" },
-      deliveryIntent,
-    );
-    assert.isFalse(
-      mode.type === "steer_active" && !grok.turns.supportsActiveSteering,
-      `${deliveryIntent} follow-up resolved to ${mode.type} by interrupt-restart`,
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(
+        projection,
+        { type: "start_immediately" },
+        deliveryIntent,
+      ),
+      { type: "steer_active", targetRunId: activeRunId },
     );
   }
+  assert.isFalse(grokCapabilities.turns.activeSteeringInterruptsTools);
 });
 
 it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) => {
@@ -278,6 +278,19 @@ layer("CommandPolicyV2", (it) => {
         threadId,
         providerInstanceId: ProviderInstanceId.make("cursor"),
         capabilities: CursorProviderCapabilitiesV2,
+      });
+      assert.equal(result, "active_steering");
+    }),
+  );
+
+  it.effect("steers a live Grok turn in place", () =>
+    Effect.gen(function* () {
+      const policy = yield* CommandPolicy.CommandPolicyV2;
+      const result = yield* policy.decideSteeringExecution({
+        commandId,
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("grok"),
+        capabilities: grokCapabilities,
       });
       assert.equal(result, "active_steering");
     }),
