@@ -26,6 +26,7 @@ import {
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionDriver from "./driver.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
   BearerConnectionTarget,
   ConnectionBlockedError,
@@ -167,8 +168,24 @@ function layerPairingOnboarding(
   options?: Parameters<typeof layerPairingHttp>[1],
   calls: Array<{ readonly url: string; readonly init: RequestInit }> = [],
   provision?: ClientCapabilities.SshEnvironmentGateway["Service"]["provision"],
+  rememberedDescriptors: Array<{
+    readonly httpBaseUrl: string;
+    readonly environmentId?: string;
+  }> = [],
 ) {
   const dependencies = Layer.mergeAll(
+    Layer.mock(RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization)({
+      rememberCheckedDescriptor: (httpBaseUrl, descriptor) =>
+        Effect.sync(() => {
+          rememberedDescriptors.push({
+            httpBaseUrl,
+            ...Option.match(descriptor, {
+              onNone: () => ({}),
+              onSome: (value) => ({ environmentId: value.environmentId }),
+            }),
+          });
+        }),
+    }),
     layerClientPresentation,
     layerPairingHttp(calls, options),
     Layer.mock(Persistence.ConnectionTargetStore)({
@@ -243,10 +260,12 @@ describe("connection onboarding", () => {
   it.effect("prepares a persisted bearer registration from pairing details", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const remembered: Array<{ readonly httpBaseUrl: string; readonly environmentId?: string }> =
+        [];
       const registration = yield* preparePairingRegistration({
         host: "remote.example.test",
         pairingCode: "pairing-token",
-      }).pipe(Effect.provide(layerPairingOnboarding(undefined, calls)));
+      }).pipe(Effect.provide(layerPairingOnboarding(undefined, calls, undefined, remembered)));
 
       expect(registration).toMatchObject({
         _tag: "BearerConnectionRegistration",
@@ -269,6 +288,10 @@ describe("connection onboarding", () => {
       expect(calls.map((call) => call.url)).toEqual([
         "https://remote.example.test/.well-known/t3/environment",
         "https://remote.example.test/oauth/token",
+      ]);
+      // The first connect reuses this read instead of fetching the descriptor again.
+      expect(remembered).toEqual([
+        { httpBaseUrl: "https://remote.example.test/", environmentId: "environment-paired" },
       ]);
 
       const tokenRequest = calls.find((call) => call.url.endsWith("/oauth/token"));
