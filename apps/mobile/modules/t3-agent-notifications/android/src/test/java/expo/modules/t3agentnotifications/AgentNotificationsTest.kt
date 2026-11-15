@@ -577,7 +577,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     // its hasPromotableCharacteristics() incorrectly requires colorization.
     assertFalse(card.extras.getBoolean(NotificationCompat.EXTRA_COLORIZED))
     assertTrue(card.flags and Notification.FLAG_ONGOING_EVENT != 0)
-    assertEquals(Notification.VISIBILITY_PRIVATE, card.visibility)
+    assertEquals(Notification.VISIBILITY_PUBLIC, card.visibility)
     assertEquals(Notification.VISIBILITY_PRIVATE, alert.visibility)
   }
 
