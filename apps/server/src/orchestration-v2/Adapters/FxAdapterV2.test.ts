@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it } from "@effect/vitest";
 import {
@@ -36,9 +37,12 @@ import {
 
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
-  TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+  TestProviderHost.layer().pipe(
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  ),
 );
 
 const SESSION_ID = "fx-session-01";
@@ -283,7 +287,7 @@ describe("FxAdapterV2", () => {
           ],
         }),
       { discard: true },
-    ).pipe(Effect.provide(testLayer), Effect.scoped),
+    ).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("puts a loaded session that ran a named model back on fx's default for Default", () =>
@@ -305,7 +309,7 @@ describe("FxAdapterV2", () => {
         // Written on load even though fx reports ask.
         ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES })),
       ],
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 
   // `fx status` names the gateway default, but this loaded session runs on
@@ -330,7 +334,7 @@ describe("FxAdapterV2", () => {
           fxConfig({ model: CODEX_MODEL, models: [CODEX_MODEL], modes: FX_0_0_13_MODES }),
         ),
       ],
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 
   // fx 0.0.13's gateway takes any model id (src/acp/server.zig
@@ -363,6 +367,6 @@ describe("FxAdapterV2", () => {
         outbound("session/prompt"),
         answer("session/prompt", { stopReason: "end_turn" }),
       ],
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 });

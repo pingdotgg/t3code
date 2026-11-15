@@ -101,48 +101,53 @@ export function SidebarUpdateReleaseNotes({
               ? "View release on GitHub"
               : `${omittedItemCount} more ${omittedItemCount === 1 ? "change" : "changes"} on GitHub`);
 
-          if (releaseNote.intro !== undefined) {
-            return (
-              <section className={index > 0 ? "mt-4" : undefined} key={releaseNote.version}>
-                {releaseNote.version !== state.availableVersion ? (
+          const generated = releaseNote.stats !== undefined || releaseNote.intro !== undefined;
+          return (
+            <section className={index > 0 ? "mt-4" : undefined} key={releaseNote.version}>
+              {generated ? (
+                releaseNote.version !== state.availableVersion && (
                   <h3 className="mb-1 text-xs leading-4 font-medium text-muted-foreground">
                     {releaseNote.releasedAt
                       ? `${releaseNote.version} · ${formatReleaseAge(releaseNote.releasedAt)}`
                       : releaseNote.version}
                   </h3>
-                ) : null}
+                )
+              ) : (
+                <h3 className="mb-2 text-foreground text-xs leading-4 font-semibold">
+                  {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
+                </h3>
+              )}
+              {releaseNote.intro ? (
                 <p className="break-words text-xs leading-5 text-popover-foreground">
                   {releaseNote.intro}
                 </p>
-                {releaseUrl ? (
-                  <ReleaseLink releaseUrl={releaseUrl} shell={shell}>
-                    {releaseNote.stats ?? "View release on GitHub"}
-                  </ReleaseLink>
-                ) : null}
-              </section>
-            );
-          }
-
-          return (
-            <div className={index > 0 ? "mt-4" : undefined} key={releaseNote.version}>
-              <section>
-                <h3 className="text-foreground text-xs leading-4 font-semibold">
-                  {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
-                </h3>
-                <ul className="mt-2 space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
-                  {keyReleaseNoteItems(releaseNote.items).map(({ item, key }) => (
-                    <li className="list-disc break-words" key={key}>
-                      {item}
-                    </li>
-                  ))}
+              ) : releaseNote.items.length > 0 ? (
+                <ul className="space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
+                  {keyReleaseNoteItems(releaseNote.items).map(({ item, key }) => {
+                    const highlight = /^\*\*([^*]+)\*\* (.+)$/.exec(item);
+                    return (
+                      <li className="list-disc break-words" key={key}>
+                        {highlight ? (
+                          <>
+                            <strong>{highlight[1]}</strong> {highlight[2]}
+                          </>
+                        ) : (
+                          item
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
-                {releaseUrl ? (
-                  <ReleaseLink releaseUrl={releaseUrl} shell={shell}>
-                    {linkLabel}
-                  </ReleaseLink>
-                ) : null}
-              </section>
-            </div>
+              ) : null}
+              {releaseNote.footer && (
+                <p className="mt-2 text-xs leading-5 font-semibold">{releaseNote.footer}</p>
+              )}
+              {releaseUrl && (
+                <ReleaseLink releaseUrl={releaseUrl} shell={shell}>
+                  {linkLabel}
+                </ReleaseLink>
+              )}
+            </section>
           );
         })}
         {state.omittedReleaseCount > 0 ? (

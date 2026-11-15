@@ -28,7 +28,7 @@ export function ProjectEnvironmentBadge(props: {
           <span
             role="img"
             aria-label={description}
-            className="ml-auto inline-flex shrink-0 items-center text-muted-foreground"
+            className="inline-flex shrink-0 items-center text-muted-foreground"
           />
         }
       >

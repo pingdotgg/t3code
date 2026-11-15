@@ -1,4 +1,5 @@
 import {
+  BrowserNavigationTarget,
   OrchestratorMcpFailure,
   ToolActivityIcon,
   PreviewAutomationActInput,
@@ -15,6 +16,7 @@ import {
   PreviewAutomationSetColorSchemeInput,
   PreviewAutomationSetColorSchemeResult,
   PreviewAutomationSnapshot,
+  PreviewAutomationSnapshotMetadata,
   PreviewAutomationStatus,
   PreviewAutomationTabTargetInput,
   PreviewAutomationWaitForInput,
@@ -62,11 +64,17 @@ const PreviewStatusTool = Tool.make("preview_status", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
+// `url` already covers websites, so open only adds the dev-server target.
+const EnvironmentPortTarget = BrowserNavigationTarget.members[1];
+
 const PreviewOpenTool = browserTool(
   Tool.make("preview_open", {
     description:
-      "Open a preview tab in this thread and show it. `open=false` keeps it in the background. Reuses your current tab unless `tabId` or `reuseExistingTab=false` says otherwise. Parallel subagents in one session must each use `reuseExistingTab=false`, then their own returned `tabId`.",
-    parameters: PreviewAutomationOpenInput,
+      "Open a preview tab in this thread and show it. For a dev server, pass `target` instead of `url`. `open=false` keeps it in the background. Reuses your current tab unless `tabId` or `reuseExistingTab=false` says otherwise. Parallel subagents in one session must each use `reuseExistingTab=false`, then their own returned `tabId`.",
+    parameters: PreviewAutomationOpenInput.mapFields(
+      (fields) => ({ ...fields, target: Schema.optional(EnvironmentPortTarget) }),
+      { unsafePreserveChecks: true },
+    ),
     success: PreviewAutomationStatus,
     failure: PreviewToolFailure,
     dependencies,
@@ -144,7 +152,7 @@ export const PreviewSnapshotTool = safeBrowserTool(
         }),
       ),
     }),
-    success: PreviewAutomationSnapshot,
+    success: Schema.Union([PreviewAutomationSnapshot, PreviewAutomationSnapshotMetadata]),
     failure: PreviewToolFailure,
     dependencies,
   }).annotate(Tool.Title, "Inspect browser page"),
@@ -175,7 +183,7 @@ export const PreviewEvaluateResult = Schema.Struct({
 const PreviewEvaluateTool = browserTool(
   Tool.make("preview_evaluate", {
     description:
-      "Run JavaScript in the page. It can change page state. Returns `{value}`, up to 64 KB. Needs your tab, or an unclaimed one. To read a tab the user drives, use `preview_snapshot`. Page tools reached here: read data only, never create, save, or display. Show results with `html_render`.",
+      "Run JavaScript in the page. It can change page state. Returns `{value}`, up to 64 KB. Needs your tab, or an unclaimed one. To read a tab the user drives, use `preview_snapshot`. Page tools write only on user request. Show results with `html_render`, never page tools.",
     parameters: PreviewAutomationEvaluateInput,
     success: PreviewEvaluateResult,
     failure: PreviewToolFailure,

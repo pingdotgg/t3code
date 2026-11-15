@@ -1,0 +1,36 @@
+import type * as guardduty from "@distilled.cloud/aws/guardduty";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `guardduty:GetInvitationsCount`.
+ *
+ * Counts the membership invitations received by this account, excluding deleted ones.
+ * Account-level operation — invoked with the caller's request as-is.
+ * Provide the implementation with
+ * `Effect.provide(AWS.GuardDuty.GetInvitationsCountHttp)`.
+ * ### Administrator & Invitations
+ * **Example:** Count Invitations
+ * ```typescript
+ * // init
+ * // init — account-level binding, no resource argument
+ * const getInvitationsCount = yield* AWS.GuardDuty.GetInvitationsCount();
+ *
+ * // runtime
+ * const { InvitationsCount } = yield* getInvitationsCount();
+ * ```
+ *
+ * @binding
+ */
+export interface GetInvitationsCount extends Binding.Service<
+  GetInvitationsCount,
+  "AWS.GuardDuty.GetInvitationsCount",
+  () => Effect.Effect<
+    (
+      request?: guardduty.GetInvitationsCountRequest,
+    ) => Effect.Effect<guardduty.GetInvitationsCountResponse, guardduty.GetInvitationsCountError>
+  >
+> {}
+export const GetInvitationsCount = Binding.Service<GetInvitationsCount>(
+  "AWS.GuardDuty.GetInvitationsCount",
+);
