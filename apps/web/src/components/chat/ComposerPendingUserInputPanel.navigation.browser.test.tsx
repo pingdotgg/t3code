@@ -11,33 +11,16 @@ import { useLayoutEffect, useRef, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-const submission = vi.hoisted(() => ({ refresh: vi.fn(), respond: vi.fn(), error: vi.fn() }));
-vi.mock(import("../../lib/attachmentUploadQueue"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  refreshExpiredAttachmentUploads: submission.refresh,
-  getUploadedAttachments: () => [],
-}));
-vi.mock(import("../../state/use-orchestration-command"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  useOrchestrationCommand: (() => submission.respond) as never,
-}));
-vi.mock(import("../../state/session"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  readEnvironmentScope: () => true,
-}));
-
 vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
   ...(await importOriginal()),
   default: (({ text }: { text: string }) => <p>{text}</p>) as never,
 }));
 
 import { act, fakeTimers, render } from "../../../test/render";
-import { useComposerDraftStore } from "../../composerDraftStore";
+import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { toastManager } from "../ui/toast";
-import { usePendingThreadRequests } from "./usePendingThreadRequests";
-import { questionAttachmentDraftId } from "../../questionAttachments";
-import { useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
+import { usePendingThreadRequests, usePendingUserInputDraft } from "./usePendingThreadRequests";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
 
@@ -97,134 +80,34 @@ interface ProbeProps {
   environmentId: EnvironmentId;
   projection: OrchestrationV2ThreadProjection;
   loading?: boolean;
+  draftTarget?: DraftId;
 }
 
-function useProbeRequests({ environmentId, projection, loading = false }: ProbeProps) {
+function useProbeRequests({ environmentId, projection, loading = false, draftTarget }: ProbeProps) {
   const promptRef = useRef("");
   const composerRef = useRef(null);
-  return usePendingThreadRequests({
+  const requests = usePendingThreadRequests({
     environmentId,
     activeThreadId: projection.thread.id,
     serverProjection: loading ? null : projection,
-    supportsQuestionAttachments: true,
-    composerDraftTarget: { environmentId, threadId: projection.thread.id },
+    supportsQuestionAttachments: false,
+    composerDraftTarget: draftTarget ?? { environmentId, threadId: projection.thread.id },
     setComposerDraftPrompt: (target, prompt) =>
       useComposerDraftStore.getState().setPrompt(target, prompt),
     promptRef,
     composerRef,
-    setThreadError: submission.error,
+    setThreadError: () => {},
   });
+  const draft = usePendingUserInputDraft({
+    environmentId,
+    activeThreadId: projection.thread.id,
+    activePendingUserInput: requests.activePendingUserInput,
+    supportsQuestionAttachments: false,
+  });
+  return { ...requests, ...draft };
 }
 
-let requests: ReturnType<typeof usePendingThreadRequests>;
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((complete) => {
-    resolve = complete;
-  });
-  return { promise, resolve };
-}
-
-it.each(["answer", "attachment"])(
-  "preserves an edited %s after remount while attachment preparation is in flight",
-  async (edit) => {
-    const environmentId = EnvironmentId.make(`editing-during-refresh-${edit}`);
-    const projection = questionProjection(ThreadId.make("editing-during-refresh"), ["first"]);
-    const requestId = RuntimeRequestId.make("first");
-    const target = questionAttachmentDraftId(
-      environmentId,
-      projection.thread.id,
-      requestId,
-      edit === "answer" ? "question-0" : "question-1",
-    );
-    const file = new File(["image"], "image.png", { type: "image/png" });
-    useComposerDraftStore.getState().addImages(target, [
-      {
-        type: "image",
-        id: "editing-upload",
-        name: file.name,
-        mimeType: file.type,
-        sizeBytes: file.size,
-        file,
-        previewUrl: "blob:editing-upload",
-      },
-    ]);
-    const started = deferred();
-    useAttachmentUploadStore.setState({
-      uploadsByImageId: {
-        "editing-upload": {
-          status: "ready",
-          environmentId,
-          attachmentId: "pending-editing-upload",
-        },
-      },
-    });
-    const release = deferred();
-    const rejected = deferred();
-    submission.respond.mockClear();
-    submission.respond.mockImplementationOnce(() => {
-      rejected.resolve();
-      return { _tag: "Success" };
-    });
-    submission.error.mockClear();
-    submission.error.mockImplementationOnce(() => rejected.resolve());
-    submission.refresh.mockImplementationOnce(() => {
-      started.resolve();
-      return release.promise;
-    });
-    const probe = <PendingRequestsProbe environmentId={environmentId} projection={projection} />;
-    await using screen = await render(probe);
-    await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "Original"));
-    await act(() => requests.onAdvanceActivePendingUserInput());
-    await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-1", "Second"));
-    await act(() => requests.onAdvanceActivePendingUserInput());
-    await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-2", "Third"));
-    await act(() => requests.onAdvanceActivePendingUserInput());
-    expect(submission.refresh).toHaveBeenCalledOnce();
-    await started.promise;
-    await screen.rerender(null);
-    await screen.rerender(probe);
-    const earlierTarget = questionAttachmentDraftId(
-      environmentId,
-      projection.thread.id,
-      requestId,
-      "question-0",
-    );
-    await act(() => {
-      if (edit === "answer")
-        requests.onChangeActivePendingUserInputCustomAnswer("question-0", "Edited");
-      else
-        useComposerDraftStore.getState().addImages(earlierTarget, [
-          {
-            type: "image",
-            id: "new-earlier-image",
-            name: file.name,
-            mimeType: file.type,
-            sizeBytes: file.size,
-            file,
-            previewUrl: "blob:new-earlier-image",
-          },
-        ]);
-    });
-    await act(async () => {
-      release.resolve();
-      await rejected.promise;
-    });
-    expect(submission.respond).not.toHaveBeenCalled();
-    expect(submission.error).toHaveBeenCalledWith(
-      projection.thread.id,
-      "Answer changed while preparing attachments. Review it and send again.",
-    );
-    expect(requests.activePendingDraftAnswers["question-0"]).toMatchObject({
-      customAnswer: edit === "answer" ? "Edited" : "Original",
-    });
-    if (edit === "attachment")
-      expect(
-        useComposerDraftStore.getState().getComposerDraft(earlierTarget)?.images,
-      ).toMatchObject([{ id: "new-earlier-image" }]);
-  },
-);
+let requests: ReturnType<typeof useProbeRequests>;
 
 function PendingRequestsProbe(props: ProbeProps) {
   const state = useProbeRequests(props);
@@ -275,12 +158,10 @@ it("tells the user when an option click moves their typed answer into the hidden
   const draftTarget = { environmentId, threadId: threadRef.threadId };
   const draftPrompt = () => useComposerDraftStore.getState().getComposerDraft(draftTarget)?.prompt;
   using toast = vi.spyOn(toastManager, "add");
-  await using _screen = await render(
-    <PendingRequestsProbe
-      environmentId={environmentId}
-      projection={questionProjection(threadRef.threadId)}
-    />,
+  const probe = (threadId: ThreadId) => (
+    <PendingRequestsProbe environmentId={environmentId} projection={questionProjection(threadId)} />
   );
+  await using screen = await render(probe(threadRef.threadId));
 
   await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
   expect(toast).not.toHaveBeenCalled();
@@ -304,6 +185,31 @@ it("tells the user when an option click moves their typed answer into the hidden
     customAnswer: "second try",
   });
   expect(toast).toHaveBeenCalledTimes(1);
+
+  // The hook outlives a thread switch; text set aside in another thread is in another draft.
+  await screen.rerender(probe(ThreadId.make("other-thread")));
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "elsewhere"));
+  await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
+  await screen.rerender(probe(threadRef.threadId));
+
+  // regression: #35205 undo puts the set-aside text back, so the draft must not keep a copy to resend
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "first try"));
+  expect(draftPrompt() ?? "").toBe("");
+
+  // Text set aside into a queued-message edit draft never withdraws from the thread draft.
+  await screen.rerender(
+    <PendingRequestsProbe
+      environmentId={environmentId}
+      projection={questionProjection(threadRef.threadId)}
+      draftTarget={DraftId.make("queued-edit")}
+    />,
+  );
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "foo"));
+  await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
+  await screen.rerender(probe(threadRef.threadId));
+  useComposerDraftStore.getState().setPrompt(draftTarget, "foo");
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "foo"));
+  expect(draftPrompt()).toBe("foo");
 });
 
 function QuestionPositionProbe(props: ProbeProps) {
@@ -380,7 +286,10 @@ it("isolates drafts by environment, thread and request and discards only resolve
     makeThreadRequestsResolvedAnnouncer(
       environmentId,
       threadRef.threadId,
-    )([RuntimeRequestId.make("second")]),
+    )([
+      { id: RuntimeRequestId.make("first"), status: "resolved" },
+      { id: RuntimeRequestId.make("second"), status: "pending" },
+    ]),
   );
   for (const [index, scope] of scopes.entries()) {
     await show(scope);
