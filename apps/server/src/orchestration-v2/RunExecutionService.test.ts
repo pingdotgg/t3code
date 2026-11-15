@@ -3556,6 +3556,16 @@ it.effect("ends a running root command when the provider stream fails mid-turn",
             ),
           ),
         ),
+      // The dead process cannot take the interrupt either.
+      interruptTurn: (input) =>
+        Effect.fail(
+          new ProviderAdapter.ProviderAdapterInterruptError({
+            driver,
+            providerThreadId: input.providerThread.id,
+            providerTurnId: input.providerTurnId,
+            cause: "provider already exited",
+          }),
+        ),
     });
     assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
     const ids = backgroundScenarioIds("stream-error-running-command");
@@ -3566,60 +3576,97 @@ it.effect("ends a running root command when the provider stream fails mid-turn",
   }),
 );
 
-it.effect("ends a subagent that outlived its root when the provider stream fails", () =>
+it.effect("keeps a running root command open when a write fails under a live provider", () =>
   Effect.gen(function* () {
-    const providerInstanceId = ProviderInstanceId.make("codex");
-    const { finalEvents } = yield* captureRootRunTermination({
-      key: "stream-error-outlived-subagent",
+    const key = "write-error-running-command";
+    const ids = backgroundScenarioIds(key);
+    const secondItemId = TurnItemId.make(`${ids.itemId}:second`);
+    const { written, observed } = yield* captureRootRunTermination({
+      key,
       shouldFinalizeRun: () => Effect.succeed(true),
-      events: (ids) =>
+      events: () =>
         Stream.make(
-          {
-            type: "subagent.updated" as const,
-            driver,
-            subagent: makeRunOwnedSubagentFixture({
-              ids,
-              providerInstanceId,
-              childThreadId: ids.childThreadId,
-              driver,
-              status: "running",
-            }),
-          },
-          {
-            type: "turn_item.updated" as const,
-            driver,
-            turnItem: makeRunOwnedSubagentTurnItemFixture({
-              ids,
-              providerInstanceId,
-              childThreadId: ids.childThreadId,
-              driver,
-              status: "running",
-            }),
-          },
-          rootTerminalEvent(ids, "completed"),
-        ).pipe(
-          Stream.concat(
-            Stream.fail(
-              new ProviderAdapter.ProviderAdapterEventStreamError({
-                driver,
-                providerSessionId: ProviderSessionId.make("session:stream-error-outlived-subagent"),
-                cause: "provider process exited",
+          backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+          backgroundTurnItemEvent(ids, "command_execution", "running", 2, secondItemId),
+        ),
+      ingestNormalized: ({ event }) =>
+        event.type === "turn_item.updated" && event.turnItem.id === secondItemId
+          ? Effect.fail(
+              new ProviderEventIngestor.ProviderEventPublishError({
+                providerSessionId: ProviderSessionId.make(`session:${key}`),
+                eventCount: 1,
+                cause: new Error("SQLITE_FULL: database or disk is full"),
               }),
+            )
+          : Effect.succeed([]),
+    });
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+    assert.isUndefined(written.find((item) => item.id === ids.itemId));
+  }),
+);
+
+it.effect.each([undefined, true] as const)(
+  "ends a subagent that outlived its root when the provider stream fails (raised by T3: %s)",
+  (raisedByT3) =>
+    Effect.gen(function* () {
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const { finalEvents } = yield* captureRootRunTermination({
+        key: "stream-error-outlived-subagent",
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) =>
+          Stream.make(
+            {
+              type: "subagent.updated" as const,
+              driver,
+              subagent: makeRunOwnedSubagentFixture({
+                ids,
+                providerInstanceId,
+                childThreadId: ids.childThreadId,
+                driver,
+                status: "running",
+              }),
+            },
+            {
+              type: "turn_item.updated" as const,
+              driver,
+              turnItem: makeRunOwnedSubagentTurnItemFixture({
+                ids,
+                providerInstanceId,
+                childThreadId: ids.childThreadId,
+                driver,
+                status: "running",
+              }),
+            },
+            rootTerminalEvent(ids, "completed"),
+          ).pipe(
+            Stream.concat(
+              Stream.fail(
+                new ProviderAdapter.ProviderAdapterEventStreamError({
+                  driver,
+                  providerSessionId: ProviderSessionId.make(
+                    "session:stream-error-outlived-subagent",
+                  ),
+                  ...(raisedByT3 === undefined ? {} : { raisedByT3 }),
+                  cause: "provider process exited",
+                }),
+              ),
             ),
           ),
+      });
+      assert.deepEqual(
+        finalEvents.flatMap((event) =>
+          event.type === "run.updated" ||
+          event.type === "subagent.updated" ||
+          event.type === "turn-item.updated"
+            ? [`${event.type}:${event.payload.status}`]
+            : [],
         ),
-    });
-    assert.deepEqual(
-      finalEvents.flatMap((event) =>
-        event.type === "run.updated" ||
-        event.type === "subagent.updated" ||
-        event.type === "turn-item.updated"
-          ? [`${event.type}:${event.payload.status}`]
-          : [],
-      ),
-      ["run.updated:waiting", "subagent.updated:failed", "turn-item.updated:failed"],
-    );
-  }),
+        // T3 ending the stream proves no dead runtime; Stop settles the work it releases.
+        raisedByT3 === true
+          ? ["run.updated:waiting"]
+          : ["run.updated:waiting", "subagent.updated:failed", "turn-item.updated:failed"],
+      );
+    }),
 );
 
 it.effect("does not interrupt a provider when ingestion fails before the root turn is known", () =>
