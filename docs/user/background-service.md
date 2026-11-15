@@ -81,6 +81,14 @@ A missing file is ignored; other read failures stop service startup.
 If the file contains credentials, restrict access to that file with `chmod 600`
 (for the default T3 home, `chmod 600 ~/.t3/service.env`).
 
+T3 Code stops an agent's process after its thread has been idle for 30 minutes
+and resumes it on the next message. To keep idle processes longer, for example
+for a tool that keeps a provider's prompt cache warm from inside that process,
+set `T3CODE_PROVIDER_IDLE_TIMEOUT_MINUTES` to a whole number of minutes from 1
+to 1440. Every idle process keeps its memory until it stops, so a longer value
+uses more memory when many threads sit idle. An invalid value is logged and
+ignored.
+
 ## Platform support
 
 Linux needs systemd user services. Setup enables lingering so T3 Code starts at

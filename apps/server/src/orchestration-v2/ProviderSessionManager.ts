@@ -1,4 +1,5 @@
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -68,6 +69,13 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
+/**
+ * Lets a host keep idle provider processes longer than the default, for example so a
+ * prompt-cache keep-alive running inside the provider process outlives the release timer.
+ * Each idle process holds its memory until released, so the default stays unchanged.
+ */
+export const IDLE_TIMEOUT_MINUTES_ENV = "T3CODE_PROVIDER_IDLE_TIMEOUT_MINUTES";
+const MAX_IDLE_TIMEOUT_MINUTES = 24 * 60;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
 /** Past adapters' own 10 s stop fallbacks, so they settle first when the provider answers at all. */
 export const PROVIDER_INTERRUPT_TIMEOUT_MS = 15 * 1000;
@@ -3424,4 +3432,27 @@ export const layerWithOptions = (
     }),
   );
 
-export const layer = layerWithOptions();
+/** `undefined` keeps the default; `invalid` is a value to warn about and ignore. */
+export function idleTimeoutFromEnvironment(
+  env: NodeJS.ProcessEnv,
+): { readonly idleTimeoutMs: number } | { readonly invalid: string } | undefined {
+  const raw = env[IDLE_TIMEOUT_MINUTES_ENV]?.trim();
+  if (raw === undefined || raw === "") return undefined;
+  const minutes = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  if (!(minutes >= 1 && minutes <= MAX_IDLE_TIMEOUT_MINUTES)) return { invalid: raw };
+  return { idleTimeoutMs: minutes * 60 * 1000 };
+}
+
+export const layer = Layer.unwrap(
+  Effect.gen(function* () {
+    const configured = idleTimeoutFromEnvironment(yield* HostProcess.Environment);
+    if (configured !== undefined && "invalid" in configured) {
+      yield* Effect.logWarning(
+        `Ignoring ${IDLE_TIMEOUT_MINUTES_ENV}: expected whole minutes from 1 to ${MAX_IDLE_TIMEOUT_MINUTES}`,
+        { value: configured.invalid },
+      );
+      return layerWithOptions();
+    }
+    return layerWithOptions(configured);
+  }),
+);
