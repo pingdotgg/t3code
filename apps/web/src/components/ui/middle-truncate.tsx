@@ -60,10 +60,6 @@ export function MiddleTruncate({
   );
 }
 
-// An overflowing head is cut after its last whole character: clip the partial glyph
-// and slide the tail left over the slack. Neither changes layout, so the observed
-// size stays the true available width.
-
 // Fitting heads one by one forces a layout per row, since each read follows the previous
 // head's write. Heads queued in one commit or resize delivery fit together in a microtask,
 // still before paint: all reads, then all writes.
@@ -74,6 +70,9 @@ function scheduleFit(head: HTMLElement) {
   pendingFits.add(head);
 }
 
+// An overflowing head is cut after its last whole character: clip the partial glyph
+// and slide the tail left over the slack. Neither changes layout, so the observed
+// size stays the true available width.
 function fitPendingHeads() {
   const heads = [...pendingFits].filter((head) => head.isConnected);
   pendingFits.clear();
