@@ -319,6 +319,7 @@ function DictionaryEditor(props: {
   readonly disabled?: boolean;
   readonly onChange: (words: SpeechCustomWords) => void;
 }) {
+  const { t } = useTranslation("settings");
   const { words, label, disabled = false, onChange } = props;
   const [termDraft, setTermDraft] = useState("");
   const [aliasDraft, setAliasDraft] = useState<{ term: string; value: string } | null>(null);
@@ -364,8 +365,8 @@ function DictionaryEditor(props: {
           rows={1}
           maxLength={5_100}
           disabled={disabled}
-          placeholder="Add words or phrases, separated by commas or line breaks"
-          aria-label={`Add a word or phrase to the ${label}`}
+          placeholder={t("voiceDictionary.addPlaceholder")}
+          aria-label={t("voiceDictionary.addAria", { label })}
           onChange={(event) => setTermDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key !== "Enter" || event.shiftKey) return;
@@ -374,11 +375,14 @@ function DictionaryEditor(props: {
           }}
         />
         <Button type="button" disabled={!canAddTerm} onClick={addTerm}>
-          Add
+          {t("voiceDictionary.add")}
         </Button>
       </div>
       {words.length > 0 ? (
-        <ul aria-label={`${label} entries`} className="mt-3 flex flex-wrap gap-1.5">
+        <ul
+          aria-label={t("voiceDictionary.entries", { label })}
+          className="mt-3 flex flex-wrap gap-1.5"
+        >
           {words.map(({ term, aliases }) => (
             <li
               key={term}
@@ -393,8 +397,8 @@ function DictionaryEditor(props: {
                   autoFocus
                   value={aliasDraft.value}
                   maxLength={50}
-                  aria-label={`Alias for ${term}`}
-                  placeholder="Misspelling"
+                  aria-label={t("voiceDictionary.aliasFor", { term })}
+                  placeholder={t("voiceDictionary.misspelling")}
                   className="w-32"
                   onChange={(event) => setAliasDraft({ term, value: event.target.value })}
                   onBlur={() => setAliasDraft(null)}
@@ -411,10 +415,10 @@ function DictionaryEditor(props: {
                   size="xs"
                   variant="ghost-muted"
                   disabled={disabled || aliases.length >= 8}
-                  aria-label={`Add an alias for ${term}`}
+                  aria-label={t("voiceDictionary.addAliasFor", { term })}
                   onClick={() => setAliasDraft({ term, value: "" })}
                 >
-                  Alias
+                  {t("voiceDictionary.alias")}
                 </Button>
               )}
               <Button
@@ -422,7 +426,7 @@ function DictionaryEditor(props: {
                 size="icon-xs"
                 variant="ghost-muted"
                 disabled={disabled}
-                aria-label={`Remove ${term}`}
+                aria-label={t("voiceDictionary.remove", { term })}
                 onClick={() => onChange(words.filter((entry) => entry.term !== term))}
               >
                 <XIcon />
@@ -437,6 +441,7 @@ function DictionaryEditor(props: {
 
 /** Vocabulary stored on the environment with the project, read by everyone who dictates there. */
 function ProjectDictionaryRow() {
+  const { t } = useTranslation("settings");
   const scope = useOptionalSettingsScope();
   const words = useScopedSettings((settings) => settings.speechProjectCustomWords);
   const updateScopedSettings = useUpdateScopedSettings();
@@ -447,21 +452,21 @@ function ProjectDictionaryRow() {
       serverScoped
       settingKeys={["speechProjectCustomWords"]}
       {...searchableSetting("speech-project-dictionary")}
-      title={isProjectScope ? "Project dictionary" : "Shared dictionary"}
+      title={t(isProjectScope ? "voiceDictionary.project" : "voiceDictionary.shared")}
       description={
         isProjectScope
-          ? `Saved with ${scope.scope.label} on its environment. Everyone who dictates in this project gets these spellings, along with their own dictionary. Project spellings win when the two overlap.`
-          : "Saved on the environment and used in every project there, along with each person’s own dictionary. Pick a project above to limit these words to one project."
+          ? t("voiceDictionary.projectDescription", { scope: scope.scope.label })
+          : t("voiceDictionary.sharedDescription")
       }
       control={
         <span className="text-xs text-muted-foreground">
-          {words.length} {words.length === 1 ? "entry" : "entries"}
+          {t("voiceDictionary.count", { count: words.length })}
         </span>
       }
     >
       <div className="mt-2 pb-3.5">
         <DictionaryEditor
-          label={isProjectScope ? "project dictionary" : "shared dictionary"}
+          label={t(isProjectScope ? "voiceDictionary.projectLower" : "voiceDictionary.sharedLower")}
           words={words}
           disabled={scope.connectedEnvironments.length === 0}
           onChange={(next) => updateScopedSettings({ speechProjectCustomWords: next })}

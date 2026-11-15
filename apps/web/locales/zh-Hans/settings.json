@@ -2956,5 +2956,24 @@
     "useModel": "使用此模型",
     "stopUsingFile": "停止使用 {{name}} 文件；文件仍会保留在磁盘上",
     "deleteModel": "删除 {{name}}"
+  },
+  "voiceDictionary": {
+    "addPlaceholder": "输入词语或短语，以逗号或换行分隔",
+    "addAria": "添加到{{label}}的词语或短语",
+    "add": "添加",
+    "entries": "{{label}}词条",
+    "aliasFor": "{{term}}的别名",
+    "misspelling": "错误拼写",
+    "addAliasFor": "为{{term}}添加别名",
+    "alias": "别名",
+    "remove": "移除{{term}}",
+    "project": "项目词典",
+    "shared": "共享词典",
+    "projectDescription": "与{{scope}}一同保存在其环境中。所有在此项目中口述的人都会使用这些拼写，也会使用各自的词典。如果两者有重复，项目词条优先。",
+    "sharedDescription": "保存在环境中，并用于其中的所有项目，同时保留每个人自己的词典。选择上方的项目，可将这些词语限定到一个项目。",
+    "count_one": "{{count}} 个词条",
+    "count_other": "{{count}} 个词条",
+    "projectLower": "项目词典",
+    "sharedLower": "共享词典"
   }
 }

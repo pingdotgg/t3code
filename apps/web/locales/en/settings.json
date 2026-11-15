@@ -2976,5 +2976,24 @@
     "useModel": "Use model",
     "stopUsingFile": "Stop using your {{name}} file; the file stays on disk",
     "deleteModel": "Delete {{name}}"
+  },
+  "voiceDictionary": {
+    "addPlaceholder": "Add words or phrases, separated by commas or line breaks",
+    "addAria": "Add a word or phrase to the {{label}}",
+    "add": "Add",
+    "entries": "{{label}} entries",
+    "aliasFor": "Alias for {{term}}",
+    "misspelling": "Misspelling",
+    "addAliasFor": "Add an alias for {{term}}",
+    "alias": "Alias",
+    "remove": "Remove {{term}}",
+    "project": "Project dictionary",
+    "shared": "Shared dictionary",
+    "projectDescription": "Saved with {{scope}} on its environment. Everyone who dictates in this project gets these spellings, along with their own dictionary. Project spellings win when the two overlap.",
+    "sharedDescription": "Saved on the environment and used in every project there, along with each person’s own dictionary. Pick a project above to limit these words to one project.",
+    "count_one": "{{count}} entry",
+    "count_other": "{{count}} entries",
+    "projectLower": "project dictionary",
+    "sharedLower": "shared dictionary"
   }
 }
