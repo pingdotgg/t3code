@@ -24,6 +24,8 @@ export BASH_ENV="$WB_DIR/tools/agent-env.sh"
 # into it. The whiteboard wants the new-thread landing instead.
 export T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD=false
 export T3CODE_UNSAFE_NO_AUTH=1
+# The board page frames /chat/ from its own origin.
+export T3CODE_ALLOW_SAME_ORIGIN_FRAME=1
 # exec keeps this PID, so `wb` finds its agent among the server's children.
 export WB_CHAT_PID=$$
 

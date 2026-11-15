@@ -37,6 +37,7 @@ import {
   storeAttachmentUpload,
   validateAttachmentUploadToken,
 } from "./assets/AttachmentUpload.ts";
+import { spaFrameHeaders } from "./fork/sameOriginFrame.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
@@ -650,6 +651,7 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
     const fileInfo = opened.info;
     const mimeType = Option.getOrElse(Mime.getType(filePath), () => "application/octet-stream");
     const isHtml = mimeType === "text/html";
+    const frameHeaders = isHtml ? yield* spaFrameHeaders(SPA_FRAME_HEADERS) : {};
 
     // A hash-like name is not enough: custom static files can use the same naming pattern.
     const relativePath = path.relative(staticRoot, filePath).replaceAll("\\", "/");
@@ -670,7 +672,7 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
     };
     const headers: Record<string, string> = {
       "Cache-Control": cacheControl,
-      ...(isHtml ? SPA_FRAME_HEADERS : {}),
+      ...frameHeaders,
       ...validators(fileInfo),
     };
     const etag = headers.ETag;
@@ -707,7 +709,7 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
       return HttpServerResponse.uint8Array(bytes, {
         headers: {
           "Cache-Control": cacheControl,
-          ...(isHtml ? SPA_FRAME_HEADERS : {}),
+          ...frameHeaders,
           ...validators({ ...info, size: ByteSize.bytes(bytes.byteLength) }),
         },
         contentType,
