@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { type AtomCommandSuccess, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { sentMessageFromToolItem } from "@t3tools/shared/toolOutput";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 import type { TimelineEntry } from "../../session-logic";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
@@ -96,6 +97,7 @@ export function resolveCitationPhase(input: {
   if (!source) return { _tag: "loading" };
   if (
     source.kind !== "proposed-plan" &&
+    source.kind !== "sent-message" &&
     (source.kind !== "message" || source.message.role !== "assistant")
   )
     return { _tag: "failed" };
@@ -126,19 +128,18 @@ export function citedThreadSnapshot(input: {
     return input.error === null ? null : { message: null, hasMoreHistory: false, loadFailed: true };
   }
   // Older pages merge into the visible turn items, not the message list.
-  const item = input.thread.projection.visibleTurnItems.find((row) =>
-    row.item.type === "proposed_plan"
-      ? row.item.id === input.messageId
-      : (row.item.type === "assistant_message" || row.item.type === "user_message") &&
-        row.item.messageId === input.messageId,
+  const item = input.thread.projection.visibleTurnItems.find(
+    ({ item }) =>
+      (item.type === "proposed_plan" && item.id === input.messageId) ||
+      ((item.type === "assistant_message" || item.type === "user_message") &&
+        item.messageId === input.messageId) ||
+      (item.type === "dynamic_tool" &&
+        item.id === input.messageId &&
+        item.status === "completed" &&
+        sentMessageFromToolItem(item) !== undefined),
   )?.item;
   return {
-    message:
-      item === undefined
-        ? null
-        : item.type === "assistant_message" || item.type === "proposed_plan"
-          ? "assistant"
-          : "other",
+    message: item === undefined ? null : item.type === "user_message" ? "other" : "assistant",
     hasMoreHistory: input.history.hasMoreHistory,
   };
 }
