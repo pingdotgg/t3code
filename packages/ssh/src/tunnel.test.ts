@@ -341,7 +341,11 @@ describe("ssh tunnel scripts", () => {
   );
 
   // sha256sum and shasum escape a newline in a file name they print, so the home path has one.
-  it.each(["sha256sum", "shasum"])("names missing gzip after verifying with %s", (checksum) => {
+  const checksumTools =
+    NodeChildProcess.spawnSync("sh", ["-c", 'command -v "$1"', "sh", "shasum"]).status === 0
+      ? ["sha256sum", "shasum"]
+      : ["sha256sum"];
+  it.each(checksumTools)("names missing gzip after verifying with %s", (checksum) => {
     const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-runner-"));
     try {
       const bin = NodePath.join(root, "bin");
