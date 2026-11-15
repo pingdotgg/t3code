@@ -133,6 +133,9 @@ export const isProviderTurnStartRunStateMissingError = Schema.is(
 const START_GAVE_UP_MESSAGE =
   "T3 Code could not start this turn. Send the message again; if it keeps failing, check the server logs.";
 
+const RESTART_RESUME_FAILED_MESSAGE =
+  "The agent could not reopen this conversation after the restart, and its last turn may still be running there. Send a message to continue in a new session.";
+
 const startFailureMessage = (error: Error): string => {
   const nestedCause = "cause" in error ? error.cause : undefined;
   return (
@@ -451,9 +454,11 @@ export const layer: Layer.Layer<
             projection.runs.some(
               (source) =>
                 source.id === handoff.targetRunId &&
-                (source.status === "failed" ||
+                // An accepted delivery is in that native session; a later fresh one gets a full summary.
+                (((source.status === "failed" ||
                   source.status === "interrupted" ||
-                  source.status === "cancelled" ||
+                  source.status === "cancelled") &&
+                  (handoff.delivery === undefined || handoff.delivery.status === "pending")) ||
                   (source.status === "completed" &&
                     handoff.delivery === undefined &&
                     // Compaction and /goal turns defer history to the next turn.
@@ -1395,6 +1400,24 @@ export const layer: Layer.Layer<
           resumed.failure._tag === "ProviderAdapterThreadInUseError"
         ) {
           return yield* loadFromProvider(Effect.fail(resumed.failure));
+        }
+        // The restart cut the source turn without the provider confirming it stopped, so
+        // a fresh session could repeat its work beside it. A message the user sends next falls back.
+        if (
+          resumed._tag === "Failure" &&
+          !uncertainDelivery &&
+          run.restartContinuationOfRunId !== undefined
+        ) {
+          return yield* loadFromProvider(
+            Effect.fail(
+              new ProviderAdapter.ProviderAdapterThreadInUseError({
+                driver: session.driver,
+                providerThreadId: providerThread.id,
+                detail: RESTART_RESUME_FAILED_MESSAGE,
+                cause: resumed.failure,
+              }),
+            ),
+          );
         }
 
         yield* Effect.logWarning("Recovering provider context in a fresh native session", {

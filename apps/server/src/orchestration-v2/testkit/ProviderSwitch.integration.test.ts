@@ -1601,12 +1601,12 @@ describe("orchestration v2 provider switching", () => {
             ["completed", "failed", "completed", "completed"],
           );
           const run4NativeThreadId = (yield* Ref.get(capturedTurns)).at(-1)?.nativeThreadId;
-          assert.equal(
-            projection.contextHandoffs.find(
-              (handoff) => handoff.targetRunId === projection.runs[1]?.id,
-            )?.delivery?.nativeThreadId,
-            run4NativeThreadId,
-          );
+          // Delivered before run 4; its fresh session gets run 4's full summary instead.
+          const olderDelivery = projection.contextHandoffs.find(
+            (handoff) => handoff.targetRunId === projection.runs[1]?.id,
+          )?.delivery?.nativeThreadId;
+          assert.isDefined(olderDelivery);
+          assert.notEqual(olderDelivery, run4NativeThreadId);
           const run4History = yield* encodeJson(
             (yield* Ref.get(injectedHistory)).slice(historyBeforeRun4),
           );

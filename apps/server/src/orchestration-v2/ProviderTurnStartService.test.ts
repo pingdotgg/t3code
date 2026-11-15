@@ -391,6 +391,7 @@ it.each([
 function makeLocalCommandHarness(input: {
   readonly text: string;
   readonly manualContinuation?: boolean;
+  readonly restartContinuation?: boolean;
   readonly nativeResumeUnsupported?: boolean;
   readonly steeringRestart?: boolean;
   readonly nativeGoals?: boolean;
@@ -454,6 +455,7 @@ function makeLocalCommandHarness(input: {
   const messageId = MessageId.make("message-native-account-command");
   const run: OrchestrationV2ThreadProjection["runs"][number] = {
     ...(input.manualContinuation ? { manualContinuationOfRunId: RunId.make("stopped-run") } : {}),
+    ...(input.restartContinuation ? { restartContinuationOfRunId: RunId.make("cut-run") } : {}),
     id: runId,
     threadId,
     ordinal: 2,
@@ -2864,39 +2866,59 @@ effectIt.effect("checks the run's status without loading the thread's history", 
   }),
 );
 
-effectIt.effect("fails the run instead of replacing a native thread another client holds", () =>
-  Effect.gen(function* () {
-    const detail = "This conversation is open in another Codex client.";
-    const harness = makeLocalCommandHarness({
-      text: "Continue",
-      resumeFailure: new ProviderAdapter.ProviderAdapterThreadInUseError({
-        driver: ProviderDriverKind.make("codex"),
-        providerThreadId: ProviderThreadId.make("new-provider-thread"),
-        detail,
-        cause: new Error("thread native-resume-thread already has an active writer"),
-      }),
-    });
+for (const [name, detail, restartContinuation, resumeFailure] of [
+  [
+    "a native thread another client holds",
+    "This conversation is open in another Codex client.",
+    false,
+    new ProviderAdapter.ProviderAdapterThreadInUseError({
+      driver: ProviderDriverKind.make("codex"),
+      providerThreadId: ProviderThreadId.make("new-provider-thread"),
+      detail: "This conversation is open in another Codex client.",
+      cause: new Error("thread native-resume-thread already has an active writer"),
+    }),
+  ],
+  [
+    "the native thread a restart cut a turn in",
+    "The agent could not reopen this conversation after the restart, and its last turn may still be running there. Send a message to continue in a new session.",
+    true,
+    new ProviderAdapter.ProviderAdapterResumeThreadError({
+      driver: ProviderDriverKind.make("codex"),
+      providerSessionId: ProviderSessionId.make("new-provider-session"),
+      providerThreadId: ProviderThreadId.make("new-provider-thread"),
+      cause: new Error("Internal error"),
+    }),
+  ],
+] as const) {
+  effectIt.effect(`fails the run instead of replacing ${name}`, () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        restartContinuation,
+        resumeFailure,
+      });
 
-    const exit = yield* Effect.exit(harness.start);
+      const exit = yield* Effect.exit(harness.start);
 
-    expect(harness.fallbackEnsureThread).not.toHaveBeenCalled();
-    expect(exit._tag).toBe("Success");
-    expect(harness.startRootRun).not.toHaveBeenCalled();
-    const projection = harness.projection();
-    expect(projection.providerThreads.at(-1)?.nativeThreadRef?.nativeId).toBe(
-      "native-resume-thread",
-    );
-    expect(projection.contextHandoffs).toEqual([]);
-    expect(projection.runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
-    expect(projection.turnItems).toMatchObject([
-      {
-        type: "error",
-        title: "Provider turn failed to start",
-        failure: { class: "provider_error", message: detail },
-      },
-    ]);
-  }),
-);
+      expect(harness.fallbackEnsureThread).not.toHaveBeenCalled();
+      expect(exit._tag).toBe("Success");
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      const projection = harness.projection();
+      expect(projection.providerThreads.at(-1)?.nativeThreadRef?.nativeId).toBe(
+        "native-resume-thread",
+      );
+      expect(projection.contextHandoffs).toEqual([]);
+      expect(projection.runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
+      expect(projection.turnItems).toMatchObject([
+        {
+          type: "error",
+          title: "Provider turn failed to start",
+          failure: { class: "provider_error", message: detail },
+        },
+      ]);
+    }),
+  );
+}
 
 effectIt.effect("does not mistake a failed state read for a superseded run", () =>
   Effect.gen(function* () {
