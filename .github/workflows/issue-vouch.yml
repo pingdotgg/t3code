@@ -81,7 +81,10 @@ jobs:
               const reopenedByOther =
                 context.payload.action === "reopened" &&
                 context.payload.sender.login.toLowerCase() !== issue.user.login.toLowerCase();
-              if (status === "denounced" && context.eventName === "issues" && !reopenedByOther) {
+              const trusted =
+                issue.user.type === "Bot" ||
+                ["OWNER", "MEMBER", "COLLABORATOR"].includes(issue.author_association);
+              if (status === "denounced" && context.eventName === "issues" && !reopenedByOther && !trusted) {
                 await github.rest.issues.createComment({
                   owner,
                   repo,

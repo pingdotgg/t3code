@@ -100,13 +100,16 @@ function parseExemptions(text) {
 }
 
 // VOUCHED.td: one `github:login` per line, `#` comments, and `-github:login reason` to denounce.
+// A login listed both ways gets its last line, the same answer issue-vouch.yml reaches.
 function parseVouchList(text) {
   const vouched = new Set();
   const denounced = new Set();
   for (const raw of text.split("\n")) {
-    const entry = raw.trim().split(/\s+/)[0];
-    if (entry.startsWith("github:")) vouched.add(entry.slice("github:".length).toLowerCase());
-    if (entry.startsWith("-github:")) denounced.add(entry.slice("-github:".length).toLowerCase());
+    const match = /^(-?)github:(\S+)/.exec(raw.trim());
+    if (!match) continue;
+    const login = match[2].toLowerCase();
+    (match[1] ? denounced : vouched).add(login);
+    (match[1] ? vouched : denounced).delete(login);
   }
   if (vouched.size === 0) throw new Error(`${VOUCHED_PATH}: no entries`);
   return { vouched, denounced };
