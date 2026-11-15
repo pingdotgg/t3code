@@ -42,6 +42,8 @@ test(
     });
     const thread = await t3.thread({ project, title: "Links", messages: ["hello"] });
     await t3.open(thread);
+    await screen.getByRole("button", "Choose editor").tap();
+    await screen.getByRole("menuitem", "VS Code", { exact: true }).tap();
 
     await screen.getByRole("button", "Toggle terminal drawer").tap();
     const terminal = screen.getByLabel("Terminal input");
