@@ -448,6 +448,8 @@ export function composerContextProviderDataRanges(text: string) {
     const close = text.indexOf(`\n${ENVELOPE_CLOSE}`, bodyStart);
     if (close === -1) continue;
     const body = text.slice(bodyStart, close);
+    // An unfinished typed envelope must not absorb the generated one after it.
+    if (body.includes(ENVELOPE_OPEN)) continue;
     const entries = [...body.matchAll(PROVIDER_ENTRY)];
     if (entries.length === 0 || entries.map(([entry]) => entry).join("\n") !== body) continue;
     const matchesEntry = (marker: RegExpExecArray, entry: RegExpExecArray) =>

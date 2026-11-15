@@ -130,6 +130,13 @@ describe("planClaudeSkillDispatch", () => {
       dispatches: true,
     },
     {
+      name: "skill after unfinished typed entry",
+      prompt: project(
+        '[Terminal: Terminal; ref=ctx_terminal]\n\n<t3_context version="1">\n<context kind="terminal" id="ctx_terminal">\nExample entry\nThen $implement [Terminal](t3-context://v1/terminal/ctx_terminal)',
+      ),
+      dispatches: true,
+    },
+    {
       name: "skill after typed envelope with unavailable context",
       prompt: project(
         `${typedEnvelope}Then $implement [Terminal](t3-context://v1/terminal/ctx_terminal)`,
