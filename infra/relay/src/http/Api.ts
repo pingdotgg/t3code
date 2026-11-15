@@ -1,6 +1,6 @@
 import { createClerkClient, verifyToken } from "@clerk/backend";
 import { sql as drizzleSql } from "drizzle-orm";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -74,6 +74,7 @@ import * as AgentActivityPublisher from "../agentActivity/AgentActivityPublisher
 import * as EnvironmentConnector from "../environments/EnvironmentConnector.ts";
 import * as EnvironmentLinker from "../environments/EnvironmentLinker.ts";
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
+import * as ManagedTunnelLimits from "../environments/ManagedTunnelLimits.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
@@ -86,10 +87,6 @@ import * as RelayDb from "../db.ts";
 export const RELAY_HTTP_ROUTER_CONFIG = {
   maxParamLength: 512,
 } as const;
-
-const decodeManagedTunnelRecoveryProof = Schema.decodeUnknownEffect(
-  RelayManagedEndpointRecoveryProofPayload,
-);
 
 const appendRelayCredentialResponseHeaders = HttpEffect.appendPreResponseHandler(
   (_request, response) =>
@@ -396,11 +393,7 @@ export const layerDpopClientAuth = Layer.effect(
           return yield* relayAuthInvalidError("invalid_bearer");
         }
         const token = readHttpAuthorizationCredential(credential);
-        const now = yield* DateTime.now;
-        const verified = yield* relayTokens.verifyDpopAccessToken({
-          token,
-          nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
-        });
+        const verified = yield* relayTokens.verifyDpopAccessToken({ token });
         if (!verified) {
           return yield* relayAuthInvalidError("invalid_bearer");
         }
@@ -587,18 +580,13 @@ export const verifyEnvironmentTunnelRecoveryProof = Effect.fn(
   "relay.api.server.verifyEnvironmentTunnelRecoveryProof",
 )(function* (input: EnvironmentTunnelRecoveryProofInput) {
   const config = yield* RelayConfiguration.RelayConfiguration;
-  const now = yield* DateTime.now;
-  const verified = yield* verifyRelayJwt({
+  const verified = yield* verifyRelayJwt(RelayManagedEndpointRecoveryProofPayload, {
     publicKey: input.environmentPublicKey,
     token: input.proof,
     typ: RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
     issuer: `t3-env:${input.environmentId}`,
     audience: normalizeRelayIssuer(config.relayIssuer),
-    nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
-  }).pipe(
-    Effect.flatMap(decodeManagedTunnelRecoveryProof),
-    Effect.mapError(() => new HttpApiError.Unauthorized({})),
-  );
+  }).pipe(Effect.mapError(() => new HttpApiError.Unauthorized({})));
 
   if (
     verified.environmentId !== input.environmentId ||
@@ -818,13 +806,14 @@ export const layerClientApi = HttpApiBuilder.group(
   "client",
   Effect.fnUntraced(function* (handlers) {
     const config = yield* RelayConfiguration.RelayConfiguration;
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const relayTokens = yield* RelayTokens.RelayTokens;
     const linker = yield* EnvironmentLinker.EnvironmentLinker;
     const links = yield* EnvironmentLinks.EnvironmentLinks;
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
     const devices = yield* Devices.Devices;
     const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
+    const tunnelLimits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
     return handlers
       .handle(
         "listEnvironments",
@@ -943,9 +932,7 @@ export const layerClientApi = HttpApiBuilder.group(
           const { userId } = yield* RelayClientPrincipal;
           const now = yield* DateTime.now;
           const expiresAt = DateTime.add(now, { minutes: 5 });
-          const jti = yield* crypto
-            .randomUUIDv4()
-            .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
+          const jti = yield* random.uuidV4();
           const challenge = yield* relayTokens
             .issueLinkChallenge({
               userId,
@@ -996,12 +983,20 @@ export const layerClientApi = HttpApiBuilder.group(
         "getT3ChatLink",
         Effect.fn("relay.api.client.getT3ChatLink")(function* () {
           yield* appendRelayCredentialResponseHeaders;
-          if (!t3Chat.available) return { available: false, link: null };
           const { userId } = yield* RelayClientPrincipal;
-          const link = yield* t3Chat
-            .getLink({ userId })
-            .pipe(Effect.catch(() => relayInternalErrorResponse("upstream_unavailable")));
-          return { available: true, link };
+          const link = t3Chat.available
+            ? yield* t3Chat
+                .getLink({ userId })
+                .pipe(Effect.catch(() => relayInternalErrorResponse("upstream_unavailable")))
+            : null;
+          const maxTunnelsOverride = yield* tunnelLimits
+            .getOverride({ userId })
+            .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
+          return {
+            available: t3Chat.available,
+            link,
+            ...(maxTunnelsOverride === null ? {} : { maxTunnelsOverride }),
+          };
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(
@@ -1035,7 +1030,7 @@ export const layerTokenApi = HttpApiBuilder.group(
   "token",
   Effect.fnUntraced(function* (handlers) {
     const config = yield* RelayConfiguration.RelayConfiguration;
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const dpopProofs = yield* DpopProofs.DpopProofReplay;
     const relayTokens = yield* RelayTokens.RelayTokens;
     return handlers.handle(
@@ -1067,9 +1062,7 @@ export const layerTokenApi = HttpApiBuilder.group(
         );
         const now = yield* DateTime.now;
         const expiresAt = DateTime.addDuration(now, RelayTokens.RELAY_DPOP_ACCESS_TOKEN_TTL);
-        const jti = yield* crypto
-          .randomUUIDv4()
-          .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
+        const jti = yield* random.uuidV4();
         return {
           access_token: yield* relayTokens
             .issueDpopAccessToken({

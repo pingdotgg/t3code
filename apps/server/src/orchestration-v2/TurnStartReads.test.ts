@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2AppThread,
@@ -351,6 +352,37 @@ it.effect.each(["sqlite"] as const)(
         (yield* store.getTurnStartContext(threadId, runId)).messages.map((m) => m.id),
         marker.id,
       );
+      const originalId = MessageId.make("unsent-original");
+      yield* store.apply({
+        id: EventId.make("unsent-original-event"),
+        type: "message.updated",
+        threadId,
+        runId: oldRunId,
+        occurredAt: now,
+        payload: { ...message, id: originalId, runId: oldRunId, text: "Original request" },
+      });
+      yield* putRun({
+        ...run,
+        id: oldRunId,
+        ordinal: 1,
+        status: "interrupted",
+        userMessageId: originalId,
+      });
+      const retryId = RunId.make("unsent-retry");
+      yield* putRun({ ...run, ordinal: 3, manualContinuationOfRunId: retryId });
+      yield* putRun({
+        ...run,
+        id: retryId,
+        ordinal: 2,
+        status: "interrupted",
+        manualContinuationOfRunId: oldRunId,
+      });
+      assert.equal(
+        (yield* store.getTurnStartContext(threadId, runId)).messages.find(
+          (m) => m.id === originalId,
+        )?.text,
+        "Original request",
+      );
       const other = ThreadId.make("other");
       yield* putThread({ ...thread, id: other });
       assert.deepEqual((yield* store.getTurnStartContext(other, runId)).messages, []);
@@ -360,6 +392,76 @@ it.effect.each(["sqlite"] as const)(
         yield* store.getTurnStartContext(ThreadId.make("missing"), runId).pipe(Effect.flip),
         ProjectionStore.ProjectionStoreThreadNotFoundError,
       );
+      const file = {
+        type: "file" as const,
+        id: "message-file",
+        name: "notes.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 12,
+      };
+      yield* store.apply({
+        id: EventId.make("attachment:message-event"),
+        type: "message.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: { ...message, attachments: [file] },
+      });
+      yield* store.apply({
+        id: EventId.make("attachment:question-event"),
+        type: "turn-item.updated",
+        threadId,
+        runId: oldRunId,
+        occurredAt: now,
+        payload: {
+          ...item,
+          id: TurnItemId.make("attachment:question"),
+          type: "user_input_request",
+          requestId: RuntimeRequestId.make("attachment:request"),
+          questions: [],
+          questionAnswer: {
+            requestId: "attachment:request",
+            answers: { document: ["See document"], image: ["See image"] },
+            attachmentsByQuestionId: {
+              document: [{ ...file, id: "answer-document" }],
+              image: [
+                {
+                  type: "image",
+                  id: "answer-image",
+                  name: "photo.png",
+                  mimeType: "image/png",
+                  sizeBytes: 8,
+                },
+              ],
+            },
+          },
+        },
+      });
+      const recordingId = "thread-completion-reads-0b9f6c1e-3c1d-4f7a-9d2e-5a6b7c8d9e0f-webm";
+      yield* store.apply({
+        id: EventId.make("attachment:recording-event"),
+        type: "turn-item.updated",
+        threadId,
+        runId: oldRunId,
+        occurredAt: now,
+        payload: {
+          ...item,
+          id: TurnItemId.make("attachment:recording"),
+          type: "dynamic_tool",
+          toolName: "mcp__t3-code__preview_recording_stop",
+          input: {},
+          output: [
+            { type: "text", text: JSON.stringify({ id: recordingId, mimeType: "video/webm" }) },
+          ],
+        },
+      });
+      assert.deepEqual((yield* store.getThreadAttachmentIds(threadId)).toSorted(), [
+        "answer-document",
+        "answer-image",
+        "attachment:old",
+        "message-file",
+        recordingId,
+      ]);
     }).pipe(Effect.provide(layerDatabase)),
 );
 

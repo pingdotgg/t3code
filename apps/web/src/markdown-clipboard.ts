@@ -1,3 +1,5 @@
+import { UNFINISHED_DRIVE_PATH } from "@t3tools/shared/markdownWindowsPaths";
+
 const SKIPPED_TAGS = new Set(["BUTTON", "INPUT", "SCRIPT", "STYLE", "TEMPLATE"]);
 const SKIPPED_CLASS_NAMES = ["select-none", "sr-only"];
 const SANITIZED_HTML_SELECTOR = [
@@ -9,6 +11,9 @@ const SANITIZED_HTML_SELECTOR = [
   '[aria-hidden="true"]',
   ...SKIPPED_CLASS_NAMES.map((className) => `.${className}`),
 ].join(", ");
+
+const ALERT_ATTRIBUTE = "data-markdown-alert";
+const ALERT_LABEL = "data-markdown-alert-label";
 
 export interface MarkdownClipboardPayload {
   text: string;
@@ -45,7 +50,9 @@ function wrapInlineCode(code: string): string {
     0,
   );
   const fence = "`".repeat(Math.max(1, longestRun + (longestRun > 0 ? 1 : 0)));
-  const pad = code.startsWith("`") || code.endsWith("`") ? " " : "";
+  // CommonMark strips one edge space from content that has both and isn't all spaces.
+  const spaceEdges = code.startsWith(" ") && code.endsWith(" ") && /[^ ]/.test(code);
+  const pad = spaceEdges || code.startsWith("`") || code.endsWith("`") ? " " : "";
   return `${fence}${pad}${code}${pad}${fence}`;
 }
 
@@ -57,26 +64,36 @@ function codeFenceFor(code: string): string {
   return "`".repeat(Math.max(3, longestRun + 1));
 }
 
-function resolveCodeBlockLanguage(pre: Element): string | null {
-  const declared =
-    pre.closest("[data-language]")?.getAttribute("data-language") ??
-    /(?:^|\s)language-(\S+)/.exec(pre.querySelector("code")?.className ?? "")?.[1] ??
-    null;
-  return declared && declared !== "text" ? declared : null;
-}
-
 export function serializeCodeBlockToMarkdown(source: string, language: string | null): string {
   const code = source.replace(/\n$/, "");
   const fence = codeFenceFor(code);
   return `${fence}${language ?? ""}\n${code}\n${fence}\n\n`;
 }
 
+// Brackets copied code so tidyMarkdown leaves its whitespace alone. Code is
+// copied as shown, without fences; DOM text from rendered markdown carries no NUL.
+const CODE_BOUNDARY = "\u0000";
+
+function verbatimBlock(code: string): string {
+  return `${CODE_BOUNDARY}${code}${CODE_BOUNDARY}\n\n`;
+}
+
+// Odd parts are code and keep their markers, so outer passes still skip them.
+function outsideCode(markdown: string, tidy: (prose: string) => string): string {
+  return markdown
+    .split(CODE_BOUNDARY)
+    .map((part, index) =>
+      index % 2 === 1 ? `${CODE_BOUNDARY}${part}${CODE_BOUNDARY}` : tidy(part),
+    )
+    .join("");
+}
+
 function serializeCodeBlock(pre: Element): string {
-  return serializeCodeBlockToMarkdown(pre.textContent ?? "", resolveCodeBlockLanguage(pre));
+  return verbatimBlock((pre.textContent ?? "").replace(/\n$/, ""));
 }
 
 function serializeTableCell(cell: Element): string {
-  return serializeChildren(cell).replace(/\n+/g, " ").trim().replaceAll("|", "\\|");
+  return serializeChildren(cell, true).replace(/\n+/g, " ").trim();
 }
 
 function tableSeparatorFor(headerCells: Element[]): string {
@@ -108,18 +125,23 @@ function serializeTable(table: Element): string {
   return `${lines.join("\n")}\n\n`;
 }
 
-function serializeListItem(item: Element, ordered: boolean, index: number): string {
+function serializeListItem(
+  item: Element,
+  ordered: boolean,
+  index: number,
+  inTableCell: boolean,
+): string {
   const checkbox = item.querySelector(
     ':scope > input[type="checkbox"], :scope > p > input[type="checkbox"]',
   );
   const task = checkbox ? `[${(checkbox as HTMLInputElement).checked ? "x" : " "}] ` : "";
   const bullet = ordered ? `${index}. ` : "- ";
   const marker = `${bullet}${task}`;
-  let content = serializeChildren(item)
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  let content = outsideCode(serializeChildren(item, inTableCell), (prose) =>
+    prose.replace(/\n{3,}/g, "\n\n"),
+  ).trim();
   if (!item.querySelector(":scope > p")) {
-    content = content.replace(/\n{2,}/g, "\n");
+    content = outsideCode(content, (prose) => prose.replace(/\n{2,}/g, "\n"));
   }
   // Continuations align after the bullet; task boxes belong to the item text.
   const continuationIndent = " ".repeat(bullet.length);
@@ -130,23 +152,53 @@ function serializeListItem(item: Element, ordered: boolean, index: number): stri
   ].join("\n");
 }
 
-function serializeList(list: Element, ordered: boolean): string {
-  const start = Number.parseInt(list.getAttribute("start") ?? "1", 10) || 1;
-  const items = [...list.children].filter((child) => child.tagName === "LI");
-  if (items.length === 0) return "";
-  return `${items.map((item, index) => serializeListItem(item, ordered, start + index)).join("\n")}\n\n`;
+/** A list's items with the numbers an ordered list shows: from `start`, reset by each `value`. */
+function numberedListItems(list: Element): { item: Element; number: number }[] {
+  const start = Number.parseInt(list.getAttribute("start") ?? "1", 10);
+  let next = Number.isNaN(start) ? 1 : start;
+  return [...list.children]
+    .filter((child) => child.tagName === "LI")
+    .map((item) => {
+      const value = Number.parseInt(item.getAttribute("value") ?? "", 10);
+      if (!Number.isNaN(value)) next = value;
+      return { item, number: next++ };
+    });
 }
 
-function serializeBlockquote(quote: Element): string {
-  const content = serializeChildren(quote)
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+function serializeList(list: Element, ordered: boolean, inTableCell: boolean): string {
+  const items = numberedListItems(list);
+  if (items.length === 0) return "";
+  return `${items
+    .map(({ item, number }) => serializeListItem(item, ordered, number, inTableCell))
+    .join("\n")}\n\n`;
+}
+
+function serializeQuoteBody(quote: Element, inTableCell: boolean): string {
+  let content = "";
+  for (const child of quote.childNodes) {
+    // A callout's rendered label stands for the marker its serializer writes.
+    if (child.nodeType === Node.ELEMENT_NODE && (child as Element).hasAttribute(ALERT_LABEL)) {
+      continue;
+    }
+    content += serializeNode(child, inTableCell);
+  }
+  return outsideCode(content, (prose) => prose.replace(/\n{3,}/g, "\n\n")).trim();
+}
+
+function serializeBlockquote(quote: Element, inTableCell: boolean, marker = ""): string {
+  const body = serializeQuoteBody(quote, inTableCell);
+  const content = marker && body ? `${marker}\n${body}` : marker || body;
   if (!content) return "";
   const quoted = content
     .split("\n")
     .map((line) => (line.length > 0 ? `> ${line}` : ">"))
     .join("\n");
   return `${quoted}\n\n`;
+}
+
+function serializeInsight(insight: Element, inTableCell: boolean): string {
+  const body = serializeQuoteBody(insight, inTableCell);
+  return `★ Insight ${"─".repeat(37)}\n${body ? `${body}\n` : ""}${"─".repeat(49)}\n\n`;
 }
 
 function serializeDetails(details: Element): string {
@@ -159,44 +211,95 @@ function serializeDetails(details: Element): string {
   return `<details${open}>\n<summary>${summary}</summary>${content ? `\n\n${content}` : ""}\n</details>\n\n`;
 }
 
-function serializeAnchor(anchor: Element): string {
-  const markdownCopy = anchor.getAttribute("data-markdown-copy");
-  if (markdownCopy !== null) return markdownCopy;
-  const content = serializeChildren(anchor);
-  const href = anchor.getAttribute("href") ?? "";
-  if (!/^https?:\/\//i.test(href)) return content;
-  const label = content.trim();
-  if (!label) return "";
-  if (label === href) return href;
-  return `[${label}](${href})`;
+// Prose that would read as inline Markdown once pasted back: a backslash before punctuation,
+// backticks, brackets, and emphasis or strikethrough runs (user remark-gfm sets singleTilde: false).
+const INLINE_MARKDOWN = /\\(?=[!-/:-@[-`{-~\n]|$)|[`[\]]|\*+|_+|~{2,}/g;
+const ESCAPED_PUNCTUATION = /\\([!-/:-@[-`{-~])/g;
+
+/** Escapes rendered prose so it parses back to the same text, leaving runs that cannot open or close. */
+function escapeProse(text: string): string {
+  return text.replace(/\S+/g, (word, wordOffset: number) => {
+    // Check each word once; testing every escape's growing prefix would be quadratic.
+    const drive = UNFINISHED_DRIVE_PATH.exec(word);
+    const driveStart = drive ? drive.index + drive[0].search(/[A-Za-z]/) + 2 : Infinity;
+    return word.replace(INLINE_MARKDOWN, (match: string, offset: number) => {
+      if (offset >= driveStart) return match;
+      const before = text[wordOffset + offset - 1];
+      const after = text[wordOffset + offset + match.length];
+      if (match === "\\" && after !== undefined && /[^\S\n]/.test(after)) return match;
+      // A text node's edge may touch another node's markers, so it counts as neither.
+      const between = (pattern: RegExp) =>
+        before !== undefined && after !== undefined && pattern.test(before) && pattern.test(after);
+      if (/[*_~]/.test(match[0]!) && between(/\s/)) return match;
+      if (match[0] === "_" && between(/[\p{L}\p{N}]/u)) return match;
+      return match.replace(/[\s\S]/g, "\\$&");
+    });
+  });
 }
 
-function serializeChildren(node: Node): string {
+function serializeAnchor(anchor: Element, inTableCell: boolean): string {
+  const markdownCopy = anchor.getAttribute("data-markdown-copy");
+  if (markdownCopy !== null) return escapeTablePipes(markdownCopy, inTableCell);
+  const content = serializeChildren(anchor, inTableCell);
+  const href = anchor.getAttribute("href") ?? "";
+  if (!/^(?:https?:\/\/|mailto:)/i.test(href)) return content;
+  const label = content.trim();
+  if (!label) return "";
+  // The label arrives escaped; a bare address goes out as shown, since GFM links it again.
+  const shown = label.replace(ESCAPED_PUNCTUATION, "$1");
+  if (shown === href) return escapeTablePipes(href, inTableCell);
+  // GFM autolinks a bare address only when it fits this shape.
+  if (href === `mailto:${shown}` && /^[\w.+-]+@[\w-]+(?:\.[\w-]+)+(?<=[a-zA-Z])$/.test(shown))
+    return shown;
+  const destination = escapeTablePipes(href.replace(/[\\()]/g, "\\$&"), inTableCell);
+  return `[${label}](${destination})`;
+}
+
+/**
+ * GFM splits a table row at every unescaped pipe, but its math-aware parsing
+ * keeps a formula's pipes in the cell, so formula source is copied unescaped.
+ */
+function escapeTablePipes(text: string, inTableCell: boolean): string {
+  return inTableCell ? text.replaceAll("|", "\\|") : text;
+}
+
+function serializeChildren(node: Node, inTableCell = false): string {
   let out = "";
   for (const child of node.childNodes) {
-    out += serializeNode(child);
+    out += serializeNode(child, inTableCell);
   }
   return out;
 }
 
-function serializeNode(node: Node): string {
+function serializeNode(node: Node, inTableCell = false): string {
   if (node.nodeType === Node.TEXT_NODE) {
     const text = node.textContent ?? "";
     if (text.includes("\n") && text.trim().length === 0) return "\n";
-    return text;
+    return escapeTablePipes(escapeProse(text), inTableCell);
   }
   if (node.nodeType !== Node.ELEMENT_NODE) return "";
   const element = node as Element;
   if (element.hasAttribute("data-markdown-details")) {
-    return serializeDetails(element);
+    return escapeTablePipes(serializeDetails(element), inTableCell);
   }
   const markdownCopy = element.getAttribute("data-markdown-copy");
-  if (markdownCopy !== null) return markdownCopy;
+  if (markdownCopy !== null) {
+    // A diagram copies as its fenced source, which is code too.
+    if (element.hasAttribute("data-markdown-mermaid")) {
+      return verbatimBlock(escapeTablePipes(markdownCopy.trimEnd(), inTableCell));
+    }
+    return element.hasAttribute("data-markdown-math")
+      ? markdownCopy
+      : escapeTablePipes(markdownCopy, inTableCell);
+  }
   if (isSkippedElement(element)) return "";
+  const alert = element.getAttribute(ALERT_ATTRIBUTE);
+  if (alert === "insight") return serializeInsight(element, inTableCell);
+  if (alert !== null) return serializeBlockquote(element, inTableCell, `[!${alert.toUpperCase()}]`);
 
   const headingLevel = /^H([1-6])$/.exec(element.tagName)?.[1];
   if (headingLevel) {
-    return `${"#".repeat(Number(headingLevel))} ${serializeChildren(element).trim()}\n\n`;
+    return `${"#".repeat(Number(headingLevel))} ${serializeChildren(element, inTableCell).trim()}\n\n`;
   }
 
   switch (element.tagName) {
@@ -205,45 +308,45 @@ function serializeNode(node: Node): string {
     case "HR":
       return "---\n\n";
     case "P":
-      return `${serializeChildren(element).trim()}\n\n`;
+      return `${serializeChildren(element, inTableCell).trim()}\n\n`;
     case "PRE":
-      return serializeCodeBlock(element);
+      return escapeTablePipes(serializeCodeBlock(element), inTableCell);
     case "CODE": {
-      const content = element.textContent ?? "";
+      const content = escapeTablePipes(element.textContent ?? "", inTableCell);
       return isBlockCodeElement(element, content) ? content : wrapInlineCode(content);
     }
     case "STRONG":
     case "B":
-      return wrapInlineMarker(serializeChildren(element), "**");
+      return wrapInlineMarker(serializeChildren(element, inTableCell), "**");
     case "EM":
     case "I":
-      return wrapInlineMarker(serializeChildren(element), "*");
+      return wrapInlineMarker(serializeChildren(element, inTableCell), "*");
     case "DEL":
     case "S":
-      return wrapInlineMarker(serializeChildren(element), "~~");
+      return wrapInlineMarker(serializeChildren(element, inTableCell), "~~");
     case "A":
-      return serializeAnchor(element);
+      return serializeAnchor(element, inTableCell);
     case "IMG": {
-      const alt = element.getAttribute("alt") ?? "";
-      const src = element.getAttribute("src") ?? "";
+      const alt = escapeTablePipes(element.getAttribute("alt") ?? "", inTableCell);
+      const src = escapeTablePipes(element.getAttribute("src") ?? "", inTableCell);
       return alt && src ? `![${alt}](${src})` : "";
     }
     case "UL":
-      return serializeList(element, false);
+      return serializeList(element, false, inTableCell);
     case "OL":
-      return serializeList(element, true);
+      return serializeList(element, true, inTableCell);
     case "BLOCKQUOTE":
-      return serializeBlockquote(element);
+      return serializeBlockquote(element, inTableCell);
     case "TABLE":
-      return serializeTable(element);
+      return escapeTablePipes(serializeTable(element), inTableCell);
     case "DIV":
     case "SECTION":
     case "ARTICLE": {
-      const content = serializeChildren(element);
+      const content = serializeChildren(element, inTableCell);
       return content && !content.endsWith("\n") ? `${content}\n` : content;
     }
     default:
-      return serializeChildren(element);
+      return serializeChildren(element, inTableCell);
   }
 }
 
@@ -299,13 +402,19 @@ function soleCodeBlock(container: Node): Element | null {
 }
 
 function tidyMarkdown(markdown: string): string {
-  return markdown
-    .split(/(```[\s\S]*?(?:```|$))/)
-    .map((part, index) =>
-      index % 2 === 1 ? part : part.replace(/[ \t]+(?=\n)/g, "").replace(/\n{3,}/g, "\n\n"),
-    )
-    .join("")
-    .trim();
+  // Odd parts are code, kept verbatim, so a selection that starts or ends inside
+  // code keeps that code's leading and trailing whitespace.
+  const parts = markdown.split(CODE_BOUNDARY);
+  const last = parts.length - 1;
+  return parts
+    .map((part, index) => {
+      if (index % 2 === 1) return part;
+      let prose = part.replace(/[ \t]+(?=\n)/g, "").replace(/\n{3,}/g, "\n\n");
+      if (index === 0) prose = prose.trimStart();
+      if (index === last) prose = prose.trimEnd();
+      return prose;
+    })
+    .join("");
 }
 
 export function serializeRenderedMarkdownFragment(container: Node): string {
@@ -315,7 +424,8 @@ export function serializeRenderedMarkdownFragment(container: Node): string {
 }
 
 export function serializeTableElementToMarkdown(table: Element): string {
-  return serializeTable(table).trim();
+  // Raw HTML can put a pre in a cell; with no tidy pass here, drop its markers.
+  return serializeTable(table).replaceAll(CODE_BOUNDARY, "").trim();
 }
 
 // The wrapper MarkdownMath puts on every formula it renders. The sanitizer drops
@@ -394,6 +504,36 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
+/** A list cloned from a later item would renumber from its start; restart it at the shown number. */
+function keepStartListNumbers(range: Range, container: Element): void {
+  // The start's ancestors below the common ancestor clone as the fragment's first-child chain.
+  const chain: Node[] = [];
+  for (
+    let node: Node | null = range.startContainer;
+    node && node !== range.commonAncestorContainer;
+    node = node.parentNode
+  ) {
+    chain.unshift(node);
+  }
+  let clone: Node | null = container;
+  for (const [depth, source] of chain.entries()) {
+    clone = clone?.firstChild ?? null;
+    if (!(clone instanceof Element) || !(source instanceof Element) || source.tagName !== "OL")
+      continue;
+    const firstCopied = chain[depth + 1] ?? source.childNodes[range.startOffset];
+    if (!firstCopied) continue;
+    const shown = numberedListItems(source).find(
+      ({ item }) =>
+        item === firstCopied ||
+        firstCopied.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    const cloned = numberedListItems(clone)[0];
+    if (shown && cloned && shown.number !== cloned.number) {
+      clone.setAttribute("start", String(shown.number));
+    }
+  }
+}
+
 export function chatMarkdownClipboardPayload(
   selection: Selection,
 ): MarkdownClipboardPayload | null {
@@ -404,6 +544,7 @@ export function chatMarkdownClipboardPayload(
     if (range.collapsed) continue;
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
+    keepStartListNumbers(range, container);
     const ancestor = range.commonAncestorContainer;
     const ancestorElement =
       ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;
@@ -425,13 +566,21 @@ export function chatMarkdownClipboardPayload(
       htmls.push(`<meta charset="utf-8">${mathSourceElement(math).outerHTML}`);
       continue;
     }
-    if (ancestorElement?.closest("pre")) {
+    // A range inside one code element clones only its text, which would otherwise be escaped as prose.
+    if (ancestorElement?.closest("pre, code")) {
       const text = range.toString();
       if (text) {
         texts.push(text);
         htmls.push(sanitizedHtmlFrom(container));
       }
       continue;
+    }
+    // A range spanning exactly one callout's text clones its contents but not the callout.
+    const callout = ancestorElement?.closest(`[${ALERT_ATTRIBUTE}]`);
+    if (callout && range.toString().trim() === (callout.textContent ?? "").trim()) {
+      const wrapper = callout.cloneNode(false) as Element;
+      wrapper.append(...container.childNodes);
+      container.replaceChildren(wrapper);
     }
     const text = serializeRenderedMarkdownFragment(container);
     if (!text) continue;

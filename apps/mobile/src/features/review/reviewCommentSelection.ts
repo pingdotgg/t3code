@@ -1,5 +1,9 @@
 import { useSyncExternalStore } from "react";
-import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import type { OrchestrationMessageContext } from "@t3tools/contracts";
+import {
+  collectComposerContextReferences,
+  replaceComposerContextReferences,
+} from "@t3tools/shared/composerContextReferences";
 
 import type { ReviewRenderableLineRow } from "./reviewModel";
 
@@ -357,11 +361,10 @@ export function formatReviewCommentContext(target: ReviewCommentTarget, comment:
   ].join("\n");
 }
 
-export function countReviewCommentContexts(value: string): number {
-  return Array.from(value.matchAll(/<review_comment\b/g)).length;
-}
-
-export function parseReviewInlineComments(value: string): ReadonlyArray<ReviewInlineComment> {
+export function parseReviewInlineComments(
+  value: string,
+  context?: OrchestrationMessageContext,
+): ReadonlyArray<ReviewInlineComment> {
   const comments: ReviewInlineComment[] = [];
   // Mask chip delimiters: labels containing </review_comment> would otherwise truncate the block.
   const masked = replaceComposerContextReferences(value, (reference) =>
@@ -384,6 +387,33 @@ export function parseReviewInlineComments(value: string): ReadonlyArray<ReviewIn
     }
 
     comments.push(comment);
+  }
+  const referencedIds = new Set(
+    collectComposerContextReferences(value)
+      .filter((reference) => reference.kind === "review-comment")
+      .map((reference) => reference.contextId),
+  );
+  for (const record of context?.records ?? []) {
+    if (
+      record.kind !== "review-comment" ||
+      "payload" in record ||
+      record.sectionId.startsWith("pull-request:") ||
+      !referencedIds.has(record.contextId)
+    ) {
+      continue;
+    }
+    comments.push({
+      id: record.contextId,
+      sectionId: record.sectionId,
+      sectionTitle: record.sectionTitle,
+      filePath: record.filePath,
+      startIndex: record.startIndex,
+      endIndex: record.endIndex,
+      rangeLabel: record.rangeLabel,
+      text: record.text,
+      diff: record.diff,
+      ...(record.fenceLanguage !== undefined ? { fenceLanguage: record.fenceLanguage } : {}),
+    });
   }
   return comments;
 }

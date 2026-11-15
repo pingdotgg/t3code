@@ -60,6 +60,11 @@ export interface AcpClientOptions {
 }
 
 type AcpClientRaw = {
+  /**
+   * Inbound notifications. Unread ones are kept best-effort: the newest 32 whose
+   * JSON lines fit in 16Mi characters, always including the latest. Ends with the
+   * connection.
+   */
   readonly notifications: Stream.Stream<AcpProtocol.AcpIncomingNotification>;
   readonly request: (method: string, payload: unknown) => Effect.Effect<unknown, AcpError.AcpError>;
   readonly notify: (method: string, payload: unknown) => Effect.Effect<void, AcpError.AcpError>;
@@ -523,6 +528,15 @@ function normalizeV1SessionUpdate(
           },
     };
   }
+  const update = notification.update;
+  // v1 defines a null tool name as unchanged; v2 consumers read null as a clear.
+  if (
+    (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") &&
+    update.name === null
+  ) {
+    const { name: _name, ...rest } = update;
+    return { ...notification, update: rest } as unknown as AcpSchema.SessionNotification;
+  }
   if (notification.update.sessionUpdate !== "available_commands_update") {
     return notification as unknown as AcpSchema.SessionNotification;
   }
@@ -782,6 +796,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     | ((method: string, params: unknown) => Effect.Effect<void, AcpError.AcpError>)
     | undefined;
   let negotiatedProtocolGeneration: 1 | 2 | undefined;
+  let sessionDeleteSupported = false;
 
   const runNotificationHandlers = <A>(
     registration: BufferedNotificationHandler<A>,
@@ -1081,12 +1096,14 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
             // ACP v1 protocolVersion values were not generation identifiers in
             // every shipped agent. Antigravity, for example, reports version 2
             // with the v1 agentInfo/agentCapabilities response shape.
-            if (isV2InitializeResponse(response)) {
-              negotiatedProtocolGeneration = 2;
-              return normalizeInitializeResponse(response);
-            }
-            negotiatedProtocolGeneration = 1;
-            return response as AcpSchema.InitializeResponse;
+            const isV2 = isV2InitializeResponse(response);
+            negotiatedProtocolGeneration = isV2 ? 2 : 1;
+            const normalized = isV2
+              ? normalizeInitializeResponse(response)
+              : (response as AcpSchema.InitializeResponse);
+            sessionDeleteSupported =
+              normalized.agentCapabilities?.sessionCapabilities?.delete != null;
+            return normalized;
           }),
         ),
       authenticate: (payload) =>
@@ -1182,9 +1199,11 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
           Effect.map((response) => response as AcpSchema.CloseSessionResponse),
         ),
       deleteSession: (payload) =>
-        negotiatedProtocolGeneration === 1
-          ? Effect.fail(AcpError.AcpRequestError.methodNotFound(AGENT_METHODS.session_delete))
-          : callRpc(AGENT_METHODS.session_delete, rpc[AGENT_METHODS.session_delete](payload)),
+        Effect.suspend(() =>
+          sessionDeleteSupported
+            ? callRpc(AGENT_METHODS.session_delete, rpc[AGENT_METHODS.session_delete](payload))
+            : Effect.fail(AcpError.AcpRequestError.methodNotFound(AGENT_METHODS.session_delete)),
+        ),
       listProviders: (payload) =>
         negotiatedProtocolGeneration === 1
           ? Effect.fail(AcpError.AcpRequestError.methodNotFound(AGENT_METHODS.providers_list))

@@ -78,6 +78,13 @@ export function usagePriceTableChanges(
     }
     const alias = (draft.alias ?? currentAlias ?? "").trim();
     if (alias !== "") {
+      if (draft.alias === undefined && Object.keys(draft.values).length > 0) {
+        errors.set(
+          draft.id,
+          `${target.label} maps this model. Remove it from "Apply to" or clear its mapping first.`,
+        );
+        continue;
+      }
       if (model === "") errors.set(draft.id, "Enter a model ID.");
       else if (alias === model) errors.set(draft.id, "Map to a different model.");
       else {

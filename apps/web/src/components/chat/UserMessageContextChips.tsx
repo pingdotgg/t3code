@@ -24,6 +24,7 @@ import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown from "../ChatMarkdown";
 import { EnvironmentContextChip } from "../EnvironmentContextChip";
 import { ThreadContextChip } from "../ThreadContextChip";
+import { ResponseReplyCard } from "./AssistantCitationChip";
 import { MessageCircleIcon, MousePointerClickIcon, PaintbrushIcon } from "lucide-react";
 import type { ComposerContextId, KnownComposerContextRecord } from "@t3tools/contracts";
 import { buildExpandedImagePreview } from "./ExpandedImagePreview";
@@ -60,6 +61,7 @@ import {
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
 import { TimelineRowCtx } from "./timelineRowContext";
+import { userMessageFileLabel } from "./TimelineUserMessageRow.logic";
 
 function UserMessageMentionChip(props: {
   record: Extract<KnownComposerContextRecord, { kind: "mention" }>;
@@ -323,6 +325,21 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         ),
     },
     {
+      kind: "response",
+      canRender: (record) => record.kind === "response",
+      render: (record, context) =>
+        record.kind === "response" ? (
+          <ResponseReplyCard
+            record={record}
+            copyMarkdown={context.copyMarkdown}
+            leading={context.reference.leading ?? false}
+            trailing={context.reference.trailing ?? false}
+          />
+        ) : (
+          <UnavailableUserMessageContextChip {...context} />
+        ),
+    },
+    {
       kind: "environment",
       canRender: (record) => record.kind === "environment",
       render: (record, context) =>
@@ -372,12 +389,14 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         }
         const attachment = context.attachment;
         const isVideo = isVideoAttachment(attachment);
+        const label = userMessageFileLabel(attachment);
         const disabled =
           attachment.downloadable === false && (!isVideo || attachment.previewUrl === undefined);
-        const size = formatAttachmentSize(record.sizeBytes);
+        const size =
+          attachment.downloadable === false ? "Sending…" : formatAttachmentSize(record.sizeBytes);
         return (
           <FileChip
-            name={record.name}
+            name={label}
             svgPreview={
               isSvgAttachment(attachment)
                 ? { environmentId: context.environmentId, attachmentId: attachment.id }
@@ -387,12 +406,12 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
             isVideo={isVideo}
             theme={context.resolvedTheme}
             disabled={disabled}
-            accessibleLabel={`${isVideo ? "Video" : "File"} attachment, ${record.name}, ${size}`}
+            accessibleLabel={`${isVideo ? "Video" : "File"} attachment, ${label}, ${size}`}
             copyMarkdown={context.copyMarkdown}
             onOpen={() =>
               isVideo ? context.onExpandVideo(attachment) : context.onOpenFile(attachment)
             }
-            tooltip={`${record.name}\n${size}`}
+            tooltip={`${label}\n${size}`}
           />
         );
       },

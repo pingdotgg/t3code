@@ -1,8 +1,9 @@
-import type {
-  EnvironmentId,
-  EnvironmentMachineKind,
-  ScopedThreadRef,
-  ThreadId,
+import {
+  isListedThreadLineage,
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 
@@ -29,7 +30,7 @@ export function composerThreadQuery(query: string): string {
 
 /**
  * Threads to reference from the composer, matched and ranked like the command
- * palette, without subagent threads. The agent reads threads on its own server
+ * palette, without subagent or side chat threads. The agent reads threads on its own server
  * and on the machines it links to, so candidates stay within those, and a linked
  * machine's threads say which machine they are on.
  */
@@ -52,7 +53,7 @@ export function matchComposerThreadItems(input: {
         input.linkedEnvironments.has(shell.environmentId)) &&
       shell.id !== input.excludeThreadId &&
       shell.archivedAt === null &&
-      shell.lineage.relationshipToParent !== "subagent",
+      isListedThreadLineage(shell.lineage),
   );
   return rankSearchItems(candidates, (shell, options) => {
     const subject = threadSearchSubject(shell, null);

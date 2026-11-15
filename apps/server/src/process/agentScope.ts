@@ -17,6 +17,7 @@ import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ProviderProcesses from "./providerProcesses.ts";
 
 const AGENT_SLICE = "app-t3code-agents.slice";
 // Owns every agent slice and competes with the server's unit or scope under app.slice.
@@ -106,6 +107,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const hostEnvironment = yield* HostProcess.Environment;
   const { stateDir } = yield* ServerConfig.ServerConfig;
+  const { hasOtherLiveOwner } = yield* ProviderProcesses.ProviderProcesses;
   const ownedSlice = ownedAgentSlice(stateDir);
   const layerScope = yield* Effect.scope;
 
@@ -130,6 +132,7 @@ export const make = Effect.gen(function* () {
   const stopLeftoverAgents = Effect.fn("agentScope.stopLeftoverAgents")(function* (
     systemctl: string,
   ) {
+    if (hasOtherLiveOwner) return;
     const shown = yield* run(systemctl, [
       "--user",
       "show",
@@ -215,7 +218,12 @@ export const make = Effect.gen(function* () {
     }),
   );
 
-  const scopeByThread = new Map<string, { unit: string; oomKilled: boolean }>();
+  // Layer acquisition is the startup barrier: recovery must not terminalize or
+  // continue old runs while a previous server's providers can still execute.
+  yield* systemd;
+
+  // `shared` scopes serve other threads too: tracked only for OOM diagnosis on old systemd.
+  const scopeByThread = new Map<string, { unit: string; oomKilled: boolean; shared: boolean }>();
 
   const readScope = Effect.fn("agentScope.readScope")(function* (systemctl: string, unit: string) {
     const shown = yield* run(systemctl, [
@@ -277,10 +285,11 @@ export const make = Effect.gen(function* () {
     systemctl: string,
     threadId: string,
     unit: string | undefined,
+    shared = false,
   ) {
     const previous = scopeByThread.get(threadId);
     scopeByThread.delete(threadId);
-    if (unit !== undefined) scopeByThread.set(threadId, { unit, oomKilled: false });
+    if (unit !== undefined) scopeByThread.set(threadId, { unit, oomKilled: false, shared });
     if (previous !== undefined) yield* forget(systemctl, previous.unit);
     if (scopeByThread.size > MAX_TRACKED_THREADS) yield* evictOldest(systemctl);
   });
@@ -340,6 +349,40 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  const kill: AgentScopeShape["kill"] = Effect.fn("AgentScope.kill")(function* (threadId) {
+    const tracked = scopeByThread.get(threadId);
+    if (tracked === undefined || tracked.shared) return false;
+    const scope = yield* systemd;
+    if (scope === undefined) return false;
+    const shown = yield* run(scope.systemctl, [
+      "--user",
+      "show",
+      tracked.unit,
+      "--property=ActiveState,ControlGroup",
+    ]);
+    if (shown._tag === "None" || shown.value.code !== 0) return false;
+    const values = parseKeyValues(shown.value.stdout);
+    if (values.get("ActiveState") !== "active") return false;
+    const controlGroup = values.get("ControlGroup") ?? "";
+    // cgroup.kill (Linux 5.14+) kills the whole tree at once; systemd's kill is the fallback.
+    const killedByCgroup =
+      controlGroup.length > 0 &&
+      (yield* fileSystem
+        .writeFileString(path.join("/sys/fs/cgroup", controlGroup, "cgroup.kill"), "1")
+        .pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ));
+    if (killedByCgroup) return true;
+    const killed = yield* run(scope.systemctl, [
+      "--user",
+      "kill",
+      "--signal=SIGKILL",
+      tracked.unit,
+    ]);
+    return killed._tag === "Some" && killed.value.code === 0;
+  });
+
   const clear: AgentScopeShape["clear"] = Effect.fn("agentScope.clear")(function* (threadId) {
     if (!scopeByThread.has(threadId)) return;
     const scope = yield* systemd;
@@ -365,7 +408,8 @@ export const make = Effect.gen(function* () {
       // Clear the launch thread's previous scope instead.
       const continuing = shared === true && scope.supportsOomPolicy;
       const owned = threadId !== undefined && !continuing;
-      if (threadId !== undefined) yield* track(scope.systemctl, threadId, owned ? unit : undefined);
+      if (threadId !== undefined)
+        yield* track(scope.systemctl, threadId, owned ? unit : undefined, shared === true);
       const systemdScope: AgentSystemdScope = {
         systemdRun: scope.systemdRun,
         runtimeDir: scope.runtimeDir,
@@ -385,8 +429,12 @@ export const make = Effect.gen(function* () {
     }),
     oomKilled,
     stop,
+    kill,
     clear,
   } satisfies AgentScopeShape;
 });
 
-export const layer = Layer.effect(AgentScope, make).pipe(Layer.provide(ProcessRunner.layer));
+export const layer = Layer.effect(AgentScope, make).pipe(
+  Layer.provide(ProcessRunner.layer),
+  Layer.provideMerge(ProviderProcesses.layer),
+);
