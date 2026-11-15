@@ -32,6 +32,7 @@ import {
   useState,
 } from "react";
 import { isElectron } from "~/env";
+import { type FileReadingKey, usePdfReadingView } from "./fileReadingSave";
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
 import type { PdfViewState } from "./PdfViewer";
 
@@ -75,8 +76,13 @@ export const isPdfPreviewFile = (path: string): boolean =>
 const PdfViewer = lazy(() => import("./PdfViewer"));
 
 // The document stays mounted while each revision gets a fresh PDF.js document.
-function PdfDocument(props: { src: string; title: string; documentKey: string }) {
-  const [view, setView] = useState<PdfViewState>({ page: 0, offset: 0, zoom: null, left: 0 });
+function PdfDocument(props: {
+  src: string;
+  title: string;
+  documentKey: string;
+  readingKey: FileReadingKey | undefined;
+}) {
+  const [view, setView] = usePdfReadingView(props.readingKey);
   return (
     <PdfDocumentRevision
       key={props.documentKey}
@@ -139,6 +145,8 @@ export function BrowserDocumentFrame(props: {
   readonly documentKey?: string | undefined;
   /** Resource identity without its revision, so PDF reloads can retain the reading position. */
   readonly documentId?: string | undefined;
+  /** Saves the PDF.js reading position across reloads. */
+  readonly readingKey?: FileReadingKey | undefined;
 }) {
   const key = props.documentKey ?? props.src;
   return props.pdf ? (
@@ -147,6 +155,7 @@ export function BrowserDocumentFrame(props: {
       documentKey={key}
       src={props.src}
       title={props.title}
+      readingKey={props.readingKey}
     />
   ) : props.htmlRender ? (
     <HtmlRenderDocument

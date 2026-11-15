@@ -116,6 +116,7 @@ import {
   FileSurfaceLoading,
 } from "./fileSurfaceChrome";
 import SourceFilePreview from "./ReadOnlySourcePreview";
+import { useFileReadingPosition, useRenderedReadingPosition } from "./fileReadingPosition";
 import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey } from "./fileContentRevision";
@@ -285,6 +286,7 @@ export function WorkspaceBrowserPreview(props: {
       documentId={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}`}
       title={props.title}
       pdf={pdf}
+      readingKey={{ environmentId: props.environmentId, absolutePath: props.absolutePath }}
     />
   );
 }
@@ -500,7 +502,10 @@ interface FileRevealState {
 function useFileLineReveal(
   relativePath: string | null,
   revealLine: number | null,
+  scrollLine: number | null,
   revealRequestId: number,
+  onRevealApplied?: (fileContainer: HTMLElement, line: number) => void,
+  keepReveal?: (fileContainer: HTMLElement) => boolean,
 ): FilePostRender {
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
 
@@ -542,7 +547,7 @@ function useFileLineReveal(
       state.handledRequestId = null;
     }
 
-    if (revealLine === null) {
+    if (scrollLine === null) {
       fileContainer.style.minHeight = "";
       return;
     }
@@ -642,15 +647,20 @@ function useFileLineReveal(
         // handled.
         const currentContents = instance.file?.contents;
         const line =
-          currentContents === undefined ? null : clampFileLine(currentContents, revealLine);
+          currentContents === undefined ? null : clampFileLine(currentContents, scrollLine);
         const targetTop = line === null ? null : resolveScrollTarget(line);
         if (line === null || targetTop === null) {
           if (attempt < REVEAL_MAX_ATTEMPTS) scheduleReveal(attempt + 1);
           return;
         }
+        if (keepReveal?.(fileContainer) === false) {
+          state.handledRequestId = revealRequestId;
+          return;
+        }
         updateFileLinkReveal(fileContainer, line);
 
         scrollContainer.scrollTop = targetTop;
+        onRevealApplied?.(fileContainer, line);
         state.handledRequestId = revealRequestId;
         guardScrollTarget(line);
       });
@@ -1042,9 +1052,14 @@ function RenderedMarkdownSurface({
 }) {
   const saveTarget = { environmentId, cwd, relativePath };
   useFileSaveSession(saveTarget, onPendingChange);
+  const scrollRef = useRenderedReadingPosition(environmentId, cwd, relativePath);
 
   return (
-    <ScrollArea className="min-h-0 flex-1" onKeyDown={selectRenderedContentOnSelectAll}>
+    <ScrollArea
+      ref={scrollRef}
+      className="min-h-0 flex-1"
+      onKeyDown={selectRenderedContentOnSelectAll}
+    >
       <FileMarkdownPreview
         text={contents}
         cwd={cwd}
@@ -1208,9 +1223,18 @@ export default function FilePreviewPanel({
   );
   const tableDelimiter =
     previewPath && attachment === undefined ? filePreviewDelimiter({ name: previewPath }) : null;
+  const reading = useFileReadingPosition({
+    environmentId,
+    threadRef,
+    requestedPath: attachment === undefined ? requestedPath : null,
+    cwd,
+    relativePath: attachment === undefined ? relativePath : null,
+    revealLine,
+  });
   const revealHandled =
     revealLine === null ||
-    (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
+    reading.renderedAllowed ||
+    (handledReveal?.path === relativePath && handledReveal.requestId === reading.revealKey);
   const renderMarkdown = isMarkdown && renderMarkdownPreferred && revealHandled;
   const renderMermaid = isMermaid && renderMermaidPreferred && revealHandled;
   const renderBrowserFile = isPdf || (isHtml && renderBrowserFilePreferred && revealHandled);
@@ -1255,9 +1279,7 @@ export default function FilePreviewPanel({
     // lands on whatever the browser selection held.
     const hasCaret = Boolean(editor.getViewState().selections?.length);
     editor.focus(
-      hasCaret
-        ? { preventScroll: true }
-        : { preventScroll: true, lineNumber: revealLine ?? "first-visible" },
+      hasCaret ? { preventScroll: true } : { preventScroll: true, lineNumber: reading.caretLine() },
     );
   };
   const handleEditorChange = (editor: FileEditor | null) => {
@@ -1318,7 +1340,16 @@ export default function FilePreviewPanel({
       : relativePath && attachment === undefined
         ? resolvePathLinkTarget(relativePath, cwd)
         : null;
-  const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const onFilePostRender = reading.trackSource(
+    useFileLineReveal(
+      relativePath,
+      revealLine,
+      reading.scrollLine,
+      reading.revealKey,
+      reading.onRevealApplied,
+      reading.keepReveal,
+    ),
+  );
   // Mounting the file read under the workspace mutation id refetches it after each mutation.
   useAtomMount(
     canReadFiles &&
@@ -1447,7 +1478,7 @@ export default function FilePreviewPanel({
                 setRenderedPreferred(pressed);
                 setHandledReveal(
                   pressed && relativePath !== null
-                    ? { path: relativePath, requestId: revealRequestId }
+                    ? { path: relativePath, requestId: reading.revealKey }
                     : null,
                 );
               }}
