@@ -108,7 +108,7 @@ export function sealedPath(dir, path = process.env.PATH ?? "/usr/bin:/bin") {
  * The environment for a server that a check starts: `RUNTIME_VARIABLES` from the shell, a
  * fresh HOME, a stand-in shell and a `PATH` without provider or host CLIs. Discovery (`server.discoverSourceControl`) then reads no CLI
  * login of this machine (gh, glab, fj, ...), no token variable, and calls no host's API; the
- * Claude status probe is off. `dir` must be a fresh temp folder the check removes.
+ * Claude and Codex status probes are off. `dir` must be a fresh temp folder the check removes.
  */
 export function sealedEnv(dir) {
   return {
@@ -117,6 +117,9 @@ export function sealedEnv(dir) {
     HOME: freshHome(dir),
     SHELL: standInShell(dir),
     CONN_CLAUDE_STATUS_PROBE: "off",
+    // Nor the Codex status probe: an entry stays T3's pending one. Checks that probe Codex on
+    // a stub turn it on.
+    CONN_CODEX_STATUS_PROBE: "off",
     // The server never fetches model-manifest.json from GitHub.
     CONN_MODEL_MANIFEST_URL: "off",
   };

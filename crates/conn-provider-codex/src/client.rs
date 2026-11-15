@@ -313,20 +313,37 @@ impl AppServer {
         self.request_on(generation, method, params).await
     }
 
+    /// Writes a request and returns its answer as a [`Reply`] that owns everything it needs,
+    /// so the wait can move to another task. Once this returns, the line is on its way to
+    /// the process: a caller that gives up on the answer knows the request went out.
+    pub async fn send(self: &Arc<Self>, method: &str, params: Value) -> Result<Reply, CallError> {
+        let generation = self.ensure_started().await?;
+        let (id, rx) = self.open_slot();
+        let reply = Reply {
+            server: Arc::clone(self),
+            id,
+            rx: Some(rx),
+        };
+        self.write(generation, request(id, method, params)).await?;
+        Ok(reply)
+    }
+
+    fn open_slot(&self) -> (u64, oneshot::Receiver<Result<Value, RpcError>>) {
+        let mut state = self.lock();
+        state.next_id += 1;
+        let id = state.next_id;
+        let (tx, rx) = oneshot::channel();
+        state.pending.insert(id, tx);
+        (id, rx)
+    }
+
     async fn request_on(
         &self,
         generation: u64,
         method: &str,
         params: Value,
     ) -> Result<Value, CallError> {
-        let (id, rx) = {
-            let mut state = self.lock();
-            state.next_id += 1;
-            let id = state.next_id;
-            let (tx, rx) = oneshot::channel();
-            state.pending.insert(id, tx);
-            (id, rx)
-        };
+        let (id, rx) = self.open_slot();
         // A caller that gives up (a Stop abandons a start) takes its pending slot with it; a
         // late answer then finds none and is dropped.
         let _slot = PendingSlot { server: self, id };
@@ -535,6 +552,41 @@ fn newer_minor(version: &str, tested: &str) -> bool {
         (parts.next().unwrap_or(0), parts.next().unwrap_or(0))
     };
     parse(version) > parse(tested)
+}
+
+/// The answer to a request [`AppServer::send`] wrote. Dropping it forgets the request, so a
+/// late answer is dropped.
+pub struct Reply {
+    server: Arc<AppServer>,
+    id: u64,
+    rx: Option<oneshot::Receiver<Result<Value, RpcError>>>,
+}
+
+impl std::fmt::Debug for Reply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Reply").field("id", &self.id).finish()
+    }
+}
+
+impl Reply {
+    /// Waits for the answer, at most [`REQUEST_TIMEOUT`].
+    pub async fn wait(mut self) -> Result<Value, CallError> {
+        let Some(rx) = self.rx.take() else {
+            return Err(CallError::Stopped);
+        };
+        match tokio::time::timeout(REQUEST_TIMEOUT, rx).await {
+            Ok(Ok(Ok(value))) => Ok(value),
+            Ok(Ok(Err(e))) => Err(CallError::Rpc(e)),
+            Ok(Err(_)) => Err(CallError::Stopped),
+            Err(_) => Err(CallError::Timeout),
+        }
+    }
+}
+
+impl Drop for Reply {
+    fn drop(&mut self) {
+        self.server.lock().pending.remove(&self.id);
+    }
 }
 
 /// Removes a request's pending slot when the request ends or is dropped.

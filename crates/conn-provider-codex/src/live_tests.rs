@@ -284,52 +284,100 @@ async fn live_codex_approval_then_interrupt() {
     session.close().await;
 }
 
-/// A stand-in `codex app-server` that answers the start's requests, logs every method it
-/// gets, and never answers `HOLD` (as a Codex still starting the thread or the turn). No model.
+/// A stand-in `codex app-server` that answers the start's requests and logs every method it
+/// gets (`turn/interrupt` with its turn id). `HOLD` is a method it never answers. The first
+/// `turn/start` behaves as `MODE` says, after `DELAY` ms:
+///
+/// - `answer`: answers with turn `turn-late`, then sends a message of that turn;
+/// - `started`: sends only `turn/started` for `turn-late`;
+/// - `silent`: sends nothing.
+///
+/// `turn/interrupt` of `turn-late` ends it (`turn/completed`, interrupted). Every later
+/// `turn/start` runs `turn-next` to the end with the text "next". No model.
 const FAKE_CODEX: &str = r#"#!/usr/bin/env node
 const fs = require("node:fs");
-const [LOG, HOLD] = [__LOG__, __HOLD__];
+const [LOG, HOLD, MODE, DELAY] = [__LOG__, __HOLD__, __MODE__, __DELAY__];
 const write = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
 const answers = {
   initialize: { userAgent: "fake-codex/0.0.0" },
   "thread/start": { thread: { id: "thr-fake", createdAt: 0, updatedAt: 0 }, model: "m" },
   "config/read": { config: {} },
-  "turn/start": { turn: { id: "turn-fake", status: "inProgress", items: [], startedAt: null } },
 };
+const turn = (id) => ({ id, status: "inProgress", items: [], startedAt: null });
+let starts = 0;
 require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
   let msg;
   try { msg = JSON.parse(line); } catch { return; }
   if (msg.method === undefined) return;
-  fs.appendFileSync(LOG, `${msg.id === undefined ? "notify " : ""}${msg.method}\n`);
+  const turnId = msg.method === "turn/interrupt" ? ` ${msg.params.turnId}` : "";
+  fs.appendFileSync(LOG, `${msg.id === undefined ? "notify " : ""}${msg.method}${turnId}\n`);
   if (msg.id === undefined || msg.method === HOLD) return;
+  if (msg.method === "turn/start" && starts++ === 0) {
+    setTimeout(() => {
+      if (MODE === "answer") {
+        write({ id: msg.id, result: { turn: turn("turn-late") } });
+        write({ method: "item/completed", params: { threadId: "thr-fake", turnId: "turn-late",
+          item: { type: "agentMessage", id: "m-late", text: "leaked", phase: "final_answer" } } });
+      } else if (MODE === "started") {
+        write({ method: "turn/started", params: { threadId: "thr-fake", turn: turn("turn-late") } });
+      }
+    }, DELAY);
+    return;
+  }
+  if (msg.method === "turn/start") {
+    write({ id: msg.id, result: { turn: turn("turn-next") } });
+    write({ method: "item/completed", params: { threadId: "thr-fake", turnId: "turn-next",
+      item: { type: "agentMessage", id: "m-next", text: "next", phase: "final_answer" } } });
+    write({ method: "turn/completed", params: { threadId: "thr-fake",
+      turn: { id: "turn-next", status: "completed", completedAt: 3 } } });
+    return;
+  }
   write({ id: msg.id, result: answers[msg.method] ?? {} });
+  if (msg.method === "turn/interrupt" && msg.params.turnId === "turn-late") {
+    write({ method: "turn/completed", params: { threadId: "thr-fake",
+      turn: { id: "turn-late", status: "interrupted", completedAt: 3 } } });
+  }
 });
 process.stdin.on("end", () => process.exit(0));
 "#;
 
-/// Stop before Codex accepted the turn: the engine abandons the start. As T3's interrupted
-/// `startTurn`, ours stops at the request it waits on and sends nothing more: held at
-/// `config/read`, no `turn/start`; held at `turn/start`, no `turn/interrupt`. The session
-/// stays usable. No CLI, no model.
-#[tokio::test(flavor = "current_thread")]
-async fn an_abandoned_start_sends_nothing_more() {
-    if std::process::Command::new("node")
-        .arg("--version")
-        .output()
-        .map_or(true, |o| !o.status.success())
-    {
-        eprintln!("skipped: no node");
-        return;
-    }
-    for hold in ["config/read", "turn/start"] {
-        let dir = Workspace::new(&format!("abandon-{}", hold.replace('/', "-")));
-        let log = dir.0.join("codex.log");
+/// A session on [`FAKE_CODEX`], its events, its thread, and the method log.
+struct Fake {
+    dir: Workspace,
+    provider: CodexProvider,
+    session: Box<dyn Session>,
+    events: mpsc::Receiver<ProviderEvent>,
+    thread: ProviderThread,
+}
+
+impl Fake {
+    async fn open(
+        name: &str,
+        hold: &str,
+        mode: &str,
+        delay_ms: u64,
+        abandoned_start_timeout: Duration,
+    ) -> Option<Self> {
+        if std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .map_or(true, |o| !o.status.success())
+        {
+            eprintln!("skipped: no node");
+            return None;
+        }
+        let dir = Workspace::new(name);
         let binary = dir.0.join("codex");
         std::fs::write(
             &binary,
             FAKE_CODEX
-                .replace("__LOG__", &serde_json::to_string(&log).unwrap())
-                .replace("__HOLD__", &serde_json::to_string(hold).unwrap()),
+                .replace(
+                    "__LOG__",
+                    &serde_json::to_string(&dir.0.join("codex.log")).unwrap(),
+                )
+                .replace("__HOLD__", &serde_json::to_string(hold).unwrap())
+                .replace("__MODE__", &serde_json::to_string(mode).unwrap())
+                .replace("__DELAY__", &delay_ms.to_string()),
         )
         .unwrap();
         {
@@ -339,11 +387,14 @@ async fn an_abandoned_start_sends_nothing_more() {
         let config = CodexConfig {
             binary,
             home_path: Some(dir.0.join("codex-home")),
+            abandoned_start_timeout,
             ..CodexConfig::default()
         };
         let provider = CodexProvider::new("codex".into(), config);
         let cwd = dir.cwd();
-        let OpenedSession { session, .. } = provider
+        let OpenedSession {
+            session, events, ..
+        } = provider
             .open_session(OpenSessionInput {
                 thread_id: "live-thread".into(),
                 provider_session_id: "live-session".into(),
@@ -365,24 +416,37 @@ async fn an_abandoned_start_sends_nothing_more() {
             })
             .await
             .expect("thread/start answers");
-        let input = turn(&thread, 1, "full-access", &cwd, "hello");
+        Some(Self {
+            dir,
+            provider,
+            session,
+            events,
+            thread,
+        })
+    }
+
+    fn methods(&self) -> Vec<String> {
+        std::fs::read_to_string(self.dir.0.join("codex.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// Starts turn `n` and abandons it once the fake logs `hold`, as the engine does on Stop.
+    /// The start must end at once, with an error.
+    async fn start_and_abandon(&self, n: u32, hold: &str) {
+        let input = turn(&self.thread, n, "full-access", &self.dir.cwd(), "hello");
         let run_id = input.run_id.clone();
-        let methods = || -> Vec<String> {
-            std::fs::read_to_string(&log)
-                .unwrap_or_default()
-                .lines()
-                .map(str::to_owned)
-                .collect()
-        };
         let both = async {
-            tokio::join!(session.start_turn(input), async {
-                for _ in 0..200 {
-                    if methods().last().map(String::as_str) == Some(hold) {
+            tokio::join!(self.session.start_turn(input), async {
+                for _ in 0..500 {
+                    if self.methods().last().map(String::as_str) == Some(hold) {
                         break;
                     }
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    tokio::time::sleep(Duration::from_millis(5)).await;
                 }
-                session
+                self.session
                     .abandon_turn_start(conn_provider::AbandonTurnStartInput {
                         thread_id: "live-thread".into(),
                         run_id: run_id.clone(),
@@ -394,17 +458,247 @@ async fn an_abandoned_start_sends_nothing_more() {
             .await
             .unwrap_or_else(|_| panic!("{hold}: the abandoned start did not end"));
         assert!(started.is_err(), "{hold}: {started:?}");
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        let seen = methods();
-        assert_eq!(
-            seen.last().map(String::as_str),
-            Some(hold),
-            "{hold}: {seen:?}"
+    }
+
+    /// Every event so far, as JSON.
+    fn drain(&mut self) -> Vec<Value> {
+        let mut seen = Vec::new();
+        while let Ok(event) = self.events.try_recv() {
+            seen.push(to_json(&event));
+        }
+        seen
+    }
+}
+
+/// No event may come from the abandoned turn: no provider turn, no message, no subagent.
+fn assert_no_late_turn(events: &[Value]) {
+    for event in events {
+        let text = event.to_string();
+        assert!(
+            !text.contains("turn-late"),
+            "an event of the abandoned turn: {text}"
         );
         assert!(
-            !seen.iter().any(|m| m == "turn/interrupt"),
-            "{hold}: {seen:?}"
+            !text.contains("leaked"),
+            "a message of the abandoned turn: {text}"
         );
-        session.close().await;
+        assert_ne!(event["type"], "subagent.updated", "{text}");
+        assert_ne!(event["type"], "app_thread.created", "{text}");
     }
+}
+
+/// Stop before `turn/start` went out: as T3's interrupted `startTurn`, ours stops at the
+/// request it waits on and sends nothing more. The session stays usable. No CLI, no model.
+#[tokio::test(flavor = "current_thread")]
+async fn an_abandoned_start_before_turn_start_sends_nothing_more() {
+    let Some(mut fake) = Fake::open(
+        "abandon-config-read",
+        "config/read",
+        "silent",
+        0,
+        Duration::from_secs(60),
+    )
+    .await
+    else {
+        return;
+    };
+    fake.start_and_abandon(1, "config/read").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let seen = fake.methods();
+    assert_eq!(
+        seen.last().map(String::as_str),
+        Some("config/read"),
+        "{seen:?}"
+    );
+    assert!(!seen.iter().any(|m| m.starts_with("turn/")), "{seen:?}");
+    assert_no_late_turn(&fake.drain());
+    fake.session.close().await;
+}
+
+/// Stop while `turn/start` waits for its answer, and the answer comes later: the turn it
+/// names gets `turn/interrupt`, and nothing of it becomes an event (Nick, 2026-11-15; T3
+/// leaves the turn running).
+#[tokio::test(flavor = "current_thread")]
+async fn a_late_answer_to_an_abandoned_start_interrupts_its_turn() {
+    let Some(mut fake) =
+        Fake::open("abandon-answer", "", "answer", 300, Duration::from_secs(60)).await
+    else {
+        return;
+    };
+    fake.start_and_abandon(1, "turn/start").await;
+    assert!(
+        !fake
+            .methods()
+            .iter()
+            .any(|m| m.starts_with("turn/interrupt")),
+        "nothing goes before Codex names the turn"
+    );
+    for _ in 0..200 {
+        if fake
+            .methods()
+            .iter()
+            .any(|m| m == "turn/interrupt turn-late")
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let seen = fake.methods();
+    assert_eq!(
+        seen.iter()
+            .filter(|m| m.starts_with("turn/interrupt"))
+            .collect::<Vec<_>>(),
+        ["turn/interrupt turn-late"],
+        "{seen:?}"
+    );
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_no_late_turn(&fake.drain());
+    fake.session.close().await;
+}
+
+/// Only `turn/started` comes for the abandoned start: that turn gets `turn/interrupt`, and it
+/// is neither a new run nor a subagent turn (T3 takes it for one, `rememberSubagentTurnStarted`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_turn_started_for_an_abandoned_start_is_interrupted() {
+    let Some(mut fake) = Fake::open(
+        "abandon-started",
+        "",
+        "started",
+        300,
+        Duration::from_secs(60),
+    )
+    .await
+    else {
+        return;
+    };
+    fake.start_and_abandon(1, "turn/start").await;
+    for _ in 0..200 {
+        if fake
+            .methods()
+            .iter()
+            .any(|m| m == "turn/interrupt turn-late")
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let seen = fake.methods();
+    assert_eq!(
+        seen.iter()
+            .filter(|m| m.starts_with("turn/interrupt"))
+            .collect::<Vec<_>>(),
+        ["turn/interrupt turn-late"],
+        "{seen:?}"
+    );
+    // The next turn starts once the stopped one ended, and is the run's own.
+    let next = turn(&fake.thread, 2, "full-access", &fake.dir.cwd(), "again");
+    tokio::time::timeout(Duration::from_secs(5), fake.session.start_turn(next))
+        .await
+        .expect("the next start does not wait out the answer's limit")
+        .expect("the next turn starts");
+    let events = until(&mut fake.events, |e| e["type"] == "turn.terminal").await;
+    assert_eq!(events.last().unwrap()["status"], "completed");
+    assert_no_late_turn(&events);
+    fake.session.close().await;
+}
+
+/// Nothing ever comes for the abandoned start: nothing is sent, and the wait is bounded (here
+/// 300 ms in place of 60 s); then the next turn starts and nothing is kept.
+#[tokio::test(flavor = "current_thread")]
+async fn an_abandoned_start_that_never_answers_sends_nothing_and_ends() {
+    let Some(mut fake) = Fake::open(
+        "abandon-silent",
+        "",
+        "silent",
+        0,
+        Duration::from_millis(300),
+    )
+    .await
+    else {
+        return;
+    };
+    fake.start_and_abandon(1, "turn/start").await;
+    let begun = std::time::Instant::now();
+    let next = turn(&fake.thread, 2, "full-access", &fake.dir.cwd(), "again");
+    tokio::time::timeout(Duration::from_secs(5), fake.session.start_turn(next))
+        .await
+        .expect("the wait is bounded")
+        .expect("the next turn starts");
+    assert!(
+        begun.elapsed() >= Duration::from_millis(200),
+        "it waited for the answer first"
+    );
+    let events = until(&mut fake.events, |e| e["type"] == "turn.terminal").await;
+    assert_eq!(events.last().unwrap()["status"], "completed");
+    let seen = fake.methods();
+    assert!(
+        !seen.iter().any(|m| m.starts_with("turn/interrupt")),
+        "{seen:?}"
+    );
+    assert_eq!(
+        seen.iter().filter(|m| *m == "turn/start").count(),
+        2,
+        "{seen:?}"
+    );
+    assert_no_late_turn(&events);
+    fake.session.close().await;
+}
+
+/// The next turn is sent before the late answer comes: it waits until the abandoned turn
+/// is stopped and ended, so the late turn's frames never land in it.
+#[tokio::test(flavor = "current_thread")]
+async fn the_next_turn_waits_for_an_abandoned_start_that_reached_codex() {
+    let Some(mut fake) =
+        Fake::open("abandon-next", "", "answer", 500, Duration::from_secs(60)).await
+    else {
+        return;
+    };
+    fake.start_and_abandon(1, "turn/start").await;
+    let next = turn(&fake.thread, 2, "full-access", &fake.dir.cwd(), "again");
+    tokio::time::timeout(Duration::from_secs(5), fake.session.start_turn(next))
+        .await
+        .expect("the next start ends")
+        .expect("the next turn starts");
+    let events = until(&mut fake.events, |e| e["type"] == "turn.terminal").await;
+    assert_eq!(events.last().unwrap()["status"], "completed");
+    assert_no_late_turn(&events);
+    let seen = fake.methods();
+    let interrupt = seen.iter().position(|m| m == "turn/interrupt turn-late");
+    let second = seen.iter().rposition(|m| m == "turn/start");
+    assert!(
+        interrupt.is_some() && interrupt < second,
+        "the late turn is stopped before the next starts: {seen:?}"
+    );
+    assert!(
+        events.iter().any(|e| e.to_string().contains("\"next\"")),
+        "the next turn's own message"
+    );
+    fake.session.close().await;
+}
+
+/// The session closes before the late answer: close does not wait for it, the last session
+/// stops the process, and nothing more is sent or shown.
+#[tokio::test(flavor = "current_thread")]
+async fn closing_the_session_ends_an_abandoned_start() {
+    let Some(mut fake) =
+        Fake::open("abandon-close", "", "answer", 500, Duration::from_secs(60)).await
+    else {
+        return;
+    };
+    fake.start_and_abandon(1, "turn/start").await;
+    tokio::time::timeout(Duration::from_secs(5), fake.session.close())
+        .await
+        .expect("close does not wait for the answer");
+    assert_eq!(
+        fake.provider.app_server_pid(),
+        None,
+        "the last session stopped the process"
+    );
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    let seen = fake.methods();
+    assert!(
+        !seen.iter().any(|m| m.starts_with("turn/interrupt")),
+        "{seen:?}"
+    );
+    assert_no_late_turn(&fake.drain());
 }

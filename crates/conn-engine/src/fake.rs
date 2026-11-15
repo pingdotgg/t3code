@@ -7,6 +7,8 @@
 //! - `subagent`: a subagent's child thread with one message, then the turn completes.
 //! - `background`: the turn completes with background work left, then asks for a
 //!   continuation turn, which answers `continued` and ends the work.
+//! - `background-text`: the turn completes, then asks for a continuation whose text is the
+//!   whole wake (`delivery: message_text`, as Codex); that turn runs as an ordinary message.
 //! - `background-task`: the turn completes with background task `bg-1` on its provider
 //!   thread's roster, which `await_background_tasks` marks or clears. `background-task-hang`:
 //!   the same roster, and the turn waits for an interrupt.
@@ -585,6 +587,17 @@ impl Session for FakeSession {
                     started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "delegated", false));
                     started.push(provider_turn(&turn, "completed"));
                     started.push(terminal(&turn, TurnStatus::Completed, None));
+                }
+                "background-text" => {
+                    // Codex's wake: the text is the whole message (`delivery: message_text`).
+                    started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "started work", false));
+                    started.push(provider_turn(&turn, "completed"));
+                    started.push(terminal(&turn, TurnStatus::Completed, None));
+                    started.push(event(json!({"type": "continuation.requested",
+                        "threadId": turn.thread_id, "providerThreadId": turn.provider_thread_id,
+                        "detail": "Subagent completed: helper", "delivery": "message_text",
+                        "notification": {"source": {"kind": "subagent"}, "outcome": "completed",
+                            "summary": "Subagent \"helper\" finished"}})));
                 }
                 "background" => {
                     self.background.store(true, Ordering::SeqCst);

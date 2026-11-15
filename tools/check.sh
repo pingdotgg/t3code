@@ -141,6 +141,8 @@ monorepo_checks=(
   "idle-diff"
   "codex instructions --check"
   "codex conformance"
+  "codex model catalog --check"
+  "codex probe conformance"
   "claude catalog --check"
   "claude conformance"
   "claude probe conformance"
@@ -200,6 +202,10 @@ else
   run "codex instructions --check" \
     node crates/conn-provider-codex/tools/gen-instructions.mjs --check
   run "codex conformance" node crates/conn-provider-codex/tools/conformance.mjs
+  run "codex model catalog --check" node crates/conn-provider-codex/tools/gen-model-catalog.mjs --check
+  # Codex's status entry: T3's checkCodexProviderStatus and ours against stub CLIs (no CLI,
+  # no model; about 45 s, two scenarios wait out the 20 s probe limit).
+  run "codex probe conformance" node crates/conn-provider-codex/tools/probe-conformance/run.mjs
   run "claude catalog --check" crates/conn-provider-claude/tools/gen-catalog/run.sh --check
   # The Claude conformance check runs the real Agent SDK in the SDK host, so it needs
   # `npm ci` in helpers/sdk-host. Without it the check is skipped, never counted as passed.

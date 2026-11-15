@@ -154,6 +154,45 @@ same(
   );
 }
 
+// ---- The Codex status probe's tables (apps/server/src/provider/CodexProvider.ts) ---------------
+{
+  const statusRs = rust("crates/conn-provider-codex/src/status.rs");
+  const providerTs = ts("apps/server/src/provider/CodexProvider.ts");
+  /** `"a" | "b" => "Label"` arms of a Rust `fn NAME` match, as {a: Label, b: Label}. */
+  const rustArms = (name) => {
+    const fnBody = new RegExp(`fn ${name}\\b[\\s\\S]*?\\n\\}`).exec(statusRs)?.[0] ?? "";
+    const out = {};
+    for (const arm of fnBody.matchAll(/((?:"[^"]+"\s*\|?\s*)+)=>\s*\{?\s*"([^"]+)"/g)) {
+      for (const key of arm[1].matchAll(/"([^"]+)"/g)) out[key[1]] = arm[2];
+    }
+    return out;
+  };
+  // `codexPlanLabel`: `case "a": case "b": return "Label";`.
+  const planBody = /export function codexPlanLabel[\s\S]*?\n\}/.exec(providerTs)?.[0] ?? "";
+  const plans = {};
+  let cases = [];
+  for (const m of planBody.matchAll(/case "([^"]+)":|return "([^"]+)";/g)) {
+    if (m[1]) cases.push(m[1]);
+    else {
+      for (const c of cases) plans[c] = m[2];
+      cases = [];
+    }
+  }
+  same("status.rs plan_label = codexPlanLabel", rustArms("plan_label"), plans);
+  const effortTs = /const REASONING_EFFORT_LABELS[^=]*= \{([\s\S]*?)\};/.exec(providerTs)?.[1] ?? "";
+  same(
+    "status.rs effort_label = REASONING_EFFORT_LABELS",
+    rustArms("effort_label"),
+    Object.fromEntries([...effortTs.matchAll(/(\w+): "([^"]+)"/g)].map((m) => [m[1], m[2]])),
+  );
+  const contracts = await importSource("packages/contracts/src/model.ts");
+  same(
+    "status.rs PREFERRED_DEFAULT_MODELS = PREFERRED_DEFAULT_CODEX_MODELS",
+    [...(/const PREFERRED_DEFAULT_MODELS: \[&str; \d+\] = \[([^\]]*)\]/.exec(statusRs)?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]),
+    [...contracts.PREFERRED_DEFAULT_CODEX_MODELS],
+  );
+}
+
 // ---- The Claude Agent SDK version (AGENTS.md: the same SDK version as the T3 server) ----------
 // T3 pins a range in apps/server/package.json; its pnpm lockfile holds the version it runs.
 const t3Sdk = [...ts("pnpm-lock.yaml").matchAll(/\n {2}'?@anthropic-ai\/claude-agent-sdk@([0-9][^':(]*)'?:/g)].map(

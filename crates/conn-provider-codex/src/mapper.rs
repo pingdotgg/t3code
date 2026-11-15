@@ -10,10 +10,20 @@ use std::collections::{HashMap, HashSet, VecDeque};
 /// How many ended turn ids the mapper remembers, so a late frame of an ended turn is not
 /// taken for a new one.
 const ENDED_TURNS_KEPT: usize = 64;
+/// Completed turns kept while their background commands run (`settledTurns`); past this the
+/// oldest is forgotten, and its commands' late ends show nothing.
+const SETTLED_TURNS_KEPT: usize = 16;
+/// `BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH` and `…_OUTPUT_TAIL_MAX_LENGTH`, in UTF-16
+/// code units as JavaScript counts.
+const WAKE_COMMAND_MAX_UNITS: usize = 200;
+const WAKE_OUTPUT_TAIL_MAX_UNITS: usize = 1_000;
 
 use conn_contract::{from_json, to_json};
-use conn_provider::{ProviderError, ProviderEvent, RuntimeRequestResponse, TurnInput};
+use conn_provider::{
+    ContinuationRequest, ProviderError, ProviderEvent, RuntimeRequestResponse, TurnInput,
+};
 use conn_provider_support::ids::{self, Env, iso_from_ms};
+use conn_provider_support::notification::{self, Work, WorkKind};
 use conn_provider_support::redact;
 use serde_json::{Map, Value, json};
 
@@ -49,6 +59,22 @@ pub enum Out {
         thread: String,
         turn: String,
     },
+    /// A turn whose start Stop abandoned reached Codex anyway: stop it (`turn/interrupt`).
+    InterruptAbandoned {
+        thread: String,
+        turn: String,
+    },
+}
+
+/// A `turn/start` that Stop abandoned after it was written ([`Mapper::abandon_turn_start`]).
+/// Its turn, once Codex names it, gets `turn/interrupt`, and none of its frames become events.
+#[derive(Debug, Clone, PartialEq)]
+struct AbandonedStart {
+    /// Tells this abandon from a later one ([`Mapper::abandoned_start_settled`]).
+    id: u64,
+    native_thread_id: String,
+    /// Set once the answer or a `turn/started` names the turn.
+    native_turn_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -226,6 +252,20 @@ pub struct Mapper<E: Env> {
     ended_unfinished: HashSet<String>,
     /// The latest ended turns, newest last; at most [`ENDED_TURNS_KEPT`].
     ended: VecDeque<String>,
+    /// The session has one native thread, so one abandoned start at a time: the next start
+    /// waits for it to settle ([`Mapper::abandoned_start_open`]).
+    abandoned: Option<AbandonedStart>,
+    abandoned_seq: u64,
+    /// Completed turns whose background commands still run (`settledTurns`), oldest first; at
+    /// most [`SETTLED_TURNS_KEPT`].
+    settled: VecDeque<Settled>,
+}
+
+/// A completed turn kept for its running commands, and the commands whose end already asked
+/// for a wake (`offeredContinuationItemsByTurn`).
+struct Settled {
+    turn: Turn,
+    offered: Vec<String>,
 }
 
 impl<E: Env> std::fmt::Debug for Mapper<E> {
@@ -357,6 +397,9 @@ impl<E: Env> Mapper<E> {
             interrupting: HashSet::new(),
             ended_unfinished: HashSet::new(),
             ended: VecDeque::new(),
+            abandoned: None,
+            abandoned_seq: 0,
+            settled: VecDeque::new(),
         }
     }
 
@@ -386,6 +429,8 @@ impl<E: Env> Mapper<E> {
             ("interrupting", self.interrupting.len()),
             ("ended_unfinished", self.ended_unfinished.len()),
             ("ended", self.ended.len()),
+            ("abandoned", usize::from(self.abandoned.is_some())),
+            ("settled", self.settled.len()),
         ]
     }
 
@@ -419,6 +464,131 @@ impl<E: Env> Mapper<E> {
     /// `turn/start` failed: forget the pending input.
     pub fn abandon_turn(&mut self, native_thread_id: &str) {
         self.pending_turns.remove(native_thread_id);
+    }
+
+    /// Stop abandoned a start whose `turn/start` was already written: forget the pending
+    /// input, and take the next unknown turn on this thread for the abandoned one. Returns
+    /// the id the session passes to [`Self::abandoned_start_answered`] and
+    /// [`Self::abandoned_start_settled`]. When a `turn/started` already registered the turn,
+    /// that turn is running as the run's own turn and the engine stops it; nothing is kept.
+    pub fn abandon_turn_start(&mut self, native_thread_id: &str) -> Option<u64> {
+        self.pending_turns.remove(native_thread_id)?;
+        self.abandoned_seq = self.abandoned_seq.wrapping_add(1);
+        self.abandoned = Some(AbandonedStart {
+            id: self.abandoned_seq,
+            native_thread_id: native_thread_id.to_owned(),
+            native_turn_id: None,
+        });
+        Some(self.abandoned_seq)
+    }
+
+    /// The answer to an abandoned `turn/start` named its turn. Stops the turn unless a
+    /// `turn/started` did already or it ended. Also after the session closed or the next
+    /// start stopped waiting: the turn still runs on in Codex.
+    pub fn abandoned_start_answered(
+        &mut self,
+        id: u64,
+        native_thread_id: &str,
+        native_turn_id: &str,
+    ) -> Vec<Out> {
+        let mut out = Vec::new();
+        if self.turns.contains_key(native_turn_id) || self.ended.iter().any(|t| t == native_turn_id)
+        {
+            return out;
+        }
+        if let Some(abandoned) = self.abandoned.as_mut().filter(|a| a.id == id) {
+            abandoned.native_turn_id = Some(native_turn_id.to_owned());
+        }
+        self.stop_abandoned_turn(native_thread_id, native_turn_id, &mut out);
+        out
+    }
+
+    /// The abandoned `turn/start` got no turn (an error, no answer in time, the process
+    /// stopped): nothing reached Codex that a later frame could name, unless a
+    /// `turn/started` named it already.
+    pub fn abandoned_start_settled(&mut self, id: u64) {
+        if self
+            .abandoned
+            .as_ref()
+            .is_some_and(|a| a.id == id && a.native_turn_id.is_none())
+        {
+            self.abandoned = None;
+        }
+    }
+
+    /// Whether an abandoned start has not settled: its answer has not come, or its turn has
+    /// not ended. The next start on the thread waits for it.
+    pub fn abandoned_start_open(&self) -> bool {
+        self.abandoned.is_some()
+    }
+
+    /// The next start stopped waiting for the abandoned one. Its turn id, when known, stays
+    /// among the ended turns, so its late frames are still dropped.
+    pub fn forget_abandoned_start(&mut self) {
+        self.abandoned = None;
+    }
+
+    fn stop_abandoned_turn(
+        &mut self,
+        native_thread_id: &str,
+        native_turn_id: &str,
+        out: &mut Vec<Out>,
+    ) {
+        self.ended.push_back(native_turn_id.to_owned());
+        while self.ended.len() > ENDED_TURNS_KEPT {
+            self.ended.pop_front();
+        }
+        out.push(Out::InterruptAbandoned {
+            thread: native_thread_id.to_owned(),
+            turn: native_turn_id.to_owned(),
+        });
+    }
+
+    /// A frame of the abandoned start's turn: never an event. The first frame that names an
+    /// unknown turn on its thread, while no other start is pending there, names that turn
+    /// and stops it. Its `turn/completed` settles the abandoned start.
+    fn abandoned_frame(&mut self, inbound: &Inbound, out: &mut Vec<Out>) -> bool {
+        let (method, params) = match inbound {
+            Inbound::Notification { method, params } | Inbound::Request { method, params, .. } => {
+                (method.as_str(), params)
+            }
+            Inbound::Response { .. } | Inbound::Invalid(_) => return false,
+        };
+        let Some(abandoned) = &self.abandoned else {
+            return false;
+        };
+        if params["threadId"].as_str() != Some(abandoned.native_thread_id.as_str()) {
+            return false;
+        }
+        let Some(turn) = params["turnId"]
+            .as_str()
+            .or_else(|| params["turn"]["id"].as_str())
+        else {
+            return false;
+        };
+        match &abandoned.native_turn_id {
+            Some(known) if known == turn => {}
+            Some(_) => return false,
+            None => {
+                // Thread-level frames name the previous turn (token usage after a resume).
+                let unknown = !method.starts_with("thread/")
+                    && !self.turns.contains_key(turn)
+                    && !self.ended.iter().any(|t| t == turn)
+                    && !self.pending_turns.contains_key(&abandoned.native_thread_id);
+                if !unknown {
+                    return false;
+                }
+                let thread = abandoned.native_thread_id.clone();
+                if let Some(abandoned) = self.abandoned.as_mut() {
+                    abandoned.native_turn_id = Some(turn.to_owned());
+                }
+                self.stop_abandoned_turn(&thread, turn, out);
+            }
+        }
+        if method == "turn/completed" {
+            self.abandoned = None;
+        }
+        true
     }
 
     /// The `turn/start` result. Registers the turn unless `turn/started` already did.
@@ -512,6 +682,14 @@ impl<E: Env> Mapper<E> {
         }
     }
 
+    /// Whether a `turn/started` already registered the run's turn while its `turn/start`
+    /// waits for the answer.
+    pub fn run_registered(&self, run_id: &str) -> bool {
+        self.turns
+            .values()
+            .any(|t| t.subagent.is_none() && t.run_id.as_deref() == Some(run_id))
+    }
+
     /// Whether a root turn on this native thread is running or starting.
     pub fn thread_busy(&self, native_thread_id: &str) -> bool {
         self.pending_turns.contains_key(native_thread_id)
@@ -556,6 +734,10 @@ impl<E: Env> Mapper<E> {
         let mut out = Vec::new();
         self.pending_turns.clear();
         self.requests.clear();
+        // A process that exited runs no turn; after a close the answer may still come (a
+        // shared process), and [`Self::abandoned_start_answered`] stops it then.
+        self.abandoned = None;
+        self.settled.clear();
         let open: Vec<String> = self.turns.keys().cloned().collect();
         for native in open {
             let now = self.env.now();
@@ -584,6 +766,9 @@ impl<E: Env> Mapper<E> {
 
     pub fn handle(&mut self, inbound: Inbound) -> Vec<Out> {
         let mut out = Vec::new();
+        if self.abandoned_frame(&inbound, &mut out) {
+            return out;
+        }
         match inbound {
             Inbound::Notification { method, params } => {
                 // Thread-level frames do not adopt: a resumed thread reports the previous
@@ -658,7 +843,14 @@ impl<E: Env> Mapper<E> {
                 }
             }
             "item/commandExecution/outputDelta" => {
-                if let Some(turn) = self.turns.get(turn_id) {
+                // Background commands stream after their turn settled.
+                let turn = self.turns.get(turn_id).or_else(|| {
+                    self.settled
+                        .iter()
+                        .find(|s| s.turn.native_turn_id == turn_id)
+                        .map(|s| &s.turn)
+                });
+                if let Some(turn) = turn {
                     let item = p["itemId"].as_str().unwrap_or_default();
                     push_event(
                         out,
@@ -703,9 +895,9 @@ impl<E: Env> Mapper<E> {
                     .retain(|_, r| !(r.native_id == *id && r.native_thread_id == thread));
             }
             "error" => self.error(turn_id, p, out),
+            "thread/closed" => self.thread_closed(p, out),
             "thread/started"
             | "thread/status/changed"
-            | "thread/closed"
             | "account/updated"
             | "account/rateLimits/updated"
             | "remoteControl/status/changed"
@@ -1103,6 +1295,9 @@ impl<E: Env> Mapper<E> {
             return;
         }
         if !self.turns.contains_key(turn_id) {
+            if kind == "commandExecution" {
+                self.settled_command_completed(turn_id, item, out);
+            }
             return;
         }
         match kind {
@@ -1522,21 +1717,102 @@ impl<E: Env> Mapper<E> {
             self.ended.pop_front();
         }
         // A child's turn ends on its own thread; only a root turn ends the engine's run.
-        if turn.subagent.is_some() {
-            return;
+        if turn.subagent.is_none() {
+            push_event(
+                out,
+                json!({
+                    "type": "turn.terminal",
+                    "providerThreadId": turn.provider_thread_id,
+                    "providerTurnId": turn.provider_turn_id,
+                    "runOrdinal": turn.run_ordinal,
+                    "status": terminal_status,
+                    "failure": failure,
+                    "threadDisposition": "reusable",
+                }),
+            );
         }
-        push_event(
-            out,
-            json!({
-                "type": "turn.terminal",
-                "providerThreadId": turn.provider_thread_id,
-                "providerTurnId": turn.provider_turn_id,
-                "runOrdinal": turn.run_ordinal,
-                "status": terminal_status,
-                "failure": failure,
-                "threadDisposition": "reusable",
-            }),
-        );
+        // `retainSettledContext`: a completed turn stays while its background commands run, so
+        // their output and end still show, and a root turn's ending command wakes the agent.
+        if status == "completed" && !turn.running_commands.is_empty() {
+            if self.settled.len() >= SETTLED_TURNS_KEPT {
+                self.settled.pop_front();
+            }
+            self.settled.push_back(Settled {
+                turn,
+                offered: Vec::new(),
+            });
+        }
+    }
+
+    /// A command of a settled turn ended (`item/completed` with `settled`): its rows, and for
+    /// a root turn the continuation (`codexBackgroundCommandDetail`), once per command, unless
+    /// the turn is being stopped. The turn is forgotten once no command runs.
+    fn settled_command_completed(&mut self, turn_id: &str, item: &Value, out: &mut Vec<Out>) {
+        let Some(at) = self
+            .settled
+            .iter()
+            .position(|s| s.turn.native_turn_id == turn_id)
+        else {
+            return;
+        };
+        let interrupting = self.interrupting.contains(turn_id);
+        let id = item["id"].as_str().unwrap_or_default().to_owned();
+        let Some(settled) = self.settled.get_mut(at) else {
+            return;
+        };
+        settled.turn.running_commands.retain(|c| c.id != id);
+        command_artifacts(&mut self.env, &mut settled.turn, item, out);
+        if settled.turn.subagent.is_none() && !interrupting && !settled.offered.contains(&id) {
+            settled.offered.push(id);
+            let command = item["command"].as_str().unwrap_or_default();
+            let exit_code = item["exitCode"].as_i64();
+            let outcome = match (exit_code, item["exitCode"].is_null()) {
+                (Some(0), _) => "completed",
+                (_, true) => "unknown",
+                _ => "failed",
+            };
+            let mut notice = notification::background_work_notification(&[Work {
+                kind: WorkKind::Command,
+                label: Some(command.to_owned()),
+                outcome,
+                child_thread_id: None,
+                exit_code,
+            }])
+            .unwrap_or(Value::Null);
+            notice["detail"] = json!(command);
+            let turn = &settled.turn;
+            out.push(Out::Event(ProviderEvent::ContinuationRequested(
+                ContinuationRequest {
+                    thread_id: turn.thread_id.as_str().into(),
+                    provider_thread_id: turn.provider_thread_id.as_str().into(),
+                    detail: Some(background_command_detail(item)),
+                    notification: Some(notice),
+                    delivery: Some("message_text".into()),
+                },
+            )));
+        }
+        if settled.turn.running_commands.is_empty() {
+            self.settled.remove(at);
+        }
+    }
+
+    /// `thread/closed`: a settled turn's commands on that thread end as interrupted.
+    fn thread_closed(&mut self, p: &Value, out: &mut Vec<Out>) {
+        let Some(thread) = p["threadId"].as_str() else {
+            return;
+        };
+        let now = self.env.now();
+        let mut kept = VecDeque::new();
+        for mut settled in std::mem::take(&mut self.settled) {
+            if settled.turn.native_thread_id != thread {
+                kept.push_back(settled);
+                continue;
+            }
+            for command in std::mem::take(&mut settled.turn.running_commands) {
+                terminal_command(&mut settled.turn, &command, "interrupted", &now, out);
+            }
+        }
+        self.settled = kept;
     }
 
     /// `reportedTurnModel`: a reroute names one turn; after one, the thread model is unknown
@@ -2085,8 +2361,8 @@ fn emit_compaction(turn: &mut Turn, item: &str, status: &str, at: &str, out: &mu
     );
 }
 
-/// `buildCommandExecutionArtifacts`, without `completionWake`: Conn Server has no background
-/// continuation, so it does not promise one.
+/// `buildCommandExecutionArtifacts`: a root turn's command promises a wake when it ends after
+/// the turn (`completionWake: "always"`).
 fn command_artifacts(env: &mut impl Env, turn: &mut Turn, item: &Value, out: &mut Vec<Out>) {
     let id = item["id"].as_str().unwrap_or_default();
     let now = env.now();
@@ -2123,11 +2399,72 @@ fn command_artifacts(env: &mut impl Env, turn: &mut Turn, item: &Value, out: &mu
     if item["exitCode"].is_number() {
         turn_item["exitCode"] = item["exitCode"].clone();
     }
+    if turn.subagent.is_none() {
+        turn_item["completionWake"] = json!("always");
+    }
     push_event(out, json!({"type": "node.updated", "node": node}));
     push_event(
         out,
         json!({"type": "turn_item.updated", "turnItem": turn_item}),
     );
+}
+
+/// `codexBackgroundCommandDetail`: the wake's text for a background command, cut in UTF-16
+/// units as JavaScript cuts it, never through a surrogate pair.
+fn background_command_detail(item: &Value) -> String {
+    let command: Vec<u16> = item["command"]
+        .as_str()
+        .unwrap_or_default()
+        .encode_utf16()
+        .collect();
+    let command = if command.len() > WAKE_COMMAND_MAX_UNITS {
+        let mut end = WAKE_COMMAND_MAX_UNITS;
+        if command
+            .get(end - 1)
+            .is_some_and(|u| (0xd800..=0xdbff).contains(u))
+        {
+            end -= 1;
+        }
+        format!(
+            "{}...",
+            String::from_utf16_lossy(command.get(..end).unwrap_or_default())
+        )
+    } else {
+        String::from_utf16_lossy(&command)
+    };
+    let exit = match &item["exitCode"] {
+        Value::Number(code) => format!(" (exit {code})"),
+        _ => String::new(),
+    };
+    let output: Vec<u16> = item["aggregatedOutput"]
+        .as_str()
+        .unwrap_or_default()
+        .trim_end()
+        .encode_utf16()
+        .collect();
+    let tail = match output.len().checked_sub(WAKE_OUTPUT_TAIL_MAX_UNITS) {
+        Some(start) if start > 0 => {
+            let start = if output
+                .get(start)
+                .is_some_and(|u| (0xdc00..=0xdfff).contains(u))
+            {
+                start + 1
+            } else {
+                start
+            };
+            format!(
+                "...{}",
+                String::from_utf16_lossy(output.get(start..).unwrap_or_default())
+            )
+        }
+        _ => String::from_utf16_lossy(&output),
+    };
+    let header = format!("Background command completed{exit}: {command}");
+    if tail.is_empty() {
+        header
+    } else {
+        format!("{header}\n\nOutput tail:\n{tail}")
+    }
 }
 
 fn terminal_command(

@@ -205,7 +205,6 @@ async function t3Reads(home, tag) {
 async function withConn(home, use) {
   const server = NodeChildProcess.spawn(binary, ["--listen", "127.0.0.1:0", "--state-dir", home.state], {
     cwd: home.base,
-    env: { ...process.env, CONN_CLAUDE_STATUS_PROBE: "off", CONN_MODEL_MANIFEST_URL: "off" },
     stdio: ["ignore", "pipe", "pipe"],
     env: sealedEnv(home.base),
   });

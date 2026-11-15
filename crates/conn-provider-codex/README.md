@@ -18,6 +18,7 @@ mapping.
 | `mapper::subagents` | Subagents: `collabAgentToolCall`, `subAgentActivity`, child threads and turns |
 | `session`  | `Session`: one native thread per session, a driver task, the 50/400 ms text flushes |
 | `text_generation` | `Provider::generate_text`: `codex mcp list`, then `codex exec` (`CodexTextGeneration.ts`) |
+| `status`   | The status probe and the `ServerProvider` entry (`checkCodexProviderStatus`), with the model catalog from T3's manifest (`model_catalog.json`, generated) |
 
 Ids, line framing and the process supervisor come from `conn-provider-support`.
 
@@ -47,9 +48,10 @@ dies, open turns end as failed, and the next call starts a new process and resum
   `CLAUDE_CONFIG_DIR`, `GROK_HOME`; a sensitive value is the real one; `Debug` prints names
   only); `launchArgs` trimmed. The server builds one per instance and a new one when the
   entry changes (`conn-server/src/instances.rs`); a session already open keeps its
-  app-server. An enabled instance is offered only when its binary exists; a disabled one is
-  listed with T3's disabled entry and starts nothing. `displayName` and `accentColor` go on
-  the entry. Not read: `customModels`, `shadowHomePath` and `setupMode` (T3's managed home).
+  app-server. Every instance is listed, as T3 lists it (see "Status probe"); a disabled one
+  has T3's disabled entry and starts nothing. `displayName`, `accentColor` and
+  `customModels` go on the entry. Not read: `shadowHomePath` and `setupMode` (T3's managed
+  home).
 - **Executable:** `CodexConfig.binary`, default `codex` on `PATH`, `~` expanded.
 - **argv:** `app-server -c thread_unload_delay_secs=0`, then `T3CODE_CODEX_LAUNCH_ARGS` (the
   instance's environment over the server's, as `resolveCodexLaunchArgs` reads the merged
@@ -122,14 +124,9 @@ after. Errors carry T3's texts ("Codex CLI request timed out.", "Codex CLI comma
 
 ## Not implemented
 
-- **Subagent wakes:** when a child ends after its parent's turn, T3 asks for a continuation
-  turn on the parent (`continuationRequests`, "Subagent completed: …"); this crate does not,
-  as for background commands. Subagent stop (`stopTask`) is not built.
-- **Status probe:** T3's `checkCodexProviderStatus` starts the instance's `app-server` and
-  asks `initialize`, `account/read`, `skills/list`, the model list, `config/read` and
-  `account/rateLimits/read` (and `codex --version` on failure). Not built: the entry is a
-  fixed `ready` one with the models from `models_cache.json`, so a broken binary, a signed-out
-  account or a wrong home shows only at the first turn.
+- **Subagent stop** (`stopTask`) is not built.
+- **Capacity continuations** (a turn held for a usage limit, `capacityContinuations`) are not
+  built; the wakes below do not wait for one.
 - **Text generation:** T3's managed runtime (`resolveRuntime`), custom models
   (`customModels`) and the catalog's `isDefault`/`isLegacy` flags in the model fallback; the
   fallback to another provider when Codex is unusable (in the server's title code).
@@ -147,9 +144,131 @@ after. Errors carry T3's texts ("Codex CLI request timed out.", "Codex CLI comma
 - **Image generation**, prompt suggestions, async questions in agent messages, and the Linux
   systemd agent scope (see `PROTOCOL.md`, Launch).
 
+## Status probe
+
+`src/status.rs` ports `checkCodexProviderStatus` and `probeCodexAppServerProvider`
+(`apps/server/src/provider/CodexProvider.ts`), with `applyCodexModelCatalog` and
+`withInstanceIdentity` as `CodexDriver.ts` applies them. Requests, in order:
+
+| Step | Request | Limit | When it fails |
+| --- | --- | --- | --- |
+| spawn | `<binary> app-server -c thread_unload_delay_secs=0 <launch args>`, the session's environment plus `MISE_OFFLINE=1`, in the server's folder | | `installed: false`, "Could not start Codex CLI (`<binary>`) …" |
+| 1 | `initialize` `{clientInfo: {name, title: "T3 Code", version}, capabilities: {experimentalApi: true}}`, then `initialized` | the whole probe: 20 s (`T3CODE_CODEX_PROBE_TIMEOUT_MS` only lengthens it) | "Codex app-server provider probe failed: <error>.", then `codex --version` (4 s) for the version |
+| 2 | `account/read` `{}` | | as 1. No account and `requiresOpenaiAuth`: `error`, unauthenticated, "Codex CLI is not authenticated. Run `codex login` …" (with `CODEX_HOME` named when a home is set); nothing more is asked |
+| 3, together | `skills/list` `{cwds: [<folder>]}`; `model/list` `{}` then `{cursor}` per page (a ChatGPT account: again once `models_cache.json` has a `fetched_at` after the spawn, polled every 100 ms for up to 3 s); `config/read` `{includeLayers: false}` (3 s) | 250 ms before the probe's limit | skills or models fail: as 1. Models late: `warning`, "Codex did not return its model catalog in time." Config fails: no config |
+| 4 | `account/rateLimits/read` `null`, only when the config routes to OpenAI itself and the account is not an API key | as 3 | `usageLimits` unavailable, `probeFailed`, with T3's text |
+| end | stdin closed, SIGTERM to the group, SIGKILL after 2 s; the probe waits for it | | |
+
+A probe that passes the 20 s gets "Timed out while checking Codex app-server provider
+status." The entry: T3's pending one before the first probe ("Codex provider status has not
+been checked in this session yet."), then `ready` (or `error` signed out), the version from
+the `userAgent`, the account as `auth` (type, plan label, email, workspace; never a token),
+the router's origin as `auth.endpoint` when the config routes elsewhere, the models with
+their reasoning, service tier and cyber access options, T3's preferred default, the
+configured service tier and Daybreak program, `customModels`, the catalog's legacy marks and
+`updateRequiredModels`, the skills, and the `/compact`, `/goal` and `/feedback` commands.
+
+It runs as the server's other probes do (`conn-server/src/methods/provider.rs`): at start, on a
+settings change (an instance is rebuilt then), on `server.refreshProviders`, and every 5
+minutes only while a client in the foreground asks for provider status. A disabled instance is
+never probed. `CONN_CODEX_STATUS_PROBE=off` keeps the pending entry (every check that starts a
+server sets it). One probe at a time per instance.
+
+Cost (macOS, release, stub CLI): about 40 ms, and the server's RSS 11.7 MiB after the probe
+against 11.4 MiB with it off; no Codex process is left after it. The real CLI adds its own
+start and, for a ChatGPT account, up to 3 s for its catalog refresh, for one short-lived
+`codex app-server` process (not measured: no check runs the real CLI).
+
+Proof: `tools/probe-conformance/run.mjs` (in `tools/check.sh`) runs T3's own function and
+ours against a stub `codex` (`stub-codex.mjs`) in 17 scenarios: disabled, missing binary (a
+path and a bare name on a PATH without it), an old CLI without `app-server`, a hang, a failed
+`initialize`, signed out with and without a home, ChatGPT with and without the cache refresh,
+an API key with custom models, Orbit's router, a failed `skills/list`, a model list that
+never answers, a failed usage read, and an instance with a `~` binary, launch arguments from
+its environment, a sensitive variable and an identity. All equal: the entry, and per run the
+argv, environment, folder, every stdin line (ids aside; the concurrent reads after
+`account/read` grouped by method, since their order is timing on both sides) and the signals
+it got. Both sides are
+sealed (T3's in `sealedNodeEnv` with the fetch guard; both probe with `PATH=/usr/bin:/bin`).
+`check-copies.mjs` holds the plan and effort labels and the preferred default models;
+`gen-model-catalog.mjs --check` the catalog.
+
+Not ported, on purpose: the version advisory (a registry lookup), the managed setup mode and
+shadow homes, and the watch on `auth.json` that probes again after `codex login` outside T3
+(the next probe shows it). Known difference: T3's client checks every answer against Codex's
+schema and fails the probe on one that does not fit ("protocol operation
+'decode-response-payload' failed"); ours reads the fields it needs and tolerates the rest.
+Also: our stderr tail for the exit message keeps 4 KiB, T3's 8 KiB (the excerpt is the last
+error line, so only a stderr with more than 4 KiB after that line differs).
+
+## A Stop that abandons a start, and a turn that still starts (deliberate difference)
+
+Nick decided on 2026-11-15: when a Stop abandons a start whose `turn/start` was already
+written, and Codex started the turn anyway, that turn is stopped. The T3 server leaves it
+running unobserved (see `docs/status.md`, "Faults found in the T3 server").
+
+- Before `turn/start` is written: as T3, the start stops at the request it waits on and sends
+  nothing more.
+- After: the answer goes to a watcher (bounded by `CodexConfig::abandoned_start_timeout`, the
+  request's 60 s). When the answer or a `turn/started` names the turn, Codex gets
+  `turn/interrupt` for it, once. None of that turn's frames become events: no new run, no
+  subagent turn, nothing in the next turn. Its `turn/completed` ends it.
+- The next start on the thread waits until the abandoned start settled (no turn in the
+  answer, or its turn ended), at most the answer's limit plus the Stop confirmation's 10 s;
+  then it goes ahead and the abandoned turn's id stays among the ended turns.
+- Nothing ever arrives: nothing is sent; after the limit nothing is kept.
+- The session closes first: close does not wait. The last session stops the process, and the
+  answer never comes; with a shared process, a late answer still gets `turn/interrupt`.
+- A `turn/started` that came before the Stop gave the run its turn: the start counts as
+  accepted, and the engine stops it as a turn accepted after Stop.
+
+What Codex receives that T3 does not send: one `turn/interrupt {threadId, turnId}` for such a
+turn. Tests (`src/live_tests.rs`, a fake app-server, no CLI):
+`an_abandoned_start_before_turn_start_sends_nothing_more`,
+`a_late_answer_to_an_abandoned_start_interrupts_its_turn`,
+`a_turn_started_for_an_abandoned_start_is_interrupted`,
+`an_abandoned_start_that_never_answers_sends_nothing_and_ends`,
+`the_next_turn_waits_for_an_abandoned_start_that_reached_codex`,
+`closing_the_session_ends_an_abandoned_start`.
+
+## Wakes: work that ends after its turn (2026-11-15)
+
+As `CodexAdapterV2` asks `ProviderContinuationRequests` for a continuation turn, this crate
+emits `ProviderEvent::ContinuationRequested`, and the engine queues the wake message
+(`queue_after_active`: it runs after any active run and before nothing queued earlier; a
+released session opens again for it, as for any message). Both wakes carry `delivery:
+"message_text"`: the text is the whole wake, so the engine creates the message as the
+server's (`creationSource: "server"`), and the wake turn sends that text to Codex as an
+ordinary `turn/start`.
+
+- **A subagent that ends after its root turn** (`finalizeCodexTurn`): a direct child whose turn
+  completes or fails while no root turn runs on its parent thread, and whose root turn was not
+  stopped or failed. Text (`codexNativeSubagentDetail`): `Subagent <status>: <title, else
+  prompt, else id>`, then `\n\nResult:\n<result>` when the child answered. Notice:
+  `backgroundWorkNotification` for the subagent, with its child thread.
+- **A background command that ends after its turn**: a completed root turn with running
+  commands is kept (`settledTurns`, at most 16) while they run; their output deltas and end
+  still show. When one ends, and the turn is not being stopped, one wake per command
+  (`codexBackgroundCommandDetail`: `Background command completed (exit N): <command, 200
+  UTF-16 units>` and the last 1,000 units of its output; the notice names the command, its
+  outcome and exit code, with the command as `detail`). `thread/closed` ends a settled turn's
+  commands as interrupted, with no wake. A root turn's command rows carry `completionWake:
+  "always"`, as T3's; the replay compares it now.
+
+The notice text is `conn_provider_support::notification`, shared with Claude. Proof:
+conformance scenarios `subagentWake` and `commandWake` (T3's recordings with the child or the
+command moved behind the root turn's end, and a wake turn; T3's adapter offers are logged and
+compared with our events: text, notice, delivery; both servers send the same wake
+`turn/start`), `idle-diff` (the "background work ended" state is the same as T3's), the
+replay of all 21 recordings with `completionWake`, unit tests
+`a_command_that_ends_after_its_turn_wakes_the_agent_once`,
+`a_stopped_turns_command_asks_for_no_wake`, `a_closed_thread_ends_a_settled_turns_commands`,
+`a_subagent_wakes_its_parent_only_after_a_completed_root_turn`, and the engine's
+`a_message_text_wake_is_the_servers_message`.
+
 ## Known differences from `CodexAdapterV2`
 
-- Command rows carry no `completionWake`: Conn Server has no background continuation.
+- A turn whose start Stop abandoned is stopped when it reaches Codex anyway (above).
 - `turn.terminal` has no `failureItemOrdinal` or `retryStartedAt`: the trait has no field.
 - Capabilities switch off what is listed above.
 
@@ -186,6 +305,8 @@ Typed upstream definitions were measured and not used:
 ```sh
 CONN_MONOREPO=/path/to/conn node crates/conn-provider-codex/tools/conformance.mjs  # the wire check
 CONN_MONOREPO=/path/to/conn node crates/conn-provider-codex/tools/gen-instructions.mjs --check
+CONN_MONOREPO=/path/to/conn node crates/conn-provider-codex/tools/gen-model-catalog.mjs --check
+CONN_MONOREPO=/path/to/conn node crates/conn-provider-codex/tools/probe-conformance/run.mjs
 cargo test -p conn-provider-codex                                                # offline
 cargo test -p conn-provider-codex live_ -- --ignored --test-threads=1 --nocapture  # real CLI
 CONN_MONOREPO=/path/to/conn node tools/capture-ts-events.mjs   # regenerate testdata, offline

@@ -99,6 +99,24 @@ const SCENARIOS = {
     addInterrupt: true,
     covers: "Stop while a subagent's turn runs: turn/interrupt to the root, then the child",
   },
+  // A subagent that ends after its root turn: T3 asks for a continuation (the wake) and runs
+  // it as the next turn. Both sides' wake requests are compared, and the turn/start Codex gets.
+  subagentWake: {
+    fixture: "subagent_v2",
+    derive: "subagentWake",
+    appendSteps: [{ type: "await_run_status", targetRunIndex: 2, status: "completed" }],
+    continuationWorker: true,
+    covers: "a subagent that ends after its root turn: the wake request, and the turn/start of the wake turn",
+  },
+  // A background command that ends after its turn: T3 keeps the settled turn, shows the late
+  // output and end, and wakes the agent (`codexBackgroundCommandDetail`).
+  commandWake: {
+    fixture: "command_output_streaming",
+    derive: "commandWake",
+    appendSteps: [{ type: "await_run_status", targetRunIndex: 2, status: "completed" }],
+    continuationWorker: true,
+    covers: "a command that ends after its turn: its late output and end, the wake request, the wake turn/start",
+  },
   model: {
     fixture: "multi_turn",
     setModelBefore: { index: 1, model: "gpt-6-astra" },
@@ -391,6 +409,82 @@ function deriveSubagentStop(fixture, dir) {
   return file;
 }
 
+/**
+ * T3's `subagent_v2` recording with the subagent ending after the root turn (as
+ * `crates/conn-server/tools/idle-diff.mjs` derives it): the child's last status change and turn
+ * end, and the root's subagent items that report them, move behind the root's `turn/completed`.
+ * Then the wake turn: `simple`'s turn on the root thread.
+ */
+function deriveSubagentWake(fixture, dir) {
+  return deriveWake(fixture, dir, (entries, rootId) => {
+    const isChildDone = (e) => e.frame?.method === "turn/completed" && e.frame.params?.threadId !== rootId;
+    const childDone = entries.findIndex(isChildDone);
+    const rootDone = entries.findIndex((e) => e.frame?.method === "turn/completed" && e.frame.params?.threadId === rootId);
+    if (childDone < 1 || rootDone < childDone) throw new Error("subagent_v2 changed shape");
+    return (entry, i) => {
+      const item = entry.frame?.params?.item?.type;
+      return (
+        i === childDone ||
+        (i === childDone - 1 && entry.frame?.method === "thread/status/changed") ||
+        (i > childDone &&
+          i < rootDone &&
+          entry.type === "emit_inbound" &&
+          (item === "subAgentActivity" || item === "collabAgentToolCall"))
+      );
+    };
+  });
+}
+
+/**
+ * `command_output_streaming` with its command running past the turn: the command's output
+ * deltas and its \`item/completed\` move behind the root's \`turn/completed\`; then the wake turn.
+ */
+function deriveCommandWake(fixture, dir) {
+  return deriveWake(fixture, dir, (entries) => {
+    const started = entries.find((e) => e.frame?.method === "item/started" && e.frame.params?.item?.type === "commandExecution");
+    if (started === undefined) throw new Error(`${fixture} has no command`);
+    const id = started.frame.params.item.id;
+    return (entry) =>
+      entry.type === "emit_inbound" &&
+      ((entry.frame?.method === "item/commandExecution/outputDelta" && entry.frame.params?.itemId === id) ||
+        (entry.frame?.method === "item/completed" && entry.frame.params?.item?.id === id));
+  });
+}
+
+/**
+ * A recording with the frames \`late\` picks moved behind the root's \`turn/completed\`, then
+ * \`simple\`'s turn on the root thread as the wake turn.
+ */
+function deriveWake(fixture, dir, pickLate) {
+  const read = (name) =>
+    NodeFS.readFileSync(
+      NodePath.join(MONOREPO, `apps/server/src/orchestration-v2/testkit/fixtures/${name}/codex_transcript.ndjson`),
+      "utf8",
+    )
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line));
+  const entries = read(fixture);
+  const rootId = entries.find((e) => e.frame?.result?.thread?.id)?.frame.result.thread.id;
+  const isRootDone = (e) => e.frame?.method === "turn/completed" && e.frame.params?.threadId === rootId;
+  const late = pickLate(entries, rootId);
+  const moved = [];
+  const kept = [];
+  entries.forEach((entry, i) => (late(entry, i) ? moved : kept).push(entry));
+  kept.splice(kept.findIndex(isRootDone) + 1, 0, ...moved);
+  const simple = read("simple");
+  const simpleId = simple.find((e) => e.frame?.result?.thread?.id)?.frame.result.thread.id;
+  const from = simple.findIndex((e) => e.type === "expect_outbound" && e.frame?.method === "turn/start");
+  const to = simple.findIndex((e) => e.frame?.method === "turn/completed");
+  const wake = simple.slice(from, to + 1).map((entry) => JSON.parse(JSON.stringify(entry).split(simpleId).join(rootId)));
+  const exit = kept.findIndex((e) => e.type === "runtime_exit");
+  kept.splice(exit === -1 ? kept.length : exit, 0, ...wake);
+  const file = NodePath.join(dir, "derived_transcript.ndjson");
+  NodeFS.mkdirSync(dir, { recursive: true });
+  NodeFS.writeFileSync(file, kept.map((e) => JSON.stringify(e)).join("\n") + "\n");
+  return file;
+}
+
 /** The executable name the `login` scenario starts: only the stand-in shell's PATH has it. */
 const LOGIN_CODEX = "codex-conn-login";
 
@@ -451,6 +545,12 @@ const plan = selected.map((name) => {
     ...(scenario.derive === "subagentStop"
       ? { transcriptFile: deriveSubagentStop(scenario.fixture, dir) }
       : {}),
+    ...(scenario.derive === "subagentWake"
+      ? { transcriptFile: deriveSubagentWake(scenario.fixture, dir) }
+      : {}),
+    ...(scenario.derive === "commandWake"
+      ? { transcriptFile: deriveCommandWake(scenario.fixture, dir) }
+      : {}),
     tsCodex: login ? LOGIN_CODEX : tsCodex,
     rustCodex: login ? LOGIN_CODEX : rustCodex,
   };
@@ -474,6 +574,7 @@ import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { materializeReplayTranscriptWorkspace } from "@t3tools/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -514,6 +615,7 @@ const changedInput = (scenario: any, base: any) => {
   }
   // Stop the first run after its message (\`subagentStop\`).
   if (scenario.addInterrupt) steps = [...steps, { type: "interrupt", targetRunIndex: 1 }];
+  if (scenario.appendSteps) steps = [...steps, ...scenario.appendSteps];
   if (scenario.setModelBefore) {
     let seen = -1;
     const at = steps.findIndex((s: any) => s.type === "message" && ++seen === scenario.setModelBefore.index);
@@ -574,7 +676,23 @@ const harnessFor = (scenario: any, log: Array<unknown>) => {
           ...(scenario.instance?.config?.binaryPath ? {} : { binaryPath: scenario.tsCodex }),
           ...(scenario.instance?.config?.homePath ? {} : { homePath: PLAN.codexHome }),
         },
-      }).pipe(Effect.map((adapter) => [adapter])),
+      }).pipe(
+        Effect.map((adapter) => [adapter]),
+        // The adapter's wake requests, logged and passed on to the server's queue.
+        Effect.provide(
+          Layer.effect(
+            ProviderContinuationRequests.ProviderContinuationRequests,
+            Effect.gen(function* () {
+              const real = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+              return {
+                ...real,
+                offer: (request: any) =>
+                  Effect.sync(() => log.push({ kind: "continuation", request })).pipe(Effect.andThen(real.offer(request))),
+              };
+            }),
+          ),
+        ),
+      ),
     ).pipe(
       Layer.provide(
         Layer.mergeAll(factory, serverConfig, NodeServices.layer, NodeCrypto.layer, IdAllocator.layer),
@@ -703,6 +821,7 @@ if (replayScenarios.length > 0) describe("conn codex conformance", () => {
         ...driver,
         ...(scenario.model ? { modelSelection: { ...driver.modelSelection, model: scenario.model } } : {}),
         ...(scenario.policy ? { runtimePolicyOverride: { ...driver.runtimePolicyOverride, ...scenario.policy } } : {}),
+        ...(scenario.continuationWorker ? { runContinuationWorker: true } : {}),
       };
       // The \`login\` scenario: the server's start-up PATH fix with a stand-in login shell,
       // as \`server.ts\` runs it, then the scenario; the environment is put back after.
@@ -1029,6 +1148,22 @@ for (const scenario of plan) {
   const add = (kind, detail) => diffs.push({ kind, ...detail });
 
   if (ts.length !== rs.length) add("process-count", { ts: ts.length, rust: rs.length });
+  // Wake requests: T3's adapter's offers (logged by the TS side) against our
+  // \`continuation.requested\` events, in order: text, notice and delivery.
+  {
+    const tsWakes = tsCalls.log
+      .filter((e) => e.kind === "continuation")
+      .map((e) => ({ detail: e.request.detail ?? null, notification: e.request.notification ?? null, delivery: e.request.delivery ?? null }));
+    const rustEventsPath = NodePath.join(scenario.dir, "rust/events.json");
+    const rustEvents = NodeFS.existsSync(rustEventsPath) ? JSON.parse(NodeFS.readFileSync(rustEventsPath, "utf8")) : [];
+    const rustWakes = rustEvents
+      .filter((e) => e.type === "continuation.requested")
+      .map((e) => ({ detail: e.detail ?? null, notification: e.notification ?? null, delivery: e.delivery ?? null }));
+    if (JSON.stringify(stable(tsWakes)) !== JSON.stringify(stable(rustWakes))) {
+      add("continuation", { ts: tsWakes, rust: rustWakes });
+    }
+    if (scenario.continuationWorker && tsWakes.length === 0) add("continuation", { ts: "no wake", rust: rustWakes.length });
+  }
   // The \`login\` scenario proves something only when each side found the stub through the
   // login shell's PATH and passed that shell's values on; equal failures must not pass.
   if (scenario.loginShell) {

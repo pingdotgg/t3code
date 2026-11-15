@@ -95,6 +95,8 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 | ACP instructions    | `node crates/conn-provider-acp/tools/gen-instructions.mjs --check` | T3's ACP prompt wrapper and runtime notes are current, byte for byte |
 | ACP conformance     | `node crates/conn-provider-acp/tools/conformance.mjs` | Grok argv, environment, every stdin line and shutdown equal the T3 server's, on a stub agent |
 | Grok probe conformance | `node crates/conn-provider-acp/tools/probe-conformance.mjs` | Grok's `ServerProvider` entry and every CLI run of its status probe equal the T3 server's, on a stub CLI |
+| Codex model catalog | `node crates/conn-provider-codex/tools/gen-model-catalog.mjs --check` | The Codex model catalog the status probe applies matches T3's bundled `model-manifest.json` |
+| Codex probe conformance | `node crates/conn-provider-codex/tools/probe-conformance/run.mjs` | Codex's `ServerProvider` entry and every run of its status probe (argv, environment, folder, every stdin line, how it ended) equal the T3 server's `checkCodexProviderStatus`, on a stub `codex` (17 scenarios) |
 | Claude catalog      | `crates/conn-provider-claude/tools/gen-catalog/run.sh --check`                                                                   | The Claude model catalog matches T3's bundled catalog                                                |
 | Claude conformance  | `crates/conn-provider-claude/tools/conformance/run.sh` (skipped, with one line, without `npm ci` in `helpers/sdk-host`)          | The `claude` CLI gets the same argv, environment and stdin as from the T3 server, on a stub CLI      |
 | Claude probe conformance | `node crates/conn-provider-claude/tools/probe-conformance/run.mjs` (skipped with the Claude conformance) | Claude's `ServerProvider` entry and every CLI run of its status probe equal the T3 server's `checkClaudeProviderStatus`, and its thread titles equal `generateThreadTitle`, on a stub CLI |
@@ -221,7 +223,9 @@ runtime request (permission prompts and questions), plan, `turn.terminal`.
 `apply_runtime_policy` is new: it carries a permission mode change to a running Claude process
 (`setPermissionMode`). `abandon_turn_start` is new too: a Stop before the provider accepted the
 turn ends the run in the engine, and the provider stops the start in flight as T3's effect
-worker interrupts it (Claude aborts a booting CLI; Codex and ACP send nothing more). Left out
+worker interrupts it (Claude aborts a booting CLI; ACP sends nothing more; Codex sends nothing
+more, and stops a turn that its `turn/start`, already written, still started: a deliberate
+difference, `crates/conn-provider-codex/README.md`). Left out
 until needed: compact, rollback, fork, thread snapshots, history
 injection, background tasks, subagent stop, MCP apps.
 
@@ -524,7 +528,7 @@ What a real Conn session hits that this server does not do:
 - **`/mcp` serves 28 of 87 T3 tools** (`crates/conn-mcp/README.md`).
 - **Worktree launch:** the worktree is made before the thread exists; `prepared-run.*` stays
   refused and no project setup script runs.
-- **Providers:** Claude, Codex and Grok (Grok with `/compact`, background work and subagents; not subagents carried over to a later turn). Their gaps are in each crate's README. Claude and Codex instance settings apply (binary, home, launch arguments, environment, enabled, identity); not yet: `customModels`, Claude's `autoCompactWindow`, Codex's `shadowHomePath` and its status probe.
+- **Providers:** Claude, Codex and Grok (Grok with `/compact`, background work and subagents; not subagents carried over to a later turn). Their gaps are in each crate's README. Claude and Codex instance settings apply (binary, home, launch arguments, environment, enabled, identity); Codex is probed as T3 probes it (its `app-server`, account, models, skills, config, usage) and reads `customModels`; not yet: Claude's `customModels` and `autoCompactWindow`, Codex's `shadowHomePath` and managed setup.
 - **Auth:** bearer and ticket only. No cookie sessions, DPoP or relay (`DROP-IN.md` §4).
 - **Desktop-local backend:** the `--bootstrap-fd` start works; the desktop itself still
   spawns the T3 server (`DROP-IN.md` §2).

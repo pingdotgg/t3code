@@ -72,6 +72,26 @@ In a container, Codex reaches models through whatever the inherited environment 
 Done once per process, before the first thread call. Nothing else goes to the session's
 process before a thread call (the TS server lists models in a separate probe process).
 
+## The status probe's process
+
+A process of its own per probe, as T3's `probeCodexAppServerProvider` (`README.md`, "Status
+probe"): the same argv, the session's environment plus `MISE_OFFLINE=1`, in the server's
+folder. `initialize` carries `capabilities: {experimentalApi: true}` only (no
+`optOutNotificationMethods`, no `extensions`). Then `initialized`, `account/read` `{}`,
+`skills/list` `{cwds}`, `model/list` `{}` / `{cursor}`, `config/read` `{includeLayers: false}`,
+`account/rateLimits/read` with `params: null`. Results read:
+
+| Request | Fields read |
+| --- | --- |
+| `initialize` | `userAgent` (the version after the first `/`), `codexHome` (where `models_cache.json` is) |
+| `account/read` | `account` (`type`: `apiKey`, `chatgpt` with `email` and `planType`, `amazonBedrock`; or null), `requiresOpenaiAuth` |
+| `skills/list` | `data[]` `{cwd, skills[] {name, path, enabled, description, scope, shortDescription, interface {displayName, shortDescription}}}` |
+| `model/list` | `data[]` `{model, displayName, isDefault, defaultReasoningEffort, supportedReasoningEfforts[].reasoningEffort, serviceTiers[] {id, name, description}, additionalSpeedTiers, defaultServiceTier, availableAccessPrograms.cyber}`, `nextCursor` |
+| `config/read` | `config` `{model_provider, openai_base_url, model_providers{}.base_url, service_tier, daybreak, features.api_key_cyber_access_programs}` |
+| `account/rateLimits/read` | `rateLimits` / `rateLimitsByLimitId.codex` `{limitId, planType, primary, secondary {usedPercent, resetsAt, windowDurationMins}, individualLimit}`, `rateLimitResetCredits`, `accountId` |
+
+The process ends with the probe: stdin closed, SIGTERM to the group, SIGKILL after 2 s.
+
 ## Threads
 
 - **Start:** `thread/start` `{"cwd", "model", "config": {...}}`. `config` holds:
@@ -108,7 +128,9 @@ process before a thread call (the TS server lists models in a separate probe pro
   `turn/started` notification can come before the result.
 
 - **Steer:** `turn/steer` `{"expectedTurnId", "input", "threadId"}` → `{"turnId"}`.
-- **Interrupt:** `turn/interrupt` `{"threadId", "turnId"}` → `{}`. Codex then sends
+- **Interrupt:** `turn/interrupt` `{"threadId", "turnId"}` → `{}`. Also sent, once, for a turn
+  whose start a Stop abandoned after `turn/start` was written, when its answer or a
+  `turn/started` names it (not in T3; README, "A Stop that abandons a start"). Codex then sends
   `turn/completed` with status `interrupted`. TS waits up to 10 s for it; without it the turn
   stays open and Stop fails with `ProviderAdapterInterruptTimeoutError` (Force stop), as here. Running background terminals are stopped with
   `thread/backgroundTerminals/terminate` `{"threadId", "processId"}`.
@@ -194,6 +216,11 @@ Child threads report on their own `threadId`; T3 maps them in `CodexAdapterV2`
 | `subAgentActivity` `completed` / `interrupted` | the task's status |
 | `turn/started` on a child thread | the child's provider turn and root node (the second and later turns reopen the task); `turn/completed` ends them, sets the child's provider thread back to `idle`, ends the `subagent` node and the task |
 | a server request on a child turn | an approval shows on the root turn under the subagent's node; a question on the child |
+
+A direct child whose turn completes or fails after its root turn ended wakes the parent: the
+next turn's text is `Subagent <status>: <label>` with its result (README, "Wakes"). A
+background command that ends after its completed turn does the same with `Background command
+completed (exit N): <command>` and its output tail.
 
 Requests T3 sends for subagents: `thread/read` `{threadId, includeTurns: false}`, then
 `thread/resume` `{threadId, excludeTurns: true}` when the read names no model (a child with

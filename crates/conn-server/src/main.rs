@@ -34,6 +34,10 @@ fn main() {
     let codex = conn_provider_codex::CodexConfig {
         // The same store Claude reads; Codex gets a path line per attachment and the images.
         attachments_dir: Some(options.state_dir.join("attachments")),
+        // Checks turn the probe off, so they never run this machine's `codex`.
+        status_probe: std::env::var_os("CONN_CODEX_STATUS_PROBE").is_none_or(|v| v != "off"),
+        // T3 probes Codex in the server's working folder (`process.cwd()`).
+        status_cwd: std::env::current_dir().ok(),
         ..Default::default()
     };
     // One SDK host process for every Claude instance (it runs only while a query is open).
@@ -59,7 +63,7 @@ fn main() {
                         id.into(),
                         codex.clone(),
                         entry,
-                    )?)
+                    ))
                 };
                 Some(provider)
             },

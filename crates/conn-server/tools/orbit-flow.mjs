@@ -39,7 +39,8 @@ const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-orbit-"));
 const home = NodePath.join(root, ".t3");
 const workspace = NodePath.join(root, "workspace");
 const origin = `http://127.0.0.1:${port}`;
-// CONN_CLAUDE_STATUS_PROBE=off: the server never runs this machine's `claude` for its status.
+// CONN_CLAUDE_STATUS_PROBE=off and CONN_CODEX_STATUS_PROBE=off: the server never runs this
+// machine's `claude` or `codex` for its status.
 // With `replay_server` (no model), a sealed environment: a throwaway HOME, a stand-in shell and
 // no variable of the shell beyond what a process needs. The live Haiku turn with `conn-server`
 // needs the real `claude` and its login, so it keeps the shell's environment.
@@ -49,6 +50,7 @@ const env = {
   T3CODE_HOME: home,
   DISABLE_AUTOUPDATER: "1",
   CONN_CLAUDE_STATUS_PROBE: "off",
+  CONN_CODEX_STATUS_PROBE: "off",
 };
 delete env.T3CODE_PORT;
 delete env.T3CODE_HOST;

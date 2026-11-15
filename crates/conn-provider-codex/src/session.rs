@@ -70,6 +70,8 @@ struct Inner {
     attachments_dir: Option<std::path::PathBuf>,
     /// `CodexConfig::stop_confirm_timeout`.
     stop_confirm_timeout: Duration,
+    /// `CodexConfig::abandoned_start_timeout`.
+    abandoned_start_timeout: Duration,
     /// The model and working folder the session opened with: TS resumes a thread for a
     /// rollback, and forks one, with the session's own selection and policy.
     open_model: Option<String>,
@@ -110,6 +112,15 @@ impl CodexSession {
                 "Stop ended the turn before Codex started it.",
             ));
         }
+        let run_id = input.run_id.as_str();
+        // A start that Stop abandoned may have reached Codex: its turn is stopped and must
+        // end before the next one starts on the thread.
+        inner
+            .unless_abandoned(run_id, async {
+                inner.settle_abandoned_start().await;
+                Ok(())
+            })
+            .await?;
         let model = launch::selection_model(&input.model_selection);
         if inner.lock().thread.is_none() {
             let native = native_thread_id(&input.provider_thread)
@@ -118,7 +129,6 @@ impl CodexSession {
             state.thread = Some((native, None));
             state.app_thread_id = Some(input.thread_id.as_str().to_owned());
         }
-        let run_id = input.run_id.as_str();
         let native = inner
             .unless_abandoned(
                 run_id,
@@ -174,16 +184,49 @@ impl CodexSession {
             &input.app_context,
         );
         inner.lock().mapper.begin_turn(&native, &input);
-        let started = inner
+        // Written first, then awaited, so a Stop knows whether the request went out.
+        let sent = inner
             .unless_abandoned(run_id, async {
-                Ok(inner.server.request("turn/start", params).await)
+                Ok(inner.server.send("turn/start", params).await)
             })
+            .await;
+        let reply = match sent {
+            Ok(Ok(reply)) => reply,
+            Ok(Err(e)) => {
+                inner.lock().mapper.abandon_turn(&native);
+                return Err(call_failed("start_turn")(e));
+            }
+            Err(abandoned) => {
+                // Not written: Codex never sees it.
+                inner.lock().mapper.abandon_turn(&native);
+                return Err(abandoned);
+            }
+        };
+        let mut answer = Box::pin(reply.wait());
+        let started = inner
+            .unless_abandoned(run_id, async { Ok((&mut answer).await) })
             .await;
         let started = match started {
             Ok(started) => started,
             Err(abandoned) => {
-                // T3 drops the pending turn; a later `turn/started` is no root turn.
-                inner.lock().mapper.abandon_turn(&native);
+                // A `turn/started` already gave the run its turn: the start is accepted, and
+                // the engine stops the turn as one Codex accepted after Stop.
+                if inner.lock().mapper.run_registered(run_id) {
+                    return Ok(());
+                }
+                // Codex may have the turn. Its answer goes to a watcher that stops the turn
+                // (`turn/interrupt`); T3 leaves it running (see the crate README).
+                let id = inner.lock().mapper.abandon_turn_start(&native);
+                if let Some(id) = id {
+                    tokio::spawn(watch_abandoned_start(
+                        Arc::downgrade(&self.inner),
+                        Arc::clone(&inner.server),
+                        id,
+                        native,
+                        answer,
+                        inner.abandoned_start_timeout,
+                    ));
+                }
                 return Err(abandoned);
             }
         };
@@ -216,6 +259,7 @@ impl CodexSession {
             instance_id: instance_id.as_str().to_owned(),
             attachments_dir: config.attachments_dir.clone(),
             stop_confirm_timeout: config.stop_confirm_timeout,
+            abandoned_start_timeout: config.abandoned_start_timeout,
             open_model: open.0,
             open_cwd: open.1,
             server,
@@ -282,9 +326,33 @@ impl Inner {
         }
     }
 
-    /// Sends events and replies in order. Holds no lock across a send.
+    /// Waits until a start that Stop abandoned has settled: its answer named no turn, or
+    /// its turn ended. Bounded by the answer's limit plus the Stop confirmation's; past that
+    /// the next start goes ahead.
+    async fn settle_abandoned_start(&self) {
+        let wait = async {
+            loop {
+                let progressed = self.progressed.notified();
+                tokio::pin!(progressed);
+                progressed.as_mut().enable();
+                if !self.lock().mapper.abandoned_start_open() {
+                    return;
+                }
+                progressed.await;
+            }
+        };
+        let bound = self.abandoned_start_timeout + self.stop_confirm_timeout;
+        if tokio::time::timeout(bound, wait).await.is_err() {
+            eprintln!("conn-provider-codex: a turn Stop abandoned did not end; starting the next");
+            self.lock().mapper.forget_abandoned_start();
+        }
+    }
+
+    /// Sends events and replies in order. Holds no lock across a send. Wakes the waiters on
+    /// [`Self::progressed`] even with nothing to send: a frame can change state silently.
     async fn deliver(&self, outs: Vec<Out>) {
         if outs.is_empty() {
+            self.progressed.notify_waiters();
             return;
         }
         let (events, generation) = {
@@ -324,20 +392,20 @@ impl Inner {
                     });
                 }
                 Out::InterruptChild { thread, turn } => {
-                    let server = Arc::clone(&self.server);
-                    tokio::spawn(async move {
-                        let request = server.request(
-                            "turn/interrupt",
-                            json!({"threadId": thread, "turnId": turn}),
-                        );
-                        if let Ok(Err(e)) =
-                            tokio::time::timeout(CHILD_INTERRUPT_TIMEOUT, request).await
-                        {
-                            eprintln!(
-                                "conn-provider-codex: a late subagent turn did not stop: {e}"
-                            );
-                        }
-                    });
+                    tokio::spawn(interrupt(
+                        Arc::clone(&self.server),
+                        thread,
+                        turn,
+                        "a late subagent turn",
+                    ));
+                }
+                Out::InterruptAbandoned { thread, turn } => {
+                    tokio::spawn(interrupt(
+                        Arc::clone(&self.server),
+                        thread,
+                        turn,
+                        "a turn Stop abandoned",
+                    ));
                 }
                 Out::Skipped(kind) => {
                     let key: String = kind.chars().take(80).collect();
@@ -486,6 +554,56 @@ async fn drive(inner: std::sync::Weak<Inner>, mut rx: mpsc::Receiver<SessionMsg>
             }
         };
         inner.deliver(outs).await;
+    }
+}
+
+/// `turn/interrupt` for a turn no run owns, at most [`CHILD_INTERRUPT_TIMEOUT`]. Starts no
+/// process: once the last session is gone the request fails at once.
+async fn interrupt(server: Arc<AppServer>, thread: String, turn: String, what: &str) {
+    let request = server.request(
+        "turn/interrupt",
+        json!({"threadId": thread, "turnId": turn}),
+    );
+    if let Ok(Err(e)) = tokio::time::timeout(CHILD_INTERRUPT_TIMEOUT, request).await {
+        eprintln!("conn-provider-codex: {what} did not stop: {e}");
+    }
+}
+
+/// The answer to a `turn/start` that Stop abandoned after it was written, at most `bound`.
+/// A turn it names is stopped. With the session gone (dropped), the turn is stopped
+/// directly; the process is gone too once no session is left, and then nothing is sent.
+async fn watch_abandoned_start(
+    inner: std::sync::Weak<Inner>,
+    server: Arc<AppServer>,
+    id: u64,
+    native: String,
+    answer: std::pin::Pin<Box<impl std::future::Future<Output = Result<Value, CallError>>>>,
+    bound: Duration,
+) {
+    let answer = tokio::time::timeout(bound, answer).await;
+    let turn = match &answer {
+        Ok(Ok(result)) => result["turn"]["id"].as_str().map(str::to_owned),
+        _ => None,
+    };
+    match inner.upgrade() {
+        Some(inner) => {
+            let outs = {
+                let mut state = inner.lock();
+                match &turn {
+                    Some(turn) => state.mapper.abandoned_start_answered(id, &native, turn),
+                    None => {
+                        state.mapper.abandoned_start_settled(id);
+                        Vec::new()
+                    }
+                }
+            };
+            inner.deliver(outs).await;
+        }
+        None => {
+            if let Some(turn) = turn {
+                interrupt(server, native, turn, "a turn Stop abandoned").await;
+            }
+        }
     }
 }
 
@@ -819,7 +937,9 @@ impl Session for CodexSession {
 
     /// Stop ended the run before Codex accepted the turn: the start stops at its next wait
     /// (`thread/start` or `thread/resume`, `config/read`, `turn/start`) and sends nothing more,
-    /// as T3's interrupted `startTurn`. A `turn/start` already written is left to Codex.
+    /// as T3's interrupted `startTurn`. A `turn/start` already written is different from T3:
+    /// when its answer or a `turn/started` names the turn, it gets `turn/interrupt`, and the
+    /// next start on the thread waits until that turn ended.
     fn abandon_turn_start(&self, input: conn_provider::AbandonTurnStartInput) -> BoxFuture<'_, ()> {
         Box::pin(async move {
             self.inner.lock().abandoned_run = Some(input.run_id.as_str().to_owned());

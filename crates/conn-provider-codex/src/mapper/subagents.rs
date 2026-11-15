@@ -11,7 +11,9 @@
 
 use std::collections::{HashMap, HashSet};
 
+use conn_provider::{ContinuationRequest, ProviderEvent};
 use conn_provider_support::ids::{self, Env};
+use conn_provider_support::notification;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -41,6 +43,7 @@ pub(super) struct Scope {
     root_node_id: String,
     provider_turn_id: String,
     provider_session_id: Value,
+    provider_thread_id: String,
     native_thread_id: String,
     native_turn_id: String,
     model_selection: Value,
@@ -57,6 +60,7 @@ impl Turn {
             root_node_id: self.root_node_id.clone(),
             provider_turn_id: self.provider_turn_id.clone(),
             provider_session_id: self.provider_session_id.clone(),
+            provider_thread_id: self.provider_thread_id.clone(),
             native_thread_id: self.native_thread_id.clone(),
             native_turn_id: self.native_turn_id.clone(),
             model_selection: self.model_selection.clone(),
@@ -1143,6 +1147,62 @@ impl<E: Env> Mapper<E> {
             },
             out,
         );
+        self.wake_parent(child, status, out);
+    }
+
+    /// Codex does not wake a completed parent turn, so a child's result would stay unread: a
+    /// direct child that completes or fails after its root turn ended asks for a continuation
+    /// turn (`finalizeCodexTurn`, `codexNativeSubagentDetail`). Not when the root turn was
+    /// stopped or failed, nor while a root turn runs on the parent thread (it gets the result
+    /// itself); a grandchild reports to its own parent.
+    fn wake_parent(&mut self, child: &str, status: &str, out: &mut Vec<Out>) {
+        let Some(sub) = self.subagents.get(child) else {
+            return;
+        };
+        let parent = &sub.parent;
+        if parent.subagent.is_some()
+            || !(status == "completed" || status == "failed")
+            || self.stopped(&parent.native_turn_id)
+            || self
+                .turns
+                .values()
+                .any(|t| t.subagent.is_none() && t.provider_thread_id == parent.provider_thread_id)
+        {
+            return;
+        }
+        let task = &sub.task;
+        let label = subagent_label(task);
+        let header = format!(
+            "Subagent {}: {}",
+            task["status"].as_str().unwrap_or_default(),
+            label
+                .clone()
+                .unwrap_or_else(|| task["id"].as_str().unwrap_or_default().to_owned())
+        );
+        let detail = match task["result"].as_str().filter(|r| !r.is_empty()) {
+            Some(result) => format!("{header}\n\nResult:\n{result}"),
+            None => header,
+        };
+        let notice = notification::background_work_notification(&[notification::Work {
+            kind: notification::WorkKind::Subagent,
+            label,
+            outcome: if status == "completed" {
+                "completed"
+            } else {
+                "failed"
+            },
+            child_thread_id: Some(sub.child_thread_id.clone()),
+            exit_code: None,
+        }]);
+        out.push(Out::Event(ProviderEvent::ContinuationRequested(
+            ContinuationRequest {
+                thread_id: parent.thread_id.as_str().into(),
+                provider_thread_id: parent.provider_thread_id.as_str().into(),
+                detail: Some(detail),
+                notification: notice,
+                delivery: Some("message_text".into()),
+            },
+        )));
     }
 
     /// `approvalOwnerCodexTurn`: an approval a child raises shows on the root turn, under the
@@ -1209,6 +1269,16 @@ impl<E: Env> Mapper<E> {
         self.finalize(native_turn, "interrupted", now, None, None, &mut out);
         out
     }
+}
+
+/// `codexNativeSubagentLabel`: the title, else the prompt, trimmed; `None` when both are empty.
+fn subagent_label(task: &Value) -> Option<String> {
+    [&task["title"], &task["prompt"]]
+        .into_iter()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .map(str::to_owned)
 }
 
 fn status_str(status: &Value) -> &'static str {

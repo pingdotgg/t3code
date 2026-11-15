@@ -42,10 +42,16 @@ if (!binary) throw new Error("usage: effect-client.mjs <conn-server binary> [--f
 const fixture = mode === "--fixture";
 
 const stateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-server-effect-"));
+// The Codex status probe runs here, on stub CLIs only: the default `codex` instance is off
+// before the start, so this machine's `codex` never runs.
+NodeFS.writeFileSync(
+  NodePath.join(stateDir, "settings.json"),
+  JSON.stringify({ providerInstances: { codex: { driver: "codex", enabled: false } } }),
+);
 const server = NodeChildProcess.spawn(
   binary,
   fixture ? [stateDir] : ["--listen", "127.0.0.1:0", "--state-dir", stateDir],
-  { stdio: ["ignore", "pipe", "pipe"], env: sealedEnv(stateDir) },
+  { stdio: ["ignore", "pipe", "pipe"], env: { ...sealedEnv(stateDir), CONN_CODEX_STATUS_PROBE: "on" } },
 );
 const stderr = [];
 server.stderr.on("data", (data) => stderr.push(String(data)));
@@ -236,6 +242,34 @@ function grokStub() {
   NodeFS.writeFileSync(
     script,
     `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(stub)} --stub-config ${JSON.stringify(config)} "$@"\n`,
+    { mode: 0o755 },
+  );
+  return script;
+}
+
+/** A stub `codex` that answers the status probe as Orbit's router setup (no sign-in). */
+function codexStub() {
+  const dir = NodePath.join(work, "codex-stub");
+  NodeFS.mkdirSync(dir, { recursive: true });
+  const stub = NodePath.resolve(import.meta.dirname, "../../conn-provider-codex/tools/probe-conformance/stub-codex.mjs");
+  NodeFS.copyFileSync(stub, NodePath.join(dir, "stub-codex.mjs"));
+  const model = {
+    id: "gpt-6-luna", model: "gpt-6-luna", displayName: "gpt-6-luna", description: "", hidden: false, isDefault: true,
+    defaultReasoningEffort: "low", supportedReasoningEfforts: [{ reasoningEffort: "low", description: "" }], serviceTiers: [{ id: "priority", name: "Fast", description: "" }],
+  };
+  NodeFS.writeFileSync(
+    NodePath.join(dir, "behaviour.json"),
+    JSON.stringify({
+      account: { account: null, requiresOpenaiAuth: false },
+      skills: { data: [{ cwd: "<cwd>", errors: [], skills: [{ name: "review", description: "Review code", enabled: true, path: "/skills/review/SKILL.md", scope: "user" }] }] },
+      models: [{ data: [model], nextCursor: null }],
+      config: { config: { model_provider: "orbit", model_providers: { orbit: { base_url: "http://router.orbit:8080/v1" } } }, origins: {} },
+    }),
+  );
+  const script = NodePath.join(dir, "codex");
+  NodeFS.writeFileSync(
+    script,
+    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(NodePath.join(dir, "stub-codex.mjs"))} "$@"\n`,
     { mode: 0o755 },
   );
   return script;
@@ -462,6 +496,43 @@ const decodeEach = (client) =>
       "a disabled Codex instance is listed disabled",
       codexEntry?.enabled === false && codexEntry.status === "disabled",
       JSON.stringify(codexEntry ?? null).slice(0, 200),
+    );
+    // Codex instances probed as T3 probes them (stub-codex.mjs; no real CLI runs): one ready
+    // through Orbit's router, one whose binary is missing (listed with T3's error entry).
+    yield* call("server.updateSettings", {
+      patch: {},
+      providerInstanceMutation: {
+        operation: "create",
+        instanceId: "codexRouter",
+        instance: { driver: "codex", displayName: "Codex Router", config: { binaryPath: codexStub(), customModels: ["my-model"] } },
+      },
+    });
+    yield* call("server.updateSettings", {
+      patch: {},
+      providerInstanceMutation: {
+        operation: "create",
+        instanceId: "codexMissing",
+        instance: { driver: "codex", config: { binaryPath: "/nonexistent/codex" } },
+      },
+    });
+    const probed = yield* call("server.refreshProviders", {});
+    const probedEntries = Exit.isSuccess(probed) ? probed.value.providers : [];
+    const router = probedEntries.find((p) => p.instanceId === "codexRouter");
+    check(
+      "Codex entry from the probe",
+      router?.status === "ready" &&
+        router.displayName === "Codex Router" &&
+        router.models.some((m) => m.slug === "gpt-6-luna" && m.isDefault === true) &&
+        router.models.some((m) => m.slug === "my-model" && m.isCustom === true) &&
+        router.skills.some((s) => s.name === "review") &&
+        router.auth.endpoint === "http://router.orbit:8080",
+      `${router?.status} ${router?.message ?? ""}`,
+    );
+    const missing = probedEntries.find((p) => p.instanceId === "codexMissing");
+    check(
+      "a Codex instance with a missing binary is listed with an error",
+      missing?.status === "error" && missing.installed === false && (missing.message ?? "").startsWith("Could not start Codex CLI"),
+      JSON.stringify(missing ?? null).slice(0, 200),
     );
     yield* call("server.getHostResources", {});
     yield* call("server.getProcessDiagnostics", {});
