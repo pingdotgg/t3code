@@ -12,6 +12,10 @@ describe("tokenizeCliArgs", () => {
     { input: '--config "model=gpt-\\\n6.1-sol"', expected: ["--config", "model=gpt-6.1-sol"] },
     { input: "--config 'model=gpt-\\\n6.1-sol'", expected: ["--config", "model=gpt-\\\n6.1-sol"] },
     { input: "\\\n", expected: [] },
+    {
+      input: "--add-dir \\\\server\\share\\\\\n--verbose",
+      expected: ["--add-dir", "\\\\server\\share\\\\", "--verbose"],
+    },
   ])("handles line continuations in $input", ({ input, expected }) => {
     expect(tokenizeCliArgs(input)).toEqual(expected);
   });

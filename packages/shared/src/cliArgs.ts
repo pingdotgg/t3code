@@ -20,18 +20,15 @@ export function tokenizeCliArgs(args?: string): ReadonlyArray<string> {
     const char = input[index];
     if (char === undefined) continue;
 
-    if (char === "\\" && input[index + 1] === "\n" && quote !== "'") {
-      index++;
-      continue;
-    }
-
     if (quote) {
       if (char === quote) {
         quote = undefined;
         quoted = true;
       } else if (char === "\\" && quote === '"') {
         const next = input[index + 1];
-        if (next !== undefined && ['"', "\\", "$", "`"].includes(next)) {
+        if (next === "\n") {
+          index++;
+        } else if (next !== undefined && ['"', "\\", "$", "`"].includes(next)) {
           current += next;
           index++;
         } else {
@@ -54,7 +51,13 @@ export function tokenizeCliArgs(args?: string): ReadonlyArray<string> {
       }
     } else if (char === "\\") {
       const next = input[index + 1];
-      if (next !== undefined && /[\s'"]/.test(next)) {
+      if (next === "\n") {
+        index++;
+      } else if (next === "\\") {
+        // Keep both so Windows UNC paths survive; the second can't start a continuation.
+        current += "\\\\";
+        index++;
+      } else if (next !== undefined && /[\s'"]/.test(next)) {
         current += next;
         index++;
       } else {
