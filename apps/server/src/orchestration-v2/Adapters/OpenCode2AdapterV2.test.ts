@@ -340,12 +340,25 @@ const resumed = (
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
     readonly onPrompt?: (input: unknown) => void;
+    readonly modelInputs?: ReadonlyArray<string>;
   },
 ) =>
   Effect.gen(function* () {
     const runtime = yield* openCode2ReplayRuntime(
       [
-        ...opening,
+        ...(options?.modelInputs === undefined
+          ? opening
+          : [
+              out("event.subscribe"),
+              out("model.list", "<any>"),
+              reply("model.list", {
+                ...modelCatalog,
+                data: modelCatalog.data.map((model) => ({
+                  ...model,
+                  capabilities: { ...model.capabilities, input: options.modelInputs },
+                })),
+              }),
+            ]),
         out("session.get", { sessionID: SESSION }),
         replyData("session.get", sessionInfo()),
         ...noOpenRequests,
@@ -5214,13 +5227,20 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   it.effect.each([
     {
       external: false,
-      name: "sends only existing supported images as turn and steer prompt files with path text",
+      supportsImages: true,
+      name: "sends native images for an image-capable model in turns and steers",
+    },
+    {
+      external: false,
+      supportsImages: false,
+      name: "omits native images for a text-only model but preserves turn and steer paths",
     },
     {
       external: true,
+      supportsImages: true,
       name: "keeps turn and steer attachment paths without local files for external servers",
     },
-  ])("$name", ({ external }) =>
+  ])("$name", ({ external, supportsImages }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -5270,7 +5290,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           event("session.inbox.delivered", { sessionID: SESSION, inboxID: steerId }),
           event("session.execution.succeeded", { sessionID: SESSION }),
         ],
-        { attachmentsDir, external, onPrompt: (input) => prompts.push(input) },
+        {
+          attachmentsDir,
+          external,
+          modelInputs: supportsImages ? ["text", "image"] : ["text"],
+          onPrompt: (input) => prompts.push(input),
+        },
       );
       const ids = yield* IdAllocator.IdAllocatorV2;
       const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
@@ -5311,7 +5336,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             `[Attached file "requirements.pdf" is saved at: ${attachmentsDir}/${document.id}.pdf]`,
           ].join("\n\n"),
         });
-        if (external) {
+        if (external || !supportsImages) {
           assert.notProperty(prompts[index], "files");
         } else {
           assert.deepInclude(prompts[index], {

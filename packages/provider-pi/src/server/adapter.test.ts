@@ -1069,6 +1069,98 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each([false, true])(
+    "keeps paths but only forwards native images to image-capable Pi models, support=%s",
+    (supportsImages) =>
+      Effect.gen(function* () {
+        const host = yield* ProviderHost.ProviderHost;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const attachment: ChatAttachment = {
+          id: ChatAttachmentId.make("model-sensitive-image"),
+          type: "image",
+          name: "image.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+        };
+        const path = host.resolveAttachmentPath(attachment)!;
+        yield* fileSystem.writeFile(path, new Uint8Array([1, 2, 3]));
+        // Keep the same model identity for both cases: only reported capabilities change.
+        const provider = "fixture-provider";
+        const modelId = "fixture-model";
+        const slug = `${provider}/${modelId}`;
+        const fake = yield* makeFakePi;
+        fake.queueModels([
+          {
+            provider,
+            id: modelId,
+            input: supportsImages ? ["text", "image"] : ["text"],
+          },
+        ]);
+        const { runtime } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection(slug),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread, slug, [attachment]);
+        const prompt = yield* fake.takeRequest("prompt");
+        assert.include(String(prompt["message"]), path);
+        if (supportsImages) {
+          assert.deepEqual(prompt["images"], [
+            { type: "image", data: "AQID", mimeType: "image/png" },
+          ]);
+        } else {
+          assert.isUndefined(prompt["images"]);
+        }
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("omits native image bytes from steers on text-only Pi models", () =>
+    Effect.gen(function* () {
+      const host = yield* ProviderHost.ProviderHost;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const attachment: ChatAttachment = {
+        id: ChatAttachmentId.make("text-only-steer-image"),
+        type: "image",
+        name: "steer.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+      };
+      const path = host.resolveAttachmentPath(attachment)!;
+      yield* fileSystem.writeFile(path, new Uint8Array([1, 2, 3]));
+      const fake = yield* makeFakePi;
+      fake.queueModels([{ provider: "fixture-provider", id: "fixture-model", input: ["text"] }]);
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const selection = modelSelection("fixture-provider/fixture-model");
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: selection,
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread, selection.model);
+      yield* fake.takeRequest("prompt");
+      const running = yield* takeEvent((event) => event.type === "provider_turn.updated");
+      assert.isTrue(running.type === "provider_turn.updated");
+      if (running.type !== "provider_turn.updated") return;
+      yield* runtime.steerTurn({
+        threadId: THREAD_ID,
+        runId: RunId.make("run:thread-pi-test:1"),
+        providerThread,
+        providerTurnId: running.providerTurn.id,
+        message: {
+          messageId: "message:text-only-steer-image" as never,
+          text: "Review this file",
+          attachments: [attachment],
+          createdBy: "user",
+          creationSource: "web",
+        },
+      });
+      const steer = yield* fake.takeRequest("prompt");
+      assert.include(String(steer["message"]), path);
+      assert.isUndefined(steer["images"]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("lists unavailable attachments alongside resolvable files in the native prompt", () =>
     Effect.gen(function* () {
       const host = yield* ProviderHost.ProviderHost;

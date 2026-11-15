@@ -3123,6 +3123,19 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         attachments: ReadonlyArray<ChatAttachment>,
       ) {
         const images: Array<{ type: "image"; data: string; mimeType: string }> = [];
+        let selectedSlug = appliedModel;
+        if (selectedSlug === null && baselineModel !== null) {
+          selectedSlug = `${baselineModel.provider}/${baselineModel.modelId}`;
+        }
+        const selectedModel = discoveredModels?.find((model) => {
+          const provider = recordString(model, "provider");
+          const id = recordString(model, "id");
+          return provider !== undefined && id !== undefined && `${provider}/${id}` === selectedSlug;
+        });
+        const reportedInputs = recordField(selectedModel, "input");
+        const supportsImages = Array.isArray(reportedInputs)
+          ? reportedInputs.includes("image")
+          : undefined;
         const message = yield* providerMessageTextWithAttachmentPaths({
           text,
           attachments,
@@ -3132,7 +3145,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         for (const attachment of attachments) {
           const path = host.resolveAttachmentPath(attachment);
           if (path === null) continue;
-          if (attachment.mimeType.startsWith("image/")) {
+          // Keep the saved path in the text prompt for text-only models.
+          if (supportsImages !== false && attachment.mimeType.startsWith("image/")) {
             const bytes = yield* fileSystem.readFile(path);
             images.push({
               type: "image",

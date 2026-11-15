@@ -838,9 +838,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     // Project config changes model limits; key by directory because this runtime serves all instance threads.
     const contextWindows = new Map<string, Map<string, number>>();
     const modelVariants = new Map<string, Map<string, ReadonlySet<string>>>();
+    const modelImageInputs = new Map<string, Map<string, boolean>>();
     const directoryOf = (cwd: string | null | undefined) => cwd ?? host.paths.cwd;
     const windowOf = (cwd: string | null | undefined, model: string) =>
       contextWindows.get(directoryOf(cwd))?.get(model);
+    const imageInputSupportOf = (cwd: string | null | undefined, model: string) =>
+      modelImageInputs.get(directoryOf(cwd))?.get(model);
     const listedModelRef = (selection: ModelSelection, cwd: string | null | undefined) =>
       modelRef(selection, modelVariants.get(directoryOf(cwd))?.get(selection.model));
     const now = yield* DateTime.now;
@@ -3883,18 +3886,23 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           Effect.timeout("5 seconds"),
           Effect.tap((models) =>
             Effect.sync(() => {
+              const imageInputs = new Map<string, boolean>();
               for (const model of models.data) {
                 const slug = `${model.providerID}/${model.id}`;
                 windows.set(slug, model.limit.input ?? model.limit.context);
                 variants.set(slug, new Set(model.variants.map((variant) => variant.id)));
+                const input = model.capabilities?.input;
+                if (Array.isArray(input)) imageInputs.set(slug, input.includes("image"));
               }
+              // A failed discovery must not mark the capability inventory as loaded.
+              modelImageInputs.set(directory, imageInputs);
             }),
           ),
           Effect.ignore({ log: true }),
         );
       });
     const readModelsOnce = (cwd: string | null | undefined) =>
-      contextWindows.has(directoryOf(cwd)) ? Effect.void : readModels(directoryOf(cwd));
+      modelImageInputs.has(directoryOf(cwd)) ? Effect.void : readModels(directoryOf(cwd));
     yield* readModels(session.cwd);
 
     const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
@@ -4186,12 +4194,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       })).trim();
     });
 
-    const promptFiles = Effect.fnUntraced(function* (attachments: ReadonlyArray<ChatAttachment>) {
+    const promptFiles = Effect.fnUntraced(function* (
+      attachments: ReadonlyArray<ChatAttachment>,
+      modelSelection: ModelSelection,
+      cwd: string | null | undefined,
+    ) {
       const files: Array<{ uri: string; name: string }> = [];
       // An external server may not share T3's attachment directory.
       if (connection.external) return files;
+      const supportsImages = imageInputSupportOf(cwd, modelSelection.model);
       for (const attachment of attachments) {
-        if (!isProviderNativeImageAttachment(attachment)) continue;
+        if (supportsImages === false || !isProviderNativeImageAttachment(attachment)) continue;
         const path = host.resolveAttachmentPath(attachment);
         if (path === null) continue;
         // OpenCode rejects the whole prompt if an attached file is missing.
@@ -4576,7 +4589,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       const mentions = skillMentions(text);
       const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
-      const files = yield* promptFiles(turnInput.message.attachments);
+      const files = yield* promptFiles(
+        turnInput.message.attachments,
+        turnInput.modelSelection,
+        turnInput.runtimePolicy.cwd,
+      );
       const messageText = turnInput.resume ? "" : yield* promptText(turnInput);
       if (!sending()) return;
       return yield* client.session
@@ -4916,7 +4933,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           turn.steers.add(inboxID);
           state.strandedSteers.delete(inboxID);
           const { files, messageText } = yield* Effect.gen(function* () {
-            const files = yield* promptFiles(steerInput.message.attachments);
+            const files = yield* promptFiles(
+              steerInput.message.attachments,
+              turn.input.modelSelection,
+              turn.input.runtimePolicy.cwd,
+            );
             const messageText = (yield* providerMessageTextWithAttachmentPaths({
               text: steerInput.message.text,
               attachments: steerInput.message.attachments,
