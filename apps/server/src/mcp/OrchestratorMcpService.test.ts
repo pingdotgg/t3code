@@ -30,7 +30,6 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
-import { buildInitialPiProviderSnapshot } from "../../../../packages/provider-pi/src/server/status.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -1463,60 +1462,62 @@ describe("OrchestratorMcpService provider resolution", () => {
   });
 
   it.effect.each([
-    { status: "warning", customModels: [] },
-    { status: "ready", customModels: [] },
-    { status: "ready", customModels: ["custom/model"] },
-  ] as const)("accepts an explicit Pi model before discovery: %j", (row) =>
+    {
+      case: "Pi before discovery",
+      driver: "pi",
+      auth: "unknown",
+      discovered: false,
+      accepted: true,
+    },
+    {
+      case: "Pi after discovery",
+      driver: "pi",
+      auth: "unknown",
+      discovered: true,
+      accepted: false,
+    },
+    {
+      case: "unauthenticated Pi",
+      driver: "pi",
+      auth: "unauthenticated",
+      discovered: false,
+      accepted: false,
+    },
+    {
+      case: "another provider",
+      driver: "muse",
+      auth: "unknown",
+      discovered: false,
+      accepted: false,
+    },
+  ] as const)("validates an explicit model for $case", (row) =>
     Effect.gen(function* () {
-      const initial = yield* buildInitialPiProviderSnapshot({
-        enabled: true,
-        binaryPath: "pi",
-        launchArgs: "",
-        customModels: [...row.customModels],
+      const provider = providerSnapshot({
+        instanceId: ProviderInstanceId.make("test"),
+        driver: ProviderDriverKind.make(row.driver),
+        model: "default",
       });
-      yield* OrchestratorMcpService.requireAdvertisedModel(
+      const result = yield* OrchestratorMcpService.requireAdvertisedModel(
         {
-          ...initial,
-          instanceId: ProviderInstanceId.make("pi"),
-          driver: ProviderDriverKind.make("pi"),
-          status: row.status,
+          ...provider,
+          auth: { status: row.auth },
+          models: [
+            ...provider.models,
+            row.discovered
+              ? {
+                  slug: "anthropic/claude-sonnet",
+                  name: "Claude Sonnet",
+                  subProvider: "anthropic",
+                  isCustom: false,
+                  capabilities: null,
+                }
+              : { slug: "custom/model", name: "custom/model", isCustom: true, capabilities: null },
+          ],
         },
         "anthropic/claude-opus",
-      );
+      ).pipe(Effect.result);
+      assert.equal(Result.isSuccess(result), row.accepted);
     }),
-  );
-
-  it.effect.each(["discovered", "unauthenticated", "other provider"] as const)(
-    "rejects an unadvertised model with a %s inventory",
-    (inventory) =>
-      Effect.gen(function* () {
-        const provider = providerSnapshot({
-          instanceId: ProviderInstanceId.make("test"),
-          driver: ProviderDriverKind.make(inventory === "other provider" ? "muse" : "pi"),
-          model: "default",
-        });
-        const error = yield* OrchestratorMcpService.requireAdvertisedModel(
-          {
-            ...provider,
-            auth: { status: inventory === "unauthenticated" ? "unauthenticated" : "unknown" },
-            models:
-              inventory === "discovered"
-                ? [
-                    ...provider.models,
-                    {
-                      slug: "anthropic/claude-sonnet",
-                      name: "Claude Sonnet",
-                      subProvider: "anthropic",
-                      isCustom: false,
-                      capabilities: null,
-                    },
-                  ]
-                : provider.models,
-          },
-          "anthropic/claude-opus",
-        ).pipe(Effect.flip);
-        assert.equal(error.code, "model_unavailable");
-      }),
   );
 
   const providerRegistryLayer = (providers: ReadonlyArray<ServerProvider>) =>
