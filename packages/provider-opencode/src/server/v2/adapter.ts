@@ -5065,19 +5065,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         function* ({ providerThread, taskIds, awaited }) {
           const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
           const state = nativeThreadId == null ? undefined : threads.get(nativeThreadId);
-          if (state === undefined) return { matched: [] };
+          if (state === undefined) return { matched: [], running: [] };
           const sessions = sessionsOf(state);
-          const matched = [...new Set(taskIds)].filter((taskId) => {
-            const shell = shells.get(taskId);
-            return shell !== undefined && shell.running && sessions.includes(shell.state);
-          });
-          if (matched.length === 0) return { matched };
+          const running = [...shells]
+            .filter(([, shell]) => shell.running && sessions.includes(shell.state))
+            .map(([taskId]) => taskId);
+          const matched = [...new Set(taskIds)].filter((taskId) => running.includes(taskId));
+          if (matched.length === 0) return { matched, running };
           for (const taskId of matched) {
             const shell = shells.get(taskId)!;
             shell.awaited = awaited;
             yield* syncRosterAncestors(shell.state);
           }
-          return { matched };
+          return { matched, running };
         },
         (effect) => effect.pipe(lock.withPermit),
       ),
@@ -5359,6 +5359,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId,
     driver,
+    awaitsBackgroundTasks: true,
     getCapabilities: Effect.fn("OpencodeAdapter.getCapabilities")(function () {
       return Effect.succeed({
         ...OpenCode2ProviderCapabilities,

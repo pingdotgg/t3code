@@ -458,6 +458,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly backgroundTasksEndWithProcess?: boolean;
+    readonly awaitsBackgroundTasks?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
     readonly interruptTurn?: Effect.Effect<void>;
@@ -489,6 +490,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: ProviderInstanceId.make("codex"),
     driver: CODEX_DRIVER,
+    ...(options.awaitsBackgroundTasks === true ? { awaitsBackgroundTasks: true } : {}),
     getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (input) =>
@@ -640,6 +642,7 @@ function layerTest(input: {
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly backgroundTasksEndWithProcess?: boolean;
+  readonly awaitsBackgroundTasks?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
   readonly interruptTurn?: Effect.Effect<void>;
@@ -668,6 +671,7 @@ function layerTest(input: {
   const layerRegistry = Layer.unwrap(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
+      awaitsBackgroundTasks: input.awaitsBackgroundTasks ?? false,
       ...(input.normalizeThreadLoadModelSelection === undefined
         ? {}
         : { normalizeThreadLoadModelSelection: input.normalizeThreadLoadModelSelection }),
@@ -2484,11 +2488,12 @@ it.effect(
 );
 
 it.effect.each([
-  { relationshipToParent: null, subagent: false },
-  { relationshipToParent: "subagent", subagent: true },
+  { relationshipToParent: null, subagent: false, backgroundWait: false },
+  { relationshipToParent: "subagent", subagent: true, backgroundWait: false },
+  { relationshipToParent: null, subagent: false, backgroundWait: true },
 ] as const)(
-  "ProviderSessionManagerV2 marks MCP credentials of delegated children ($relationshipToParent)",
-  ({ relationshipToParent, subagent }) =>
+  "ProviderSessionManagerV2 marks MCP credentials of delegated children ($relationshipToParent) and background-wait providers ($backgroundWait)",
+  ({ relationshipToParent, subagent, backgroundWait }) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const mcpConfigs = yield* Ref.make<
@@ -2528,11 +2533,22 @@ it.effect.each([
           "",
         );
         assert.isDefined(token);
-        assert.equal((yield* registry.resolve(token!))?.thread.subagent, subagent);
+        const resolved = yield* registry.resolve(token!);
+        assert.equal(resolved?.thread.subagent, subagent);
+        assert.equal(resolved?.thread.backgroundWait, backgroundWait);
         yield* manager.close(providerSessionId);
       });
 
-      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, mcpConfigs })));
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1_000,
+            mcpConfigs,
+            awaitsBackgroundTasks: backgroundWait,
+          }),
+        ),
+      );
     }),
 );
 

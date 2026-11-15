@@ -24,6 +24,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -621,7 +622,10 @@ it.effect.each([
                     providerThreadId: input.providerThread.id,
                     awaited: input.awaited,
                   });
-                  return { matched: input.taskIds.filter((taskId) => taskId === "tests") };
+                  return {
+                    matched: input.taskIds.filter((taskId) => taskId === "tests"),
+                    running: ["tests"],
+                  };
                 }),
             }),
       } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
@@ -668,6 +672,8 @@ it.effect.each([
         expect(result).toMatchObject({
           failure: { _tag: "ThreadManagementBackgroundWaitError", reason: "unmatched" },
         });
+        // The agent retries with a real ID only if the refusal names what is running.
+        expect(Result.isFailure(result) && result.failure.message).toContain("Running now: tests.");
         expect(calls).toEqual([{ providerThreadId, awaited: true }]);
       } else if (state === "no-match-clear") {
         expect(result).toMatchObject({ success: { matched: [], unmatched: ["finished"] } });

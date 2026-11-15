@@ -116,7 +116,12 @@ export const makeBackgroundWait = Effect.fn("evaluateMcpToolUse.makeBackgroundWa
   const scope: McpInvocationContext.McpThreadInvocationScope = {
     environmentId: EnvironmentId.make("00000000-0000-4000-8000-0000000000e0"),
     requestNamespace: "mcp-tool-use-eval",
-    thread: { threadId, providerSessionId: "mcp-tool-use-eval", providerInstanceId },
+    thread: {
+      threadId,
+      providerSessionId: "mcp-tool-use-eval",
+      providerInstanceId,
+      backgroundWait: true,
+    },
     client: undefined,
     capabilities: new Set<McpInvocationContext.McpCapability>(["orchestration"]),
     issuedAt: 0,

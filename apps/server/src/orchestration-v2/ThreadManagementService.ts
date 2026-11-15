@@ -353,6 +353,8 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
   {
     threadId: ThreadId,
     reason: Schema.Literals(["unsupported", "unavailable", "failed", "unmatched"]),
+    /** On `unmatched`: the IDs that would match now. */
+    running: Schema.optional(Schema.Array(Schema.String)),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -364,8 +366,13 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
         return "This thread has no live provider session.";
       case "failed":
         return "Failed to update the awaited background work.";
-      case "unmatched":
-        return "None of these IDs is running background work on this thread, so this request registers no wait for them. If the task already finished, read its output now. Otherwise pass the task ID of a background command or Monitor you started. Subagent, Agent tool, and delegate_task IDs don't go here.";
+      case "unmatched": {
+        const running =
+          this.running === undefined || this.running.length === 0
+            ? "No background work is running on this thread now."
+            : `Running now: ${this.running.join(", ")}.`;
+        return `None of these IDs is running background work on this thread, so this request registers no wait for them. ${running} A task you started that is not running has already finished: read its output now. Otherwise pass the task ID of a background command or Monitor you started. Subagent, Agent tool, and delegate_task IDs don't go here.`;
+      }
     }
   }
 }
@@ -1585,7 +1592,7 @@ const make = Effect.gen(function* () {
         reason: "unsupported",
       });
     }
-    const { matched } = yield* runtime.value
+    const { matched, running } = yield* runtime.value
       .awaitBackgroundTasks({ providerThread, taskIds: input.taskIds, awaited: input.awaited })
       .pipe(
         Effect.timeout("15 seconds"),
@@ -1602,6 +1609,7 @@ const make = Effect.gen(function* () {
       return yield* new ThreadManagementBackgroundWaitError({
         threadId: input.threadId,
         reason: "unmatched",
+        running,
       });
     }
     const matchedIds = new Set(matched);

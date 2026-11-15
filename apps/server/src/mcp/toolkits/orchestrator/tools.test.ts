@@ -54,7 +54,7 @@ it.effect("does not list t3_background_wait to a thread whose provider cannot se
           providerInstanceId: ProviderInstanceId.make("codex"),
         },
         client: undefined,
-        capabilities: new Set(["orchestration"]),
+        capabilities: new Set<McpInvocationContext.McpCapability>(["orchestration"]),
         issuedAt: 1,
       }),
     );
