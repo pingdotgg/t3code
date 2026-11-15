@@ -90,6 +90,25 @@ export function workEntryRawCommand(
   return rawCommand === workEntry.command.trim() ? null : rawCommand;
 }
 
+/** Whether a row the user has not opened or closed starts open. */
+export function workEntryStartsExpanded(
+  workEntry: Pick<TimelineWorkEntry, "itemType" | "detail">,
+  expandedByDefault: boolean,
+): boolean {
+  // A thought opens once it has text; until then there is nothing to show.
+  return (
+    expandedByDefault && (workEntry.itemType !== "reasoning" || Boolean(workEntry.detail?.trim()))
+  );
+}
+
+export function workEntryIsExpanded(
+  entryExpansion: ReadonlyMap<string, boolean>,
+  workEntry: Pick<TimelineWorkEntry, "id" | "itemType" | "detail">,
+  expandedByDefault: boolean,
+): boolean {
+  return entryExpansion.get(workEntry.id) ?? workEntryStartsExpanded(workEntry, expandedByDefault);
+}
+
 export function buildToolCallExpandedBody(
   workEntry: TimelineWorkEntry,
   workspaceRoot: string | undefined,

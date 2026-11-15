@@ -544,6 +544,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.toolCallVisibility !== DEFAULT_UNIFIED_SETTINGS.toolCallVisibility
       ? ["Tool calls in chat"]
       : []),
+    ...(settings.toolCallDetailsExpanded !== DEFAULT_UNIFIED_SETTINGS.toolCallDetailsExpanded
+      ? ["Tool call details"]
+      : []),
     ...(settings.screenReaderAnnouncements !== DEFAULT_UNIFIED_SETTINGS.screenReaderAnnouncements
       ? ["Screen reader announcements"]
       : []),
@@ -669,6 +672,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       toolCallVisibility: DEFAULT_UNIFIED_SETTINGS.toolCallVisibility,
+      toolCallDetailsExpanded: DEFAULT_UNIFIED_SETTINGS.toolCallDetailsExpanded,
       screenReaderAnnouncements: DEFAULT_UNIFIED_SETTINGS.screenReaderAnnouncements,
       screenReaderWindowTitle: DEFAULT_UNIFIED_SETTINGS.screenReaderWindowTitle,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
@@ -1310,6 +1314,7 @@ export function ChatSettingsPanel() {
 
       <SettingsSection id="activity" title="Activity">
         <ToolCallVisibilityRow />
+        <ToolCallDetailsRow />
       </SettingsSection>
 
       <SettingsSection id="screen-reader" title="Screen reader">
@@ -1362,6 +1367,51 @@ function ToolCallVisibilityRow() {
                 {TOOL_CALL_VISIBILITY_LABELS[value]}
               </SelectItem>
             ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
+  );
+}
+
+function ToolCallDetailsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("tool-call-details")}
+      description="Start commands, edits, and thoughts in chat open or closed. Rows you open or close stay that way."
+      resetAction={
+        settings.toolCallDetailsExpanded !== DEFAULT_UNIFIED_SETTINGS.toolCallDetailsExpanded ? (
+          <SettingResetButton
+            label="tool call details"
+            onClick={() =>
+              updateSettings({
+                toolCallDetailsExpanded: DEFAULT_UNIFIED_SETTINGS.toolCallDetailsExpanded,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Select
+          value={settings.toolCallDetailsExpanded ? "expanded" : "collapsed"}
+          onValueChange={(value) => {
+            if (value === "expanded" || value === "collapsed") {
+              updateSettings({ toolCallDetailsExpanded: value === "expanded" });
+            }
+          }}
+        >
+          <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Tool call details">
+            <SelectValue>{settings.toolCallDetailsExpanded ? "Expanded" : "Collapsed"}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem hideIndicator value="collapsed">
+              Collapsed
+            </SelectItem>
+            <SelectItem hideIndicator value="expanded">
+              Expanded
+            </SelectItem>
           </SelectPopup>
         </Select>
       }

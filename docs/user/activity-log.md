@@ -30,6 +30,9 @@ answering, the answer it finished before reading your steer stays too. On web an
 shows the in-between messages while it is open. Approvals, questions, and errors always show. The
 setting applies to this browser or device only.
 
+On web and desktop, **Tool call details** in the same section opens each command, edit, and thought
+with its output showing. A row you open or close yourself stays that way.
+
 ## Screen reader announcements
 
 On web and desktop, a screen reader hears the open thread's turn as it runs. **Screen reader

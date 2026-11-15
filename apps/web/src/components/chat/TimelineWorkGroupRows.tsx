@@ -60,6 +60,7 @@ import {
   THOUGHT_PREVIEW_SOURCE_MAX_LENGTH,
   toolGroupSummaryIconName,
   workEntryIconName,
+  workEntryIsExpanded,
 } from "./TimelineWorkEntryRow.logic";
 import { formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
 
@@ -196,6 +197,7 @@ function ExpandedWorkGroupEntries({
 }) {
   const {
     workGroupViewState: viewState,
+    toolCallDetailsExpanded,
     onToggleWorkEntry,
     onWorkEntryContentReady,
   } = use(TimelineRowCtx);
@@ -287,11 +289,12 @@ function ExpandedWorkGroupEntries({
   const updateExpandedContentHeight = () => {
     const state = listRef.current?.getState();
     let height = 0;
-    for (const entryId of viewState.expandedEntries) {
-      if (state?.indexByKey(entryId) === undefined) continue;
+    for (const entry of entries) {
+      if (!workEntryIsExpanded(viewState.entryExpansion, entry, toolCallDetailsExpanded)) continue;
+      if (state?.indexByKey(entry.id) === undefined) continue;
       height += Math.max(
         0,
-        (state.sizes.get(entryId) ?? compactWorkEntryHeight) - compactWorkEntryHeight,
+        (state.sizes.get(entry.id) ?? compactWorkEntryHeight) - compactWorkEntryHeight,
       );
     }
     setExpandedContentHeight(height);

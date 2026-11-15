@@ -123,7 +123,7 @@ export interface RememberedTimelinePosition {
     readonly attempts: ReadonlySet<RunAttemptId>;
     readonly workGroupState: {
       scrollPositions: Map<string, { readonly entryId: string; readonly offset: number }>;
-      expandedEntries: Set<string>;
+      entryExpansion: Map<string, boolean>;
     };
   };
 }
