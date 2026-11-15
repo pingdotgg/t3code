@@ -23,6 +23,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import { prefersHttpMcpTransport } from "./mcpTransport.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 const registryUrl = "https://registry.test/registry.json";
@@ -336,6 +337,54 @@ describe("AcpRegistrySupport", () => {
     ),
   );
 
+  it.effect("resolves the local Command Code configurations the HTTP selector matches", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-command-code-",
+      });
+      const catalog = (executable: string) =>
+        AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(SpawnExecutableResolution, () => executable),
+        );
+
+      const bare = decodeAcpRegistrySettings({ source: "local", commandPath: "cmdc" });
+      expect(prefersHttpMcpTransport(bare)).toBe(true);
+      expect(
+        yield* (yield* catalog("C:\\bin\\cmdc.exe")).resolve(bare, "/workspace"),
+      ).toMatchObject({ spawn: { command: "C:\\bin\\cmdc.exe", shell: false } });
+      // A bare name that PATHEXT resolves to a batch shim never launches, so the transport it
+      // selects cannot matter: there is no session to attach MCP servers to.
+      expect(
+        yield* (yield* catalog("C:\\bin\\cmdc.cmd")).resolve(bare, "/workspace").pipe(Effect.flip),
+      ).toMatchObject({ reason: "runner_unavailable" });
+
+      const vendored = decodeAcpRegistrySettings({
+        source: "local",
+        commandPath: "node.exe",
+        commandArgs: [
+          "C:\\Users\\me\\.t3\\bin\\cmdcode\\node_modules\\command-code\\dist\\index.mjs",
+          "acp",
+        ],
+      });
+      expect(prefersHttpMcpTransport(vendored)).toBe(true);
+      expect(
+        yield* (yield* catalog("C:\\Program Files\\nodejs\\node.exe")).resolve(
+          vendored,
+          "/workspace",
+        ),
+      ).toMatchObject({ spawn: { command: "C:\\Program Files\\nodejs\\node.exe" } });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerResolver(() => Effect.die("unexpected registry request"))),
+    ),
+  );
+
   it.effect("reports missing or non-executable local commands without registry fallback", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -502,6 +551,44 @@ describe("AcpRegistrySupport", () => {
         command: path.join(userGlobalBin, "example-agent"),
         env: { PATH: expect.stringMatching(new RegExp(`^${userGlobalBin}:`, "u")) },
       });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
+  it.effect("launches the managed uv command over a PATH command named after the agent", () => {
+    const agent = makeAgent({
+      uvx: { package: "fast-agent-acp==0.10.1", args: ["--acp"] },
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-uv-path-collision-",
+      });
+      const toolchain = yield* makeFakeUvToolchain(cacheDir);
+      const userBin = path.join(cacheDir, "user-bin");
+      const userCommand = path.join(userBin, "example-agent");
+      yield* fileSystem.makeDirectory(userBin, { recursive: true });
+      yield* fileSystem.writeFileString(userCommand, "#!/bin/sh\n");
+      yield* fileSystem.chmod(userCommand, 0o755);
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+
+      const resolved = yield* resolver.resolve(settings(), "/workspace", {
+        ...toolchain.environment,
+        PATH: `${userBin}:${toolchain.environment.PATH}`,
+      });
+
+      expect(resolved.spawn.command).toBe(toolchain.executablePath);
     }).pipe(
       Effect.scoped,
       Effect.provide(

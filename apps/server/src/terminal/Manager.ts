@@ -539,9 +539,11 @@ function normalizeShellCommand(
     return trimmed;
   }
 
-  const firstToken = trimmed.split(/\s+/g)[0]?.trim();
-  if (!firstToken) return null;
-  return firstToken.replace(/^['"]|['"]$/g, "");
+  // A shell path can contain spaces, so only text from the first flag (`bash -l`) is dropped,
+  // and a quoted path is kept whole even when it contains " -".
+  const quoted = /^(['"])(.*?)\1(?:\s|$)/.exec(trimmed);
+  const command = quoted ? quoted[2] : trimmed.split(/\s+(?=-)/)[0]?.replace(/^['"]|['"]$/g, "");
+  return command || null;
 }
 
 function basenameForPlatform(command: string, platform: NodeJS.Platform): string {
@@ -3655,7 +3657,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
         const eventStamp = advanceEventSequence(session);
-        yield* persistHistory(input.threadId, terminalId, session.history);
+        // A drain waits for the key to go idle, which never happens while the shell keeps
+        // printing; every reader of the file flushes it first.
+        yield* persistWorker.enqueue(toSessionKey(input.threadId, terminalId), {
+          history: session.history,
+          immediate: true,
+        });
         yield* publishEvent({
           type: "cleared",
           threadId: input.threadId,
