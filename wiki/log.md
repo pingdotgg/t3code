@@ -1,14 +1,20 @@
 # Wiki update log
 
+## 2026-11-15
+
+- **Permissions**: Removed the fork's [OpenCode permission override](upstream-integration.md#opencode-compatibility-boundary); upstream thread-controlled modes now apply on session creation, resume, child setup, and rollback.
+
+- **Retirement**: Removed the [Tricket integration](tricket-integration.md) and restored pre-integration code paths. Existing threads, connector data, and credentials are not deleted; deployed runtimes require a separate update.
+
 ## 2026-11-14
 
-- **Tricket**: Corrected [native execution](tricket-integration.md) to use thread-bound MCP for leads and workers, with full-access defaults for unattended work; opt-in ordinary threads keep their existing permissions and CLI-only exposure.
+- **Tricket**: Corrected native execution to use thread-bound MCP for leads and workers, with full-access defaults for unattended work; opt-in ordinary threads kept their existing permissions and CLI-only exposure. [Retired November 15](tricket-integration.md).
 
-- **Tricket**: Recorded [project leads and opt-in CLI enrollment](tricket-integration.md): execute the brief only when instructed, keep existing threads and credentials, and avoid adding MCP context to ordinary agents. New assignment records remain isolated from the legacy ticket worker table for safe runtime rollback.
+- **Tricket**: Recorded project leads and opt-in CLI enrollment: execute the brief only when instructed, keep existing threads and credentials, and avoid adding MCP context to ordinary agents. New assignment records stayed isolated from the legacy ticket worker table for safe runtime rollback. [Retired November 15](tricket-integration.md).
 
 ## 2026-11-13
 
-- **Tricket**: Corrected the [native integration](tricket-integration.md) record: PR #76 merged and its initial assignment path is deployed. Recorded the follow-up boundary: replay committed activity into the same owner, suppress only its own actor, preserve snooze, and count active turns rather than open tickets.
+- **Tricket**: Corrected the native integration record: PR #76 merged and its initial assignment path was deployed. Recorded the follow-up boundary: replay committed activity into the same owner, suppress only its own actor, preserve snooze, and count active turns rather than open tickets. [Retired November 15](tricket-integration.md).
 
 - **Integration**: [PR #75](https://github.com/NicholasZolton/t3code/pull/75) reached fork `main` at `8843960553`. Refreshed [upstream integration](upstream-integration.md#completed-november-13-sync): all 379 commits through `286eeea19f` are incorporated with ancestry preserved and zero main gap. Partitioned verification passes 12,901 tests; remaining failures reproduce on pinned upstream or fork main. Shared Git/Jujutsu recovery, process-aware OpenCode recovery, quota weighting, and launch/update fallbacks remain. No live deployment occurred.
 

@@ -65,16 +65,10 @@ session.
 
 ## Approvals
 
-By default, OpenCode follows the shared [permission modes](./permission-modes.md). **Auto** has
+OpenCode follows the shared [permission modes](./permission-modes.md). **Auto** has
 the same rules as **Supervised** because OpenCode has no AI approval reviewer.
 Environment files such as `.env` and `.env.local` need approval in restricted
 modes even though normal file reads do not; `.env.example` is allowed.
-
-To keep the permissions you configured in `opencode.json(c)`, set **Permissions →
-Provider settings** for your OpenCode instance in **Settings → Providers**, then
-reconnect its sessions. This overrides the thread's permission mode, including
-**Full access**, so your configured denies and approval requests still apply.
-Choose **T3 Code modes** to return to thread-controlled permissions.
 
 **Allow for workspace** applies to matching requests in other OpenCode sessions
 using the same workspace. It is broader than the current thread, especially on a

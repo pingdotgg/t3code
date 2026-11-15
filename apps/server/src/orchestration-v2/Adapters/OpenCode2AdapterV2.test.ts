@@ -482,30 +482,6 @@ const nativeGoal = (status: "active" | "paused" | "complete") => ({
 });
 
 it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
-  it.effect("keeps provider permissions when resuming in a different T3 runtime mode", () =>
-    Effect.gen(function* () {
-      const nativeRules = [{ action: "shell", resource: "*", effect: "deny" }];
-      const runtime = yield* openCode2ReplayRuntime(
-        [
-          ...opening,
-          out("session.get", { sessionID: SESSION }),
-          replyData("session.get", sessionInfo({ permissions: nativeRules })),
-          ...noOpenRequests,
-          out("session.update", { sessionID: SESSION, permissions: mcpRules }),
-          reply("session.update", null),
-        ],
-        { permissionMode: "provider" },
-      );
-      const thread = yield* runtime.resumeThread({
-        providerThread: providerThread(yield* DateTime.now),
-        threadId,
-        modelSelection: bigPickle,
-        runtimePolicy: policy("approval-required"),
-      });
-      assert.equal(thread.nativeThreadRef?.nativeId, SESSION);
-    }).pipe(Effect.scoped),
-  );
-
   it.effect("switches the session's model and variant before a turn that changed them", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([

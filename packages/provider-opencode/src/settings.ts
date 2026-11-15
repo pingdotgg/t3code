@@ -6,16 +6,9 @@ import {
   secretSetting,
   SettingsSecretValue,
   TrimmedString,
-  type ProviderSettingsFormOption,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-
-const OPENCODE_PERMISSION_MODES = [
-  { value: "t3", label: "T3 Code modes" },
-  { value: "provider", label: "Provider settings" },
-] as const satisfies ReadonlyArray<ProviderSettingsFormOption>;
-const OpenCodePermissionMode = Schema.Literals(OPENCODE_PERMISSION_MODES.map((mode) => mode.value));
 
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
@@ -57,26 +50,13 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
-    permissionMode: OpenCodePermissionMode.pipe(
-      Schema.withDecodingDefault(Effect.succeed("t3" as const)),
-      Schema.annotateKey({
-        title: "Permissions",
-        description:
-          "Use thread permission modes, or preserve your opencode.json(c) rules instead. Applies when sessions reconnect.",
-        providerSettingsForm: {
-          control: "select",
-          options: OPENCODE_PERMISSION_MODES,
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
   {
-    order: ["binaryPath", "serverUrl", "serverPassword", "permissionMode"],
+    order: ["binaryPath", "serverUrl", "serverPassword"],
   },
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;

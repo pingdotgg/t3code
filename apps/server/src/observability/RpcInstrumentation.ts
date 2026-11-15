@@ -1,9 +1,4 @@
-import {
-  ORCHESTRATION_V2_WS_METHODS,
-  TRICKET_RPC_METHODS,
-  WS_METHODS,
-  type WsRpcGroup,
-} from "@t3tools/contracts";
+import { ORCHESTRATION_V2_WS_METHODS, WS_METHODS, type WsRpcGroup } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as References from "effect/References";
@@ -17,10 +12,6 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 // Trace queries and dashboards depend on these labels, including deviations from method prefixes.
 const RPC_AGGREGATES = {
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: "orchestrationV2",
-  [TRICKET_RPC_METHODS.get]: "tricket",
-  [TRICKET_RPC_METHODS.update]: "tricket",
-  [TRICKET_RPC_METHODS.reconcile]: "tricket",
-  [TRICKET_RPC_METHODS.execute]: "tricket",
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: "orchestration",
