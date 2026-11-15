@@ -167,7 +167,7 @@ export function usePullRequestWithheldFile(
 ) {
   const withheld = findWithheldFile(parsed, path, readable);
   const reference = pullRequestTarget(params);
-  const { data, error, refresh } = useEnvironmentQuery(
+  const { data, error, refresh, isPending } = useEnvironmentQuery(
     withheld
       ? composerPullRequests.diff({
           ...reference,
@@ -186,5 +186,6 @@ export function usePullRequestWithheldFile(
         : parsed,
     [parsed, withheld, data, error],
   );
-  return { parsed: withFile, refresh: withheld ? refresh : () => {} };
+  // A refetch keeps showing the last patch, whose lines may not exist at the new head.
+  return { parsed: withFile, pending: isPending, refresh: withheld ? refresh : () => {} };
 }

@@ -1019,6 +1019,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     !staleDiff &&
     !detail.isPending &&
     !result.isPending &&
+    !withheldFile.pending &&
     !result.error;
   const activity = useEnvironmentQuery(composerPullRequests.activity(requestTarget(route.params)));
   const baseData = useMemo(() => getCachedNativeReviewDiffData({ parsedDiff: parsed }), [parsed]);
