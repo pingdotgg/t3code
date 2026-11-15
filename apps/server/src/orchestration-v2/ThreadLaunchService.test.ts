@@ -112,6 +112,20 @@ const adapter = {
   openSession: () => Effect.die("provider execution is disabled in launch tests"),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 
+const readyCodexProvider: ServerProvider = {
+  instanceId: modelSelection.instanceId,
+  driver: ProviderDriverKind.make("codex"),
+  enabled: true,
+  installed: true,
+  version: "test",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-01-01T00:00:00.000Z",
+  models: [],
+  slashCommands: [],
+  skills: [],
+};
+
 const claudeModelSelection = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
   model: "claude-opus-5-5",
@@ -401,21 +415,7 @@ function launchInput(input: {
 it.effect(
   "rejects a remote delegation to a cooling provider but preserves ordinary launches and receipt replay",
   () => {
-    const providers: ServerProvider[] = [
-      {
-        instanceId: modelSelection.instanceId,
-        driver: ProviderDriverKind.make("codex"),
-        enabled: true,
-        installed: true,
-        version: "test",
-        status: "ready",
-        auth: { status: "authenticated" },
-        checkedAt: "2026-01-01T00:00:00.000Z",
-        models: [],
-        slashCommands: [],
-        skills: [],
-      },
-    ];
+    const providers: ServerProvider[] = [readyCodexProvider];
     const harness = makeHarness({ providers });
     return Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -578,7 +578,7 @@ it.effect(
 );
 
 it.effect("leaves a task delegated from a linked environment out of the top-level list", () => {
-  const harness = makeHarness();
+  const harness = makeHarness({ providers: [readyCodexProvider] });
   return Effect.gen(function* () {
     const launches = yield* ThreadLaunch.ThreadLaunchService;
     const threads = yield* ThreadManagement.ThreadManagementService;
@@ -1249,10 +1249,7 @@ it.effect("renames a temporary branch with a configured prefix when generation s
         workspace: { type: "worktree", baseRef: "main" },
       }),
     );
-    yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
-      Stream.filter((stored) => stored.commandId === "prefix-rename:branch-rename"),
-      Stream.runHead,
-    );
+    yield* Deferred.await(harness.branchSynced);
     const projection = yield* threads.getThreadProjection(launched.threadId);
     assert.equal(projection.thread.branch, "my-prefix/fix-parser");
     assert.match(

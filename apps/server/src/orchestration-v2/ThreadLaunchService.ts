@@ -326,6 +326,26 @@ const make = Effect.gen(function* () {
       .getByCommandId(commandId)
       .pipe(Effect.mapError(mapError(input, "read-receipt", input.threadId)));
 
+  const assertDelegatedProviderAvailable = Effect.fn(
+    "ThreadLaunchService.assertDelegatedProviderAvailable",
+  )(function* (
+    input: ThreadLaunchInput,
+    operation: ThreadLaunchError["operation"],
+    threadId?: ThreadId,
+  ) {
+    const providers = yield* providerRegistry.getProviders;
+    const provider = providers.find(
+      (candidate) => candidate.instanceId === input.modelSelection.instanceId,
+    );
+    const constraints =
+      provider === undefined
+        ? ["Provider instance is not registered."]
+        : delegationProviderConstraints(provider, true, yield* Clock.currentTimeMillis);
+    if (constraints.length > 0) {
+      return yield* mapError(input, operation, threadId)(constraints.join(" "));
+    }
+  });
+
   const validateReusableThread = Effect.fn("ThreadLaunchService.validateReusableThread")(function* (
     input: ThreadLaunchInput,
     threadId: ThreadId,
@@ -1147,24 +1167,10 @@ const make = Effect.gen(function* () {
       }
 
       const launchReceipt = yield* readReceipt(input, input.commandId);
-      const delegationReceipt =
-        input.delegatedFrom !== undefined && input.initialMessage !== undefined
-          ? yield* readReceipt(input, CommandId.make(`${input.commandId}:initial-message`))
-          : launchReceipt;
-      if (
-        input.delegatedFrom !== undefined &&
-        !(Option.isSome(delegationReceipt) && delegationReceipt.value.status === "accepted")
-      ) {
-        const providers = yield* providerRegistry.getProviders;
-        const provider = providers.find(
-          (candidate) => candidate.instanceId === input.modelSelection.instanceId,
-        );
-        const constraints =
-          provider === undefined
-            ? ["Provider instance is not registered."]
-            : delegationProviderConstraints(provider, true, yield* Clock.currentTimeMillis);
-        if (constraints.length > 0)
-          return yield* mapError(input, "create-thread")(constraints.join(" "));
+      const launchAccepted =
+        Option.isSome(launchReceipt) && launchReceipt.value.status === "accepted";
+      if (input.delegatedFrom !== undefined && !launchAccepted) {
+        yield* assertDelegatedProviderAvailable(input, "create-thread");
       }
       yield* threads.assertProviderInstanceEnabled({
         projectId: input.projectId,
@@ -1304,6 +1310,13 @@ const make = Effect.gen(function* () {
             const messageCommandId = CommandId.make(`${input.commandId}:initial-message`);
             const messageReceipt = yield* readReceipt(input, messageCommandId);
             messageWasAlreadyAccepted = Option.isSome(messageReceipt);
+            if (
+              input.delegatedFrom !== undefined &&
+              launchAccepted &&
+              !(Option.isSome(messageReceipt) && messageReceipt.value.status === "accepted")
+            ) {
+              yield* assertDelegatedProviderAvailable(input, "dispatch-message", threadId);
+            }
             accepted = yield* threads
               .dispatch({
                 ...initialMessage,
