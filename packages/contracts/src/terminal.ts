@@ -224,6 +224,13 @@ export const TerminalResizeInput = Schema.Struct({
 });
 export type TerminalResizeInput = Schema.Codec.Encoded<typeof TerminalResizeInput>;
 
+// `pid` is the shell the client saw start, so a restarted terminal never answers for it.
+export const TerminalForegroundCwdInput = Schema.Struct({
+  ...TerminalSessionInput.fields,
+  pid: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+export type TerminalForegroundCwdInput = Schema.Codec.Encoded<typeof TerminalForegroundCwdInput>;
+
 export const TerminalClearInput = TerminalSessionInput;
 export type TerminalClearInput = Schema.Codec.Encoded<typeof TerminalClearInput>;
 

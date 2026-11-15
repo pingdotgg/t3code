@@ -43,6 +43,7 @@ export interface TerminalSessionState {
   readonly updatedAt: string | null;
   readonly version: number;
   readonly lifecycleVersion: number;
+  readonly pid: number | null;
 }
 
 export interface TerminalBufferState {
@@ -50,6 +51,8 @@ export interface TerminalBufferState {
   readonly grid: TerminalGrid | null;
   readonly status: TerminalSessionSnapshot["status"] | "closed";
   readonly error: string | null;
+  /** The shell the latest snapshot named; the server decides whether it still runs. */
+  readonly pid: number | null;
   readonly updatedAt: string | null;
   readonly version: number;
   readonly lifecycleVersion: number;
@@ -79,6 +82,7 @@ export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
   grid: null,
   status: "closed",
   error: null,
+  pid: null,
   updatedAt: null,
   version: 0,
   lifecycleVersion: 0,
@@ -94,6 +98,7 @@ export const EMPTY_TERMINAL_SESSION_STATE = Object.freeze<TerminalSessionState>(
   updatedAt: null,
   version: 0,
   lifecycleVersion: 0,
+  pid: null,
 });
 
 let terminalAttachGeneration = 0;
@@ -119,6 +124,7 @@ function terminalBufferStateFromSnapshot(
     grid: nextGrid(current.grid, snapshot),
     status: snapshot.status,
     error: snapshot.error ?? null,
+    pid: snapshot.pid,
     updatedAt: snapshot.updatedAt,
     version: current.version + 1,
     lifecycleVersion: current.lifecycleVersion,
@@ -155,6 +161,7 @@ export function combineTerminalSessionState(
     updatedAt: latestTimestamp(summary?.updatedAt ?? null, buffer.updatedAt),
     version: buffer.version,
     lifecycleVersion: buffer.lifecycleVersion,
+    pid: buffer.pid,
   };
 }
 

@@ -267,6 +267,7 @@ import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalError,
+  TerminalForegroundCwdInput,
   TerminalMetadataStreamEvent,
   TerminalOpenInput,
   TerminalResizeInput,
@@ -482,6 +483,7 @@ export const WS_METHODS = {
   terminalWrite: "terminal.write",
   terminalResize: "terminal.resize",
   terminalClear: "terminal.clear",
+  terminalForegroundCwd: "terminal.foregroundCwd",
   terminalClose: "terminal.close",
 
   previewOpen: "preview.open",
@@ -1673,6 +1675,13 @@ const WsTerminalClearRpc = Rpc.make(WS_METHODS.terminalClear, {
   error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
 });
 
+// Null when the platform, an ended shell or a replaced one cannot say where it is.
+const WsTerminalForegroundCwdRpc = Rpc.make(WS_METHODS.terminalForegroundCwd, {
+  payload: TerminalForegroundCwdInput,
+  success: Schema.NullOr(Schema.String),
+  error: EnvironmentAuthorizationError,
+});
+
 const WsTerminalCloseRpc = Rpc.make(WS_METHODS.terminalClose, {
   payload: TerminalCloseInput,
   error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
@@ -2281,6 +2290,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTerminalWriteRpc,
   WsTerminalResizeRpc,
   WsTerminalClearRpc,
+  WsTerminalForegroundCwdRpc,
   WsTerminalCloseRpc,
   WsSubscribeTerminalMetadataRpc,
   WsPreviewOpenRpc,

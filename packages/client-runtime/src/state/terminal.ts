@@ -117,6 +117,10 @@ export function createTerminalEnvironmentAtoms<R, E>(
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
+    foregroundCwd: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:terminal:foreground-cwd",
+      tag: WS_METHODS.terminalForegroundCwd,
+    }),
     close: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:terminal:close",
       tag: WS_METHODS.terminalClose,

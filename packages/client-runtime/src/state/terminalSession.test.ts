@@ -339,17 +339,20 @@ describe("terminal session reducers", () => {
       data: "next",
     });
     expect(terminalOutputText(afterClear.output)).toBe("next");
+    expect(state.pid).toBe(123);
+    // A restart is a new shell, which is the only one later lookups may ask about.
     state = applyTerminalAttachStreamEvent(state, {
       type: "restarted",
       threadId: TARGET.threadId,
       terminalId: TARGET.terminalId,
-      snapshot: BASE_SNAPSHOT,
+      snapshot: { ...BASE_SNAPSHOT, pid: 456 },
     });
     expect(readTerminalOutputUpdate(state.output, cleared.cursor)).toMatchObject({
       type: "reset",
       data: "hello",
     });
     expect(state.lifecycleVersion).toBe(2);
+    expect(state.pid).toBe(456);
   });
 
   it("does not reuse a renderer cursor when a fresh attach has matching counters", () => {

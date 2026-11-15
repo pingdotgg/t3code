@@ -30,6 +30,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Ref from "effect/Ref";
 import * as Queue from "effect/Queue";
@@ -137,7 +138,7 @@ class FakePtyAdapter {
   readonly processes: FakePtyProcess[] = [];
   readonly spawnFailures: Error[] = [];
   private readonly mode: "sync" | "async";
-  private nextPid = 9000;
+  nextPid = 9000;
   exitOnSubscribe: PtyAdapter.PtyExitEvent | undefined;
 
   constructor(mode: "sync" | "async" = "sync") {
@@ -587,6 +588,48 @@ it.layer(
       assert.equal(third.threadId, "thread-1");
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
     }),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "says where a terminal's own shell is, and nothing for an ended or replaced one",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const shellDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-shell-cwd-" });
+        // A real process stands in for the shell, so procfs has a directory to report.
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const shell = yield* spawner.spawn(ChildProcess.make("sleep", ["60"], { cwd: shellDir }));
+        const pid = Number(shell.pid);
+        const { manager, ptyAdapter } = yield* createManager();
+        ptyAdapter.nextPid = pid;
+        const ask = (askedPid: number) =>
+          manager.foregroundCwd({
+            threadId: "thread-1",
+            terminalId: DEFAULT_TERMINAL_ID,
+            pid: askedPid,
+          });
+
+        assert.equal(yield* ask(pid), null);
+        yield* manager.open(openInput());
+        assert.equal(yield* ask(pid), shellDir);
+        assert.equal(yield* ask(pid + 1), null);
+
+        const exited = yield* Deferred.make<void>();
+        const unsubscribe = yield* manager.subscribe((event) =>
+          event.type === "exited"
+            ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+        ptyAdapter.processes[0]?.emitExit({ exitCode: 0, signal: 0 });
+        yield* Deferred.await(exited);
+        assert.equal(yield* ask(pid), null);
+
+        // The restarted shell is another process; the one the caller saw cannot answer for it.
+        yield* manager.open(openInput());
+        expect(ptyAdapter.processes).toHaveLength(2);
+        assert.equal(yield* ask(pid), null);
+      }),
   );
 
   it.effect("keeps attach streams live when a terminal id is closed and reopened", () =>

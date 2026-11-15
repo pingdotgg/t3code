@@ -5,7 +5,7 @@ import {
   splitFilePathPosition,
 } from "@t3tools/shared/fileLinks";
 import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
-import { stripSlashPrefixedWindowsDrive } from "@t3tools/shared/path";
+import { isHostPath, stripSlashPrefixedWindowsDrive } from "@t3tools/shared/path";
 import { isMacPlatform } from "./lib/utils";
 
 export type TerminalLinkKind = "url" | "path";
@@ -160,6 +160,13 @@ export function extractTerminalLinks(line: string): TerminalLinkMatch[] {
 
 export function isTerminalUrl(value: string): boolean {
   return /^https?:\/\//iu.test(value);
+}
+
+/** Whether `text` resolves against the shell's working directory instead of naming its own place. */
+export function isCwdRelativeTerminalPath(text: string): boolean {
+  if (/^file:\/\//iu.test(text)) return false;
+  const { path } = splitFilePathPosition(text);
+  return !isHostPath(path) && !path.startsWith("~\\");
 }
 
 /** Explicit OSC 8 targets may be `file://` URIs; everything else is a path relative to `cwd`. */
