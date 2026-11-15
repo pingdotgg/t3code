@@ -5,7 +5,7 @@ import type { ComposerTrigger } from "../../composer-logic";
 const isSameTrigger = (a: ComposerTrigger | null, b: ComposerTrigger | null) =>
   a !== null && b !== null && a.kind === b.kind && a.rangeStart === b.rangeStart;
 
-/** The open suggestion menu's trigger. Edits open one unless Escape dismissed it; caret moves only close. */
+/** Edits open suggestions unless Escape dismissed the trigger; caret moves only close, resets can open. */
 export function useComposerTriggerState(initialTrigger: () => ComposerTrigger | null) {
   const [trigger, setActiveTrigger] = useState(initialTrigger);
   // Key handlers read this before React commits the state.
@@ -33,6 +33,9 @@ export function useComposerTriggerState(initialTrigger: () => ComposerTrigger | 
 
   /** After the caret moved without an edit, with the trigger at the caret. */
   const followCaret = (candidate: ComposerTrigger | null) => {
+    if (!isSameTrigger(dismissedTriggerRef.current, candidate)) {
+      dismissedTriggerRef.current = null;
+    }
     activate(resolveTrigger(candidate));
   };
 
