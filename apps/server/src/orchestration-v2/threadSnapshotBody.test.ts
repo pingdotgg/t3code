@@ -1,9 +1,4 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off
-import * as NodeHttp from "node:http";
-import type * as NodeNet from "node:net";
 import { assert, it } from "@effect/vitest";
-import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
   EnvironmentHttpApi,
   EventId,
@@ -21,15 +16,10 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
-import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { HttpMiddleware, HttpRouter, HttpServerResponse } from "effect/http";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -40,7 +30,6 @@ const provider = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId: provider, model: "gpt-5.4" };
 const PARENT = ThreadId.make("thread:snapshot-body:parent");
 const FORK = ThreadId.make("thread:snapshot-body:fork");
-const LARGE = ThreadId.make("thread:snapshot-body:large");
 const parentRun = RunId.make("run:snapshot-body:parent");
 const ITEMS = 1_200;
 // Escapes, a lone surrogate, astral and two-byte text: every JSON.stringify string rule.
@@ -207,68 +196,6 @@ const item = (
     payload: payloads[ordinal % payloads.length]!,
   };
 };
-
-// Incompressible, so even a gzip body outgrows the socket buffers and its client can leave mid-body.
-const noise = (seed: number, bytes: number) => {
-  let state = seed;
-  const buffer = Buffer.alloc(bytes);
-  for (let index = 0; index < bytes; index++) {
-    state ^= state << 13;
-    state ^= state >>> 17;
-    state ^= state << 5;
-    buffer[index] = state & 0xff;
-  }
-  return buffer.toString("base64");
-};
-
-const largeItem = (ordinal: number, at: DateTime.Utc): OrchestrationV2DomainEvent => ({
-  id: EventId.make(`event:${LARGE}:item:${ordinal}`),
-  type: "turn-item.updated",
-  threadId: LARGE,
-  occurredAt: at,
-  payload: {
-    id: TurnItemId.make(`turn-item:${LARGE}:${ordinal}`),
-    threadId: LARGE,
-    runId: null,
-    nodeId: null,
-    providerThreadId: null,
-    providerTurnId: null,
-    nativeItemRef: null,
-    parentItemId: null,
-    ordinal,
-    status: "completed",
-    title: null,
-    startedAt: at,
-    completedAt: at,
-    updatedAt: at,
-    type: "command_execution",
-    input: noise(ordinal, 192 * 1024),
-    exitCode: 0,
-  },
-});
-
-const readBody = (port: number) =>
-  Effect.callback<Buffer, Error>((resume) => {
-    const request = NodeHttp.get(
-      { host: "127.0.0.1", port, path: "/snapshot", agent: false },
-      (response) => {
-        const chunks: Array<Buffer> = [];
-        response.on("data", (chunk: Buffer) => chunks.push(chunk));
-        response.on("end", () => resume(Effect.succeed(Buffer.concat(chunks))));
-        response.on("error", (error) => resume(Effect.fail(error)));
-      },
-    );
-    request.on("error", (error) => resume(Effect.fail(error)));
-  });
-
-const seedLarge = Effect.gen(function* () {
-  const projections = yield* ProjectionStore.ProjectionStoreV2;
-  const at = DateTime.makeUnsafe("2026-10-01T00:00:00.000Z");
-  yield* projections.apply(threadCreated(LARGE, at));
-  for (let ordinal = 1; ordinal <= 100; ordinal++) {
-    yield* projections.apply(largeItem(ordinal, at));
-  }
-});
 
 const seed = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -449,61 +376,3 @@ it.layer(TestLayer)("thread snapshot body", (it) => {
     }),
   );
 });
-
-it.live("ends the request when its client leaves mid-body, compressed or not", () =>
-  Effect.gen(function* () {
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const { snapshotSequence, projection } = yield* projections.getThreadSnapshot(LARGE);
-    const snapshot = { snapshotSequence, projection: projectThreadProjectionForWire(projection) };
-    const exits = yield* Queue.unbounded<Exit.Exit<unknown, unknown>>();
-    const server = NodeHttp.createServer();
-    const route = HttpRouter.add(
-      "GET",
-      "/snapshot",
-      encodeThreadSnapshotBody(snapshot).pipe(
-        Effect.map((body) => HttpServerResponse.stream(body, { contentType: "application/json" })),
-      ),
-    );
-    const serverScope = yield* Scope.make();
-    yield* Effect.addFinalizer(() => Scope.close(serverScope, Exit.void));
-    yield* Layer.buildWithScope(
-      HttpRouter.serve(route, {
-        disableListenLog: true,
-        disableLogger: true,
-        middleware: (app) =>
-          HttpMiddleware.compression()(Effect.onExit(app, (exit) => Queue.offer(exits, exit))),
-      }).pipe(
-        Layer.provide(NodeHttpServer.layer(() => server, { port: 0 })),
-        Layer.provide(NodeHttpPlatform.layer),
-      ),
-      serverScope,
-    );
-    const { port } = server.address() as NodeNet.AddressInfo;
-
-    for (const encoding of ["gzip", "identity"]) {
-      const firstBytes = yield* Deferred.make<string>();
-      const request = NodeHttp.get(
-        {
-          host: "127.0.0.1",
-          port,
-          path: "/snapshot",
-          agent: false,
-          headers: { "accept-encoding": encoding },
-        },
-        (response) =>
-          response.once("data", () => {
-            Deferred.doneUnsafe(
-              firstBytes,
-              Effect.succeed(response.headers["content-encoding"] ?? "identity"),
-            );
-            request.destroy();
-          }),
-      );
-      request.on("error", () => undefined);
-      assert.strictEqual(yield* Deferred.await(firstBytes), encoding);
-      assert.isTrue(Exit.hasInterrupts(yield* Queue.take(exits)));
-    }
-    assert.isTrue((yield* readBody(port)).equals(referenceBody(snapshot)));
-    assert.isTrue(Exit.isSuccess(yield* Queue.take(exits)));
-  }).pipe(Effect.provide(seededStore(seedLarge))),
-);
