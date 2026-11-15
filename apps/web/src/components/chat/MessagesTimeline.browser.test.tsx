@@ -3006,5 +3006,90 @@ describe("MessagesTimeline work rows", () => {
     );
     expect(screen.text()).toContain("Cited response");
     expect(screen.text()).toContain(feedback.message.text);
+
+    const rail = screen.container.querySelector<HTMLElement>("[data-wake-ups-rail]");
+    expect(rail).not.toBeNull();
+    await act(async () => {
+      rail!.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 10, clientY: 10 }),
+      );
+      rail!.dispatchEvent(
+        new PointerEvent("pointermove", { bubbles: true, clientX: 30, clientY: 30 }),
+      );
+      rail!.dispatchEvent(
+        new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 10, clientY: 10 }),
+      );
+    });
+    expect(groups()[0]!.getAttribute("aria-expanded")).toBe("true");
+    const headerTop = groups()[0]!.getBoundingClientRect().top;
+    await act(async () => {
+      rail!.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 10, clientY: 10 }),
+      );
+      rail!.dispatchEvent(
+        new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 10, clientY: 10 }),
+      );
+    });
+    await vi.waitFor(() =>
+      expect(groups().map((node) => node.getAttribute("aria-expanded"))).toEqual([
+        "false",
+        "false",
+      ]),
+    );
+    await vi.waitFor(() => expect(groups()[0]!.getBoundingClientRect().top).toBe(headerTop));
+  });
+
+  it("reveals the wake-up header when its rail collapses below the viewport", async () => {
+    const fixture = makeStreamingTimelineFixture("Latest result stays outside the fold.");
+    const timelineEntries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: fixture.visibleTurnItems.map((row): OrchestrationV2ProjectedTurnItem => ({
+        ...row,
+        item:
+          row.item.type === "user_message"
+            ? {
+                ...row.item,
+                type: "notification",
+                source: { kind: "monitor" },
+                outcome: "updated",
+                summary: "Pull request updated",
+              }
+            : row.item.type === "assistant_message"
+              ? {
+                  ...row.item,
+                  status: "completed",
+                  streaming: false,
+                  text:
+                    row.item.runId === fixture.historyRunId
+                      ? "Review details.\n\n".repeat(45)
+                      : row.item.text,
+                }
+              : row.item.type === "command_execution"
+                ? { ...row.item, status: "completed", exitCode: 0, output: "Passed" }
+                : row.item,
+      })),
+      optimisticMessages: [],
+    });
+    await using screen = await renderTimeline(timelineEntries);
+    screen.container.style.height = "320px";
+    const header = screen.getByRole("button", { name: /^2 wake-ups:/ });
+    await header.click();
+    const rails = () => [...screen.container.querySelectorAll<HTMLElement>("[data-wake-ups-rail]")];
+    await vi.waitFor(() => expect(rails().length).toBeGreaterThan(1));
+    await act(async () => rails().at(-1)!.scrollIntoView({ block: "center" }));
+    const viewport = screen.container.querySelector<HTMLElement>(".messages-timeline-scroll")!;
+    await vi.waitFor(() =>
+      expect(
+        screen.buttons(/^2 wake-ups:/)[0]?.getBoundingClientRect().top ?? -Infinity,
+      ).toBeLessThan(viewport.getBoundingClientRect().top),
+    );
+    await userEvent.click(rails().at(-1)!);
+    await expect.element(header).toHaveAttribute("aria-expanded", "false");
+    await vi.waitFor(() => {
+      const bounds = header.element().getBoundingClientRect();
+      const visible = viewport.getBoundingClientRect();
+      expect(bounds.top).toBeGreaterThanOrEqual(visible.top);
+      expect(bounds.bottom).toBeLessThanOrEqual(visible.bottom);
+    });
+    expect(screen.text()).toContain("Latest result stays outside the fold.");
   });
 });
