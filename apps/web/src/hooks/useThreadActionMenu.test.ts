@@ -122,6 +122,7 @@ vi.mock("./useThreadActions", () => ({
   canTurnThreadIntoProject: () => false,
   confirmThreadMove: async () => false,
   readThreadMoveTargets: () => [],
+  readThreadMachineMoveTargets: () => [],
   useThreadActions: () =>
     Object.fromEntries(
       [

@@ -67,6 +67,7 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderInputIcon,
+  ServerIcon,
   FolderPlusIcon,
   KeyboardIcon,
   MessageSquareDashedIcon,
@@ -127,7 +128,11 @@ import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useRestartAgentSession } from "../hooks/useRestartAgentSession";
-import { confirmThreadMove } from "../hooks/useThreadActions";
+import {
+  confirmThreadMove,
+  moveThreadToMachineAndOpen,
+  readThreadMachineMoveTargets,
+} from "../hooks/useThreadActions";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useScratchProject } from "../hooks/useScratchProject";
@@ -1550,6 +1555,45 @@ function OpenCommandPaletteDialog(props: {
           })),
         },
       ],
+    });
+  }
+
+  const machineMoveTargets =
+    activeThread !== null
+      ? readThreadMachineMoveTargets(scopeThreadRef(activeThread.environmentId, activeThread.id))
+      : [];
+  if (activeThread !== null && machineMoveTargets.length > 0) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "submenu",
+      value: "action:move-thread-to-machine",
+      searchTerms: ["move", "machine", "environment", "server", "remote", "computer"],
+      title: "Move thread to machine...",
+      icon: <ServerIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <ServerIcon className={ADDON_ICON_CLASS} />,
+      disabled: !threadRuntimeCanArchive(activeThread.runtime),
+      groups: machineMoveTargets.map((machine) => ({
+        value: `move-thread-to-machine:${machine.environmentId}`,
+        label: machine.label,
+        items: machine.projects.map((project) => ({
+          kind: "action" as const,
+          value: `move-thread-to-machine:${machine.environmentId}:${project.id}`,
+          searchTerms: [machine.label, project.title, project.workspaceRoot],
+          title: project.title,
+          description: project.workspaceRoot,
+          icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+          run: () =>
+            moveThreadToMachineAndOpen(
+              threadRef,
+              { environmentId: machine.environmentId, projectId: project.id },
+              (target) =>
+                navigate({
+                  to: "/$environmentId/$threadId",
+                  params: buildThreadRouteParams(target),
+                }),
+            ),
+        })),
+      })),
     });
   }
 

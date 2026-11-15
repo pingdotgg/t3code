@@ -19,6 +19,7 @@ import { useRouter } from "@tanstack/react-router";
 import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
+  parseMachineMovePick,
   threadActionRequiresOperate,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
@@ -51,6 +52,7 @@ import { useClientSettings } from "./useSettings";
 import {
   canTurnThreadIntoProject,
   confirmThreadMove,
+  readThreadMachineMoveTargets,
   readThreadMoveTargets,
   useThreadActions,
 } from "./useThreadActions";
@@ -95,6 +97,7 @@ export function useThreadActionMenu(input: {
     markThreadUnread,
     turnThreadIntoProject,
     moveThreadToProject,
+    moveThreadToMachine,
   } = useThreadActions();
   const regenerateThreadTitle = useOrchestrationCommand(threadEnvironment.regenerateTitle, {
     reportFailure: false,
@@ -135,6 +138,7 @@ export function useThreadActionMenu(input: {
       };
       const isRegeneratingTitle = thread.titleRegeneration != null;
       const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
+      const machineMoveTargets = readThreadMachineMoveTargets(threadRef);
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         canFind: onFind !== undefined,
@@ -152,6 +156,7 @@ export function useThreadActionMenu(input: {
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
         moveTargets: readThreadMoveTargets(threadRef),
+        machineMoveTargets,
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -192,6 +197,14 @@ export function useThreadActionMenu(input: {
           failureToast(title, squashAtomCommandFailure(result));
         }
       };
+      const machinePick = parseMachineMovePick(action, machineMoveTargets);
+      if (machinePick) {
+        await moveThreadToMachine(threadRef, {
+          environmentId: machinePick.machine.environmentId,
+          projectId: machinePick.project.id,
+        });
+        return;
+      }
       if (action.startsWith("move-to-project:")) {
         const projectId = ProjectId.make(action.slice("move-to-project:".length));
         if (!(await confirmThreadMove(threadRef, projectId))) return;

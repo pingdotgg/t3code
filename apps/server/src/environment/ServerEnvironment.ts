@@ -261,6 +261,7 @@ export const make = Effect.gen(function* () {
       threadAutoSettleOptOut: true,
       threadProjectFromScratch: true,
       threadMoveToProject: true,
+      threadMoveToMachine: true,
       threadTitleRegeneration: true,
       commandOutputStreaming: true,
       threadVisitedTracking: true,

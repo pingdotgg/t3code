@@ -219,6 +219,10 @@
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"
     },
+    "./state/threadMachineMove": {
+      "types": "./src/state/threadMachineMove.ts",
+      "default": "./src/state/threadMachineMove.ts"
+    },
     "./state/orchestration": {
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"

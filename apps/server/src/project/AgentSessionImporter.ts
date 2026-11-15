@@ -109,7 +109,9 @@ type HistoryMessage = Omit<AgentSessionScanner.AgentSessionThreadMessage, "role"
   readonly role: AgentSessionScanner.AgentSessionThreadMessage["role"] | "reasoning";
 };
 
-function messageEvents(input: {
+/** Events that add one message to a thread as run-less history, which `v1_import` threads show. */
+export function messageEvents(input: {
+  readonly prefix: string;
   readonly threadId: ThreadId;
   readonly index: number;
   readonly message: HistoryMessage;
@@ -117,9 +119,7 @@ function messageEvents(input: {
   const ordinal = input.index + 1;
   const suffix = String(input.index).padStart(6, "0");
   const messageId = MessageId.make(`${input.threadId}:${suffix}`);
-  const turnItemId = TurnItemId.make(
-    `${IMPORT_EVENT_PREFIX}:turn-item:${input.threadId}:${suffix}`,
-  );
+  const turnItemId = TurnItemId.make(`${input.prefix}:turn-item:${input.threadId}:${suffix}`);
   const at = dateTime(input.message.createdAt);
   const common = {
     id: turnItemId,
@@ -184,7 +184,7 @@ function messageEvents(input: {
         };
   return [
     {
-      id: EventId.make(`${IMPORT_EVENT_PREFIX}:message:${input.threadId}:${suffix}`),
+      id: EventId.make(`${input.prefix}:message:${input.threadId}:${suffix}`),
       type: "message.updated",
       threadId: input.threadId,
       occurredAt: at,
@@ -460,7 +460,7 @@ const make = Effect.gen(function* () {
                   ]
                 : []),
               ...thread.messages.flatMap((message, index) =>
-                messageEvents({ threadId, index, message }),
+                messageEvents({ prefix: IMPORT_EVENT_PREFIX, threadId, index, message }),
               ),
               {
                 id: EventId.make(`${IMPORT_EVENT_PREFIX}:provider-thread:${providerThreadId}`),
@@ -529,7 +529,12 @@ const make = Effect.gen(function* () {
           yield* eventSink.write({
             events: [
               ...messages.flatMap((message, index) =>
-                messageEvents({ threadId: input.threadId, index, message }),
+                messageEvents({
+                  prefix: IMPORT_EVENT_PREFIX,
+                  threadId: input.threadId,
+                  index,
+                  message,
+                }),
               ),
               {
                 id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${input.threadId}:native-history`),

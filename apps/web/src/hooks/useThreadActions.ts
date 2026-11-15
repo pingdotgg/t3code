@@ -8,6 +8,10 @@ import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { threadMoveTargets, threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
+  moveThreadToMachine,
+  threadMachineMoveTargets,
+} from "@t3tools/client-runtime/state/threadMachineMove";
+import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   EnvironmentAuthorizationError,
@@ -18,7 +22,7 @@ import {
   sessionGrantsScope,
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
-import { threadMoveNotice } from "@t3tools/shared/threadMove";
+import { threadMachineMoveNotice, threadMoveNotice } from "@t3tools/shared/threadMove";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
@@ -29,6 +33,8 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { environmentSession, readEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
+import { readEnvironment } from "../state/environments";
+import { environmentSummaries } from "../state/presentation";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { orchestrationEnvironment } from "../state/orchestration";
 import { projectEnvironment } from "../state/projects";
@@ -291,6 +297,77 @@ export async function confirmThreadMove(
     }),
   );
   return confirmed._tag === "Success" && confirmed.value;
+}
+
+/** Other connected machines this thread can move to, each with its projects. */
+export function readThreadMachineMoveTargets(threadRef: ScopedThreadRef) {
+  return threadMachineMoveTargets({
+    sourceEnvironmentId: threadRef.environmentId,
+    connectedEnvironmentIds: appAtomRegistry.get(environmentSummaries.connectedEnvironmentIdsAtom),
+    serverConfigs: appAtomRegistry.get(environmentServerConfigsAtom),
+    projects: readProjects(),
+    labelOf: (environmentId) => readEnvironment(environmentId)?.label,
+    canOperate: (environmentId) =>
+      readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
+  });
+}
+
+/** Confirms, moves the thread to a project on another machine, then opens it there. */
+export async function moveThreadToMachineAndOpen(
+  source: ScopedThreadRef,
+  target: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
+  open: (threadRef: ScopedThreadRef) => Promise<void>,
+): Promise<void> {
+  const thread = readThreadShell(source);
+  const project = readProject(target);
+  const fromMachine = readEnvironment(source.environmentId)?.label;
+  const toMachine = readEnvironment(target.environmentId)?.label;
+  const api = readLocalApi();
+  if (!thread || !project || !fromMachine || !toMachine || !api) return;
+  const outcome = await moveThreadToMachine({
+    registry: appAtomRegistry,
+    commands: projectEnvironment,
+    source,
+    sourceLabel: fromMachine,
+    target,
+    targetLabel: `${project.title} on ${toMachine}`,
+    confirm: async ({ leftBehind }) => {
+      const notice = threadMachineMoveNotice({
+        fromMachine,
+        toMachine,
+        projectTitle: project.title,
+        leftBehind,
+      });
+      const confirmed = await settlePromise(() =>
+        api.dialogs.confirm(`Move "${thread.title}" to ${toMachine}?\n${notice}`, {
+          initialFocus: "confirm",
+        }),
+      );
+      return confirmed._tag === "Success" && confirmed.value;
+    },
+  });
+  if (outcome._tag === "Cancelled") return;
+  if (outcome._tag === "Failed") {
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Could not move thread",
+        description: outcome.message,
+      }),
+    );
+    return;
+  }
+  refreshArchivedThreadsForEnvironment(source.environmentId);
+  if (outcome.archiveError !== null) {
+    toastManager.add(
+      stackedThreadToast({
+        type: "warning",
+        title: `Moved, but the original is still active on ${fromMachine}`,
+        description: `${outcome.archiveError} The moved copy is on ${toMachine}.`,
+      }),
+    );
+  }
+  await settlePromise(() => open(outcome.threadRef));
 }
 
 function threadOperationFailure(target: ScopedThreadRef) {
@@ -1070,5 +1147,15 @@ export function useThreadActions() {
         environmentId: target.environmentId,
         input: { threadId: target.threadId, projectId },
       }),
+    moveThreadToMachine: (
+      source: ScopedThreadRef,
+      target: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
+    ) =>
+      moveThreadToMachineAndOpen(source, target, (threadRef) =>
+        router.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        }),
+      ),
   };
 }

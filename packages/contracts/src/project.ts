@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import {
   CommandId,
   ForwardCompatibleUnion,
@@ -558,6 +559,66 @@ export const ProjectMoveThreadInput = Schema.Struct({
   projectId: ProjectId,
 });
 export type ProjectMoveThreadInput = typeof ProjectMoveThreadInput.Type;
+
+/**
+ * A thread's conversation as another environment can import it. Checkpoints, runs, provider
+ * sessions and attachments belong to the machine that made them, so they stay behind.
+ */
+export const ThreadMoveBundle = Schema.Struct({
+  title: TrimmedNonEmptyString,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  createdAt: IsoDateTime,
+  messages: Schema.Array(
+    Schema.Struct({
+      role: Schema.Literals(["user", "assistant"]),
+      text: Schema.String,
+      createdAt: IsoDateTime,
+    }),
+  ),
+});
+export type ThreadMoveBundle = typeof ThreadMoveBundle.Type;
+
+export const ProjectExportThreadInput = Schema.Struct({ threadId: ThreadId });
+export type ProjectExportThreadInput = typeof ProjectExportThreadInput.Type;
+
+/** What a move leaves on the source environment, so messages name only what applies. */
+export const ThreadMoveLeftBehind = Schema.Struct({
+  diffs: Schema.Boolean,
+  worktree: Schema.Boolean,
+  attachments: NonNegativeInt,
+  scheduledTasks: NonNegativeInt,
+});
+
+export const ProjectExportThreadResult = Schema.Struct({
+  bundle: ThreadMoveBundle,
+  leftBehind: ThreadMoveLeftBehind,
+  /** The thread's runs at export; finishing the move refuses once a new one has started. */
+  revision: Schema.String,
+});
+export type ProjectExportThreadResult = typeof ProjectExportThreadResult.Type;
+
+export const ProjectImportThreadInput = Schema.Struct({
+  projectId: ProjectId,
+  bundle: ThreadMoveBundle,
+  /** The source machine as the user knows it, for the new thread's notice. */
+  movedFrom: TrimmedNonEmptyString,
+  leftBehind: ThreadMoveLeftBehind,
+});
+export type ProjectImportThreadInput = typeof ProjectImportThreadInput.Type;
+
+export const ProjectImportThreadResult = Schema.Struct({ threadId: ThreadId });
+export type ProjectImportThreadResult = typeof ProjectImportThreadResult.Type;
+
+export const ProjectFinishThreadMoveInput = Schema.Struct({
+  threadId: ThreadId,
+  /** Where the conversation went, as the user knows it, for the archived thread's notice. */
+  movedTo: TrimmedNonEmptyString,
+  /** From the export the target imported, so newer work is never archived unseen. */
+  revision: Schema.String,
+});
+export type ProjectFinishThreadMoveInput = typeof ProjectFinishThreadMoveInput.Type;
 
 export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileError>()(
   "ProjectWriteFileError",

@@ -247,6 +247,11 @@ import {
   ProjectCreateFromThreadInput,
   ProjectCreateFromThreadResult,
   ProjectMoveThreadInput,
+  ProjectExportThreadInput,
+  ProjectExportThreadResult,
+  ProjectImportThreadInput,
+  ProjectImportThreadResult,
+  ProjectFinishThreadMoveInput,
   ProjectEnsureScratchResult,
   ProjectListEntriesError,
   ProjectListEntriesInput,
@@ -432,6 +437,9 @@ export const WS_METHODS = {
   projectsCreateNew: "projects.createNew",
   projectsCreateFromThread: "projects.createFromThread",
   projectsMoveThread: "projects.moveThread",
+  projectsExportThread: "projects.exportThread",
+  projectsImportThread: "projects.importThread",
+  projectsFinishThreadMove: "projects.finishThreadMove",
 
   shellOpenInEditor: "shell.openInEditor",
 
@@ -1438,6 +1446,23 @@ const WsProjectsMoveThreadRpc = Rpc.make(WS_METHODS.projectsMoveThread, {
   error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
 });
 
+const WsProjectsExportThreadRpc = Rpc.make(WS_METHODS.projectsExportThread, {
+  payload: ProjectExportThreadInput,
+  success: ProjectExportThreadResult,
+  error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsImportThreadRpc = Rpc.make(WS_METHODS.projectsImportThread, {
+  payload: ProjectImportThreadInput,
+  success: ProjectImportThreadResult,
+  error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsFinishThreadMoveRpc = Rpc.make(WS_METHODS.projectsFinishThreadMove, {
+  payload: ProjectFinishThreadMoveInput,
+  error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
+});
+
 const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   payload: LaunchEditorInput,
   error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
@@ -2258,6 +2283,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsCreateNewRpc,
   WsProjectsCreateFromThreadRpc,
   WsProjectsMoveThreadRpc,
+  WsProjectsExportThreadRpc,
+  WsProjectsImportThreadRpc,
+  WsProjectsFinishThreadMoveRpc,
   WsProjectsWriteFileRpc,
   WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,

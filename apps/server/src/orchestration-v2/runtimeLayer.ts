@@ -321,6 +321,9 @@ const layerThreadProjectMoveProvided = ThreadProjectMove.layer.pipe(
       layerManagedProjectFoldersProvided,
       layerThreadManagementProvided,
       layerScheduledTaskProvided,
+      layerEventSink,
+      IdAllocator.layer,
+      ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
     ).pipe(Layer.provideMerge(layerProjectService)),
   ),
 );
