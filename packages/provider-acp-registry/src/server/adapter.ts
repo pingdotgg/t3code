@@ -42,6 +42,7 @@ import {
   normalizeAcpRegistryCommands,
   normalizeAcpRegistryLiveConfiguration,
   normalizeAcpRegistryWebUrl,
+  rewriteAcpRegistrySkillMention,
 } from "./probe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
@@ -270,6 +271,21 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
           answerablePermissionOptions: devinAnswerablePermissionOptions,
+          // The composer writes `$name` for a picked skill; Devin runs commands as `/name`.
+          ...(runtimeCoordinator === undefined
+            ? {}
+            : {
+                rewriteUserText: (text: string) =>
+                  runtimeCoordinator.getAvailableCommands(options.instanceId).pipe(
+                    Effect.map(
+                      Option.match({
+                        onNone: () => text,
+                        onSome: (commands) =>
+                          rewriteAcpRegistrySkillMention(text, registryAgentId, commands.skills),
+                      }),
+                    ),
+                  ),
+              }),
         }
       : {}),
     ...(copilotRouting === undefined

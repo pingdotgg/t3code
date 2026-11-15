@@ -21,6 +21,7 @@ import {
   logoutAcpRegistry,
   normalizeAcpRegistryAuthMethods,
   normalizeAcpRegistryCommands,
+  rewriteAcpRegistrySkillMention,
   probeAcpRegistryConfiguration,
 } from "@t3tools/provider-acp-registry/testing";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
@@ -356,6 +357,56 @@ describe("ACP Registry probe", () => {
         },
       ],
     });
+  });
+
+  it("routes Devin commands with cognition.ai category Skills to the provider skill menu", () => {
+    expect(
+      normalizeAcpRegistryCommands([
+        {
+          name: "research",
+          description: "Research before deciding",
+          _meta: { "cognition.ai/category": "Skills", "cognition.ai/icon": "zap" },
+        },
+        {
+          name: "compact",
+          description: "Compact the session",
+          _meta: { "cognition.ai/category": "Session", "cognition.ai/icon": "archive" },
+        },
+        {
+          name: "login",
+          description: "Sign in",
+          _meta: { "cognition.ai/category": "Account" },
+        },
+        { name: "review", description: "No meta at all" },
+      ]),
+    ).toEqual({
+      slashCommands: [
+        { name: "compact", description: "Compact the session" },
+        { name: "login", description: "Sign in" },
+        { name: "review", description: "No meta at all" },
+      ],
+      skills: [
+        {
+          name: "research",
+          description: "Research before deciding",
+          path: "acp://skill/research",
+          scope: "agent",
+          enabled: true,
+        },
+      ],
+    });
+  });
+
+  it("rewrites a leading $skill mention to Devin's native /skill command", () => {
+    const skills = [{ name: "research", path: "acp://skill/research", enabled: true }] as const;
+    expect(rewriteAcpRegistrySkillMention("  $research t3 code", "devin", skills)).toBe(
+      "/research t3 code",
+    );
+    expect(rewriteAcpRegistrySkillMention("$missing", "devin", skills)).toBe("$missing");
+    expect(rewriteAcpRegistrySkillMention("use $research later", "devin", skills)).toBe(
+      "use $research later",
+    );
+    expect(rewriteAcpRegistrySkillMention("$research", "kimi", skills)).toBe("$research");
   });
 
   it.effect("lists native sessions and logs out through generic ACP lifecycle methods", () => {
