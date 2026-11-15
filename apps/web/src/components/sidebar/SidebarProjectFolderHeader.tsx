@@ -79,7 +79,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
         <span
           className={cn(
             "min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/90",
-            !collapsed &&
+            (!collapsed || hiddenThreads.length === 0) &&
               "group-hover/project-folder:me-6 group-has-[[data-sidebar-action-for]:focus]/project-folder:me-6 pointer-coarse:me-6",
           )}
         >
