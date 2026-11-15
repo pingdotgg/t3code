@@ -286,6 +286,7 @@ import { requestUrl } from "./requestUrl.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
+const isWorkspacePathsError = Schema.is(WorkspacePaths.WorkspacePathsError);
 
 const resolveDiscoveryForConfig = <A, E, R>(
   discovery: Effect.Effect<A, E, R>,
@@ -3005,7 +3006,7 @@ export const layerWsRpc = (
                       ? cause.message
                       : cause._tag === "ProjectOperationError" &&
                           cause.operation === "normalize-workspace" &&
-                          cause.cause instanceof Error
+                          isWorkspacePathsError(cause.cause)
                         ? cause.cause.message
                         : "Failed to mutate project.",
                   cause,

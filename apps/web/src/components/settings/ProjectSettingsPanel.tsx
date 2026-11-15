@@ -199,10 +199,14 @@ export function ProjectSettingsPanel({
     if (!sameProjectSelection(lastSelection, current)) setLastSelection(current);
   }
 
-  const isLastMember = (member: SidebarProjectGroupMember) =>
-    lastSelection !== null &&
-    (lastSelection.memberKeys.includes(member.physicalProjectKey) ||
-      lastSelection.memberIds.includes(`${member.environmentId}:${member.id}`));
+  const hasLastId = (member: SidebarProjectGroupMember) =>
+    lastSelection?.memberIds.includes(`${member.environmentId}:${member.id}`) === true;
+  const hasLastKey = (member: SidebarProjectGroupMember) =>
+    lastSelection?.memberKeys.includes(member.physicalProjectKey) === true;
+  // Another project can take a moved project's old folder, so the id wins over the folder key.
+  const isLastMember = groups.some((group) => group.memberProjects.some(hasLastId))
+    ? hasLastId
+    : hasLastKey;
   const successor =
     members.length === 0 &&
     lastSelection?.key === projectKey &&
