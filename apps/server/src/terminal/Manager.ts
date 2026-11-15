@@ -336,7 +336,6 @@ interface TerminalGrid {
 interface TerminalViewer {
   streams: number;
   grid: TerminalGrid | null;
-  /** Whether this viewer's query replies are the ones that reach the PTY. */
   answersQueries: boolean;
 }
 
