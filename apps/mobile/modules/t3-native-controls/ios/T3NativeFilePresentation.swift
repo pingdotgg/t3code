@@ -286,6 +286,7 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     do {
       let download = directory.appendingPathComponent("original")
+      var mimeType: String?
       if url.isFileURL {
         try FileManager.default.copyItem(at: url, to: download)
       } else if url.scheme == "data" {
@@ -298,6 +299,7 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
         guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
           throw URLError(.badServerResponse)
         }
+        mimeType = response.mimeType
         try FileManager.default.moveItem(at: temporaryFile, to: download)
       }
       try Task.checkCancellation()
@@ -311,7 +313,8 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
         type = detectedType
       } else if CGPDFDocument(download as CFURL) != nil {
         type = .pdf
-      } else if originalExtension.lowercased() == "svg" {
+      } else if originalExtension.lowercased() == "svg" || mimeType == "image/svg+xml" {
+        // ImageIO cannot read SVG, and served images such as QR codes often have no extension.
         type = .svg
       }
       let fileExtension: String
