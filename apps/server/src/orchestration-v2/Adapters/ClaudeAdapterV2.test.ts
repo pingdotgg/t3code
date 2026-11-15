@@ -15415,7 +15415,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
       yield* harness.offerAndWait(wakeNotification);
       assert.lengthOf(harness.continuationRequests, 0);
-      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      // Claude is opening its wake turn; releasing the session now kills it.
+      assert.isTrue(yield* harness.hasPendingBackgroundWork);
 
       yield* Queue.offer(harness.sdkMessages, wakeAssistant);
       yield* harness.awaitContinuation(1);
