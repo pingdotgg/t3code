@@ -2273,6 +2273,13 @@
     "composerContextAria": "Keep composer context visible in active threads",
     "resetComposerContext": "composer context"
   },
+  "worktrees": {
+    "creation": "Creation",
+    "branches": "Branches",
+    "startFromRemoteDescription": "Uses the latest commit of the base branch’s tracked remote branch, even if its name differs. Otherwise uses the same-named branch on origin. Uses your local branch if that remote branch is missing.",
+    "startFromRemoteReset": "new worktrees start from remote",
+    "startFromRemoteAria": "Start new worktrees from remote by default"
+  },
   "storage": {
     "worktreesDirectoryDescription": "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. Existing worktrees stay where they are. Leave empty to use the T3 home folder.",
     "resetWorktreeLocation": "worktree location",

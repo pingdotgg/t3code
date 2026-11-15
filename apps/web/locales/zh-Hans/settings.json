@@ -2255,6 +2255,13 @@
     "composerContextAria": "在活动线程中保留输入区上下文控件",
     "resetComposerContext": "输入区上下文"
   },
+  "worktrees": {
+    "creation": "创建",
+    "branches": "分支",
+    "startFromRemoteDescription": "使用基准分支所跟踪的远程分支中的最新提交，即使远程分支名称不同。否则使用 origin 上同名分支。远程分支不存在时使用本地分支。",
+    "startFromRemoteReset": "新工作树默认从远程分支开始",
+    "startFromRemoteAria": "默认从远程分支创建新工作树"
+  },
   "storage": {
     "worktreesDirectoryDescription": "新建工作树的存放文件夹，可在任意盘符，如 D:\\worktrees 或 ~/worktrees。已有的工作树保持原位。留空则使用 T3 主目录。",
     "resetWorktreeLocation": "工作树位置",
