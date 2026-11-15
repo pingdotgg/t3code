@@ -356,7 +356,6 @@ export default defineConfig({
         files: [
           "packages/client-runtime/src/state/runtime.ts",
           "packages/client-runtime/src/state/vcsAction.ts",
-          "packages/client-runtime/src/state/providerAccountSync.ts",
         ],
         rules: {
           "t3code/no-rpc-permission-bypass": [

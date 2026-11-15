@@ -53,7 +53,6 @@ import type {
   RuntimeRequestId,
   ScopedThreadRef,
   ServerConfig as T3ServerConfig,
-  UsageLimitsReport,
   RunId,
 } from "@t3tools/contracts";
 import {
@@ -1025,9 +1024,12 @@ function ThreadDetailBody(
     readonly now: number;
   } | null>(null);
   // Approval/question identity invalidates quota: answering on any client resumes spending.
+  const usageLimitsInstanceId =
+    props.selectedThread.runtime?.providerInstanceId ??
+    props.selectedThread.modelSelection.instanceId;
   const usageLimitsKey = [
     selectedThreadKey,
-    props.selectedThread.modelSelection.instanceId,
+    usageLimitsInstanceId,
     props.selectedThread.latestRun?.runId ?? "",
     props.activePendingApproval?.requestId ?? props.activePendingUserInput?.requestId ?? "",
   ].join(":");
@@ -1037,22 +1039,25 @@ function ThreadDetailBody(
   const usageLimitsReport =
     usageLimitsPanel !== null && usageLimitsPanel.key === usageLimitsKey
       ? collectProviderUsageLimits(
-          props.selectedThread.modelSelection.instanceId,
+          usageLimitsInstanceId,
           props.serverConfig?.providers ?? [],
           props.serverConfig?.usageLimitSources ?? [],
           usageLimitsPanel.now,
         )
       : null;
-  const showUsageLimits = (report: UsageLimitsReport | null) =>
-    setUsageLimitsPanel(
-      report === null
-        ? null
-        : {
-            key: usageLimitsKey,
-            threadKey: selectedThreadKey,
-            now: Date.parse(report.createdAt),
-          },
+  const showUsageLimits = () => {
+    const now = Date.now();
+    const report = collectProviderUsageLimits(
+      usageLimitsInstanceId,
+      props.serverConfig?.providers ?? [],
+      props.serverConfig?.usageLimitSources ?? [],
+      now,
     );
+    setUsageLimitsPanel(
+      report === null ? null : { key: usageLimitsKey, threadKey: selectedThreadKey, now },
+    );
+    return report !== null;
+  };
   const dismissUsageLimits = () => setUsageLimitsPanel(null);
   // Late sends clear only their originating thread's limits panel.
   const clearUsageLimitsFor = (threadKey: string) =>

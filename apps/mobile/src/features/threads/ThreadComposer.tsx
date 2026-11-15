@@ -26,13 +26,8 @@ import {
   type ModelSelection,
   type ProviderInteractionMode,
   type ServerConfig as T3ServerConfig,
-  type UsageLimitsReport,
 } from "@t3tools/contracts";
-import {
-  collectProviderUsageLimits,
-  hasProviderUsageLimits,
-  isUsageLimitsCommand,
-} from "@t3tools/shared/usageLimits";
+import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
@@ -258,7 +253,8 @@ export interface ThreadComposerProps {
     followUp?: ActiveTurnComposerAction,
     stillSendable?: () => boolean,
   ) => Promise<MessageId | null>;
-  readonly onShowUsageLimits: (report: UsageLimitsReport | null) => void;
+  /** Opens the limits panel; false when the provider reports none. */
+  readonly onShowUsageLimits: () => boolean;
   readonly canSwitchProvider: boolean;
   readonly onUpdateInteractionMode?: (interactionMode: ProviderInteractionMode) => void;
   readonly onHeightChange?: (height: number) => void;
@@ -533,19 +529,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       props.serverConfig?.usageLimitSources ?? [],
     );
   const openUsageLimits = () => {
-    const report = collectProviderUsageLimits(
-      props.selectedThread.runtime?.providerInstanceId ??
-        props.selectedThread.modelSelection.instanceId,
-      props.serverConfig?.providers ?? [],
-      props.serverConfig?.usageLimitSources ?? [],
-      // oxlint-disable-next-line react/purity -- The submit and menu handlers read usage limits only after a user action.
-      Date.now(),
-    );
-    onShowUsageLimits(report);
-    if (!report) {
+    const shown = onShowUsageLimits();
+    if (!shown) {
       Dialog.alert("Usage limits unavailable", "This provider does not currently report limits.");
     }
-    return report !== null;
+    return shown;
   };
 
   const lockedProviderInstanceId = props.canSwitchProvider

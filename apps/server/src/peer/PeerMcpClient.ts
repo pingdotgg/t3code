@@ -309,12 +309,11 @@ const make = Effect.gen(function* () {
               }),
         );
       }
+      const success = input.success;
       const decoded =
         body.result.structuredContent === undefined
-          ? // oxlint-disable-next-line t3code/no-inline-schema-compile -- Each caller supplies its tool's result schema.
-            Schema.decodeEffect(Schema.fromJsonString(input.success))(text)
-          : // oxlint-disable-next-line t3code/no-inline-schema-compile -- Each caller supplies its tool's result schema.
-            Schema.decodeEffect(input.success)(body.result.structuredContent);
+          ? Schema.decodeEffect(Schema.fromJsonString(success))(text)
+          : Schema.decodeEffect(success)(body.result.structuredContent);
       return yield* decoded.pipe(
         Effect.map(Result.succeed),
         Effect.mapError(

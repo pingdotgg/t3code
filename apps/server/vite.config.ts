@@ -1,6 +1,8 @@
 import "vite-plus/test/config";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- tsdown needs the asset path when it reads this config.
 import * as NodePath from "node:path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Effect from "effect/Effect";
 import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
@@ -46,10 +48,9 @@ const packExecutableTarget = resolveCliExecutableTarget({
   target: process.env.T3CODE_PACK_EXE_TARGET,
   nodeVersion: rootPackageJson.engines.node,
   hostNodeVersion: process.versions.node,
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- Build config selects the running Node binary, including its emulated architecture, before the Effect runtime exists.
-  hostPlatform: process.platform,
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- Build config must match the Node binary's architecture rather than the machine's physical architecture.
-  hostArch: process.arch,
+  // The running Node is the one tsdown embeds for a native build.
+  hostPlatform: Effect.runSync(HostProcess.Platform),
+  hostArch: Effect.runSync(HostProcess.Architecture),
 });
 
 // The root config's `projects` route repo-root runs to package configs,

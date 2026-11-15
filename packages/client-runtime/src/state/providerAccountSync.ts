@@ -25,11 +25,15 @@ import {
   EnvironmentRpcUnavailableError,
   getInitialServerConfig,
   requestGuarded,
-  RpcPermissionGuard,
 } from "../rpc/client.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { resolveProviderInstanceDisplayName } from "./providerInstanceDisplay.ts";
-import { type AtomCommand, createAtomCommandScheduler, createRuntimeCommand } from "./runtime.ts";
+import {
+  type AtomCommand,
+  createAtomCommandScheduler,
+  createRuntimeCommand,
+  withEnvironmentRpcPermissions,
+} from "./runtime.ts";
 
 export interface ProviderAccountSyncRequest {
   readonly sourceEnvironmentId: EnvironmentId;
@@ -242,16 +246,7 @@ export function createProviderAccountSyncCommand<E>(
         ]),
     },
     execute: (request, atomRegistry) =>
-      syncAccounts(request).pipe(
-        Effect.provideService(RpcPermissionGuard, {
-          authorize: (environmentId, method, payload) =>
-            createCommandPermissions(runtime, method).authorize(
-              atomRegistry,
-              environmentId,
-              payload,
-            ),
-        }),
-      ),
+      syncAccounts(request).pipe(withEnvironmentRpcPermissions(runtime, atomRegistry)),
   });
   return {
     ...command,
