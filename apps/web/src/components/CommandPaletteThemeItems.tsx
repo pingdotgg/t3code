@@ -1,8 +1,10 @@
 import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
 import { AppWindowIcon, MonitorIcon, MoonIcon, PaletteIcon, SunIcon } from "lucide-react";
 
+import { APP_ICON_OPTIONS, appIconOption } from "../appIcon";
 import { useCustomThemes } from "../hooks/useCustomThemes";
 import { useEnvironmentThemeDefinitions } from "../hooks/useEnvironmentTheme";
+import { updateClientSettings, useClientSettings } from "../hooks/useSettings";
 import { APPEARANCE_CHOICES, useTheme, type AppearanceChoice } from "../hooks/useTheme";
 import { getThemeDefinition } from "../themePalette";
 import {
@@ -66,6 +68,7 @@ export function useCommandPaletteThemeItems() {
     setThemeHalf,
   } = useTheme();
   const themeCards = useThemeCards();
+  const currentAppIcon = appIconOption(useClientSettings((settings) => settings.appIcon));
 
   const changeThemeItem: CommandPaletteSubmenuItem = {
     kind: "submenu",
@@ -164,5 +167,32 @@ export function useCommandPaletteThemeItems() {
     },
   };
 
-  return { changeThemeItem, changeAppearanceItem, themeEditorItem };
+  const changeAppIconItem: CommandPaletteSubmenuItem = {
+    kind: "submenu",
+    value: "action:change-app-icon",
+    searchTerms: ["change app icon", "dock", "taskbar", "favicon", "logo", "nightly"],
+    title: "Change app icon",
+    icon: <AppWindowIcon className={ITEM_ICON_CLASS} />,
+    addonIcon: <AppWindowIcon className={ADDON_ICON_CLASS} />,
+    groups: [
+      {
+        value: "app-icons",
+        label: "Change app icon",
+        items: APP_ICON_OPTIONS.map((option) => ({
+          kind: "action",
+          value: `app-icon:${option.id}`,
+          title: option.label,
+          searchTerms: [option.label, "app icon"],
+          icon: <img alt="" className="size-4" draggable={false} src={option.src} />,
+          titleTrailingContent:
+            currentAppIcon.id === option.id ? (
+              <span className="text-meta text-dim-foreground">Current</span>
+            ) : undefined,
+          run: () => updateClientSettings({ appIcon: option.id }),
+        })),
+      },
+    ],
+  };
+
+  return { changeThemeItem, changeAppearanceItem, changeAppIconItem, themeEditorItem };
 }

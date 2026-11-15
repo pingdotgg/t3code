@@ -95,6 +95,7 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
         Effect.provideService(DesktopAppIdentity.DesktopAppIdentity, {
           resolveUserDataPath: Effect.succeed("/isolated/userdata"),
           configure: stub.record("identity"),
+          applyAppIcon: () => Effect.void,
         } as DesktopAppIdentity.DesktopAppIdentity["Service"]),
         Effect.provideService(ElectronApp.ElectronApp, {
           setPath: () => Effect.void,
