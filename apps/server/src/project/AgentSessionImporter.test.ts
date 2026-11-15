@@ -1075,7 +1075,8 @@ it.effect("paces progress per import while preserving processed counts", () =>
     expect(progress.map(({ processedCount }) => processedCount)).toEqual([1, 3, 5]);
     expect(progress.slice(1).map(({ at }, index) => at - progress[index]!.at)).toEqual([250, 250]);
     progress.length = 0;
+    // Already-imported threads count as neither imported nor skipped.
     yield* importer.importRecentAgentThreads({ projectId }, report);
-    expect(progress.map(({ processedCount }) => processedCount)).toEqual([1]);
+    expect(progress.map(({ processedCount }) => processedCount)).toEqual([0]);
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );

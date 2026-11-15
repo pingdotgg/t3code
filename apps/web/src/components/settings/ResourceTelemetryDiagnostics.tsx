@@ -1044,7 +1044,9 @@ function ResourceTelemetryDiagnosticsBody({
               </div>
             ) : (
               <div className="flex items-center gap-2 text-3xs text-dim-foreground">
-                <StatusDot tone={snapshot && snapshot.sampleIntervalMs > 0 ? "success" : "neutral"} />
+                <StatusDot
+                  tone={snapshot && snapshot.sampleIntervalMs > 0 ? "success" : "neutral"}
+                />
                 {snapshot ? formatSamplingStatus(snapshot.sampleIntervalMs) : "Sampling every ..."}
               </div>
             )}
