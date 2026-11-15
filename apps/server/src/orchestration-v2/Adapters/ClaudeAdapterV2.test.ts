@@ -35,6 +35,8 @@ import {
   ChatImageAttachment,
   CheckpointId,
   ClaudeSettings,
+  DEFAULT_SERVER_SETTINGS,
+  ServerSettingsError,
   EnvironmentId,
   MessageId,
   type ModelSelection,
@@ -116,6 +118,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import { ClaudeOrchestratorReplayHarness } from "./ClaudeAdapterV2.testkit.ts";
@@ -21045,6 +21048,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* fileSystem.writeFileString(appendFile, "File sentinel\n");
       const processQueues: Array<Queue.Queue<SDKMessage>> = [];
       let closes = 0;
+      let settingsFail = false;
+      const settingsError = new ServerSettingsError({
+        settingsPath: "settings.json",
+        operation: "read-secret",
+      });
       const firstTurnTerminal = yield* Deferred.make<void>();
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
@@ -21091,7 +21099,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           subagentModel: () => Effect.succeed(null),
           assertComplete: Effect.void,
         },
-      });
+      }).pipe(
+        Effect.provide(
+          Layer.mock(ServerSettingsService)({
+            getSettings: Effect.suspend(() =>
+              settingsFail ? Effect.fail(settingsError) : Effect.succeed(DEFAULT_SERVER_SETTINGS),
+            ),
+          }),
+        ),
+      );
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
         interactionMode: "default",
@@ -21141,25 +21157,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
       yield* fileSystem.remove(appendFile);
       // A thinking change cannot apply live, so this turn must replace the process.
-      const refused = yield* runtime
-        .startTurn(
-          makeClaudeTestTurnInput({
-            threadId,
-            providerThread: { ...providerThread, status: "active" },
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-append-replacement-b"),
-            text: "Switch model.",
-            attachments: [],
-            providerTurnOrdinal: 2,
-            modelSelection: CLAUDE_TEST_RESTART_MODEL_SELECTION,
-            runtimePolicy,
-          }),
-        )
-        .pipe(Effect.flip);
+      const replacement = runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId,
+          providerThread: { ...providerThread, status: "active" },
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-append-replacement-b"),
+          text: "Switch model.",
+          attachments: [],
+          providerTurnOrdinal: 2,
+          modelSelection: CLAUDE_TEST_RESTART_MODEL_SELECTION,
+          runtimePolicy,
+        }),
+      );
+      const refused = yield* replacement.pipe(Effect.flip);
       assert.equal(
         makeProviderFailure({ cause: refused, class: "provider_error" }).message,
         new ClaudeAdapterV2.ClaudeAppendSystemPromptFileError({ path: appendFile }).message,
       );
+      assert.lengthOf(processQueues, 1);
+      assert.equal(closes, 0);
+
+      yield* fileSystem.writeFileString(appendFile, "File sentinel\n");
+      settingsFail = true;
+      const settingsFailure = yield* replacement.pipe(Effect.flip);
+      assert.instanceOf(settingsFailure, ProviderAdapter.ProviderAdapterTurnStartError);
+      assert.strictEqual(settingsFailure.cause, settingsError);
       assert.lengthOf(processQueues, 1);
       assert.equal(closes, 0);
     }).pipe(

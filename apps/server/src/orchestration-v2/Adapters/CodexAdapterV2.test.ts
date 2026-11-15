@@ -29,6 +29,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  ServerSettingsError,
   ThreadId,
   TurnItemId,
   type ServerProviderModel,
@@ -78,6 +79,7 @@ import * as ModelManifest from "../../provider/ModelManifest.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
 import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
 
@@ -1682,6 +1684,52 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("reports unreadable visual settings as a turn-start failure", () =>
+    Effect.gen(function* () {
+      const settingsError = new ServerSettingsError({
+        settingsPath: "settings.json",
+        operation: "read-secret",
+      });
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "visual-settings-error",
+          entries: codexReplayPreamble({
+            nativeThreadId: "visual-settings-thread",
+            nativeTurnId: "visual-settings-turn",
+            prompt: "work",
+          }).slice(0, 5),
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mock(ServerSettingsService)({ getSettings: Effect.fail(settingsError) }),
+        ),
+      );
+      const failure = yield* harness.runtime
+        .startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("visual-settings-attempt"),
+            text: "work",
+          }),
+        )
+        .pipe(Effect.flip);
+      assert.instanceOf(failure, ProviderAdapter.ProviderAdapterTurnStartError);
+      assert.strictEqual(failure.cause, settingsError);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   it.effect("keeps native image views available to the clients", () =>

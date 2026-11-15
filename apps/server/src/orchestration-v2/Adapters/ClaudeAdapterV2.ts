@@ -12614,6 +12614,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ],
             { concurrency: "unbounded" },
           );
+          const visualInstructions = Option.isSome(serverSettings)
+            ? (yield* serverSettings.value.getSettings).visualInstructions
+            : null;
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           clearedNativeSessions.delete(nativeThreadId);
           if (existing !== null) {
@@ -12633,9 +12636,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
           const queryOptions = makeClaudeQueryOptions({
-            visualInstructions: Option.isSome(serverSettings)
-              ? (yield* serverSettings.value.getSettings.pipe(Effect.orDie)).visualInstructions
-              : null,
+            visualInstructions,
             modelSelection: turnInput.modelSelection,
             modelCatalog: catalog,
             nativeThreadId,

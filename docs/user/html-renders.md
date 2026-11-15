@@ -15,7 +15,8 @@ Previews can load public resources such as CDN scripts, but nothing on your loca
 To use your own publishing workflow, set `visualInstructions` in the environment's
 `settings.json` under its userdata directory. This setting survives app updates and
 replaces T3's visual-delivery guidance for every provider receiving it. Start a new
-thread after changing it; existing threads may retain earlier instructions.
+thread after changing it. Existing threads and forks may retain the instructions
+from their original thread.
 
 ```json
 {

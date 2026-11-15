@@ -7480,7 +7480,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeThreadId: threadId,
               codexInput,
               visualInstructions: Option.isSome(serverSettings)
-                ? (yield* serverSettings.value.getSettings.pipe(Effect.orDie)).visualInstructions
+                ? (yield* serverSettings.value.getSettings).visualInstructions
                 : null,
               runtimePolicy: turnInput.runtimePolicy,
               modelSelection: turnInput.modelSelection,
