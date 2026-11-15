@@ -110,12 +110,6 @@ const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
         ],
       },
       {
-        id: "highlight-text",
-        label: "Highlight text",
-        role: "accentSurfaceForeground",
-        roles: ["accentSurfaceForeground"],
-      },
-      {
         id: "border",
         label: msg("Border"),
         role: "border",
@@ -138,7 +132,7 @@ const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
         id: "highlight-surface",
         label: msg("Highlight surface"),
         role: "accentSurface",
-        roles: ["accentSurface", "toolbarControlHover"],
+        roles: ["accentSurface", "accentSurfaceForeground", "toolbarControlHover"],
       },
       {
         id: "accent",
