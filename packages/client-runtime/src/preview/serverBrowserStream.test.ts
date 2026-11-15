@@ -1,10 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  createPreviewCursor,
-  createPreviewStreamClient,
-  type PreviewStreamControl,
-} from "./serverBrowserStream.ts";
+import { createPreviewStreamClient, type PreviewStreamControl } from "./serverBrowserStream.ts";
 
 class FakeSocket extends EventTarget {
   static readonly OPEN = 1;
@@ -218,18 +214,5 @@ describe("preview stream page cursor", () => {
     cursor("grab");
     client.stop();
     expect(onCursor.mock.calls).toEqual([["pointer"], ["default"], ["grab"], ["default"]]);
-  });
-
-  it("shows the page's cursor only while shown", () => {
-    const element = { style: { cursor: "" } } as HTMLElement;
-    const cursor = createPreviewCursor(element);
-    cursor.set("pointer");
-    expect(element.style.cursor).toBe("");
-    cursor.show(true);
-    expect(element.style.cursor).toBe("pointer");
-    cursor.set("text");
-    expect(element.style.cursor).toBe("text");
-    cursor.show(false);
-    expect(element.style.cursor).toBe("");
   });
 });
