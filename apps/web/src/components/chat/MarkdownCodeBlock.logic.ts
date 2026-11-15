@@ -68,16 +68,17 @@ export function isClosedCodeFence(
   );
 }
 
-// Markdown code blocks gain one "\n" when they become HTML. The text of a raw
-// HTML <pre> is the author's, so its final newline stays.
+// A fenced block gains one "\n" when it becomes HTML. Only a block whose source
+// starts with a fence loses it: the text of a raw HTML <pre> is the author's,
+// and its position can be off inside a list or quote.
 export function codeBlockCopyText(
   node: ReactMarkdownExtraProps["node"],
   text: string,
   code: string,
 ): string {
   const start = node?.position?.start.offset;
-  if (start === undefined || text.startsWith("<", start) || !code.endsWith("\n")) return code;
-  return code.slice(0, -1);
+  if (start === undefined || !code.endsWith("\n")) return code;
+  return text.startsWith("```", start) || text.startsWith("~~~", start) ? code.slice(0, -1) : code;
 }
 
 export function nodeToPlainText(node: ReactNode): string {
