@@ -1,5 +1,6 @@
 import * as NodeModule from "node:module";
 import * as NodeNet from "node:net";
+import * as NodeTls from "node:tls";
 
 import type * as Undici from "undici";
 
@@ -29,6 +30,24 @@ export function installHttp1FetchDispatcher(): void {
 /** Avoids uncaught idle-timeout errors on h2 streams (https://github.com/nodejs/undici/issues/5936). */
 export function keepOutboundFetchOnHttp1(): void {
   if (builtinFetchUsesHttp2(process.versions.undici)) installHttp1FetchDispatcher();
+}
+
+/**
+ * TLS-inspecting corporate gateways re-sign traffic with roots that live only in the OS
+ * store, which curl and browsers trust but Node does not. Without them GitHub release
+ * downloads fail with "unable to get local issuer certificate".
+ */
+export function trustSystemCertificates(tls: typeof NodeTls = NodeTls): void {
+  try {
+    const current = tls.getCACertificates("default");
+    // --use-openssl-ca roots are not enumerable; replacing the list would discard them.
+    if (current.length === 0) return;
+    const known = new Set(current);
+    const added = tls.getCACertificates("system").filter((certificate) => !known.has(certificate));
+    if (added.length > 0) tls.setDefaultCACertificates([...current, ...added]);
+  } catch {
+    // An unreadable OS store leaves Node's bundled trust in place.
+  }
 }
 
 // @types/node does not declare setTypeOfService yet.

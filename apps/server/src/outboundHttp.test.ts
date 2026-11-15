@@ -16,6 +16,7 @@ import {
   builtinFetchUsesHttp2,
   ignoreMacosTypeOfServiceEinval,
   installHttp1FetchDispatcher,
+  trustSystemCertificates,
 } from "./outboundHttp.ts";
 
 // Non-secret, self-signed 127.0.0.1 certificate, valid until 2126; ALPN h2 requires TLS.
@@ -163,4 +164,32 @@ if (calls === 0) throw new Error("fetch did not call setTypeOfService");
       expect(child.stdout.trim()).toBe("1.1");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+});
+
+describe("trustSystemCertificates", () => {
+  const fakeTls = (stores: { default: Array<string>; system: Array<string> | Error }) => {
+    const installed: Array<Array<string>> = [];
+    const tls = {
+      getCACertificates: (type: "default" | "system") => {
+        const store = stores[type];
+        if (store instanceof Error) throw store;
+        return store;
+      },
+      setDefaultCACertificates: (certificates: Array<string>) => void installed.push(certificates),
+    } as unknown as typeof NodeTls;
+    trustSystemCertificates(tls);
+    return installed;
+  };
+
+  it("adds only OS roots Node does not already trust", () => {
+    expect(fakeTls({ default: ["bundled", "shared"], system: ["shared", "corp"] })).toEqual([
+      ["bundled", "shared", "corp"],
+    ]);
+    expect(fakeTls({ default: ["bundled"], system: ["bundled"] })).toEqual([]);
+  });
+
+  it("keeps existing trust when it is not enumerable or the OS store is unreadable", () => {
+    expect(fakeTls({ default: [], system: ["corp"] })).toEqual([]);
+    expect(fakeTls({ default: ["bundled"], system: new Error("keychain locked") })).toEqual([]);
+  });
 });
