@@ -9,7 +9,7 @@ this checkout.
 
 | What                     | Orbit does                                                                                                                                                                                                                                                                                  | Reference                                                                                                                                                                        | Conn Server                                                                                                                                                                                                                                                |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Install                  | Native tarball `t3-0.1.7-linux-x64` (sha-pinned), unpacked into the agent folder, `bin/t3` symlinked; mounted read-only at `/opt/orbit-agent/current/agent/bin/t3`                                                                                                                          | `apps/gateway/resources/machine-software/recipe.json:1354-1365`, `swamp/ansible/tasks/instance-folder.yml:28-73`, `InstanceHostIntent.php:41`                                    | Same place, one static binary (`x86_64-unknown-linux-musl`)                                                                                                                                                                                                |
+| Install                  | Native tarball `t3-0.1.7-linux-x64` (sha-pinned), unpacked into the agent folder, `bin/t3` symlinked; mounted read-only at `/opt/orbit-agent/current/agent/bin/t3`                                                                                                                          | `apps/gateway/resources/machine-software/recipe.json:1354-1365`, `swamp/ansible/tasks/instance-folder.yml:28-73`, `InstanceHostIntent.php:41`                                    | Same place: the release tarball (see "Release tarball for Orbit")                                                                                                                                                                                      |
 | Upgrade                  | Flip the `current` symlink, then `systemctl try-restart t3.service` per container                                                                                                                                                                                                           | `instance-folder.yml:141-168`                                                                                                                                                    | Same                                                                                                                                                                                                                                                       |
 | Start                    | `ExecStart=/opt/orbit-agent/current/agent/bin/t3 serve --host=0.0.0.0 --port=3773 --no-browser`                                                                                                                                                                                             | `InstanceImage.php:179-212` (line 204)                                                                                                                                           | `serve`, `--host`, `--port`, `--no-browser`, `--flag=value` form: done                                                                                                                                                                                     |
 | Unit                     | `User=agent`, `WorkingDirectory=/home/agent`, `HOME=/home/agent`, `PATH=…/agent/bin:…`, `DISABLE_AUTOUPDATER=1`, `EnvironmentFile=/home/agent/.config/orbit/model.env`, `Type=simple`, `Restart=always`, `RestartSec=2`, no stop settings (SIGTERM, then SIGKILL)                           | `InstanceImage.php:188-209`                                                                                                                                                      | Home from `$HOME` → `~/.t3/userdata`; stops on SIGTERM in under 2 s: done                                                                                                                                                                                  |
@@ -49,6 +49,91 @@ How the `thread` commands reach the server, in both CLIs: read `userdata/server-
 session, 30 days, scopes `orchestration:read`, `orchestration:operate`, `settings:write`,
 `source-control:write`, label `t3 thread cli`), call `/mcp` with it, revoke it when the command
 ends. No token from outside is needed; whoever may write the auth store may run them.
+
+### Release tarball for Orbit (2026-11-15)
+
+Nick decided on 2026-11-15 that an Orbit Project chooses the T3 server or the Conn Server for
+its containers. Only the binary differs; credentials stay as with T3 (`model.env`, Codex's
+`config.toml`, through the AI router).
+
+**Build.** `node tools/release-tarball.mjs [--out <dir>]` on Linux x86_64 (needs `musl-gcc`
+and GNU tar). It writes `conn-server-<version>-linux-x64.tar.gz` and `<tarball>.sha256`, and
+prints the sha256. The version is `[workspace.package]` in `Cargo.toml`. Same input, same bytes.
+
+```text
+conn-server-<version>-linux-x64/
+├── conn-server          x86_64-unknown-linux-musl, static
+└── sdk-host/            index.mjs, drivers/, package.json, package-lock.json, .npmrc
+    └── node_modules/    @anthropic-ai/claude-agent-sdk only (npm ci --omit=dev --ignore-scripts)
+```
+
+**Release.** `.github/workflows/release.yml` builds it on `ubuntu-24.04` when a tag `v*` is
+pushed. The tag must be `v` plus the `conn-server` crate version. The run makes a GitHub
+Release with the tarball and its `.sha256`. `workflow_dispatch` on a branch only keeps the
+tarball as a workflow artifact. No tag has been pushed and no release made: Nick has not
+decided whether the repository goes public, and Orbit's fetch needs a URL it can read.
+
+**How the server finds the SDK host.** Orbit links `bin/conn-server` to
+`../conn-server/conn-server-<version>-linux-x64/conn-server`. The server follows that link
+and looks beside the real binary: `conn-sdk-host` (the single executable) first, then
+`sdk-host/index.mjs`, which it runs with `node` from `PATH`. `--sdk-host` and `CONN_SDK_HOST`
+still win. The `node` is Orbit's runtime folder's (`/opt/orbit-runtime/current/bin/node`,
+Node 24.22.1); the agent folder has none.
+
+**Recipe entry Orbit would add** (`apps/gateway/resources/machine-software/recipe.json`,
+`instances.agent`), beside `t3`:
+
+```json
+"conn-server": {
+    "version": "0.1.0",
+    "artifacts": {
+        "amd64": {
+            "url": "https://github.com/hardimpactdev/conn-server/releases/download/v0.1.0/conn-server-0.1.0-linux-x64.tar.gz",
+            "sha256": "<the .sha256 of the release>"
+        }
+    },
+    "bin": {
+        "conn-server": "conn-server-0.1.0-linux-x64/conn-server"
+    }
+}
+```
+
+A Project that chooses the Conn Server then gets `ExecStart=/opt/orbit-agent/current/agent/bin/conn-server
+serve --host=0.0.0.0 --port=3773 --no-browser` in `t3.service`, and Orbit's `t3 ...` CLI calls
+become `conn-server ...`. The Orbit side of the choice is not built.
+
+**Node.** The SDK host asks for Node 24.10 or newer (`engines`); the Claude Agent SDK 0.3.321
+asks for 18.14. The T3 server allows `^22.16 || ^23.11 || >=24.10` (`apps/server/package.json`),
+but its release `t3-0.1.7-linux-x64` embeds Node 26.12.1 and runs the SDK there. In Orbit the
+Conn Server runs the SDK on the runtime folder's Node 24.22.1. CI and the checks run the SDK
+host on 26.12.1. The SDK gives the `claude` CLI the same argv on 24.22.1 (proof below); a
+difference between the two Node versions in a live turn is not tested. If Orbit's runtime
+Node falls below 24.10, the SDK host may not start.
+
+**Proof on Beast (2026-11-15)**, in the `conn-proof` container of the Incus project
+`conn-server-proof` (Orbit's Instance image), no model and no credential. The tarball was
+built on Beast (`tools/release-tarball.mjs`, 10,131,239 bytes, sha256
+`b94b2054c3aeac93ed83170760e2b0d4b3c8cdebe6a0a9f163982eafc4f2e3ca`; a second pack gave the
+same bytes). The script is `/tmp/conn-release-proof/proof.sh` in the container.
+
+1. Orbit's folder steps: `tar -xf --no-same-owner` into `agent/conn-server`, the `bin` link,
+   the check for an executable regular file, `root:root` and `u+rwX,go+rX,go-w`, then
+   `root:2750` and `o-rwx` on `agent/`. Passed.
+2. As `agent` with Orbit's `PATH` order: `conn-server --version` runs; `node` is the runtime
+   folder's v24.22.1.
+3. The bundled SDK host under that node, as `agent`: `{"ch":"host","t":"ready","protocol":1,"node":"24.22.1"}`, exit 0.
+4. `conn-server serve` as `agent` became ready (`/.well-known/t3/environment` answered). Its
+   Claude status probe started the SDK host from the tarball, which loaded the SDK and
+   started the stub `claude` with the SDK's argv (`--output-format stream-json --verbose
+   --input-format stream-json ...`, `CLAUDE_CODE_ENTRYPOINT=t3-code`). The stub's parent was
+   `node .../conn-server-0.1.0-linux-x64/sdk-host/index.mjs` with exe
+   `/opt/orbit-runtime/<version>/node/node-v24.22.1-linux-x64/bin/node`; its parent was
+   `conn-server`. The stub exits 1, so the probe reports an error; no model was called. The
+   SDK host was gone after the probe. SIGTERM stopped the server and closed the port.
+
+Not proven: a live turn through the tarball, Codex from the tarball (it needs no SDK host),
+the release workflow itself (it has not run), and the server under Orbit's real
+`t3.service` with this layout (the earlier proof ran an older binary as `bin/t3`).
 
 ## 2. Conn desktop's local backend
 

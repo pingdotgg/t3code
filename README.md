@@ -544,9 +544,12 @@ host for all sessions: about 44 MB of private memory on macOS arm64.
 
 - **From a checkout:** run `npm ci` in `helpers/sdk-host` once. The server then runs
   `helpers/sdk-host/index.mjs` with `node` from `PATH`.
-- **In a container:** build the single executable with `helpers/sdk-host/build-sea.sh` and put
-  `conn-sdk-host` beside the `conn-server` binary. `--sdk-host <path>` or `CONN_SDK_HOST`
-  names another place.
+- **In a container:** the release tarball (`tools/release-tarball.mjs`) puts
+  `sdk-host/index.mjs` with its production `node_modules` beside the `conn-server` binary; the
+  server runs it with `node` from `PATH` (Orbit's runtime folder gives Node 24.22.1). See
+  `crates/conn-server/DROP-IN.md`, "Release tarball for Orbit". A `conn-sdk-host` single
+  executable (`helpers/sdk-host/build-sea.sh`) beside the binary wins over it.
+  `--sdk-host <path>` or `CONN_SDK_HOST` names another place.
 - **Proofs, with no model call:** `crates/conn-provider-claude/tools/conformance/run.sh`
   proves that the `claude` CLI gets the same argv, environment and stdin from the Conn Server
   as from the T3 server. `crates/conn-provider-claude/tools/t3-replay/run.sh` replays the T3

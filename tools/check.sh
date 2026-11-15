@@ -97,15 +97,18 @@ client_check() {
     node crates/conn-engine/tools/client-check.mjs "$scratch/export.json"
 }
 
-# CI installs the toolchain by name; it must be the one rust-toolchain.toml pins.
+# CI and the release build install the toolchain by name; it must be the one
+# rust-toolchain.toml pins.
 toolchain_pin() {
-  local pinned ci
+  local pinned ci workflow
   pinned="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
-  ci="$(sed -n 's/^  RUST_TOOLCHAIN: "\(.*\)"$/\1/p' .github/workflows/ci.yml)"
-  if [ -z "$pinned" ] || [ "$pinned" != "$ci" ]; then
-    printf 'rust-toolchain.toml pins %s; .github/workflows/ci.yml installs %s\n' "$pinned" "$ci"
-    return 1
-  fi
+  for workflow in .github/workflows/ci.yml .github/workflows/release.yml; do
+    ci="$(sed -n 's/^  RUST_TOOLCHAIN: "\(.*\)"$/\1/p' "$workflow")"
+    if [ -z "$pinned" ] || [ "$pinned" != "$ci" ]; then
+      printf 'rust-toolchain.toml pins %s; %s installs %s\n' "$pinned" "$workflow" "$ci"
+      return 1
+    fi
+  done
 }
 
 run "toolchain pin" toolchain_pin
