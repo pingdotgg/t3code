@@ -30,6 +30,7 @@ import {
   hasProviderUsageLimits,
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
+import { parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
@@ -236,6 +237,8 @@ export interface ThreadComposerProps {
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
+  /** Sending declines a pending approval and redirects the agent, so `/side` is plain text. */
+  readonly redirectsApproval: boolean;
   readonly canStopThread: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
@@ -499,7 +502,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     });
   const sendPresentation = resolveComposerSendPresentation({
     editingQueuedMessage: queuedEdit !== null,
-    running: props.activeThreadBusy,
+    // A side-chat command starts a side chat; it never queues or steers the running turn.
+    running:
+      props.activeThreadBusy &&
+      (props.redirectsApproval || parseSideChatCommand(draftMessage) === null),
     canSteer: props.canSteerActiveTurn,
     followUpBehavior: props.followUpBehavior,
     deliveryDeferred:

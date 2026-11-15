@@ -224,6 +224,9 @@ catalogs:
     micromark-util-character:
       specifier: 2.1.1
       version: 2.1.1
+    micromark-util-decode-string:
+      specifier: 2.0.1
+      version: 2.0.1
     micromark-util-types:
       specifier: 2.0.2
       version: 2.0.2
@@ -282,7 +285,7 @@ overrides:
   expo-widgets: 58.0.27
   '@ff-labs/fff-node': 0.11.0
   '@legendapp/list': 3.7.2
-  '@pierre/diffs': 1.7.0-beta.3
+  '@pierre/diffs': 1.7.0-beta.4
   '@react-native-ai/apple': 0.12.0
   '@react-native-menu/menu': 2.0.0
   '@react-navigation/native-stack': 7.21.0
@@ -363,12 +366,13 @@ patchedDependencies:
   '@alchemy.run/test@2.0.0-beta.85': 29c0539ea71d9cc372f0b16558640599beb9bc609605feb2a493da268d72713e
   '@clerk/expo-native-components@0.4.4': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4
   '@cursor/sdk@1.2.0': 57f502128bf6accd976963b126e227c86a45d815a53a8dc450461beae3bed4a4
+  '@effect/platform-node-shared@4.1.2': 06952843c6f431ca83c78762fd18d23cda76883801049ee311feced2438ecf14
   '@effect/vitest@4.1.2': 299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7
   '@expo/ui@58.0.27': 9f2547678939f4ec78fe45163b6455aad63d3c80353d7e0cc783f6a61a7ccc2f
   '@ff-labs/fff-node@0.11.0': 3be7107340e5f388114da259637828cd47f2b32eb8ae572440715c4e38cffe6e
   '@legendapp/list@3.7.2': 3c68607b8bb7a531873bcbe0b197d163ef1fdb4d4cf52a4ddf9d2b3804671658
   '@muse-code/sdk@1.4.6': 7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101
-  '@pierre/diffs@1.7.0-beta.3': 4a64f63a0def94c5add9d86d70560d26d6857e1f5150133862e42e1fd77bc4e8
+  '@pierre/diffs@1.7.0-beta.4': dd078a7448ce6727aaaa8b8b6702fe0ff02e85f18efa7c441a768530cabbe0cc
   '@react-native-ai/apple@0.12.0': 2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d
   '@react-native-menu/menu@2.0.0': 6872ba71b9847c5a0210b1b896923dadc3860faedfe28d9f062bcedfe786ef1d
   '@react-navigation/native-stack@7.21.0': 990d575444c4af2ce8218b3b7a8280fe244c03abbdb32b822a2e862f791dbf42
@@ -385,7 +389,7 @@ patchedDependencies:
   mdast-util-math@3.0.0: afe6b2c89e1eaddfd3c90cf2723f12c9a17d513e65beff51653781486013251c
   mdast-util-to-hast@13.2.1: 57ea46c73aea3c876ab8d351fe0482ddd081dcb4a0610576e399dbe5eb59d2b1
   micromark-extension-gfm-table@2.1.1: 9ad23a530e45d9f83cba1da8654fe16d5af8b59d5c73d5c7a7c91fd25b9be1d8
-  micromark-extension-llm-math@3.1.0: 4eeb9d9e27ebc75e98795e21c0719005483dad7d233055698257f7d10e91603b
+  micromark-extension-llm-math@3.1.0: 6c191d17ea797a4ac6cc88b901041c5e6c5d4c4e508102a033e3f14e95bd2add
   micromark@4.0.2: cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67
   node-pty@1.2.0-beta.15: f1e680afec85f650699ea756f91f469844ec4c976f4f168492a45c6b3f67d651
   react-native-gesture-handler@3.5.0: 171379dd378f8f11e9187876dec2116e5cbf5f21cef6576cdde6956518324f98
@@ -568,8 +572,8 @@ importers:
         specifier: 0.3.0
         version: 0.3.0
       '@pierre/diffs':
-        specifier: 1.7.0-beta.3
-        version: 1.7.0-beta.3(patch_hash=4a64f63a0def94c5add9d86d70560d26d6857e1f5150133862e42e1fd77bc4e8)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        specifier: 1.7.0-beta.4
+        version: 1.7.0-beta.4(patch_hash=dd078a7448ce6727aaaa8b8b6702fe0ff02e85f18efa7c441a768530cabbe0cc)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@pierre/highlights':
         specifier: 'catalog:'
         version: 0.5.0
@@ -855,7 +859,7 @@ importers:
         version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/platform-node-shared':
         specifier: 4.1.2
-        version: 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
+        version: 4.1.2(patch_hash=06952843c6f431ca83c78762fd18d23cda76883801049ee311feced2438ecf14)(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
       '@ff-labs/fff-node':
         specifier: 0.11.0
         version: 0.11.0(patch_hash=3be7107340e5f388114da259637828cd47f2b32eb8ae572440715c4e38cffe6e)
@@ -1089,8 +1093,8 @@ importers:
         specifier: 'catalog:'
         version: 1.8.0
       '@pierre/diffs':
-        specifier: 1.7.0-beta.3
-        version: 1.7.0-beta.3(patch_hash=4a64f63a0def94c5add9d86d70560d26d6857e1f5150133862e42e1fd77bc4e8)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        specifier: 1.7.0-beta.4
+        version: 1.7.0-beta.4(patch_hash=dd078a7448ce6727aaaa8b8b6702fe0ff02e85f18efa7c441a768530cabbe0cc)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@pierre/trees':
         specifier: 1.0.0-beta.6
         version: 1.0.0-beta.6(@pierre/theme@2.0.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
@@ -1505,8 +1509,8 @@ importers:
   packages/client-runtime:
     dependencies:
       '@pierre/diffs':
-        specifier: 1.7.0-beta.3
-        version: 1.7.0-beta.3(patch_hash=4a64f63a0def94c5add9d86d70560d26d6857e1f5150133862e42e1fd77bc4e8)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        specifier: 1.7.0-beta.4
+        version: 1.7.0-beta.4(patch_hash=dd078a7448ce6727aaaa8b8b6702fe0ff02e85f18efa7c441a768530cabbe0cc)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -2115,6 +2119,9 @@ importers:
       micromark-util-character:
         specifier: 'catalog:'
         version: 2.1.1
+      micromark-util-decode-string:
+        specifier: 'catalog:'
+        version: 2.0.1
       property-information:
         specifier: ^7.2.0
         version: 7.2.0
@@ -6351,8 +6358,8 @@ packages:
     resolution: {integrity: sha512-ODOov0sGMJMf3jPonOkgGqPknTsu+DdQ7kD++gz8aI+aFMOMHFbWAA2taqXXVTdP+OTOQR/znGvSpmkeI0WTYQ==}
     engines: {node: '>=14.18.0'}
 
-  '@pierre/diffs@1.7.0-beta.3':
-    resolution: {integrity: sha512-eAoAoL9aoO7vR9VV5NCLIuIAEr4yu5LsBnhTbyoy8wDFjT0y7bDrlhX8doO7FUb/MCd0Ldcd15Ga/yTOq2mjBA==}
+  '@pierre/diffs@1.7.0-beta.4':
+    resolution: {integrity: sha512-QtsUN1eO1hfAie0SUBRZ8xfjzybetaOzq3xFPw7UYl/XLkx9KxQ1uRDXHat4B44S2SW8HBt63yWKCSzQ6OQmEQ==}
     peerDependencies:
       react: ^18.3.1 || ^19.0.0
       react-dom: ^18.3.1 || ^19.0.0
@@ -6364,6 +6371,9 @@ packages:
 
   '@pierre/highlights@0.5.0':
     resolution: {integrity: sha512-G8gscrHrik3YjKd+tPTcmivJ/W0zRrtg4adVxnfX7+415+0Qplo6qUWuEX5R0UkA1fMhmE2sOSuLBMNGDtLhIw==}
+
+  '@pierre/highlights@0.5.1':
+    resolution: {integrity: sha512-c2WF6sgwgKdxXU6FpWDLWUYHRca/cJy+3QJkWAqYqEAFxqlPf8eSH0ehHcFFjKBmT+9KBl9H7q6z7HMRU7+m6g==}
 
   '@pierre/patches@0.0.1':
     resolution: {integrity: sha512-NycJQVQNuqmBdr7u1LsUcmkiIz1fRm9xhWZyRbm21oJYd0MVVCa45t9Lsuj5IKrTMBonxOuh4LMv+R3BpL4bmQ==}
@@ -14311,13 +14321,13 @@ snapshots:
 
   '@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)':
     dependencies:
-      '@effect/platform-node-shared': 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
+      '@effect/platform-node-shared': 4.1.2(patch_hash=06952843c6f431ca83c78762fd18d23cda76883801049ee311feced2438ecf14)(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
       effect: 4.1.3
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node-shared@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)':
+  '@effect/platform-node-shared@4.1.2(patch_hash=06952843c6f431ca83c78762fd18d23cda76883801049ee311feced2438ecf14)(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)':
     dependencies:
       '@types/ws': 8.18.2
       effect: 4.1.3
@@ -14328,7 +14338,7 @@ snapshots:
 
   '@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6)':
     dependencies:
-      '@effect/platform-node-shared': 4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
+      '@effect/platform-node-shared': 4.1.2(patch_hash=06952843c6f431ca83c78762fd18d23cda76883801049ee311feced2438ecf14)(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6)
       effect: 4.1.3
       redis: 6.2.1
       undici: 8.12.4
@@ -16430,9 +16440,9 @@ snapshots:
       tslib: 2.8.1
       webcrypto-core: 1.9.2
 
-  '@pierre/diffs@1.7.0-beta.3(patch_hash=4a64f63a0def94c5add9d86d70560d26d6857e1f5150133862e42e1fd77bc4e8)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@pierre/diffs@1.7.0-beta.4(patch_hash=dd078a7448ce6727aaaa8b8b6702fe0ff02e85f18efa7c441a768530cabbe0cc)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
-      '@pierre/highlights': 0.5.0
+      '@pierre/highlights': 0.5.1
       '@pierre/patches': 0.0.1
       '@pierre/theme': 2.0.0
       '@pierre/theming': 1.0.2(@pierre/theme@2.0.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
@@ -16447,6 +16457,8 @@ snapshots:
       - '@shikijs/themes'
 
   '@pierre/highlights@0.5.0': {}
+
+  '@pierre/highlights@0.5.1': {}
 
   '@pierre/patches@0.0.1': {}
 
@@ -21272,7 +21284,7 @@ snapshots:
       micromark-util-combine-extensions: 2.0.1
       micromark-util-types: 2.0.2
 
-  micromark-extension-llm-math@3.1.0(patch_hash=4eeb9d9e27ebc75e98795e21c0719005483dad7d233055698257f7d10e91603b):
+  micromark-extension-llm-math@3.1.0(patch_hash=6c191d17ea797a4ac6cc88b901041c5e6c5d4c4e508102a033e3f14e95bd2add):
     dependencies:
       '@types/katex': 0.16.8
       devlop: 1.1.0
@@ -22741,7 +22753,7 @@ snapshots:
     dependencies:
       '@types/mdast': 4.0.4
       mdast-util-math: 3.0.0(patch_hash=afe6b2c89e1eaddfd3c90cf2723f12c9a17d513e65beff51653781486013251c)(supports-color@8.1.1)
-      micromark-extension-math: micromark-extension-llm-math@3.1.0(patch_hash=4eeb9d9e27ebc75e98795e21c0719005483dad7d233055698257f7d10e91603b)
+      micromark-extension-math: micromark-extension-llm-math@3.1.0(patch_hash=6c191d17ea797a4ac6cc88b901041c5e6c5d4c4e508102a033e3f14e95bd2add)
       unified: 11.0.5
     transitivePeerDependencies:
       - supports-color

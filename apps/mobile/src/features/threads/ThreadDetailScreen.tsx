@@ -1890,6 +1890,10 @@ function ThreadDetailBody(
                         serverConfig={props.serverConfig}
                         queueCount={props.selectedThreadQueueCount}
                         activeThreadBusy={props.activeThreadBusy}
+                        redirectsApproval={
+                          props.activePendingApprovals.length > 0 &&
+                          props.activePendingUserInput === null
+                        }
                         canStopThread={props.canStopThread}
                         environmentId={props.environmentId}
                         projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}
