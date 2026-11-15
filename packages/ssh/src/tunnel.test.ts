@@ -340,13 +340,13 @@ describe("ssh tunnel scripts", () => {
     },
   );
 
-  // The home path holds characters that sha256sum and shasum escape when they print a file name.
+  // sha256sum and shasum escape a newline in a file name they print, so the home path has one.
   it.each(["sha256sum", "shasum"])("names missing gzip after verifying with %s", (checksum) => {
     const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-runner-"));
     try {
       const bin = NodePath.join(root, "bin");
       const release = NodePath.join(root, "release");
-      const home = NodePath.join(root, "home\\\ncache");
+      const home = NodePath.join(root, "home\ncache");
       const archive = `t3-${ARCHIVE.archiveVersion}-linux-x64.tar.gz`;
       NodeFS.mkdirSync(bin);
       NodeFS.mkdirSync(home);
