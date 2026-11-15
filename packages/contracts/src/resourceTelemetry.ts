@@ -289,6 +289,7 @@ export const DesktopUpdateStatusReport = Schema.Struct({
   version: Schema.Literal(1),
   type: Schema.Literal("desktopUpdateStatus"),
   requestId: Schema.optionalKey(TrimmedNonEmptyString),
+  preparedRequestId: Schema.optionalKey(TrimmedNonEmptyString),
   outcome: Schema.optionalKey(DesktopUpdateRemoteOutcome),
   reason: Schema.optionalKey(TrimmedNonEmptyString),
   state: DesktopUpdateStateSchema,
@@ -297,6 +298,8 @@ export type DesktopUpdateStatusReport = typeof DesktopUpdateStatusReport.Type;
 
 export const ShellEnvironmentPatch = Schema.Struct({
   PATH: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  ANDROID_HOME: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  ANDROID_SDK_ROOT: Schema.optionalKey(Schema.NullOr(Schema.String)),
   DBUS_SESSION_BUS_ADDRESS: Schema.optionalKey(Schema.NullOr(Schema.String)),
   DISPLAY: Schema.optionalKey(Schema.NullOr(Schema.String)),
   LANG: Schema.optionalKey(Schema.NullOr(Schema.String)),

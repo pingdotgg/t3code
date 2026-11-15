@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -12,6 +13,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import {
   GitCommandError,
+  VcsCheckpointStorageError,
   VcsProcessExitError,
   VcsUnsupportedOperationError,
   type VcsSwitchRefInput,
@@ -37,6 +39,7 @@ import {
 } from "@t3tools/contracts";
 import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import {
   makeGitVcsDriverCore,
   PATCH_RENDER_PREFIX_ARGS,
@@ -121,7 +124,10 @@ export interface ExecuteGitProgress {
 }
 
 export interface CreateWorktreeProgress {
-  /** Git refuses existing paths; claimed paths belong to this call and can be removed on cancel. */
+  /**
+   * Runs uninterruptibly once the worktree exists; from then on the caller owns its cleanup.
+   * For new-branch calls on Git supporting add --reason, cancellation before the claim removes what it made.
+   */
   readonly onWorktreeClaimed?: (path: string) => Effect.Effect<void, never>;
   readonly onCheckoutProgress?: (input: {
     percent: number;
@@ -177,12 +183,16 @@ export interface GitPushResult {
   status: "pushed" | "skipped_up_to_date";
   branch: string;
   upstreamBranch?: string | undefined;
+  /** Set when `upstreamBranch` is on a configured push remote instead of the tracked upstream. */
+  pushRemote?: string | undefined;
   setUpstream?: boolean | undefined;
 }
 
 export interface GitPushTarget {
   remoteName: string;
   branchName: string;
+  /** The tracked upstream is current, yet pushes go to this configured push remote. */
+  viaPushRemote: boolean;
 }
 
 export interface GitRangeContext {
@@ -327,6 +337,8 @@ export class GitVcsDriver extends Context.Service<
       cwd: string,
       options?: GitRemoteStatusOptions,
     ) => Effect.Effect<GitRemoteStatusDetails, GitCommandError>;
+    /** Refs, HEAD and shallow boundaries. Null when the snapshot cannot be read. */
+    readonly readRefSnapshot: (cwd: string) => Effect.Effect<string | null>;
     readonly prepareCommitContext: (
       cwd: string,
       filePaths?: readonly string[],
@@ -563,6 +575,7 @@ const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
     args: ReadonlyArray<string>,
     options?: {
       readonly stdin?: string;
+      readonly onSpawn?: () => void;
       readonly env?: NodeJS.ProcessEnv;
       readonly allowNonZeroExit?: boolean;
       readonly timeoutMs?: number;
@@ -578,6 +591,7 @@ const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
       cwd,
       spawnCwd: globalThis.process.cwd(),
       ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
+      ...(options?.onSpawn !== undefined ? { onSpawn: options.onSpawn } : {}),
       ...(options?.env !== undefined ? { env: options.env } : {}),
       ...(options?.allowNonZeroExit !== undefined
         ? { allowNonZeroExit: options.allowNonZeroExit }
@@ -649,6 +663,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
     gitCommand(vcsProcess, input.operation, input.cwd, input.args, {
       ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+      ...(input.onSpawn !== undefined ? { onSpawn: input.onSpawn } : {}),
       ...(input.env !== undefined ? { env: input.env } : {}),
       ...(input.allowNonZeroExit !== undefined ? { allowNonZeroExit: input.allowNonZeroExit } : {}),
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
@@ -1064,8 +1079,42 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const indexId = yield* random.uuidV4();
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
       const hostEnv = yield* HostProcess.Environment;
+      // VcsProcess clears inherited object selectors, so every other command uses this store.
+      const sharedObjects = path.join(gitCommonDir, "objects");
+      const quotedObjects = quoteGitPatchPath(sharedObjects);
+      // Isolate bulk-checkin packs so cleanup cannot remove another Git writer's objects.
+      const privateObjects = yield* Effect.acquireRelease(
+        fileSystem
+          .makeTempDirectory({ directory: sharedObjects, prefix: "tmp_objdir-t3-checkpoint-" })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new VcsCheckpointStorageError({
+                  operation,
+                  cwd: input.cwd,
+                  stage: "isolate",
+                  cause,
+                }),
+            ),
+          ),
+        (directory) =>
+          fileSystem.remove(directory, { recursive: true, force: true }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not remove private checkpoint objects", {
+                reason: cause.reason._tag,
+              }),
+            ),
+          ),
+      );
       const commitEnv: NodeJS.ProcessEnv = {
         GIT_INDEX_FILE: tempIndexPath,
+        GIT_OBJECT_DIRECTORY: privateObjects,
+        // A filter must not publish refs that depend on our disposable store.
+        GIT_QUARANTINE_PATH: privateObjects,
+        // Git accepts C-quoted alternate paths, including path-list separators.
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: quotedObjects.startsWith('"')
+          ? quotedObjects
+          : `"${quotedObjects}"`,
         GIT_AUTHOR_NAME: "T3 Code",
         GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
         GIT_COMMITTER_NAME: "T3 Code",
@@ -1369,6 +1418,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                   GIT_INDEX_FILE: undefined,
                   GIT_OBJECT_DIRECTORY: undefined,
                   GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+                  GIT_QUARANTINE_PATH: undefined,
                 };
                 const exclusions: Array<string> = [];
                 for (const entry of candidates) {
@@ -1566,13 +1616,100 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
+        // Git writers have exited; bound publication by fanout directory.
+        yield* fileSystem.readDirectory(privateObjects).pipe(
+          Effect.flatMap((directories) =>
+            Effect.forEach(
+              directories.filter(
+                (directory) => directory === "pack" || /^[0-9a-f]{2}$/.test(directory),
+              ),
+              (directory) =>
+                Effect.gen(function* () {
+                  const source = path.join(privateObjects, directory);
+                  const destination = path.join(sharedObjects, directory);
+                  // Most fanouts already exist; avoid constructing an EEXIST error
+                  // for each of them on every capture. mkdir still handles the race.
+                  if (!(yield* fileSystem.exists(destination)))
+                    yield* fileSystem.makeDirectory(destination).pipe(
+                      Effect.andThen(
+                        Effect.gen(function* () {
+                          // Git has already applied core.sharedRepository to the source.
+                          // chmod bypasses umask, but never changes a pre-existing bucket.
+                          const { mode } = yield* fileSystem.stat(source);
+                          yield* fileSystem.chmod(destination, mode & 0o7777);
+                        }),
+                      ),
+                      Effect.catchIf(
+                        (cause) => cause.reason._tag === "AlreadyExists",
+                        () => Effect.void,
+                      ),
+                      Effect.uninterruptible,
+                    );
+                  const names = yield* fileSystem.readDirectory(source);
+                  // Per-object spans would swamp the capture span for large workspaces.
+                  const linkObject = Effect.fnUntraced(function* (name: string) {
+                    const from = path.join(source, name);
+                    const to = path.join(destination, name);
+                    yield* fileSystem.link(from, to).pipe(
+                      Effect.catchIf(
+                        (cause) =>
+                          cause.reason._tag === "PermissionDenied" ||
+                          cause.reason._tag === "Unknown",
+                        () =>
+                          Effect.gen(function* () {
+                            if (yield* fileSystem.exists(to)) return;
+                            // Git also falls back to rename without hardlinks; identical object names are interchangeable.
+                            yield* fileSystem.rename(from, to);
+                          }),
+                      ),
+                      Effect.catchIf(
+                        (cause) => cause.reason._tag === "AlreadyExists",
+                        () => Effect.void,
+                      ),
+                    );
+                  });
+                  if (directory !== "pack") {
+                    yield* Effect.forEach(
+                      names.filter((name) => /^(?:[0-9a-f]{38}|[0-9a-f]{62})$/.test(name)),
+                      linkObject,
+                      { discard: true },
+                    );
+                    return;
+                  }
+                  const files = new Set(names);
+                  for (const name of names) {
+                    if (!/^pack-(?:[0-9a-f]{40}|[0-9a-f]{64})\.pack$/.test(name)) continue;
+                    const base = name.slice(0, -5);
+                    if (!files.has(`${base}.idx`)) continue;
+                    // Link metadata before the pack so an I/O error cannot strand a
+                    // large unindexed pack. Defer cancellation across this short group
+                    // of links. Never roll back shared links: a concurrent writer may
+                    // already depend on them. Ref publication still happens last.
+                    yield* Effect.forEach(
+                      [".keep", ".promisor", ".rev", ".idx", ".pack"]
+                        .map((extension) => `${base}${extension}`)
+                        .filter((file) => files.has(file)),
+                      linkObject,
+                      { discard: true },
+                    ).pipe(Effect.uninterruptible);
+                  }
+                }),
+              { concurrency: 16, discard: true },
+            ),
+          ),
+          Effect.mapError(
+            (cause) =>
+              new VcsCheckpointStorageError({ operation, cwd: input.cwd, stage: "publish", cause }),
+          ),
+        );
+
         yield* execute({
           operation,
           cwd: input.cwd,
           args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
         });
       }).pipe(Effect.ensuring(cleanupTempIndex));
-    }),
+    }, Effect.scoped),
 
     hasCheckpointRef: (input) =>
       resolveCheckpointCommit(input.cwd, input.checkpointRef).pipe(
@@ -1597,15 +1734,48 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         cwd: input.cwd,
         args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", "."],
       });
-      // An empty index and checkpoint have nothing for git restore's pathspec to match.
-      if (tracked.stdout.length > 0) {
-        const sparseConfig = yield* execute({
+      const sparseConfig =
+        tracked.stdout.length > 0
+          ? yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["config", "--bool", "core.sparseCheckout"],
+              allowNonZeroExit: true,
+            })
+          : null;
+      const sparseCheckout = sparseConfig?.stdout.trim() === "true";
+      // Restoring away the last tracked file can remove a nested workspace directory.
+      const recreateWorkspace = fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new VcsProcessExitError({
+              operation,
+              command: "git restore",
+              cwd: input.cwd,
+              exitCode: 0,
+              detail: `Could not recreate the checkpoint workspace: ${cause.message}`,
+            }),
+        ),
+      );
+      const resetIndex = Effect.gen(function* () {
+        // On Windows clean can remove './' and exit 0.
+        yield* recreateWorkspace;
+        yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["config", "--bool", "core.sparseCheckout"],
-          allowNonZeroExit: true,
+          args: [...longPaths, "reset", "--quiet", "--", "."],
         });
-        const sparseCheckout = sparseConfig.stdout.trim() === "true";
+      });
+      let mutationStarted = false;
+      const onSpawn = () => {
+        mutationStarted = true;
+      };
+      // Queued commands preserve user staging; spawned children stop before this scope resets it.
+      yield* Effect.addFinalizer((exit) =>
+        mutationStarted && Exit.hasInterrupts(exit) ? resetIndex.pipe(Effect.ignore) : Effect.void,
+      );
+      // An empty index and checkpoint have nothing for git restore's pathspec to match.
+      if (tracked.stdout.length > 0) {
         const restore = [...longPaths, "restore", "--source", commitOid, "--worktree", "--staged"];
         // restore leaves skip-worktree paths alone. Outside a sparse checkout every such bit was
         // set by hand and capture recorded the file, so override them all.
@@ -1613,6 +1783,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           operation,
           cwd: input.cwd,
           args: [...restore, ...(sparseCheckout ? [] : ["--ignore-skip-worktree-bits"]), "--", "."],
+          onSpawn,
         });
         if (sparseCheckout) {
           // Sparse exclusions stay excluded; only skip-worktree paths the rules select are manual.
@@ -1684,28 +1855,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
       }
-      // Restoring away the last tracked file can remove a nested workspace directory.
-      const recreateWorkspace = fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new VcsProcessExitError({
-              operation,
-              command: "git restore",
-              cwd: input.cwd,
-              exitCode: 0,
-              detail: `Could not recreate the checkpoint workspace: ${cause.message}`,
-            }),
-        ),
-      );
-      const resetIndex = Effect.gen(function* () {
-        // On Windows clean can remove './' and exit 0.
-        yield* recreateWorkspace;
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: [...longPaths, "reset", "--quiet", "--", "."],
-        });
-      });
       yield* recreateWorkspace;
       const clean = execute({
         operation,
@@ -1713,6 +1862,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         args: [...longPaths, "clean", "-fd", "--", "."],
         env: { LC_ALL: "C" },
         allowNonZeroExit: true,
+        onSpawn,
       });
       let cleaned = yield* clean;
       // Removing a new .gitignore exposes the files it hid; clean again until nothing is left.
@@ -1766,7 +1916,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       yield* resetIndex;
 
       return true;
-    }),
+    }, Effect.scoped),
 
     diffCheckpoints: Effect.fn("GitVcsDriver.checkpoints.diffCheckpoints")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.diffCheckpoints";

@@ -3017,7 +3017,13 @@ it.effect("carries a slice on without sending the rows it already sent", () =>
       cursors: { "github.com acme/web": "2026-07-02T00:00:00Z|1|3" },
     });
 
-    assert.deepStrictEqual(cursors, [{ updatedBefore: "2026-07-02T00:00:00Z", delivered: 1 }]);
+    assert.deepStrictEqual(cursors, [
+      {
+        updatedBefore: "2026-07-02T00:00:00Z",
+        delivered: 1,
+        seenAt: [{ repository: "acme/web", number: 3 }],
+      },
+    ]);
     assert.deepStrictEqual(
       result.entries.map((entry) => entry.number),
       [4],
@@ -4416,6 +4422,43 @@ it.effect("keeps viewed files itself for a host that keeps none of its own", () 
       asked.map((paths) => [...paths].toSorted()),
       [["src/a.ts", "src/b.ts"]],
     );
+  }),
+);
+
+it.effect("records shown revisions until the reader ticks the pushed version", () =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const revisions = new Map([
+      ["src/a.ts", "pushed-a"],
+      ["src/b.ts", "current-b"],
+    ]);
+    const service = yield* environmentViewedService(revisions, asked);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [
+        { path: "src/a.ts", viewed: true, revision: "shown-a" },
+        { path: "src/b.ts", viewed: true },
+      ],
+    });
+    assert.deepStrictEqual(asked, [["src/b.ts"]]);
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "dismissed" },
+      { path: "src/b.ts", state: "viewed" },
+    ]);
+
+    const reads = asked.length;
+    revisions.set("src/a.ts", "pushed-a-again");
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true, revision: "pushed-a-again" }],
+    });
+    assert.strictEqual(asked.length, reads);
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "viewed" },
+      { path: "src/b.ts", state: "viewed" },
+    ]);
   }),
 );
 
