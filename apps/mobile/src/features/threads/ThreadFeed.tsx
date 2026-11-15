@@ -26,6 +26,7 @@ import { LinkRequestCard } from "./LinkRequestCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import {
+  WorktreePreparingHeader,
   WorktreeWorkingHeader,
   WorktreeSetupCard,
   type WorktreeSetupCardProps,
@@ -321,6 +322,7 @@ export interface ThreadFeedProps {
   readonly toolCallVisibility?: ToolCallVisibility;
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
+  readonly preparingWorktree?: boolean;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
   readonly onEditPendingMessage: ((message: QueuedThreadMessage) => void) | null;
@@ -1090,7 +1092,11 @@ interface MarkdownLinkHandlers {
     actionId: string,
     reply?: MarkdownLinkReply,
   ) => void;
-  readonly onImagePress?: (href: string) => void;
+  /** `withGallery` pages the image through its message's images; the feed's viewer sits outside that scope. */
+  readonly onImagePress?: (
+    href: string,
+    withGallery?: (source: FilePreviewSource) => FilePreviewSource,
+  ) => void;
   readonly resolveImageSource?: MarkdownImageSourceResolver;
   readonly fileEmbedLabel?: (href: string, standalone: boolean) => string | null;
   readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;
@@ -1172,8 +1178,11 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   const models = useModelMentions(props.environmentId, props.markdown);
   const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
+  const withGallery = useFilePreviewGallery();
+  const onImagePress = props.linkHandlers.onImagePress;
   const linkHandlers: MarkdownLinkHandlers = {
     ...props.linkHandlers,
+    ...(onImagePress ? { onImagePress: (href: string) => onImagePress(href, withGallery) } : {}),
     onLinkPress: (href) => props.linkHandlers.onLinkPress(href, props.reply),
     onFileContextMenuAction: (href, actionId) =>
       props.linkHandlers.onFileContextMenuAction(href, actionId, props.reply),
@@ -3007,7 +3016,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     };
     return lookup().catch(() => relativePath);
   };
-  const onMarkdownLinkPress = (href: string, imageEmbed = false, reply?: MarkdownLinkReply) => {
+  const onMarkdownLinkPress = (
+    href: string,
+    imageEmbed = false,
+    reply?: MarkdownLinkReply,
+    withGallery?: (source: FilePreviewSource) => FilePreviewSource,
+  ) => {
     markdownLinkRequest.current?.abort();
     const request = new AbortController();
     markdownLinkRequest.current = request;
@@ -3040,7 +3054,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         if (request.signal.aborted) return;
         openPreview(
           scope,
-          media.kind === "video" ? { video: media.source } : { file: media.source },
+          media.kind === "video"
+            ? { video: media.source }
+            : { file: withGallery ? withGallery(media.source) : media.source },
         );
       };
       const resource = "resource" in media.source ? media.source.resource : null;
@@ -3115,7 +3131,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       ),
     onLinkPress: (href, reply) => onMarkdownLinkPress(href, false, reply),
     linkCustomization: enrichedThreadLinkCustomization,
-    onImagePress: (href) => onMarkdownLinkPress(href, true),
+    onImagePress: (href, withGallery) => onMarkdownLinkPress(href, true, undefined, withGallery),
     resolveImageSource,
     fileContextMenu: (href) => {
       const skill = enrichedSkillReference(href, props.skills);
@@ -3346,6 +3362,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     formatMessageTime,
     worktreeSetup: props.worktreeSetup,
     setupWorkingStartedAt: props.setupWorkingStartedAt,
+    preparingWorktree: props.preparingWorktree,
     dispatchingMessageId: props.dispatchingMessageId,
     unsettledTurnId,
     copiedRowId,
@@ -3430,7 +3447,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const groupedFeed = groupFeed(presentedFeed, {
     workflowOpeningMessageId: workflowOpening?.messageId,
     setupAnchorIndex:
-      props.worktreeSetup || props.setupWorkingStartedAt ? setupAnchorIndex : undefined,
+      props.worktreeSetup || props.setupWorkingStartedAt || props.preparingWorktree
+        ? setupAnchorIndex
+        : undefined,
   });
   const { contentInsetEndAdjustment } = props;
   const attachList = (list: LegendListRef | null) => {
@@ -3800,6 +3819,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
           ) : props.setupWorkingStartedAt && info.index === setupAnchorIndex ? (
             <WorktreeWorkingHeader startedAt={props.setupWorkingStartedAt} />
+          ) : props.preparingWorktree && info.index === setupAnchorIndex ? (
+            <WorktreePreparingHeader />
           ) : null}
         </ThreadMediaVisibility>
       </MessageImageGalleryScope>
@@ -3896,6 +3917,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                 {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
                 {setupAnchorIndex < 0 && props.worktreeSetup ? (
                   <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
+                ) : setupAnchorIndex < 0 && props.preparingWorktree ? (
+                  <WorktreePreparingHeader />
                 ) : null}
                 {props.historyControls ? (
                   <ThreadFeedLoadEarlierControl {...props.historyControls} />
