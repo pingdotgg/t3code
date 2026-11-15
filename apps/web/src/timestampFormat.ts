@@ -144,6 +144,34 @@ export function formatShortTimestamp(isoDate: string, timestampFormat: Timestamp
   return getTimestampFormatter(timestampFormat, false).format(date);
 }
 
+const dateTimeFormatterCache = new Map<TimestampFormat, Intl.DateTimeFormat>();
+
+/** A date and time, such as "Oct 20, 2026, 5:30 PM". */
+export function formatDateTimeTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
+  const date = parseTimestampDate(isoDate);
+  if (!date) return "";
+  let formatter = dateTimeFormatterCache.get(timestampFormat);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(timestampLocale, {
+      dateStyle: "medium",
+      timeStyle: "short",
+      ...(timestampFormat === "locale" ? {} : { hour12: timestampFormat === "12-hour" }),
+    });
+    dateTimeFormatterCache.set(timestampFormat, formatter);
+  }
+  return formatter.format(date);
+}
+
+/** A wall-clock `H:MM` or `HH:MM` that names no date or zone, such as a daily schedule's time. */
+export function formatTimeOfDay(timeOfDay: string, timestampFormat: TimestampFormat): string {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(timeOfDay);
+  if (!match) return timeOfDay;
+  // Formatted in UTC so the host zone cannot shift the wall time.
+  return getTimestampFormatter(timestampFormat, false, "UTC").format(
+    Date.UTC(2000, 0, 1, Number(match[1]), Number(match[2])),
+  );
+}
+
 const numericDateOptions: Intl.DateTimeFormatOptions = { month: "numeric", day: "numeric" };
 const numericDateWithYearOptions: Intl.DateTimeFormatOptions = {
   ...numericDateOptions,
