@@ -23,6 +23,167 @@ import { SessionControl } from "./SessionControl.ts";
 
 const decodeEvaluateInput = Schema.decodeUnknownSync(PreviewAutomationEvaluateInput);
 
+describe("JPEG screenshot dimensions", () => {
+  const encode = (bytes: number[]) => Buffer.from(bytes).toString("base64");
+  const frame = [0xff, 0xd8, 0xff, 0xc0, 0, 7, 8, 0, 24, 0, 32];
+
+  it("reads valid dimensions and rejects invalid or incomplete frames", () => {
+    expect(ServerBrowserPage.jpegSize(encode(frame))).toEqual({ width: 32, height: 24 });
+    for (const bytes of [
+      [],
+      [0xff, 0xd8, 0xff, 0xe1, 0, 20, 1],
+      frame.slice(0, -1),
+      [...frame.slice(0, 7), 0, 0, 0, 32],
+      [...frame.slice(0, 9), 0, 0],
+    ]) {
+      expect(() => ServerBrowserPage.jpegSize(encode(bytes))).toThrow("Invalid JPEG screenshot.");
+    }
+  });
+});
+
+describe("snapshot deadline diagnostics", () => {
+  const never = () => new Promise<never>(() => {});
+  const stalledSnapshot = async (options: {
+    readonly stalled?: "metrics";
+    readonly page?: Partial<Record<keyof Page, unknown>>;
+    readonly advanceMs: number;
+  }) => {
+    vi.useFakeTimers();
+    try {
+      const frame = {};
+      const page = {
+        viewportSize: () => ({ width: 1280, height: 800 }),
+        mainFrame: () => frame,
+        frames: () => [frame],
+        on: () => {},
+        evaluate: async () => ({
+          url: "about:blank",
+          title: "",
+          loading: false,
+          visibleText: "",
+          interactiveElements: [],
+        }),
+        ariaSnapshot: async () => "",
+        ...options.page,
+      } as unknown as Page;
+      const cdp = {
+        send: async (method: string) => {
+          if (options.stalled === "metrics") return never();
+          if (method === "Page.captureScreenshot") return { data: "" };
+          if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
+          if (method === "Page.createIsolatedWorld") return { executionContextId: 1 };
+          if (method === "Runtime.evaluate") return { result: { value: [] } };
+          throw new Error(`Unexpected command: ${method}`);
+        },
+      } as unknown as CDPSession;
+      const captured = ServerBrowserPage.snapshot({
+        page,
+        cdp,
+        renderScale: options.stalled === "metrics" ? "display" : 1,
+        consoleEntries: [],
+        networkEntries: [],
+        actionTimeline: [],
+      }).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(options.advanceMs);
+      return await captured;
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+
+  it("identifies a stalled metrics read", async () => {
+    expect(await stalledSnapshot({ stalled: "metrics", advanceMs: 10_000 })).toMatchObject({
+      tag: "PreviewAutomationTimeoutError",
+      detail: { timeoutMs: 10_000, pendingStages: ["metrics"] },
+    });
+  });
+
+  it("keeps an accessibility tree that hit its own timeout", async () => {
+    const timedOut = Object.assign(new Error("Timeout exceeded"), { name: "TimeoutError" });
+    const captured = await stalledSnapshot({
+      page: { ariaSnapshot: () => Promise.reject(timedOut) },
+      advanceMs: 0,
+    });
+    expect(captured).toMatchObject({
+      tag: "PreviewAutomationTimeoutError",
+      detail: { timeoutMs: 10_000 },
+    });
+    expect((captured as ServerBrowserPage.ServerBrowserOperationError).detail).toMatchObject({
+      pendingStages: expect.arrayContaining(["accessibility tree"]),
+    });
+  });
+
+  it("omits a timed-out stage after it succeeds on retry", async () => {
+    let attempts = 0;
+    const timedOut = Object.assign(new Error("Timeout exceeded"), { name: "TimeoutError" });
+    expect(
+      await stalledSnapshot({
+        page: {
+          evaluate: never,
+          ariaSnapshot: async () => {
+            if (attempts++ === 0) throw timedOut;
+            return "";
+          },
+        },
+        advanceMs: 10_000,
+      }),
+    ).toMatchObject({ detail: { timeoutMs: 10_000, pendingStages: ["page state"] } });
+  });
+
+  it.each(["elementHandle", "contentFrame"] as const)(
+    "identifies stalled iframe %s lookup",
+    async (stage) => {
+      const main = {};
+      const child = { evaluate: never, parentFrame: () => main };
+      const captured = await stalledSnapshot({
+        page: {
+          mainFrame: () => main,
+          frames: () => [main, child],
+          context: () => ({
+            newCDPSession: () =>
+              Promise.reject(new Error("Only this preview tab's page can be attached")),
+          }),
+          ariaSnapshot: async () => "- iframe [ref=f1]:\n  - text: inside",
+          locator: () => ({
+            elementHandle:
+              stage === "elementHandle" ? never : async () => ({ contentFrame: never }),
+          }),
+        },
+        advanceMs: 10_000,
+      });
+      expect(captured).toMatchObject({
+        detail: { timeoutMs: 10_000, pendingStages: expect.arrayContaining(["frames"]) },
+      });
+    },
+  );
+
+  it("reports a frame that didn't answer as the frame's own timeout", async () => {
+    const main = {};
+    // A desktop tab refuses frame sessions, so the frame is read in its own world.
+    const child = { evaluate: never, parentFrame: () => main };
+    const captured = await stalledSnapshot({
+      page: {
+        mainFrame: () => main,
+        frames: () => [main, child],
+        context: () => ({
+          newCDPSession: () =>
+            Promise.reject(new Error("Only this preview tab's page can be attached")),
+        }),
+        ariaSnapshot: async () => "- iframe [ref=f1]:\n  - text: inside",
+        locator: () => ({
+          elementHandle: async () => ({ contentFrame: async () => child, dispose: async () => {} }),
+        }),
+      },
+      // Both attempts wait out the frame; neither reaches the capture deadline.
+      advanceMs: 2_000,
+    });
+    expect(captured).toMatchObject({
+      tag: "PreviewAutomationTimeoutError",
+      detail: { timeoutMs: 1_000, pendingStages: ["frames"] },
+    });
+  });
+});
+
 describe("server browser capture deadlines", () => {
   it("releases control after an unanswered capture and ignores its late reply", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -448,7 +609,7 @@ describe("server browser snapshot screenshot", () => {
   const screenshotOf = async (html: string) => {
     const page = await context.newPage();
     await page.setContent(html);
-    const { screenshot, fullScreenshot } = await ServerBrowserPage.snapshot({
+    const input = {
       page,
       cdp: await context.newCDPSession(page),
       renderScale: 2,
@@ -456,7 +617,8 @@ describe("server browser snapshot screenshot", () => {
       consoleEntries: [],
       networkEntries: [],
       actionTimeline: [],
-    });
+    };
+    const { screenshot, fullScreenshot } = await ServerBrowserPage.snapshot(input);
     // The server has no DOM types, so the decoder runs as page source.
     const points = [
       [0.15, 0.75],
@@ -475,7 +637,7 @@ describe("server browser snapshot screenshot", () => {
         Array.from(context.getImageData(x * bitmap.width, y * bitmap.height, 1, 1).data),
       );
     })()`)) as Array<[number, number, number, number]>;
-    return { screenshot, fullScreenshot, pixels };
+    return { screenshot, fullScreenshot, pixels, input };
   };
   const colorOf = ([red, green, blue]: readonly [number, number, number, number]) =>
     blue - red > 100 ? "blue" : red - blue > 100 ? "red" : `rgb(${red}, ${green}, ${blue})`;
@@ -490,13 +652,20 @@ describe("server browser snapshot screenshot", () => {
   });
 
   it("captures a plain page at the shrunk size with its content in place", async () => {
-    const { screenshot, fullScreenshot, pixels } = await screenshotOf(halves(""));
+    const { screenshot, fullScreenshot, pixels, input } = await screenshotOf(halves(""));
+    const metadata = await ServerBrowserPage.snapshotMetadata(input);
 
     expect({
       size: [screenshot.width, screenshot.height],
       fullSize: [fullScreenshot?.width, fullScreenshot?.height],
+      metadataSize: metadata.screenshot,
       colors: pixels.map(colorOf),
-    }).toEqual({ size: [1280, 800], fullSize: [2560, 1600], colors: ["blue", "red", "red"] });
+    }).toEqual({
+      size: [1280, 800],
+      fullSize: [2560, 1600],
+      metadataSize: { width: 1280, height: 800 },
+      colors: ["blue", "red", "red"],
+    });
   });
 
   it("records the destination of a finite entrance animation without waiting on infinite ones", async () => {
@@ -622,6 +791,52 @@ describe("server browser drag", () => {
   });
 });
 
+describe("server browser action timeout", () => {
+  type StepOptions = { readonly timeout?: number };
+  it.each([
+    {
+      action: "hover",
+      act: (page: Page) => ServerBrowserPage.hover(page, { selector: "#a", timeoutMs: 9_000 }),
+      last: ["#a.hover 1"],
+    },
+    {
+      action: "drag",
+      act: (page: Page) =>
+        ServerBrowserPage.drag(page, { source: "#a", target: "#b", timeoutMs: 9_000 }),
+      last: ["#a.dragTo 1", "#b.boundingBox 1"],
+    },
+  ])("gives the $action's steps one shared timeout", async ({ act, last }) => {
+    let now = 0;
+    using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const steps: Array<string> = [];
+    const box = { x: 0, y: 0, width: 20, height: 20 };
+    const page = {
+      locator: (selector: string) => {
+        const record = (step: string, options: StepOptions) =>
+          steps.push(`${selector}.${step} ${options.timeout}`);
+        return {
+          // Each step that finds the target takes 5 of the 9 seconds.
+          scrollIntoViewIfNeeded: async (options: StepOptions) => {
+            record("scrollIntoViewIfNeeded", options);
+            now += 5_000;
+          },
+          boundingBox: async (options: StepOptions) => {
+            record("boundingBox", options);
+            now += 5_000;
+            return box;
+          },
+          hover: async (options: StepOptions) => record("hover", options),
+          dragTo: async (_target: unknown, options: StepOptions) => record("dragTo", options),
+        };
+      },
+    } as unknown as Page;
+
+    await act(page);
+
+    expect(steps).toEqual(["#a.scrollIntoViewIfNeeded 9000", "#a.boundingBox 4000", ...last]);
+  });
+});
+
 describe("server browser click", () => {
   it("clicks a target the page replaced while it was being scrolled into view", async () => {
     let scrolls = 0;
@@ -714,6 +929,14 @@ describe("server browser evaluate", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("server browser unresponsive script", () => {
+  it("leaves a page that answers alone", async () => {
+    const send = vi.fn(async (_method: string) => ({}));
+    await ServerBrowserPage.stopUnresponsiveScript({ send } as unknown as CDPSession);
+    expect(send.mock.calls.map(([method]) => method)).toEqual(["Runtime.evaluate"]);
   });
 });
 
