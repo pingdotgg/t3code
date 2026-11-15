@@ -13,7 +13,6 @@ import {
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
@@ -107,23 +106,13 @@ export class VcsActionRemoteFailureError extends Schema.TaggedError<VcsActionRem
     environmentId: EnvironmentId,
     cwd: Schema.String,
     phase: Schema.NullOr(GitActionProgressPhase),
-    remoteMessage: Schema.Redacted(Schema.String),
+    remoteMessageLength: Schema.Number,
   },
 ) {
   override get message(): string {
     const phase = this.phase === null ? "execution" : this.phase;
     return `Source control action '${this.action}' failed during ${phase}.`;
   }
-}
-
-const isVcsActionRemoteFailureError = Schema.is(VcsActionRemoteFailureError);
-
-/** Text for the user who ran the action; logs and spans only see the error's generic `message`. */
-export function vcsActionFailureDescription(error: unknown, fallback: string): string {
-  if (isVcsActionRemoteFailureError(error)) {
-    return Redacted.value(error.remoteMessage).trim() || error.message;
-  }
-  return error instanceof Error ? error.message : fallback;
 }
 
 export class VcsActionMissingTerminalEventError extends Schema.TaggedError<VcsActionMissingTerminalEventError>()(
@@ -310,7 +299,7 @@ export function consumeVcsActionProgress<E, R>(
               environmentId: input.target.environmentId,
               cwd: input.target.cwd,
               phase: terminalEvent.phase,
-              remoteMessage: Redacted.make(terminalEvent.message),
+              remoteMessageLength: terminalEvent.message.length,
             }),
           );
         }

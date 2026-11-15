@@ -24,7 +24,6 @@ import { AsyncResult } from "effect/reactivity";
 import { useBranches } from "./queries";
 import { threadEnvironment } from "./threads";
 import { vcsActionManager, vcsEnvironment } from "./vcs";
-import { vcsActionFailureDescription } from "@t3tools/client-runtime/state/vcs";
 import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { readEnvironmentScope, useEnvironmentScope } from "./session";
@@ -200,7 +199,7 @@ export function useSelectedThreadGitActions() {
         : await vcsActionManager.track(appAtomRegistry, target, { operation, label }, run);
     if (AsyncResult.isFailure(result)) {
       const error = Cause.squash(result.cause);
-      const message = vcsActionFailureDescription(error, "Git action failed.");
+      const message = error instanceof Error ? error.message : "Git action failed.";
       setPendingConnectionError(message);
       showGitActionResult({ type: "error", title: "Git action failed", description: message });
       return null;

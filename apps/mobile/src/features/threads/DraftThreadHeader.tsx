@@ -12,7 +12,6 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsActionManager, vcsEnvironment } from "../../state/vcs";
-import { vcsActionFailureDescription } from "@t3tools/client-runtime/state/vcs";
 import { useVcsActionState } from "../../state/use-vcs-action-state";
 import { ThreadHeader } from "./ThreadHeader";
 
@@ -85,10 +84,7 @@ export function DraftThreadHeader(props: {
             actionId: uuidv4(),
           });
           if (AsyncResult.isFailure(result)) {
-            Dialog.alert(
-              "Git action failed",
-              vcsActionFailureDescription(Cause.squash(result.cause), "Git action failed."),
-            );
+            Dialog.alert("Git action failed", String(Cause.squash(result.cause)));
             return null;
           }
           return result.value;
