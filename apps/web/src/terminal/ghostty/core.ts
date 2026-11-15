@@ -176,7 +176,7 @@ const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 const strictDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const encoder = new TextEncoder();
 
-// Legacy X10 reports carry coordinates past 94 as single bytes above 0x7f, which are not UTF-8.
+// Legacy X10 reports can contain bytes above 0x7f that are not valid UTF-8.
 function mouseReport(bytes: Uint8Array): GhosttyMouseReport {
   try {
     return { data: strictDecoder.decode(bytes), binary: false };
