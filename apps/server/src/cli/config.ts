@@ -119,9 +119,10 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
   Flag.optional,
 );
+const decodeAdvertisedUrls = Schema.decodeEffect(AdvertisedUrlsFromString);
 const advertiseUrlFlag = Flag.String("advertise-url").pipe(
   Flag.mapEffect((value) =>
-    Schema.decodeUnknownEffect(AdvertisedUrlsFromString)(value).pipe(
+    decodeAdvertisedUrls(value).pipe(
       Effect.mapError((error) => new CliError.ValidationError({ message: error.message })),
     ),
   ),
