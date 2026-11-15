@@ -21,11 +21,22 @@ import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes
 import { fencingLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
+const delegatedTaskPrefix = "thread:delegated-task:";
+
+const suggestedThreadId = (threadId: ThreadId) => {
+  if (!threadId.startsWith(delegatedTaskPrefix)) return ThreadId.make(`mcp:${threadId}`);
+  const rest = threadId.slice(delegatedTaskPrefix.length);
+  // encodeURIComponent throws on lone surrogates, which a JSON string can carry.
+  if (!rest.isWellFormed()) return null;
+  const encoded = encodeURIComponent(rest);
+  return encoded === rest ? null : ThreadId.make(`${delegatedTaskPrefix}${encoded}`);
+};
+
 /**
- * Threads an agent starts over MCP are `mcp:<uuid>`, and agents often paste the
- * bare uuid. The id is never rewritten, so permission checks keyed on it still
- * hold; the miss only names a live thread the caller could read by its full id.
- * Ids from another machine miss here too. The link hint is static: listing links probes peers.
+ * Agents paste bare uuids for `mcp:<uuid>` threads and unencoded delegated-task ids.
+ * The id is never rewritten, so permission checks keyed on it still hold; the miss
+ * only names a live thread the caller could read by its full id. Ids from another
+ * machine miss here too. The link hint is static: listing links probes peers.
  */
 export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")(function* (
   threads: Pick<ThreadManagement.ThreadManagementService["Service"], "getThreadShell">,
@@ -33,10 +44,13 @@ export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")
   threadId: ThreadId,
   message: string,
 ) {
-  const prefixed = ThreadId.make(`mcp:${threadId}`);
-  const shell = yield* threads.getThreadShell(prefixed).pipe(Effect.orElseSucceed(() => null));
+  const suggested = suggestedThreadId(threadId);
+  const shell =
+    suggested === null
+      ? null
+      : yield* threads.getThreadShell(suggested).pipe(Effect.orElseSucceed(() => null));
   const mcpHint =
-    shell === null || shell.deletedAt !== null ? "" : ` Did you mean \`${prefixed}\`?`;
+    shell === null || shell.deletedAt !== null ? "" : ` Did you mean \`${suggested}\`?`;
   const caller =
     scope.thread === undefined
       ? null
