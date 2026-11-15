@@ -3109,9 +3109,13 @@ describe("OrchestratorMcpService provider resolution", () => {
             dispatchMode: { type: "start_immediately" },
           });
 
-          // No project, or this thread's own: the thread shares this checkout.
+          // No project or environment, or this thread's own: the thread shares this checkout.
           const own = yield* service.createThreads(scope, {
-            threads: [{}, { target: { projectId } }],
+            threads: [
+              {},
+              { target: { projectId } },
+              { target: { environmentId: scope.environmentId } },
+            ],
             clientRequestId: "own-project",
           });
           for (const thread of own.threads) {

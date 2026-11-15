@@ -2955,7 +2955,12 @@ const make = Effect.gen(function* () {
         }
         const parentNodeId = parentRun.rootNodeId;
         // Check every request before creating any thread, so a bad entry cannot leave a partial batch.
-        if (input.threads.some((request) => request.target?.environmentId !== undefined)) {
+        if (
+          input.threads.some(
+            (request) =>
+              PeerForwarding.remoteTarget(callerScope, request.target?.environmentId) !== undefined,
+          )
+        ) {
           return yield* failure(
             "invalid_request",
             "create_threads creates threads on this machine. For a linked environment, use t3_thread_launch with environmentId. No thread was created.",
