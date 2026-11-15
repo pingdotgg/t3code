@@ -99,7 +99,7 @@ export function HomeRouteScreen() {
     moveFolder,
     setFolderCollect,
     applyFolderRule,
-    settleFolder,
+    parkFolder,
     archiveThread,
     confirmDeleteThread,
     settleThread,
@@ -219,7 +219,7 @@ export function HomeRouteScreen() {
           onMoveFolder={moveFolder}
           onFolderCollect={setFolderCollect}
           onApplyFolderRule={applyFolderRule}
-          onSettleFolder={settleFolder}
+          onParkFolder={parkFolder}
           onRenameFolder={renameFolder}
           onDeleteFolder={deleteFolder}
           onMoveThread={moveThread}

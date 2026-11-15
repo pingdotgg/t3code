@@ -16,7 +16,7 @@ import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { showThreadUndoNotice } from "./thread-undo-notice";
-import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
@@ -234,6 +234,12 @@ function confirmThreadDeletion(
   });
 }
 
+export type ThreadFolderParkAction =
+  | "settle"
+  | "unsettle"
+  | "wake"
+  | { readonly snoozedUntil: string };
+
 export function useThreadListActions(): {
   readonly moveThreadToFolder: (
     thread: EnvironmentThreadShell,
@@ -252,7 +258,10 @@ export function useThreadListActions(): {
     choice: ThreadFolderCollectChoice,
   ) => Promise<boolean>;
   readonly applyFolderRule: (folder: EnvironmentThreadFolder) => Promise<boolean>;
-  readonly settleFolder: (folder: EnvironmentThreadFolder, settled: boolean) => Promise<boolean>;
+  readonly parkFolder: (
+    folder: EnvironmentThreadFolder,
+    action: ThreadFolderParkAction,
+  ) => Promise<boolean>;
   readonly archiveThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly settleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
@@ -357,14 +366,22 @@ export function useThreadListActions(): {
       return null;
     }
   };
-  const settleFolder = async (folder: EnvironmentThreadFolder, settled: boolean) => {
+  // Members that need the user cannot snooze, so a snoozed folder skips them.
+  const parkFolder = async (folder: EnvironmentThreadFolder, action: ThreadFolderParkAction) => {
     const allMembers = await loadFolderMembers(folder);
     if (allMembers === null) return false;
-    const members = allMembers.filter(
-      (thread) => (thread.settledOverride === "settled") !== settled,
-    );
+    // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
+    const now = new Date().toISOString();
     const results = await Promise.all(
-      members.map((thread) => (settled ? settleThread(thread) : unsettleThread(thread))),
+      allMembers.flatMap((thread) => {
+        const settled = thread.settledOverride === "settled";
+        if (action === "settle") return settled ? [] : [settleThread(thread)];
+        if (action === "unsettle") return settled ? [unsettleThread(thread)] : [];
+        if (action === "wake") return thread.snoozedUntil != null ? [unsnoozeThread(thread)] : [];
+        return settled || effectiveSnoozed(thread, { now }) || !canSnooze(thread, { now })
+          ? []
+          : [snoozeThread(thread, action.snoozedUntil)];
+      }),
     );
     return results.every(Boolean);
   };
@@ -961,7 +978,7 @@ export function useThreadListActions(): {
     moveFolder,
     setFolderCollect,
     applyFolderRule,
-    settleFolder,
+    parkFolder,
     archiveThread: (thread) => archiveThread(liveThread(thread)),
     confirmDeleteThread: (thread) => confirmDeleteThread(liveThread(thread)),
     settleThread: (thread) => settleThread(liveThread(thread)),

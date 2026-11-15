@@ -37,6 +37,7 @@ import {
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
+  resolveSidebarFolderTally,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -1704,78 +1705,81 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
+    const waiting = { ...idle, runtime: { ...runtime, status: "idle" as const } };
+    expect(resolveSidebarFolderTally([idle])).toEqual([]);
+    expect(resolveSidebarFolderTally([working, waiting, unread, limited, working])).toEqual([
+      { status: "attention", count: 1 },
+      { status: "unread", count: 1 },
+      { status: "working", count: 2 },
+    ]);
+    expect(resolveSidebarFolderTally([waiting])).toEqual([{ status: "waiting", count: 1 }]);
   });
 });
 
 describe("foldSidebarThreadFolders", () => {
-  it("moves every member into its folder in shelf order and keeps empty folders", () => {
+  const folderKey = (id: string) => `${localEnvironmentId}:${id}`;
+  const folder = (id: string, threadIds: readonly ThreadId[]) => ({
+    environmentId: localEnvironmentId,
+    id: ThreadFolderId.make(id),
+    name: id,
+    icon: null,
+    rule: null,
+    autoFile: false,
+    ruleSetAt: null,
+    threadIds: [...threadIds],
+    createdAt: "2026-03-09T10:00:00Z",
+    updatedAt: "2026-03-09T10:00:00Z",
+  });
+  const base = {
+    pinnedThreads: [] as Thread[],
+    activeThreads: [] as Thread[],
+    workingThreads: [] as Thread[],
+    snoozedThreads: [] as Thread[],
+    settledThreads: [] as Thread[],
+    collapsedKeys: new Set<string>(),
+    parkedOpenKeys: new Set<string>(),
+    routeThreadKey: null,
+    shelfExpanded: { working: true, snoozed: true, settled: true },
+  };
+
+  it("keeps a mixed folder on top, pinned first, with parked members in a footer", () => {
     const active = makeThread({ id: ThreadId.make("active"), activeOrderKey: "b" });
     const working = makeThread({ id: ThreadId.make("working"), activeOrderKey: "a" });
     const unfiled = makeThread({ id: ThreadId.make("unfiled") });
     const pinned = makeThread({ id: ThreadId.make("pinned"), pinnedAt: "2026-03-09T10:00:00Z" });
-    const snoozed = makeThread({ id: ThreadId.make("snoozed") });
+    const soon = makeThread({ id: ThreadId.make("soon"), snoozedUntil: "2026-03-10T09:00:00Z" });
+    const later = makeThread({ id: ThreadId.make("later"), snoozedUntil: "2026-03-12T14:00:00Z" });
     const settled = makeThread({ id: ThreadId.make("settled") });
-    const folder = {
-      environmentId: localEnvironmentId,
-      id: ThreadFolderId.make("folder"),
-      name: "Work",
-      icon: null,
-      rule: null,
-      autoFile: false,
-      ruleSetAt: null,
-      threadIds: [settled.id, active.id, snoozed.id, working.id, pinned.id],
-      createdAt: "2026-03-09T10:00:00Z",
-      updatedAt: "2026-03-09T10:00:00Z",
-    };
     const input = {
+      ...base,
       pinnedThreads: [pinned],
       activeThreads: [active, unfiled],
       workingThreads: [working],
-      snoozedThreads: [snoozed],
+      snoozedThreads: [soon, later],
       settledThreads: [settled],
-      folders: [folder, { ...folder, id: ThreadFolderId.make("empty"), threadIds: [] }],
-      collapsedKeys: new Set<string>(),
-      routeThreadKey: null,
-      settledShelfExpanded: true,
+      folders: [
+        folder("work", [settled.id, active.id, later.id, soon.id, working.id, pinned.id]),
+        folder("empty", []),
+      ],
     };
     const result = foldSidebarThreadFolders(input);
-    expect(result.blocks[0]?.rows).toEqual([
+    const work = result.blocks[0]!;
+    expect(work.placement).toBe("open");
+    expect(work.rows).toEqual([
       { thread: pinned, section: "pinned" },
       { thread: working, section: "active" },
       { thread: active, section: "active" },
-      { thread: snoozed, section: "snoozed" },
-      { thread: settled, section: "settled" },
     ]);
-    expect(result.blocks.map((block) => block.settled)).toEqual([false, false]);
-    expect(result.blocks[1]?.threads).toEqual([]);
+    // The footer names the soonest wake, whatever order the members were snoozed in.
+    expect(work.parked).toEqual({
+      expanded: false,
+      snoozedCount: 2,
+      settledCount: 1,
+      nextWakeAt: soon.snoozedUntil,
+    });
+    expect(work.liveThreads).toEqual([pinned, working, active]);
+    expect(result.blocks[1]).toMatchObject({ placement: "open", threads: [] });
     expect(result.activeThreads).toEqual([unfiled]);
-    const allSettled = foldSidebarThreadFolders({
-      ...input,
-      folders: [{ ...folder, threadIds: [settled.id] }],
-    });
-    expect(allSettled.blocks[0]?.settled).toBe(true);
-    expect(allSettled.blocks[0]?.collapsed).toBe(true);
-    const opened = foldSidebarThreadFolders({
-      ...input,
-      folders: [{ ...folder, threadIds: [settled.id] }],
-      collapsedKeys: new Set([`${localEnvironmentId}:${folder.id}`]),
-    });
-    expect(opened.blocks[0]?.rows).toEqual([{ thread: settled, section: "settled" }]);
-    const shelfClosed = foldSidebarThreadFolders({
-      ...input,
-      folders: [{ ...folder, threadIds: [settled.id, snoozed.id] }],
-      settledShelfExpanded: false,
-    });
-    expect(shelfClosed.blocks[0]?.rows).toHaveLength(2);
-    const settledShelfClosed = foldSidebarThreadFolders({
-      ...input,
-      folders: [{ ...folder, threadIds: [settled.id, snoozed.id] }],
-      snoozedThreads: [],
-      settledThreads: [settled, snoozed],
-      settledShelfExpanded: false,
-      routeThreadKey: `${localEnvironmentId}:${snoozed.id}`,
-    });
-    expect(settledShelfClosed.blocks[0]?.rows).toEqual([{ thread: snoozed, section: "settled" }]);
     for (const shelf of [
       result.pinnedThreads,
       result.workingThreads,
@@ -1784,13 +1788,103 @@ describe("foldSidebarThreadFolders", () => {
     ]) {
       expect(shelf).toEqual([]);
     }
+
+    const footerOpen = foldSidebarThreadFolders({
+      ...input,
+      parkedOpenKeys: new Set([folderKey("work")]),
+    });
+    expect(footerOpen.blocks[0]?.rows.map((row) => row.thread)).toEqual([
+      pinned,
+      working,
+      active,
+      soon,
+      later,
+      settled,
+    ]);
+    expect(footerOpen.blocks[0]?.parked?.expanded).toBe(true);
+
+    // The open thread stays visible even while the footer is folded.
+    const routed = foldSidebarThreadFolders({ ...input, routeThreadKey: folderKey(later.id) });
+    expect(routed.blocks[0]?.rows.map((row) => row.thread)).toContain(later);
+
     const collapsed = foldSidebarThreadFolders({
       ...input,
-      collapsedKeys: new Set([`${localEnvironmentId}:${folder.id}`]),
-      routeThreadKey: `${localEnvironmentId}:${settled.id}`,
+      collapsedKeys: new Set([folderKey("work")]),
+      routeThreadKey: folderKey(settled.id),
     });
     expect(collapsed.blocks[0]?.rows).toEqual([{ thread: settled, section: "settled" }]);
-    expect(collapsed.blocks[0]?.hiddenThreads).toEqual([pinned, working, active, snoozed]);
+    expect(collapsed.blocks[0]?.hiddenThreads).toEqual([pinned, working, active, soon, later]);
+    expect(collapsed.blocks[0]?.parked).toBeNull();
+  });
+
+  it("moves a folder to the shelf all its members share, and back when one leaves", () => {
+    const a = makeThread({ id: ThreadId.make("a"), snoozedUntil: "2026-03-12T14:00:00Z" });
+    const b = makeThread({ id: ThreadId.make("b"), snoozedUntil: "2026-03-10T09:00:00Z" });
+    const snoozedFolder = foldSidebarThreadFolders({
+      ...base,
+      snoozedThreads: [a, b],
+      folders: [folder("f", [a.id, b.id])],
+    }).blocks[0]!;
+    expect(snoozedFolder).toMatchObject({
+      placement: "snoozed",
+      settled: false,
+      collapsed: false,
+      parked: null,
+      liveThreads: [],
+      snoozedCount: 2,
+      nextWakeAt: b.snoozedUntil,
+    });
+
+    // A message sent to one member wakes only that one; the folder returns to the top.
+    const woken = { ...b, snoozedUntil: null };
+    const oneWoken = foldSidebarThreadFolders({
+      ...base,
+      activeThreads: [woken],
+      snoozedThreads: [a],
+      folders: [folder("f", [a.id, b.id])],
+    }).blocks[0]!;
+    expect(oneWoken).toMatchObject({ placement: "open", nextWakeAt: null });
+    expect(oneWoken.rows).toEqual([{ thread: woken, section: "active" }]);
+    expect(oneWoken.parked).toMatchObject({ snoozedCount: 1, nextWakeAt: a.snoozedUntil });
+
+    const working = foldSidebarThreadFolders({
+      ...base,
+      workingThreads: [a, b],
+      folders: [folder("f", [a.id, b.id])],
+    }).blocks[0]!;
+    expect(working.placement).toBe("working");
+    expect(working.liveThreads).toEqual([a, b]);
+
+    // A pinned member keeps a folder on top.
+    const pinnedWorking = foldSidebarThreadFolders({
+      ...base,
+      pinnedThreads: [a],
+      workingThreads: [b],
+      folders: [folder("f", [a.id, b.id])],
+    }).blocks[0]!;
+    expect(pinnedWorking.placement).toBe("open");
+
+    // Shelf folders fold away with a closed shelf; settled ones also start collapsed.
+    const closedShelf = foldSidebarThreadFolders({
+      ...base,
+      snoozedThreads: [a, b],
+      folders: [folder("f", [a.id, b.id])],
+      shelfExpanded: { working: true, snoozed: false, settled: true },
+    }).blocks[0]!;
+    expect(closedShelf.collapsed).toBe(true);
+    const settled = foldSidebarThreadFolders({
+      ...base,
+      settledThreads: [a],
+      folders: [folder("f", [a.id])],
+    }).blocks[0]!;
+    expect(settled).toMatchObject({ placement: "settled", settled: true, collapsed: true });
+    const settledOpened = foldSidebarThreadFolders({
+      ...base,
+      settledThreads: [a],
+      folders: [folder("f", [a.id])],
+      collapsedKeys: new Set([folderKey("f")]),
+    }).blocks[0]!;
+    expect(settledOpened.rows).toEqual([{ thread: a, section: "settled" }]);
   });
 });
 

@@ -149,7 +149,7 @@ interface HomeScreenProps {
   readonly onMoveFolder: ReturnType<typeof useThreadListActions>["moveFolder"];
   readonly onFolderCollect: ReturnType<typeof useThreadListActions>["setFolderCollect"];
   readonly onApplyFolderRule: ReturnType<typeof useThreadListActions>["applyFolderRule"];
-  readonly onSettleFolder: ReturnType<typeof useThreadListActions>["settleFolder"];
+  readonly onParkFolder: ReturnType<typeof useThreadListActions>["parkFolder"];
   readonly onMoveThread: (
     thread: EnvironmentThreadShell,
     direction: ThreadMoveDestination,
@@ -511,7 +511,8 @@ export function HomeScreen(props: HomeScreenProps) {
           onMove={props.onMoveFolder}
           onCollect={props.onFolderCollect}
           onApplyRule={props.onApplyFolderRule}
-          onSettle={props.onSettleFolder}
+          onPark={props.onParkFolder}
+          snoozePresets={snoozePresetsByEnvironmentId.get(item.environmentId)}
           onRename={props.onRenameFolder}
           onDelete={props.onDeleteFolder}
           environmentLabel={

@@ -3,10 +3,13 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import type { EnvironmentThreadFolder } from "@t3tools/client-runtime/state/thread-folders";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/client-runtime/thread-pull-requests";
 import { AuthOrchestrationOperateScope, type ProjectIconOverride } from "@t3tools/contracts";
-import type { SidebarThreadFolderStyle } from "@t3tools/contracts/settings";
+import type { SidebarThreadFolderStyle, TimestampFormat } from "@t3tools/contracts/settings";
 import {
+  AlarmClockIcon,
   CheckIcon,
   ChevronDownIcon,
+  ChevronRightIcon,
+  CircleDotDashedIcon,
   FolderClosedIcon,
   FolderOpenIcon,
   Undo2Icon,
@@ -15,6 +18,7 @@ import {
   memo,
   useRef,
   useState,
+  type ReactNode,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -27,21 +31,58 @@ import { useUiStateStore } from "../../uiStateStore";
 import { ProjectIconOverrideGlyph } from "../ProjectFavicon";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
+import { resolveSidebarFolderTally, resolveThreadLastVisitedAt } from "../Sidebar.logic";
+import type { SnoozePreset } from "../Sidebar.snooze";
+import { formatShortTimestamp, formatUpcomingTimestamp } from "../../timestampFormat";
+import { SnoozeMenuButton } from "./SidebarThreadRow";
 
-const FOLDER_DOT_CLASS_NAME = {
-  attention: "bg-warning",
-  failed: "bg-error",
-  unread: "bg-success",
-  working: "bg-info",
+const FOLDER_TALLY_CLASS_NAME = {
+  attention: { dot: "bg-warning", text: "text-warning-foreground" },
+  failed: { dot: "bg-error", text: "text-error-foreground" },
+  unread: { dot: "bg-success", text: "text-success-foreground" },
+  working: { dot: "bg-info", text: "text-info-foreground" },
+  waiting: { dot: null, text: "text-sidebar-muted-foreground" },
 } as const;
 
-const FOLDER_DOT_LABEL = {
-  attention: ", needs you",
-  failed: ", failed",
-  unread: ", done",
-  working: ", working",
+const FOLDER_TALLY_LABEL = {
+  attention: "need you",
+  failed: "failed",
+  unread: "done",
+  working: "working",
+  waiting: "waiting",
 } as const;
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** A wake time short enough for a folder header: "10:30 AM", "Tue 9:00", or a date past a week. */
+function threadFolderWakeLabel(wakeAt: string, timestampFormat: TimestampFormat): string {
+  const wake = new Date(wakeAt);
+  const now = new Date();
+  const time = formatShortTimestamp(wakeAt, timestampFormat);
+  if (wake.toDateString() === now.toDateString()) return time;
+  if (wake.getTime() - now.getTime() < WEEK_MS) {
+    return `${wake.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
+  }
+  return formatUpcomingTimestamp(wakeAt, timestampFormat);
+}
+
+/** "3 snoozed · Tue 9:00 · 1 settled": the parked members an open folder folds away. */
+export function threadFolderParkedLabel(
+  parked: {
+    readonly snoozedCount: number;
+    readonly settledCount: number;
+    readonly nextWakeAt: string | null;
+  },
+  timestampFormat: TimestampFormat,
+): string {
+  return [
+    ...(parked.snoozedCount > 0 ? [`${parked.snoozedCount} snoozed`] : []),
+    ...(parked.snoozedCount > 0 && parked.nextWakeAt !== null
+      ? [threadFolderWakeLabel(parked.nextWakeAt, timestampFormat)]
+      : []),
+    ...(parked.settledCount > 0 ? [`${parked.settledCount} settled`] : []),
+  ].join(" · ");
+}
 
 const DOUBLE_CLICK_WINDOW_MS = 500;
 const MAX_NAME_LENGTH = 80;
@@ -126,6 +167,36 @@ function FolderRenameInput(props: {
   );
 }
 
+function FolderActionButton(props: {
+  label: string;
+  className: string;
+  onPress: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={props.label}
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onPress();
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+            className={props.className}
+          />
+        }
+      >
+        {props.children}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{props.label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 /**
  * The top of a thread folder's card. It is one flat `<li>` carrying the tint; the
  * member rows that follow it in the list carry the same tint and close the card.
@@ -134,10 +205,16 @@ export const SidebarThreadFolderHeader = memo(function SidebarThreadFolderHeader
   folder: EnvironmentThreadFolder;
   folderKey: string;
   style: SidebarThreadFolderStyle;
+  /** Shelf folders: snoozed ones fade, settled ones turn grey. */
+  placement: "open" | "working" | "snoozed" | "settled";
   collapsed: boolean;
   threads: readonly EnvironmentThreadShell[];
   hiddenThreads: readonly EnvironmentThreadShell[];
-  hiddenLiveThreads: readonly EnvironmentThreadShell[];
+  /** Pinned, active and working members: the ones the header tally counts. */
+  liveThreads: readonly EnvironmentThreadShell[];
+  /** The soonest wake of a folder on the Snoozed shelf. */
+  nextWakeAt: string | null;
+  timestampFormat: TimestampFormat;
   isDropTarget: boolean;
   isDragging: boolean;
   /** Where a dragged folder would land relative to this one. */
@@ -146,6 +223,10 @@ export const SidebarThreadFolderHeader = memo(function SidebarThreadFolderHeader
   /** Settles every thread, or un-settles a settled folder; null hides the button. */
   settleAction: "settle" | "unsettle" | null;
   onSettle: (folder: EnvironmentThreadFolder, action: "settle" | "unsettle") => void;
+  /** Snoozes every member that can be, or wakes a snoozed folder; null hides the button. */
+  snoozeAction: "snooze" | "wake" | null;
+  onSnooze: (folder: EnvironmentThreadFolder, preset: Pick<SnoozePreset, "snoozedUntil">) => void;
+  onWake: (folder: EnvironmentThreadFolder) => void;
   onToggle: (folderKey: string) => void;
   onRename: (folder: EnvironmentThreadFolder, name: string) => void;
   onContextMenu: (folder: EnvironmentThreadFolder, position: { x: number; y: number }) => void;
@@ -154,28 +235,46 @@ export const SidebarThreadFolderHeader = memo(function SidebarThreadFolderHeader
   const canOperate = useEnvironmentScope(folder.environmentId, AuthOrchestrationOperateScope);
   const isRenaming = useThreadFolderRenameKey() === folderKey;
   const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
-  const icon = folder.icon;
+  const icon = props.placement === "settled" ? null : folder.icon;
   const color = icon && icon.kind !== "emoji" ? icon.color : null;
-  const nameClassName = color ? projectIconColorClassName(color) : "text-sidebar-foreground";
+  const nameClassName = cn(
+    color ? projectIconColorClassName(color) : "text-sidebar-foreground",
+    props.placement === "settled" && "text-sidebar-muted-foreground",
+  );
+  const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
   const pullRequestCount = collapsed ? threads.filter(hasVisiblePullRequest).length : 0;
-  const dot = collapsed
-    ? resolveSidebarFolderDot(
-        props.hiddenLiveThreads.map((thread) => ({
-          ...thread,
-          lastVisitedAt: resolveThreadLastVisitedAt(
-            thread.lastVisitedAt,
-            localLastVisitedAtById[
-              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
-            ],
-          ),
-        })),
-      )
-    : null;
+  const tally = resolveSidebarFolderTally(
+    props.liveThreads.map((thread) => ({
+      ...thread,
+      lastVisitedAt: resolveThreadLastVisitedAt(
+        thread.lastVisitedAt,
+        localLastVisitedAtById[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))],
+      ),
+    })),
+  );
+  const wakeLabel =
+    props.nextWakeAt === null
+      ? null
+      : threadFolderWakeLabel(props.nextWakeAt, props.timestampFormat);
   const label = [
     `${folder.name} folder`,
     plural(threads.length, "thread"),
+    ...tally.map((entry) => `${entry.count} ${FOLDER_TALLY_LABEL[entry.status]}`),
+    ...(wakeLabel === null ? [] : [`wakes ${wakeLabel}`]),
     ...(pullRequestCount > 0 ? [plural(pullRequestCount, "pull request")] : []),
   ].join(", ");
+  const showActions = !isRenaming && canOperate;
+  // Hover swaps the numbers for the actions; an open snooze menu keeps them shown.
+  const numbersClassName = cn(
+    showActions &&
+      (props.settleAction !== null || props.snoozeAction !== null) &&
+      "group-has-focus-visible/thread-folder:hidden group-hover/thread-folder:hidden",
+    snoozeMenuOpen && "hidden",
+  );
+  const actionClassName = cn(
+    "hidden size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-sidebar-muted-foreground hover:text-sidebar-foreground group-has-focus-visible/thread-folder:inline-flex group-hover/thread-folder:inline-flex pointer-coarse:inline-flex",
+    snoozeMenuOpen && "inline-flex",
+  );
   const Icon = collapsed ? FolderClosedIcon : FolderOpenIcon;
 
   // Folds made by the clicks of a rename double-click, so the double-click can undo them.
@@ -226,6 +325,7 @@ export const SidebarThreadFolderHeader = memo(function SidebarThreadFolderHeader
             ],
         props.isDropTarget && "ring-2 ring-inset ring-primary/70",
         props.isDragging && "opacity-60",
+        props.placement === "snoozed" && !props.isDragging && "opacity-75",
         props.reorderMark !== null && "relative",
       )}
     >
@@ -243,7 +343,7 @@ export const SidebarThreadFolderHeader = memo(function SidebarThreadFolderHeader
         tabIndex={-1}
         data-sidebar-row={sidebarThreadFolderRowId(folderKey)}
         aria-expanded={isRenaming ? undefined : !collapsed}
-        aria-label={isRenaming ? undefined : `${label}${dot ? FOLDER_DOT_LABEL[dot] : ""}`}
+        aria-label={isRenaming ? undefined : label}
         className={cn(
           "mx-0.5 flex h-9 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           props.style === "tabs"
@@ -292,58 +392,75 @@ export const SidebarThreadFolderHeader = memo(function SidebarThreadFolderHeader
             {folder.name}
           </span>
         )}
-        {pullRequestCount > 0 ? (
-          <span
-            aria-hidden
-            className="inline-flex shrink-0 items-center gap-0.5 text-2xs tabular-nums text-sidebar-muted-foreground"
-          >
-            <PullRequestGlyph.pullRequest aria-hidden className="size-3" />
-            {pullRequestCount}
-          </span>
-        ) : null}
-        {collapsed && hiddenThreads.length > 0 ? (
-          <span
-            aria-hidden
-            className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground group-has-focus-visible/thread-folder:hidden group-hover/thread-folder:hidden"
-          >
-            {hiddenThreads.length}
-          </span>
-        ) : null}
-        {dot ? (
-          <span
-            aria-hidden
-            className={cn("size-1.5 shrink-0 rounded-full", FOLDER_DOT_CLASS_NAME[dot])}
+        <span aria-hidden className={cn("flex shrink-0 items-center gap-2", numbersClassName)}>
+          {tally.map((entry) => {
+            const classes = FOLDER_TALLY_CLASS_NAME[entry.status];
+            return (
+              <span
+                key={entry.status}
+                className={cn(
+                  "inline-flex items-center gap-0.75 text-xs font-semibold tabular-nums",
+                  classes.text,
+                )}
+              >
+                {classes.dot === null ? (
+                  <CircleDotDashedIcon className="size-3" />
+                ) : (
+                  <span className={cn("size-1.5 rounded-full", classes.dot)} />
+                )}
+                {entry.count}
+              </span>
+            );
+          })}
+          {wakeLabel === null ? null : (
+            <span className="inline-flex items-center gap-1 text-xs text-sidebar-muted-foreground">
+              <AlarmClockIcon className="size-3" />
+              {wakeLabel}
+            </span>
+          )}
+          {pullRequestCount > 0 ? (
+            <span className="inline-flex items-center gap-0.5 text-2xs tabular-nums text-sidebar-muted-foreground">
+              <PullRequestGlyph.pullRequest aria-hidden className="size-3" />
+              {pullRequestCount}
+            </span>
+          ) : null}
+          {collapsed && hiddenThreads.length > 0 ? (
+            <span className="text-xs tabular-nums text-sidebar-muted-foreground/70">
+              {hiddenThreads.length}
+            </span>
+          ) : null}
+        </span>
+        {!showActions || props.snoozeAction === null ? null : props.snoozeAction === "snooze" ? (
+          <SnoozeMenuButton
+            open={snoozeMenuOpen}
+            onOpenChange={setSnoozeMenuOpen}
+            onSnooze={(preset) => props.onSnooze(folder, preset)}
+            timestampFormat={props.timestampFormat}
+            environmentId={folder.environmentId}
+            label="Snooze folder"
+            className={actionClassName}
           />
-        ) : null}
-        {isRenaming || props.settleAction === null || !canOperate ? null : (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  aria-label={
-                    props.settleAction === "settle" ? "Settle folder" : "Un-settle folder"
-                  }
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    props.onSettle(folder, props.settleAction!);
-                  }}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onDoubleClick={(event) => event.stopPropagation()}
-                  className="hidden size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-sidebar-muted-foreground hover:text-sidebar-foreground group-has-focus-visible/thread-folder:inline-flex group-hover/thread-folder:inline-flex pointer-coarse:inline-flex"
-                />
-              }
-            >
-              {props.settleAction === "settle" ? (
-                <CheckIcon aria-hidden className="size-3.5" />
-              ) : (
-                <Undo2Icon aria-hidden className="size-3.5" />
-              )}
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {props.settleAction === "settle" ? "Settle folder" : "Un-settle folder"}
-            </TooltipPopup>
-          </Tooltip>
+        ) : (
+          <FolderActionButton
+            label="Wake folder"
+            className={actionClassName}
+            onPress={() => props.onWake(folder)}
+          >
+            <AlarmClockIcon aria-hidden className="size-3.5" />
+          </FolderActionButton>
+        )}
+        {!showActions || props.settleAction === null ? null : (
+          <FolderActionButton
+            label={props.settleAction === "settle" ? "Settle folder" : "Un-settle folder"}
+            className={actionClassName}
+            onPress={() => props.onSettle(folder, props.settleAction!)}
+          >
+            {props.settleAction === "settle" ? (
+              <CheckIcon aria-hidden className="size-3.5" />
+            ) : (
+              <Undo2Icon aria-hidden className="size-3.5" />
+            )}
+          </FolderActionButton>
         )}
         {isRenaming ? null : (
           <ChevronDownIcon
@@ -371,12 +488,53 @@ export const SidebarThreadFolderEmptyRow = memo(function SidebarThreadFolderEmpt
       data-thread-folder-drop={props.folderKey}
       className={cn(
         threadFolderMemberClassName(props.folder.icon, props.style),
-        "list-none rounded-b-lg pb-2 ps-9 text-xs",
+        "list-none rounded-b-lg px-2.5 pb-2",
       )}
     >
-      <span className="text-sidebar-muted-foreground">
-        {props.folder.threadIds.length > 0 ? "No active threads" : "No threads yet"}
-      </span>
+      {props.folder.threadIds.length > 0 ? (
+        <span className="ps-6.5 text-xs text-sidebar-muted-foreground">
+          No threads in this view
+        </span>
+      ) : (
+        <span className="flex h-7 items-center justify-center rounded-md border border-dashed border-sidebar-foreground/18 text-xs text-sidebar-muted-foreground">
+          Drag threads here
+        </span>
+      )}
+    </li>
+  );
+});
+
+/** The last line of an open folder: its snoozed and settled members, folded until opened. */
+export const SidebarThreadFolderParkedRow = memo(function SidebarThreadFolderParkedRow(props: {
+  folder: EnvironmentThreadFolder;
+  folderKey: string;
+  style: SidebarThreadFolderStyle;
+  label: string;
+  expanded: boolean;
+  onToggle: (folderKey: string) => void;
+}) {
+  return (
+    <li
+      data-thread-selection-safe
+      data-thread-folder-drop={props.folderKey}
+      className={cn(
+        threadFolderMemberClassName(props.folder.icon, props.style),
+        "list-none rounded-b-lg pb-1",
+      )}
+    >
+      <button
+        type="button"
+        aria-expanded={props.expanded}
+        onClick={() => props.onToggle(props.folderKey)}
+        className="flex h-[30px] w-full cursor-pointer items-center gap-1.5 rounded-md ps-9 pe-2.5 text-left text-xs text-sidebar-muted-foreground outline-none hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <AlarmClockIcon aria-hidden className="size-3 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{props.label}</span>
+        <ChevronRightIcon
+          aria-hidden
+          className={cn("size-3 shrink-0 transition-transform", props.expanded && "rotate-90")}
+        />
+      </button>
     </li>
   );
 });

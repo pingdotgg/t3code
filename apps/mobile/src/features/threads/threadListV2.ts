@@ -1,5 +1,7 @@
 import {
   layoutThreadFolders,
+  resolveThreadFolderPlacement,
+  type ThreadFolderPlacement,
   scopedThreadFolderKey,
   findThreadFolder,
   type EnvironmentThreadFolder,
@@ -486,7 +488,12 @@ export interface ThreadListV2SettledShelfListItem {
 export interface ThreadListV2FolderHeaderListItem {
   readonly type: "v2-folder-header";
   readonly settled: boolean;
-  /** The folders of this header's section (open or settled), in screen order, for Move up/down. */
+  /** Where the folder shows: on top, or on the shelf every member shares. */
+  readonly placement: ThreadFolderPlacement;
+  /** Members that can still be snoozed, and members now snoozed, for the folder menu. */
+  readonly snoozableCount: number;
+  readonly snoozedCount: number;
+  /** The folders of this header's section, in screen order, for Move up/down. */
   readonly sectionFolders: ReadonlyArray<EnvironmentThreadFolder>;
   readonly key: string;
   readonly folderKey: string;
@@ -534,6 +541,9 @@ export function threadListV2ListItemsAreEqual(
         JSON.stringify(previous.collectChoices) === JSON.stringify(item.collectChoices) &&
         previous.count === item.count &&
         previous.settled === item.settled &&
+        previous.placement === item.placement &&
+        previous.snoozableCount === item.snoozableCount &&
+        previous.snoozedCount === item.snoozedCount &&
         previous.sectionFolders === item.sectionFolders &&
         previous.expanded === item.expanded &&
         previous.disabled === item.disabled
@@ -683,12 +693,15 @@ export function buildThreadListV2ListItems(input: {
       }
     }
   };
-  const openFolders = (input.folderHeaders ?? []).filter((header) => !header.settled);
-  const settledFolders = (input.folderHeaders ?? []).filter((header) => header.settled);
-  for (let index = 0; index <= activeEnd; index += 1) {
-    pushFolders(openFolders, index);
-    if (index < activeEnd) result.push(threadItems[index]!);
-  }
+  const foldersAt = (placement: ThreadFolderPlacement) =>
+    (input.folderHeaders ?? []).filter((header) => header.placement === placement);
+  const pushRange = (folders: ThreadListV2Layout["folderHeaders"], from: number, to: number) => {
+    for (let index = from; index <= to; index += 1) {
+      pushFolders(folders, index);
+      if (index < to) result.push(threadItems[index]!);
+    }
+  };
+  pushRange(foldersAt("open"), 0, activeEnd);
   const shelfDisabled = input.shelfPreferencesLoading === true;
   if (workingShelfHeaderIndex !== null && workingCount > 0) {
     result.push({
@@ -698,7 +711,7 @@ export function buildThreadListV2ListItems(input: {
       expanded: input.workingShelfExpanded === true,
       disabled: shelfDisabled,
     });
-    result.push(...threadItems.slice(workingShelfHeaderIndex, workingEnd));
+    pushRange(foldersAt("working"), workingShelfHeaderIndex, workingEnd);
   }
   if (snoozedShelfHeaderIndex !== null && snoozedCount > 0) {
     result.push({
@@ -708,7 +721,7 @@ export function buildThreadListV2ListItems(input: {
       expanded: input.snoozedShelfExpanded === true,
       disabled: shelfDisabled,
     });
-    result.push(...threadItems.slice(snoozedShelfHeaderIndex, snoozedEnd));
+    pushRange(foldersAt("snoozed"), snoozedShelfHeaderIndex, snoozedEnd);
   }
   if (settledShelfHeaderIndex !== null && settledCount > 0) {
     result.push({
@@ -718,10 +731,7 @@ export function buildThreadListV2ListItems(input: {
       expanded: input.settledShelfExpanded !== false,
       disabled: shelfDisabled,
     });
-    for (let index = settledShelfHeaderIndex; index <= threadItems.length; index += 1) {
-      pushFolders(settledFolders, index);
-      if (index < threadItems.length) result.push(threadItems[index]!);
-    }
+    pushRange(foldersAt("settled"), settledShelfHeaderIndex, threadItems.length);
   }
   return result.map((entry, index) => {
     if (entry.type !== "v2-thread" && entry.type !== "v2-pending") return entry;
@@ -1004,22 +1014,37 @@ export function buildThreadListV2Items(input: {
   const snoozedThreads = new Set(snoozed);
   const settledThreads = new Set(settled);
   const pinnedThreads = new Set(pinned);
+  const workingThreads = new Set(working);
   const folderHeaders: Array<ThreadListV2FolderHeaderListItem & { readonly index: number }> = [];
-  // A folder whose every member is settled sits on the Settled shelf.
-  const isSettledFolder = (block: (typeof folderLayout.blocks)[number]) =>
-    block.threads.length > 0 && block.threads.every((thread) => settledThreads.has(thread));
-  const openFolderList = folderLayout.blocks
-    .filter((block) => !isSettledFolder(block))
-    .map((block) => block.folder);
-  const settledFolderList = folderLayout.blocks
-    .filter(isSettledFolder)
-    .map((block) => block.folder);
-  const pushFolder = (block: (typeof folderLayout.blocks)[number]) => {
-    const settled = isSettledFolder(block);
-    // Settled folders start collapsed, and fold away with a closed Settled shelf.
+  type FolderBlock = (typeof folderLayout.blocks)[number];
+  const placementOf = (block: FolderBlock) =>
+    resolveThreadFolderPlacement(
+      block.threads.map((thread) =>
+        snoozedThreads.has(thread)
+          ? "snoozed"
+          : settledThreads.has(thread)
+            ? "settled"
+            : pinnedThreads.has(thread)
+              ? "pinned"
+              : workingThreads.has(thread)
+                ? "working"
+                : "active",
+      ),
+    );
+  const blocksAt = (placement: ThreadFolderPlacement) =>
+    folderLayout.blocks.filter((block) => placementOf(block) === placement);
+  const shelfExpanded = {
+    working: input.workingShelfExpanded === true,
+    snoozed: input.snoozedShelfExpanded === true,
+    settled: input.settledShelfExpanded !== false,
+  };
+  const pushFolder = (block: FolderBlock) => {
+    const placement = placementOf(block);
+    const settled = placement === "settled";
+    // Settled folders start collapsed, and shelf folders fold away with a closed shelf.
     const expanded =
       (input.collapsedFolderKeys?.has(block.key) ?? false) === settled &&
-      !(settled && input.settledShelfExpanded === false);
+      !(placement !== "open" && !shelfExpanded[placement]);
     folderHeaders.push({
       type: "v2-folder-header",
       key: `v2-folder:${block.key}`,
@@ -1029,7 +1054,13 @@ export function buildThreadListV2Items(input: {
       collectChoices: threadFolderCollectChoices(block.folder, input.threads),
       count: block.threads.length,
       settled,
-      sectionFolders: settled ? settledFolderList : openFolderList,
+      placement,
+      snoozableCount: block.threads.filter(
+        (thread) =>
+          !snoozedThreads.has(thread) && !settledThreads.has(thread) && canSnooze(thread, { now }),
+      ).length,
+      snoozedCount: block.threads.filter((thread) => thread.snoozedUntil != null).length,
+      sectionFolders: blocksAt(placement).map((candidate) => candidate.folder),
       expanded,
       disabled: false,
       index: items.length,
@@ -1050,9 +1081,22 @@ export function buildThreadListV2Items(input: {
       });
     }
   };
-  for (const block of folderLayout.blocks) if (!isSettledFolder(block)) pushFolder(block);
-  const settledFolders = folderLayout.blocks.filter(isSettledFolder);
-  const workingShelfHeaderIndex = orderedWorking.length > 0 ? items.length : null;
+  const pushShelfFolders = (placement: "working" | "snoozed" | "settled") => {
+    for (const block of blocksAt(placement)) {
+      if (
+        shelfExpanded[placement] ||
+        block.threads.some((thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey)
+      ) {
+        pushFolder(block);
+      }
+    }
+  };
+  const shelfFolderCount = (placement: "working" | "snoozed" | "settled") =>
+    blocksAt(placement).reduce((total, block) => total + block.threads.length, 0);
+  for (const block of blocksAt("open")) pushFolder(block);
+  const workingCount = orderedWorking.length + shelfFolderCount("working");
+  const workingShelfHeaderIndex = workingCount > 0 ? items.length : null;
+  pushShelfFolders("working");
   for (const thread of visibleWorking) {
     items.push({
       thread,
@@ -1063,7 +1107,9 @@ export function buildThreadListV2Items(input: {
       isLast: false,
     });
   }
-  const snoozedShelfHeaderIndex = orderedSnoozed.length > 0 ? items.length : null;
+  const snoozedCount = orderedSnoozed.length + shelfFolderCount("snoozed");
+  const snoozedShelfHeaderIndex = snoozedCount > 0 ? items.length : null;
+  pushShelfFolders("snoozed");
   for (const thread of visibleSnoozed) {
     items.push({
       thread,
@@ -1074,16 +1120,10 @@ export function buildThreadListV2Items(input: {
       isLast: false,
     });
   }
+  const settledFolderCount = shelfFolderCount("settled");
   const settledShelfHeaderIndex =
-    settledTotal > 0 || settledFolders.length > 0 ? items.length : null;
-  for (const block of settledFolders) {
-    if (
-      input.settledShelfExpanded !== false ||
-      block.threads.some((thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey)
-    ) {
-      pushFolder(block);
-    }
-  }
+    settledTotal > 0 || blocksAt("settled").length > 0 ? items.length : null;
+  pushShelfFolders("settled");
   for (const thread of visibleSettled) {
     items.push({
       thread,
@@ -1103,12 +1143,11 @@ export function buildThreadListV2Items(input: {
     folderHeaders,
     hiddenSettledCount: Math.max(0, settledTotal - pagedSettled.length),
     listedSettledThreads: listedSettled,
-    workingCount: orderedWorking.length,
+    workingCount,
     workingShelfHeaderIndex,
-    snoozedCount: orderedSnoozed.length,
+    snoozedCount,
     snoozedShelfHeaderIndex,
-    settledCount:
-      settledTotal + settledFolders.reduce((total, block) => total + block.threads.length, 0),
+    settledCount: settledTotal + settledFolderCount,
     settledShelfHeaderIndex,
     nextSnoozeWakeAt,
     contentOnlyThreadKeys,

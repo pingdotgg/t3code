@@ -69,7 +69,7 @@ import {
   ProviderInstanceIcon,
   providerInstanceNameLabel,
 } from "../../components/ProviderIcon";
-import { useNowAfter } from "../../lib/clock";
+import { useNowAfter, useNowMinuteMs } from "../../lib/clock";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { copyThreadReference } from "../../lib/copyThreadReference";
@@ -355,9 +355,21 @@ export const ThreadListV2FolderHeader = memo(function ThreadListV2FolderHeader(p
     choice: ThreadFolderCollectChoice,
   ) => Promise<boolean>;
   readonly onApplyRule: (folder: EnvironmentThreadFolder) => Promise<boolean>;
-  readonly onSettle: (folder: EnvironmentThreadFolder, settled: boolean) => Promise<boolean>;
+  readonly onPark: (
+    folder: EnvironmentThreadFolder,
+    action: "settle" | "unsettle" | "wake" | { readonly snoozedUntil: string },
+  ) => Promise<boolean>;
+  readonly snoozePresets: ReadonlyArray<SnoozePresetSetting> | undefined;
 }) {
   const { item } = props;
+  const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
+  // The menu shows minute-fresh presets and re-reads the clock when one is picked.
+  const nowMinuteMs = useNowMinuteMs();
+  const snoozePresets = resolveThreadListV2SnoozePresets({
+    secondary: item.snoozableCount > 0 ? "snooze" : null,
+    now: new Date(nowMinuteMs).toISOString(),
+    presets: props.snoozePresets,
+  });
   const folders = item.sectionFolders.filter(
     (folder) => folder.environmentId === item.environmentId,
   );
@@ -377,130 +389,178 @@ export const ThreadListV2FolderHeader = memo(function ThreadListV2FolderHeader(p
   const icon = item.folder.icon;
   const colors = projectIconColorClassNames(icon && "color" in icon ? icon.color : "blue");
   return (
-    <Menu
-      shouldOpenOnLongPress
-      actions={[
-        { id: "rename", title: "Rename", image: "square.and.pencil" },
-        ...(folderIndex > 0 ? [{ id: "move-up", title: "Move up", image: "arrow.up" }] : []),
-        ...(folderIndex >= 0 && folderIndex < folders.length - 1
-          ? [{ id: "move-down", title: "Move down", image: "arrow.down" }]
-          : []),
-        {
-          id: "collect",
-          title: "Collect new threads",
-          image: "tray.and.arrow.down",
-          subactions: [
-            {
-              id: "collect:off",
-              title: "Off",
-              state:
-                !item.folder.autoFile || item.folder.rule === null
-                  ? ("on" as const)
-                  : ("off" as const),
-            },
-            {
-              id: "collect:topic",
-              title: "By topic",
-              state: collect.topic ? ("on" as const) : ("off" as const),
-            },
-            // Android menus nest one level, so branches and worktrees sit inline there.
-            ...(Platform.OS === "android"
-              ? [
-                  ...choiceActions("branch", item.collectChoices.branches, "Branch: "),
-                  ...choiceActions("worktree", item.collectChoices.worktrees, "Worktree: "),
-                ]
-              : [
-                  {
-                    id: "collect:branch",
-                    title: threadFolderCollectLabel("By branch", collect.branches),
-                    subactions: choiceActions("branch", item.collectChoices.branches),
-                  },
-                  {
-                    id: "collect:worktree",
-                    title: threadFolderCollectLabel("By worktree", collect.worktrees),
-                    subactions: choiceActions("worktree", item.collectChoices.worktrees),
-                  },
-                ]),
-            ...(collect.custom
-              ? [
-                  {
-                    id: "collect:custom",
-                    title: "Set by an agent",
-                    state: "on" as const,
-                    attributes: { disabled: true },
-                  },
-                ]
+    <>
+      {customSnoozeOpen && (
+        <CustomSnoozeSheet
+          onClose={() => setCustomSnoozeOpen(false)}
+          onSnooze={(snoozedUntil) => void props.onPark(item.folder, { snoozedUntil })}
+        />
+      )}
+      <Menu
+        shouldOpenOnLongPress
+        actions={[
+          { id: "rename", title: "Rename", image: "square.and.pencil" },
+          ...(folderIndex > 0 ? [{ id: "move-up", title: "Move up", image: "arrow.up" }] : []),
+          ...(folderIndex >= 0 && folderIndex < folders.length - 1
+            ? [{ id: "move-down", title: "Move down", image: "arrow.down" }]
+            : []),
+          {
+            id: "collect",
+            title: "Collect new threads",
+            image: "tray.and.arrow.down",
+            subactions: [
+              {
+                id: "collect:off",
+                title: "Off",
+                state:
+                  !item.folder.autoFile || item.folder.rule === null
+                    ? ("on" as const)
+                    : ("off" as const),
+              },
+              {
+                id: "collect:topic",
+                title: "By topic",
+                state: collect.topic ? ("on" as const) : ("off" as const),
+              },
+              // Android menus nest one level, so branches and worktrees sit inline there.
+              ...(Platform.OS === "android"
+                ? [
+                    ...choiceActions("branch", item.collectChoices.branches, "Branch: "),
+                    ...choiceActions("worktree", item.collectChoices.worktrees, "Worktree: "),
+                  ]
+                : [
+                    {
+                      id: "collect:branch",
+                      title: threadFolderCollectLabel("By branch", collect.branches),
+                      subactions: choiceActions("branch", item.collectChoices.branches),
+                    },
+                    {
+                      id: "collect:worktree",
+                      title: threadFolderCollectLabel("By worktree", collect.worktrees),
+                      subactions: choiceActions("worktree", item.collectChoices.worktrees),
+                    },
+                  ]),
+              ...(collect.custom
+                ? [
+                    {
+                      id: "collect:custom",
+                      title: "Set by an agent",
+                      state: "on" as const,
+                      attributes: { disabled: true },
+                    },
+                  ]
+                : []),
+            ],
+          },
+          {
+            id: "apply-rule",
+            title: addingRelated ? "Adding related threads…" : "Add related threads",
+            image: "folder.badge.plus",
+            ...(addingRelated ? { attributes: { disabled: true } } : {}),
+          },
+          ...(item.snoozableCount > 0
+            ? [
+                {
+                  id: "snooze",
+                  title: `Snooze folder (${item.snoozableCount})`,
+                  image: "clock",
+                  subactions: [
+                    ...snoozePresets.map((preset) => ({
+                      id: `snooze:${preset.id}`,
+                      title: preset.label,
+                      subtitle: preset.whenLabel,
+                    })),
+                    { id: "snooze:custom", title: "Custom…" },
+                  ],
+                },
+              ]
+            : item.snoozedCount > 0
+              ? [{ id: "wake", title: `Wake folder (${item.snoozedCount})`, image: "alarm" }]
               : []),
-          ],
-        },
-        {
-          id: "apply-rule",
-          title: addingRelated ? "Adding related threads…" : "Add related threads",
-          image: "folder.badge.plus",
-          ...(addingRelated ? { attributes: { disabled: true } } : {}),
-        },
-        item.settled
-          ? { id: "unsettle", title: "Un-settle folder", image: "arrow.uturn.backward" }
-          : { id: "settle", title: "Settle folder", image: "checkmark.circle" },
-        {
-          id: "delete-menu",
-          title: "Delete folder",
-          image: "trash",
-          attributes: { destructive: true },
-          subactions: [
-            { id: "delete", title: "Keep its threads" },
-            {
-              id: "delete-threads",
-              title: `Delete its threads too (${item.count})`,
-              attributes: { destructive: true, ...(item.count === 0 ? { disabled: true } : {}) },
-            },
-          ],
-        },
-      ]}
-      onPressAction={({ nativeEvent }) => {
-        if (nativeEvent.event === "rename") props.onRename(item.folder);
-        if (nativeEvent.event === "delete") props.onDelete(item.folder, false);
-        if (nativeEvent.event === "delete-threads") props.onDelete(item.folder, true);
-        if (nativeEvent.event === "move-up") void props.onMove(item.folder, "up", folders);
-        if (nativeEvent.event === "move-down") void props.onMove(item.folder, "down", folders);
-        if (nativeEvent.event === "apply-rule") void props.onApplyRule(item.folder);
-        const [, by, ...value] = nativeEvent.event.split(":");
-        if (nativeEvent.event.startsWith("collect:")) {
-          if (by === "off" || by === "topic") void props.onCollect(item.folder, { by });
-          if ((by === "branch" || by === "worktree") && value.length > 0)
-            void props.onCollect(item.folder, { by, value: value.join(":") });
-        }
-        if (nativeEvent.event === "settle") void props.onSettle(item.folder, true);
-        if (nativeEvent.event === "unsettle") void props.onSettle(item.folder, false);
-      }}
-    >
-      <ThreadListV2Section
-        pane={props.pane}
-        label={`${item.folder.name} (${item.count})${props.environmentLabel ? " · " + props.environmentLabel : ""}`}
-        onPress={() => props.onToggle(item.folderKey)}
-        leading={
-          <View className={cn("h-7 w-7 items-center justify-center rounded-lg", colors.background)}>
-            {icon ? (
-              <ProjectFavicon
-                environmentId={item.environmentId}
-                projectTitle={item.folder.name}
-                projectIcon={icon}
-                size={18}
-              />
-            ) : (
-              <SymbolView name="folder" size={16} tintColorClassName={colors.tint} />
-            )}
-          </View>
-        }
-        disclosure={{
-          expanded: item.expanded,
-          disabled: item.disabled,
-          onToggle: () => props.onToggle(item.folderKey),
-          accessibilityLabel: `${item.folder.name}, ${item.count} threads`,
-          accessibilityHint: item.expanded ? "Collapse folder." : "Expand folder.",
+          item.settled
+            ? { id: "unsettle", title: "Un-settle folder", image: "arrow.uturn.backward" }
+            : { id: "settle", title: "Settle folder", image: "checkmark.circle" },
+          {
+            id: "delete-menu",
+            title: "Delete folder",
+            image: "trash",
+            attributes: { destructive: true },
+            subactions: [
+              { id: "delete", title: "Keep its threads" },
+              {
+                id: "delete-threads",
+                title: `Delete its threads too (${item.count})`,
+                attributes: { destructive: true, ...(item.count === 0 ? { disabled: true } : {}) },
+              },
+            ],
+          },
+        ]}
+        onPressAction={({ nativeEvent }) => {
+          if (nativeEvent.event === "rename") props.onRename(item.folder);
+          if (nativeEvent.event === "delete") props.onDelete(item.folder, false);
+          if (nativeEvent.event === "delete-threads") props.onDelete(item.folder, true);
+          if (nativeEvent.event === "move-up") void props.onMove(item.folder, "up", folders);
+          if (nativeEvent.event === "move-down") void props.onMove(item.folder, "down", folders);
+          if (nativeEvent.event === "apply-rule") void props.onApplyRule(item.folder);
+          const [, by, ...value] = nativeEvent.event.split(":");
+          if (nativeEvent.event.startsWith("collect:")) {
+            if (by === "off" || by === "topic") void props.onCollect(item.folder, { by });
+            if ((by === "branch" || by === "worktree") && value.length > 0)
+              void props.onCollect(item.folder, { by, value: value.join(":") });
+          }
+          if (nativeEvent.event === "settle") void props.onPark(item.folder, "settle");
+          if (nativeEvent.event === "unsettle") void props.onPark(item.folder, "unsettle");
+          if (nativeEvent.event === "wake") void props.onPark(item.folder, "wake");
+          if (nativeEvent.event === "snooze:custom") {
+            setCustomSnoozeOpen(true);
+            return;
+          }
+          const snoozeSelection = resolveThreadListV2SnoozeMenuSelection({
+            event: nativeEvent.event,
+            displayedPresets: snoozePresets,
+            now: new Date(),
+            presets: props.snoozePresets,
+          });
+          if (snoozeSelection._tag === "selected") {
+            void props.onPark(item.folder, { snoozedUntil: snoozeSelection.preset.snoozedUntil });
+          } else if (snoozeSelection._tag === "expired") {
+            Dialog.alert(
+              "Could not snooze folder",
+              "That snooze time has passed. Choose another time.",
+            );
+          }
         }}
-      />
-    </Menu>
+      >
+        <ThreadListV2Section
+          pane={props.pane}
+          label={`${item.folder.name} (${item.count})${props.environmentLabel ? " · " + props.environmentLabel : ""}`}
+          onPress={() => props.onToggle(item.folderKey)}
+          leading={
+            <View
+              className={cn("h-7 w-7 items-center justify-center rounded-lg", colors.background)}
+            >
+              {icon ? (
+                <ProjectFavicon
+                  environmentId={item.environmentId}
+                  projectTitle={item.folder.name}
+                  projectIcon={icon}
+                  size={18}
+                />
+              ) : (
+                <SymbolView name="folder" size={16} tintColorClassName={colors.tint} />
+              )}
+            </View>
+          }
+          disclosure={{
+            expanded: item.expanded,
+            disabled: item.disabled,
+            onToggle: () => props.onToggle(item.folderKey),
+            accessibilityLabel: `${item.folder.name}, ${item.count} threads`,
+            accessibilityHint: item.expanded ? "Collapse folder." : "Expand folder.",
+          }}
+        />
+      </Menu>
+    </>
   );
 });
 

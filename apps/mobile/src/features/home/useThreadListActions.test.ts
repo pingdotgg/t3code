@@ -723,7 +723,7 @@ describe("folder actions", () => {
       updatedAt: loaded.updatedAt,
       threadIds: [loaded.id, old.id, active.id, ThreadId.make("archived")],
     };
-    expect(await useThreadListActions().settleFolder(folder, false)).toBe(true);
+    expect(await useThreadListActions().parkFolder(folder, "unsettle")).toBe(true);
     expect(state.requests.map(({ action, input }) => [action, input.threadId])).toEqual([
       ["unsettle", loaded.id],
       ["unsettle", old.id],

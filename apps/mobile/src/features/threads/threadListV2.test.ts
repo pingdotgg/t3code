@@ -1970,6 +1970,58 @@ describe("thread folders", () => {
     expect(search.items.map((item) => item.thread.id)).toEqual([filed.id]);
     expect(search.folderHeaders).toEqual([]);
   });
+
+  it("moves a folder to the shelf all its members share, and back when one wakes", () => {
+    const later = makeThread({
+      id: ThreadId.make("later"),
+      title: "Later",
+      snoozedUntil: "2026-06-04T00:00:00.000Z",
+    });
+    const soon = makeThread({
+      id: ThreadId.make("soon"),
+      title: "Soon",
+      snoozedUntil: "2026-06-03T00:00:00.000Z",
+    });
+    const folder = {
+      environmentId,
+      id: ThreadFolderId.make("folder"),
+      name: "Work",
+      icon: null,
+      threadIds: [later.id, soon.id],
+      rule: null,
+      autoFile: false,
+      ruleSetAt: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+    const input = {
+      threads: [later, soon],
+      folders: [folder],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      workingShelfEnabled: true,
+      workingShelfExpanded: true,
+      snoozedShelfExpanded: true,
+    };
+    const ids = (layout: ReturnType<typeof buildThreadListV2Items>) =>
+      buildThreadListV2ListItems({ ...layout, pendingTasks: [] }).map((item) =>
+        item.type === "v2-thread" ? item.item.thread.id : item.type,
+      );
+    const snoozed = buildThreadListV2Items(input);
+    expect(snoozed.snoozedCount).toBe(2);
+    expect(snoozed.folderHeaders[0]).toMatchObject({ placement: "snoozed", snoozedCount: 2 });
+    expect(ids(snoozed)).toEqual(["v2-snoozed-shelf", "v2-folder-header", soon.id, later.id]);
+
+    // A message to one member clears its snooze; the folder goes back to the top.
+    const woken = buildThreadListV2Items({
+      ...input,
+      threads: [later, { ...soon, snoozedUntil: null }],
+    });
+    expect(woken.folderHeaders[0]).toMatchObject({ placement: "open", snoozableCount: 1 });
+    expect(woken.snoozedCount).toBe(0);
+    expect(ids(woken)[0]).toBe("v2-folder-header");
+  });
 });
 
 describe("queued messages keep a settled thread active", () => {

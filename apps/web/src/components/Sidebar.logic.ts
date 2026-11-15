@@ -1,5 +1,6 @@
 import {
   layoutThreadFolders,
+  resolveThreadFolderPlacement,
   type EnvironmentThreadFolder,
 } from "@t3tools/client-runtime/state/thread-folders";
 import { sortActiveThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
@@ -63,9 +64,21 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 
 export type SidebarFolderSection = "pinned" | "active" | "snoozed" | "settled";
 
+function earliestSnoozeWake(threads: readonly EnvironmentThreadShell[]): string | null {
+  let earliest: string | null = null;
+  for (const thread of threads) {
+    const wake = thread.snoozedUntil ?? null;
+    if (wake !== null && (earliest === null || Date.parse(wake) < Date.parse(earliest))) {
+      earliest = wake;
+    }
+  }
+  return earliest;
+}
+
 /**
- * Folders own every member, whatever its shelf: rows leave the shared sections and
- * render inside the folder as pinned, active (working first), snoozed, then settled.
+ * Folders own every member, whatever its shelf. A folder whose members all share a shelf
+ * moves to that shelf; any other folder stays on top, pinned rows first, then live rows by
+ * order key. There its snoozed and settled members fold into a footer until it is opened.
  * A collapsed folder still shows the open thread.
  */
 export function foldSidebarThreadFolders<T extends EnvironmentThreadShell>(input: {
@@ -76,10 +89,17 @@ export function foldSidebarThreadFolders<T extends EnvironmentThreadShell>(input
   readonly settledThreads: readonly T[];
   readonly folders: readonly EnvironmentThreadFolder[];
   readonly collapsedKeys: ReadonlySet<string>;
+  /** Open folders whose parked footer is expanded. */
+  readonly parkedOpenKeys: ReadonlySet<string>;
   readonly routeThreadKey: string | null;
-  /** A closed Settled shelf folds settled folders away like a collapsed folder. */
-  readonly settledShelfExpanded: boolean;
+  /** A closed shelf folds its folders away, like a collapsed folder. */
+  readonly shelfExpanded: {
+    readonly working: boolean;
+    readonly snoozed: boolean;
+    readonly settled: boolean;
+  };
 }) {
+  const working = new Set(input.workingThreads);
   const ordered: Array<{ readonly thread: T; readonly section: SidebarFolderSection }> = [
     ...input.pinnedThreads.map((thread) => ({ thread, section: "pinned" as const })),
     ...sortActiveThreadsByOrderKey([...input.workingThreads, ...input.activeThreads]).map(
@@ -102,23 +122,46 @@ export function foldSidebarThreadFolders<T extends EnvironmentThreadShell>(input
     snoozedThreads: input.snoozedThreads.filter((thread) => unfiled.has(thread)),
     settledThreads: input.settledThreads.filter((thread) => unfiled.has(thread)),
     blocks: layout.blocks.map((block) => {
-      const rows = block.threads.map((thread) => ({ thread, section: sectionOf.get(thread)! }));
-      // A folder whose every member is settled moves to the Settled shelf, card and all.
-      const settled = rows.length > 0 && rows.every((row) => row.section === "settled");
+      const all = block.threads.map((thread) => ({ thread, section: sectionOf.get(thread)! }));
+      const placement = resolveThreadFolderPlacement(
+        all.map((row) => (working.has(row.thread) ? "working" : row.section)),
+      );
+      const parked = all.filter((row) => row.section === "snoozed" || row.section === "settled");
+      // Only an open folder folds its parked members; on a shelf they are the whole folder.
+      const parkedFolded =
+        placement === "open" && parked.length > 0 && !input.parkedOpenKeys.has(block.key);
+      const rows = parkedFolded
+        ? all.filter((row) => !parked.includes(row) || isRoute(row.thread))
+        : all;
       // Settled folders start collapsed, so a stored key flips each folder from its default.
+      const settled = placement === "settled";
       const collapsed =
-        input.collapsedKeys.has(block.key) !== settled || (settled && !input.settledShelfExpanded);
-      const hidden = collapsed ? rows.filter((row) => !isRoute(row.thread)) : [];
+        input.collapsedKeys.has(block.key) !== settled ||
+        (placement !== "open" && !input.shelfExpanded[placement]);
+      const hidden = collapsed ? all.filter((row) => !isRoute(row.thread)) : [];
+      const snoozed = parked.filter((row) => row.section === "snoozed").map((row) => row.thread);
       return {
         ...block,
+        placement,
         collapsed,
         settled,
-        rows: collapsed ? rows.filter((row) => isRoute(row.thread)) : rows,
+        rows: collapsed ? all.filter((row) => isRoute(row.thread)) : rows,
         hiddenThreads: hidden.map((row) => row.thread),
-        // Parked members never light the folder's status dot.
-        hiddenLiveThreads: hidden
-          .filter((row) => row.section === "pinned" || row.section === "active")
+        // The header tally counts live members only; parked ones never light it.
+        liveThreads: all
+          .filter((row) => row.section !== "snoozed" && row.section !== "settled")
           .map((row) => row.thread),
+        parked:
+          collapsed || placement !== "open" || parked.length === 0
+            ? null
+            : {
+                expanded: !parkedFolded,
+                snoozedCount: snoozed.length,
+                settledCount: parked.length - snoozed.length,
+                nextWakeAt: earliestSnoozeWake(snoozed),
+              },
+        snoozedCount: snoozed.length,
+        nextWakeAt: placement === "snoozed" ? earliestSnoozeWake(snoozed) : null,
       };
     }),
   };
@@ -1105,6 +1148,43 @@ export function resolveSidebarFolderDot(
   if (hasUnread) return "unread";
   if (statuses.has("working") || statuses.has("preparing")) return "working";
   return null;
+}
+
+export type SidebarFolderTallyStatus = "attention" | "failed" | "unread" | "working" | "waiting";
+
+const FOLDER_TALLY_ORDER: readonly SidebarFolderTallyStatus[] = [
+  "attention",
+  "failed",
+  "unread",
+  "working",
+  "waiting",
+];
+
+/** A thread folder's header tally: one count per status its live members show, most urgent first. */
+export function resolveSidebarFolderTally(
+  threads: ReadonlyArray<ThreadStatusInput & SidebarThreadStatusInput>,
+): ReadonlyArray<{ readonly status: SidebarFolderTallyStatus; readonly count: number }> {
+  const counts = new Map<SidebarFolderTallyStatus, number>();
+  for (const thread of threads) {
+    const status = resolveSidebarRowStatus(thread);
+    const tally: SidebarFolderTallyStatus | null =
+      status === "input" || status === "approval" || status === "request" || status === "limited"
+        ? "attention"
+        : status === "failed"
+          ? "failed"
+          : status === "ready"
+            ? hasUnseenCompletion(thread)
+              ? "unread"
+              : null
+            : status === "working" || status === "preparing"
+              ? "working"
+              : "waiting";
+    if (tally !== null) counts.set(tally, (counts.get(tally) ?? 0) + 1);
+  }
+  return FOLDER_TALLY_ORDER.flatMap((status) => {
+    const count = counts.get(status);
+    return count === undefined ? [] : [{ status, count }];
+  }).slice(0, 3);
 }
 
 /**

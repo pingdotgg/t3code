@@ -137,7 +137,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     moveFolder,
     setFolderCollect,
     applyFolderRule,
-    settleFolder,
+    parkFolder,
     archiveThread,
     confirmDeleteThread,
     settleThread,
@@ -513,7 +513,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             onMove={moveFolder}
             onCollect={setFolderCollect}
             onApplyRule={applyFolderRule}
-            onSettle={settleFolder}
+            onPark={parkFolder}
+            snoozePresets={snoozePresetsByEnvironmentId.get(item.environmentId)}
             onRename={renameFolder}
             onDelete={deleteFolder}
             environmentLabel={
