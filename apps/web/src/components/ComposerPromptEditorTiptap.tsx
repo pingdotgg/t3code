@@ -731,6 +731,15 @@ const ComposerChipSelectionExtension = Extension.create({
         },
         props: {
           decorations: (state) => ChipSelectionPluginKey.getState(state),
+          handleDOMEvents: {
+            // Chrome's IME keeps a selection bounded by an uneditable chip, or composes inside it.
+            compositionstart: (view) => {
+              if (ChipSelectionPluginKey.getState(view.state) !== DecorationSet.empty) {
+                view.dispatch(markAsCompositionReplace(view.state.tr.deleteSelection()));
+              }
+              return false;
+            },
+          },
         },
       }),
     ];
@@ -748,15 +757,6 @@ function chipSelectionDecorations({ doc, selection }: EditorState): DecorationSe
     return false;
   });
   return DecorationSet.create(doc, decorations);
-}
-
-function selectionHasChip({ doc, selection }: EditorState): boolean {
-  let found = false;
-  doc.nodesBetween(selection.from, selection.to, (node) => {
-    if (node.type.name.startsWith("composer-")) found = true;
-    return !found;
-  });
-  return found;
 }
 
 type TiptapEditor = NonNullable<ReturnType<typeof useEditor>>;
@@ -1140,13 +1140,6 @@ function ComposerPromptEditorTiptapInner(
               return true;
             }
             return hasCommandForKeyDown(event);
-          },
-          // Chrome's IME keeps a selection bounded by a chip, or composes inside the chip; replace it first.
-          compositionstart: (view) => {
-            if (selectionHasChip(view.state)) {
-              view.dispatch(markAsCompositionReplace(view.state.tr.deleteSelection()));
-            }
-            return false;
           },
         },
         handleKeyDown: (view, event) => {
