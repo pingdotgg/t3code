@@ -105,6 +105,7 @@ import type { RightPanelSurface } from "../rightPanelStore";
 import {
   NO_PROVIDER_MODEL_SELECTION,
   resolveSelectableProviderInstanceEntry,
+  isProviderInstancePickerVisible,
   type ProviderInstanceEntry,
 } from "../providerInstances";
 
@@ -510,7 +511,14 @@ export function resolveComposerProviderSelection(input: {
     candidateInstanceIds
       .map((candidate) =>
         compatibleEntries.find(
-          (entry) => entry.instanceId === candidate && entry.enabled && entry.isAvailable,
+          (entry) =>
+            entry.instanceId === candidate &&
+            (isProviderInstancePickerVisible(entry) ||
+              // Retain the signed-out Google selection so its existing send guard explains sign-in.
+              (entry.driverKind === "antigravity" &&
+                entry.enabled &&
+                entry.isAvailable &&
+                entry.snapshot.auth.status === "unauthenticated")),
         ),
       )
       .find((entry) => entry !== undefined) ??

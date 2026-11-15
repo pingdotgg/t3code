@@ -52,6 +52,12 @@ export type InferenceDriver = keyof typeof harnesses;
 export const INFERENCE_HARNESSES: Readonly<Record<InferenceDriver, InferenceHarness>> = harnesses;
 export const INFERENCE_DRIVERS = Object.keys(harnesses) as ReadonlyArray<InferenceDriver>;
 export const InferenceDriver = Schema.Literals(INFERENCE_DRIVERS);
+export const InferenceRouteHealth = Schema.Struct({
+  availableDrivers: Schema.Array(InferenceDriver),
+  models: Schema.Array(Schema.String),
+});
+export type InferenceRouteHealth = typeof InferenceRouteHealth.Type;
+
 const isInferenceDriver = Schema.is(InferenceDriver);
 export const inferenceHarness = (driver: string): InferenceHarness | undefined =>
   isInferenceDriver(driver) ? INFERENCE_HARNESSES[driver] : undefined;

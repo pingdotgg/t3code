@@ -19,6 +19,12 @@ const handler = Effect.gen(function* () {
     request.headers.authorization?.match(/^Bearer ([^ ]+)$/i)?.[1] ?? request.headers["x-api-key"];
   if (!key) return HttpServerResponse.empty({ status: 401 });
   const host = yield* InferenceProxy;
+  if (targetPath.path === "/health") {
+    const health = yield* host.health(key, targetPath.environmentId);
+    return health === null
+      ? HttpServerResponse.empty({ status: 403 })
+      : HttpServerResponse.jsonUnsafe(health, { headers: { "cache-control": "no-store" } });
+  }
   const target = yield* host.authorize(key, targetPath.environmentId);
   if (!target) return HttpServerResponse.empty({ status: 403 });
   const client = HttpClient.withScope(yield* HttpClient.HttpClient);

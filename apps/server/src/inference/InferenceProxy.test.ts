@@ -92,6 +92,7 @@ it.effect(
           lastError: null,
         };
         let serving = false;
+        let poolUnavailable = false;
         let lan = false;
         let rejectNextLaunch = false;
         let currentExit: Deferred.Deferred<void> | undefined;
@@ -248,12 +249,14 @@ it.effect(
                           name: "codex:api-key:fixture",
                           provider: "codex",
                           status: "active",
+                          unavailable: poolUnavailable,
                           runtime_only: true,
                         },
                         {
                           name: "one.json",
                           provider: "codex",
                           status: "active",
+                          unavailable: poolUnavailable,
                           refresh_token: "must stay local",
                         },
                       ],
@@ -663,6 +666,16 @@ it.effect(
             expect((yield* proxy.grant(peer)).key).toBe(issued.key);
             expect((yield* proxy.authorize(issued.key))?.key).not.toBe(issued.key);
             const local = yield* proxy.grant({ environmentId: hostId, label: "Host" });
+            expect(yield* proxy.health("wrong-key")).toBeNull();
+            expect((yield* proxy.health(issued.key))?.availableDrivers).toEqual([
+              "codex",
+              "opencode",
+              "pi",
+            ]);
+            poolUnavailable = true;
+            expect((yield* proxy.health(issued.key))?.availableDrivers).toEqual([]);
+            poolUnavailable = false;
+            expect((yield* proxy.health(issued.key))?.availableDrivers).toContain("codex");
             const connect = { grant: local, driver: "codex" as const, hostLabel: "Host" };
             expect(yield* proxy.connect(connect).pipe(Effect.flip)).toHaveProperty(
               "_tag",
@@ -974,6 +987,7 @@ it.effect(
             expect((yield* proxy.authorize(grant.key))?.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:/);
             yield* proxy.manage({ operation: "revoke", environmentId: peer.environmentId });
             expect(yield* proxy.authorize(grant.key)).toBeNull();
+            expect(yield* proxy.health(grant.key)).toBeNull();
             expect((yield* proxy.grant(peer)).key).not.toBe(grant.key);
             expectRecovery = true;
             yield* Deferred.succeed(currentExit!, undefined);

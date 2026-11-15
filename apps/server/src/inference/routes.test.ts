@@ -13,6 +13,11 @@ describe("inference routes", () => {
       "/v1/messages?beta=true",
     );
     expect(inferencePath("GET", "/api/inference/v1/models")).toBe("/v1/models");
+    expect(inferenceTarget("GET", "/api/inference/linked/host/health")).toEqual({
+      path: "/health",
+      environmentId: "host",
+    });
+    expect(inferencePath("POST", "/api/inference/health")).toBeNull();
     expect(inferencePath("POST", "/api/inference/v1/chat/completions")).toBe(
       "/v1/chat/completions",
     );

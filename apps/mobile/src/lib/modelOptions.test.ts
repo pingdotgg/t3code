@@ -328,18 +328,20 @@ describe("mobile model options", () => {
     ).toEqual([true, true]);
   });
 
-  it.each(["disabled", "unavailable", "missing"] as const)(
+  it.each(["disabled", "unavailable", "missing", "offline", "limited"] as const)(
     "retains the selected %s provider's fallback in a filtered catalog",
     (state) => {
       const selection = {
-        instanceId: ProviderInstanceId.make("google_work"),
+        instanceId: ProviderInstanceId.make("claude_work"),
         model: "saved-model",
         options: [{ id: "native-option", value: "saved-choice" }],
       };
       const provider = {
         instanceId: selection.instanceId,
-        driver: "antigravity",
-        displayName: "Google Work",
+        driver: "claudeAgent",
+        status: state === "offline" ? "error" : "ready",
+        ...(state === "limited" ? { limitedUntil: "2099-01-01T00:00:00.000Z" } : {}),
+        displayName: "Claude Work",
         enabled: state !== "disabled",
         installed: true,
         availability: state === "unavailable" ? "unavailable" : "available",
@@ -348,10 +350,15 @@ describe("mobile model options", () => {
       };
       const config = {
         providers: state === "missing" ? [] : [provider],
-        settings: { providerInstances: { google_work: { driver: "antigravity" } } },
+        settings: {
+          providerInstances: {
+            claude_work: { driver: "claudeAgent", enabled: state !== "disabled" },
+          },
+        },
       } as unknown as ServerConfig;
       const options = buildModelOptions(config, selection, selection.instanceId, null);
       expect(options).toEqual(buildModelOptions(config, selection, undefined, null));
+      expect(buildModelOptions(config, null, undefined, null)).toEqual([]);
       expect(options).toHaveLength(1);
       expect(options[0]).toMatchObject({ selection, isUnavailable: true });
     },
@@ -396,7 +403,7 @@ describe("mobile model options", () => {
     expect(resolveSelectableModelSelection(config, disabled, null)).toBeNull();
     expect(resolveSelectableModelSelection(config, removed, null)).toBeNull();
     expect(isModelSelectionUnavailable(config, disabled, null)).toBe(true);
-    expect(isModelSelectionUnavailable(config, removed, null)).toBe(false);
+    expect(isModelSelectionUnavailable(config, removed, null)).toBe(true);
     expect(resolveSelectableModelSelection(null, disabled, null)).toBe(disabled);
   });
 
@@ -532,14 +539,14 @@ describe("mobile model options", () => {
       ]);
     });
 
-    it("keeps offline selections without assuming that an unknown instance is Antigravity", () => {
+    it("keeps the saved label but blocks an instance missing from the available catalog", () => {
       const unknownConfig = { ...config, providers: [] };
 
       expect(resolveDefaultableModelSelection(null, selection, null)).toBe(selection);
       expect(isModelSelectionUnavailable(null, selection, null)).toBe(false);
       expect(buildModelOptions(null, selection, undefined, null)[0]?.selection).toBe(selection);
       expect(buildModelOptions(null, selection, undefined, null)[0]?.isUnavailable).not.toBe(true);
-      expect(isModelSelectionUnavailable(unknownConfig, selection, null)).toBe(false);
+      expect(isModelSelectionUnavailable(unknownConfig, selection, null)).toBe(true);
       expect(resolveSelectableModelSelection(unknownConfig, selection, null)).toBeNull();
     });
   });

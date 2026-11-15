@@ -770,6 +770,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     ),
     Layer.provideMerge(ProviderRegistry.layer),
     Layer.provideMerge(
+      InferenceProxy.layer.pipe(
+        Layer.provideMerge(PeerLinks.layer.pipe(Layer.provide(PeerLinks.layerSsh))),
+      ),
+    ),
+    Layer.provideMerge(
       ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(SqlitePersistence.layerConfig)),
     ),
     // One gate for the server, below hydration so the Claude adapter sees it: layers memoize by
@@ -935,13 +940,7 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
   Layer.provide(PreviewBrowser.layer),
   // Links to other environments, shared by Settings (WebSocket) and agents (/mcp).
-  Layer.provide(
-    PeerForwarding.layer.pipe(
-      Layer.provideMerge(PeerMcpClient.layer),
-      Layer.provideMerge(InferenceProxy.layer),
-      Layer.provideMerge(PeerLinks.layer.pipe(Layer.provide(PeerLinks.layerSsh))),
-    ),
-  ),
+  Layer.provide(PeerForwarding.layer.pipe(Layer.provideMerge(PeerMcpClient.layer))),
   Layer.provide(
     SpeechService.layer.pipe(
       Layer.provide(layerServerSettings),

@@ -1,3 +1,5 @@
+import { makeInferenceProviderHealth } from "../inference/providerHealth.ts";
+import * as SecretResolver from "../secrets/SecretResolver.ts";
 import {
   defaultInstanceIdForDriver,
   isProviderWorkspaceSnapshotCurrent,
@@ -401,6 +403,7 @@ export const layer = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const inferenceHealth = yield* makeInferenceProviderHealth();
 
     const changesPubSub = yield* Effect.acquireRelease(
       PubSub.unbounded<ReadonlyArray<ServerProvider>>(),
@@ -496,7 +499,11 @@ export const layer = Layer.effect(
         ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
       );
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
-      bootProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
+      yield* Effect.forEach(
+        bootProviders,
+        (provider) => inferenceHealth.apply(classifyCompatibility(provider, initialManifest)),
+        { concurrency: "unbounded" },
+      ),
     );
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>
@@ -528,8 +535,9 @@ export const layer = Layer.effect(
     });
 
     const applyProviderUpdateState = Effect.fn("applyProviderUpdateState")(function* (
-      provider: ServerProvider,
+      snapshot: ServerProvider,
     ) {
+      const provider = yield* inferenceHealth.apply(snapshot);
       const maintenanceActionStates = yield* Ref.get(maintenanceActionStatesRef);
       const updateState = maintenanceActionStates.get(provider.instanceId)?.update;
       if (!updateState) {
@@ -741,6 +749,7 @@ export const layer = Layer.effect(
     });
 
     const refresh = Effect.fn("refresh")(function* (provider?: ProviderDriverKind) {
+      yield* inferenceHealth.invalidate;
       if (provider === undefined) {
         return yield* refreshAll();
       }
@@ -754,6 +763,7 @@ export const layer = Layer.effect(
     const refreshInstance = Effect.fn("refreshInstance")(function* (
       instanceId: ProviderInstanceId,
     ) {
+      yield* inferenceHealth.invalidate;
       yield* syncLiveSourcesAndContinue;
       const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
       if (!instance) {
@@ -1153,7 +1163,26 @@ export const layer = Layer.effect(
       return yield* refreshInstanceWorkspaceSnapshot(input);
     });
 
-    const getProviders = Ref.get(providersRef);
+    const refreshInferenceProviders = Effect.fn("ProviderRegistry.refreshInferenceProviders")(
+      function* () {
+        const ids = yield* inferenceHealth.instanceIds;
+        yield* Effect.forEach(
+          ids,
+          (id) =>
+            Effect.gen(function* () {
+              const instance = yield* instanceRegistry.getInstance(id);
+              if (!instance) return;
+              const source = buildSnapshotSource(instance);
+              const snapshot = yield* source.getSnapshot;
+              const next = yield* inferenceHealth.apply(snapshot);
+              if (!(yield* isCurrentInstance(instance))) return;
+              yield* correlateSnapshotWithSource(source, next).pipe(Effect.flatMap(syncProvider));
+            }),
+          { concurrency: "unbounded", discard: true },
+        );
+      },
+    );
+    const getProviders = refreshInferenceProviders().pipe(Effect.andThen(Ref.get(providersRef)));
     const streamPublishedChanges = Stream.unwrap(
       subscribeBeforeSnapshotWithoutMutex(changesPubSub, getProviders).pipe(
         Effect.map(({ latest, changes }) => Stream.concat(Stream.succeed(latest), changes)),
@@ -1199,6 +1228,7 @@ export const layer = Layer.effect(
     });
 
     const refreshModelCatalog = Effect.fn("ProviderRegistry.refreshModelCatalog")(function* () {
+      yield* refreshInferenceProviders();
       const { updatedAt } = yield* manifestService.refreshOnDemand;
       // The first pass can be one that started before the fetch, so allow one more.
       for (let pass = 0; pass < 2; pass++) {
@@ -1234,4 +1264,4 @@ export const layer = Layer.effect(
       },
     } satisfies ProviderRegistry["Service"];
   }),
-);
+).pipe(Layer.provide(SecretResolver.layer));

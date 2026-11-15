@@ -584,10 +584,14 @@ describe("resolveComposerProviderSelection", () => {
     ).toBe(sessionEntry.driverKind);
   });
 
-  it.each(["missing", "disabled"] as const)(
+  it.each(["missing", "disabled", "offline", "limited"] as const)(
     "does not move imported history to another driver when its instance is %s",
     (state) => {
-      const imported = entry("claudeAgent", "claude_work", { enabled: false });
+      const imported = entry("claudeAgent", "claude_work", {
+        enabled: state !== "disabled",
+        ...(state === "offline" ? { status: "error" } : {}),
+        ...(state === "limited" ? { limitedUntil: "2099-01-01T00:00:00.000Z" } : {}),
+      });
       const other = entry("codex");
       const entries = state === "missing" ? [other] : [other, imported];
       const thread = importedThread(imported.instanceId);

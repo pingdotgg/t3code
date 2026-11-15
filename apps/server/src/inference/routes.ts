@@ -16,7 +16,7 @@ const PREFIX = "/api/inference";
 export function inferencePath(method: string, rawUrl: string): string | null {
   if (!rawUrl.startsWith(PREFIX)) return null;
   const path = rawUrl.slice(PREFIX.length);
-  if (method === "GET" && path === "/v1/models") return path;
+  if (method === "GET" && (path === "/v1/models" || path === "/health")) return path;
   if (method !== "POST") return null;
   return [
     "/v1/responses",

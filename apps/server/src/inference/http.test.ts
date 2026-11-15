@@ -54,6 +54,14 @@ it("streams an authorized request with a host key, then denies the revoked consu
     InferenceHttp.layer.pipe(
       Layer.provide(
         Layer.mock(InferenceProxy)({
+          health: (key, hostId) => {
+            linkedHost = hostId;
+            return Effect.succeed(
+              active && key === "consumer"
+                ? { availableDrivers: ["codex"], models: ["gpt-fixture"] }
+                : null,
+            );
+          },
           authorize: (key, hostId) => {
             linkedHost = hostId;
             return Effect.succeed(
@@ -110,8 +118,26 @@ it("streams an authorized request with a host key, then denies the revoked consu
     expect(limited.status).toBe(429);
     expect(limited.headers.get("retry-after")).toBe("60");
     expect(await limited.text()).toBe("quota");
+    const health = await handler(
+      new Request("http://t3.test/api/inference/linked/host/health", {
+        headers: { authorization: "Bearer consumer" },
+      }),
+    );
+    expect(health.status).toBe(200);
+    expect(health.headers.get("cache-control")).toBe("no-store");
+    expect(await health.json()).toEqual({ availableDrivers: ["codex"], models: ["gpt-fixture"] });
+    expect(linkedHost).toBe("host");
     active = false;
     expect((await handler(request("v1/messages", "consumer"))).status).toBe(403);
+    expect(
+      (
+        await handler(
+          new Request("http://t3.test/api/inference/health", {
+            headers: { authorization: "Bearer consumer" },
+          }),
+        )
+      ).status,
+    ).toBe(403);
     expect(upstreamCalls).toBe(4);
   } finally {
     await dispose();

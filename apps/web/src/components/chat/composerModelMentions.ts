@@ -1,5 +1,9 @@
 import { rankComposerModelMentions } from "@t3tools/client-runtime/composerModelMentions";
-import type { ProviderInstanceId } from "@t3tools/contracts";
+import {
+  providerLimitedUntilMs,
+  type ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
@@ -17,7 +21,7 @@ type ComposerModelMentionProvider = Pick<
   | "enabled"
   | "isAvailable"
   | "status"
->;
+> & { readonly snapshot: Pick<ServerProvider, "limitedUntil"> };
 
 export function matchComposerModelItems(input: {
   readonly instanceEntries: ReadonlyArray<ComposerModelMentionProvider>;
@@ -32,7 +36,8 @@ export function matchComposerModelItems(input: {
       !entry.enabled ||
       !entry.isAvailable ||
       entry.status === "error" ||
-      entry.status === "disabled"
+      entry.status === "disabled" ||
+      providerLimitedUntilMs(entry.snapshot, Date.now()) !== null
     ) {
       continue;
     }

@@ -14,6 +14,7 @@ const traex = {
   enabled: true,
   isAvailable: true,
   status: "ready" as const,
+  snapshot: {},
 };
 const opencode = {
   ...traex,
@@ -63,10 +64,13 @@ describe("matchComposerModelItems", () => {
     expect(match("gpt").toSorted()).toEqual(["opencode:traex/gpt-6.1", "traex:gpt-6.1"]);
   });
 
-  it("leaves out providers that are not ready", () => {
-    expect(
-      match("gpt", { instanceEntries: [{ ...traex, status: "error" as const }, opencode] }),
-    ).toEqual(["opencode:traex/gpt-6.1"]);
+  it.each([
+    { status: "error" as const },
+    { snapshot: { limitedUntil: "2099-01-01T00:00:00.000Z" } },
+  ])("leaves out providers that are not ready: %j", (unavailable) => {
+    expect(match("gpt", { instanceEntries: [{ ...traex, ...unavailable }, opencode] })).toEqual([
+      "opencode:traex/gpt-6.1",
+    ]);
   });
 
   it("keeps providers whose health probe only warns", () => {

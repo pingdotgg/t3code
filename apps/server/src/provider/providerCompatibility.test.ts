@@ -1,3 +1,5 @@
+import { InferenceProxy } from "../inference/InferenceProxy.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -286,6 +288,8 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
     );
     const layerDependencies = Layer.mergeAll(
       ProviderLatestVersions.layer,
+      NodeCrypto.layer,
+      Layer.mock(InferenceProxy)({}),
       Layer.succeed(ModelManifest.ModelManifest, {
         current: Ref.get(manifest),
         refresh,

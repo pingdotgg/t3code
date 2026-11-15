@@ -1,3 +1,4 @@
+import { InferenceProxy } from "../inference/InferenceProxy.ts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import { vi } from "vite-plus/test";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -25,6 +26,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import {
   EnvironmentId,
+  InferenceProxyError,
   ClaudeSettings,
   CodexSettings,
   DEFAULT_SERVER_SETTINGS,
@@ -359,7 +361,12 @@ const layerTestNodeServices = Layer.mergeAll(
 );
 
 it.layer(
-  Layer.mergeAll(layerTestNodeServices, ServerSettingsModule.layerTest(), layerTestHttpClient),
+  Layer.mergeAll(
+    layerTestNodeServices,
+    ServerSettingsModule.layerTest(),
+    layerTestHttpClient,
+    Layer.mock(InferenceProxy)({}),
+  ),
 )("ProviderRegistry", (it) => {
   describe("checkCodexProviderStatus", () => {
     it.effect("uses the app-server account and model list for provider status", () =>
@@ -684,6 +691,129 @@ it.layer(
                   }),
                 ),
                 Layer.provide(layerUnusedMutator),
+                Layer.provide(
+                  ServerConfig.layerTest(process.cwd(), {
+                    prefix: "t3-provider-operation-capabilities-",
+                  }),
+                ),
+              ),
+            ),
+          );
+        }),
+    );
+
+    it.effect.each(["codex", "claudeAgent", "opencode", "pi"] as const)(
+      "rejects unavailable %s inference routes and restores recovered routes",
+      (driver) =>
+        Effect.gen(function* () {
+          let proxyStatus = 503;
+          let poolAvailable = true;
+          const instanceId = ProviderInstanceId.make(driver);
+          const driverKind = ProviderDriverKind.make(driver);
+          const provider = decodeServerProvider({
+            instanceId,
+            driver: driverKind,
+            enabled: true,
+            installed: true,
+            version: "1.0.0",
+            status: "ready",
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            models: [
+              { slug: "claude-fixture", name: "Fixture", capabilities: null, isCustom: false },
+            ],
+            supportsTextGeneration: true,
+            textGenerationOperations: ["generateReviewGuide"],
+          });
+          const instance: ProviderInstance = {
+            instanceId,
+            driverKind,
+            displayName: undefined,
+            enabled: true,
+            continuationIdentity: {
+              driverKind,
+              continuationKey: "claudeAgent:instance:claudeAgent",
+            },
+            snapshot: {
+              getSnapshot: Effect.succeed(provider),
+              refresh: Effect.succeed(provider),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+              markLimited: () => Effect.void,
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: driverKind,
+                    packageName: null,
+                  }),
+                ),
+            },
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+            textGeneration: {
+              ...fromRunner("Fixture", () => Effect.die("Unexpected generation operation")),
+              supportedOperations: ["generateConversationSummary"],
+            },
+          };
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            for (const status of [503, 429, 200]) {
+              proxyStatus = status;
+              const providers = yield* registry.refresh();
+              expect(providers[0]?.availability).toBe(status === 200 ? undefined : "unavailable");
+              expect(providers[0]?.status).toBe(status === 200 ? "ready" : "error");
+            }
+            poolAvailable = false;
+            yield* TestClock.adjust("16 seconds");
+            expect((yield* registry.getProviders)[0]?.availability).toBe("unavailable");
+            poolAvailable = true;
+            yield* TestClock.adjust("16 seconds");
+            expect((yield* registry.getProviders)[0]?.availability).toBeUndefined();
+          }).pipe(
+            Effect.provide(
+              ProviderRegistry.layer.pipe(
+                Layer.provide(
+                  Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+                    getInstance: () => Effect.succeed(instance),
+                    listInstances: Effect.succeed([instance]),
+                    listUnavailable: Effect.succeed([]),
+                    streamChanges: Stream.empty,
+                    subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+                  }),
+                ),
+                Layer.provide(layerUnusedMutator),
+                Layer.provide(
+                  Layer.mock(InferenceProxy)({
+                    routeHealth: () =>
+                      proxyStatus === 200
+                        ? Effect.succeed({
+                            availableDrivers: poolAvailable ? [driver] : [],
+                            models: ["claude-fixture"],
+                          })
+                        : Effect.fail(new InferenceProxyError({ message: "Unavailable" })),
+                  }),
+                ),
+                Layer.provide(
+                  Layer.mock(ServerSettingsModule.ServerSettingsService)({
+                    getSettings: Effect.succeed({
+                      ...DEFAULT_SERVER_SETTINGS,
+                      providerInstances: {
+                        [instanceId]: {
+                          driver: driverKind,
+                          enabled: true,
+                          config: {
+                            inferenceEnabled: true,
+                            inferenceHostId: EnvironmentId.make("host"),
+                            inferenceHostLabel: "Host",
+                            inferenceBaseUrl: "http://127.0.0.1:9876",
+                            inferenceKey: "fixture-key",
+                            inferenceModels: ["claude-fixture"],
+                            inferenceHomePath: "/fixture",
+                          },
+                        },
+                      },
+                    }),
+                  }),
+                ),
                 Layer.provide(
                   ServerConfig.layerTest(process.cwd(), {
                     prefix: "t3-provider-operation-capabilities-",

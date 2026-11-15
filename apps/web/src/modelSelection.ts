@@ -34,6 +34,7 @@ import { ModelEsque } from "./components/chat/providerIconUtils";
 import {
   type ProviderInstanceEntry,
   deriveProviderInstanceEntries,
+  isProviderInstancePickerVisible,
   NO_PROVIDER_MODEL_SELECTION,
   resolveDefaultProviderModelSelection,
   resolveProjectDefaultProviderModelSelection,
@@ -391,10 +392,9 @@ export function resolveAppModelSelectionState(
     ),
   );
   const selectedEntry = entries.find(
-    (entry) => entry.instanceId === selection.instanceId && entry.enabled && entry.isAvailable,
+    (entry) => entry.instanceId === selection.instanceId && isProviderInstancePickerVisible(entry),
   );
-  const entry =
-    selectedEntry ?? entries.find((candidate) => candidate.enabled && candidate.isAvailable);
+  const entry = selectedEntry ?? entries.find(isProviderInstancePickerVisible);
   if (entry) {
     const selectedModel = selectedEntry ? selection.model : null;
     // Use the cheap generation default; the catalog default is the expensive chat flagship.

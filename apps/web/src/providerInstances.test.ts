@@ -13,6 +13,7 @@ import {
   deriveProviderInstanceEntries,
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
+  isProviderInstancePickerVisible,
   providerInstanceEntriesFor,
   resolveDefaultProviderModelSelection,
   resolveSelectableProviderInstance,
@@ -129,6 +130,20 @@ describe("isProviderInstancePickerReady", () => {
 
     expect(entry?.status).toBe("ready");
     expect(entry && isProviderInstancePickerReady(entry)).toBe(false);
+  });
+  it.each([
+    { availability: "unavailable" as const },
+    { status: "error" as const },
+    { limitedUntil: "2099-01-01T00:00:00.000Z" },
+  ])("excludes an unusable provider from picks and defaults: %j", (unavailable) => {
+    const snapshot = {
+      ...provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
+      ...unavailable,
+    };
+    const [entry] = deriveProviderInstanceEntries([snapshot]);
+    expect(isProviderInstancePickerReady(entry!)).toBe(false);
+    expect(isProviderInstancePickerVisible(entry!)).toBe(false);
+    expect(resolveSelectableProviderInstance([snapshot], snapshot.instanceId)).toBeUndefined();
   });
 });
 
@@ -371,7 +386,7 @@ describe("resolveSelectableProviderInstance", () => {
     expect(resolveSelectableProviderInstance(providers, undefined)).toBe(ready);
   });
 
-  it("keeps a requested instance even when its probe errored", () => {
+  it("falls back to a healthy instance when the requested probe errored", () => {
     const requested = ProviderInstanceId.make("codex");
     const providers = [
       provider({
@@ -382,7 +397,7 @@ describe("resolveSelectableProviderInstance", () => {
       provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: "claudeAgent" }),
     ];
 
-    expect(resolveSelectableProviderInstance(providers, requested)).toBe(requested);
+    expect(resolveSelectableProviderInstance(providers, requested)).toBe("claudeAgent");
   });
 
   // regression: #4117 users without Codex got a broken default provider

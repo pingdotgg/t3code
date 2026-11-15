@@ -15,6 +15,7 @@ import {
   disallowedProviderMessage,
   isManagedDriverAllowed,
   isInferenceAccountReplaced,
+  providerLimitedUntilMs,
   isProviderDriverKind,
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
@@ -201,12 +202,14 @@ function modelOptionProviderContext(
           !config?.settings ||
           !isInferenceAccountReplaced(provider.instanceId, config.settings.providerInstances)) &&
         isProviderEnabledForProject(config, provider, projectId) &&
+        provider.availability !== "unavailable" &&
+        provider.status !== "error" &&
+        provider.status !== "disabled" &&
+        providerLimitedUntilMs(provider, Date.now()) === null &&
         // Antigravity's catalog only exists once it is set up; other providers stay
         // listed as unavailable so a pending or failed probe cannot erase them.
         (provider.driver !== "antigravity" ||
-          (provider.installed &&
-            provider.auth.status !== "unauthenticated" &&
-            provider.availability !== "unavailable")),
+          (provider.installed && provider.auth.status !== "unauthenticated")),
     ),
   };
 }
@@ -235,12 +238,18 @@ export function isModelSelectionUnavailable(
   if (isDriverDisallowed(config, driver)) {
     return true;
   }
+  if (
+    !provider ||
+    provider.availability === "unavailable" ||
+    provider.status === "error" ||
+    provider.status === "disabled" ||
+    providerLimitedUntilMs(provider, Date.now()) !== null
+  )
+    return true;
   return (
     driver === "antigravity" &&
-    (!provider ||
-      !provider.installed ||
+    (!provider.installed ||
       provider.auth.status === "unauthenticated" ||
-      provider.availability === "unavailable" ||
       !provider.models.some((model) => model.slug === selection.model))
   );
 }
@@ -273,8 +282,11 @@ export function describeUnavailableModelSelection(
         detail: "Turn it back on from web or desktop, or choose another model.",
       }
     : {
-        title: "Antigravity model unavailable",
-        detail: "Set up Antigravity on web or desktop, or choose another model.",
+        title: "Provider unavailable",
+        detail:
+          provider?.unavailableReason ??
+          provider?.message ??
+          "Check the provider on web or desktop, or choose another model.",
       };
 }
 
@@ -297,7 +309,8 @@ export function resolveSelectableModelSelection(
   return provider &&
     isProviderEnabledForProject(config, provider, projectId) &&
     provider.installed &&
-    provider.auth.status !== "unauthenticated"
+    provider.auth.status !== "unauthenticated" &&
+    !isModelSelectionUnavailable(config, selection, projectId)
     ? selection
     : null;
 }

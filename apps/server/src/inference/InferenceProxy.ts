@@ -8,6 +8,8 @@ import {
   INFERENCE_HARNESSES,
   inferenceHarness,
   InferenceConsumer,
+  InferenceRouteHealth,
+  type InferenceProviderConfig,
   InferenceHostConnection,
   isInferenceProviderConfig,
   InferenceRouting,
@@ -83,6 +85,8 @@ const Files = Schema.Struct({
       name: Schema.String,
       provider: Schema.String,
       status: Schema.String,
+      disabled: Schema.optionalKey(Schema.Boolean),
+      unavailable: Schema.optionalKey(Schema.Boolean),
       runtime_only: Schema.optionalKey(Schema.Boolean),
     }),
   ),
@@ -1223,6 +1227,70 @@ const make = Effect.gen(function* () {
     Effect.mapError(safeFailure("Inference host unavailable.")),
   );
 
+  const localHealth = Effect.fn("InferenceProxy.localHealth")(function* () {
+    const state = yield* read;
+    if (!state.enabled) return yield* failure("Inference hosting is disabled.");
+    const runtime = yield* ensureWatched(state);
+    const [{ files }, { data }] = yield* Effect.all(
+      [
+        jsonRequest(runtime.baseUrl + "/v0/management/auth-files", runtime.management, Files),
+        jsonRequest(runtime.baseUrl + "/v1/models", runtime.key, Models),
+      ],
+      { concurrency: "unbounded" },
+    );
+    const available = files.filter(
+      (account) => account.status === "active" && !account.disabled && !account.unavailable,
+    );
+    return {
+      availableDrivers: INFERENCE_DRIVERS.filter((driver) =>
+        available.some(
+          (account) => INFERENCE_HARNESSES[driver].accounts?.includes(account.provider) ?? true,
+        ),
+      ),
+      models: data.map((model) => model.id),
+    };
+  });
+
+  const health = Effect.fn("InferenceProxy.health")(
+    function* (key: string, hostId?: EnvironmentId) {
+      const target = yield* authorize(key, hostId);
+      if (!target) return null;
+      return hostId === undefined
+        ? yield* mutex.withPermit(localHealth())
+        : yield* jsonRequest(target.baseUrl + "/health", target.key, InferenceRouteHealth);
+    },
+    Effect.mapError(safeFailure("Could not check inference host health.")),
+  );
+
+  const routeHealth = Effect.fn("InferenceProxy.routeHealth")(
+    function* (route: InferenceProviderConfig, key: string) {
+      const ownId = yield* environment.getEnvironmentId;
+      if (route.inferenceHostId === ownId) {
+        return yield* mutex.withPermit(
+          Effect.gen(function* () {
+            const state = yield* read;
+            if (!state.enabled) return yield* failure("Inference hosting is disabled.");
+            const runtime = yield* ensureWatched(state);
+            if (runtime.baseUrl !== route.inferenceBaseUrl || runtime.key !== key)
+              return yield* failure(
+                "Inference route credentials have changed. Connect the route again.",
+              );
+            return yield* localHealth();
+          }),
+        );
+      }
+      const address =
+        route.inferenceConnection || route.inferenceBaseUrl.includes("/api/inference/linked/")
+          ? new URL(
+              "/api/inference",
+              yield* peerAddress(route.inferenceHostId, route.inferenceConnection),
+            ).href
+          : route.inferenceBaseUrl;
+      return yield* jsonRequest(address + "/health", key, InferenceRouteHealth);
+    },
+    Effect.mapError(safeFailure("Could not check inference route health.")),
+  );
+
   const connect = Effect.fn("InferenceProxy.connect")(
     function* ({ grant, driver, hostLabel, connection }: InferenceRouteInput) {
       const id = yield* environment.getEnvironmentId;
@@ -1368,13 +1436,21 @@ const make = Effect.gen(function* () {
     Effect.ignore,
     Effect.forkScoped,
   );
-  return { status, manage, authorize, grant, connect, bindRoutes };
+  return { status, manage, authorize, health, routeHealth, grant, connect, bindRoutes };
 });
 
 export class InferenceProxy extends Context.Service<
   InferenceProxy,
   {
     readonly status: Effect.Effect<InferenceProxyStatus, InferenceProxyError>;
+    readonly health: (
+      key: string,
+      hostId?: EnvironmentId,
+    ) => Effect.Effect<InferenceRouteHealth | null, InferenceProxyError>;
+    readonly routeHealth: (
+      route: InferenceProviderConfig,
+      key: string,
+    ) => Effect.Effect<InferenceRouteHealth, InferenceProxyError>;
     readonly manage: (
       input: InferenceProxyAction,
     ) => Effect.Effect<InferenceProxyActionResult, InferenceProxyError>;

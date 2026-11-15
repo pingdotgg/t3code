@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   isInferenceAccountReplaced,
+  providerLimitedUntilMs,
   resolveProjectProviderInstanceEnabled,
   type ModelSelection,
   type ProjectId,
@@ -55,13 +56,21 @@ export interface ProviderInstanceEntry {
 
 /** Disabled instances may retain ready status until reconciliation. */
 export function isProviderInstancePickerReady(
-  entry: Pick<ProviderInstanceEntry, "enabled" | "isAvailable" | "status">,
+  entry: Pick<ProviderInstanceEntry, "enabled" | "isAvailable" | "status" | "snapshot">,
 ): boolean {
-  return entry.enabled && entry.isAvailable && entry.status === "ready";
+  return isProviderInstancePickerVisible(entry) && entry.status === "ready";
 }
 
-export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): boolean {
-  return entry.enabled;
+export function isProviderInstancePickerVisible(
+  entry: Pick<ProviderInstanceEntry, "enabled" | "isAvailable" | "status" | "snapshot">,
+): boolean {
+  return (
+    entry.enabled &&
+    entry.isAvailable &&
+    entry.status !== "error" &&
+    entry.status !== "disabled" &&
+    providerLimitedUntilMs(entry.snapshot, Date.now()) === null
+  );
 }
 
 export function deriveProviderInstanceEntry(snapshot: ServerProvider): ProviderInstanceEntry {
@@ -235,7 +244,7 @@ export function getDefaultProviderInstanceModel(
 }
 
 const isSelectableProviderInstanceEntry = (entry: ProviderInstanceEntry): boolean =>
-  entry.enabled && entry.isAvailable;
+  isProviderInstancePickerVisible(entry);
 
 export function resolveSelectableProviderInstanceEntry(
   entries: ReadonlyArray<ProviderInstanceEntry>,
