@@ -140,7 +140,7 @@ export function VoiceInputSetup(props: {
                 </div>
               ) : !props.error ? (
                 <p role="status" className="text-muted-foreground">
-                  Loading transcription models…
+                  {t("voice.loadingModels")}
                 </p>
               ) : null}
               {props.error ? (
@@ -201,10 +201,7 @@ export function VoiceInputSetup(props: {
                   </Button>
                 </div>
                 {selectedIsUnavailable ? (
-                  <p className="text-xs text-destructive">
-                    The selected microphone is unavailable. Choose another or use the system
-                    default.
-                  </p>
+                  <p className="text-xs text-destructive">{t("voice.microphoneUnavailable")}</p>
                 ) : null}
                 {microphoneError ? (
                   <p role="alert" className="text-xs text-muted-foreground">
@@ -212,10 +209,7 @@ export function VoiceInputSetup(props: {
                   </p>
                 ) : null}
               </div>
-              <p className="text-muted-foreground">
-                Speak and transcribe in multiple languages or translate into English, and get names
-                and technical terms right with the dictionary in Voice settings.
-              </p>
+              <p className="text-muted-foreground">{t("voice.multilingualHint")}</p>
             </section>
           )}
         </WizardPanel>
@@ -226,7 +220,7 @@ export function VoiceInputSetup(props: {
                 {model ? t("voice.chooseAnotherModel") : t("voice.chooseModel")}
               </Button>
               {props.onRetryCatalog ? (
-                <Button onClick={props.onRetryCatalog}>Retry loading models</Button>
+                <Button onClick={props.onRetryCatalog}>{t("voice.retryLoadingModels")}</Button>
               ) : null}
               {props.downloading ? (
                 <Button variant="outline" disabled={!canManage} onClick={props.onCancelDownload}>

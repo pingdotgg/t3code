@@ -338,6 +338,7 @@
   },
   "inspector": {
     "couldNotLoadOutput": "Couldn't load output: {{error}}",
+    "earlierOutputNotShown": "Earlier output not shown",
     "loadingOutput": "Loading output…",
     "noOutput": "No output.",
     "openDiff": "Open diff",
@@ -567,7 +568,9 @@
     "stopSubagentAria": "Stop subagent {{title}}",
     "stopSubagentFailed": "Could not stop subagent",
     "stopWorkflowFailed": "Could not stop workflow",
-    "subagent": "Subagent"
+    "subagent": "Subagent",
+    "showMore": "Show {{count}} more",
+    "runsOn": "on {{label}}"
   },
   "sideChat": {
     "addToMainDetail": "Adds this side chat to the main thread's next message.",
@@ -623,6 +626,14 @@
     "viewCited": "View cited assistant text: {{label}}",
     "workLoadFailed": "Couldn't load work. Click to retry."
   },
+  "usage": {
+    "ofTokens": "{{used}} of {{max}} tokens",
+    "paceAhead": "Ahead of pace",
+    "paceOn": "On pace",
+    "paceUnder": "Under pace",
+    "percentLeft": "{{percent}}% left",
+    "resetsIn": "Resets in {{duration}}"
+  },
   "userMessage": {
     "agent": "Agent",
     "automation": "Automation",
@@ -657,9 +668,13 @@
     "downloading": "Downloading…",
     "downloadModel": "Download model",
     "downloadProgressAria": "Speech model download progress",
+    "loadingModels": "Loading transcription models…",
     "micAria": "Microphone",
     "micListFailed": "Could not list microphones. You can still use the system default.",
     "microphone": "Microphone",
+    "microphoneUnavailable": "The selected microphone is unavailable. Choose another or use the system default.",
+    "multilingualHint": "Speak and transcribe in multiple languages or translate into English, and get names and technical terms right with the dictionary in Voice settings.",
+    "retryLoadingModels": "Retry loading models",
     "recommendedFor": "Recommended for {{language}}",
     "refreshMics": "Refresh microphones",
     "selectedUnavailable": "Selected microphone (Unavailable)",

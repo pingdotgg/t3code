@@ -118,6 +118,7 @@ function ThreadLineageRowList(props: {
   readonly onShowMore: () => void;
   readonly children: ReactNode;
 }) {
+  const { t } = useTranslation("chat");
   return (
     <>
       {/* ScrollArea's max-height viewport measures badly inside this scrolling panel. */}
@@ -134,7 +135,9 @@ function ThreadLineageRowList(props: {
           className={`flex h-8 w-full cursor-pointer items-center rounded-lg ${THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS} text-sm font-medium text-muted-foreground/70 hover:bg-black/[0.055] hover:text-foreground/80 dark:hover:bg-white/[0.075]`}
         >
           <PlusIcon aria-hidden className="size-4 shrink-0" />
-          Show {Math.min(props.hiddenCount, THREAD_LINEAGE_PAGE_COUNT)} more
+          {t("relations.showMore", {
+            count: Math.min(props.hiddenCount, THREAD_LINEAGE_PAGE_COUNT),
+          })}
         </button>
       ) : null}
     </>
@@ -274,6 +277,7 @@ function RemoteSubagentRow(props: {
   readonly provider: ServerProvider | undefined;
 }) {
   const navigate = useNavigate();
+  const { t } = useTranslation("chat");
   const environment = useEnvironment(props.agent.remoteChild.environmentId);
   const { remoteChild } = props.agent;
   const status = props.agent.status;
@@ -320,7 +324,7 @@ function RemoteSubagentRow(props: {
           <span
             className={`flex max-w-1/2 shrink-0 gap-1 text-2xs ${failed ? "text-destructive" : "text-muted-foreground"}`}
           >
-            <span className="truncate">on {remoteChild.label}</span>
+            <span className="truncate">{t("relations.runsOn", { label: remoteChild.label })}</span>
             <span className="shrink-0">· {threadRelationshipStatusLabel(status)}</span>
           </span>
         </TooltipTrigger>
@@ -348,6 +352,7 @@ function DelegatedFromRow(props: {
   readonly fallbackLabel: string | undefined;
 }) {
   const navigate = useNavigate();
+  const { t } = useTranslation("chat");
   const { delegatedFrom } = props;
   const environment = useEnvironment(delegatedFrom.environmentId);
   const parentRef = scopeThreadRef(delegatedFrom.environmentId, delegatedFrom.threadId);
@@ -384,7 +389,7 @@ function DelegatedFromRow(props: {
           </span>
           {label ? (
             <span className="max-w-1/2 shrink-0 truncate text-2xs text-muted-foreground">
-              on {label}
+              {t("relations.runsOn", { label })}
             </span>
           ) : null}
         </TooltipTrigger>

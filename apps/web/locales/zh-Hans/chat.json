@@ -331,6 +331,7 @@
   },
   "inspector": {
     "couldNotLoadOutput": "无法加载输出：{{error}}",
+    "earlierOutputNotShown": "更早的输出未显示",
     "loadingOutput": "正在加载输出…",
     "noOutput": "无输出。",
     "openDiff": "打开差异",
@@ -560,7 +561,9 @@
     "stopSubagentAria": "停止子代理 {{title}}",
     "stopSubagentFailed": "无法停止子代理",
     "stopWorkflowFailed": "无法停止工作流",
-    "subagent": "子代理"
+    "subagent": "子代理",
+    "showMore": "显示更多 {{count}} 条",
+    "runsOn": "在 {{label}} 上"
   },
   "sideChat": {
     "addToMainDetail": "把这条旁路对话加进主线程的下一条消息。",
@@ -616,6 +619,14 @@
     "viewCited": "查看被引用的助手文本：{{label}}",
     "workLoadFailed": "无法加载工作记录，点击重试。"
   },
+  "usage": {
+    "ofTokens": "{{used}} / {{max}} 个 token",
+    "paceAhead": "快于正常节奏",
+    "paceOn": "符合节奏",
+    "paceUnder": "慢于正常节奏",
+    "percentLeft": "剩余 {{percent}}%",
+    "resetsIn": "{{duration}} 后重置"
+  },
   "userMessage": {
     "agent": "Agent",
     "automation": "自动任务",
@@ -650,9 +661,13 @@
     "downloading": "下载中…",
     "downloadModel": "下载模型",
     "downloadProgressAria": "语音模型下载进度",
+    "loadingModels": "正在加载转录模型…",
     "micAria": "麦克风",
     "micListFailed": "无法列出麦克风。你仍可以使用系统默认设备。",
     "microphone": "麦克风",
+    "microphoneUnavailable": "所选麦克风不可用。请选择其他设备或使用系统默认设备。",
+    "multilingualHint": "可以说多种语言并进行转录，或翻译成英语；在语音设置的词典里录入人名和术语，识别会更准确。",
+    "retryLoadingModels": "重新加载模型",
     "recommendedFor": "推荐用于 {{language}}",
     "refreshMics": "刷新麦克风列表",
     "selectedUnavailable": "所选麦克风（不可用）",
