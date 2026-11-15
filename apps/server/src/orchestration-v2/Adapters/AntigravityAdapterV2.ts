@@ -38,6 +38,7 @@ import {
   antigravityApprovalOptions,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
+  extractAntigravityElicitationForm,
   extractAntigravityUserInputQuestion,
   makeAntigravityReadRepair,
   makeAntigravityUserInputResponse,
@@ -270,6 +271,7 @@ export function makeAntigravityAcpAdapterFlavor(
         respond: (answers) => makeAntigravityUserInputResponse(request, answers),
       };
     },
+    extractElicitationForm: extractAntigravityElicitationForm,
     normalizeToolCall: normalizeAntigravityToolCall,
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
