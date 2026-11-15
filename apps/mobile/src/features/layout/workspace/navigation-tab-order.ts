@@ -1,4 +1,4 @@
-export const NAVIGATION_TAB_ORDER = ["threads", "pullRequests", "usage"] as const;
+export const NAVIGATION_TAB_ORDER = ["threads", "pullRequests", "issues", "usage"] as const;
 export type NavigationTab = (typeof NAVIGATION_TAB_ORDER)[number];
 
 export function navigationCustomizationAvailable(
@@ -10,6 +10,7 @@ export function navigationCustomizationAvailable(
 export const NAVIGATION_TAB_LABELS: Readonly<Record<NavigationTab, string>> = {
   threads: "Threads",
   pullRequests: "Pulls",
+  issues: "Issues",
   usage: "Usage",
 };
 

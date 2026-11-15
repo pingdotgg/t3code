@@ -29,16 +29,13 @@ import { usePullRequestPermissions } from "./usePullRequestPermissions";
 const EMPTY_PENDING: ReadonlyMap<PullRequestReactionContent, boolean> = new Map();
 const PILL = "min-h-8 flex-row items-center gap-1 rounded-full border px-2.5 active:opacity-70";
 
-function ReactionPills(props: {
-  readonly params: PullRequestParams;
+/** Reaction pills for any subject; `onReact` resolves false when the host refused the change. */
+export function ReactionPills(props: {
   readonly reactions: ReadonlyArray<PullRequestReaction>;
   readonly canReact: boolean;
-  /** Absent reacts to the change request itself. */
-  readonly subjectId?: string;
-  readonly onChanged: () => void;
+  readonly onReact: (content: PullRequestReactionContent, reacted: boolean) => Promise<boolean>;
+  readonly onChanged?: () => void;
 }) {
-  const target = pullRequestTarget(props.params);
-  const setReaction = useAtomCommand(composerPullRequests.setReaction, { reportFailure: false });
   // Keyed by what the host last reported, so a refresh that lands the change drops the overlay.
   const [pending, setPending] = useState({ signature: "", values: EMPTY_PENDING });
   const signature = pullRequestReactionsSignature(props.reactions);
@@ -46,16 +43,7 @@ function ReactionPills(props: {
   const shown = applyPendingPullRequestReactions(props.reactions, values);
   const toggle = async (content: PullRequestReactionContent, reacted: boolean) => {
     setPending({ signature, values: new Map([...values, [content, reacted]]) });
-    const result = await setReaction({
-      ...target,
-      input: {
-        ...target.input,
-        ...(props.subjectId === undefined ? {} : { subjectId: props.subjectId }),
-        content,
-        reacted,
-      },
-    });
-    if (AsyncResult.isFailure(result)) {
+    if (!(await props.onReact(content, reacted))) {
       setPending((current) => {
         const next = new Map(current.values);
         next.delete(content);
@@ -64,7 +52,7 @@ function ReactionPills(props: {
       Dialog.alert("Couldn't save the reaction", "Try again in a moment.");
       return;
     }
-    props.onChanged();
+    props.onChanged?.();
   };
   return (
     <>
@@ -117,6 +105,23 @@ function ReactionPills(props: {
   );
 }
 
+function usePullRequestReact(params: PullRequestParams, subjectId?: string) {
+  const target = pullRequestTarget(params);
+  const setReaction = useAtomCommand(composerPullRequests.setReaction, { reportFailure: false });
+  return async (content: PullRequestReactionContent, reacted: boolean) =>
+    !AsyncResult.isFailure(
+      await setReaction({
+        ...target,
+        input: {
+          ...target.input,
+          ...(subjectId === undefined ? {} : { subjectId }),
+          content,
+          reacted,
+        },
+      }),
+    );
+}
+
 /** Reactions on the change request itself, which is where its description's reactions live. */
 export function PullRequestReactions(props: { readonly params: PullRequestParams }) {
   const target = pullRequestTarget(props.params);
@@ -124,13 +129,14 @@ export function PullRequestReactions(props: { readonly params: PullRequestParams
   const activity = useEnvironmentQuery(composerPullRequests.activity(target));
   const { canReact } = usePullRequestPermissions(props.params, detail.data);
   const reactions = activity.data?.reactions ?? [];
+  const onReact = usePullRequestReact(props.params);
   if (!activity.data || (reactions.length === 0 && !canReact)) return null;
   return (
     <View className="flex-row flex-wrap items-center gap-1.5">
       <ReactionPills
-        params={props.params}
         reactions={reactions}
         canReact={canReact}
+        onReact={onReact}
         onChanged={activity.refresh}
       />
     </View>
@@ -156,14 +162,14 @@ export function PullRequestCommentFooter(props: {
   const editableKind = comment.kind === "review" ? null : comment.kind;
   const canEdit = editableKind !== null && props.permissions.canEditComment(comment);
   const canReact = props.permissions.canReactComment(comment);
+  const onReact = usePullRequestReact(props.params, comment.id);
   if (reactions.length === 0 && !canReact && !canEdit) return null;
   return (
     <View className="flex-row flex-wrap items-center gap-1.5">
       <ReactionPills
-        params={props.params}
         reactions={reactions}
         canReact={canReact}
-        subjectId={comment.id}
+        onReact={onReact}
         onChanged={props.onChanged}
       />
       {canEdit && editableKind !== null ? (
