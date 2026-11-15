@@ -973,7 +973,9 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
               typeof query === "string" &&
               /\bSELECT\s+payload_json\s+FROM orchestration_v2_projection_(?:runs|context_transfers)\b/i.test(
                 query,
-              )
+              ) &&
+              // The caller's own active run, read by id for its modes, is not history.
+              !/\brun_id IN\b/i.test(query)
             ) {
               historyReads.push(query);
             }

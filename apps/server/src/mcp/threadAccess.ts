@@ -15,6 +15,7 @@ import {
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
+import { callerModes } from "../orchestration-v2/DispatchModeLimit.ts";
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
@@ -107,11 +108,18 @@ export const loadCaller = Effect.fn("mcp.loadCaller")(function* () {
       message: "The calling thread was not found.",
     });
   }
+  // A queued run can execute in modes other than the thread's; the caller gets the stricter.
+  const activeRun =
+    caller.activeRunId === null
+      ? undefined
+      : (yield* threads
+          .getThreadRecords(caller.id, ["runs"], { runIds: [caller.activeRunId] })
+          .pipe(Effect.mapError(unavailable))).runs[0];
   return {
     scope,
     threads,
     caller,
-    limits: { runtimeMode: caller.runtimeMode, interactionMode: caller.interactionMode },
+    limits: callerModes(caller, activeRun),
   } satisfies Caller;
 });
 

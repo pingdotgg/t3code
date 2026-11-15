@@ -59,8 +59,13 @@ export const liveThreadShell = (
   };
 };
 
+/** The caller's active run has no recorded modes, so callers act with their thread's. */
+export const runsWithoutModes: ThreadManagement.ThreadManagementService["Service"]["getThreadRecords"] =
+  () => Effect.succeed({ runs: [] } as unknown as OrchestrationV2ThreadProjection);
+
 export const liveThreadsLayer = Layer.mock(ThreadManagement.ThreadManagementService)({
   getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
+  getThreadRecords: runsWithoutModes,
 });
 
 export const idleThreadProjection = (
