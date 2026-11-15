@@ -64,13 +64,11 @@ function carryFanoutSelections(
   environmentId: EnvironmentId,
 ) {
   if (draft.environmentId === environmentId) return;
+  const selectionsOn = (id: EnvironmentId) =>
+    draftFanoutSelectionsAtom(scopedThreadKey(scopeThreadRef(id, draft.threadId)));
   appAtomRegistry.set(
-    draftFanoutSelectionsAtom(scopedThreadKey(scopeThreadRef(environmentId, draft.threadId))),
-    appAtomRegistry.get(
-      draftFanoutSelectionsAtom(
-        scopedThreadKey(scopeThreadRef(draft.environmentId, draft.threadId)),
-      ),
-    ),
+    selectionsOn(environmentId),
+    appAtomRegistry.get(selectionsOn(draft.environmentId)),
   );
 }
 
