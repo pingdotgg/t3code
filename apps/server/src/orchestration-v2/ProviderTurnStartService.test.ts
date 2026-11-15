@@ -2173,7 +2173,9 @@ effectIt.effect("sends new steering text when restarting a manual continuation",
   }),
 );
 
-effectIt.effect("refuses unsupported resume instead of manufacturing a user prompt", () =>
+// Fork: upstream failed here with "Native resume is unavailable", which left Grok, OpenCode and
+// Antigravity threads stuck on Resume. The fork starts an ordinary turn that asks to continue.
+effectIt.effect("asks to continue when the provider cannot resume natively", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
       text: "",
@@ -2182,20 +2184,10 @@ effectIt.effect("refuses unsupported resume instead of manufacturing a user prom
       sideChat: { contextRun: "delivered" },
     });
     yield* harness.start;
-    expect(harness.startTurn).not.toHaveBeenCalled();
-    expect(harness.startRootRun).not.toHaveBeenCalled();
-    expect(harness.settledRuns).toEqual(["failed"]);
-    expect(harness.projection().turnItems).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: "error",
-          failure: expect.objectContaining({
-            message:
-              "This provider cannot resume without a new message. Send a message to continue.",
-          }),
-        }),
-      ]),
-    );
+    expect(harness.startTurn.mock.calls.map(([turn]) => turn.message.text)).toEqual([
+      "Continue where you left off.",
+    ]);
+    expect(harness.settledRuns).not.toContain("failed");
   }),
 );
 
