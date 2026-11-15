@@ -165,8 +165,7 @@ export interface GhosttyMouseInput {
 const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 const encoder = new TextEncoder();
 
-// One axis of mouse geometry in the encoder's whole-pixel space. Cell reports rescale the
-// position so each fractional rendered cell lands in the same whole-pixel encoder cell.
+// The encoder only takes whole-pixel cells, so cell reports rescale the pointer onto that grid.
 function encoderAxis(
   position: number,
   screen: number,
@@ -661,8 +660,7 @@ export class GhosttyTerminalCore {
       this.terminal,
     );
 
-    // The encoder takes whole-pixel geometry, so map the fractional rendered grid onto it and
-    // cell reports name the cell drawn under the pointer. SGR pixel reports keep surface pixels.
+    // SGR pixel reports (DEC 1016) must name surface pixels, so they skip the rescale.
     const pixelReports = this.modeEnabled(1016);
     const x = encoderAxis(
       input.x,
