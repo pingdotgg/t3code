@@ -34,6 +34,7 @@ import * as NodeURL from "node:url";
 import { McpSession, oauthMcpToken, pairBearer } from "../../conn-mcp/tools/mcp-client.mjs";
 import { monorepo } from "../../../tools/monorepo.mjs";
 import { sealedEnv, sealedNodeEnv } from "../../../tools/sealed-env.mjs";
+import { GUARD_ARG } from "../../../tools/no-outside-fetch.mjs";
 
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const STUB = NodePath.resolve(HERE, "../../conn-provider-codex/tools/codex-stub.mjs");
@@ -221,13 +222,26 @@ class Side {
     this.name = kind === "ts" ? "T3" : "Conn";
     Object.assign(this, prepareSide(dir, transcript, gates));
     this.out = NodePath.join(dir, "server.out");
+    if (kind === "ts") {
+      // No provider update check (registry.npmjs.org) and no model-manifest fetch from GitHub.
+      const userdata = NodePath.join(dir, "base", "userdata");
+      NodeFS.mkdirSync(userdata, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(userdata, "settings.json"), JSON.stringify({ enableProviderUpdateChecks: false }));
+    }
   }
 
   env() {
     const common = { PATH: this.path, SHELL: this.loginShell, GIT_CONFIG_NOSYSTEM: "1" };
     if (this.kind === "ts") {
       const base = NodePath.join(this.dir, "base");
-      return { ...sealedNodeEnv(this.dir), ...common, T3CODE_HOME: base, T3CODE_NO_BROWSER: "1" };
+      // No telemetry to ingest.t3.codes (AnalyticsService.ts reads T3CODE_TELEMETRY_ENABLED).
+      return {
+        ...sealedNodeEnv(this.dir),
+        ...common,
+        T3CODE_HOME: base,
+        T3CODE_NO_BROWSER: "1",
+        T3CODE_TELEMETRY_ENABLED: "false",
+      };
     }
     const env = Object.fromEntries(
       Object.entries(sealedEnv(this.dir)).filter(([name]) => !PROVIDER_VARIABLES.test(name)),
@@ -240,6 +254,7 @@ class Side {
       return [
         process.execPath,
         [
+          GUARD_ARG,
           NodePath.join(MONOREPO, "apps/server/src/bin.ts"),
           // `t3 serve`, as Orbit's `t3.service` starts it: no project from the folder it runs in.
           "serve",
@@ -260,7 +275,7 @@ class Side {
   addProject() {
     const [command, args] =
       this.kind === "ts"
-        ? [process.execPath, [NodePath.join(MONOREPO, "apps/server/src/bin.ts"), "project", "add", this.project, "--title", "work", "--base-dir", NodePath.join(this.dir, "base")]]
+        ? [process.execPath, [GUARD_ARG, NodePath.join(MONOREPO, "apps/server/src/bin.ts"), "project", "add", this.project, "--title", "work", "--base-dir", NodePath.join(this.dir, "base")]]
         : [rustBinary, ["project", "add", this.project, "--title", "work", "--state-dir", NodePath.join(this.dir, "state")]];
     const out = NodeFS.openSync(this.out, "a");
     try {

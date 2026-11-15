@@ -642,7 +642,9 @@ mod tests {
         });
         let deps = Deps {
             engine: None,
-            providers: vec![counted.clone()],
+            providers: conn_provider::ProviderSet::from(vec![
+                counted.clone() as Arc<dyn conn_provider::Provider>
+            ]),
             ..Deps::default()
         };
         start_status_refresh(&deps);
