@@ -931,8 +931,6 @@ function unwrapData<A>(operation: string, result: { readonly data?: A }): NonNul
 export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function* (
   options: OpenCodeAdapterV2Options,
 ) {
-  const permissionRules = (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
-    options.settings.permissionMode === "provider" ? [] : openCodePermissionRules(policy);
   const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
@@ -1405,13 +1403,10 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               () => client.session.get({ sessionID: childSessionId }),
             );
             const nativeChildSession = unwrapData("session.get", childSessionResponse);
-            const childPermission =
-              options.settings.permissionMode === "provider"
-                ? (nativeChildSession.permission ?? [])
-                : openCodeChildPermissionRules(
-                    turn.runtimePolicy,
-                    nativeChildSession.permission ?? [],
-                  );
+            const childPermission = openCodeChildPermissionRules(
+              turn.runtimePolicy,
+              nativeChildSession.permission ?? [],
+            );
             yield* sdkCall(
               "session.update",
               { sessionID: childSessionId, permission: childPermission },
@@ -3702,7 +3697,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 yield* sdkCall("session.update", { sessionID: fork.id }, () =>
                   client.session.update({
                     sessionID: fork.id,
-                    permission: permissionRules(input.runtimePolicy),
+                    permission: openCodePermissionRules(input.runtimePolicy),
                   }),
                 );
                 retainedThread = {

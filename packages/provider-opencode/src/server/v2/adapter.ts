@@ -785,14 +785,7 @@ const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["s
       };
 };
 
-/**
- * The adapter for one provider instance. It talks to the instance's
- * {@link OpenCode2Server.OpenCode2Server}, which the driver builds from the instance's settings.
- */
-export const make = Effect.fn("OpenCode2Adapter.make")(function* (
-  instanceId: ProviderInstanceId,
-  options: { readonly permissionMode?: "t3" | "provider" } = {},
-) {
+export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: ProviderInstanceId) {
   const server = yield* OpenCode2Server.OpenCode2Server;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
@@ -4124,8 +4117,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       policy: RulesPolicy,
       appThreadId: string | null,
     ) {
-      const mcpServerName = appThreadId === null ? null : yield* mcpServerNameFor(appThreadId);
-      if (options.permissionMode === "provider") return mcpRules(mcpServerName);
       const plan = policy.interactionMode === "plan";
       const paths =
         policy.runtimeMode === "full-access" && !plan
@@ -4135,7 +4126,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         policy,
         paths,
         policy.runtimeMode === "full-access" ? [] : thread.grants,
-        mcpServerName,
+        appThreadId === null ? null : yield* mcpServerNameFor(appThreadId),
       );
     });
 

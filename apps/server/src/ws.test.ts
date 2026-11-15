@@ -37,7 +37,6 @@ import * as Deferred from "effect/Deferred";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as TricketIntegration from "./integrations/tricket/TricketIntegration.ts";
 import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
 import * as Fiber from "effect/Fiber";
@@ -797,7 +796,6 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
 
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedConfigRpcServices = Layer.mergeAll(
-  Layer.mock(TricketIntegration.TricketIntegration)({}),
   Layer.mock(DocumentText.DocumentText)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(SecretCheck.SecretCheck)({}),

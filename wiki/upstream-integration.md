@@ -6,7 +6,7 @@ tags: [upstream, fork, integration]
 status: stable
 generated:
   by: opencode/gpt-6.1-sol
-  at: 2026-11-13T18:16:03+00:00
+  at: 2026-11-15T07:56:01+00:00
 verified:
   - by: opencode/gpt-6.1-sol
     at: 2026-11-13T18:16:03+00:00
@@ -24,6 +24,9 @@ snapshot:
   branch_code_tip: ccb63c2129a16b7d9894d32115266cbc26ceb101
   missing_upstream_on_branch: 0
 sources:
+  - id: opencode-permissions-retirement
+    resource: ../packages/provider-opencode/src/server/v2/adapter.ts
+    title: Upstream thread-controlled OpenCode permissions
   - id: november-13-candidate
     resource: https://github.com/NicholasZolton/t3code/commit/4e3eaf41faf1a967fd293715b34841ae69589ac2
     title: Ancestry-preserving November 13 merge, now incorporated into main
@@ -943,6 +946,12 @@ OpenCode Go account deduplication, and releases 0.0.43 and 0.0.44.
 
 ## OpenCode compatibility boundary
 
+The November 15 removal retires the fork's provider-managed permission
+override. OpenCode follows T3's thread permission modes; the provider settings
+form no longer offers a separate Permissions control. Existing saved override
+values are ignored on load, without a settings migration. Deployment remains
+separate.[^opencode-permissions-retirement]
+
 At the completed `99e08526e5` sync, upstream marked OpenCode v2
 incompatible while this fork supported it natively. Fork #18 removed that
 advisory, and PR #27 retained the bundled policy and remote metadata filter.
@@ -1316,6 +1325,8 @@ git log --reverse --oneline origin/main..upstream/main
 [^workspace-recovery]: Shared recovery service preserves backend ownership and retained-branch priority.
 
 [^opencode-child-tracking]: Native OpenCode lifecycle with reused-child admission, execution attribution, and delivery tracking.
+
+[^opencode-permissions-retirement]: The adapter always derives session rules from the thread's runtime policy.
 
 [^composer-collapse-removal]: Upstream #25869 deletes the collapsed composer state and the `composerCollapseOnScroll` setting.
 

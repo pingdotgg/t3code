@@ -222,7 +222,6 @@ export const replayServer = (
   transcript: ProviderReplayTranscript,
   options?: {
     readonly external?: boolean;
-    readonly permissionMode?: "t3" | "provider";
     readonly processExit?: Effect.Effect<void>;
     readonly beforeResponse?: (path: string) => Effect.Effect<void>;
     readonly replayGate?: ProviderReplayGate;
@@ -279,7 +278,6 @@ const makeReplayAdapter = (
   transcript: ProviderReplayTranscript,
   options?: {
     readonly external?: boolean;
-    readonly permissionMode?: "t3" | "provider";
     readonly processExit?: Effect.Effect<void>;
     readonly beforeResponse?: (path: string) => Effect.Effect<void>;
     readonly onPrompt?: (input: unknown) => void;
@@ -289,7 +287,7 @@ const makeReplayAdapter = (
 ) =>
   Effect.gen(function* () {
     const server = yield* replayServer(transcript, options);
-    return yield* OpenCode2Adapter.make(ProviderInstanceId.make("opencode"), options).pipe(
+    return yield* OpenCode2Adapter.make(ProviderInstanceId.make("opencode")).pipe(
       Effect.provideService(OpenCode2Server.OpenCode2Server, server),
     );
   });
@@ -335,7 +333,6 @@ export const openCode2ReplayRuntime = (
   entries: ReadonlyArray<ProviderReplayEntry>,
   options?: {
     readonly external?: boolean;
-    readonly permissionMode?: "t3" | "provider";
     readonly processExit?: Effect.Effect<void>;
     readonly beforeResponse?: (path: string) => Effect.Effect<void>;
     readonly version?: string;
