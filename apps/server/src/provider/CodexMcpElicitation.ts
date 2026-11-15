@@ -182,6 +182,23 @@ const ONE_TIME_APPROVAL_CHOICE =
 // Confirmation forms (e.g. mongodb-mcp-server's required "Yes"/"No" enum) ask
 // for consent with a plain affirmative instead of an allow-once choice.
 const ONE_TIME_CONFIRMATION_CHOICE = /^(?:yes|confirm|proceed|continue|ok(?:ay)?)$/i;
+const REMEMBER_CHOICE_HINT = /remember|future/i;
+
+// A bare "Yes" carries no scope of its own, so the field and the label must not ask to persist it.
+function isOneTimeConfirmationChoice(
+  key: string,
+  field: typeof McpElicitationFormField.Type,
+  option: ReturnType<typeof mcpElicitationFieldOptions>[number],
+): boolean {
+  return (
+    ONE_TIME_CONFIRMATION_CHOICE.test(option.value.trim()) &&
+    mcpElicitationPersistenceDecision(option.label ?? "") === null &&
+    !isMcpElicitationPersistenceField(key, field) &&
+    ![key, field.title, field.description, option.label].some(
+      (text) => typeof text === "string" && REMEMBER_CHOICE_HINT.test(text),
+    )
+  );
+}
 
 export function toMcpElicitationResponse(
   payload: McpElicitationResponseInput,
@@ -212,8 +229,7 @@ export function toMcpElicitationResponse(
         ? mcpElicitationPersistenceDecision(option.value) === decision
         : (ONE_TIME_APPROVAL_CHOICE.test(option.value.trim()) ||
             (responseOptions?.acceptConfirmationChoices === true &&
-              !isMcpElicitationPersistenceField(key, field) &&
-              ONE_TIME_CONFIRMATION_CHOICE.test(option.value.trim()))) &&
+              isOneTimeConfirmationChoice(key, field, option))) &&
           mcpElicitationPersistenceDecision(option.value) === null,
     );
     if (chosenOption) {

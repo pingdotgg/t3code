@@ -1649,6 +1649,22 @@ describe("ClaudeAdapterV2 MCP elicitation acceptance", () => {
         },
         ["remember"],
       ),
+      form(
+        {
+          remember: {
+            type: "string",
+            title: "Remember this approval for future requests",
+            enum: ["Yes", "No"],
+          },
+        },
+        ["remember"],
+      ),
+      form(
+        {
+          grant: { type: "string", enum: ["yes", "no"], enumNames: ["Always allow", "Allow once"] },
+        },
+        ["grant"],
+      ),
       { serverName: "deploys", message: "Deploy web?", mode: "form" },
     ] satisfies ReadonlyArray<ElicitationRequest>) {
       assert.isUndefined(ClaudeAdapterV2.claudeMcpElicitationAcceptance(request));
