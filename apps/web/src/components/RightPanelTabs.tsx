@@ -748,7 +748,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     breadcrumb: mobileDiff ? mobileBreadcrumbSlot : breadcrumbSlot,
     actions: actionsSlot,
     registerActions,
-    breadcrumbOnBar,
   };
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
   const [tabScrollState, setTabScrollState] = useState({

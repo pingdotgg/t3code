@@ -249,11 +249,6 @@ export function DiffViewControls({
             <EllipsisIcon className="size-3.5" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuRadioGroup value={diffLayout} onValueChange={setDiffLayout}>
-              <DropdownMenuRadioItem value="stacked">Stacked view</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="split">Split view</DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
-            <DropdownMenuSeparator />
             {refresh && (
               <DropdownMenuItem disabled={refresh.refreshing} onClick={refresh.onRefresh}>
                 Refresh diff
@@ -264,6 +259,11 @@ export function DiffViewControls({
                 {allFilesCollapsed ? "Expand all files" : "Collapse all files"}
               </DropdownMenuItem>
             )}
+            <DropdownMenuRadioGroup value={diffLayout} onValueChange={setDiffLayout}>
+              <DropdownMenuRadioItem value="stacked">Stacked view</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="split">Split view</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
             <DropdownMenuCheckboxItem
               checked={wordWrap}
               onCheckedChange={(checked) => onWordWrapChange(Boolean(checked))}
