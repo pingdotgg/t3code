@@ -447,6 +447,8 @@ it.effect("lists a peer as reachable at another address while its first one slee
 
       yield* Ref.set(b.asleep, true);
       expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      // A call does not wait out the sleeping address either.
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(elsewhere);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
