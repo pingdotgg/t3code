@@ -8973,7 +8973,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     if (!interrupted && flavor.restartRuntimeAfterPromptError?.(failure) === true) {
                       yield* Ref.set(runtimeRestartRequired, true);
                     }
-                    if (!interrupted) yield* terminalizeOpenForegroundTools(context, "failed");
+                    // An agent that answered with an error is still alive and may finish its
+                    // tools; any other failure means its process or pipe is gone.
+                    const agentAnswered =
+                      Result.isSuccess(error) && error.success._tag === "AcpRequestError";
+                    if (!interrupted && !agentAnswered) {
+                      yield* terminalizeOpenForegroundTools(context, "failed");
+                    }
                     yield* finalizeTurn(
                       context,
                       interrupted ? "interrupted" : "failed",
