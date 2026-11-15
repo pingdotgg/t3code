@@ -7,6 +7,11 @@ import * as Option from "effect/Option";
 import { Navigate, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
+import { WorkspaceSplitPane } from "./workspaceTabs/WorkspaceSplitPane";
+import { WorkspaceTabBar } from "./workspaceTabs/WorkspaceTabBar";
+import { WorkspaceTabBarSlot } from "./workspaceTabs/WorkspaceTabBarSlot";
+import { useWorkspaceTabsStore } from "../workspaceTabsStore";
+
 import ChatView from "./ChatView";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { SidebarInset } from "./ui/sidebar";
@@ -139,6 +144,15 @@ export function ThreadRouteView({
     draftThreadExists: draftThread !== null,
   });
   const environmentHasAnyThreads = environmentThreadRefs.length > 0 || environmentHasDraftThreads;
+  const activeTabKey = serverThreadRef === null ? null : scopedThreadKey(serverThreadRef);
+  const split = useWorkspaceTabsStore((state) => state.split);
+  const threadReady = renderState === "ready" && !hiddenByTagFilter && !offShellBlocked;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the thread shown in the main view as an open tab in the persisted tab store
+  useEffect(() => {
+    if (!background && threadReady && activeTabKey !== null) {
+      useWorkspaceTabsStore.getState().visit(activeTabKey);
+    }
+  }, [activeTabKey, background, threadReady]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears pending file drops and navigates the router home once a server thread is confirmed missing
   useEffect(() => {
@@ -224,12 +238,34 @@ export function ThreadRouteView({
     );
   }
 
+  const shown = !background && view !== null;
+  const tabBar = background ? null : (
+    <WorkspaceTabBar activeKey={activeTabKey} draftActive={target.kind === "draft"} />
+  );
+  const showSplit = shown && activeTabKey !== null && split !== null && split.key !== activeTabKey;
+
   return (
     <SidebarInset
       className="h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh"
       inert={background}
     >
-      <BackgroundThreadContext value={background}>{view}</BackgroundThreadContext>
+      <BackgroundThreadContext value={background}>
+        <WorkspaceTabBarSlot value={tabBar}>
+          {/* The same wrapper with or without a split, so opening one keeps this ChatView. */}
+          <div className="flex min-h-0 min-w-0 flex-1">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">{view}</div>
+            {showSplit ? (
+              <div className="hidden min-h-0 md:contents">
+                <WorkspaceSplitPane
+                  splitKey={split.key}
+                  activeKey={activeTabKey}
+                  ratio={split.ratio}
+                />
+              </div>
+            ) : null}
+          </div>
+        </WorkspaceTabBarSlot>
+      </BackgroundThreadContext>
       {background ? null : redirect}
     </SidebarInset>
   );

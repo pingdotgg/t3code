@@ -24,12 +24,13 @@ integrated, and tested. Features inherited from T3 Code are marked _(upstream)_.
 | Local models through Ollama                                          | Settings → Local models: install, hardware checks, downloads, agent use through Codex                   |
 | Memory vaults                                                        | Per-conversation Markdown vaults, access levels, relevant-section retrieval, agent tools                |
 | Default account and assisted switching                               | Default/fallback model _(upstream)_; **Continue on …** on usage-limit banner, never automatic           |
+| Thread tabs and split view                                           | Drag, pin, close/reopen, keyboard switching, two threads side by side; saved across restarts            |
 
 ## Planned
 
 | Feature                                          | Plan                                                                                         |
 | ------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| Browser-style workspace tabs                     | Session, editor, terminal, browser, settings tabs with drag, pin, split view, saved layouts  |
+| More tab kinds and layouts                       | Editor, terminal, browser, and settings tabs; more than two panes; named saved layouts       |
 | Built-in code editor                             | Monaco editor with tabs, search/replace, formatting, language features                       |
 | Account Manager page                             | One page listing every account with its limits                                               |
 | Agent Eyes                                       | Live follow of edits, commands, tests, and browser activity; timeline, replay, explanations  |

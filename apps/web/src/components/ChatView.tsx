@@ -211,6 +211,7 @@ import { toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
 import { isInSideChatPane, type SideChatParentPanel } from "~/lib/sideChatPane";
+import { WorkspaceTabBarSlot } from "./workspaceTabs/WorkspaceTabBarSlot";
 import {
   NO_PROVIDER_MODEL_SELECTION,
   providerInstanceEntriesFor,
@@ -450,6 +451,7 @@ export default function ChatView(props: ChatViewProps) {
     embedded: parentPanel,
   } = props;
   const embedded = parentPanel !== undefined;
+  const workspaceTabBar = use(WorkspaceTabBarSlot);
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
@@ -3412,6 +3414,7 @@ export default function ChatView(props: ChatViewProps) {
             />
           </header>
         )}
+        {embedded ? null : workspaceTabBar}
 
         <div className="relative flex min-h-0 min-w-0 flex-1">
           <ThreadFindCanvas

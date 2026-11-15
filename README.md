@@ -37,17 +37,18 @@ It is **not** an official T3 Code release. See [License and attribution](#licens
 5. [First-time setup](#first-time-setup)
 6. [Using multiple accounts](#using-multiple-accounts)
 7. [Switching AI agents](#switching-ai-agents)
-8. [Run models locally with Ollama](#run-models-locally-with-ollama)
-9. [Memory vaults](#memory-vaults)
-10. [Using the editor, terminal, and browser](#using-the-editor-terminal-and-browser)
-11. [Settings](#settings)
-12. [Supported operating systems](#supported-operating-systems)
-13. [Building from source](#building-from-source)
-14. [Troubleshooting](#troubleshooting)
-15. [Updating](#updating)
-16. [Contributing](#contributing)
-17. [License and attribution](#license-and-attribution)
-18. [Roadmap](#roadmap)
+8. [Tabs and split view](#tabs-and-split-view)
+9. [Run models locally with Ollama](#run-models-locally-with-ollama)
+10. [Memory vaults](#memory-vaults)
+11. [Using the editor, terminal, and browser](#using-the-editor-terminal-and-browser)
+12. [Settings](#settings)
+13. [Supported operating systems](#supported-operating-systems)
+14. [Building from source](#building-from-source)
+15. [Troubleshooting](#troubleshooting)
+16. [Updating](#updating)
+17. [Contributing](#contributing)
+18. [License and attribution](#license-and-attribution)
+19. [Roadmap](#roadmap)
 
 ## Download
 
@@ -256,6 +257,22 @@ The new agent does not receive the old agent's private reasoning or tool state; 
 export those. For long or important tasks, restate key requirements in your next message. Details:
 [portable handoffs](./docs/user/portable-handoffs.md).
 
+## Tabs and split view
+
+Every thread you open gets a tab under the thread's title, like a web browser. Tabs are remembered
+when you restart Continuum.
+
+- **Switch:** click a tab, or press `Ctrl+Tab` / `Ctrl+Shift+Tab`.
+- **Close and reopen:** click ×, middle-click the tab, or press `Ctrl+Alt+W` (`Cmd+Option+W` on
+  macOS). `Ctrl+Alt+T` reopens the last closed tab.
+- **Reorder:** drag a tab. Right-click a tab to **pin** it (pinned tabs stay first), close other
+  tabs, or close tabs to the right.
+- **Split view:** right-click a tab → **Open beside current thread** to work in two threads side by
+  side. Drag the divider to resize, use ⇄ to swap the two, or × to close the split. Split view needs
+  a window at least 768 pixels wide.
+
+Shortcuts can be changed in Settings → Keybindings.
+
 ## Run models locally with Ollama
 
 Run open models on your own computer, with no account and nothing sent to the cloud.
@@ -451,6 +468,7 @@ keeps compatibility with them but does not operate them.
 - Automatic agent updates so the newest Claude and Codex models appear
 - Local models through Ollama, usable as a full agent
 - Memory vaults
+- Browser-style thread tabs (drag, pin, close and reopen, saved across restarts) and split view
 - Default account and **Continue on …** switching when an account hits its limit
 - Window transparency setting
 - Analytics off by default, no third-party endpoint
@@ -458,7 +476,7 @@ keeps compatibility with them but does not operate them.
 
 **Planned** (not available yet)
 
-- Browser-style workspace tabs with split views and saved layouts
+- Tabs for the editor, terminal, browser, and settings, and more than two panes
 - Agent Eyes: follow an agent's edits, commands, and browser activity live, with replay
 - Built-in code editor (Monaco) with search and replace
 - A single Account Manager page
