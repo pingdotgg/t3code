@@ -495,14 +495,15 @@ export const layer = Layer.effect(
           isSynthesisError(cause)
             ? cause
             : new SpeechSynthesisError({ provider, reason: "unavailable", cause });
-        // Resolved per piece, so a long reply stops when its key is locked, removed, or replaced.
         const source = (yield* credentials)[provider];
+        const backend: SynthesisBackend = synthesisBackends[provider];
+        const synthesisRequest = yield* backend.request(input);
+        // Resolved per piece and after building, which may fetch a catalog, so the key sent is
+        // never older than the vault's state at send time.
         const key = yield* resolveKey(
           source,
           (reason, cause) => new SpeechSynthesisError({ provider, reason, cause }),
         );
-        const backend: SynthesisBackend = synthesisBackends[provider];
-        const synthesisRequest = yield* backend.request(input);
         const current = (yield* credentials)[provider];
         if (!current || !source || !sameCredential(source, current))
           return yield* new SpeechSynthesisError({ provider, reason: "key-changed" });

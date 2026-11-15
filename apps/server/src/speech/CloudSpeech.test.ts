@@ -99,43 +99,62 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
   }),
 );
 
-it.effect("stops a long reply when its vault-backed key locks between pieces", () =>
-  Effect.gen(function* () {
-    const reference = { provider: SecretProviderId.make("work"), reference: "op://Work/Voice/key" };
-    let secret: string | undefined = "vault-key";
-    const upstream = vi.fn<typeof fetch>(async () => {
-      secret = undefined;
-      return new Response(Uint8Array.of(0xff, 0xfb), { headers: { "content-type": "audio/mpeg" } });
-    });
-    const service = yield* CloudSpeech.CloudSpeech.pipe(
-      Effect.provide(
-        CloudSpeech.layer.pipe(
-          Layer.provide(NodeServices.layer),
-          Layer.provide(FetchHttpClient.layer),
-          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
-          Layer.provide(
-            Layer.mock(SecretResolver.SecretResolver)({
-              read: () => Effect.sync(() => [secret]),
-              label: () => Effect.succeed("Work"),
-              invalidate: () => Effect.void,
-            }),
+it.effect.each([
+  {
+    provider: "openai",
+    window: "between pieces",
+    text: "Read this sentence aloud. ".repeat(200),
+    model: "",
+    uploads: 1,
+  },
+  // An empty voice makes OpenRouter's request builder fetch the catalog for a default.
+  {
+    provider: "openrouter",
+    window: "while the request is built",
+    text: "Read this reply.",
+    model: "acme/voice",
+    uploads: 0,
+  },
+] as const)(
+  "stops a reply when its vault-backed key locks $window",
+  ({ provider, text, model, uploads }) =>
+    Effect.gen(function* () {
+      const reference = {
+        provider: SecretProviderId.make("work"),
+        reference: "op://Work/Voice/key",
+      };
+      let secret: string | undefined = "vault-key";
+      const upstream = vi.fn<typeof fetch>(async (input) => {
+        secret = undefined;
+        return new URL(String(input)).pathname.endsWith("/models")
+          ? Response.json({ data: [{ id: "acme/voice", supported_voices: ["reader"] }] })
+          : new Response(Uint8Array.of(0xff, 0xfb), { headers: { "content-type": "audio/mpeg" } });
+      });
+      const service = yield* CloudSpeech.CloudSpeech.pipe(
+        Effect.provide(
+          CloudSpeech.layer.pipe(
+            Layer.provide(NodeServices.layer),
+            Layer.provide(FetchHttpClient.layer),
+            Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+            Layer.provide(
+              Layer.mock(SecretResolver.SecretResolver)({
+                read: () => Effect.sync(() => [secret]),
+                label: () => Effect.succeed("Work"),
+                invalidate: () => Effect.void,
+              }),
+            ),
           ),
         ),
-      ),
-    );
-    yield* service.setKey("openai", reference);
-    const failure = yield* service
-      .stream("openai", {
-        text: "Read this sentence aloud. ".repeat(200),
-        model: "",
-        voice: "",
-        speed: 1,
-        language: "en",
-      })
-      .pipe(Stream.runDrain, Effect.flip, Effect.provideService(FetchHttpClient.Fetch, upstream));
-    expect(failure).toMatchObject({ reason: "unreadable-key" });
-    expect(upstream).toHaveBeenCalledTimes(1);
-  }),
+      );
+      yield* service.setKey(provider, reference);
+      const failure = yield* service
+        .stream(provider, { text, model, voice: "", speed: 1, language: "en" })
+        .pipe(Stream.runDrain, Effect.flip, Effect.provideService(FetchHttpClient.Fetch, upstream));
+      expect(failure).toMatchObject({ reason: "unreadable-key" });
+      expect(
+        upstream.mock.calls.filter(([url]) => String(url).endsWith("/audio/speech")),
+      ).toHaveLength(uploads);
+    }),
 );
 
 it.effect("uploads to OpenRouter only for a listed exact model, as zero-retention JSON WAV", () =>
