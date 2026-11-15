@@ -227,16 +227,18 @@ export function createComposerImageThumbnail(file: File): Promise<string | null>
 /**
  * Pasted images are re-encoded after their placeholder already shows the source's thumbnail.
  * Reusing it keeps the tile from flashing back to its fallback while the new file is decoded.
+ * Resolves once the target's thumbnail is readable, so a tile swapped to it paints at once even
+ * when compression finished before the source's thumbnail did.
  */
-export function inheritComposerImageThumbnail(source: File, target: File): void {
+export async function inheritComposerImageThumbnail(source: File, target: File): Promise<void> {
   const sourceThumbnail = composerThumbnails.get(source);
   if (source === target || !sourceThumbnail || composerThumbnails.has(target)) return;
-  const settled = settledComposerThumbnails.get(source);
-  if (settled) settledComposerThumbnails.set(target, settled);
   cacheComposerImageThumbnail(
     target,
     sourceThumbnail.then((src) => src ?? renderComposerImageThumbnail(target)),
   );
+  const src = await sourceThumbnail;
+  if (src) settledComposerThumbnails.set(target, src);
 }
 
 async function renderComposerImageThumbnail(file: File): Promise<string | null> {
