@@ -56,11 +56,13 @@ export interface RelayHost<R = never> {
   };
   readonly apnsSender: Effect.Effect<Ports.DeliveryQueueSender<SignedApnsDeliveryJob>>;
   readonly fcmSender: Effect.Effect<Ports.DeliveryQueueSender<FcmDeliveryJob>>;
-  /** A failing handler asks the host to retry that message; the host owns retries and dead-lettering. */
+  /** Hands over each batch; the handler settles every message, and the host owns redelivery. */
   readonly consumeQueue: (
     name: "apns" | "fcm",
     options: Omit<Ports.DeliveryQueueConsumerOptions, "deadLetterQueue">,
-    handler: (body: unknown) => Effect.Effect<void, Ports.QueueHandlerError, HttpClient.HttpClient>,
+    handler: (
+      messages: ReadonlyArray<Ports.DeliveryQueueMessage>,
+    ) => Effect.Effect<void, never, HttpClient.HttpClient>,
   ) => Effect.Effect<void, never, R | HttpClient.HttpClient>;
   /** Runs `effect` on the cron schedule; the host owns retries and overlap policy. */
   readonly schedule: (

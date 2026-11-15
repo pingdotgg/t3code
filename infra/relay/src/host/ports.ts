@@ -40,6 +40,14 @@ export interface DeliveryQueueSender<A> {
   readonly send: (body: A) => Effect.Effect<void, DeliveryQueueSendError>;
 }
 
+/** One queued delivery job. The consumer settles it once, with `ack` or `retry`. */
+export interface DeliveryQueueMessage {
+  readonly body: unknown;
+  readonly ack: Effect.Effect<void>;
+  /** Redelivers the job after the retry delay; past `maxRetries` the host drops or dead-letters it. */
+  readonly retry: (error: QueueHandlerError) => Effect.Effect<void>;
+}
+
 export interface DeliveryQueueConsumerOptions {
   readonly batchSize: number;
   readonly maxRetries: number;

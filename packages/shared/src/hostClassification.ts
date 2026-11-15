@@ -140,6 +140,7 @@ const PRIVATE_FAVICON_TLDS = [
   ".intranet",
   ".invalid",
   ".lan",
+  ".localdomain",
   ".onion",
   ".private",
   ".test",

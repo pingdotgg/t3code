@@ -305,12 +305,17 @@ export const composeRelay = Effect.fn("relay.composition.compose")(function* <R>
   yield* host.consumeQueue(
     "apns",
     { batchSize: 10, maxRetries: 5, retryDelay: "30 seconds" },
-    (body) =>
+    (messages) =>
       ApnsDeliveries.ApnsDeliveries.pipe(
-        Effect.flatMap((deliveries) => deliveries.processSignedJob(body)),
-        Effect.asVoid,
-        Effect.mapError((cause) => new Ports.QueueHandlerError({ cause })),
-        Effect.withSpan("relay.apn_delivery_queue.process_message"),
+        Effect.flatMap((deliveries) =>
+          deliveries.processBatch(
+            messages.map((message) => ({
+              body: message.body,
+              ack: message.ack,
+              retry: (cause) => message.retry(new Ports.QueueHandlerError({ cause })),
+            })),
+          ),
+        ),
         Effect.provide(layerRuntime),
       ),
   );
@@ -318,9 +323,19 @@ export const composeRelay = Effect.fn("relay.composition.compose")(function* <R>
   yield* host.consumeQueue(
     "fcm",
     { batchSize: 10, maxRetries: 5, retryDelay: "30 seconds" },
-    (body) =>
-      FcmDeliveryQueueConsumer.processMessage(body).pipe(
-        Effect.mapError((cause) => new Ports.QueueHandlerError({ cause })),
+    (messages) =>
+      Effect.forEach(
+        messages,
+        (message) =>
+          FcmDeliveryQueueConsumer.processMessage(message.body).pipe(
+            Effect.matchEffect({
+              onSuccess: () => message.ack,
+              onFailure: (cause) => message.retry(new Ports.QueueHandlerError({ cause })),
+            }),
+          ),
+        { discard: true },
+      ).pipe(
+        Effect.withSpan("relay.fcm_delivery_queue.process_batch"),
         Effect.provide(layerRuntime),
       ),
   );

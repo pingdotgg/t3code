@@ -233,13 +233,14 @@ export const layer = Api.make(
             ).queueName as unknown as string,
           },
           (stream) =>
-            stream.pipe(
-              Stream.withSpan(`relay.${name}_delivery_queue.process_batch`),
-              Stream.runForEach((message) =>
-                handler(message.body).pipe(
-                  Effect.matchEffect({
+            Stream.runCollect(stream).pipe(
+              Effect.flatMap((messages) =>
+                handler(
+                  messages.map((message) => ({
+                    body: message.body,
+                    ack: Effect.sync(() => message.ack()),
                     // Cloudflare keeps the first ack/retry decision, so retry before logging.
-                    onFailure: (error) =>
+                    retry: (error) =>
                       Effect.sync(() => message.retry()).pipe(
                         Effect.andThen(
                           Effect.logWarning(`Relay ${name} delivery failed; retrying message`, {
@@ -248,8 +249,7 @@ export const layer = Api.make(
                           }),
                         ),
                       ),
-                    onSuccess: () => Effect.sync(() => message.ack()),
-                  }),
+                  })),
                 ),
               ),
             ),

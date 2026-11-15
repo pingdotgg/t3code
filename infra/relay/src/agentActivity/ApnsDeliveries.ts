@@ -10,6 +10,7 @@ import {
   RelayAgentAwarenessPreferences as RelayAgentAwarenessPreferencesSchema,
   RelayDeliveryKind as RelayDeliveryKindSchema,
 } from "@t3tools/contracts/relay";
+import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Mac from "effect/crypto/Mac";
@@ -132,6 +133,7 @@ const decodeRelayAgentAwarenessPreferencesJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayAgentAwarenessPreferencesSchema),
 );
 const decodeSignedApnsDeliveryJob = Schema.decodeUnknownEffect(SignedApnsDeliveryJob);
+const decodeSignedApnsDeliveryJobOption = Schema.decodeUnknownOption(SignedApnsDeliveryJob);
 
 function parseAggregate(value: string | null): RelayAgentActivityAggregateState | null {
   if (!value) {
@@ -474,6 +476,12 @@ function makeLiveActivityDeliveryRequest(
   }
 }
 
+export interface ApnsDeliveryQueueMessage {
+  readonly body: unknown;
+  readonly ack: Effect.Effect<void>;
+  readonly retry: (error: ApnsDeliveryError) => Effect.Effect<void>;
+}
+
 export class ApnsDeliveries extends Context.Service<
   ApnsDeliveries,
   {
@@ -490,6 +498,9 @@ export class ApnsDeliveries extends Context.Service<
     readonly processSignedJob: (
       body: unknown,
     ) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
+    readonly processBatch: (
+      messages: ReadonlyArray<ApnsDeliveryQueueMessage>,
+    ) => Effect.Effect<void>;
     readonly sendPushNotification: (input: {
       readonly target: LiveActivityDeliveryTarget;
       readonly token: string;
@@ -1003,10 +1014,43 @@ const make = Effect.gen(function* () {
     }).pipe(withSpanAttributes({ "user.id": payload.target.userId }));
   });
 
+  const processBatch: ApnsDeliveries["Service"]["processBatch"] = Effect.fn(
+    "relay.apn_delivery_queue.process_batch",
+  )(function* (messages) {
+    const groups = Arr.groupBy(messages, (message) => {
+      const job = decodeSignedApnsDeliveryJobOption(message.body);
+      return Option.isSome(job)
+        ? JSON.stringify([job.value.payload.target.userId, job.value.payload.target.deviceId])
+        : "";
+    });
+    // Devices run in parallel; within one, a failure redelivers the rest unsent to keep their order.
+    yield* Effect.forEach(
+      Object.values(groups),
+      Effect.fnUntraced(function* (group) {
+        for (const [index, message] of group.entries()) {
+          const failure = yield* processSignedJob(message.body).pipe(
+            Effect.withSpan("relay.apn_delivery_queue.process_message"),
+            Effect.matchEffect({
+              onSuccess: () => Effect.as(message.ack, undefined),
+              onFailure: Effect.succeed,
+            }),
+          );
+          if (failure !== undefined) {
+            return yield* Effect.forEach(group.slice(index), (pending) => pending.retry(failure), {
+              discard: true,
+            });
+          }
+        }
+      }),
+      { concurrency: 10, discard: true },
+    );
+  });
+
   return ApnsDeliveries.of({
     sendLiveActivity,
     sendPushNotification,
     processSignedJob,
+    processBatch,
     sendForTarget: Effect.fnUntraced(function* (input) {
       if (!config.apns) return null;
       const delivery = chooseDelivery(input);

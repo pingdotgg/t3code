@@ -227,43 +227,66 @@ export const makeNodeHost = Effect.fn("relay.node.host")(function* (options: Nod
     },
     apnsSender: Effect.succeed(senderFor(apnsQueue)),
     fcmSender: Effect.succeed(senderFor(fcmQueue)),
-    consumeQueue: (name, consumerOptions, handler) => {
+    consumeQueue: Effect.fnUntraced(function* (name, consumerOptions, handler) {
       const queue = queueFor(name);
-      const deliver = (job: QueuedJob) =>
-        handler(job.body).pipe(
-          Effect.catchCause((cause) => {
-            if (Cause.hasInterrupts(cause)) return Effect.failCause(cause);
-            const attempts = job.attempts + 1;
-            const failure = Cause.pretty(cause);
-            if (attempts >= consumerOptions.maxRetries) {
-              return Effect.logWarning("Dropping relay delivery job after retries", {
-                queue: name,
-                attempts,
-                failure,
-              });
-            }
-            return Effect.logWarning("Retrying relay delivery job", {
-              queue: name,
-              attempts,
-              failure,
-            }).pipe(
-              Effect.andThen(
-                Effect.forkScoped(
-                  Effect.sleep(consumerOptions.retryDelay).pipe(
-                    Effect.andThen(Queue.offer(queue, { body: job.body, attempts })),
-                  ),
-                ),
+      const scope = yield* Effect.scope;
+      const redeliver = (job: QueuedJob, failure: string) => {
+        const attempts = job.attempts + 1;
+        if (attempts >= consumerOptions.maxRetries) {
+          return Effect.logWarning("Dropping relay delivery job after retries", {
+            queue: name,
+            attempts,
+            failure,
+          });
+        }
+        return Effect.logWarning("Retrying relay delivery job", {
+          queue: name,
+          attempts,
+          failure,
+        }).pipe(
+          Effect.andThen(
+            Effect.forkIn(
+              Effect.sleep(consumerOptions.retryDelay).pipe(
+                Effect.andThen(Queue.offer(queue, { body: job.body, attempts })),
               ),
-            );
-          }),
+              scope,
+            ),
+          ),
+          Effect.asVoid,
         );
-      return Queue.take(queue).pipe(
+      };
+      const deliver = (jobs: ReadonlyArray<QueuedJob>) => {
+        const settled = new Set<QueuedJob>();
+        const settle = (job: QueuedJob, effect: Effect.Effect<void>) =>
+          settled.has(job)
+            ? Effect.void
+            : Effect.andThen(
+                Effect.sync(() => settled.add(job)),
+                effect,
+              );
+        return handler(
+          jobs.map((job) => ({
+            body: job.body,
+            ack: settle(job, Effect.void),
+            retry: (error) => settle(job, redeliver(job, Cause.pretty(Cause.fail(error)))),
+          })),
+        ).pipe(
+          // A defect leaves the batch half-settled; redeliver what the handler never settled.
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterrupts(cause),
+            (cause) =>
+              Effect.forEach(jobs, (job) => settle(job, redeliver(job, Cause.pretty(cause))), {
+                discard: true,
+              }),
+          ),
+        );
+      };
+      yield* Queue.takeBetween(queue, 1, consumerOptions.batchSize).pipe(
         Effect.flatMap(deliver),
         Effect.forever,
         Effect.forkScoped,
-        Effect.asVoid,
       );
-    },
+    }),
     schedule: (cron, effect) => {
       const match = MINUTE_STEP_CRON.exec(cron);
       if (match === null) {

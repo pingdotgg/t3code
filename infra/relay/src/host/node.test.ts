@@ -73,9 +73,14 @@ describe("self-hosted queue and scheduler", () => {
       yield* host.consumeQueue(
         "fcm",
         { batchSize: 10, maxRetries: 3, retryDelay: "30 seconds" },
-        () =>
-          Queue.offer(attempts, (seen += 1)).pipe(
-            Effect.andThen(Effect.fail(new Ports.QueueHandlerError({ cause: "rejected" }))),
+        (messages) =>
+          Effect.forEach(
+            messages,
+            (message) =>
+              Queue.offer(attempts, (seen += 1)).pipe(
+                Effect.andThen(message.retry(new Ports.QueueHandlerError({ cause: "rejected" }))),
+              ),
+            { discard: true },
           ),
       );
 
