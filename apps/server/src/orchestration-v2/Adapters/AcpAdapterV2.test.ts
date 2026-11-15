@@ -5030,6 +5030,36 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect(
+    "does not keep a turn running forever when the agent replies after a command it never closes",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makePromptInactivityHarness({
+          environment: (runtimeOrdinal) =>
+            runtimeOrdinal === 1 ? { T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG: "execute" } : {},
+        });
+        yield* harness.startTurn(1);
+        yield* harness.runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === "tracked-tool-call",
+          ),
+          Stream.runHead,
+        );
+        // Antigravity's final reply arrives, but neither the command update nor the prompt response does.
+        yield* harness.emitUpdate({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "All done." },
+          },
+        });
+        yield* TestClock.adjust("2 hours");
+        assert.isFalse(yield* harness.nextTurnRejected(2));
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("delivers a follow-up the agent rejects while it is still processing", () =>
     Effect.gen(function* () {
       let promptCalls = 0;
