@@ -1,4 +1,5 @@
 import { WizardSteps } from "../ui/wizard";
+import { translateDynamic } from "../../i18nCore";
 import {
   ADD_PROVIDER_WIZARD_STEPS,
   resolveWizardNavigation,
@@ -31,7 +32,7 @@ export function AddProviderInstanceWizardSteps({
 }: AddProviderInstanceWizardStepsProps) {
   return (
     <WizardSteps
-      steps={steps}
+      steps={steps.map((step) => translateDynamic(step))}
       currentStep={currentStep}
       summaries={summaries}
       isStepDisabled={() => disabled}
