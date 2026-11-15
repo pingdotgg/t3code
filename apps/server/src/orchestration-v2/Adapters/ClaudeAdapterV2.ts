@@ -12603,7 +12603,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             existing.selection.queryIdentity !== compiledSelection.queryIdentity &&
             canApplyClaudeSelectionLive(existing.selection, compiledSelection) &&
             (existing.selection.apiModelId === compiledSelection.apiModelId ||
-              existing.openedPermissionMode === queryPolicy.permissionMode)
+              existing.openedPermissionMode === existing.queryPolicy.permissionMode)
           ) {
             yield* applySelectionLive(existing, compiledSelection);
           }
@@ -13570,7 +13570,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               existing.selection.queryIdentity !== steerSelection.queryIdentity &&
               canApplyClaudeSelectionLive(existing.selection, steerSelection) &&
               (existing.selection.apiModelId === steerSelection.apiModelId ||
-                existing.openedPermissionMode === currentTurn.queryPolicy.permissionMode)
+                existing.openedPermissionMode === existing.queryPolicy.permissionMode)
                 ? steerSelection
                 : undefined;
             const userMessage = yield* makeClaudeUserMessageWithAttachments({

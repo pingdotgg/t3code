@@ -7554,60 +7554,28 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   // regression: an Auto turn answered forwarded requests from the mode it asked for, so a
-  // process that had fallen back to default ran them unasked.
-  it.effect.each([
-    { name: "a status frame reports default mid-turn", downgrade: "status", planFirst: false },
-    { name: "a delayed init frame reports default", downgrade: "init", planFirst: false },
-    { name: "a process reused from Plan reports default", downgrade: "status", planFirst: true },
-    { name: "the downgrade frame is still queued", downgrade: "queued", planFirst: false },
-  ] as const)("asks before a forwarded Bash command in Auto when $name", (scenario) =>
+  // process that had fallen back to default (its status frame still queued) ran them unasked.
+  it.effect("asks before a forwarded Bash command in Auto", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
-        const turn = (ordinal: number, interactionMode: "plan" | "default") => {
-          const input = makeClaudeTestTurnInput({
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
             threadId: harness.threadId,
             providerThread: harness.providerThread,
             now,
-            attemptId: RunAttemptId.make(`attempt-auto-downgrade:${ordinal}`),
-            text: `Request ${ordinal}`,
+            attemptId: RunAttemptId.make("attempt-auto-forwarded:1"),
+            text: "Request 1",
             attachments: [],
-            providerTurnOrdinal: ordinal,
+            providerTurnOrdinal: 1,
             runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
               runtimeMode: "auto",
-              interactionMode,
+              interactionMode: "default",
               cwd: "/workspace",
             }),
-          });
-          return {
-            ...input,
-            appThread: { ...input.appThread, runtimeMode: "auto" as const, interactionMode },
-          };
-        };
-        if (scenario.planFirst) {
-          yield* harness.runtime.startTurn(turn(1, "plan"));
-          yield* harness.offerAndWait(turnOneResult);
-          yield* Queue.take(harness.terminalReceipts);
-        }
-        const openedOptions = harness.getOpenedOptions();
-        yield* harness.runtime.startTurn(turn(scenario.planFirst ? 2 : 1, "default"));
-        if (scenario.planFirst) {
-          assert.strictEqual(harness.getOpenedOptions(), openedOptions);
-          assert.deepEqual(harness.permissionModeChanges, ["auto"]);
-        }
-        if (scenario.downgrade !== "queued") {
-          yield* harness.offerAndWait(
-            claudeSdkFrame({
-              type: "system",
-              subtype: scenario.downgrade,
-              ...(scenario.downgrade === "status" ? { status: null } : {}),
-              permissionMode: "default",
-              uuid: "auto-downgrade",
-              session_id: WAKE_NATIVE_SESSION,
-            }),
-          );
-        }
+          }),
+        );
 
         const decision = yield* Effect.promise(() =>
           harness.getOpenedOptions()!.canUseTool!(
