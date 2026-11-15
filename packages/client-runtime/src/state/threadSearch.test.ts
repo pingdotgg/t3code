@@ -108,6 +108,28 @@ it("merges successful environments and silently ignores failures", () => {
   registry.dispose();
 });
 
+it("says a search failed when no environment answered, so it does not read as no results", () => {
+  const searchAtom = createThreadSearchResultsAtomFamily<Error>({
+    getSearchAtom: () =>
+      Atom.make(
+        AsyncResult.failure<OrchestrationSearchThreadsResult, Error>(
+          Cause.fail(new Error("interrupted")),
+        ),
+      ),
+    labelPrefix: "test:thread-search",
+  }).results;
+  const registry = AtomRegistry.make();
+
+  try {
+    const state = registry.get(searchAtom(makeThreadSearchKey([envA], "headlamp")));
+    expect(state.matches).toEqual([]);
+    expect(state.isLoading).toBe(false);
+    expect(state).toHaveProperty("failed", true);
+  } finally {
+    registry.dispose();
+  }
+});
+
 it("asks environments that omit older settled threads for their rows, with the caller's scope", () => {
   const inputs: Array<readonly [EnvironmentId, OrchestrationV2SearchThreadsInput]> = [];
   const row = { id: ThreadId.make("thread-old") } as OrchestrationV2ThreadShell;
