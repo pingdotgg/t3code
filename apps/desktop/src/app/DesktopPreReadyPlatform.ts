@@ -16,6 +16,7 @@ import { trimmedString } from "./DesktopConfig.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
 import {
   isGeneratedUrlHandlerDesktopEntry,
+  mimeInfoCacheAssociatesScheme,
   renderUrlHandlerDesktopEntry,
   replacedVersionedAppImagePath,
 } from "./DesktopLinuxUrlHandler.ts";
@@ -98,18 +99,31 @@ export const make = Effect.gen(function* () {
       );
       const desktopEntryPath = NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName);
       const scheme = ElectronProtocol.getDesktopScheme(linux.isDevelopment);
-      // A same-named entry in $XDG_DATA_HOME would override a packaged launcher,
-      // hiding it from menus. The packaged launcher declares the scheme itself.
-      const hasInstalledDesktopEntry = DesktopEarlyElectronStartup.resolveXdgDataDirs(
+      // A same-named entry in $XDG_DATA_HOME would override a packaged launcher, hiding it
+      // from menus. Defer only when the launcher's own directory already handles the scheme.
+      const installedApplicationsDir = DesktopEarlyElectronStartup.resolveXdgDataDirs(
         Option.getOrUndefined(linuxDesktopEntryConfig.xdgDataDirs),
-      ).some((dataDir) => {
-        const dir = NodePath.posix.join(dataDir, "applications");
-        return (
-          dir !== applicationsDir &&
-          NodeFS.existsSync(NodePath.posix.join(dir, linux.linuxDesktopEntryName))
+      )
+        .map((dataDir) => NodePath.posix.join(dataDir, "applications"))
+        .find(
+          (dir) =>
+            dir !== applicationsDir &&
+            NodeFS.existsSync(NodePath.posix.join(dir, linux.linuxDesktopEntryName)),
         );
-      });
-      if (hasInstalledDesktopEntry) {
+      let hasInstalledSchemeHandler = false;
+      if (installedApplicationsDir !== undefined) {
+        try {
+          hasInstalledSchemeHandler = mimeInfoCacheAssociatesScheme(
+            NodeFS.readFileSync(
+              NodePath.posix.join(installedApplicationsDir, "mimeinfo.cache"),
+              "utf8",
+            ),
+            scheme,
+            linux.linuxDesktopEntryName,
+          );
+        } catch {}
+      }
+      if (hasInstalledSchemeHandler) {
         try {
           const existing = NodeFS.readFileSync(desktopEntryPath, "utf8");
           if (isGeneratedUrlHandlerDesktopEntry(existing, scheme)) {

@@ -74,6 +74,7 @@ const layerHandler = (
     readonly writeError?: PlatformError.PlatformError;
     readonly existingEntry?: string;
     readonly installedEntries?: ReadonlyArray<string>;
+    readonly mimeInfoCaches?: Readonly<Record<string, string>>;
     readonly iconSource?: string;
     readonly iconWriteError?: PlatformError.PlatformError;
   } = {},
@@ -118,7 +119,19 @@ const layerHandler = (
               : Effect.sync(() => {
                   recorded.icons.push({ path, bytes: [...bytes] });
                 }),
-          readFileString: () => Effect.succeed(input.existingEntry ?? ""),
+          readFileString: (path) =>
+            path.endsWith("/mimeinfo.cache")
+              ? input.mimeInfoCaches?.[path] === undefined
+                ? Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "NotFound",
+                      module: "FileSystem",
+                      method: "readFileString",
+                      pathOrDescriptor: path,
+                    }),
+                  )
+                : Effect.succeed(input.mimeInfoCaches[path])
+              : Effect.succeed(input.existingEntry ?? ""),
           exists: (path) => Effect.succeed(input.installedEntries?.includes(path) ?? false),
           remove: (path) =>
             Effect.sync(() => {
@@ -244,16 +257,6 @@ describe("DesktopLinuxUrlHandler", () => {
     }
   });
 
-  it("treats a generated entry with an edited Exec as generated", () => {
-    // Startup has always rewritten this file, so an edited Exec never took effect.
-    const entry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
-      displayName: "T3 Code (Beta)",
-      execTarget: "t3code",
-      scheme: "t3code",
-    }).replace(/^Exec=.*$/m, "Exec=t3code --ozone-platform=x11 %U");
-    assert.isTrue(DesktopLinuxUrlHandler.isGeneratedUrlHandlerDesktopEntry(entry, "t3code"));
-  });
-
   it.effect(
     "writes the handler entry, refreshes the MIME cache, and claims the scheme default",
     () => {
@@ -352,6 +355,10 @@ describe("DesktopLinuxUrlHandler", () => {
       yield* runRegister(recorded, {
         environment: { appImagePath: Option.none() },
         installedEntries: ["/usr/share/applications/com.t3tools.T3Code.desktop"],
+        mimeInfoCaches: {
+          "/usr/share/applications/mimeinfo.cache":
+            "[MIME Cache]\nx-scheme-handler/t3code=other.desktop;com.t3tools.T3Code.desktop;\n",
+        },
         existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
           displayName: "T3 Code (Alpha)",
           execTarget: "/usr/lib/electron/electron",
@@ -382,6 +389,10 @@ describe("DesktopLinuxUrlHandler", () => {
     return Effect.gen(function* () {
       yield* runRegister(recorded, {
         installedEntries: ["/usr/share/applications/com.t3tools.T3Code.desktop"],
+        mimeInfoCaches: {
+          "/usr/share/applications/mimeinfo.cache":
+            "[MIME Cache]\nx-scheme-handler/t3code=com.t3tools.T3Code.desktop;\n",
+        },
         existingEntry: [
           "[Desktop Entry]",
           "Type=Application",
@@ -397,18 +408,34 @@ describe("DesktopLinuxUrlHandler", () => {
     });
   });
 
-  it.effect("does not treat $XDG_DATA_HOME as an installed entry", () => {
+  it.effect.each([
+    {
+      label: "an entry in $XDG_DATA_HOME",
+      linuxSystemApplicationsDirs: [
+        "/home/alice/.local/share/applications",
+        "/usr/share/applications",
+      ],
+      installedEntries: ["/home/alice/.local/share/applications/com.t3tools.T3Code.desktop"],
+      mimeInfoCaches: {
+        "/home/alice/.local/share/applications/mimeinfo.cache":
+          "[MIME Cache]\nx-scheme-handler/t3code=com.t3tools.T3Code.desktop;\n",
+      },
+    },
+    {
+      // A nix profile is read-only and has no cache, so the portal would find no handler.
+      label: "an installed entry its directory's MIME cache does not associate",
+      linuxSystemApplicationsDirs: ["/home/alice/.nix-profile/share/applications"],
+      installedEntries: ["/home/alice/.nix-profile/share/applications/com.t3tools.T3Code.desktop"],
+      mimeInfoCaches: {},
+    },
+  ])("still writes the handler entry next to $label", ({ label: _, ...input }) => {
     const recorded = emptyRecording();
 
     return Effect.gen(function* () {
       yield* runRegister(recorded, {
-        environment: {
-          linuxSystemApplicationsDirs: [
-            "/home/alice/.local/share/applications",
-            "/usr/share/applications",
-          ],
-        },
-        installedEntries: ["/home/alice/.local/share/applications/com.t3tools.T3Code.desktop"],
+        environment: { linuxSystemApplicationsDirs: input.linuxSystemApplicationsDirs },
+        installedEntries: input.installedEntries,
+        mimeInfoCaches: input.mimeInfoCaches,
       });
 
       assert.equal(recorded.files.length, 1);

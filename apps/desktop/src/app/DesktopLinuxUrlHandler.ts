@@ -134,6 +134,21 @@ export const isGeneratedUrlHandlerDesktopEntry = (content: string, scheme: strin
   return lines.includes("NoDisplay=true") && lines.includes(`MimeType=x-scheme-handler/${scheme};`);
 };
 
+// The portal ignores mimeapps.list defaults for custom schemes and needs this association.
+export const mimeInfoCacheAssociatesScheme = (
+  cache: string,
+  scheme: string,
+  desktopEntryName: string,
+): boolean =>
+  cache.split("\n").some(
+    (line) =>
+      line.startsWith(`x-scheme-handler/${scheme}=`) &&
+      line
+        .slice(line.indexOf("=") + 1)
+        .split(";")
+        .includes(desktopEntryName),
+  );
+
 // Docks may look up the Wayland app id without a desktop entry; icon theme lookups are case-sensitive.
 const LINUX_THEME_ICON_SIZE = "256x256";
 
@@ -203,15 +218,17 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  // A same-named entry in $XDG_DATA_HOME would override a packaged launcher,
-  // hiding it from menus. The packaged launcher declares the scheme itself.
-  const hasInstalledDesktopEntry = Effect.gen(function* () {
+  // A same-named entry in $XDG_DATA_HOME would override a packaged launcher, hiding it
+  // from menus. Defer only when the launcher's own directory already handles the scheme.
+  const hasInstalledSchemeHandler = Effect.gen(function* () {
     for (const dir of environment.linuxSystemApplicationsDirs) {
       if (dir === environment.linuxApplicationsDir) continue;
       const candidate = environment.path.join(dir, environment.linuxDesktopEntryName);
-      if (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
-        return true;
-      }
+      if (!(yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false)))) continue;
+      const cache = yield* fileSystem
+        .readFileString(environment.path.join(dir, "mimeinfo.cache"))
+        .pipe(Effect.orElseSucceed(() => ""));
+      return mimeInfoCacheAssociatesScheme(cache, scheme, environment.linuxDesktopEntryName);
     }
     return false;
   });
@@ -356,7 +373,7 @@ export const make = Effect.gen(function* () {
     if (environment.platform !== "linux") {
       return;
     }
-    if (yield* hasInstalledDesktopEntry) {
+    if (yield* hasInstalledSchemeHandler) {
       yield* removeGeneratedDesktopEntry;
     } else {
       yield* writeDesktopEntry;

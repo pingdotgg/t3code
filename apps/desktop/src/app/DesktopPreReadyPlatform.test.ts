@@ -285,6 +285,9 @@ describe("DesktopPreReadyPlatform", () => {
     );
     readFileSyncMock.mockImplementation((path: string) => {
       if (path === userEntry) return previousEntry;
+      if (path === "/opt/share/applications/mimeinfo.cache") {
+        return "[MIME Cache]\nx-scheme-handler/t3code=com.t3tools.T3Code.desktop;\n";
+      }
       throw new Error("ENOENT");
     });
 
