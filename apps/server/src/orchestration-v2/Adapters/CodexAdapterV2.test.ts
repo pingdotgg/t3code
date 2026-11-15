@@ -72,6 +72,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ModelManifest from "../../provider/ModelManifest.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
@@ -599,6 +600,7 @@ function codexReplayPreamble(input: {
   readonly prompt: string;
   readonly sentPrompt?: string;
   readonly effort?: string;
+  readonly summary?: CodexSettings["reasoningSummary"];
 }): Array<CodexReplay.CodexAppServerReplayEntry> {
   return [
     {
@@ -696,7 +698,7 @@ function codexReplayPreamble(input: {
           approvalPolicy: "never",
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
-          summary: "detailed",
+          summary: input.summary ?? "detailed",
           ...(input.effort === undefined ? {} : { effort: input.effort }),
           collaborationMode: {
             mode: "default",
@@ -1390,6 +1392,78 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         awaitTerminal: (count: number) => changes.until(() => terminalEvents().length >= count),
       };
     });
+
+  it.effect("applies summary changes to the next turn of an open session", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const nativeThreadId = "summary-settings-thread";
+      const summaries = ["detailed", "auto", "concise", "none", "detailed"] as const;
+      const entries = summaries.flatMap((summary, index) => {
+        const nativeTurnId = `summary-turn-${index}`;
+        const preamble = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId,
+          prompt: "work",
+          summary,
+        });
+        return [
+          ...(index === 0 ? preamble.slice(0, 5) : []),
+          ...preamble.slice(5, 7).map((entry) => withReplayRequestId(entry, index + 3)),
+          {
+            type: "emit_inbound" as const,
+            label: "turn completed",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+        ];
+      });
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({ scenario: "summary-settings", entries }),
+      );
+      for (const [index, reasoningSummary] of summaries.entries()) {
+        yield* settings.updateSettings({
+          providerInstances: {
+            [CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID]: {
+              driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+              config: { reasoningSummary },
+            },
+          },
+        });
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`summary-${index}`),
+            text: "work",
+          }),
+          runOrdinal: index + 1,
+          providerTurnOrdinal: index + 1,
+        });
+        yield* harness.awaitTerminal(index + 1);
+      }
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => event.status),
+        summaries.map(() => "completed"),
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.ServerSettingsService.layerTest(),
+          NodeServices.layer,
+          NodeCrypto.layer,
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+        ),
+      ),
+      Effect.scoped,
+    ),
+  );
 
   it.effect.each(["before", "after"] as const)(
     "rejects a previous run's native turn when it completes %s the new start response",
