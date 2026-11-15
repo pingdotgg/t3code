@@ -536,6 +536,7 @@ function TerminalSessionViewport({
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canReadFilesystem = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const hostname = serverConfig?.hostname;
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
     serverConfig?.availableEditors ?? [],
@@ -621,7 +622,7 @@ function TerminalSessionViewport({
       // Older servers, other platforms and ended or replaced shells fall back to the launch cwd.
       if (result._tag === "Success" && result.value !== null) shellCwd = result.value;
     }
-    return { text, cwd: shellCwd, target: resolveTerminalLinkTarget(text, shellCwd) };
+    return { text, cwd: shellCwd, target: resolveTerminalLinkTarget(text, shellCwd, hostname) };
   });
   const hoverTerminalLink = useEffectEvent((text: string | null) => {
     const request = ++linkLocationRequestRef.current;
