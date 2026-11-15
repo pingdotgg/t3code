@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalConsole:off
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off -- Runs synchronously via --require before Effect starts; stderr is its only fallback.
 import * as NodePath from "node:path";
 import type * as Ffi from "ffi-rs";
 
