@@ -4272,7 +4272,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         t3OrchestrationSystemPrompt(
           mcpAvailable,
           mcpSession?.capabilities?.has("device") === true,
-          (yield* host.settings.get.pipe(Effect.orDie)).visualInstructions,
+          (yield* host.settings.get).visualInstructions,
         ),
         mcpAvailable
           ? "To wait for a background shell you started (tests, a build), call `t3_background_wait` with its shell ID before you end your turn. Do not mark work you leave running, or PRs."

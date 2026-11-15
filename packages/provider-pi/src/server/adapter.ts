@@ -522,7 +522,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             environment: {
               ...options.environment,
               [T3_PI_ORCHESTRATION_INSTRUCTIONS_ENV]: t3OrchestrationInstructions(
-                (yield* host.settings.get.pipe(Effect.orDie)).visualInstructions,
+                (yield* host.settings.get).visualInstructions,
               ).trim(),
             },
             mcpSession,

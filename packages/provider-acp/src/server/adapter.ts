@@ -8400,8 +8400,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               );
             attachmentBlocks.push(...blocks);
           }
-          const visualInstructions = (yield* host.settings.get.pipe(Effect.orDie))
-            .visualInstructions;
+          const visualInstructions = (yield* host.settings.get).visualInstructions;
           // Read delivery state after the awaits above, so a compaction that lands
           // while the prompt is prepared still resends the notes in this prompt.
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
