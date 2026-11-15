@@ -2803,7 +2803,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
     {
       const error = startResult.failure;
-      const message = `${error.message} Close this terminal and open a new one to try again.`;
+      const message = error.message;
       if (ptyProcess) {
         yield* startKillEscalation(ptyProcess, session.threadId, session.terminalId);
       }

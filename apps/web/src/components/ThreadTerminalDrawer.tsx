@@ -191,7 +191,7 @@ export function synchronizeTerminalOutput(
   return update.cursor;
 }
 
-/** Replays the diagnostic too when a replacement snapshot resets the surface. */
+/** Writes what changed between two session notifications: new output, then the error, again after a reset. */
 export function synchronizeTerminalSession(
   terminal: Parameters<typeof synchronizeTerminalOutput>[0],
   previous: Pick<TerminalSessionState, "output" | "version" | "error">,
