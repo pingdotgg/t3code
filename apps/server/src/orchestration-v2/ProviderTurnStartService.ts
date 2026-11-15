@@ -133,6 +133,9 @@ export const isProviderTurnStartRunStateMissingError = Schema.is(
 const START_GAVE_UP_MESSAGE =
   "T3 Code could not start this turn. Send the message again; if it keeps failing, check the server logs.";
 
+const RESTART_RESUME_FAILED_MESSAGE =
+  "The agent could not reopen this conversation after the restart, and its last turn may still be running there. Send a message to continue in a new session.";
+
 const startFailureMessage = (error: Error): string => {
   const nestedCause = "cause" in error ? error.cause : undefined;
   return (
@@ -1407,6 +1410,25 @@ export const layer: Layer.Layer<
           resumed.failure._tag === "ProviderAdapterThreadInUseError"
         ) {
           return yield* loadFromProvider(Effect.fail(resumed.failure));
+        }
+        // ACP agents that restore sessions can outlive a backend restart, and their load errors
+        // cannot tell busy from gone. A fresh session could repeat the cut turn beside it.
+        if (
+          resumed._tag === "Failure" &&
+          !uncertainDelivery &&
+          run.restartContinuationOfRunId !== undefined &&
+          session.canResumeAfterRestart === true
+        ) {
+          return yield* loadFromProvider(
+            Effect.fail(
+              new ProviderAdapter.ProviderAdapterThreadInUseError({
+                driver: session.driver,
+                providerThreadId: providerThread.id,
+                detail: RESTART_RESUME_FAILED_MESSAGE,
+                cause: resumed.failure,
+              }),
+            ),
+          );
         }
 
         yield* Effect.logWarning("Recovering provider context in a fresh native session", {

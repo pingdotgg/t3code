@@ -391,6 +391,7 @@ it.each([
 function makeLocalCommandHarness(input: {
   readonly text: string;
   readonly manualContinuation?: boolean;
+  readonly restartContinuation?: { readonly canResumeAfterRestart: boolean };
   readonly nativeResumeUnsupported?: boolean;
   readonly steeringRestart?: boolean;
   readonly nativeGoals?: boolean;
@@ -454,6 +455,7 @@ function makeLocalCommandHarness(input: {
   const messageId = MessageId.make("message-native-account-command");
   const run: OrchestrationV2ThreadProjection["runs"][number] = {
     ...(input.manualContinuation ? { manualContinuationOfRunId: RunId.make("stopped-run") } : {}),
+    ...(input.restartContinuation ? { restartContinuationOfRunId: RunId.make("cut-run") } : {}),
     id: runId,
     threadId,
     ordinal: 2,
@@ -1030,6 +1032,7 @@ function makeLocalCommandHarness(input: {
   const fallbackEnsureThread = vi.fn(() => Effect.succeed(providerThread));
   const resumeFallbackSession = {
     driver: providerThread.driver,
+    canResumeAfterRestart: input.restartContinuation?.canResumeAfterRestart,
     resumeThread: () =>
       Effect.fail(
         input.resumeFailure ??
@@ -2897,6 +2900,44 @@ effectIt.effect("fails the run instead of replacing a native thread another clie
     ]);
   }),
 );
+
+for (const canResumeAfterRestart of [true, false]) {
+  effectIt.effect(
+    `${canResumeAfterRestart ? "fails" : "falls back for"} a restart continuation whose agent ${canResumeAfterRestart ? "can" : "cannot"} reload sessions`,
+    () =>
+      Effect.gen(function* () {
+        const harness = makeLocalCommandHarness({
+          text: "Continue",
+          restartContinuation: { canResumeAfterRestart },
+          resumeFailure: new ProviderAdapter.ProviderAdapterResumeThreadError({
+            driver: ProviderDriverKind.make("acp"),
+            providerSessionId: ProviderSessionId.make("new-provider-session"),
+            providerThreadId: ProviderThreadId.make("new-provider-thread"),
+            cause: new Error("Internal error"),
+          }),
+        });
+
+        yield* Effect.exit(harness.start);
+
+        if (!canResumeAfterRestart) {
+          expect(harness.fallbackEnsureThread).toHaveBeenCalledOnce();
+          return;
+        }
+        expect(harness.fallbackEnsureThread).not.toHaveBeenCalled();
+        expect(harness.startRootRun).not.toHaveBeenCalled();
+        expect(harness.projection().runs.at(-1)).toMatchObject({ status: "failed" });
+        expect(harness.projection().turnItems).toMatchObject([
+          {
+            type: "error",
+            failure: {
+              message:
+                "The agent could not reopen this conversation after the restart, and its last turn may still be running there. Send a message to continue in a new session.",
+            },
+          },
+        ]);
+      }),
+  );
+}
 
 effectIt.effect("does not mistake a failed state read for a superseded run", () =>
   Effect.gen(function* () {
