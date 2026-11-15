@@ -437,11 +437,15 @@
     "unlinkFailed": "取消关联拉取请求失败"
   },
   "mcp": {
+    "appLeftPage": "{{server}} 应用离开了其页面，已被停止",
+    "appWasClosed": "{{server}} 应用已关闭",
     "cannotCallTool": "此应用无法调用该工具。",
     "declinedByUser": "已被用户拒绝。",
     "exitFullScreen": "退出全屏",
     "messagesUnavailable": "此处不能使用消息。",
-    "requestFailed": "请求失败。"
+    "requestFailed": "请求失败。",
+    "showApp": "显示应用",
+    "unableToLoad": "无法加载 {{server}} 应用"
   },
   "mermaid": {
     "expand": "展开图",

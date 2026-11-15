@@ -444,11 +444,15 @@
     "unlinkFailed": "Unable to unlink pull request"
   },
   "mcp": {
+    "appLeftPage": "The {{server}} app left its page and was stopped",
+    "appWasClosed": "The {{server}} app was closed",
     "cannotCallTool": "This app cannot call that tool.",
     "declinedByUser": "Declined by the user.",
     "exitFullScreen": "Exit full screen",
     "messagesUnavailable": "Messages are not available here.",
-    "requestFailed": "Request failed."
+    "requestFailed": "Request failed.",
+    "showApp": "Show app",
+    "unableToLoad": "Unable to load the {{server}} app"
   },
   "mermaid": {
     "expand": "Expand diagram",
