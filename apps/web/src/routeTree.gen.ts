@@ -32,6 +32,7 @@ import { Route as ChatSettingsSnapShotRouteImport } from './routes/_chat.setting
 import { Route as ChatSettingsSecretsRouteImport } from './routes/_chat.settings.secrets'
 import { Route as ChatSettingsScheduledTasksRouteImport } from './routes/_chat.settings.scheduled-tasks'
 import { Route as ChatSettingsProvidersRouteImport } from './routes/_chat.settings.providers'
+import { Route as ChatSettingsProviderUpdatesRouteImport } from './routes/_chat.settings.provider-updates'
 import { Route as ChatSettingsProjectsRouteImport } from './routes/_chat.settings.projects'
 import { Route as ChatSettingsOpenSourceLicensesRouteImport } from './routes/_chat.settings.open-source-licenses'
 import { Route as ChatSettingsMemoryVaultsRouteImport } from './routes/_chat.settings.memory-vaults'
@@ -172,6 +173,12 @@ const ChatSettingsProvidersRoute = ChatSettingsProvidersRouteImport.update({
   path: '/providers',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsProviderUpdatesRoute =
+  ChatSettingsProviderUpdatesRouteImport.update({
+    id: '/provider-updates',
+    path: '/provider-updates',
+    getParentRoute: () => ChatSettingsRoute,
+  } as any)
 const ChatSettingsProjectsRoute = ChatSettingsProjectsRouteImport.update({
   id: '/projects',
   path: '/projects',
@@ -322,6 +329,7 @@ export interface FileRoutesByFullPath {
   '/settings/memory-vaults': typeof ChatSettingsMemoryVaultsRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
+  '/settings/provider-updates': typeof ChatSettingsProviderUpdatesRoute
   '/settings/providers': typeof ChatSettingsProvidersRoute
   '/settings/scheduled-tasks': typeof ChatSettingsScheduledTasksRoute
   '/settings/secrets': typeof ChatSettingsSecretsRoute
@@ -368,6 +376,7 @@ export interface FileRoutesByTo {
   '/settings/memory-vaults': typeof ChatSettingsMemoryVaultsRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
+  '/settings/provider-updates': typeof ChatSettingsProviderUpdatesRoute
   '/settings/providers': typeof ChatSettingsProvidersRoute
   '/settings/scheduled-tasks': typeof ChatSettingsScheduledTasksRoute
   '/settings/secrets': typeof ChatSettingsSecretsRoute
@@ -416,6 +425,7 @@ export interface FileRoutesById {
   '/_chat/settings/memory-vaults': typeof ChatSettingsMemoryVaultsRoute
   '/_chat/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/_chat/settings/projects': typeof ChatSettingsProjectsRoute
+  '/_chat/settings/provider-updates': typeof ChatSettingsProviderUpdatesRoute
   '/_chat/settings/providers': typeof ChatSettingsProvidersRoute
   '/_chat/settings/scheduled-tasks': typeof ChatSettingsScheduledTasksRoute
   '/_chat/settings/secrets': typeof ChatSettingsSecretsRoute
@@ -464,6 +474,7 @@ export interface FileRouteTypes {
     | '/settings/memory-vaults'
     | '/settings/open-source-licenses'
     | '/settings/projects'
+    | '/settings/provider-updates'
     | '/settings/providers'
     | '/settings/scheduled-tasks'
     | '/settings/secrets'
@@ -510,6 +521,7 @@ export interface FileRouteTypes {
     | '/settings/memory-vaults'
     | '/settings/open-source-licenses'
     | '/settings/projects'
+    | '/settings/provider-updates'
     | '/settings/providers'
     | '/settings/scheduled-tasks'
     | '/settings/secrets'
@@ -557,6 +569,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/memory-vaults'
     | '/_chat/settings/open-source-licenses'
     | '/_chat/settings/projects'
+    | '/_chat/settings/provider-updates'
     | '/_chat/settings/providers'
     | '/_chat/settings/scheduled-tasks'
     | '/_chat/settings/secrets'
@@ -744,6 +757,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsProvidersRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/provider-updates': {
+      id: '/_chat/settings/provider-updates'
+      path: '/provider-updates'
+      fullPath: '/settings/provider-updates'
+      preLoaderRoute: typeof ChatSettingsProviderUpdatesRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/projects': {
       id: '/_chat/settings/projects'
       path: '/projects'
@@ -922,6 +942,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsMemoryVaultsRoute: typeof ChatSettingsMemoryVaultsRoute
   ChatSettingsOpenSourceLicensesRoute: typeof ChatSettingsOpenSourceLicensesRoute
   ChatSettingsProjectsRoute: typeof ChatSettingsProjectsRoute
+  ChatSettingsProviderUpdatesRoute: typeof ChatSettingsProviderUpdatesRoute
   ChatSettingsProvidersRoute: typeof ChatSettingsProvidersRoute
   ChatSettingsScheduledTasksRoute: typeof ChatSettingsScheduledTasksRoute
   ChatSettingsSecretsRoute: typeof ChatSettingsSecretsRoute
@@ -954,6 +975,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsMemoryVaultsRoute: ChatSettingsMemoryVaultsRoute,
   ChatSettingsOpenSourceLicensesRoute: ChatSettingsOpenSourceLicensesRoute,
   ChatSettingsProjectsRoute: ChatSettingsProjectsRoute,
+  ChatSettingsProviderUpdatesRoute: ChatSettingsProviderUpdatesRoute,
   ChatSettingsProvidersRoute: ChatSettingsProvidersRoute,
   ChatSettingsScheduledTasksRoute: ChatSettingsScheduledTasksRoute,
   ChatSettingsSecretsRoute: ChatSettingsSecretsRoute,

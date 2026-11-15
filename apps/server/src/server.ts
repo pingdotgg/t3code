@@ -210,6 +210,8 @@ import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsag
 import * as UsageService from "./usage/UsageService.ts";
 import * as OllamaService from "./ollama/OllamaService.ts";
 import * as MemoryVaultService from "./memoryVaults/MemoryVaultService.ts";
+import * as ProviderRuntimeUpdater from "./providerRuntimes/ProviderRuntimeUpdater.ts";
+import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
@@ -675,6 +677,7 @@ const layerServerRestart = Layer.effect(
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
+  ProviderRuntimeUpdater.layer.pipe(Layer.provide(ProviderMaintenanceRunner.layer)),
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,

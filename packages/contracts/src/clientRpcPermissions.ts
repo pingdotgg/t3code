@@ -84,6 +84,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.ollamaPullModel]: AuthProvidersManageScope,
   [WS_METHODS.ollamaDeleteModel]: AuthProvidersManageScope,
   [WS_METHODS.ollamaSetAgentIntegration]: AuthProvidersManageScope,
+  // Runtime updates download and run provider executables.
+  [WS_METHODS.providerRuntimesUpdateSettings]: AuthProvidersManageScope,
+  [WS_METHODS.providerRuntimesCheckNow]: AuthProvidersManageScope,
+  [WS_METHODS.providerRuntimesRestore]: AuthProvidersManageScope,
   // Vault notes reach every agent that uses the vault.
   [WS_METHODS.memoryVaultsUpdateSettings]: AuthSettingsWriteScope,
   [WS_METHODS.memoryVaultsManage]: AuthSettingsWriteScope,

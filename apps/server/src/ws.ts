@@ -249,6 +249,7 @@ import type { TelemetryOwner } from "./telemetry/Identify.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as OllamaService from "./ollama/OllamaService.ts";
 import * as MemoryVaultService from "./memoryVaults/MemoryVaultService.ts";
+import * as ProviderRuntimeUpdater from "./providerRuntimes/ProviderRuntimeUpdater.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -1505,6 +1506,7 @@ export const layerWsRpc = (
       const usage = yield* UsageService.UsageService;
       const ollama = yield* OllamaService.OllamaService;
       const memoryVaults = yield* MemoryVaultService.MemoryVaultService;
+      const providerRuntimes = yield* ProviderRuntimeUpdater.ProviderRuntimeUpdater;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
@@ -2697,6 +2699,11 @@ export const layerWsRpc = (
           resourceTelemetry.readHistory(input),
         [WS_METHODS.serverGetUsageSummary]: (input) => usage.readSummary(input),
         [WS_METHODS.serverRefreshUsageRates]: (_input) => usage.refreshRates,
+        [WS_METHODS.providerRuntimesStatus]: (_input) => providerRuntimes.status,
+        [WS_METHODS.providerRuntimesUpdateSettings]: (input) =>
+          providerRuntimes.updateSettings(input),
+        [WS_METHODS.providerRuntimesCheckNow]: (_input) => providerRuntimes.checkNow,
+        [WS_METHODS.providerRuntimesRestore]: (input) => providerRuntimes.restore(input.instanceId),
         [WS_METHODS.memoryVaultsOverview]: (input) => memoryVaults.overview(input.threadId),
         [WS_METHODS.memoryVaultsUpdateSettings]: (input) => memoryVaults.updateSettings(input),
         [WS_METHODS.memoryVaultsManage]: (input) => memoryVaults.manage(input),

@@ -27,6 +27,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/snap-shot"
   | "/settings/providers"
+  | "/settings/provider-updates"
   | "/settings/local-models"
   | "/settings/memory-vaults"
   | "/settings/threads"
@@ -104,6 +105,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": msg("Keybindings"),
   "/settings/snap-shot": msg("SnapShots"),
   "/settings/providers": msg("Providers"),
+  "/settings/provider-updates": msg("Provider updates"),
   "/settings/local-models": msg("Local models"),
   "/settings/memory-vaults": msg("Memory vaults"),
   "/settings/threads": msg("Threads"),
@@ -145,6 +147,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: msg("Agents"),
     paths: [
       "/settings/providers",
+      "/settings/provider-updates",
       "/settings/local-models",
       "/settings/memory-vaults",
       "/settings/threads",
@@ -388,6 +391,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Memory vault location",
     to: "/settings/memory-vaults",
     searchTerms: ["memory vault folder storage path"],
+  },
+  {
+    id: "setting-provider-updates-mode",
+    title: "Provider updates",
+    to: "/settings/provider-updates",
+    searchTerms: ["update claude codex cli version latest models outdated automatic"],
+  },
+  {
+    id: "setting-provider-updates-user-installs",
+    title: "Update my installed CLIs",
+    to: "/settings/provider-updates",
+    searchTerms: ["npm homebrew mise update claude codex"],
   },
   {
     id: "setting-ollama-runtime",
@@ -1463,6 +1478,7 @@ const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id,
 
 const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScope | null>> = {
   "/settings/diagnostics": "environment",
+  "/settings/provider-updates": null,
   "/settings/local-models": null,
   "/settings/memory-vaults": null,
   "/settings/projects": "project",

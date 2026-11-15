@@ -414,6 +414,12 @@ import {
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 import {
+  ProviderRuntimeError,
+  ProviderRuntimeRestoreInput,
+  ProviderRuntimeSettingsPatch,
+  ProviderRuntimeStatus,
+} from "./providerRuntimes.ts";
+import {
   MemoryVaultError,
   MemoryVaultManageInput,
   MemoryVaultManageResult,
@@ -582,6 +588,11 @@ export const WS_METHODS = {
   ollamaPullModel: "ollama.pullModel",
   ollamaDeleteModel: "ollama.deleteModel",
   ollamaSetAgentIntegration: "ollama.setAgentIntegration",
+
+  providerRuntimesStatus: "providerRuntimes.status",
+  providerRuntimesUpdateSettings: "providerRuntimes.updateSettings",
+  providerRuntimesCheckNow: "providerRuntimes.checkNow",
+  providerRuntimesRestore: "providerRuntimes.restore",
 
   memoryVaultsOverview: "memoryVaults.overview",
   memoryVaultsUpdateSettings: "memoryVaults.updateSettings",
@@ -1065,6 +1076,28 @@ const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSummary, {
   payload: UsageSummaryInput,
   success: UsageSummary,
   error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
+});
+
+const ProviderRuntimeRpcError = Schema.Union([ProviderRuntimeError, EnvironmentAuthorizationError]);
+const WsProviderRuntimesStatusRpc = Rpc.make(WS_METHODS.providerRuntimesStatus, {
+  payload: Schema.Struct({}),
+  success: ProviderRuntimeStatus,
+  error: ProviderRuntimeRpcError,
+});
+const WsProviderRuntimesUpdateSettingsRpc = Rpc.make(WS_METHODS.providerRuntimesUpdateSettings, {
+  payload: ProviderRuntimeSettingsPatch,
+  success: ProviderRuntimeStatus,
+  error: ProviderRuntimeRpcError,
+});
+const WsProviderRuntimesCheckNowRpc = Rpc.make(WS_METHODS.providerRuntimesCheckNow, {
+  payload: Schema.Struct({}),
+  success: ProviderRuntimeStatus,
+  error: ProviderRuntimeRpcError,
+});
+const WsProviderRuntimesRestoreRpc = Rpc.make(WS_METHODS.providerRuntimesRestore, {
+  payload: ProviderRuntimeRestoreInput,
+  success: ProviderRuntimeStatus,
+  error: ProviderRuntimeRpcError,
 });
 
 const MemoryVaultRpcError = Schema.Union([MemoryVaultError, EnvironmentAuthorizationError]);
@@ -2291,6 +2324,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsOllamaPullModelRpc,
   WsOllamaDeleteModelRpc,
   WsOllamaSetAgentIntegrationRpc,
+  WsProviderRuntimesStatusRpc,
+  WsProviderRuntimesUpdateSettingsRpc,
+  WsProviderRuntimesCheckNowRpc,
+  WsProviderRuntimesRestoreRpc,
   WsMemoryVaultsOverviewRpc,
   WsMemoryVaultsUpdateSettingsRpc,
   WsMemoryVaultsManageRpc,
