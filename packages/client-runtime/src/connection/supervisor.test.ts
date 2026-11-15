@@ -696,7 +696,7 @@ describe("EnvironmentSupervisor", () => {
           initiallyDesired: true,
         }).pipe(Effect.provide(harness.dependencies));
         yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-        if (from === "backoff") {
+        if (from === "backoff" || from === "an attempt cancelled offline") {
           yield* harness.closeLatestSession();
           yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
         }
@@ -711,7 +711,7 @@ describe("EnvironmentSupervisor", () => {
         if (from === "offline") {
           yield* TestClock.adjust("0 millis");
           yield* harness.setNetworkStatus("online");
-        } else if (from !== "backoff") {
+        } else if (from === "connected") {
           yield* TestClock.adjust("1500 millis");
         }
         if (from === "an attempt cancelled offline") {
