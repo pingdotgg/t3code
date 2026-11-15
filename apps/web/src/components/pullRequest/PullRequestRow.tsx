@@ -115,9 +115,7 @@ function PullRequestRowImpl({
       data-pull-request-key={statsKey}
       className={cn(
         "flex items-center rounded-md [content-visibility:auto] [contain-intrinsic-block-size:56.5px]",
-        selected
-          ? "bg-accent text-accent-foreground [--contrast-muted-foreground:var(--contrast-accent-foreground)]"
-          : "hover:bg-accent/60",
+        selected ? "bg-accent" : "hover:bg-accent/60",
       )}
     >
       <button
@@ -136,6 +134,8 @@ function PullRequestRowImpl({
           PULL_REQUEST_ROW_CLASS,
           PAGE_ROW_CLASS,
           "min-w-0 flex-1 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+          selected &&
+            "text-accent-foreground [--contrast-muted-foreground:var(--contrast-accent-foreground)]",
         )}
       >
         <PullRequestRowGlyph
