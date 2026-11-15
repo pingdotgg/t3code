@@ -909,15 +909,6 @@ export function emptyProjection(
   };
 }
 
-function isQueuedProviderThreadPlaceholder(providerThread: OrchestrationV2ProviderThread): boolean {
-  return (
-    providerThread.status === "not_loaded" &&
-    providerThread.firstRunOrdinal === null &&
-    providerThread.nativeThreadRef === null &&
-    providerThread.providerSessionId === null
-  );
-}
-
 // Retained sessions report after a handoff or fresh start without reclaiming the route.
 function providerThreadUpdateSelectsRoute(
   thread: OrchestrationV2ThreadProjection["thread"],
