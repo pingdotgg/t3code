@@ -882,16 +882,18 @@ export const layer: Layer.Layer<
       // turn proves a prompt arrived, so a refused one keeps the note pending.
       const acceptedAttemptIds = new Set(projection.providerTurns.map((turn) => turn.runAttemptId));
       const previousAttempt = projection.runs
-        .filter(
-          (source) =>
-            source.ordinal <= run.ordinal &&
-            source.status !== "rolled_back" &&
-            !commandMessageIds.has(
-              (unsentManualContinuationSource(source, projection) ?? source).userMessageId,
-            ),
-        )
+        .filter((source) => source.ordinal <= run.ordinal && source.status !== "rolled_back")
         .flatMap((source) =>
-          projection.attempts.filter((candidate) => candidate.runId === source.id),
+          projection.attempts.filter(
+            (candidate) =>
+              candidate.runId === source.id &&
+              !commandMessageIds.has(
+                (candidate.reason === "steering_restart"
+                  ? source
+                  : (unsentManualContinuationSource(source, projection) ?? source)
+                ).userMessageId,
+              ),
+          ),
         )
         .findLast(
           (candidate) => candidate.id !== attempt.id && acceptedAttemptIds.has(candidate.id),

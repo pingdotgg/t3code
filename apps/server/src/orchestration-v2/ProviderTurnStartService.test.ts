@@ -2307,9 +2307,13 @@ effectIt.effect.each([
   }),
 );
 
-effectIt.effect.each(["/compact", "/goal finish"])(
-  "keeps the switch note pending after a resumed %s",
-  (command) =>
+effectIt.effect.each(
+  ["/compact", "/goal finish"].flatMap((command) =>
+    [false, true].map((steered) => ({ command, steered })),
+  ),
+)(
+  "keeps the switch note pending after a resumed $command unless steered: $steered",
+  ({ command, steered }) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
         text: "Next prompt",
@@ -2356,7 +2360,11 @@ effectIt.effect.each(["/compact", "/goal finish"])(
         messages: [
           { ...projection.messages[0]!, id: earlierId, text: "Earlier prompt" },
           { ...projection.messages[0]!, id: commandId, text: command },
-          { ...projection.messages[0]!, id: resumedMessageId, text: "" },
+          {
+            ...projection.messages[0]!,
+            id: resumedMessageId,
+            text: steered ? "Steered prompt" : "",
+          },
           ...projection.messages,
         ],
         attempts: [
@@ -2364,6 +2372,7 @@ effectIt.effect.each(["/compact", "/goal finish"])(
           {
             ...previousAttempt,
             id: resumedAttemptId,
+            reason: steered ? "steering_restart" : "initial",
             runId: resumedId,
             providerInstanceId: harness.newInstanceId,
           },
@@ -2379,9 +2388,9 @@ effectIt.effect.each(["/compact", "/goal finish"])(
         ],
       });
       yield* harness.start;
-      expect(harness.startTurn.mock.calls[0]?.[0].message.text).toContain(
-        "switched by the user from",
-      );
+      expect(
+        harness.startTurn.mock.calls[0]?.[0].message.text.includes("switched by the user from"),
+      ).toBe(!steered);
     }),
 );
 
