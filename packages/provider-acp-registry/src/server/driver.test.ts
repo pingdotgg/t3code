@@ -1271,11 +1271,6 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
           return effortBySlug(yield* instance.snapshot.getSnapshot);
         });
 
-      // A live session that reports neither models nor options leaves the probe's list as is.
-      yield* coordinator.publishLiveConfiguration(
-        identity.instanceId,
-        normalizeAcpRegistryLiveConfiguration([]),
-      );
       const probed = yield* waitFor("model-a", "").pipe(
         Effect.forkScoped({ startImmediately: true }),
       );

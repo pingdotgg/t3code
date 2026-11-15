@@ -698,17 +698,19 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     // Refreshes rebuild the snapshot from the probe, so the models a session has
     // opened (the probe's included) keep their reported options here.
     const learnedModels = yield* Ref.make<ReadonlyArray<ServerProviderModel>>([]);
+    const withOpenedModels = (
+      learned: ReadonlyArray<ServerProviderModel>,
+      provider: ServerProvider,
+    ) => [
+      ...learned,
+      ...openedModels(provider).filter((model) => !learned.some(({ slug }) => slug === model.slug)),
+    ];
     const applyLiveConfiguration = (
       provider: ServerProvider,
       configuration: AcpRegistryLiveConfiguration,
     ) =>
       Ref.modify(learnedModels, (learned) => {
-        const observed = [
-          ...learned,
-          ...openedModels(provider).filter(
-            (model) => !learned.some(({ slug }) => slug === model.slug),
-          ),
-        ];
+        const observed = withOpenedModels(learned, provider);
         const next = applyAcpRegistryLiveConfiguration(
           provider,
           configuration,
@@ -744,11 +746,16 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           }).pipe(
             Effect.flatMap(({ commands, configuration, authAction }) => {
               const withCommands = applyAcpRegistryAvailableCommands(provider, commands);
-              return Option.match(configuration, {
-                onNone: () => Effect.succeed(withCommands),
-                onSome: (liveConfiguration) =>
-                  applyLiveConfiguration(withCommands, liveConfiguration),
-              }).pipe(
+              return Ref.update(learnedModels, (learned) =>
+                withOpenedModels(learned, withCommands),
+              ).pipe(
+                Effect.andThen(
+                  Option.match(configuration, {
+                    onNone: () => Effect.succeed(withCommands),
+                    onSome: (liveConfiguration) =>
+                      applyLiveConfiguration(withCommands, liveConfiguration),
+                  }),
+                ),
                 Effect.map((withConfiguration) =>
                   applyAcpRegistryUrlAuthAction(withConfiguration, authAction),
                 ),
