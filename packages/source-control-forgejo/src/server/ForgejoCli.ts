@@ -305,7 +305,7 @@ export const make = Effect.gen(function* () {
     const remote = remoteUrl ? parseForgejoRemote(remoteUrl) : null;
     return Object.keys(keys.hosts).flatMap((host) => {
       const url = parseForgejoRemote(`https://${host}`);
-      // fj 0.6 drops URL mounts during whoami and OAuth renewal; tea supports them.
+      // fj drops URL mounts during whoami and OAuth renewal; tea supports them.
       if (!url || url.path) return [];
       // fj omits the scheme in storage. Only an explicit matching HTTP remote opts into HTTP.
       const scheme =
@@ -350,26 +350,47 @@ export const make = Effect.gen(function* () {
       readonly body?: string;
     }) {
       const base = new URL(`${input.baseUrl}/api/v1/`);
-      const url = new URL(input.path, base);
-      if (
-        url.origin !== base.origin ||
-        !url.pathname.startsWith(base.pathname) ||
-        url.username ||
-        url.password
-      )
+      const apiUrl = (path: string, from: string) => {
+        const url = URL.parse(path, from);
+        return url &&
+          url.origin === base.origin &&
+          url.pathname.startsWith(base.pathname) &&
+          !url.username &&
+          !url.password
+          ? url
+          : undefined;
+      };
+      const requested = apiUrl(input.path, base.href);
+      if (!requested)
         return yield* new ForgejoCliError({
           command: "fj",
           cwd: input.cwd,
           detail: "Invalid Forgejo API path.",
         });
-      let request = HttpClientRequest.make(input.method ?? "GET")(url.toString()).pipe(
-        HttpClientRequest.setHeader("Authorization", `token ${input.token}`),
-      );
-      if (input.body !== undefined)
-        request = request.pipe(HttpClientRequest.bodyText(input.body, "application/json"));
-      const response = yield* httpClient
-        .execute(request)
-        .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
+      let url = requested;
+      const send = (target: URL) => {
+        let request = HttpClientRequest.make(input.method ?? "GET")(target.toString()).pipe(
+          HttpClientRequest.setHeader("Authorization", `token ${input.token}`),
+        );
+        if (input.body !== undefined)
+          request = request.pipe(HttpClientRequest.bodyText(input.body, "application/json"));
+        return httpClient
+          .execute(request)
+          .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
+      };
+      let response = yield* send(url);
+      // Forgejo redirects a renamed repository's API paths before running the handler,
+      // so the same method and body are re-sent. The token never leaves the API base.
+      for (let hops = 0; hops < 5; hops++) {
+        const location = response.headers.location;
+        const next =
+          location && [301, 302, 307, 308].includes(response.status)
+            ? apiUrl(location, url.href)
+            : undefined;
+        if (!next) break;
+        url = next;
+        response = yield* send(url);
+      }
       const status = response.status;
       const body =
         status === 204 || status === 205
@@ -613,7 +634,7 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         reason: "authentication",
         detail:
-          "No matching Forgejo login. Use `fj auth login`, `fj auth add-token`, or `tea login add` for this server; choose a default when multiple tea accounts match.",
+          "No matching Forgejo login. Use `fj auth login`, `fj auth add-token`, or `tea login add` for this server. For a server under a URL subpath, use `tea login add`. Choose a default when multiple tea accounts match.",
       });
     if (hostOnly)
       return { command, login: login.name, repository: "", baseUrl: login.url.replace(/\/+$/, "") };
@@ -706,7 +727,8 @@ export const make = Effect.gen(function* () {
     });
     // tea reports HTTP failures with exit code zero; use its response status.
     const status = Number(/^HTTP\/\S+ (\d{3})/m.exec(result.stderr)?.[1]);
-    if (!status || status >= 400)
+    if (!status || status >= 400) {
+      const body = result.stdout.trim();
       return yield* new ForgejoCliError({
         command: "tea",
         cwd: input.cwd,
@@ -727,8 +749,13 @@ export const make = Effect.gen(function* () {
               ? "Forgejo repository or pull request was not found."
               : status === 429
                 ? "Forgejo API rate limit exceeded."
-                : `Forgejo API request failed${status ? ` (HTTP ${status})` : " without an HTTP status"}.`,
+                : !status
+                  ? "Forgejo API request failed without an HTTP status."
+                  : body
+                    ? `Forgejo API request failed (HTTP ${status}): ${body}`
+                    : `Forgejo API request failed (HTTP ${status}).`,
       });
+    }
     return result;
   });
   return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api });
