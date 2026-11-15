@@ -128,8 +128,6 @@ const DESKTOP_VIEWPORT_READ_TIMEOUT = "1 second";
 const DESKTOP_RESIZE_WAIT_MS = 1000;
 // A revealed tab's client opens the panel and attaches its stream a few round trips later, remote ones included.
 const REVEAL_VIEWER_WAIT_MS = 1000;
-// Stopping or starting a screencast is one CDP command; a viewer that takes longer has stalled.
-const SCREENCAST_SWITCH_TIMEOUT_MS = 2000;
 
 const sleepUntil = (deadline: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())));
@@ -2330,7 +2328,7 @@ const make = Effect.gen(function* () {
             ...[...tab.viewers].map((viewer) => viewer.pause()),
             recording?.session.send("Page.stopScreencast").catch(constVoid),
           ]),
-          Math.min(SCREENCAST_SWITCH_TIMEOUT_MS, remaining()),
+          remaining(),
         );
         stage = "capturing the page";
         return await capture(Math.max(1, remaining()));
@@ -2347,7 +2345,7 @@ const make = Effect.gen(function* () {
                   .catch(constVoid)
               : undefined,
           ]),
-          Math.min(SCREENCAST_SWITCH_TIMEOUT_MS, remaining()),
+          remaining(),
         );
       }
     });
