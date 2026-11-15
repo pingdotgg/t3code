@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off -- Node module loading anchors Koffi's Darwin FFI to the packaged runtime.
 import * as NodeModule from "node:module";
 
 import type {
