@@ -674,7 +674,7 @@ function UsageOverview({
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <span>
                 <span className={figureClass(loadingPartial)}>
-                  {formatCount(merged.sessions)} sessions
+                  {td("sessionsCount", { count: formatCount(merged.sessions) })}
                 </span>
                 {metric === "cost" && " · API estimate"}
               </span>
@@ -888,7 +888,7 @@ function UsageOverview({
               {breakdownModels.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="py-6 text-center text-muted-foreground">
-                    No activity in this window.
+                    {td("noActivity")}
                   </td>
                 </tr>
               ) : (
@@ -977,7 +977,7 @@ function UsageOverview({
                       colSpan={activeProviders.length + 3}
                       className="py-6 text-center text-muted-foreground"
                     >
-                      No activity in this window.
+                      {td("noActivity")}
                     </td>
                   </tr>
                 ) : (
@@ -1106,10 +1106,7 @@ function UsageCoverageNotice({
         </span>
       ))}
       {duplicateSources.length > 0 ? (
-        <span>
-          Counted once across environments sharing a transcript directory:{" "}
-          {duplicateSources.join(", ")}
-        </span>
+        <span>{td("duplicateTranscriptDirs", { list: duplicateSources.join(", ") })}</span>
       ) : null}
     </div>
   );
@@ -1230,9 +1227,7 @@ function UsageEnvironmentFilter({
           <p className="px-2 py-2 text-xs text-muted-foreground">{td("noEnvironments")}</p>
         ) : null}
         {showUsageStatus && isPartial ? (
-          <p className="px-2 py-2 text-xs text-muted-foreground">
-            Totals are partial while selected environments scan.
-          </p>
+          <p className="px-2 py-2 text-xs text-muted-foreground">{td("totalsPartialScanning")}</p>
         ) : null}
         {showUsageStatus ? (
           <UsageCoverageNotice
