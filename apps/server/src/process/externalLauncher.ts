@@ -869,7 +869,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
       options: {
         detached: launch.detached ?? true,
         shell: spawnCommand.shell,
-        env: yield* readGraphicalSessionEnv(),
+        env: { ...env, ...(yield* readGraphicalSessionEnv()) },
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",

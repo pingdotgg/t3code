@@ -990,7 +990,8 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
       const existingEntries = new Set(existingPath.split(delimiter));
       const missing = fallbackDirs.filter((dir) => !existingEntries.has(dir));
       if (missing.length > 0) {
-        env.PATH = [...missing, existingPath].filter(Boolean).join(delimiter);
+        const spawnEnv = options.env ?? hostEnvironment;
+        spawnEnv.PATH = [existingPath, ...missing].filter(Boolean).join(delimiter);
       }
     }
     return { command, args: [...args], shell: false };

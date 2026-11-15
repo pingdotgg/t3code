@@ -902,6 +902,66 @@ describe("npmShimExecutable", () => {
 });
 
 effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "keeps PATH commands ahead of fallback commands when spawning",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped();
+        const primary = path.join(root, "primary");
+        const fallback = path.join(root, "fallback");
+        for (const [dir, value] of [
+          [primary, "primary"],
+          [fallback, "fallback"],
+        ] as const) {
+          yield* fs.makeDirectory(dir, { recursive: true });
+          const file = path.join(dir, "t3-path-probe");
+          yield* fs.writeFileString(file, `#!/bin/sh\nprintf '${value}'\n`);
+          yield* fs.chmod(file, 0o755);
+        }
+        const env = { PATH: primary, T3CODE_CLI_FALLBACK_DIRS: fallback };
+        const resolved = yield* resolveSpawnCommand("t3-path-probe", [], { env }).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+        );
+        expect(
+          NodeChildProcess.execFileSync(resolved.command, [...resolved.args], {
+            env,
+            encoding: "utf8",
+          }),
+        ).toBe("primary");
+      }),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "passes fallback interpreters to spawns that extend the environment",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped();
+        yield* fs.symlink(yield* HostProcess.ExecutablePath, path.join(root, "node"));
+        const cli = path.join(root, "t3-fallback-probe");
+        yield* fs.writeFileString(
+          cli,
+          "#!/usr/bin/env node\nconsole.log('fallback interpreter');\n",
+        );
+        yield* fs.chmod(cli, 0o755);
+        const host = { PATH: "/usr/bin:/bin" };
+        const env = { PATH: "", T3CODE_CLI_FALLBACK_DIRS: root };
+        const resolved = yield* resolveSpawnCommand(cli, [], { env, extendEnv: true }).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Environment, host),
+        );
+        expect(
+          NodeChildProcess.execFileSync(resolved.command, [...resolved.args], {
+            env: { ...host, ...env },
+            encoding: "utf8",
+          }).trim(),
+        ).toBe("fallback interpreter");
+      }),
+  );
+
   it.effect("runs Windows executables directly without a shell", () =>
     Effect.gen(function* () {
       const command = yield* resolveSpawnCommand("node.exe", ["script.js", "hello & goodbye"], {

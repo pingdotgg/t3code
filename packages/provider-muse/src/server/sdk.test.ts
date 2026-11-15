@@ -259,6 +259,18 @@ describe("Muse SDK host", () => {
 });
 
 describe("Muse launch", () => {
+  it.effect("adds fallback directories to the POSIX SDK environment after PATH", () =>
+    Effect.gen(function* () {
+      const environment = { PATH: "/preferred/bin", T3CODE_CLI_FALLBACK_DIRS: "/fallback/bin" };
+      expect(
+        yield* museLaunch("muse", environment).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+        ),
+      ).toEqual({ command: "muse", args: [] });
+      expect(environment.PATH).toBe("/preferred/bin:/fallback/bin");
+    }),
+  );
+
   const CMD = "C:\\Windows\\system32\\cmd.exe";
   const onWindows = (resolved: string | undefined, env: NodeJS.ProcessEnv = { ComSpec: CMD }) =>
     museLaunch("muse", env).pipe(
