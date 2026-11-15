@@ -626,6 +626,7 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   }
 
   private func updateTitle() {
+    updateActions()
     titleLabel.text = titles[safe: currentIndex]
     counterLabel.text = titles.count > 1 ? "\(currentIndex + 1) of \(titles.count)" : nil
     counterLabel.isHidden = titles.count < 2
@@ -654,14 +655,26 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   func setImage(_ image: UIImage, at index: Int, full: Bool) {
     guard let page = pages[safe: index] else { return }
     page.setImage(image, full: full)
+    updateActions()
   }
 
   func setLoading(at index: Int) { pages[safe: index]?.setLoading() }
 
-  func release(at index: Int, placeholder: UIImage?) { pages[safe: index]?.release(to: placeholder) }
+  func release(at index: Int, placeholder: UIImage?) {
+    pages[safe: index]?.release(to: placeholder)
+    updateActions()
+  }
 
   func setFailed(at index: Int, retryable: Bool) {
     pages[safe: index]?.setFailed(retryable: retryable)
+    updateActions()
+  }
+
+  /// Save and Share act on the original, so they wait until the current page shows it.
+  private func updateActions() {
+    let ready = pages[safe: currentIndex]?.isFull == true
+    saveButton?.isEnabled = ready
+    shareButton?.isEnabled = ready
   }
 
   // MARK: Transitions
