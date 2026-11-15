@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 
 import type { OtlpEndpointSource } from "@t3tools/contracts";
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
+import { markNoCopyOnWrite } from "./noCopyOnWrite.ts";
 import {
   DEFAULT_SIGNAL_EXPORT,
   nodeProcessRuntimeAttributes,
@@ -42,6 +43,7 @@ export interface ServerDerivedPaths {
   readonly environmentThemesDir: string;
   readonly providerStatusCacheDir: string;
   readonly worktreesDir: string;
+  readonly worktreeCheckoutCacheDir: string;
   readonly attachmentsDir: string;
   readonly browserArtifactsDir: string;
   readonly logsDir: string;
@@ -99,6 +101,7 @@ export class ServerConfig extends Context.Service<
     readonly shellEnvironmentPrepared?: boolean | undefined;
     readonly desktopTelemetryFd?: number | undefined;
     readonly desktopTelemetryControlFd?: number | undefined;
+    readonly desktopAppUpdate?: boolean | undefined;
     readonly desktopBrowserFd?: number | undefined;
     readonly desktopBrowserControlFd?: number | undefined;
     readonly resourceMonitorPath?: string | undefined;
@@ -158,6 +161,7 @@ export const deriveServerPaths = Effect.fn(function* (
     environmentThemesDir: join(stateDir, "themes"),
     providerStatusCacheDir,
     worktreesDir: join(baseDir, "worktrees"),
+    worktreeCheckoutCacheDir: join(providerStatusCacheDir, "worktree-checkouts"),
     attachmentsDir,
     browserArtifactsDir: join(stateDir, "browser-artifacts"),
     logsDir,
@@ -176,9 +180,14 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
+  yield* fs.makeDirectory(derivedPaths.stateDir, { recursive: true });
+  // Only before the database exists: a No_COW WAL beside an existing copy-on-write database
+  // could not be reflinked into one backup folder with it. When unsure, leave the folder as is.
+  if (!(yield* fs.exists(derivedPaths.dbPath).pipe(Effect.orElseSucceed(() => true)))) {
+    yield* Effect.promise(() => markNoCopyOnWrite(derivedPaths.stateDir));
+  }
   yield* Effect.all(
     [
-      fs.makeDirectory(derivedPaths.stateDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.logsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.providerLogsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.terminalLogsDir, { recursive: true }),

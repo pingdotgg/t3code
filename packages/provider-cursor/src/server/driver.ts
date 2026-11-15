@@ -5,7 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { CursorSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -37,7 +37,6 @@ import { makeCursorAuth } from "./auth.ts";
 import * as CursorCredentialStore from "./credentialStore.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorSdk from "./CursorSdk.ts";
-import * as CursorKeychain from "./CursorKeychain.ts";
 import * as CursorUsageAccounts from "./CursorUsageAccounts.ts";
 
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
@@ -51,13 +50,12 @@ const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
 
 export type CursorDriverEnv =
   | CursorAdapterV2DriverEnv
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
   | CursorSdk.CursorSdk
-  | ProviderHost.ProviderHost
-  | CursorKeychain.CursorKeychain;
+  | ProviderHost.ProviderHost;
 
 export const CursorDriver: ProviderDriver<
   CursorSettings,
@@ -74,11 +72,11 @@ export const CursorDriver: ProviderDriver<
   usage: {
     kind: "scan",
     provider: "cursor",
-    scan: ({ settings, windowStartMs, retentionCutoffMs, awaitRefresh }) =>
+    scan: ({ instances, windowStartMs, retentionCutoffMs, awaitRefresh }) =>
       CursorUsageAccounts.CursorUsageAccounts.pipe(
         Effect.flatMap((accounts) =>
           accounts.scan({
-            keychainUsageEnabled: settings.cursorKeychainUsageEnabled,
+            instances,
             windowStartMs,
             retentionCutoffMs,
             awaitRefresh,
@@ -98,7 +96,6 @@ export const CursorDriver: ProviderDriver<
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const httpClient = yield* HttpClient.HttpClient;
-    const keychain = yield* CursorKeychain.CursorKeychain;
     const sdkRunner = yield* CursorAgentSdk.CursorAgentSdkRunner;
     const processEnv = yield* mergeProviderInstanceEnvironment(environment);
     const continuationIdentity = defaultProviderContinuationIdentity({
@@ -211,6 +208,7 @@ export const CursorDriver: ProviderDriver<
       processEnv,
       auth.requireApiKey,
       auth.withAccess,
+      () => catalogModels,
     );
 
     const checkProvider = auth.readApiKey.pipe(
@@ -232,22 +230,15 @@ export const CursorDriver: ProviderDriver<
                 snapshot.auth.status === "authenticated"
               ),
             (snapshot) =>
-              host.settings.get.pipe(
-                Effect.flatMap((settings) =>
-                  readCursorUsageLimits(
-                    effectiveConfig,
-                    { ...processEnv, CURSOR_API_KEY: apiKey },
-                    settings.cursorKeychainUsageEnabled,
-                  ),
-                ),
-                Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
-              ),
+              readCursorUsageLimits(effectiveConfig, {
+                ...processEnv,
+                CURSOR_API_KEY: apiKey,
+              }).pipe(Effect.map((usageLimits) => ({ ...snapshot, usageLimits }))),
           ),
         ),
       ),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
-      Effect.provideService(CursorKeychain.CursorKeychain, keychain),
       Effect.map(stampSnapshot),
       Effect.tap((provider) =>
         Effect.sync(() => {

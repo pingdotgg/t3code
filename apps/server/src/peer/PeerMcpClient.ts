@@ -3,12 +3,14 @@ import {
   OrchestratorMcpFailure,
   type PeerLinkError,
   type ProviderInteractionMode,
+  type OrchestrationV2LinkedSender,
   type RuntimeMode,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
@@ -19,6 +21,9 @@ import * as PeerLinks from "./PeerLinks.ts";
 
 /** The only MCP protocol version a T3 Code `/mcp` registers. */
 const PROTOCOL_VERSION = "2025-06-18";
+
+/** A title can be any length; the header carrying it stays well under HTTP header limits. */
+const SENDER_TITLE_MAX_LENGTH = 200;
 
 /** The limits a call carries to the peer: the calling agent's modes here. */
 export interface PeerCallLimits {
@@ -40,6 +45,8 @@ export class PeerMcpClient extends Context.Service<
       readonly tool: string;
       readonly arguments: Record<string, unknown>;
       readonly limits: PeerCallLimits;
+      /** The thread here the call is made for, sent as `T3-Sender-Thread`. */
+      readonly sender?: OrchestrationV2LinkedSender;
       readonly success: S;
     }) => Effect.Effect<S["Type"], OrchestratorMcpFailure>;
   }
@@ -83,6 +90,11 @@ const linkedEnvironmentsOffThere = new OrchestratorMcpFailure({
     "The linked environment has Linked environments turned off. Turn it on in its Settings → Labs.",
 });
 
+const stoppedAnswering = new OrchestratorMcpFailure({
+  code: "orchestration_error",
+  message: "The linked environment stopped answering.",
+});
+
 /** The body of an MCP response: JSON, or a single server-sent event carrying JSON. */
 const responseJson = (contentType: string | undefined, text: string) =>
   contentType?.includes("text/event-stream") === true
@@ -112,45 +124,45 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const openSession = Effect.fn("PeerMcpClient.openSession")(function* (
-    url: string,
-    token: string,
-    limitHeader: Record<string, string>,
-  ) {
-    const initialized = yield* post(
-      url,
-      token,
-      {
-        jsonrpc: "2.0",
-        id: 0,
-        method: "initialize",
-        params: {
-          protocolVersion: PROTOCOL_VERSION,
-          capabilities: {},
-          clientInfo: { name: "t3code-peer", version: "1" },
+  const openSession = Effect.fn("PeerMcpClient.openSession")(
+    function* (url: string, token: string, limitHeader: Record<string, string>) {
+      const initialized = yield* post(
+        url,
+        token,
+        {
+          jsonrpc: "2.0",
+          id: 0,
+          method: "initialize",
+          params: {
+            protocolVersion: PROTOCOL_VERSION,
+            capabilities: {},
+            clientInfo: { name: "t3code-peer", version: "1" },
+          },
         },
-      },
-      limitHeader,
-    );
-    const sessionId = initialized.headers["mcp-session-id"];
-    if (initialized.status === 403) return yield* linkedEnvironmentsOffThere;
-    if (initialized.status !== 200 || sessionId === undefined) {
-      return yield* new OrchestratorMcpFailure({
-        code: initialized.status === 401 ? "capability_denied" : "orchestration_error",
-        message:
-          initialized.status === 401
-            ? "The linked environment no longer accepts this link. It may have been revoked there; link it again."
-            : `The linked environment refused to start an MCP session (HTTP ${initialized.status}).`,
-      });
-    }
-    yield* post(
-      url,
-      token,
-      { jsonrpc: "2.0", method: "notifications/initialized" },
-      { ...limitHeader, "mcp-session-id": sessionId, "mcp-protocol-version": PROTOCOL_VERSION },
-    );
-    return sessionId;
-  });
+        limitHeader,
+      );
+      const sessionId = initialized.headers["mcp-session-id"];
+      if (initialized.status === 403) return yield* linkedEnvironmentsOffThere;
+      if (initialized.status !== 200 || sessionId === undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: initialized.status === 401 ? "capability_denied" : "orchestration_error",
+          message:
+            initialized.status === 401
+              ? "The linked environment no longer accepts this link. It may have been revoked there; link it again."
+              : `The linked environment refused to start an MCP session (HTTP ${initialized.status}).`,
+        });
+      }
+      yield* post(
+        url,
+        token,
+        { jsonrpc: "2.0", method: "notifications/initialized" },
+        { ...limitHeader, "mcp-session-id": sessionId, "mcp-protocol-version": PROTOCOL_VERSION },
+      );
+      return sessionId;
+    },
+    // Only the handshake is bounded: a forwarded tool call may wait for minutes.
+    (effect, url) => Effect.timeout(effect, PeerLinks.probeTimeout(url)),
+  );
 
   const call: PeerMcpClient["Service"]["call"] = Effect.fn("PeerMcpClient.call")(
     function* (input) {
@@ -160,6 +172,20 @@ const make = Effect.gen(function* () {
       const limitHeader = {
         [McpInvocationContext.MODE_LIMIT_HEADER]: `${input.limits.runtimeMode}/${input.limits.interactionMode}`,
       };
+      const senderHeader =
+        input.sender === undefined
+          ? {}
+          : {
+              [McpInvocationContext.SENDER_THREAD_HEADER]: [
+                input.sender.environmentId,
+                input.sender.threadId,
+                // Whole code points, so a cut never leaves half an emoji for encodeURIComponent.
+                Array.from(input.sender.title).slice(0, SENDER_TITLE_MAX_LENGTH).join(""),
+              ]
+                // encodeURIComponent throws on an unpaired surrogate, which a title can hold.
+                .map((part) => encodeURIComponent(part.toWellFormed()))
+                .join("/"),
+            };
       const sessionKey = `${input.environmentId} ${resolved.url}`;
       const callOnce = (sessionId: string) =>
         post(
@@ -171,7 +197,12 @@ const make = Effect.gen(function* () {
             method: "tools/call",
             params: { name: input.tool, arguments: input.arguments },
           },
-          { ...limitHeader, "mcp-session-id": sessionId, "mcp-protocol-version": PROTOCOL_VERSION },
+          {
+            ...limitHeader,
+            ...senderHeader,
+            "mcp-session-id": sessionId,
+            "mcp-protocol-version": PROTOCOL_VERSION,
+          },
         );
       const existing = (yield* Ref.get(sessions)).get(sessionKey);
       const sessionId = existing ?? (yield* openSession(resolved.url, resolved.token, limitHeader));
@@ -210,25 +241,36 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      if (body.error !== undefined || body.result === undefined) {
+      if (body.error !== undefined) {
+        return Result.fail(
+          new OrchestratorMcpFailure({ code: "invalid_request", message: body.error.message }),
+        );
+      }
+      if (body.result === undefined) {
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
-          message: body.error?.message ?? "The linked environment returned no result.",
+          message: "The linked environment returned no result.",
         });
       }
       const text = body.result.content.map((part) => part.text ?? "").join("");
       if (body.result.isError === true) {
         // A refusal keeps the peer's own code, so the agent sees why it was refused.
         const refused = decodeFailure(text);
-        return yield* refused._tag === "Some"
-          ? new OrchestratorMcpFailure({ code: refused.value.code, message: refused.value.message })
-          : new OrchestratorMcpFailure({
-              code: "orchestration_error",
-              message: text || "The linked environment refused the call.",
-            });
+        return Result.fail(
+          refused._tag === "Some"
+            ? new OrchestratorMcpFailure({
+                code: refused.value.code,
+                message: refused.value.message,
+              })
+            : new OrchestratorMcpFailure({
+                code: "orchestration_error",
+                message: text || "The linked environment refused the call.",
+              }),
+        );
       }
       const success = Schema.fromJsonString(input.success);
       return yield* Schema.decodeEffect(success)(text).pipe(
+        Effect.map(Result.succeed),
         Effect.mapError(
           () =>
             new OrchestratorMcpFailure({
@@ -244,17 +286,14 @@ const make = Effect.gen(function* () {
         Effect.tapError((error) =>
           links.recordOutcome(input.environmentId, { error: error.message }),
         ),
+        // A refusal is still an answer: the link works, so only this call fails.
         Effect.tap(() => links.recordOutcome(input.environmentId, { error: null })),
         // Recorded above with the transport's own message; the agent hears it plainly.
         Effect.catchTags({
-          HttpClientError: () =>
-            Effect.fail(
-              new OrchestratorMcpFailure({
-                code: "orchestration_error",
-                message: "The linked environment stopped answering.",
-              }),
-            ),
+          HttpClientError: () => Effect.fail(stoppedAnswering),
+          TimeoutError: () => Effect.fail(stoppedAnswering),
         }),
+        Effect.flatMap(Effect.fromResult),
       ),
   );
 
