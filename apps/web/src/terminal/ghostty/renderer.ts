@@ -92,10 +92,8 @@ function isCellFillingGlyph(text: string): boolean {
   return text.length === 1 && code >= 0x2500 && code <= 0x259f;
 }
 
-// Fonts draw these glyphs to their own line height, shorter than our rows, so
-// stretch the full block's ink past the row by `seamOverlap` on each side (the
-// caller clips to the row) and the rest of the glyph follows. Returns the
-// baseline to draw at; the caller saves and restores the context.
+// Fonts draw these glyphs shorter than our rows, so stretch the full block's ink one
+// device pixel past each row edge. Returns the baseline; the caller saves, clips and restores.
 function fitGlyphRow(
   context: CanvasRenderingContext2D,
   text: string,

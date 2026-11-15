@@ -139,6 +139,9 @@ describe("GhosttyTerminalSurface visibility", () => {
       fillRect: (...args: number[]) => paint("fillRect", args),
       strokeRect: (...args: number[]) => paint("strokeRect", args),
       fillText: (...args: [string, number, number, number?]) => paint("fillText", args),
+      getImageData: (_x: number, _y: number, width: number, height: number) => ({
+        data: new Uint8ClampedArray(width * height * 4),
+      }),
       measureText: (text: string) => ({
         width: text.length * 8,
         actualBoundingBoxAscent: 9,
