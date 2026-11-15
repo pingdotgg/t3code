@@ -14,7 +14,6 @@ const state = vi.hoisted(() => ({
   relatedShells: [] as unknown[],
   threadTitles: {} as Record<string, string>,
   archivedThreads: [] as unknown[],
-  familyThreads: [] as unknown[],
 }));
 
 vi.mock(import("../../state/query"), async (original) => ({
@@ -23,7 +22,7 @@ vi.mock(import("../../state/query"), async (original) => ({
     atom === null
       ? { data: null, isSuccess: false, isPending: false }
       : {
-          data: { ...state.threadTitles, threads: state.familyThreads },
+          data: state.threadTitles,
           isSuccess: true,
           isPending: false,
         }) as never,
@@ -62,6 +61,11 @@ vi.mock(import("../../state/use-atom-command"), () => ({
       : AsyncResult.failure(Cause.fail(new Error("Connection lost")))) as never,
 }));
 
+vi.mock(import("../../state/threads"), async (original) => ({
+  ...(await original()),
+  threadFamilies: { ...(await original()).threadFamilies, mount: () => () => {} },
+}));
+
 import { render } from "../../../test/render";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { ScrollArea } from "../ui/scroll-area";
@@ -76,7 +80,6 @@ function setup() {
   state.relatedShells = [];
   state.threadTitles = { source: "Source" };
   state.archivedThreads = [];
-  state.familyThreads = [];
   state.projection = {
     thread: {
       id: threadId,
@@ -415,37 +418,89 @@ it("hides a deleted fork and keeps unloaded and archived forks with their curren
   await expect.element(screen.getByText("deleted-fork", { exact: true })).not.toBeInTheDocument();
 });
 
-it("nests a subagent's own subagents under it", async () => {
-  setup();
-  const projection = makeThreadProjectionFixture();
-  const environmentId = EnvironmentId.make("local");
-  const shell = (id: string, title: string, parentThreadId: ThreadId) => ({
-    id: ThreadId.make(id),
-    title,
-    activityRunStatus: "running",
-    status: "running",
-    lineage: { parentThreadId, relationshipToParent: "subagent" },
-    forkedFrom: null,
-  });
-  state.projection = projection;
-  state.relatedShells = [shell("child", "Camera", projection.thread.id)];
-  state.familyThreads = [shell("grandchild", "Research lighting", ThreadId.make("child"))];
-  await using screen = await render(
-    <ThreadRelationshipsPanel
-      environmentId={environmentId}
-      threadId={projection.thread.id}
-      showLineage
-      showSideChats
-    />,
-  );
+it.each([false, true])(
+  "nests subagents while preserving workflow expansion (%s)",
+  async (workflow) => {
+    setup();
+    const projection = makeThreadProjectionFixture();
+    const environmentId = EnvironmentId.make("local");
+    const shell = (id: string, title: string, parentThreadId: ThreadId) => ({
+      id: ThreadId.make(id),
+      title,
+      activityRunStatus: "running",
+      status: "running",
+      lineage: { parentThreadId, relationshipToParent: "subagent" },
+      forkedFrom: null,
+    });
+    state.projection = {
+      ...projection,
+      subagents: workflow
+        ? [
+            {
+              id: NodeId.make("workflow"),
+              childThreadId: ThreadId.make("child"),
+              title: "Camera",
+              prompt: "Research lighting",
+              model: null,
+              status: "running",
+              result: null,
+              startedAt: projection.thread.createdAt,
+              completedAt: null,
+              updatedAt: projection.thread.updatedAt,
+              workflow: {
+                name: "Camera workflow",
+                phases: [{ index: 1, title: "Research" }],
+                agents: [
+                  {
+                    index: 1,
+                    label: "Research lighting",
+                    state: "running",
+                    phaseIndex: 1,
+                    phaseTitle: "Research",
+                    childThreadId: ThreadId.make("grandchild"),
+                  },
+                ],
+              },
+            },
+          ]
+        : [],
+    };
+    state.relatedShells = [
+      shell("child", "Camera", projection.thread.id),
+      shell("grandchild", "Research lighting", ThreadId.make("child")),
+    ];
+    await using screen = await render(
+      <ThreadRelationshipsPanel
+        environmentId={environmentId}
+        threadId={projection.thread.id}
+        showLineage
+        showSideChats
+      />,
+    );
 
-  await expect.element(screen.getByRole("button", { name: /Camera/ })).toBeVisible();
-  await expect.element(screen.getByRole("button", { name: /Research lighting/ })).toBeVisible();
-  await expect.element(screen.getByText("Lineage · 2 running")).toBeVisible();
-  await expect
-    .element(screen.getByRole("listitem").filter({ hasText: "Research lighting" }))
-    .toHaveClass("ms-4");
-});
+    await expect
+      .element(screen.getByText(workflow ? "Camera workflow" : "Camera", { exact: true }))
+      .toBeVisible();
+    if (workflow) {
+      await expect
+        .element(screen.getByText("Research lighting", { exact: true }))
+        .not.toBeInTheDocument();
+      await screen.getByRole("button", { name: "Expand Camera workflow", exact: true }).click();
+      await expect.element(screen.getByText("Research lighting", { exact: true })).toBeVisible();
+      await expect.element(screen.getByText("Lineage · 1 running")).toBeVisible();
+      await screen.getByRole("button", { name: "Collapse Camera workflow", exact: true }).click();
+      await expect
+        .element(screen.getByText("Research lighting", { exact: true }))
+        .not.toBeInTheDocument();
+      return;
+    }
+    await expect.element(screen.getByRole("button", { name: /Research lighting/ })).toBeVisible();
+    await expect.element(screen.getByText("Lineage · 2 running")).toBeVisible();
+    await expect
+      .element(screen.getByRole("listitem").filter({ hasText: "Research lighting" }))
+      .toHaveClass("ms-4");
+  },
+);
 
 it.each([1, 18])("continues scrolling the panel past a list of %i subagents", async (count) => {
   setup();

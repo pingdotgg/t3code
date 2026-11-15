@@ -57,7 +57,7 @@ import {
   SquareIcon,
   UnplugIcon,
 } from "lucide-react";
-import { Fragment, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -76,6 +76,7 @@ import {
   deriveProviderInstanceEntries,
 } from "../../providerInstances";
 import { threadEnvironment, threadFamilies } from "../../state/threads";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { orchestrationEnvironment, threadTitlesRead } from "../../state/orchestration";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
@@ -433,16 +434,18 @@ export function ThreadRelationshipsPanel(props: {
   const providersByEnvironment = useEnvironmentProviders();
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
   const relationshipShells = useThreadRelationshipShells(ref);
-  const family = useEnvironmentQuery(
+  const needsFamily =
     props.showLineage &&
-      relationshipShells.some(
-        (thread) =>
-          thread.lineage.parentThreadId === props.threadId &&
-          thread.lineage.relationshipToParent === "subagent",
-      )
-      ? threadFamilies.familyAtom(props.environmentId, props.threadId)
-      : null,
-  );
+    relationshipShells.some(
+      (thread) =>
+        thread.lineage.parentThreadId === props.threadId &&
+        thread.lineage.relationshipToParent === "subagent",
+    );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds completed descendants in the shell's family registry while lineage is visible
+  useEffect(() => {
+    if (!needsFamily) return;
+    return threadFamilies.mount(appAtomRegistry, props.environmentId, props.threadId);
+  }, [needsFamily, props.environmentId, props.threadId]);
   const hiddenKeys = useHiddenThreadKeys();
   const hidingAnywhere = useAnyEnvironmentHiding();
   const allProjects = useProjects();
@@ -495,6 +498,11 @@ export function ThreadRelationshipsPanel(props: {
     : undefined;
   const projected = projection?.subagents ?? [];
   const runtimeSubagents = projectedSubagentsToRuntime(projected);
+  const workflowMemberThreadIds = new Set(
+    runtimeSubagents
+      .filter((agent) => agent.parentAgentId !== null)
+      .map((agent) => agent.childThreadId),
+  );
   const byId = new Map(runtimeSubagents.map((agent) => [agent.id, agent]));
   const subagentsByThreadId = new Map(
     projected
@@ -520,7 +528,6 @@ export function ThreadRelationshipsPanel(props: {
   );
   const shells: ReadonlyArray<OrchestrationV2ThreadShell> = [
     ...relationshipShells,
-    ...(family.data?.threads ?? []),
     ...(archivedShells ?? []),
   ];
   const graph = deriveThreadRelationshipGraph({ threads: shells, projection });
@@ -624,6 +631,7 @@ export function ThreadRelationshipsPanel(props: {
             (child) =>
               child.edge.kind === "subagent" &&
               child.edge.sourceThreadId === row.threadId &&
+              !workflowMemberThreadIds.has(child.threadId) &&
               !isHiddenRelation(child.threadId),
           ),
           currentThreadId: row.threadId,
