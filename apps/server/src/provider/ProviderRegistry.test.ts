@@ -4220,7 +4220,7 @@ it.layer(
         label: "Custom API endpoint",
       },
     ])(
-      "uses the settings endpoint before the process endpoint: $type / $baseUrl",
+      "uses the project settings endpoint before user and process endpoints: $type / $baseUrl",
       ({ settings, baseUrl, type, label }) =>
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -4230,13 +4230,13 @@ it.layer(
           });
           yield* fileSystem.writeFileString(
             path.join(configDir, "settings.json"),
-            JSON.stringify(settings),
+            JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://user.example" } }),
           );
           const stateDir = yield* fileSystem.makeTempDirectoryScoped();
           yield* fileSystem.makeDirectory(path.join(stateDir, ".claude"));
           yield* fileSystem.writeFileString(
             path.join(stateDir, ".claude", "settings.json"),
-            JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://state-dir.example" } }),
+            JSON.stringify(settings),
           );
           const status = yield* checkClaudeProviderStatus(
             { ...defaultClaudeSettings, homePath: configDir },
