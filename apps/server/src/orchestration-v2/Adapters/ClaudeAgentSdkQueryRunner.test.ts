@@ -31,6 +31,7 @@ import {
   ClaudeAgentSdkQueryRunner,
   type ClaudeAgentSdkQueryOpenInput,
   layerQueryRunner,
+  makeClaudeDescendantTracking,
   spawnClaudeProcessGroup,
 } from "./ClaudeAdapterV2.ts";
 
@@ -567,6 +568,47 @@ const openFakeCli = (cli: string) =>
       },
     });
   });
+
+it.effect("one process-table read a second serves every live Claude CLI", () =>
+  Effect.gen(function* () {
+    const row = (pid: number, ppid: number, pgid: number) => ({
+      pid,
+      ppid,
+      pgid,
+      started: "Sun Nov 15 12:00:00 2026",
+    });
+    // Each CLI has started one job that left its process group.
+    let table = [row(100, 1, 100), row(101, 100, 101), row(200, 1, 200), row(201, 200, 201)];
+    let reads = 0;
+    const killed: Array<number> = [];
+    const track = yield* makeClaudeDescendantTracking(
+      Effect.sync(() => {
+        reads += 1;
+        return table;
+      }),
+      (job) => killed.push(job.pid),
+    );
+
+    yield* TestClock.adjust("3 seconds");
+    assert.strictEqual(reads, 0, "nothing is read while no CLI runs");
+
+    const first = track(100);
+    const second = track(200);
+    yield* TestClock.adjust("2 seconds");
+    assert.strictEqual(reads, 3, "one read at the start and one per second, not one per CLI");
+
+    // The first CLI exits: its job is re-parented, so only the shared read could have recorded it.
+    table = [row(101, 1, 101), row(200, 1, 200), row(201, 200, 201)];
+    yield* first.stop;
+    assert.deepStrictEqual(killed, [101]);
+
+    yield* second.stop;
+    assert.deepStrictEqual(killed, [101, 201]);
+    const readsAfterExit = reads;
+    yield* TestClock.adjust("3 seconds");
+    assert.strictEqual(reads, readsAfterExit);
+  }),
+);
 
 describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI process", () => {
   // The leftover child holds a FIFO open; its death produces EOF without polling.
