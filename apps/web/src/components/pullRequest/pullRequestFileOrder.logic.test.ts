@@ -48,6 +48,17 @@ describe("orderDiffFiles", () => {
     ).toEqual(["src/lib/index.ts", "src/a.ts"]);
   });
 
+  it("resolves .mts and .cts modules from NodeNext and extensionless specifiers", () => {
+    expect(order([file("a.mts", ['import { z } from "./z.mjs";']), file("z.mts")])).toEqual([
+      "z.mts",
+      "a.mts",
+    ]);
+    expect(order([file("a.ts", ['import { z } from "./z";']), file("z.cts")])).toEqual([
+      "z.cts",
+      "a.ts",
+    ]);
+  });
+
   it("falls back to the specifier's last segment when the path does not line up", () => {
     expect(order([file("src/a.ts", ['import { b } from "~/lib/b";']), file("lib/b.ts")])).toEqual([
       "lib/b.ts",

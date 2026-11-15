@@ -22,7 +22,8 @@ const GENERATED_DIRECTORIES = new Set([
   "vendor",
 ]);
 const TEST_DIRECTORIES = new Set(["__tests__", "tests", "test"]);
-const MODULE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
+// `.mts` also ends in `.ts`, so longer extensions come first.
+const MODULE_EXTENSIONS = [".mts", ".cts", ".mjs", ".cjs", ".tsx", ".jsx", ".ts", ".js"];
 
 function diffFileTier(path: string): DiffFileTier {
   const segments = path.split("/");
