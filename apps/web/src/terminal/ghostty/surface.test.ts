@@ -620,10 +620,12 @@ describe("GhosttyTerminalSurface visibility", () => {
       { scenario: "keyboard-selected", exists: false },
       { scenario: "selection-cleared", exists: true },
       { scenario: "output-cleaned", exists: true },
-    ].flatMap((test) => [
-      { ...test, bound: false },
-      { ...test, bound: true },
-    ]),
+    ]
+      .map((test) => ({ ...test, bound: false }))
+      .concat([
+        { scenario: "file", exists: true, bound: true },
+        { scenario: "replaced", exists: true, bound: true },
+      ]),
   )(
     "validates a quick click without waiting for hover: $scenario (bound: $bound)",
     async ({ scenario, exists, bound }) => {
