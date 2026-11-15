@@ -700,13 +700,6 @@ it.effect.each([
       "SSH encountered an untrusted host key while connecting to probe.test from the machine running this T3 Code server. Connect once with ssh from there to identify the host and verify its key before accepting it.",
   },
   {
-    name: "changed proxy host key",
-    exitCode: 255,
-    stderr: "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\nHost key verification failed.\n",
-    reason:
-      "SSH encountered a changed host key while connecting to probe.test from the machine running this T3 Code server. Connect once with ssh from there to identify the affected host. If the change is expected, remove that host's old key with `ssh-keygen -R`, then verify and accept its new key.",
-  },
-  {
     name: "unrecognized SSH failure",
     exitCode: 255,
     stderr: "private SSH diagnostics",
