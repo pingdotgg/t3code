@@ -74,9 +74,10 @@ three conversations, already checked. Projects already in T3 Code are not checke
 again. Uncheck the box to start without them, or
 select **Review all** to pick from everything found, with "Select all" and
 "Select none". Linked worktrees of bare repositories
-can be offered as separate projects. Other linked git worktrees, Codex scratch
-directories under `Documents/Codex`, and anything under `Downloads` are not
-offered.
+can be offered as separate projects. Conversations in other linked git worktrees
+count toward their main checkout, so a repository is offered even if you only
+worked in its worktrees. Codex scratch directories under `Documents/Codex`, and
+anything under `Downloads` are not offered.
 
 A large or malformed history can reach the scan limit. T3 Code keeps the
 projects it found and warns when projects or conversations may be missing.
@@ -99,9 +100,11 @@ a time and skips files larger than 4 GiB. It also skips a conversation when the
 message text and metadata it keeps need more than 32 MiB of memory. Tool output
 does not count toward that limit. It skips a conversation with more than 100,000
 records every time, so opening the page again does not import it. It ignores
-malformed records and skips unreadable or unparseable conversations.
+malformed records and conversations with no messages, such as a session opened
+in an editor but never used. It skips unreadable or unparseable conversations.
 
-Each import attempt reads up to 100 conversation files and 4 GiB per project. To
+Each import attempt reads up to 100 conversations and 4 GiB per project.
+Conversations with no messages count toward the 4 GiB but not the 100. To
 continue a large batch, open the Welcome page again and pick the project in
 **Review all**. Completed conversations are not imported again. You can continue
 without the remaining history.

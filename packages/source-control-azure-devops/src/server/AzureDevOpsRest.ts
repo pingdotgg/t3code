@@ -73,7 +73,7 @@ function organizationKey(url: URL): string {
 
 const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
-  const httpClient = yield* HttpClient.HttpClient;
+  const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   const credentials = yield* AzureDevOpsCredentials.AzureDevOpsCredentials;
   const tokenLock = yield* Semaphore.make(1);
   let held: HeldToken | null = null;
@@ -193,15 +193,11 @@ const make = Effect.gen(function* () {
         authorize.value,
         HttpClientRequest.acceptJson,
       );
-      return yield* httpClient.execute(request).pipe(
+      const result = yield* httpClient.execute(request).pipe(
         Effect.flatMap((response) => {
           const json = (response.headers["content-type"] ?? "").includes("application/json");
           // A refused credential answers 401, or 203 with a sign-in page.
-          if (
-            response.status === 401 ||
-            response.status === 403 ||
-            (response.status < 300 && !json)
-          ) {
+          if (response.status === 401 || (response.status < 300 && !json)) {
             return Clock.currentTimeMillis.pipe(
               Effect.map((at) => {
                 if (credential !== null || generation === accountGeneration) {
@@ -223,9 +219,14 @@ const make = Effect.gen(function* () {
             ),
           );
         }),
+        Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+        Effect.scoped,
         Effect.timeoutOrElse({ duration: REQUEST_TIMEOUT_MS, orElse: () => Effect.succeedNone }),
         Effect.orElseSucceed(() => Option.none<string>()),
       );
+      // An account can change while the request or its body is in flight, without another read.
+      yield* tokenLock.withPermit(followAccount);
+      return credential !== null || generation === accountGeneration ? result : Option.none();
     },
   );
 

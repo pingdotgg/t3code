@@ -52,7 +52,7 @@ esac
 
 const encodeSettings = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: string) {
+export const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.remove(home, { recursive: true, force: true });
@@ -63,6 +63,13 @@ const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: string) {
     yield* fs.writeFileString(shim, HOST_LABEL_SHIM);
     yield* fs.chmod(shim, 0o755);
   }
+  // Editor discovery is cached, so the recording shim must exist before the server starts.
+  const editor = path.join(home, "bin", "cursor");
+  yield* fs.writeFileString(
+    editor,
+    `#!/bin/sh\nprintf '%s\\n' "$@" > "$(dirname "$0")/../editor-args.txt"\n`,
+  );
+  yield* fs.chmod(editor, 0o755);
   const noModel = path.join(home, "bin/no-model");
   yield* fs.writeFileString(noModel, "#!/bin/sh\necho 'scenarios run no model' >&2\nexit 1\n");
   yield* fs.chmod(noModel, 0o755);
@@ -85,7 +92,7 @@ const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: string) {
 });
 
 /** Starts a process in the caller's scope and hands each line it prints to `onLine`. */
-const start = Effect.fn("startApp.start")(function* (input: {
+export const start = Effect.fn("startApp.start")(function* (input: {
   readonly cwd: string;
   readonly command: string;
   readonly args: ReadonlyArray<string>;

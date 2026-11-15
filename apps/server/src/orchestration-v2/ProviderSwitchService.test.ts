@@ -252,6 +252,24 @@ it.effect.each(["stopped", "error"] as const)(
     ),
 );
 
+it.effect("applies a model change on next turn after a settled thread's session detached", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const result = yield* service.plan({
+      projection: { ...deadNativeThreadProjection("stopped"), providerSessions: [] },
+      targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+    });
+    assert.equal(result.transition.type, "switch_model_in_session");
+    assert.deepEqual(result.releaseProviderSessionIds, []);
+  }).pipe(
+    Effect.provide(
+      layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }, (input) =>
+        Effect.succeed(acpSelectionTransition(input)),
+      ),
+    ),
+  ),
+);
+
 it.effect("rejects a model change the dead record never negotiated support for", () =>
   Effect.gen(function* () {
     const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
@@ -295,4 +313,32 @@ it.effect("distinguishes compatible and incompatible instances of the same drive
       }),
     ),
   ),
+);
+
+it.effect(
+  "applies a next-turn selection change when a shared session's cwd is another thread's",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+      const thread = projection();
+      const result = yield* service.plan({
+        projection: {
+          ...thread,
+          providerSessions: [{ ...thread.providerSessions[0]!, cwd: "/other-thread-worktree" }],
+        },
+        targetModelSelection: {
+          instanceId: currentInstanceId,
+          model: "gpt-5.1-codex",
+          options: [{ id: "fastMode", value: true }],
+        },
+      });
+      assert.equal(result.transition.type, "switch_model_in_session");
+      assert.deepEqual(result.releaseProviderSessionIds, []);
+    }).pipe(
+      Effect.provide(
+        layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }, () =>
+          Effect.succeed({ type: "apply_on_next_turn" }),
+        ),
+      ),
+    ),
 );
