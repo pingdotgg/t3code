@@ -1,3 +1,4 @@
+import { PRODUCT_BRAND } from "@t3tools/shared/branding";
 // @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off - Local mock OAuth server validates the browser callback boundary.
 import * as NodeNet from "node:net";
 import * as Context from "effect/Context";
@@ -601,7 +602,7 @@ it.effect(
           "state",
         ]);
         assert.strictEqual(first.searchParams.get("client_id"), "dynamic_agent_client");
-        assert.strictEqual(first.searchParams.get("agent_name_hint"), "T3 Code");
+        assert.strictEqual(first.searchParams.get("agent_name_hint"), PRODUCT_BRAND.baseName);
         assert.strictEqual(first.searchParams.get("response_type"), "code");
         assert.strictEqual(
           first.searchParams.get("scope"),

@@ -189,8 +189,11 @@ function normalizeReplayFrame(value: unknown): unknown {
     if (typeof params.clientInfo === "object" && params.clientInfo !== null) {
       normalized.params = {
         ...params,
+        // Builds and forks identify themselves differently; the handshake shape is what matters.
         clientInfo: {
           ...(params.clientInfo as Record<string, unknown>),
+          name: "<ignored>",
+          title: "<ignored>",
           version: "<ignored>",
         },
       };

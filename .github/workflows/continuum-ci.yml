@@ -48,19 +48,23 @@ jobs:
             command: vp run --filter @t3tools/contracts --filter @t3tools/shared --filter @t3tools/client-runtime test
           - name: desktop
             command: vp run --filter @t3tools/desktop test
-          # The server suite takes over 45 minutes on one hosted runner.
+          # The server suite takes over 45 minutes on one hosted runner; its preview tests drive Chromium.
           - name: server 1/4
             command: vp test run --shard 1/4
             directory: apps/server
+            browsers: true
           - name: server 2/4
             command: vp test run --shard 2/4
             directory: apps/server
+            browsers: true
           - name: server 3/4
             command: vp test run --shard 3/4
             directory: apps/server
+            browsers: true
           - name: server 4/4
             command: vp test run --shard 4/4
             directory: apps/server
+            browsers: true
           - name: web (unit)
             command: vp test run --passWithNoTests --project unit
             directory: apps/web

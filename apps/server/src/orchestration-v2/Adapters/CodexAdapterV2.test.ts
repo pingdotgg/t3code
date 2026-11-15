@@ -1,3 +1,4 @@
+import { PRODUCT_BRAND } from "@t3tools/shared/branding";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
@@ -666,7 +667,11 @@ function codexReplayPreamble(input: {
         id: 1,
         method: "initialize",
         params: {
-          clientInfo: { name: "T3 Code", title: "T3 Code", version: packageJson.version },
+          clientInfo: {
+            name: PRODUCT_BRAND.baseName,
+            title: PRODUCT_BRAND.baseName,
+            version: packageJson.version,
+          },
           capabilities: {
             experimentalApi: true,
             optOutNotificationMethods: ["turn/diff/updated"],
