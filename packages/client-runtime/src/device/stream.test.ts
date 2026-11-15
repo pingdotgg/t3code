@@ -313,11 +313,13 @@ function recoveryFixture(
   }
   vi.stubGlobal("WebSocket", Socket);
   const decoders: Decoder[] = [];
+  const configs: VideoDecoderConfig[] = [];
   class Decoder {
     static isConfigSupported = vi.fn(async () => ({ supported: true }));
     state = "unconfigured";
     decodeQueueSize = 0;
-    configure() {
+    configure(config: VideoDecoderConfig) {
+      configs.push(config);
       this.state = "configured";
     }
     reset = vi.fn(() => {
@@ -408,6 +410,7 @@ function recoveryFixture(
     fetch,
     videoBodies,
     decoders,
+    configs,
     Decoder,
     drawImage,
     decodedFrame,
@@ -483,6 +486,26 @@ describe("shared device stream readiness and recovery", () => {
     expect(fetch.mock.calls.filter(([url]) => url.includes("stream.avcc"))).toHaveLength(1);
     expect(sockets).toHaveLength(1);
     expect(events.onStatus).toHaveBeenLastCalledWith("error", expect.stringContaining("expired"));
+    client.stop();
+  });
+
+  it("tries another iOS decoding path when every AVCC reconnect backs up the same decoder", async () => {
+    const { client, fetch, videoBodies, decoders, configs } = recoveryFixture("ios", false);
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    for (let attempt = 0; attempt < 4; attempt++) {
+      videoBodies[attempt]!.enqueue(
+        new Uint8Array([...envelope(1, [1, 0x64, 0, 0x1f]), ...envelope(2, [2])]),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      decoders.at(-1)!.decodeQueueSize = 9;
+      videoBodies[attempt]!.enqueue(new Uint8Array(envelope(3, [3])));
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    expect(fetch.mock.calls.filter(([url]) => url.includes("stream.avcc")).length).toBeGreaterThan(
+      1,
+    );
+    expect(configs.map((config) => config.hardwareAcceleration)).toContain("prefer-software");
     client.stop();
   });
 
