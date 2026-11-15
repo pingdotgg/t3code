@@ -98,6 +98,7 @@ describe("paged mobile pull request diffs", () => {
       path: "large.ts",
       additions: 3000,
       deletions: 1800,
+      notice: "Diff too large to display here.",
       rows: [],
     });
     expect(parsed.additions).toBe(3000);

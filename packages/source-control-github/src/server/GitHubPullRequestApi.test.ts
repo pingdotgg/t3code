@@ -3106,6 +3106,33 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("cuts one withheld file out of GitHub's whole diff", () =>
+    Effect.gen(function* () {
+      const sdk = "diff --git a/patches/sdk.patch b/patches/sdk.patch\n@@ -1 +1 @@\n-old\n+new\n";
+      const patch = `diff --git a/a.ts b/a.ts\n@@ -1 +1 @@\n-a\n+b\n${sdk}diff --git a/z.ts b/z.ts\n@@ -1 +1 @@\n-y\n+z\n`;
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(patch)));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const ref = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
+      const file = yield* cli.getPullRequestDiff({ ...ref, path: "patches/sdk.patch" });
+      expect(file).toEqual({ patch: sdk, truncated: false, nextCursor: null });
+      expect(pathAt(0)).toBe("repos/acme/web/pulls/7");
+      expect(callAt(0)).toMatchObject({ kind: "rest", accept: "application/vnd.github.diff" });
+
+      const minified = `diff --git a/b.js b/b.js\n@@ -10,2 +10,2 @@\n ${"c".repeat(1200)}\n-${"a".repeat(3000)}\n+${"b".repeat(1500)}\n`;
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(minified)));
+      const shortened = yield* cli.getPullRequestDiff({ ...ref, path: "b.js" });
+      expect(shortened.patch).toBe(
+        `diff --git a/b.js b/b.js\n@@ -10,2 +10,2 @@\n ${"c".repeat(1000)} …[200 more characters]\n-${"a".repeat(1000)} …[2,000 more characters]\n+${"b".repeat(1000)} …[500 more characters]\n`,
+      );
+
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(patch, true)));
+      const error = yield* Effect.flip(
+        cli.getPullRequestDiff({ ...ref, path: "patches/sdk.patch" }),
+      );
+      expect(error._tag).toBe("GitHubPullRequestReadError");
+    }),
+  );
+
   it.effect("hands back a cursor for the next page rather than walking on by itself", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.fail(diffRefused));

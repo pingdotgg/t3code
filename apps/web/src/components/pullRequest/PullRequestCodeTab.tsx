@@ -43,11 +43,13 @@ import {
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
 } from "lucide-react";
-import { useAtomRefresh } from "@effect/atom-react";
+import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { AsyncResult, Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
 import {
   createContext,
   use,
+  useContext,
   useEffect,
   useEffectEvent,
   useRef,
@@ -141,6 +143,7 @@ import {
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
+import { CUT_LINE_NOTE_CSS, markCutLineNotes } from "./cutLineNotes";
 import {
   nextPendingReviewCommentId,
   pullRequestReviewKey,
@@ -154,7 +157,28 @@ interface ReviewAnnotationGroup {
   readonly pending: ReadonlyArray<PendingReviewComment>;
   readonly draft: boolean;
   readonly image?: { readonly url: string; readonly path: string };
+  readonly withheld?: { readonly path: string; readonly status: WithheldFileStatus };
 }
+
+type WithheldFileStatus = "idle" | "loading" | "error" | "empty";
+
+type PullRequestDiffTarget = Parameters<typeof pullRequestEnvironment.diff>[0];
+
+// One read per withheld file the reader asked for, so only that file's diff crosses the wire.
+const withheldFileDiffsAtom = Atom.family((key: string) => {
+  const { environmentId, input, paths } = JSON.parse(key) as {
+    readonly environmentId: PullRequestDiffTarget["environmentId"];
+    readonly input: PullRequestDiffTarget["input"];
+    readonly paths: ReadonlyArray<string>;
+  };
+  return Atom.make((get) =>
+    paths.map((path) =>
+      get(pullRequestEnvironment.diff({ environmentId, input: { ...input, path } })),
+    ),
+  ).pipe(Atom.withLabel(`pull-request-withheld-file-diffs:${key}`));
+});
+
+const NO_PATHS: ReadonlyArray<string> = [];
 
 type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
 
@@ -606,11 +630,89 @@ function PullRequestCodeTab({
   // Agent context is local, so it does not require host comment permission.
   const canSelectLines =
     commit === null && (review.inlineComment || onAddToAgentSelection !== undefined);
-  const { parsedSlices, loadedFiles, sourceFileStats } = diffModel(
+  const {
+    parsedSlices,
+    loadedFiles: pagedFiles,
+    sourceFileStats,
+  } = diffModel(
     loadedSlices,
     `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}`,
     ignoreWhitespace,
   );
+  const [withheldLoads, setWithheldLoads] = useState<{
+    readonly scope: string;
+    readonly paths: ReadonlyArray<string>;
+    /** Loads whose file has not been unfolded yet. */
+    readonly unopened: ReadonlyArray<string>;
+  }>({ scope: "", paths: NO_PATHS, unopened: NO_PATHS });
+  const withheldPaths = withheldLoads.scope === scopeKey ? withheldLoads.paths : NO_PATHS;
+  const withheldInput = { ...reference, ...(commit === null ? {} : { commit }) };
+  const withheldResults = useAtomValue(
+    withheldFileDiffsAtom(
+      JSON.stringify({ environmentId, input: withheldInput, paths: withheldPaths }),
+    ),
+  );
+  const atomRegistry = useContext(RegistryContext);
+  const withheldStatuses = new Map<string, WithheldFileStatus>();
+  const withheldFiles = new Map<string, (typeof pagedFiles)[number]>();
+  withheldPaths.forEach((path, index) => {
+    const result = withheldResults[index];
+    if (result === undefined) return;
+    const data = AsyncResult.getOrElse(result, () => null);
+    if (data === null) {
+      withheldStatuses.set(path, result._tag === "Failure" ? "error" : "loading");
+      return;
+    }
+    const parsed = parseSlice(
+      {
+        source: data,
+        cursor: null,
+        patch: data.patch,
+        truncated: false,
+        nextCursor: null,
+        omittedFileStats: [],
+      },
+      `pull-request:${scopeKey}:${resolvedTheme}:withheld:${path}`,
+      // Cut lines can match up to the cut and differ after it; hiding them would drop changes.
+      false,
+    );
+    const file = parsed?.kind === "files" ? parsed.files[0] : undefined;
+    if (file !== undefined && file.hunks.length > 0) withheldFiles.set(path, file);
+    else withheldStatuses.set(path, "empty");
+  });
+  // A loaded file renders under a new key, so it would fold again if marked Viewed.
+  const arrived = withheldLoads.unopened.filter((path) => withheldFiles.has(path));
+  if (withheldLoads.scope === scopeKey && arrived.length > 0) {
+    setWithheldLoads({
+      ...withheldLoads,
+      unopened: withheldLoads.unopened.filter((path) => !arrived.includes(path)),
+    });
+    setFoldChoices((current) =>
+      arrived.reduce((next, path) => {
+        const file = withheldFiles.get(path);
+        return file === undefined
+          ? next
+          : withFileDiffFold(next, buildFileDiffRenderKey(file), false);
+      }, current),
+    );
+  }
+  const loadedFiles =
+    withheldFiles.size === 0
+      ? pagedFiles
+      : pagedFiles.map((file) => withheldFiles.get(resolveFileDiffPath(file)) ?? file);
+  const loadWithheldFile = (path: string) => {
+    if (withheldPaths.includes(path)) {
+      atomRegistry.refresh(
+        pullRequestEnvironment.diff({ environmentId, input: { ...withheldInput, path } }),
+      );
+      return;
+    }
+    setWithheldLoads({
+      scope: scopeKey,
+      paths: [...withheldPaths, path],
+      unopened: [...(withheldLoads.scope === scopeKey ? withheldLoads.unopened : []), path],
+    });
+  };
   const linkAnchor = parsePullRequestAnchor(revealUrl);
   const linkFile =
     linkAnchor?.kind === "diff"
@@ -732,6 +834,17 @@ function PullRequestCodeTab({
         lineNumber: 0,
         metadata: { threads: [], pending: [], draft: false, image: { url: imageUrl, path } },
       });
+    } else if (fileDiff.hunks.length === 0 && omittedFileStats.has(path)) {
+      annotations.push({
+        side: "additions",
+        lineNumber: 0,
+        metadata: {
+          threads: [],
+          pending: [],
+          draft: false,
+          withheld: { path, status: withheldStatuses.get(path) ?? "idle" },
+        },
+      });
     }
     return {
       fileKey,
@@ -743,7 +856,7 @@ function PullRequestCodeTab({
         annotations
           .map(
             ({ side, lineNumber, metadata }) =>
-              `${side}:${lineNumber}:${metadata.image?.url ?? ""}:${metadata.draft ? "d" : ""}:${metadata.pending
+              `${side}:${lineNumber}:${metadata.image?.url ?? ""}:${metadata.withheld?.status ?? ""}:${metadata.draft ? "d" : ""}:${metadata.pending
                 .map((comment) => `${comment.id}:${comment.body}`)
                 .join(",")}:${metadata.threads
                 .map(
@@ -1035,7 +1148,10 @@ function PullRequestCodeTab({
     enableLineSelection: canSelectLines && draft === null,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
-    onPostRender: codeViewReveal.flush,
+    onPostRender: (fileContainer: HTMLElement) => {
+      codeViewReveal.flush();
+      if (withheldFiles.size > 0) markCutLineNotes(fileContainer);
+    },
     // Find may repeat requests before render; only unfold, never toggle.
     onRevealSearchMatch: (item: CodeViewItem<ReviewAnnotationGroup>) =>
       setFoldChoices((current) => withFileDiffFold(current, item.id, false)),
@@ -1142,6 +1258,12 @@ function PullRequestCodeTab({
             alt={annotation.metadata.image.path}
           />
         </div>
+      ) : null}
+      {annotation.metadata.withheld ? (
+        <WithheldFileNotice
+          {...annotation.metadata.withheld}
+          onLoad={detail.provider === "github" ? loadWithheldFile : undefined}
+        />
       ) : null}
       <InlineReviewThreads threads={annotation.metadata.threads} renderThread={renderThreadCard} />
       {annotation.metadata.pending.map((comment) => (
@@ -1736,7 +1858,7 @@ function PullRequestCodeTab({
               renderHeaderPrefix={renderHeaderPrefix}
               renderHeaderMetadata={renderHeaderMetadata}
               renderAnnotation={renderAnnotation}
-              unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
+              unsafeCSSExtra={`${REPLACE_FILE_COUNTS_CSS}\n${CUT_LINE_NOTE_CSS}`}
             />
           </FileViewedToggleContext>
         </div>
@@ -1778,6 +1900,40 @@ function PullRequestCodeTab({
         ) : null}
       </div>
       {unstructured}
+    </div>
+  );
+}
+
+// GitHub alone can serve one withheld file; other hosts get the notice without the action.
+function WithheldFileNotice({
+  path,
+  status,
+  onLoad,
+}: {
+  readonly path: string;
+  readonly status: WithheldFileStatus;
+  readonly onLoad: ((path: string) => void) | undefined;
+}) {
+  return (
+    <div className="flex items-center gap-2 bg-warning/8 px-3 py-2 text-xs text-warning-foreground">
+      <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0 text-warning" />
+      <span>
+        {status === "error"
+          ? "Couldn't load this diff."
+          : status === "empty"
+            ? "No text diff for this file."
+            : "Diff too large to display."}
+      </span>
+      {onLoad === undefined || status === "empty" ? null : (
+        <Button
+          size="micro"
+          variant="warning-outline"
+          disabled={status === "loading"}
+          onClick={() => onLoad(path)}
+        >
+          {status === "loading" ? "Loading..." : status === "error" ? "Retry" : "Load diff"}
+        </Button>
+      )}
     </div>
   );
 }

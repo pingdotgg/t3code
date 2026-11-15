@@ -84,7 +84,13 @@ export function combinePullRequestDiffPages(
       );
       const files = value.files.map((file) => {
         const stat = omittedFileStats.get(file.path);
-        return stat ? { ...file, additions: stat.additions, deletions: stat.deletions } : file;
+        if (!stat) return file;
+        return {
+          ...file,
+          additions: stat.additions,
+          deletions: stat.deletions,
+          ...(file.rows.length === 0 ? { notice: "Diff too large to display here." } : {}),
+        };
       });
       value = {
         ...value,

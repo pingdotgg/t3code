@@ -3249,6 +3249,31 @@ it.effect("reads the fresh diff when detail or summary discovers a changed revis
   }),
 );
 
+it.effect("keeps a withheld file's read out of the page's cached diff", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getDiff: (input) =>
+            Effect.succeed({
+              patch: input.path === undefined ? "page" : `file ${input.path}`,
+              truncated: input.path === undefined,
+              nextCursor: null,
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 10 };
+    assert.strictEqual((yield* service.diff(ref)).patch, "page");
+    assert.strictEqual(
+      (yield* service.diff({ ...ref, path: "sdk.patch" })).patch,
+      "file sdk.patch",
+    );
+    assert.strictEqual((yield* service.diff(ref)).patch, "page");
+  }),
+);
+
 it.effect("keeps routed reads separate when the GitHub account changes", () =>
   Effect.gen(function* () {
     for (const operation of ["summary", "detail", "checks", "diff", "filesViewed"] as const) {
