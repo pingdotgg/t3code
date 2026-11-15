@@ -1,5 +1,6 @@
 import { Button } from "../../components/ui/Button";
 import {
+  WORKTREE_SETUP_STAGE_ORDER,
   worktreeSetupStageLabel,
   type WorktreeSetupSnapshot,
   type WorktreeSetupStage,
@@ -148,11 +149,29 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
 }
 
 /** Holds the card's place until the server publishes the first setup snapshot. */
+// Same rows the first snapshot brings, so the card keeps its height when that snapshot lands.
+const PREPARING_STAGES: ReadonlyArray<WorktreeSetupStage> = WORKTREE_SETUP_STAGE_ORDER.filter(
+  (id) => id !== "agent",
+).map((id) => ({
+  id,
+  status: "pending",
+  startedAt: null,
+  endedAt: null,
+  percent: null,
+  detail: null,
+  tail: [],
+}));
+
 export function WorktreePreparingHeader() {
   return (
     <View className="py-1">
       <View className="min-h-11 flex-row items-center border-b border-border px-1">
         <HeaderLabel label="Setting up worktree…" active />
+      </View>
+      <View className="pt-1 pb-2">
+        {PREPARING_STAGES.map((stage) => (
+          <StageRow key={stage.id} stage={stage} scriptName={null} now={0} compact />
+        ))}
       </View>
     </View>
   );
