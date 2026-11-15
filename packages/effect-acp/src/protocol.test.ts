@@ -239,6 +239,48 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect("evicts unread raw notifications while a slow reader handles an earlier one", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const handled = yield* Queue.unbounded<number>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onNotification: (notification) =>
+          Queue.offer(handled, decodeIndex(notification.params).index).pipe(Effect.asVoid),
+      });
+      const send = (index: number, textLength: number) =>
+        Queue.offer(input, largeNotification(index, textLength)).pipe(
+          Effect.andThen(Queue.take(handled)),
+        );
+
+      yield* send(1, 6 * MIB);
+      yield* send(2, 6 * MIB);
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const reader = yield* transport.incoming.pipe(
+        Stream.map((notification) => decodeIndex(notification.params).index),
+        Stream.tap((index) =>
+          index === 1
+            ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))
+            : Effect.void,
+        ),
+        Stream.take(4),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(entered);
+
+      // Notification 2 is still unread, so 3 and 4 push it past the budget.
+      yield* send(3, 6 * MIB);
+      yield* send(4, 6 * MIB);
+      yield* send(5, 1);
+      yield* Deferred.succeed(release, undefined);
+
+      assert.deepEqual(yield* Fiber.join(reader), [1, 3, 4, 5]);
+    }),
+  );
+
   it.effect("delivers every raw notification to a reader that keeps up, then ends", () =>
     Effect.gen(function* () {
       const { stdio, input } = yield* makeInMemoryStdio();
@@ -486,6 +528,31 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
             '{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"session-1"}}\n',
         },
       ]);
+    }),
+  );
+
+  it.effect("skips blank lines between agent messages", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const outcome = yield* Deferred.make<string>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onTermination: (error) => Deferred.succeed(outcome, error._tag).pipe(Effect.asVoid),
+      });
+      yield* transport.incoming.pipe(
+        Stream.runForEach((notification) => Deferred.succeed(outcome, notification._tag)),
+        Effect.forkScoped,
+      );
+
+      const update = encodeUnknownJsonString({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: "session-1", update: { sessionUpdate: "plan", entries: [] } },
+      });
+      yield* Queue.offer(input, encoder.encode(`\n\r\n \t\n${update}\n\n`));
+
+      assert.equal(yield* Deferred.await(outcome), "SessionUpdate");
     }),
   );
 
