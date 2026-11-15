@@ -63,12 +63,14 @@ Codex gets T3's MCP server in each thread's `thread/start`, `thread/resume`,
 and `thread/fork` config, with the provider-session token in an
 `Authorization` header. The same server is registered twice:
 
-- `t3-code`: every tool except `t3_thread_wait`.
-- `t3-code-direct`: only `t3_thread_wait`, with `omit_tools_from = ["code_mode", "deferred"]`.
+- `t3-code`: every tool except `t3_thread_wait` and `delegate_task`.
+- `t3-code-direct`: only `t3_thread_wait` and `delegate_task`, with
+  `omit_tools_from = ["code_mode", "deferred"]`.
 
-Code Mode runs a nested call as part of a script, so the model keeps working
-while a blocking wait runs. The second entry makes the wait a direct tool call,
-like Codex's own wait tools. Codex reports calls as `<server>.<tool>`, so
+Code Mode yields a script after about 30 seconds, so the model polls a blocking
+`t3_thread_wait` or `delegate_task` with `mode: "wait"`, resending its context
+on each poll. The second entry makes both direct tool calls, like Codex's own
+wait tools. Codex reports calls as `<server>.<tool>`, so
 `packages/shared/src/t3McpToolPresentation.ts` must resolve both server names.
 Tool display and pending-work detection depend on it.
 
@@ -293,7 +295,15 @@ type DelegateTaskResult = {
   childThreadId: string;
   childRunId: string | null;
   childNodeId: string;
-  status: "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled" | "interrupted";
+  status:
+    | "queued"
+    | "starting"
+    | "running"
+    | "waiting"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "interrupted";
   workState: "working" | "waiting_for_children" | "result_available";
   hasPendingChildRuns: boolean;
   providerInstanceId: string;
@@ -318,12 +328,15 @@ type DelegateTaskResult = {
 
 Reads a delegated task from the parent thread's durable projection. A task ID
 from another parent thread is rejected. `childRunId` identifies the original
-run. `workState` distinguishes active work, a finished turn waiting for children,
-and an available result. The task remains nonterminal until its known work
-finishes. Its published `summary` and result transfer then remain stable across
-later follow-ups. `hasPendingChildRuns` reports later queued or executing turns;
-`latestTerminal*` exposes later executed, non-monitor results without replacing
-the published task result.
+run. `status: "starting"` means the child's provider has not started its turn
+yet, so a task that stays there has not begun work. A task in a linked
+environment reads its run's status there for this. `workState` distinguishes
+active work, a finished turn waiting for children, and an available result. The
+task remains nonterminal until its known work finishes. Its published `summary`
+and result transfer then remain stable across later follow-ups.
+`hasPendingChildRuns` reports later queued or executing turns; `latestTerminal*`
+exposes later executed, non-monitor results without replacing the published task
+result.
 
 ### `task_cancel`
 
@@ -379,7 +392,7 @@ this binding.
 
 Pass the task in `message`. Project, model, and modes inherit when omitted;
 workspace does not. `scratch: true` launches without a project, in a folder of
-its own under the environment's Scratch project. For stacked PRs, use the parent branch as `baseRef` with
+its own under the environment's Scratch project. A new worktree with `startFromOrigin` omitted follows the new-worktree setting. For stacked PRs, use the parent branch as `baseRef` with
 `startFromOrigin: false`. The new thread may not run with broader runtime or
 interaction modes than the caller. As for `delegate_task`, a runtime mode the
 provider does not offer is refused, and an inherited or default one steps down
