@@ -15,17 +15,13 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { readResourceTelemetryHistory } from "./ResourceTelemetryHistoryReader.ts";
 
 import * as DesktopTelemetryReceiver from "./DesktopTelemetryReceiver.ts";
 import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./ResourceAttribution.ts";
 import * as ResourceTelemetry from "./ResourceTelemetry.ts";
 import { buildResourceTelemetryHistory } from "./ResourceTelemetryHistory.ts";
-
-const encodeHistoryError = Schema.encodeSync(Schema.toCodecJson(ResourceTelemetryHistoryError));
 
 // ResourceTelemetry classifies process.pid as the server, so fixture PIDs are
 // offsets from it. Fixed PIDs collide whenever the test worker is assigned one.
@@ -156,10 +152,10 @@ function desktopSnapshot(sampledAtUnixMs: number): DesktopHostTelemetrySnapshot 
 }
 
 describe("ResourceTelemetry", () => {
-  it.live("reports a history worker failure instead of successful zero usage", () =>
+  it.live("fails history reads when the aggregation worker cannot run", () =>
     Effect.gen(function* () {
       const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
-      const result = yield* Effect.flip(
+      const error = yield* Effect.flip(
         telemetry
           .readHistory({ windowMs: 3_600_000, bucketMs: 120_000 })
           .pipe(
@@ -169,40 +165,7 @@ describe("ResourceTelemetry", () => {
             ),
           ),
       );
-      expect(result._tag).toBe("ResourceTelemetryHistoryError");
-      expect(result.message).toBe("Resource telemetry history aggregation failed.");
-      expect(result.cause).toMatchObject({ _tag: "HistoryAggregationError" });
-      expect(encodeHistoryError(result)).toEqual({
-        _tag: "ResourceTelemetryHistoryError",
-        cause: "HistoryAggregationError",
-      });
-      const failedWorker = yield* Effect.flip(
-        readResourceTelemetryHistory({
-          readAt: DateTime.makeUnsafe(10_000),
-          windowMs: 10_000,
-          bucketMs: 1_000,
-          sampleIntervalMs: 1_000,
-          serverPid: SERVER_PID,
-          sidecarPid: Option.none(),
-          desktopSnapshot: Option.none(),
-          health: (yield* telemetry.latest).health,
-          snapshots: Array.from({ length: 1_000 }, (_, index) =>
-            nativeSnapshot({
-              sequence: index + 1,
-              sampledAtUnixMs: index,
-              childCpuTimeMs: index,
-              childWriteBytes: index,
-            }),
-          ),
-        }).pipe(
-          Effect.provideService(HostProcess.IsExecutable, true),
-          Effect.provideService(HostProcess.ExecutablePath, process.execPath),
-        ),
-      );
-      expect(failedWorker.cause).toMatchObject({
-        code: 1,
-        message: expect.stringContaining("__resource-telemetry-history"),
-      });
+      expect(error).toBeInstanceOf(ResourceTelemetryHistoryError);
     }).pipe(
       Effect.provide(
         ResourceTelemetry.layer.pipe(

@@ -1,3 +1,4 @@
+import { ResourceTelemetryHistoryError } from "@t3tools/contracts";
 import type {
   DesktopHostTelemetrySnapshot,
   HostPowerSnapshot,
@@ -35,7 +36,6 @@ import {
   type ResourceTelemetryHistoryWithLegacyBuckets,
 } from "./ResourceTelemetryHistory.ts";
 import { readResourceTelemetryHistory } from "./ResourceTelemetryHistoryReader.ts";
-import { ResourceTelemetryHistoryError } from "@t3tools/contracts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
 
 export class ResourceTelemetryRefreshFailed extends Schema.TaggedError<ResourceTelemetryRefreshFailed>()(
@@ -142,10 +142,11 @@ function buildHealth(input: {
 /** @public */
 export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(function* () {
   const nativeClient = yield* NativeTelemetryClient.NativeTelemetryClient;
-  const historyMutex = yield* Semaphore.make(1);
   const desktopReceiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
   const attribution = yield* ResourceAttribution.ResourceAttribution;
   const mutex = yield* Semaphore.make(1);
+  // One history worker at a time bounds the retained-snapshot copies in flight.
+  const historyMutex = yield* Semaphore.make(1);
   const changes = yield* PubSub.sliding<ResourceTelemetrySnapshot>(8);
   const initialReadAt = yield* DateTime.now;
   const nativeHealthSubscription = yield* nativeClient.subscribeHealth;
@@ -427,7 +428,7 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
       desktopReceiver.health,
     ]);
     const current = yield* Ref.get(state);
-    const historyInput = {
+    return yield* readResourceTelemetryHistory({
       readAt,
       windowMs: normalizedInput.windowMs,
       bucketMs: normalizedInput.bucketMs,
@@ -441,9 +442,11 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
         desktop: desktopHealth,
         nativeSnapshot: current.nativeSnapshot,
       }),
-    };
-    return yield* readResourceTelemetryHistory(historyInput).pipe(
-      Effect.mapError((cause) => new ResourceTelemetryHistoryError({ cause })),
+    }).pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("Resource telemetry history aggregation failed", { cause: error.cause }),
+      ),
+      Effect.mapError(() => new ResourceTelemetryHistoryError()),
     );
   }, historyMutex.withPermits(1));
   yield* nativeHealthSubscription.changes.pipe(
