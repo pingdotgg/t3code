@@ -1015,7 +1015,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               hidden={!expanded}
               dir={markdownProseDirection(resolvedContext.text)}
             >
-              <WorkLogDetails>
+              <WorkLogDetails kind={ctx.findActive ? "panel" : "text"}>
                 <div>{body}</div>
               </WorkLogDetails>
             </div>

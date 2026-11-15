@@ -1450,8 +1450,9 @@ describe("MessagesTimeline agent messages", () => {
     expect(screen.text()).not.toContain("drops the index");
 
     // The linked sender shows the title it sent, and its thread cannot be opened from here.
-    await click(screen.button(/^Release lead/));
-    expect(screen.buttons("Open thread")).toHaveLength(0);
+    const linkedRow = screen.button(/^Release lead/);
+    await click(linkedRow);
+    expect(linkedRow.querySelectorAll("button")).toHaveLength(0);
   });
 
   it("folds a message sent by T3 Code into a work-log row", async () => {
@@ -1484,6 +1485,10 @@ describe("MessagesTimeline agent messages", () => {
     );
     const { range } = collectThreadFindRanges(screen.container, "drops the index")[0]!;
     const body = screen.container.querySelector("[data-user-message-body]")!;
+    const details = body.closest(".cursor-auto")!;
+    expect(range.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      details.getBoundingClientRect().bottom,
+    );
     expect(range.getBoundingClientRect().height).toBeGreaterThan(0);
     expect(range.getBoundingClientRect().bottom).toBeLessThanOrEqual(
       body.getBoundingClientRect().bottom,
