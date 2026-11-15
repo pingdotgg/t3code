@@ -85,6 +85,7 @@ import { knownTerminalSessionsAtom, useKnownTerminalSessions } from "../state/te
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironmentQuery } from "../state/query";
 import { focusActivePanelTerminal, focusTerminal } from "../lib/terminalFocus";
+import { requestSideChatComposerFocus } from "../lib/workspaceFocus";
 import type { TerminalContextSelection } from "../lib/terminalContext";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
@@ -557,7 +558,10 @@ function ThreadSurfacePane({
       previewRuntimeTabId={resolveRuntimeTabId}
       terminalLabelsById={terminalLabels}
       threadTitle={threadTitle}
-      onActivate={noop}
+      onActivate={(active) => {
+        // Choosing a side chat's tab puts the keyboard in its message box, even when it shows.
+        if (active.kind === "side-chat") requestSideChatComposerFocus(threadRef, active.id);
+      }}
       onCloseSurface={close}
       onRenameDevice={(id, title) =>
         useRightPanelStore.getState().renameDevice(threadRef, id, title)
