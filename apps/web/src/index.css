@@ -677,19 +677,19 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     background-color: color-mix(in oklab, var(--primary) 45%, transparent);
   }
   :root {
-    /* Keep the original T3 Code artwork palettes as the defaults. Built-in
-       themes override them with their own pigments in the components layer. */
-    --stage-art-top: oklch(0.782169 0.123386 240.226);
-    --stage-art-mid: oklch(0.616111 0.195824 259.735);
-    --stage-art-bottom: oklch(0.441553 0.232394 265.474);
-    --stage-art-highlight: oklch(0.951597 0.037289 215.482);
-    --stage-art-secondary: oklch(0.794668 0.12136 235.46);
-    --stage-art-tertiary: oklch(0.678991 0.170261 275.365);
-    --stage-art-line: oklch(0.959666 0.029238 218.179);
-    --stage-art-celeste-highlight: oklch(0.968763 0.045822 196.42);
-    --stage-art-celeste-secondary: oklch(0.827395 0.126071 211.26);
-    --stage-art-violet-highlight: oklch(0.895381 0.053248 286.447);
-    --stage-art-grid-line: oklch(0.966822 0.01757 239.99);
+    /* Dev artwork uses Exploro teal. Built-in themes override these pigments
+       in the components layer. */
+    --stage-art-top: oklch(0.782169 0.123386 196.6);
+    --stage-art-mid: oklch(0.616111 0.195824 203.4);
+    --stage-art-bottom: oklch(0.441553 0.232394 205.4);
+    --stage-art-highlight: oklch(0.951597 0.037289 187.9);
+    --stage-art-secondary: oklch(0.794668 0.12136 194.9);
+    --stage-art-tertiary: oklch(0.678991 0.170261 208.9);
+    --stage-art-line: oklch(0.959666 0.029238 188.9);
+    --stage-art-celeste-highlight: oklch(0.968763 0.045822 181.2);
+    --stage-art-celeste-secondary: oklch(0.827395 0.126071 186.4);
+    --stage-art-violet-highlight: oklch(0.895381 0.053248 212.8);
+    --stage-art-grid-line: oklch(0.966822 0.01757 196.5);
     --stage-night-base-top: oklch(0.283792 0.117327 297.201);
     --stage-night-base-mid: oklch(0.227147 0.086086 277.99);
     --stage-night-base-bottom: oklch(0.200528 0.055699 261.216);
@@ -705,9 +705,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --stage-night-sparkle: oklch(0.880867 0.057747 269.011);
 
     @variant dark {
-      --stage-art-top: oklch(0.581473 0.149124 256.9);
-      --stage-art-mid: oklch(0.456509 0.159377 261.945);
-      --stage-art-bottom: oklch(0.291327 0.136578 267.649);
+      --stage-art-top: oklch(0.581473 0.149124 202.4);
+      --stage-art-mid: oklch(0.456509 0.159377 204.2);
+      --stage-art-bottom: oklch(0.291327 0.136578 206.2);
     }
   }
 
@@ -1127,7 +1127,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --card-foreground: var(--color-zinc-900);
   --popover: var(--color-white);
   --popover-foreground: var(--color-zinc-900);
-  --primary: oklch(0.488 0.217 264);
+  --primary: oklch(0.5 0.09 205);
   --primary-foreground: var(--color-white);
   --secondary: var(--color-zinc-50);
   --secondary-foreground: var(--color-zinc-800);
@@ -1196,7 +1196,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --card-foreground: var(--color-neutral-100);
     --popover: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);
-    --primary: oklch(0.571 0.21 264);
+    --primary: oklch(0.74 0.115 200);
+    --primary-foreground: oklch(0.17 0.018 220);
     --secondary: --alpha(var(--color-white) / 3%);
     --secondary-foreground: var(--color-neutral-100);
     --muted: --alpha(var(--color-white) / 3%);

@@ -1,12 +1,12 @@
 {
   "id": "/",
-  "name": "T3 Code",
-  "short_name": "T3 Code",
+  "name": "Exploro",
+  "short_name": "Exploro",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#161616",
-  "theme_color": "#161616",
+  "background_color": "#061115",
+  "theme_color": "#061115",
   "icons": [
     {
       "src": "/favicon-32x32.png",

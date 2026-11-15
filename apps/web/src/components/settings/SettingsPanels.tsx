@@ -2344,7 +2344,7 @@ export function AboutSettingsPanel() {
           {...searchableSetting("privacy-policy")}
           description={
             telemetryOff === undefined
-              ? "How we handle your data, including the anonymous usage data T3 Code collects."
+              ? "How Exploro handles your data. It sends no usage data by default."
               : `How we handle your data. ${telemetryOff}`
           }
           control={
@@ -2359,7 +2359,7 @@ export function AboutSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("open-source-licenses")}
-          description="Notices for dependencies, assets, and optional tools used by T3 Code."
+          description="Exploro is built on T3 Code (MIT). Notices for it and for the dependencies, assets, and optional tools Exploro uses."
           control={
             <Button
               render={<Link to="/settings/open-source-licenses" />}

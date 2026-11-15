@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
+  <title>Exploro</title>
+  <defs>
+    <mask id="exploro-cursor-gap" maskUnits="userSpaceOnUse" x="0" y="0" width="128" height="128">
+      <rect width="128" height="128" fill="#FFFFFF"/>
+      <path d="M62 60V102L72.5 91.5L81 108L91 103L82.5 87H98Z" fill="#000000" stroke="#000000" stroke-width="6" stroke-linejoin="round"/>
+    </mask>
+  </defs>
+  <circle cx="56" cy="56" r="27" stroke="currentColor" stroke-width="12" mask="url(#exploro-cursor-gap)"/>
+  <path d="M62 60V102L72.5 91.5L81 108L91 103L82.5 87H98Z" fill="currentColor"/>
+</svg>

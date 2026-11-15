@@ -145,7 +145,7 @@ function ReclaimRow({
       toastManager.add({
         type: "success",
         title: `Reclaiming ${amount} on ${label}`,
-        description: `T3 Code there restarts and is back in about ${minutes} min.`,
+        description: `Exploro there restarts and is back in about ${minutes} min.`,
       });
       return;
     }
@@ -163,7 +163,7 @@ function ReclaimRow({
       title={`${amount} on ${label}`}
       description={
         status.reclaimFailure === undefined
-          ? `Restarts T3 Code there. It will be offline for about ${minutes} min.`
+          ? `Restarts Exploro there. It will be offline for about ${minutes} min.`
           : `The last attempt failed: ${status.reclaimFailure}`
       }
       control={
@@ -184,7 +184,7 @@ function ReclaimRow({
                   Reclaim {amount} on {label}?
                 </AlertDialogTitle>
                 <AlertDialogDescription>
-                  T3 Code on {label} stops, rebuilds its database, and starts again. It will be
+                  Exploro on {label} stops, rebuilds its database, and starts again. It will be
                   offline for about {minutes} min. Running agents stop when it restarts.
                 </AlertDialogDescription>
               </AlertDialogHeader>

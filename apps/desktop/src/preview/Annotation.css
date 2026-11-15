@@ -34,7 +34,7 @@
   --t3-foreground: oklch(0.269 0 0);
   --t3-popover: white;
   --t3-popover-foreground: oklch(0.269 0 0);
-  --t3-primary: oklch(0.488 0.217 264);
+  --t3-primary: oklch(0.5 0.09 205);
   --t3-primary-foreground: white;
   --t3-destructive: oklch(0.577 0.245 27.325);
   --t3-muted: rgb(0 0 0 / 4%);
@@ -43,7 +43,7 @@
   --t3-accent-foreground: oklch(0.269 0 0);
   --t3-border: rgb(0 0 0 / 8%);
   --t3-input: rgb(0 0 0 / 10%);
-  --t3-ring: oklch(0.488 0.217 264);
+  --t3-ring: oklch(0.5 0.09 205);
   color: var(--t3-foreground);
   font-family: var(--t3-font-sans);
 }

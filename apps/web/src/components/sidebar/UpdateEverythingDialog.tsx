@@ -137,7 +137,7 @@ function UpdateEverythingDialogContent({
         <AlertDialogDescription>
           {version !== null ? (
             <>
-              T3 Code <span className="font-mono text-xs">{version}</span>
+              Exploro <span className="font-mono text-xs">{version}</span>
             </>
           ) : null}
           {version !== null && providerCount > 0 ? " · " : null}
@@ -166,7 +166,7 @@ function UpdateEverythingDialogContent({
               className="col-span-full grid grid-cols-subgrid border-b pb-1.5 text-muted-foreground text-xs"
             >
               <span role="columnheader">Machine</span>
-              <span role="columnheader">T3 Code</span>
+              <span role="columnheader">Exploro</span>
               <span role="columnheader">Providers</span>
               <span role="columnheader" />
             </div>
