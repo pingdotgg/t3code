@@ -185,8 +185,8 @@ scheme uses HTTP, so include `https://` when your server uses HTTPS.
 
 ## Desktop-managed SSH
 
-In the desktop app, open **Settings → Environments → Add machine**, choose
-**SSH**, and enter a host or SSH alias such as `user@example.com`. Ada starts
+In the desktop app, open **Settings → Environments → Connect without
+Tailscale**, choose **SSH**, and enter a host or SSH alias such as `user@example.com`. Ada starts
 or reuses a server there and opens the port forward for you. Projects, provider
 credentials, and agent work stay on the remote machine.
 
@@ -305,11 +305,11 @@ the other: launch, message, wait on and stop its threads, answer their
 questions, and manage their queues. Linked agents cannot change the other
 machine's projects, settings or scheduled tasks.
 
-Open **Settings → Environments → Machines** on web, desktop and mobile. Machines
-in your network show up here by themselves and open by themselves in every app
-of the network. Add a machine once and every app in your network can use it.
-Machines outside the network, such as a VPS paired by code or an SSH host, are
-rows in the same list.
+Open **Settings → Environments → Machines** on web, desktop and mobile. Your
+machines are one network: each reaches every other, and every app opens all of
+them by itself and shows their projects and threads. Machines outside the
+network, such as a VPS paired by code or an SSH host, are rows in the same
+list.
 
 Each row has a switch, **Show in this app**. It only affects this app: switch it
 off to disconnect the machine here, on to bring it back. Other apps are not
@@ -324,9 +324,9 @@ if that machine has agent links paused, its result arrives once they are back.
 While this app's machines have agent links paused, rows it is not connected to
 read **Agent links paused**, because nothing opens them until you resume.
 
-**+ Add machine** offers a Tailscale machine, a pairing code, or SSH. **Remove**
-is for machines outside the network. A machine in the network is switched off
-here or forgotten from the network instead.
+**Connect without Tailscale** pairs a machine that is not on your tailnet, with
+a pairing code or over SSH. **Remove** is for those machines. A machine in the
+network is switched off here or removed from the network instead.
 
 A phone that is not on your tailnet shows network machines as **Can't reach from
 this phone**. On a hosted web app, a machine reachable only over plain HTTP shows
@@ -335,56 +335,47 @@ or use Tailscale HTTPS.
 
 ### Your device network
 
-Machines running Ada on your Tailscale account show up in **Machines** on
-your other machines. Being on the same account is not permission: a machine
-joins only when you add it and pick what it may do. Adding the first one starts
-your network, with the machine you added from at full access. Tagged nodes and
-machines shared from someone else's tailnet never show up. A machine
-reinstalled on the same computer shows as one row. An old install you revoked
-is not listed beside it; one still in the network is, with **Forget**.
+You have one network. A machine running Ada on your Tailscale account shows up
+in **Machines** in every app as soon as it starts, as **New device found on
+Tailscale**. Choose **Allow** once, in any app. From then on it has full access
+to every machine in your network, each of them has full access to it, and every
+app opens it and shows its threads. There is nothing to do on the new machine,
+and nothing to wait for.
+
+Tagged nodes and machines shared from someone else's tailnet never show up. A
+machine reinstalled on the same computer is one row, and installs you removed
+are not listed.
 
 Changes go through a full-access machine this app is connected to, and every
 machine in the network picks them up.
 
-- **Add to network** gives a machine the access you pick on every machine,
-  full access unless you choose less. Every machine in the network can then
-  reach it, and it can reach each of them, with nothing more to do. A
-  limit one machine already set for it stays until you clear it. **Link to … only** links it to one machine, as a pairing code would.
-  A machine linked that way, or with a pairing code, can be added to the
-  network later.
-- A machine must agree before another machine adds it or links to it: on it,
-  choose **Allow joining**. That stays open for 10 minutes, and the list shows
-  until when. A machine already in a network needs this too before a link
-  from outside it.
-- A member's access is the most it may do on every machine. A full-access
-  machine can narrow it, **Revoke** it everywhere, or restore it at a level you
-  pick. **Only on …: limit** narrows it on one machine alone; choose **No
-  limit** to clear it.
-- **Forget** removes a machine from the list. A member is revoked everywhere
-  first, so it cannot rejoin by itself. If it is still on your tailnet, it
-  shows up again as a machine you can add.
-- **Leave network** takes a machine out of the network. Other apps that reach
-  it through the network are signed out, and the others see it as left. The
-  app you leave from keeps its connection until that session ends, 30 days
-  after it was issued, and its row shows until when; nothing renews it. The
-  only full-access machine cannot leave while other members remain: give
-  another machine full access first. The others then show it as **Left the
-  network**; to bring it back before the session ends, choose **Allow
-  joining** on it, then **Add again** on its row from a full-access machine.
-  After that, pair with it by code.
-- After updating from a version before machines were tied to their Tailscale
-  identity, machines that were linked both ways (by Tailscale or by pairing
-  code) and still hold those links reconnect on their own, at the access they
-  had, and come out as one network. Any other member shows **Needs re-adding
-  after the update**, and the other machines refuse it until then. Choose
-  **Add again** on its row from a full-access machine; if this app is not also
-  connected to that machine, first choose **Allow joining** on it.
-- A machine that is in another of your networks shows **Merge networks**.
-  Adding it makes the two networks one, and every machine and app keeps the
-  access it has. A machine you forgot shows **Restore** once it is found on
-  your tailnet again.
-- Below full access, a member opens read-only, and its row shows **Connected ·
-  read-only in this app**.
+- **Allow** is the one step that lets a machine in. Being on your Tailscale
+  account only gets it listed. Allow a new machine from an app connected to a
+  machine already in your network. Allowing from the new machine's own app is
+  refused, with a message saying so.
+- A machine that already has machines of its own does not join until it leaves
+  them: choose **Leave network** on it, then allow it.
+- A member's access is the most it may do on every machine. Allowing gives full
+  access. Open the row's **…** menu to narrow it everywhere, or choose **Only
+  on …: limit** to narrow it on one machine alone; **No limit** clears that.
+  Below full access, a member opens read-only, and its row shows **Read-only in
+  this app**.
+- **Remove from network** revokes a machine everywhere, so it cannot come back
+  by itself. If it is still on your tailnet it is listed as a new device again,
+  and **Allow** brings it back.
+- **Leave network** takes the machine you are on out of the network. Other apps
+  that reach it through the network are signed out. The app you leave from
+  keeps its connection until that session ends, 30 days after it was issued;
+  nothing renews it. The only full-access machine cannot leave while other
+  members remain: give another machine full access first. To bring it back,
+  choose **Allow** on its row from a full-access machine.
+- After updating, networks from earlier versions come together by themselves.
+  Machines whose lists had drifted apart agree again the next time they check
+  each other, which happens at startup and every ten minutes. A machine that an
+  earlier version left out of the network is listed as a new device: allow it
+  once.
+- Every machine needs a version with the one network. An older one answers
+  **Allow** with a message asking you to update it.
 - When you create a pairing link on a full-access member, **Works on all your
   network's machines** pairs the phone or browser with the whole network at
   once. It is listed under **Phones and browsers** once it pairs. Apps are full
@@ -393,8 +384,8 @@ machine in the network picks them up.
   web or desktop and open the new link on that device; it replaces the old
   entry on every machine. If the network no longer lists the old entry, choose
   **Pair as new** instead, then forget the old entry.
-- Other people's machines, and anything off your tailnet, still link with a
-  pairing code as described below.
+- Other people's machines, and anything off your tailnet, link with a pairing
+  code as described below.
 
 ### Link with a pairing code
 

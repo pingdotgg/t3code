@@ -78,6 +78,7 @@ import {
   TailnetChallengeConfirm,
   TailnetDeviceClientCredential,
   TailnetDeviceClientCredentialRequest,
+  TailnetDeviceDescriptor,
   TailnetDevicesSyncPayload,
   TailnetJoinRequest,
   TailnetDevicesUnauthorizedError,
@@ -829,11 +830,18 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
   .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint)) {}
 
 /**
- * The owner's network of machines. `request`, `join`, `confirm` and `grant` carry no
+ * The owner's network of machines. `hello`, `request`, `join`, `confirm` and `grant` carry no
  * credential: each side proves the other through Tailscale and its own roster before trusting
  * it. `sync` and `clientCredential` need a member session this environment issued.
  */
 class EnvironmentTailnetDevicesHttpApi extends HttpApiGroup.make("tailnetDevices")
+  .add(
+    // A machine that just started says where it answers, so the others list it at once.
+    HttpApiEndpoint.post("hello", "/api/tailnet-devices/hello", {
+      payload: TailnetDeviceDescriptor,
+      success: TailnetGrantResult,
+    }),
+  )
   .add(
     HttpApiEndpoint.post("request", "/api/tailnet-devices/request", {
       payload: TailnetLinkRequest,

@@ -53,7 +53,6 @@ import {
   TailnetDeviceForgetInput,
   TailnetAppForgetInput,
   TailnetDeviceSetLimitInput,
-  TailnetDeviceAllowJoinResult,
   NetworkApp,
   NetworkMember,
 } from "./tailnetDevices.ts";
@@ -618,7 +617,6 @@ export const WS_METHODS = {
   tailnetDevicesLeave: "tailnetDevices.leave",
   pushRegistrationsRegister: "pushRegistrations.register",
   pushRegistrationsUnregister: "pushRegistrations.unregister",
-  tailnetDevicesAllowJoin: "tailnetDevices.allowJoin",
   subscribeTailnetDevices: "subscribeTailnetDevices",
   serverUpdateSettings: "server.updateSettings",
   serverGetAgentSkills: "server.getAgentSkills",
@@ -1030,11 +1028,10 @@ const WsTailnetDevicesSetAppAccessRpc = Rpc.make(WS_METHODS.tailnetDevicesSetApp
   error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
 });
 
-/** Adds a machine Tailscale proves is the owner's to the whole network. */
+/** Allows a machine Tailscale proves is the owner's into the one network. */
 const WsTailnetDevicesAdmitRpc = Rpc.make(WS_METHODS.tailnetDevicesAdmit, {
   payload: TailnetDeviceAdmitInput,
-  /** Null for `scope: "local"`, which joins no network. */
-  success: Schema.NullOr(NetworkMember),
+  success: NetworkMember,
   error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
 });
 
@@ -1075,12 +1072,6 @@ const WsPushRegistrationsRegisterRpc = Rpc.make(WS_METHODS.pushRegistrationsRegi
 const WsPushRegistrationsUnregisterRpc = Rpc.make(WS_METHODS.pushRegistrationsUnregister, {
   payload: PushRegistrationsUnregisterInput,
   error: Schema.Union([PushRegistrationError, EnvironmentAuthorizationError]),
-});
-
-const WsTailnetDevicesAllowJoinRpc = Rpc.make(WS_METHODS.tailnetDevicesAllowJoin, {
-  payload: Schema.Struct({}),
-  success: TailnetDeviceAllowJoinResult,
-  error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
 });
 
 /** The snapshot now and after every roster, link or switch change, so clients follow it live. */
@@ -2539,7 +2530,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsTailnetDevicesLeaveRpc,
   WsPushRegistrationsRegisterRpc,
   WsPushRegistrationsUnregisterRpc,
-  WsTailnetDevicesAllowJoinRpc,
   WsSubscribeTailnetDevicesRpc,
   WsPeerLinksLinkRpc,
   WsPeerLinksUnlinkRpc,

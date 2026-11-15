@@ -53,7 +53,6 @@ export interface SavedMachineNetwork {
   readonly actions: ReactNode;
   readonly menuItems: ReactNode;
   readonly dialogs: ReactNode;
-  readonly others: ReactNode;
 }
 
 type SavedBackendListRowProps = {
@@ -290,7 +289,6 @@ export function SavedBackendListRow({
           {networkDetails.length > 0 ? (
             <p className="text-xs text-muted-foreground">{networkDetails.join(" · ")}</p>
           ) : null}
-          {network?.others}
           {diagnosis ? (
             <ConnectionDiagnosisSummary
               diagnosis={diagnosis}
@@ -420,7 +418,8 @@ function EmptyRemoteEnvironments() {
       <EmptyHeader>
         <EmptyTitle>No other machines yet</EmptyTitle>
         <EmptyDescription>
-          Machines in your network show up here by themselves. Click “Add machine” to pair one.
+          Ada machines on your Tailscale account show up here by themselves. To pair one that is
+          not, click “Connect without Tailscale”.
         </EmptyDescription>
       </EmptyHeader>
     </Empty>

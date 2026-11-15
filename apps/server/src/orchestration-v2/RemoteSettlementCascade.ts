@@ -78,8 +78,8 @@ export const make = Effect.gen(function* () {
         .filter(([id, scopes]) => id !== local && settles(scopes))
         .map(([id]) => id),
     );
-    const members = yield* Effect.all([membership.members, membership.local]).pipe(
-      Effect.map(([network, linked]) => [...network, ...linked].map((m) => m.environmentId)),
+    const members = yield* membership.members.pipe(
+      Effect.map((network) => network.map((member) => member.environmentId)),
       Effect.orElseSucceed(() => []),
     );
     // With full access itself, this machine renews a member session with any member.

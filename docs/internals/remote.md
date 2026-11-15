@@ -117,14 +117,26 @@ Unlinking on the linking side only forgets the token.
 ### Tailnet devices
 
 [`TailnetDevices`](../../apps/server/src/peer/TailnetDevices.ts) makes the same
-kind of link without a pairing code, but only between members of the user's
-device network. **Same Tailscale account is never permission.** A machine joins
-only when a full-access member adds it. It refuses to join while linked
-environments is off, on a dev server, or when it revoked the machine adding it.
-A machine in another network joins only while its owner allows joining there,
-and then the two rosters merge into one (tombstones alone are no network). Requests arriving through Serve come
-from loopback with headers any local process can forge, so nothing inbound is
-trusted:
+kind of link without a pairing code, between the members of the user's device
+network. **A user has one network.** Being one of the owner's Tailscale nodes
+only gets a machine listed. It becomes a member when the owner allows it once,
+from any full-access member, and that one act is the whole grant:
+
+- **A machine on its own is asked nothing.** It joins whichever of the owner's
+  nodes allowed it and takes that roster whole. This replaces the consent step
+  that used to run on the joining machine, so a process on any of the owner's
+  nodes can take in a machine that has no network yet.
+- **A machine that has members takes a join only from one of them**, a
+  full-access member answering from the node it is bound to, and then merges
+  the roster by the ordinary sync rules. A node the network does not know
+  cannot pull it anywhere or rewrite it: the owner allows that node from a
+  member. Two machines that each built a network do not merge by themselves;
+  one leaves its own first.
+- A machine refuses to join while linked environments is off, on a dev server,
+  or when it revoked the machine allowing it.
+
+Requests arriving through Serve come from loopback with headers any local
+process can forge, so nothing inbound is trusted:
 
 - **The side giving access dials the other.** The issuer resolves the
   requester's address itself (a tailnet IP, or an https MagicDNS name, whose
@@ -143,24 +155,35 @@ trusted:
   answering. No user step, scan or pairing code stands between a roster entry
   and access both ways. The scan only repairs what those missed.
 - **A member is bound to its Tailscale node** (`StableID` from whois, `ID` in
-  status). An explicit add binds or rebinds it, and a different node answering
+  status). Only the owner's Allow binds or rebinds it, and a different node answering
   for the same environment id is refused. A member left unbound by the upgrade
   rebinds only through this machine's own link to it (handshake-made or paired
   by code): proved at that link's stored addresses (a MagicDNS name is whichever
   owner node holds it now, as the link always trusted), with a live session this
   side issued, confirmed by challenge, at the roster's level. A code-paired
   session's self-chosen id gains nothing, because the challenge is confirmed at
-  this machine's own stored address. Otherwise it is refused until the user adds
-  it again; an inbound or first answer never binds one.
+  this machine's own stored address. Otherwise it is refused until the user
+  allows it again; an inbound or first answer never binds one.
 - **Machines linked both ways before the roster existed stay one network.**
   Migration 022 makes such a peer (a live link here and a live session it holds
   here) a member at the level that session grants, stamped at zero. Equal stamps
   go to the narrower level, so those seeds converge whichever machine updates
   first. A one-way link, a found machine or anything revoked here stays out.
-- **A machine in no network joins only while its owner allows it** there
-  (`allowJoin`, ten minutes, in memory), and so do rebinding an unbound admin
-  and a link to that machine alone (`local`), which may replace a code-paired
-  link.
+- **Rosters that drifted apart converge without the user**, through the sync
+  from a full-access member both sides list. Nothing automatic binds a node,
+  restores a revoked machine or admits one: those are the owner's Allow.
+- **A machine announces itself.** A scan tells each machine it finds that it is
+  there (`hello`), and that machine lists it after proving the address through
+  Tailscale. A machine that starts while its node was already online is
+  therefore offered everywhere at once, not at the others' next ten-minute
+  scan. Nothing is granted by a hello.
+- **A handshake slot is held for the proof only.** Each side whoises and dials
+  out under a small limit, because the caller is unauthenticated. The link back
+  and the roster exchange wait on the other machine's own handshake, so they
+  run outside it; holding a slot across them let several machines linking at
+  once starve each other until a timeout.
+- **A link or session minted while its machine was being revoked is cut.** The
+  handshake checks the roster again after it stores or issues.
 
 The [roster](../../apps/server/src/peer/Membership.ts) of members and network
 apps is replicated and merged last-writer-wins by hybrid logical clock.
@@ -182,20 +205,18 @@ and narrowing from a member's sync, never widening, and mints nothing.
 
 A machine that leaves writes its own tombstone (stamped by itself) and clears
 its roster, so a restore would list a machine that takes no part: it is
-refused, and the user adds the machine again, a join whose write names the
+refused, and the user allows the machine again, a join whose write names the
 tombstone in `restores`. Leaving ends every app and member session except the
 one that asked, which keeps its scopes, so a machine reached only through the
-network can still allow joining and be added again. It is never renewed without
+network can still be allowed again from there. It is never renewed without
 the network, so it lasts until its own expiry. On rejoining, app sessions whose
 app is not live in the adopted roster end, the kept one included. A revocation is never
-restamped, so its stamp still says who wrote it. Forgetting hides a tombstone on
-one machine only; found on the tailnet again, the machine is offered to add like
-any other.
+restamped, so its stamp still says who wrote it. Clients never list a tombstone:
+a revoked machine found on the tailnet again is offered like any new one.
 
-Every member write, and every link to one machine only, also writes the level an
-older build reads (`tailnet_device_policy`, narrowed by the local limit; a
-forgotten link writes `revoked`), because that build lets a machine with no row
-there in at full access. Nothing reads it back.
+Every member write also writes the level an older build reads
+(`tailnet_device_policy`, narrowed by the local limit), because that build lets
+a machine with no row there in at full access. Nothing reads it back.
 
 Apps open members without a click. A bounded loop, `dueNetworkMemberOpens` in
 [`networkMembers.ts`](../../packages/client-runtime/src/connection/networkMembers.ts),
@@ -204,7 +225,10 @@ members still listed live. At most two opens run at once across all members,
 with one attempt per change of opening hosts, online status or session
 generation, and a 2 s to 5 min backoff. A failed open runs again after each
 backoff while the member is still due: a machine is listed the instant it is
-added, before the host asked can open it, so the first open often fails. The app fetches the member's
+allowed, before the host asked can open it, so the first open often fails. The
+client view ([`tailnetDevices.ts`](../../packages/client-runtime/src/tailnetDevices.ts))
+is one network by construction: a machine any connected host lists live is a
+member, whatever the other hosts' rosters hold so far. The app fetches the member's
 public descriptor before asking any server to mint, so an offline member costs
 no server-to-server call. A member switched off in this app (a record's `off`,
 or a disabled saved entry) is never opened, which is why members offer that

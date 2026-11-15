@@ -1,9 +1,4 @@
-import {
-  type EnvironmentId,
-  type PeerLinkSummary,
-  type TailnetDevicesSnapshot,
-  WS_METHODS,
-} from "@t3tools/contracts";
+import { type EnvironmentId, type TailnetDevicesSnapshot, WS_METHODS } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -33,10 +28,6 @@ export function createDeviceNetworkCommands<R, E>(
       label: "environment-data:tailnet-devices:leave",
       tag: WS_METHODS.tailnetDevicesLeave,
     }),
-    allowJoin: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:tailnet-devices:allow-join",
-      tag: WS_METHODS.tailnetDevicesAllowJoin,
-    }),
   };
 }
 
@@ -58,12 +49,11 @@ export interface DeviceNetworkHostState extends DeviceNetworkHost {
 }
 
 /**
- * Every host's snapshot, links and permissions, read together so one view can merge them.
+ * Every host's snapshot and permissions, read together so one view can merge them.
  * Keyed by `deviceNetworkHostsKey`, so a new host list is a new atom.
  */
 export function createDeviceNetworkHostsAtom(options: {
   readonly snapshot: ListFamily<TailnetDevicesSnapshot>;
-  readonly links: ListFamily<{ readonly links: ReadonlyArray<PeerLinkSummary> }>;
   readonly mayWrite: (environmentId: EnvironmentId) => Atom.Atom<boolean>;
 }) {
   return Atom.family((key: string) =>
@@ -77,7 +67,6 @@ export function createDeviceNetworkHostsAtom(options: {
         return {
           ...host,
           snapshot: AsyncResult.getOrElse(snapshot, () => null),
-          links: AsyncResult.getOrElse(get(options.links(target)), () => null)?.links ?? [],
           mayWrite: get(options.mayWrite(host.environmentId)),
           list: AsyncResult.isSuccess(snapshot)
             ? "ready"
@@ -96,12 +85,3 @@ export const deviceNetworkHostsKey = (hosts: ReadonlyArray<DeviceNetworkHostInpu
   JSON.stringify(
     hosts.map(({ environmentId, label, enabled }) => ({ environmentId, label, enabled })),
   );
-
-/** After a write, every host's links; snapshots are pushed, but links are only listed. */
-export function refreshDeviceNetwork(
-  registry: { readonly refresh: (atom: Atom.Atom<unknown>) => void },
-  links: ListFamily<unknown>,
-  hosts: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
-) {
-  for (const { environmentId } of hosts) registry.refresh(links({ environmentId, input: {} }));
-}

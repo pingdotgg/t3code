@@ -82,7 +82,6 @@ const RPC_AGGREGATES = {
   [WS_METHODS.tailnetDevicesForgetApp]: "tailnetDevices",
   [WS_METHODS.tailnetDevicesSetLimit]: "tailnetDevices",
   [WS_METHODS.tailnetDevicesLeave]: "tailnetDevices",
-  [WS_METHODS.tailnetDevicesAllowJoin]: "tailnetDevices",
   [WS_METHODS.pushRegistrationsRegister]: "pushRegistrations",
   [WS_METHODS.pushRegistrationsUnregister]: "pushRegistrations",
   [WS_METHODS.subscribeTailnetDevices]: "tailnetDevices",

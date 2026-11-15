@@ -1321,7 +1321,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/connections",
     searchTerms: [
       "environments add pair backend host code ssh config agent tailscale tailnet saved show in this app switch",
-      "device network members add to network access revoke restore forget leave network allow joining limit add again",
+      "device network members new device found on tailscale allow access remove from network leave network limit connect without tailscale",
       "pause agent links linked environments link peer another machine vps agents work there handoff pairing code",
       "phones and browsers apps paired pair again pair as new",
     ],
