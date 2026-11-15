@@ -35,6 +35,7 @@ export default function ProviderAuthTerminal({
       theme: terminalThemeFromApp(element),
       font: { size: 13 },
       onData: (data) => respond({ type: "terminal", data }),
+      onReply: (data) => respond({ type: "terminal", data }),
       onResize: (cols, rows) => respond({ type: "terminal", data: "", size: { cols, rows } }),
       onSelectionChange: () => {},
       beforeKey: (event) => event.key !== "Tab",

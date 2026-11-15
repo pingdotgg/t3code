@@ -198,6 +198,9 @@ export const TerminalWriteInput = Schema.Struct({
   data: Schema.String.check(Schema.isNonEmpty()).check(
     Schema.isMaxLength(TERMINAL_WRITE_MAX_LENGTH),
   ),
+  // A renderer's answer to a terminal query (DA, DSR, DECRQM). Every attached renderer
+  // answers, so the server passes on one viewer's replies; older servers ignore it.
+  reply: Schema.optional(Schema.Boolean),
 });
 export type TerminalWriteInput = Schema.Codec.Encoded<typeof TerminalWriteInput>;
 

@@ -249,6 +249,7 @@ describe("GhosttyTerminalSurface visibility", () => {
             cursor: { r: 255, g: 255, b: 255 },
           },
           onData,
+          onReply: onData,
           onResize() {},
           onSelectionChange() {},
           beforeKey: () => false,
