@@ -59,6 +59,7 @@
   },
   "automations": {
     "edit": "Edit automation",
+    "loadFailed": "Could not load automations: {{error}}",
     "manageScheduledTasks": "Manage scheduled tasks",
     "runFailed": "Could not run automation",
     "runNow": "Run now",
@@ -283,6 +284,7 @@
     "noProject": "No project",
     "searchProjects": "Search projects",
     "searchProjectsPlaceholder": "Search projects...",
+    "whatWentWrong": "What went wrong?",
     "whatNext": "What should we work on?"
   },
   "errors": {
@@ -300,6 +302,7 @@
     "failed": "Search failed",
     "next": "Next match",
     "previous": "Previous match",
+    "retry": "Retry",
     "searching": "Searching…",
     "title": "Find in thread"
   },
@@ -320,6 +323,7 @@
     "linkActive": "Guest link active",
     "linkAria": "Guest link",
     "linkExpired": "Guest link expired",
+    "nameSuffix": " (guest)",
     "replacesLink": "A new link ends the current one.",
     "send": "Send",
     "sendAria": "Send message from {{name}}",
@@ -355,6 +359,7 @@
   "inspector": {
     "couldNotLoadOutput": "Couldn't load output: {{error}}",
     "earlierOutputNotShown": "Earlier output not shown",
+    "exitCode": "exit {{code}}",
     "loadingOutput": "Loading output…",
     "noOutput": "No output.",
     "openDiff": "Open diff",
@@ -516,6 +521,7 @@
     "revertTitle": "Edit from here?"
   },
   "panelControls": {
+    "chooseToShow": "Choose what to show",
     "maximize": "Maximize panel",
     "restore": "Restore panel size",
     "rightPanelUnavailable": "Right panel is unavailable",
@@ -532,6 +538,7 @@
   },
   "plan": {
     "actions": "Plan actions",
+    "cancel": "Cancel",
     "badge": "Plan",
     "collapse": "Collapse plan",
     "copied": "Copied!",
@@ -592,6 +599,7 @@
     "mergeIntoSource": "Merge this conversation back into its source",
     "mergeNeedsRun": "Complete a run in this fork before merging it back",
     "moreThreadActions": "More thread actions",
+    "noAgentsYet": "No agents yet",
     "parentAgent": "Parent agent",
     "parentThread": "Parent thread",
     "previousAgents": "Previous agents",
@@ -610,6 +618,10 @@
     "decline": "Decline",
     "open": "Open {{host}}",
     "saveSecurely": "Save securely"
+  },
+  "skills": {
+    "noDescription": "No description is available for this skill.",
+    "viewInstructions": "View instructions"
   },
   "sideChat": {
     "addToMainDetail": "Adds this side chat to the main thread's next message.",
@@ -663,10 +675,12 @@
     "loadingEarlierTurns": "Loading earlier turns…",
     "loadingWorkHistoryA11y": "Loading work history",
     "openParentThread": "Open parent thread",
+    "retry": "Retry",
     "scrollToEnd": "Scroll to end",
     "subagentOf": "Subagent of",
     "systemDividerA11y": "{{label}}: {{detail}}",
     "viewCited": "View cited assistant text: {{label}}",
+    "workflowStarted": "Workflow started",
     "workLoadFailed": "Couldn't load work. Click to retry."
   },
   "usage": {
@@ -680,6 +694,7 @@
   "userMessage": {
     "agent": "Agent",
     "automation": "Automation",
+    "capturedTerminalAria": "Captured terminal output",
     "copyPromptLink": "Copy prompt link",
     "downloadAttachment": "Download {{label}}",
     "editFromHere": "Edit from here",

@@ -2,6 +2,7 @@ import { collectComposerModelMentions } from "@t3tools/client-runtime/composer-m
 import type { EnvironmentId, ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { Children, cloneElement, isValidElement, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { matchInlineSkills } from "@t3tools/shared/inlineSkills";
 
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -123,6 +124,7 @@ export function SkillChipPopover(props: {
   copyMarkdown?: string | undefined;
   onViewInstructions: (() => void) | undefined;
 }) {
+  const { t } = useTranslation("chat");
   return (
     <ContextChipPopover
       kind="skill"
@@ -133,10 +135,10 @@ export function SkillChipPopover(props: {
     >
       <div className="space-y-3 p-2 text-sm">
         <p className="font-medium">{props.label}</p>
-        <p>{props.description || "No description is available for this skill."}</p>
+        <p>{props.description || t("skills.noDescription")}</p>
         {props.onViewInstructions ? (
           <Button variant="outline" size="sm" onClick={props.onViewInstructions}>
-            View instructions
+            {t("skills.viewInstructions")}
           </Button>
         ) : null}
       </div>

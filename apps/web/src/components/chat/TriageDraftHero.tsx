@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { TRIAGE_CLI_COMMAND } from "~/hooks/useStartTriage";
 
@@ -13,10 +15,11 @@ export function TriageDraftHero(props: {
   readonly serverVersion: string | null;
 }) {
   const { copyToClipboard, isCopied } = useCopyToClipboard({ timeout: 1500, target: "command" });
+  const { t } = useTranslation("chat");
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
       <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
-        What went wrong?
+        {t("draftHero.whatWentWrong")}
       </h1>
       <p className="mt-2 flex h-6 w-full items-center justify-center gap-1.5 text-sm">
         <Tooltip>

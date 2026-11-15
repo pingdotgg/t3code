@@ -59,6 +59,7 @@
   },
   "automations": {
     "edit": "编辑自动化",
+    "loadFailed": "无法加载自动化任务：{{error}}",
     "manageScheduledTasks": "管理定时任务",
     "runFailed": "无法运行自动化",
     "runNow": "立即运行",
@@ -278,6 +279,7 @@
     "noProject": "无项目",
     "searchProjects": "搜索项目",
     "searchProjectsPlaceholder": "搜索项目...",
+    "whatWentWrong": "哪里出了问题？",
     "whatNext": "接下来做什么？"
   },
   "errors": {
@@ -295,6 +297,7 @@
     "failed": "搜索失败",
     "next": "下一个匹配",
     "previous": "上一个匹配",
+    "retry": "重试",
     "searching": "搜索中…",
     "title": "在线程中查找"
   },
@@ -315,6 +318,7 @@
     "linkActive": "访客链接生效中",
     "linkAria": "访客链接",
     "linkExpired": "访客链接已过期",
+    "nameSuffix": "（访客）",
     "replacesLink": "创建新链接会使当前链接失效。",
     "send": "发送",
     "sendAria": "发送来自 {{name}} 的消息",
@@ -349,6 +353,7 @@
   "inspector": {
     "couldNotLoadOutput": "无法加载输出：{{error}}",
     "earlierOutputNotShown": "更早的输出未显示",
+    "exitCode": "退出码 {{code}}",
     "loadingOutput": "正在加载输出…",
     "noOutput": "无输出。",
     "openDiff": "打开差异",
@@ -510,6 +515,7 @@
     "revertTitle": "从这里修改？"
   },
   "panelControls": {
+    "chooseToShow": "选择显示内容",
     "maximize": "最大化面板",
     "restore": "恢复面板大小",
     "rightPanelUnavailable": "右侧面板不可用",
@@ -526,6 +532,7 @@
   },
   "plan": {
     "actions": "计划操作",
+    "cancel": "取消",
     "badge": "计划",
     "collapse": "折叠计划",
     "copied": "已复制！",
@@ -586,6 +593,7 @@
     "mergeIntoSource": "将此对话合并回其源对话",
     "mergeNeedsRun": "先在此分叉中完成一轮运行，才能合并回去",
     "moreThreadActions": "更多线程操作",
+    "noAgentsYet": "还没有代理",
     "parentAgent": "父代理",
     "parentThread": "父线程",
     "previousAgents": "先前的代理",
@@ -604,6 +612,10 @@
     "decline": "拒绝",
     "open": "打开 {{host}}",
     "saveSecurely": "安全保存"
+  },
+  "skills": {
+    "noDescription": "此技能没有可用的描述。",
+    "viewInstructions": "查看说明"
   },
   "sideChat": {
     "addToMainDetail": "把这条旁路对话加进主线程的下一条消息。",
@@ -657,10 +669,12 @@
     "loadingEarlierTurns": "正在加载更早的对话轮…",
     "loadingWorkHistoryA11y": "正在加载工作记录",
     "openParentThread": "打开父线程",
+    "retry": "重试",
     "scrollToEnd": "滚动到末尾",
     "subagentOf": "子代理所属",
     "systemDividerA11y": "{{label}}: {{detail}}",
     "viewCited": "查看被引用的助手文本：{{label}}",
+    "workflowStarted": "工作流已开始",
     "workLoadFailed": "无法加载工作记录，点击重试。"
   },
   "usage": {
@@ -674,6 +688,7 @@
   "userMessage": {
     "agent": "Agent",
     "automation": "自动任务",
+    "capturedTerminalAria": "捕获的终端输出",
     "copyPromptLink": "复制提示链接",
     "downloadAttachment": "下载 {{label}}",
     "editFromHere": "从这里编辑",
