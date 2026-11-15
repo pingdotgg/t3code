@@ -13779,13 +13779,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }
             }
             const buffers = yield* Ref.get(wakeBuffers);
-            for (const entry of buffers.values()) {
+            const { reports } = yield* Ref.get(wakeReportsByNativeThread);
+            for (const [nativeThreadId, entry] of buffers) {
+              const wakeReports = reports.get(nativeThreadId);
               if (
                 entry.messages.some(
                   (message) =>
                     message.type === "user" ||
                     message.type === "assistant" ||
-                    message.type === "result",
+                    message.type === "result" ||
+                    // Claude opens a wake turn for this notification; closing before its first
+                    // frame arrives kills the turn and loses the wake.
+                    (message.type === "system" &&
+                      message.subtype === "task_notification" &&
+                      wakeReports?.has(message.task_id) === true),
                 )
               ) {
                 return true;

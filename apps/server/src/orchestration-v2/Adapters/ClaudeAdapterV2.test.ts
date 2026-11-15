@@ -15415,7 +15415,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
       yield* harness.offerAndWait(wakeNotification);
       assert.lengthOf(harness.continuationRequests, 0);
-      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      // Claude is opening its wake turn: a session release now would kill it.
+      assert.isTrue(yield* harness.hasPendingBackgroundWork);
 
       yield* Queue.offer(harness.sdkMessages, wakeAssistant);
       yield* harness.awaitContinuation(1);
@@ -16305,7 +16306,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* harness.offerAndWait(wakeNotification);
         if (emptyLevel === "after") yield* harness.offerAndWait(emptyRoster);
         // Query replacement reads the internal roster, which the exit already cleared.
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        assert.isFalse(
+          yield* harness.runtime.hasPendingBackgroundWorkForThread!(harness.providerThread, {
+            includeSubagents: true,
+          }),
+        );
+        // The owed wake still holds the process against a session release.
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
         yield* harness.offerAndWait(wakeTurnInit);
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -16357,6 +16364,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           rosters.at(-1)?.taskIds,
           emptyLevel === "sibling" ? [[secondTaskId, true]] : [],
         );
+        // The wake run took the buffered notification, so it no longer holds the session.
+        if (emptyLevel !== "sibling") assert.isFalse(yield* harness.hasPendingBackgroundWork);
         if (emptyLevel === "sibling") {
           assert.isTrue(rosters.at(-1)?.pendingWork);
           yield* harness.offerAndWait(
@@ -20966,7 +20975,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* changes.until(
           () => events.filter((event) => event.type === "turn.terminal").length === 2,
         );
-        assert.isFalse(yield* hasPendingBackgroundWork);
+        // The model switch went through; the wake it carried over is still owed.
+        assert.isTrue(yield* hasPendingBackgroundWork);
         assert.lengthOf(continuationRequests, 0);
 
         yield* Queue.offer(secondProcess, wakeResult);
