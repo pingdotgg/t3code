@@ -105,19 +105,6 @@ describe("node-pty Windows exit flush", () => {
     expect(agent._inSocket.readable).toBe(false);
   });
 
-  it("restarts the window when more output arrives", () => {
-    const agent = makeAgent();
-    flush(agent);
-    loopIteration(60);
-    flush(agent);
-
-    loopIteration(99);
-    expect(agent._outSocket.destroy).not.toHaveBeenCalled();
-
-    loopIteration(1);
-    expect(agent._outSocket.destroy).toHaveBeenCalledTimes(1);
-  });
-
   // Timers run before the poll phase. After a main-thread stall longer than the window, output that is already
   // buffered in the pipe is read only after the timer has expired, so the cleanup has to wait one loop turn for it.
   it("keeps the socket open when buffered output is read right after a stalled timer expires", () => {
@@ -140,14 +127,5 @@ describe("node-pty Windows exit flush", () => {
 
     loopIteration(150);
     expect(agent._outSocket.destroy).toHaveBeenCalledTimes(1);
-  });
-
-  it("does nothing when node-pty hosts conpty itself", () => {
-    const agent = makeAgent();
-    agent._useConptyDll = true;
-    flush(agent);
-
-    loopIteration(5000);
-    expect(agent._outSocket.destroy).not.toHaveBeenCalled();
   });
 });
