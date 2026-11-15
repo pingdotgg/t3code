@@ -18,8 +18,9 @@ use conn_provider::{Provider, ProviderSet};
 use serde_json::{Map, Value};
 
 /// Builds one provider: instance id, driver, the `providerInstances[id]` entry (`None`: the
-/// default instance with no entry). `None` when the instance is not offered (an enabled
-/// Codex whose binary is missing). It may read files: the caller runs it on a blocking thread.
+/// default instance with no entry). `None` when the instance is not offered; Claude and
+/// Codex always offer theirs (a Codex whose binary is missing is listed with T3's error
+/// entry after its probe). It may read files: the caller runs it on a blocking thread.
 pub type Build = dyn Fn(&str, &str, Option<&Value>) -> Option<Arc<dyn Provider>> + Send + Sync;
 
 pub struct Instances {
@@ -127,8 +128,7 @@ impl Instances {
                     made
                 }
             };
-            // An instance that is not offered (Codex not installed) is tried again on the next
-            // settings change.
+            // An instance that is not offered is tried again on the next settings change.
             built_now.push((want.id.clone(), want.entry));
             if let Some(provider) = provider {
                 next.push(provider);

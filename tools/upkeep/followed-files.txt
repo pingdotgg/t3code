@@ -27,6 +27,9 @@ apps/server/src/provider/CodexInstallation.ts
 apps/server/src/provider/CodexDeveloperInstructions.ts
 apps/server/src/provider/Drivers/CodexDriver.ts
 apps/server/src/provider/Drivers/CodexHomeLayout.ts
+apps/server/src/provider/codexModelCatalog.ts
+apps/server/src/provider/codexUsageLimits.ts
+apps/server/src/provider/model-manifest.json
 packages/effect-codex-app-server
 
 [crates/conn-provider-acp]

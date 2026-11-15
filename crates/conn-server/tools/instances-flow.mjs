@@ -39,6 +39,8 @@ const env = {
   ...sealedNodeEnv(root),
   T3CODE_HOME: NodePath.join(root, ".t3"),
   CONN_CLAUDE_STATUS_PROBE: "off",
+  // Codex is probed here: the default instance is off, and codexWork's stub answers the probe.
+  CONN_CODEX_STATUS_PROBE: "on",
 };
 const home = env.HOME;
 const workspace = NodePath.join(root, "workspace");
@@ -70,13 +72,54 @@ const stub = (name) => {
   );
   return { dir, script, tilde: `~/${NodePath.relative(home, script)}` };
 };
+/**
+ * A stub `codex` that records each start in `records/` (pid, argv, environment, the methods
+ * it got), answers the status probe's requests (`initialize`, `account/read`, `skills/list`,
+ * `model/list`, `config/read`) as Orbit's router setup would (no sign-in), and exits 1 on any
+ * thread call, as `stub` does.
+ */
+const codexStub = (name) => {
+  const dir = NodePath.join(home, "stubs", name);
+  NodeFS.mkdirSync(NodePath.join(dir, "records"), { recursive: true });
+  const program = NodePath.join(dir, "stub.cjs");
+  NodeFS.writeFileSync(
+    program,
+    `const fs = require("fs");
+const out = ${JSON.stringify(NodePath.join(dir, "records"))} + "/" + process.pid + ".json";
+const record = { pid: process.pid, argv: process.argv.slice(2), env: process.env, methods: [] };
+const save = () => fs.writeFileSync(out, JSON.stringify(record));
+save();
+const answers = {
+  initialize: { userAgent: "codex_cli_rs/0.166.0 (flow) T3 Code", codexHome: process.env.CODEX_HOME || "", platformFamily: "unix", platformOs: "macos" },
+  "account/read": { account: null, requiresOpenaiAuth: false },
+  "skills/list": { data: [] },
+  "model/list": { data: [{ id: "gpt-6-luna", model: "gpt-6-luna", displayName: "gpt-6-luna", description: "", hidden: false, isDefault: true, defaultReasoningEffort: "low", supportedReasoningEfforts: [{ reasoningEffort: "low", description: "" }] }], nextCursor: null },
+  "config/read": { config: { model_provider: "orbit", model_providers: { orbit: { base_url: "http://router.orbit:8080/v1" } } }, origins: {} },
+};
+require("readline").createInterface({ input: process.stdin }).on("line", (line) => {
+  let message;
+  try { message = JSON.parse(line); } catch { return; }
+  record.methods.push(message.method);
+  save();
+  if (message.id === undefined) return;
+  if (!(message.method in answers)) process.exit(1);
+  process.stdout.write(JSON.stringify({ id: message.id, result: answers[message.method] }) + "\\n");
+});
+process.stdin.on("end", () => process.exit(0));
+`,
+  );
+  const script = NodePath.join(dir, "codex");
+  NodeFS.writeFileSync(script, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(program)} "$@"\n`, { mode: 0o755 });
+  return { dir, script, tilde: `~/${NodePath.relative(home, script)}` };
+};
 const records = (s) =>
   NodeFS.readdirSync(NodePath.join(s.dir, "records"))
     .filter((f) => f.endsWith(".json"))
     .map((f) => JSON.parse(NodeFS.readFileSync(NodePath.join(s.dir, "records", f), "utf8")));
+/** The first start that is not a status probe (the probe alone sets `MISE_OFFLINE=1`). */
 const waitRecord = async (s, label) => {
   for (let i = 0; i < 120; i++) {
-    const found = records(s);
+    const found = records(s).filter((r) => r.env.MISE_OFFLINE !== "1");
     if (found.length > 0) return found[0];
     await sleep(500);
   }
@@ -86,7 +129,7 @@ const waitRecord = async (s, label) => {
 
 const claudeLow = stub("claude-low");
 const claudeLowNext = stub("claude-low-next");
-const codexWork = stub("codex-work");
+const codexWork = codexStub("codex-work");
 
 // Files Orbit writes before the first start. The default instances are off, so no real CLI
 // can run; the sensitive value moves to the secret store at start, as in T3.
@@ -186,6 +229,42 @@ try {
     "the disabled default Codex is listed disabled",
     listed.find((p) => p.instanceId === "codex")?.status === "disabled",
     JSON.stringify(listed.map((p) => [p.instanceId, p.status])),
+  );
+  // codexWork is probed as T3 probes it: its own app-server, environment and home.
+  const work = listed.find((p) => p.instanceId === "codexWork");
+  ok(
+    "codexWork: a probed entry (ready, the version, the models, the router endpoint)",
+    work?.status === "ready" &&
+      work.installed === true &&
+      work.version === "0.166.0" &&
+      work.models.some((m) => m.slug === "gpt-6-luna") &&
+      work.auth?.endpoint === "http://router.orbit:8080" &&
+      work.usageLimits?.unavailable?.reason === "unsupported",
+    JSON.stringify(work ?? null).slice(0, 400),
+  );
+  const probes = records(codexWork).filter((r) => r.env.MISE_OFFLINE === "1");
+  const probe = probes[0];
+  ok(
+    "codexWork: the probe ran its app-server with the instance environment and home",
+    probe?.argv[0] === "app-server" &&
+      probe.env.CONN_FLOW === "work-1" &&
+      probe.env.CODEX_HOME === NodePath.join(home, "codex-work") &&
+      probe.methods.slice(0, 3).join(",") === "initialize,initialized,account/read",
+    JSON.stringify(probe ? { argv: probe.argv, methods: probe.methods } : null),
+  );
+  // The probe's app-server ends with the probe: an idle server keeps no Codex running.
+  const alive = (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  ok(
+    "codexWork: no probe app-server is left running",
+    probes.length > 0 && probes.every((r) => !alive(r.pid)),
+    JSON.stringify(probes.map((r) => [r.pid, alive(r.pid)])),
   );
 
   const mcp = new McpSession(origin, `Bearer ${token}`);

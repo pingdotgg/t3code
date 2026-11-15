@@ -40,8 +40,9 @@ const home = NodePath.join(root, ".t3");
 const state = NodePath.join(home, "userdata");
 const workspace = NodePath.join(root, "workspace");
 const origin = `http://127.0.0.1:${port}`;
-// CONN_CLAUDE_STATUS_PROBE=off: the server never runs this machine's `claude` for its status.
-const env = { ...process.env, T3CODE_HOME: home, DISABLE_AUTOUPDATER: "1", CONN_CLAUDE_STATUS_PROBE: "off",
+// CONN_CLAUDE_STATUS_PROBE=off and CONN_CODEX_STATUS_PROBE=off: the server never runs this
+// machine's `claude` or `codex` for its status.
+const env = { ...process.env, T3CODE_HOME: home, DISABLE_AUTOUPDATER: "1", CONN_CLAUDE_STATUS_PROBE: "off", CONN_CODEX_STATUS_PROBE: "off",
   CONN_MODEL_MANIFEST_URL: "off" };
 delete env.T3CODE_PORT;
 delete env.T3CODE_HOST;

@@ -177,6 +177,8 @@ function makeSide(name) {
     // Our server never fetches model-manifest.json; the T3 server's settings turn its fetch off.
     CONN_MODEL_MANIFEST_URL: "off",
     CONN_CLAUDE_STATUS_PROBE: "off",
+    // Ours probes no Codex here, as before: the check compares the task-turn commands.
+    CONN_CODEX_STATUS_PROBE: "off",
   };
   const isT3 = name === "t3";
   // The T3 server and CLI run with fetch limited to loopback (no-outside-fetch.mjs).

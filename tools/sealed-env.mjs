@@ -15,9 +15,15 @@ export function sealedEnv(dir) {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !TOKEN_VARIABLES.test(name)),
   );
-  // The Claude status probe would run this machine's `claude` (and its login) at start.
+  // The Claude and Codex status probes would run this machine's `claude` and `codex` at start.
   // CONN_MODEL_MANIFEST_URL=off: the server never fetches model-manifest.json from GitHub.
-  return { ...env, HOME: home, CONN_CLAUDE_STATUS_PROBE: "off", CONN_MODEL_MANIFEST_URL: "off" };
+  return {
+    ...env,
+    HOME: home,
+    CONN_CLAUDE_STATUS_PROBE: "off",
+    CONN_CODEX_STATUS_PROBE: "off",
+    CONN_MODEL_MANIFEST_URL: "off",
+  };
 }
 
 /** What node and vitest need from the shell to run T3's code; nothing else passes. */
@@ -37,5 +43,5 @@ export function sealedNodeEnv(dir) {
   );
   // No server of ours reads it there, but a check that starts one from this environment
   // must not fetch either.
-  return { ...env, HOME: home, CONN_MODEL_MANIFEST_URL: "off" };
+  return { ...env, HOME: home, CONN_CODEX_STATUS_PROBE: "off", CONN_MODEL_MANIFEST_URL: "off" };
 }
