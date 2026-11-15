@@ -415,6 +415,7 @@ it("keeps escaped brackets in written text literal for the native math parser", 
     String.raw`- [TICKET](https://example.com) - \[Endpoint MFE\] Language dropdown missing`,
     String.raw`related: [TEST-123: \[Security\]\[CI\] Title](https://example.com/issues/TEST-123)`,
     "Code `\\[x\\]` stays, \\\\[y\\\\] is a backslash, and $x^2$ is math.",
+    String.raw`Open C:\(work)\file.ts`,
   ].join("\n\n");
   const kinds: string[] = [];
   const text: string[] = [];
@@ -423,9 +424,12 @@ it("keeps escaped brackets in written text literal for the native math parser", 
     if (node.type === "Text") text.push(node.content ?? "");
     node.children?.forEach((child) => collect(child as typeof node));
   };
-  collect(await parseMarkdown(markdownWithLiteralTexEscapes(markdown)));
+  collect(
+    await parseMarkdown(markdownWithLiteralTexEscapes(markdown), { preserveWindowsPaths: true }),
+  );
   expect(kinds).toEqual(["LatexMathInline"]);
   expect(text.join("")).toContain("[Endpoint MFE] Language dropdown missing");
   expect(text.join("")).toContain("TEST-123: [Security][CI] Title");
   expect(text.join("")).toContain(String.raw`\[x\]`);
+  expect(text.join("")).toContain(String.raw`Open C:\(work)\file.ts`);
 });

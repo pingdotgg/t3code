@@ -2,7 +2,10 @@ import type { Root, RootContent } from "mdast";
 import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
-import { remarkKeepWindowsProsePaths } from "@t3tools/shared/markdownWindowsPaths";
+import {
+  remarkKeepWindowsProsePaths,
+  UNFINISHED_DRIVE_PATH,
+} from "@t3tools/shared/markdownWindowsPaths";
 import { absoluteFilePathMatches, parseMarkdownFileLink } from "@t3tools/shared/markdownLinks";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
@@ -501,7 +504,12 @@ export function markdownWithLiteralTexEscapes(markdown: string): string {
     token: DestinationToken,
   ) {
     const entity = TEX_OPENER_ENTITIES[this.sliceSerialize(token)];
-    if (entity) edits.push({ start: token.start.offset, end: token.end.offset, content: entity });
+    if (!entity) return;
+    const start = token.start.offset;
+    // In a drive path the backslash is a separator, which md4c's preserveWindowsPaths keeps.
+    const word = markdown.slice(0, start).match(/\S*$/)?.[0] ?? "";
+    if (UNFINISHED_DRIVE_PATH.test(word)) return;
+    edits.push({ start, end: token.end.offset, content: entity });
   }
   unified()
     .use(remarkParse)
