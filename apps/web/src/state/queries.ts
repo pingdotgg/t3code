@@ -12,7 +12,11 @@ import {
   type ThreadSearchResultsState,
   type ThreadSearchScope,
 } from "@t3tools/client-runtime/state/thread-search";
-import { ProjectSearchContentsError, THREAD_SEARCH_QUERY_MAX_LENGTH } from "@t3tools/contracts";
+import {
+  ProjectSearchContentsError,
+  PROJECT_SEARCH_CONTENTS_QUERY_MAX_LENGTH,
+  THREAD_SEARCH_QUERY_MAX_LENGTH,
+} from "@t3tools/contracts";
 import { messageSearchTokens } from "@t3tools/shared/paletteSearch";
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
@@ -316,7 +320,7 @@ export function useProjectPathSearch(
           environmentId: debouncedTarget.environmentId,
           input: {
             cwd: debouncedTarget.cwd,
-            query: debouncedTarget.query,
+            query: debouncedTarget.query.slice(0, 256).replace(/[\uD800-\uDBFF]$/, ""),
             limit,
             ...(debouncedTarget.kind ? { kind: debouncedTarget.kind } : {}),
             ...(debouncedTarget.imageOnly ? { imageOnly: true } : {}),
@@ -347,7 +351,7 @@ export function useProjectPathSearch(
 }
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
-  return useProjectPathSearch(target, COMPOSER_PATH_SEARCH_LIMIT);
+  return useProjectPathSearch(target, COMPOSER_PATH_SEARCH_LIMIT, { allowEmptyQuery: true });
 }
 
 interface ProjectContentSearchTarget {
@@ -367,13 +371,16 @@ export function useProjectContentSearch(target: ProjectContentSearchTarget) {
   // Preserve query whitespace; trim only to detect blank input.
   const query = target.query;
   const hasQuery = query.trim().length > 0;
+  const queryTooLong = query.length > PROJECT_SEARCH_CONTENTS_QUERY_MAX_LENGTH;
   const debouncedQuery = useDebouncedValue(query, PROJECT_CONTENT_SEARCH_DEBOUNCE_MS);
   const result = useEnvironmentQuery(
     canReadFiles &&
       target.environmentId !== null &&
       target.cwd !== null &&
       hasQuery &&
-      debouncedQuery.trim().length > 0
+      !queryTooLong &&
+      debouncedQuery.trim().length > 0 &&
+      debouncedQuery.length <= PROJECT_SEARCH_CONTENTS_QUERY_MAX_LENGTH
       ? projectContentSearch({
           environmentId: target.environmentId,
           input: {
@@ -411,12 +418,14 @@ export function useProjectContentSearch(target: ProjectContentSearchTarget) {
     error:
       !hasTarget || isCheckingAccess
         ? null
-        : canReadFiles
-          ? result.error
-          : (fileAccess.error ?? "This connection cannot search host files."),
+        : !canReadFiles
+          ? (fileAccess.error ?? "This connection cannot search host files.")
+          : queryTooLong
+            ? `Search is limited to ${PROJECT_SEARCH_CONTENTS_QUERY_MAX_LENGTH} characters.`
+            : result.error,
     isPending:
       isCheckingAccess ||
-      (canReadFiles && hasQuery && (query !== debouncedQuery || result.isPending)),
+      (canReadFiles && hasQuery && !queryTooLong && (query !== debouncedQuery || result.isPending)),
     hasQuery,
     truncated: result.data?.truncated ?? false,
     invalidRegex: target.useRegex && result.data?.regexFallbackError !== undefined,
