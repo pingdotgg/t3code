@@ -320,8 +320,7 @@ export function decodeScanCache(
       continue;
     }
     // Keep history for deleted rollouts, but re-parse incompatible reducer state.
-    // v13 adds Claude 1-hour cache writes; v14 uses Codex request ledgers.
-    // v15 repairs skipped Codex requests whose counters rewound; clean v14 entries stay served.
+    // v14 uses Codex request ledgers; v15 repairs rewinds while serving clean v14 entries.
     // v17 keys Grok turns by time, restoring turns previously dropped as repeats.
     // v18 adds authoritative Claude fallback replacement keys.
     const legacy =
