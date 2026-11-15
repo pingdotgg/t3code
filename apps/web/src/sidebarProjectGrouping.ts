@@ -7,6 +7,7 @@ import {
   buildProjectGroups,
   derivePhysicalProjectKey,
   resolveScratchProjectScopeKey,
+  selectGroupDefaultProject,
   type ProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
 import type { Project } from "./types";
@@ -225,8 +226,10 @@ export function buildSidebarProjectPickerEntries(input: {
             project.environmentId === preferredProjectRef.environmentId &&
             project.id === preferredProjectRef.projectId,
         ) ??
-        group.memberProjects.find(
-          (project) => project.environmentId === preferredProjectRef.environmentId,
+        selectGroupDefaultProject(
+          group.memberProjects.filter(
+            (project) => project.environmentId === preferredProjectRef.environmentId,
+          ),
         ))
       : null;
     const targetProject =
