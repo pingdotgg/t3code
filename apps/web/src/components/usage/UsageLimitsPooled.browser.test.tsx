@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { type LimitPresentations, CHATGPT_USAGE_URL } from "@t3tools/shared/usageLimits";
 import { describe, expect, it } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
@@ -154,5 +155,5 @@ it("keeps the account label and reset summary on a one-account row of a multi-ac
   await expect.element(screen.getByText("average left", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("Across 2 accounts", { exact: true })).toBeVisible();
   await screen.getByRole("button", { name: /^later-session: 99% left/ }).click();
-  await expect.element(screen.getByText("100% left on this account")).toBeVisible();
+  await expect.element(page.getByText("100% left on this account")).toBeVisible();
 });

@@ -647,6 +647,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     }
   }
   const pools = [...byKey].map(([key, members]): LimitPoolWindow => {
+    const memberByAccount = new Map(members.map((member) => [member.account.key, member]));
     const first = members[0]!.window;
     const id = members[0]!.account.driver === "codex" ? key : first.id;
     // One unknown plan makes the pool incomparable by plan, so every member then counts once.
@@ -692,7 +693,14 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       kind: first.kind,
       label: first.label,
       members,
-      columns: members,
+      columns: accounts.flatMap((account) => {
+        const member = memberByAccount.get(account.key);
+        return member
+          ? [member]
+          : first.kind === "monthly" && account.limits.zeroSpendCap
+            ? [{ account, window: null }]
+            : [];
+      }),
       usedPercent: Math.round(usedPercent),
       remainingPercent: Math.round(100 - usedPercent),
       pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),

@@ -1352,12 +1352,22 @@ describe("pooled account columns", () => {
           { ...weekly, usedPercent: 80 },
         ]),
         account("c", [weekly]),
+        {
+          ...account("capped", []),
+          limits: { checkedAt: new Date(now).toISOString(), windows: [], zeroSpendCap: true },
+        },
+        account("monthly", [{ ...window, kind: "monthly" }]),
       ],
       now,
     );
     expect(keys(pool!)).toEqual([
       ["a", "b"],
       ["b", "c"],
+      [null, "monthly"],
+    ]);
+    expect(pool!.windows[2]!.columns.map(({ account }) => account.key)).toEqual([
+      "capped",
+      "monthly",
     ]);
     expect(pool!.windows[1]!.members.map((member) => member.account.key)).toEqual(["b", "c"]);
     expect(pool!.windows[1]!.remainingPercent).toBe(40);
