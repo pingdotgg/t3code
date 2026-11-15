@@ -16,6 +16,7 @@ import {
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -986,6 +987,7 @@ it.effect("repeated imports reach linked-worktree sessions behind the scan budge
               },
             }),
             Layer.mock(ProjectStore.ProjectStoreV2)({ listShells: () => Effect.succeed([]) }),
+            Layer.mock(SecretResolver.SecretResolver)({}),
             Layer.succeed(
               ProviderSessionRuntime.ProviderSessionRuntimeRepository,
               yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository,

@@ -7,6 +7,7 @@ import {
   AgentSessionScanError,
   ClaudeSettings,
   CodexSettings,
+  isSecretReference,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
@@ -14,6 +15,8 @@ import {
   type AgentSessionProjectGit,
   type AgentSessionScanResult,
   type ProviderInstanceConfig,
+  type ProviderInstanceEnvironment,
+  type ProviderInstanceEnvironmentVariable,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -29,6 +32,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import { isBareGitConfig, parseOriginUrlFromGitConfig } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
@@ -38,7 +42,10 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
-import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import {
+  resolveCodexHomeLayout,
+  withCodexEnvironmentHome,
+} from "../provider/Drivers/CodexHomeLayout.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { piHome, resolvePiSessionsDir } from "@t3tools/provider-pi/server/usage";
@@ -838,6 +845,7 @@ export const make = Effect.gen(function* () {
   const foldWorktreeCase = isWindows;
   const hostEnvironment = yield* HostProcess.Environment;
   const homeDir = yield* HostProcess.HomeDirectory;
+  const secretResolver = yield* SecretResolver.SecretResolver;
   // `/private/tmp` is what macOS reports for sessions started in `/tmp`.
   const excludedProjectRoots = new Set(
     [homeDir, NodeOS.tmpdir(), "/tmp", "/private/tmp"].map((directory) =>
@@ -866,6 +874,33 @@ export const make = Effect.gen(function* () {
 
   const statOption = (target: string) =>
     fileSystem.stat(target).pipe(Effect.asSome, Effect.orElseSucceed(Option.none));
+
+  // Drivers see the environment with secret references resolved (readInstanceSecrets); discovery
+  // must read the same values or a secret-backed home goes undiscovered. Home selection only
+  // reads `relevant` variables, so only their references are read; the rest are dropped because
+  // every consumer either matches relevant names or skips non-string values.
+  const resolveInstanceEnvironment = Effect.fn("AgentSessionScanner.resolveInstanceEnvironment")(
+    function* (
+      environment: ProviderInstanceEnvironment | undefined,
+      relevant: (variable: ProviderInstanceEnvironmentVariable) => boolean,
+    ) {
+      const variables = environment ?? [];
+      const references = variables
+        .filter(relevant)
+        .flatMap((variable) => (isSecretReference(variable.value) ? [variable.value] : []));
+      const values = references.length === 0 ? [] : yield* secretResolver.read(references);
+      let index = 0;
+      return variables.flatMap((variable) => {
+        if (typeof variable.value === "string") return [{ ...variable, value: variable.value }];
+        if (!relevant(variable)) return [];
+        const secret = values[index++];
+        // Unreadable or blank references stay out, matching the driver's environment.
+        return secret === undefined || secret.trim() === ""
+          ? []
+          : [{ ...variable, value: secret, sensitive: true }];
+      });
+    },
+  );
 
   const transcriptChunkReader = Effect.fn("AgentSessionScanner.transcriptChunkReader")(function* (
     file: FileSystem.File,
@@ -1716,17 +1751,30 @@ export const make = Effect.gen(function* () {
       const homes: Array<{ homePath: string; providerInstanceId: ProviderInstanceId }> = [];
       const seenHomes = new Set<string>();
       for (const { instanceId, config: instance } of instances) {
+        // Resolve only the secrets home selection reads; other instance secrets stay unread.
+        const homeVariableNames =
+          source === "pi"
+            ? ["PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR"]
+            : ["CLAUDE_CONFIG_DIR", "CODEX_HOME"];
+        const instanceEnvironment = yield* resolveInstanceEnvironment(
+          instance.environment,
+          (variable) =>
+            // Windows merges variable names case-insensitively; discovery must match the merge.
+            homeVariableNames.some((name) =>
+              isWindows ? variable.name.toUpperCase() === name : variable.name === name,
+            ),
+        );
         const environmentHome = (name: "CLAUDE_CONFIG_DIR" | "CODEX_HOME") => {
-          const configured = instance.environment?.findLast(
-            (variable) => variable.name === name,
+          const configured = instanceEnvironment.findLast((variable) =>
+            isWindows ? variable.name.toUpperCase() === name : variable.name === name,
           )?.value;
-          return typeof configured === "string" ? configured : hostEnvironment[name];
+          return configured ?? hostEnvironment[name];
         };
 
         let homePath: string;
         if (source === "pi") {
           const environment = yield* mergeProviderInstanceEnvironment(
-            instance.environment,
+            instanceEnvironment,
             hostEnvironment,
           ).pipe(Effect.provideService(HostProcess.HomeDirectory, homeDir));
           homePath = resolvePiSessionsDir(
@@ -1744,13 +1792,10 @@ export const make = Effect.gen(function* () {
         } else {
           const config = decodeCodexSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
-          const codexHome = environmentHome("CODEX_HOME");
-          const codexSettings =
-            config.value.homePath.trim().length === 0 &&
-            config.value.shadowHomePath.trim().length === 0 &&
-            codexHome?.trim()
-              ? { ...config.value, homePath: codexHome }
-              : config.value;
+          const codexSettings = withCodexEnvironmentHome(
+            config.value,
+            environmentHome("CODEX_HOME"),
+          );
           const layout = yield* resolveCodexHomeLayout(codexSettings).pipe(
             Effect.provideService(Path.Path, path),
           );
