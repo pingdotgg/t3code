@@ -34,11 +34,12 @@ const linksHint =
 const readBare = (
   existing: ReadonlyArray<OrchestrationV2ThreadShell | ThreadId>,
   scope: McpInvocationContext.McpInvocationScope = client,
+  threadId: ThreadId = bareId,
 ) => {
   const shells = existing.map((shell) =>
     typeof shell === "string" ? liveThreadShell(shell) : shell,
   );
-  return readThread(bareId).pipe(
+  return readThread(threadId).pipe(
     Effect.flip,
     Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
     Effect.provide(
@@ -99,5 +100,20 @@ it.effect("tells a caller with linked environments that the thread may be on one
       },
     );
     expect(fenced.message).toBe("The thread was not found.");
+  }),
+);
+
+it.effect("points an unencoded delegated-task id at the encoded thread it belongs to", () =>
+  Effect.gen(function* () {
+    const commandId = `command:mcp:${bareId}:delegate-task:0e7d2c41-6b9a-4f3e-8d15-a2c4b6e8f019`;
+    const encoded = ThreadId.make(`thread:delegated-task:${encodeURIComponent(commandId)}`);
+    const error = yield* readBare(
+      [encoded],
+      client,
+      ThreadId.make(`thread:delegated-task:${commandId}`),
+    );
+
+    expect(error.code).toBe("thread_not_found");
+    expect(error.message).toContain(`\`${encoded}\``);
   }),
 );
