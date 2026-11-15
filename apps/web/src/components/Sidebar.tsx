@@ -7,7 +7,11 @@ import {
   endThreadContextDrag,
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
-import { selectFocusedTab, selectLayoutThreadKeys } from "../layout/layoutModel";
+import {
+  selectFocusedLayoutGhostId,
+  selectFocusedTab,
+  selectLayoutThreadKeys,
+} from "../layout/layoutModel";
 import { followLayoutCompanions } from "../layout/openRules";
 import { isThreadlessSurfacesRef } from "../threadlessSurfaces";
 import { useLayoutStore } from "../layout/layoutStore";
@@ -1122,6 +1126,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       : null;
   const [renamingTitle, setRenamingTitle] = useState("");
   const renamingOriginalTitleRef = useRef("");
+  const threadKeptByClickRef = useRef<string | null>(null);
   const settlingThreadKeysRef = useRef(new Set<string>());
   const threadListRef = useRef<HTMLUListElement | null>(null);
   const searchResultsListRef = useRef<HTMLUListElement | null>(null);
@@ -1590,6 +1595,23 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     });
   };
 
+  const keepFocusedGhostChat = (threadRef: ScopedThreadRef) => {
+    const store = useLayoutStore.getState();
+    const ghostId = selectFocusedLayoutGhostId(store.layout, {
+      kind: "chat",
+      target: { kind: "server", threadRef },
+    });
+    if (ghostId === null) return false;
+    store.keepTab(ghostId);
+    return true;
+  };
+
+  const openThreadFromRow = (threadRef: ScopedThreadRef) => {
+    const kept = keepFocusedGhostChat(threadRef);
+    void navigateToThread(threadRef);
+    return kept;
+  };
+
   const handleThreadFileDrop = async (threadRef: ScopedThreadRef, files: File[]) => {
     const dropId = queuePendingFileDrop({ threadRef, files });
     const landedBefore =
@@ -1698,41 +1720,50 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
 
   const readOpensPullRequestsInRightPanel = useStableCallback(() => routeThreadRef !== null);
-  const handleThreadClick = (event: ReactMouseEvent, threadRef: ScopedThreadRef) => {
-    if (isSidebarNestedLinkClick(event.target)) return;
-    const isMac = isMacPlatform(navigator.platform);
-    const isModClick = isMac ? event.metaKey : event.ctrlKey;
-    const threadKey = scopedThreadKey(threadRef);
-    if (isModClick) {
-      event.preventDefault();
-      toggleThreadSelection(threadKey);
-      return;
-    }
-    if (event.shiftKey) {
-      event.preventDefault();
-      rangeSelectTo(threadKey, orderedThreadKeysRef.current);
-      return;
-    }
-    if (isTrailingDoubleClick(event.detail)) {
-      return;
-    }
-    if (event.button === 1) {
-      // Middle click keeps the thread open as a tab; the URL follows the focused tab.
-      event.preventDefault();
-      followLayoutCompanions(() =>
-        useLayoutStore
-          .getState()
-          .openKeptTab({ kind: "chat", target: { kind: "server", threadRef } }),
-      );
-      return;
-    }
-    if (event.altKey) {
-      event.preventDefault();
-      openThreadToTheSide(threadRef);
-      return;
-    }
-    navigateToThread(threadRef);
-  };
+  const handleThreadClick = useStableCallback(
+    (event: ReactMouseEvent, threadRef: ScopedThreadRef) => {
+      if (isSidebarNestedLinkClick(event.target)) return;
+      const isMac = isMacPlatform(navigator.platform);
+      const isModClick = isMac ? event.metaKey : event.ctrlKey;
+      const threadKey = scopedThreadKey(threadRef);
+      if (isModClick) {
+        event.preventDefault();
+        toggleThreadSelection(threadKey);
+        return;
+      }
+      if (event.shiftKey) {
+        event.preventDefault();
+        rangeSelectTo(threadKey, orderedThreadKeysRef.current);
+        return;
+      }
+      if (isTrailingDoubleClick(event.detail)) {
+        return;
+      }
+      if (event.button === 1) {
+        // Middle click keeps the thread open as a tab; the URL follows the focused tab.
+        event.preventDefault();
+        followLayoutCompanions(() =>
+          useLayoutStore
+            .getState()
+            .openKeptTab({ kind: "chat", target: { kind: "server", threadRef } }),
+        );
+        return;
+      }
+      if (event.altKey) {
+        event.preventDefault();
+        openThreadToTheSide(threadRef);
+        return;
+      }
+      threadKeptByClickRef.current = openThreadFromRow(threadRef) ? threadKey : null;
+    },
+  );
+
+  const handleThreadDoubleClick = useStableCallback((threadRef: ScopedThreadRef, title: string) => {
+    const keptByClick = threadKeptByClickRef.current === scopedThreadKey(threadRef);
+    threadKeptByClickRef.current = null;
+    if (keptByClick || keepFocusedGhostChat(threadRef)) return;
+    startThreadRename(threadRef, title);
+  });
 
   // Snapshot navigation before partition mutation; background parks use a null plan.
   const planForwardNavigation = (
@@ -3639,6 +3670,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             timestampFormat={timestampFormat}
                             onThreadClick={handleThreadClick}
                             onThreadActivate={navigateToThread}
+                            onThreadOpen={openThreadFromRow}
+                            onThreadDoubleClick={handleThreadDoubleClick}
                             onStartRename={startThreadRename}
                             onRenameTitleChange={setRenamingTitle}
                             onCommitRename={commitThreadRename}
