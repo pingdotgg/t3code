@@ -1,3 +1,4 @@
+import { threadPullRequestKeyOf } from "@t3tools/client-runtime/thread-pull-requests";
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
 import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
 import {
@@ -121,6 +122,25 @@ describe("composerSubmissionIntentForKey", () => {
       }),
     ).toBe(expected);
   });
+
+  it.each([
+    ["mod-enter", "one line"],
+    ["mod-enter-multiline", "two\nlines"],
+  ] as const)(
+    "starts a new thread in the foreground on Mod+Enter with %s",
+    (sendShortcut, prompt) => {
+      const draft = { ...input, isDraftThread: true, sendShortcut, prompt };
+      expect(composerSubmissionIntentForKey({ ...draft, event: { ...enter, ctrlKey: true } })).toBe(
+        "foreground",
+      );
+      expect(
+        composerSubmissionIntentForKey({
+          ...draft,
+          event: { ...enter, ctrlKey: true, altKey: true },
+        }),
+      ).toBe("background");
+    },
+  );
 
   it("honors the send preference with an existing install's saved alternate binding", () => {
     const keybindings = mergeWithDefaultKeybindings(
@@ -312,30 +332,35 @@ describe("detectComposerTrigger", () => {
 describe("filterComposerPullRequestMatches", () => {
   const entries = [
     {
+      host: "github.com",
       number: 7,
       projectId: "project-1",
       repository: "t3tools/t3code",
       updatedAt: "2026-09-01T12:00:00.000Z",
     },
     {
+      host: "github.com",
       number: 8987,
       projectId: "project-1",
       repository: "T3Tools/T3Code",
       updatedAt: "2026-09-03T12:00:00.000Z",
     },
     {
+      host: "github.com",
       number: 27,
       projectId: "project-1",
       repository: "t3tools/t3code",
       updatedAt: "2026-09-02T12:00:00.000Z",
     },
     {
+      host: "github.com",
       number: 27,
       projectId: "project-1",
       repository: "t3tools/t3code",
       updatedAt: "2026-09-01T13:00:00.000Z",
     },
     {
+      host: "github.com",
       number: 70,
       projectId: "project-2",
       repository: "t3tools/other",
@@ -346,6 +371,7 @@ describe("filterComposerPullRequestMatches", () => {
   it("matches and de-duplicates number fragments within one repository, exact match first", () => {
     expect(
       filterComposerPullRequestMatches({
+        keyOf: threadPullRequestKeyOf,
         entries,
         projectId: "project-1",
         repository: "t3tools/t3code",
@@ -357,18 +383,21 @@ describe("filterComposerPullRequestMatches", () => {
 
   it("keeps an older exact match when newer substring matches would fill the limit", () => {
     const exact = {
+      host: "github.com",
       number: 7,
       projectId: "project-1",
       repository: "t3tools/t3code",
       updatedAt: "2020-01-01T00:00:00.000Z",
     };
     const newerSubstringMatches = Array.from({ length: 12 }, (_unused, index) => ({
+      host: "github.com",
       number: 700 + index,
       projectId: "project-1",
       repository: "t3tools/t3code",
       updatedAt: `2026-09-${String(index + 1).padStart(2, "0")}T12:00:00.000Z`,
     }));
     const matches = filterComposerPullRequestMatches({
+      keyOf: threadPullRequestKeyOf,
       entries: [...newerSubstringMatches, exact],
       projectId: "project-1",
       repository: "t3tools/t3code",

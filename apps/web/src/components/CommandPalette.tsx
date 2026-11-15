@@ -10,6 +10,7 @@ import {
 import {
   canCreateProjectInEnvironment,
   getCloneDestinationBrowsePath,
+  getCloneDestinationForPickedFolder,
   getCloneDestinationPath,
   getCloneDirectoryLeafName,
   getCloneDirectoryPath,
@@ -80,6 +81,8 @@ import {
   UserPlusIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
+import { dispatchPreviewAction } from "./preview/previewActionBus";
+import { previewBridge } from "./preview/previewBridge";
 import {
   useDeferredValue,
   useEffect,
@@ -135,6 +138,7 @@ import {
 } from "../state/environments";
 import {
   useAnyEnvironmentHiding,
+  useDelegatedUnderParent,
   useHiddenThreadKeys,
   useEnvironmentThreadRefs,
   useProjects,
@@ -142,8 +146,12 @@ import {
   useVisibleThreadShells,
   waitForProject,
 } from "../state/entities";
-import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
-import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import { isShownUnderParent, visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
+import {
+  resolveThreadActionProjectRef,
+  startNewThreadFromContext,
+  threadHasStarted,
+} from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
@@ -164,7 +172,11 @@ import {
   useCommandPaletteMount,
   useCommandPaletteStore,
 } from "../commandPaletteStore";
-import { PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
+import {
+  PULL_REQUESTS_PANEL_REF,
+  selectActiveRightPanel,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { getLatestThreadForProject, sortThreads } from "@t3tools/client-runtime/state/thread-sort";
 import {
   cn,
@@ -218,7 +230,6 @@ import {
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
-import { isSidebarHiddenThread } from "./Sidebar.logic";
 import { CommandPaletteContent, type PendingInputSelection } from "./CommandPaletteContent";
 import {
   selectCommandPaletteClientSettings,
@@ -505,8 +516,16 @@ function OpenCommandPaletteDialog(props: {
     if (activeThreadReferenceCopyTarget === null) return;
     await copyThreadReference(activeThreadReferenceCopyTarget);
   };
-  // Side chats and subagents open inside their parent, so opening a project never lands on one.
-  const threads = useVisibleThreadShells().filter((thread) => !isSidebarHiddenThread(thread));
+  // Threads the sidebar shows under their parent open there, so opening a project never lands on one.
+  const delegatedUnderParent = useDelegatedUnderParent();
+  const threads = useVisibleThreadShells().filter(
+    (thread) =>
+      !isShownUnderParent(
+        { environmentId: thread.environmentId, threadId: thread.id },
+        thread.lineage,
+        delegatedUnderParent,
+      ),
+  );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providersByEnvironment = useEnvironmentProviders();
   const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
@@ -676,6 +695,14 @@ function OpenCommandPaletteDialog(props: {
   const activeThreadKey = activeThread
     ? scopedThreadKey(scopeThreadRef(activeThread.environmentId, activeThread.id))
     : null;
+  const previewPanelThreadRef = activeThread
+    ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+    : activeDraftThread
+      ? scopeThreadRef(activeDraftThread.environmentId, activeDraftThread.threadId)
+      : null;
+  const activeThreadPreviewOpen = useRightPanelStore(
+    (state) => selectActiveRightPanel(state.byThreadKey, previewPanelThreadRef) === "preview",
+  );
   const supportsThreadFind =
     environments.find((environment) => environment.environmentId === activeThread?.environmentId)
       ?.serverConfig?.threadFind === true;
@@ -1002,6 +1029,10 @@ function OpenCommandPaletteDialog(props: {
     environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
       ?.newProjectsRoot ?? null;
 
+  const offeredProvidersFor = (environmentId: EnvironmentId | null) =>
+    environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
+      ?.settings.offeredSourceControlProviders;
+
   const startNewProject = (
     environmentId: EnvironmentId,
     sourcesEnvironmentId: EnvironmentId | null,
@@ -1058,7 +1089,7 @@ function OpenCommandPaletteDialog(props: {
 
     const orderedSources: ReadonlyArray<AddProjectRemoteSource> = [
       "url",
-      ...sortAddProjectProviderSources(readinessBySource),
+      ...sortAddProjectProviderSources(readinessBySource, offeredProvidersFor(environmentId)),
     ];
 
     for (const source of orderedSources) {
@@ -1343,6 +1374,20 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  if (activeThreadPreviewOpen && previewBridge) {
+    actionItems.push({
+      kind: "action",
+      value: "find-in-browser-page",
+      title: "Find on page in browser",
+      searchTerms: ["find", "search", "browser", "preview", "page"],
+      icon: <TextSearchIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "preview.find",
+      run: async () => {
+        dispatchPreviewAction("find");
+      },
+    });
+  }
+
   const promptLinkTarget = paletteRouteTarget
     ? paletteRouteTarget.kind === "server"
       ? paletteRouteTarget.threadRef
@@ -1364,6 +1409,7 @@ function OpenCommandPaletteDialog(props: {
               ? providersByEnvironment.get(promptLinkProjectRef.environmentId)
               : undefined) ?? [],
           threadModelSelection: activeThread?.modelSelection ?? null,
+          threadStarted: threadHasStarted(activeThread),
         };
   const plainPromptLink = promptLinkInput
     ? composerPromptLink({ ...promptLinkInput, withContext: false })
@@ -1972,7 +2018,12 @@ function OpenCommandPaletteDialog(props: {
   };
 
   const newProjectPublishTargets =
-    newProjectFlow === null ? [] : getNewProjectPublishTargets(sourceControlDiscovery.data ?? null);
+    newProjectFlow === null
+      ? []
+      : getNewProjectPublishTargets(
+          sourceControlDiscovery.data ?? null,
+          offeredProvidersFor(newProjectFlow.environmentId),
+        );
   const newProjectPublishTarget = getNewProjectPublishTarget(
     newProjectPublishTargets,
     newProjectPublishKind,
@@ -2389,6 +2440,7 @@ function OpenCommandPaletteDialog(props: {
                 ),
                 ...(isCreatingNewProject ? { disabled: true } : {}),
                 keepOpen: true,
+                checked: newProjectPublishes,
                 run: async () => {
                   setNewProjectPublishes((publishes) => !publishes);
                 },
@@ -2778,12 +2830,42 @@ function OpenCommandPaletteDialog(props: {
         );
         return;
       }
+      if (addProjectCloneFlow?.step === "confirm") {
+        if (selection.environmentId !== addProjectCloneFlow.environmentId) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Clone failed",
+              description: "Choose a folder in the environment the repository is cloned into.",
+            }),
+          );
+          return;
+        }
+        await submitAddProjectCloneFlow(
+          getCloneDestinationForPickedFolder({
+            pickedPath: selection.linuxPath,
+            cloneDirectoryName: pinnedCloneDirectoryName,
+            caseSensitive: true,
+          }),
+        );
+        return;
+      }
       await handleAddProjectForEnvironment({
         environmentId: selection.environmentId,
         rawCwd: selection.linuxPath,
         platform: "Linux",
         currentProjectCwd: null,
       });
+      return;
+    }
+    if (addProjectCloneFlow?.step === "confirm") {
+      await submitAddProjectCloneFlow(
+        getCloneDestinationForPickedFolder({
+          pickedPath,
+          cloneDirectoryName: pinnedCloneDirectoryName,
+          caseSensitive: !isWindowsPlatform(browseEnvironmentPlatform),
+        }),
+      );
       return;
     }
     await handleAddProject(pickedPath);

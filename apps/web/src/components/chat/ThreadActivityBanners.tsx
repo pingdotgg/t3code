@@ -30,6 +30,7 @@ import { tickTextContent } from "~/lib/tickTextContent";
 import { BackgroundWorkDetails } from "./BackgroundWorkDetails";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 import type { ThreadNowItem } from "./ThreadNow";
 
@@ -98,10 +99,17 @@ export function goalNowItem(input: {
   return {
     id: `goal:${input.threadId}`,
     icon: <TargetIcon />,
-    title:
-      presentation.usage === null
-        ? presentation.title
-        : `${presentation.title} · ${presentation.usage}`,
+    title: (
+      <Popover>
+        <PopoverTrigger openOnHover render={<InlineButton />}>
+          {presentation.title}
+          {presentation.usage === null ? null : ` · ${presentation.usage}`}
+        </PopoverTrigger>
+        <PopoverPopup side="top" width="md" padding="compact" aria-label="Goal objective">
+          <p className="whitespace-pre-wrap wrap-anywhere text-sm">{presentation.objective}</p>
+        </PopoverPopup>
+      </Popover>
+    ),
     description: presentation.objective,
     // Clear stops goal work; Resume would stop unrelated work, so it waits.
     actions: (
@@ -182,9 +190,11 @@ export function backgroundWorkNowItem(input: {
   const presentation = presentPendingBackgroundWork(input.tasks);
   if (presentation === null) return null;
   const rows = presentation.items.map((task) => {
+    const itemKey =
+      input.tasks.find((pending) => pending.taskId === task.taskId)?.nativeItemId ?? task.taskId;
     // Same key derivePendingBackgroundWork gives turn-item tasks; subagent items carry progress.
     const item = input.turnItems.findLast(
-      (candidate) => (candidate.nativeItemRef?.nativeId || candidate.id) === task.taskId,
+      (candidate) => (candidate.nativeItemRef?.nativeId || candidate.id) === itemKey,
     );
     const subagent = item?.type === "subagent" ? item : undefined;
     return {
