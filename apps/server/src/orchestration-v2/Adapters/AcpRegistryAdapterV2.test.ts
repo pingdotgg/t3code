@@ -1901,6 +1901,102 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  // Copilot wakes its root agent when a background subagent finishes, after the run settled.
+  it.effect("does not drop Copilot's root reply when a finished background agent wakes it", () =>
+    Effect.gen(function* () {
+      const sessionId = "copilot-session";
+      const sessionEvent = (type: string) => ({
+        type: "emit_inbound",
+        frame: {
+          kind: "notification",
+          method: "github.com/copilot/sessionEvent",
+          params: { sessionId, type, data: {} },
+        },
+      });
+      const update = (sessionUpdate: Record<string, unknown>) =>
+        claudeFrames.update(sessionId, sessionUpdate);
+      const session = yield* openClaudeReplaySession(
+        [
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "initialize", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: {
+                protocolVersion: 1,
+                agentInfo: { name: "Copilot", version: "1.0.112" },
+                agentCapabilities: { loadSession: true },
+                authMethods: [],
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/new", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: { kind: "response", method: "session/new", result: { sessionId } },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          sessionEvent("assistant.turn_start"),
+          update({
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Agents are still working." },
+          }),
+          sessionEvent("assistant.idle"),
+          update({ sessionUpdate: "session_info_update", title: "after foreground idle" }),
+          // The background agent finishes; Copilot reads it and starts a new root turn.
+          sessionEvent("assistant.turn_start"),
+          update({
+            sessionUpdate: "tool_call",
+            toolCallId: "read-agent-1",
+            title: "read_agent",
+            kind: "other",
+            status: "completed",
+            rawInput: { agent_id: "agent-1" },
+          }),
+          update({
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Agent 1 finished" },
+          }),
+          sessionEvent("assistant.idle"),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          update({ sessionUpdate: "session_info_update", title: "after wake idle" }),
+        ],
+        undefined,
+        true,
+        "github-copilot-cli",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const foreground = yield* session.throughMarker("after foreground idle");
+      assert.isDefined(foreground.find((event) => event.type === "turn.terminal"));
+      const wake = yield* session.throughMarker("after wake idle");
+      assert.isTrue(
+        session.offers.length > 0 || JSON.stringify(wake).includes("Agent 1 finished"),
+        "the woken root reply is shown or opens a continuation run",
+      );
+      yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+      const continuation = yield* session.until((event) => event.type === "turn.terminal");
+      assert.include(JSON.stringify(continuation), "Agent 1 finished");
+      assert.include(JSON.stringify(continuation.at(-1)), '"status":"completed"');
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.each([
     { kind: "approval", stopReason: "end_turn", status: "completed" },
     { kind: "question", stopReason: "error", status: "failed" },
