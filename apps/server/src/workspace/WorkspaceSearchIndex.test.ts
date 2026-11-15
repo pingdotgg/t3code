@@ -294,51 +294,93 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
   ).pipe(Effect.provide(testLayer)),
 );
 
-it.effect("keeps building a content index that outlasts the scan timeout", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      let isWarmupComplete = false;
-      const grep = vi.fn(async () => ({
-        ok: true as const,
-        value: {
-          items: [],
-          totalMatched: 0,
-          totalFilesSearched: 0,
-          totalFiles: 0,
-          filteredFileCount: 0,
-          nextCursor: null,
-        } satisfies GrepResult,
-      }));
-      const finder = {
-        destroy: vi.fn(),
-        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: false })),
-        getScanProgressAsync: async () => ({
-          ok: true as const,
-          value: { isScanning: false, isWarmupComplete },
-        }),
-        watch: () => ({ ok: true as const, value: () => undefined }),
-        grepAsync: grep,
-      } as unknown as FileFinder;
-      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+it.live("answers content searches with git grep while a slow content index builds", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const vcsProcess = yield* VcsProcess.VcsProcess;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-content-warmup-" });
+    yield* vcsProcess.run({ operation: "test.gitInit", command: "git", args: ["init"], cwd });
+    yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "ignored.txt\n");
+    yield* fileSystem.makeDirectory(path.join(cwd, "src"));
+    yield* fileSystem.writeFileString(
+      path.join(cwd, "src/a.ts"),
+      "const Needle = 1;\r\nneedles(a.b);\nnone\n",
+    );
+    yield* fileSystem.writeFileString(path.join(cwd, "ignored.txt"), "needle\n");
 
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
-      const input = {
+    let isWarmupComplete = false;
+    const grep = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        items: [],
+        totalMatched: 0,
+        totalFilesSearched: 0,
+        totalFiles: 0,
+        filteredFileCount: 0,
+        nextCursor: null,
+      } satisfies GrepResult,
+    }));
+    const finder = {
+      destroy: vi.fn(),
+      waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: false })),
+      getScanProgressAsync: async () => ({
+        ok: true as const,
+        value: { isScanning: false, isWarmupComplete },
+      }),
+      watch: () => ({ ok: true as const, value: () => undefined }),
+      grepAsync: grep,
+    } as unknown as FileFinder;
+    vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+    const searchIndex = yield* WorkspaceSearchIndex.make(cwd, "content");
+    const search = (input: Partial<Parameters<typeof searchIndex.searchContents>[0]>) =>
+      searchIndex.searchContents({
         query: "needle",
         limit: 10,
         caseSensitive: false,
         wholeWord: false,
         useRegex: false,
-      };
-      const pending = yield* Effect.flip(searchIndex.searchContents(input));
-      expect(pending._tag).toBe("WorkspaceSearchIndexScanTimedOut");
-      expect(grep).not.toHaveBeenCalled();
+        ...input,
+      });
 
-      isWarmupComplete = true;
-      const result = yield* searchIndex.searchContents(input);
-      expect(result).toEqual({ matches: [], truncated: false });
-      expect(finder.destroy).not.toHaveBeenCalled();
-    }),
-  ).pipe(Effect.provide(testLayer)),
+    expect(yield* search({})).toEqual({
+      matches: [
+        {
+          path: "src/a.ts",
+          lineNumber: 1,
+          lineContent: "const Needle = 1;",
+          matchRanges: [{ start: 6, end: 12 }],
+        },
+        {
+          path: "src/a.ts",
+          lineNumber: 2,
+          lineContent: "needles(a.b);",
+          matchRanges: [{ start: 0, end: 6 }],
+        },
+      ],
+      truncated: false,
+    });
+    expect((yield* search({ caseSensitive: true, wholeWord: true })).matches).toEqual([]);
+    expect((yield* search({ query: "a.b" })).matches.map((match) => match.matchRanges)).toEqual([
+      [{ start: 8, end: 11 }],
+    ]);
+    expect(
+      (yield* search({ query: "ne+dles?", useRegex: true })).matches.map(
+        (match) => match.matchRanges,
+      ),
+    ).toEqual([[{ start: 6, end: 12 }], [{ start: 0, end: 7 }]]);
+    const invalid = yield* search({ query: "a.b(", useRegex: true });
+    expect(invalid.matches).toEqual([]);
+    expect(invalid.regexFallbackError).toBeDefined();
+    expect(yield* search({ limit: 1 })).toMatchObject({ truncated: true });
+    expect(grep).not.toHaveBeenCalled();
+
+    isWarmupComplete = true;
+    yield* search({});
+    expect(grep).toHaveBeenCalledTimes(1);
+    expect(finder.destroy).not.toHaveBeenCalled();
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
 function fakeSymlinkFinder(

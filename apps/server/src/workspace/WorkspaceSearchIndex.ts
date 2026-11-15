@@ -57,6 +57,9 @@ const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
 const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
+const GIT_GREP_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+// fff's lineContent cap; matches past it are reported without ranges.
+const CONTENT_LINE_MAX_LENGTH = 512;
 const SYMLINK_SCAN_CONCURRENCY = 16;
 // A scan no watcher can invalidate is reused this long, so typing does not rescan every folder.
 const UNWATCHED_SYMLINK_SCAN_TTL_MS = 2_000;
@@ -292,6 +295,28 @@ function mapContentMatchRanges(
     start: toStringIndex(startByte),
     end: toStringIndex(endByte),
   }));
+}
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[\\^$.*+?()[\]{}|/]/g, "\\$&");
+}
+
+// `git grep -z` records: NUL-separated fields, one record per line; a truncated last line is dropped.
+function parseGitGrepRecords(
+  stdout: string,
+  fieldCount: number,
+  truncated: boolean,
+): Array<Array<string>> {
+  const lines = stdout.split("\n");
+  if (truncated || lines.at(-1) === "") lines.pop();
+  const records: Array<Array<string>> = [];
+  for (const line of lines) {
+    const fields = line.split("\0");
+    if (fields.length < fieldCount) continue;
+    // Only the last field (the line or match text) can contain NUL bytes.
+    records.push([...fields.slice(0, fieldCount - 1), fields.slice(fieldCount - 1).join("\0")]);
+  }
+  return records;
 }
 
 // Post-filter whole words: consuming boundary regexes swallow adjacent separators and widen ranges; \b misses punctuation edges.
@@ -610,23 +635,153 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   });
   const hasIncompleteInitialScan = () => (initialScanTimedOut ? isScanning : Effect.succeed(false));
 
-  // Grep before the content index is ready reads every file itself, as slowly as the build.
-  const ensureContentIndexReady = Effect.fn("WorkspaceSearchIndex.ensureContentIndexReady")(
-    function* () {
-      if (!contentIndexPending) return;
-      const progress = yield* Effect.promise(() =>
-        finder.getScanProgressAsync().catch(() => undefined),
-      );
-      if (progress?.ok && !progress.value.isScanning && progress.value.isWarmupComplete) {
-        contentIndexPending = false;
-        return;
-      }
-      return yield* new WorkspaceSearchIndexScanTimedOut({
-        cwd,
-        timeout: WORKSPACE_INDEX_SCAN_TIMEOUT,
-      });
+  const isContentIndexReady = Effect.fn("WorkspaceSearchIndex.isContentIndexReady")(function* () {
+    if (!contentIndexPending) return true;
+    const progress = yield* Effect.promise(() =>
+      finder.getScanProgressAsync().catch(() => undefined),
+    );
+    if (progress?.ok && !progress.value.isScanning && progress.value.isWarmupComplete) {
+      contentIndexPending = false;
+    }
+    return !contentIndexPending;
+  });
+
+  const runGitGrep = Effect.fn("WorkspaceSearchIndex.runGitGrep")(function* (
+    pattern: string,
+    options: {
+      readonly regexMode: boolean;
+      readonly ignoreCase: boolean;
+      readonly maxMatchesPerFile: number;
+      readonly onlyMatching: boolean;
     },
-  );
+  ) {
+    return yield* vcsProcess
+      .run({
+        operation: "WorkspaceSearchIndex.gitGrep",
+        command: "git",
+        args: [
+          "-c",
+          "core.quotePath=false",
+          "-c",
+          "core.fsmonitor=false",
+          "grep",
+          "--untracked",
+          "--no-color",
+          "-I",
+          "-n",
+          "-z",
+          "-m",
+          String(options.maxMatchesPerFile),
+          ...(options.onlyMatching ? ["-o", "--column"] : []),
+          ...(options.ignoreCase ? ["-i"] : []),
+          options.regexMode ? "-P" : "-F",
+          "-e",
+          pattern,
+        ],
+        cwd,
+        allowNonZeroExit: true,
+        timeoutMs: 10_000,
+        maxOutputBytes: GIT_GREP_MAX_OUTPUT_BYTES,
+        outputMode: "truncate",
+        appendTruncationMarker: false,
+      })
+      .pipe(Effect.option);
+  });
+
+  // fff's grep before its content index is ready opens every file itself, as slowly as the
+  // build (minutes on Windows with Defender), so git grep answers until the index is ready.
+  const searchContentsWithGit = Effect.fn("WorkspaceSearchIndex.searchContentsWithGit")(function* (
+    input: Omit<ProjectSearchContentsInput, "cwd">,
+  ): Effect.fn.Return<ProjectSearchContentsResult, WorkspaceSearchIndexScanTimedOut> {
+    const notReady = new WorkspaceSearchIndexScanTimedOut({
+      cwd,
+      timeout: WORKSPACE_INDEX_SCAN_TIMEOUT,
+    });
+    const options = {
+      ignoreCase: !input.caseSensitive,
+      maxMatchesPerFile: CONTENT_SEARCH_MAX_MATCHES_PER_FILE,
+      onlyMatching: false,
+    };
+    let regexMode = input.useRegex;
+    let regexFallbackError: string | undefined;
+    let result = yield* runGitGrep(input.query, { ...options, regexMode });
+    if (regexMode && Option.isSome(result) && result.value.exitCode === 128) {
+      // fff searches an invalid pattern as a literal and reports why.
+      regexFallbackError = result.value.stderr.trim().split("\n")[0] || "Invalid regex";
+      regexMode = false;
+      result = yield* runGitGrep(input.query, { ...options, regexMode });
+    }
+    if (Option.isNone(result) || result.value.exitCode > 1) return yield* notReady;
+
+    const regexRanges = new Map<string, Array<readonly [number, number]>>();
+    if (regexMode) {
+      // Ranges come from git too: running the user's pattern in JS could backtrack without bound.
+      const ranges = yield* runGitGrep(input.query, { ...options, regexMode, onlyMatching: true });
+      if (Option.isSome(ranges) && ranges.value.exitCode === 0) {
+        for (const record of parseGitGrepRecords(
+          ranges.value.stdout,
+          4,
+          ranges.value.stdoutTruncated,
+        )) {
+          const [relativePath, lineNumber, column, text] = record as [
+            string,
+            string,
+            string,
+            string,
+          ];
+          const start = Number(column) - 1;
+          const key = `${relativePath}\0${lineNumber}`;
+          const lineRanges = regexRanges.get(key) ?? [];
+          lineRanges.push([start, start + Buffer.byteLength(text)]);
+          regexRanges.set(key, lineRanges);
+        }
+      }
+    }
+    const literal = regexMode
+      ? undefined
+      : new RegExp(escapeRegExp(input.query), input.caseSensitive ? "gu" : "giu");
+
+    const matches: Array<ProjectSearchContentsResult["matches"][number]> = [];
+    for (const record of parseGitGrepRecords(
+      result.value.stdout,
+      3,
+      result.value.stdoutTruncated,
+    )) {
+      const [relativePath, lineNumber, rawLine] = record as [string, string, string];
+      const lineContent = (rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine).slice(
+        0,
+        CONTENT_LINE_MAX_LENGTH,
+      );
+      const matchRanges = (
+        literal
+          ? Array.from(lineContent.matchAll(literal), (match) => ({
+              start: match.index,
+              end: match.index + match[0].length,
+            }))
+          : mapContentMatchRanges(
+              lineContent,
+              regexRanges.get(`${relativePath}\0${lineNumber}`) ?? [],
+            )
+      ).filter(
+        (range) =>
+          range.end <= lineContent.length &&
+          (!input.wholeWord || isWholeWordRange(lineContent, range)),
+      );
+      if (input.wholeWord && matchRanges.length === 0) continue;
+      matches.push({
+        path: relativePath,
+        lineNumber: Number(lineNumber),
+        lineContent,
+        matchRanges,
+      });
+      if (matches.length > input.limit) break;
+    }
+    return {
+      matches: matches.slice(0, input.limit),
+      truncated: matches.length > input.limit || result.value.stdoutTruncated,
+      ...(regexFallbackError !== undefined ? { regexFallbackError } : {}),
+    };
+  });
 
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
@@ -1058,7 +1213,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(
     "WorkspaceSearchIndex.searchContents",
   )(function* (input) {
-    yield* ensureContentIndexReady();
+    if (!(yield* isContentIndexReady())) return yield* searchContentsWithGit(input);
     let { searchQuery, regexMode } = buildContentSearchQuery(input);
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
     // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.
