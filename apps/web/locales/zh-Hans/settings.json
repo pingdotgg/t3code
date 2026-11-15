@@ -328,7 +328,30 @@
     "projectScope": "项目范围",
     "unavailableProject": "项目不可用",
     "allProjects": "所有项目",
-    "searchProjects": "搜索项目"
+    "searchProjects": "搜索项目",
+    "unavailableSelection": "不可用的选择",
+    "selectProjectForCheckout": "请先选择一个项目，才能选择它的检出。",
+    "environmentMissing": "此环境已不可用。",
+    "projectMissing": "此项目已不可用。",
+    "checkoutMissing": "此检出在所选的项目和环境中已不可用。",
+    "noCheckoutOnEnvironment": "此项目在此环境上没有检出。",
+    "checkoutEnvironmentMissing": "此检出的环境已不可用。",
+    "allCheckouts": "所有检出"
+  },
+  "scopedWrite": {
+    "notSaved": "设置未保存",
+    "savedSome": "设置只在部分环境保存",
+    "lacksPermission": "此连接没有更改这些设置的权限。",
+    "saveFailedOn": "无法在{{label}}上保存：{{message}}",
+    "savedOn": "已保存到{{labels}}。",
+    "envWide": "此设置为整个环境所用，项目不能覆盖它。",
+    "saveOverride": "连接所选检出，或更新它们的环境，以保存项目覆盖。",
+    "saveSetting": "连接{{target}}以保存此设置。",
+    "anEnvironment": "一个环境",
+    "resetOverride": "连接所选检出，或更新它们的环境，以重置此覆盖。",
+    "resetOverrides": "连接各环境以重置这些覆盖。",
+    "unsupported": "此环境不支持此设置。请更新其上的 T3 Code。",
+    "saveFailed": "保存失败。请重新连接后再试一次。"
   },
   "row": {
     "policyDetailsAria": "后台策略详情",

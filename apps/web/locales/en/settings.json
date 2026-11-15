@@ -328,7 +328,30 @@
     "projectScope": "Project scope",
     "unavailableProject": "Unavailable project",
     "allProjects": "All projects",
-    "searchProjects": "Search projects"
+    "searchProjects": "Search projects",
+    "unavailableSelection": "Unavailable selection",
+    "selectProjectForCheckout": "Select a project to choose one of its checkouts.",
+    "environmentMissing": "This environment is no longer available.",
+    "projectMissing": "This project is no longer available.",
+    "checkoutMissing": "This checkout is no longer available in the selected project and environment.",
+    "noCheckoutOnEnvironment": "This project has no checkout on this environment.",
+    "checkoutEnvironmentMissing": "This checkout's environment is no longer available.",
+    "allCheckouts": "All checkouts"
+  },
+  "scopedWrite": {
+    "notSaved": "Setting not saved",
+    "savedSome": "Setting saved on some environments",
+    "lacksPermission": "This connection lacks permission to change these settings.",
+    "saveFailedOn": "Could not save on {{label}}: {{message}}",
+    "savedOn": "Saved on {{labels}}.",
+    "envWide": "This setting is environment-wide and cannot be overridden by a project.",
+    "saveOverride": "Connect the selected checkouts, or update their environments, to save a project override.",
+    "saveSetting": "Connect {{target}} to save this setting.",
+    "anEnvironment": "an environment",
+    "resetOverride": "Connect the selected checkouts, or update their environments, to reset this override.",
+    "resetOverrides": "Connect the environments to reset these overrides.",
+    "unsupported": "This environment does not support this setting. Update T3 Code on it.",
+    "saveFailed": "The save failed. Try reconnecting and saving again."
   },
   "row": {
     "policyDetailsAria": "Background policy details",

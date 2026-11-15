@@ -24,6 +24,7 @@ import {
 import * as Equal from "effect/Equal";
 import * as Cause from "effect/Cause";
 
+import { translateDynamic } from "../../i18nCore";
 import type { ResolvedSettingsScope } from "./settingsScope";
 
 export type ScopedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
@@ -327,10 +328,15 @@ export function planScopedSettingsPatch(
       : scope.kind === "unavailable"
         ? scope.message
         : unscopableKeys.length > 0
-          ? "This setting is environment-wide and cannot be overridden by a project."
+          ? translateDynamic("scopedWrite.envWide")
           : isProjectScope
-            ? "Connect the selected checkouts, or update their environments, to save a project override."
-            : `Connect ${scope.kind === "environment" ? scope.label : "an environment"} to save this setting.`;
+            ? translateDynamic("scopedWrite.saveOverride")
+            : translateDynamic("scopedWrite.saveSetting", {
+                target:
+                  scope.kind === "environment"
+                    ? scope.label
+                    : translateDynamic("scopedWrite.anEnvironment"),
+              });
   return { clientPatch, hasClientWrite, serverWrites, unavailableReason };
 }
 
@@ -350,9 +356,7 @@ export function planScopedSettingsClear(
     hasClientWrite: false,
     serverWrites,
     unavailableReason:
-      serverWrites.length > 0
-        ? null
-        : "Connect the selected checkouts, or update their environments, to reset this override.",
+      serverWrites.length > 0 ? null : translateDynamic("scopedWrite.resetOverride"),
   };
 }
 
@@ -408,7 +412,7 @@ export function planProjectOverridesClear(
     hasClientWrite: false,
     serverWrites,
     unavailableReason:
-      serverWrites.length > 0 ? null : "Connect the environments to reset these overrides.",
+      serverWrites.length > 0 ? null : translateDynamic("scopedWrite.resetOverrides"),
   };
 }
 
@@ -475,7 +479,7 @@ export async function persistScopedSettingsPatch(
       return [
         {
           ...environment,
-          message: "This environment does not support this setting. Update T3 Code on it.",
+          message: translateDynamic("scopedWrite.unsupported"),
         },
       ];
     }
@@ -489,9 +493,7 @@ export async function persistScopedSettingsPatch(
       {
         ...environment,
         message:
-          error instanceof Error
-            ? error.message
-            : "The save failed. Try reconnecting and saving again.",
+          error instanceof Error ? error.message : translateDynamic("scopedWrite.saveFailed"),
       },
     ];
   });

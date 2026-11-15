@@ -13,6 +13,7 @@ import {
   type ServerSettings,
   type UnifiedSettings,
 } from "@t3tools/contracts";
+import { useTranslation } from "react-i18next";
 
 import { persistClientSettingsPatch, useMergedSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
@@ -49,11 +50,12 @@ export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) 
 
 function useRunScopedPlan() {
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
+  const { t } = useTranslation("settings");
   return (plan: ReturnType<typeof planScopedSettingsPatch>, onFailed?: () => void) => {
     if (plan.unavailableReason) {
       toastManager.add({
         type: "warning",
-        title: "Setting not saved",
+        title: t("scopedWrite.notSaved"),
         description: plan.unavailableReason,
       });
       onFailed?.();
@@ -70,7 +72,7 @@ function useRunScopedPlan() {
             Cause.fail(
               new EnvironmentAuthorizationError({
                 requiredScope: missing,
-                message: "This connection lacks permission to change these settings.",
+                message: t("scopedWrite.lacksPermission"),
               }),
             ),
           );
@@ -82,14 +84,17 @@ function useRunScopedPlan() {
       onFailed?.();
       toastManager.add({
         type: "error",
-        title:
-          savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
+        title: savedEnvironmentCount > 0 ? t("scopedWrite.savedSome") : t("scopedWrite.notSaved"),
         description: [
-          ...failedEnvironments.map(
-            ({ label, message }) => `Could not save on ${label}: ${message}`,
+          ...failedEnvironments.map(({ label, message }) =>
+            t("scopedWrite.saveFailedOn", { label, message }),
           ),
           ...(savedEnvironmentCount > 0
-            ? [`Saved on ${savedEnvironments.map(({ label }) => label).join(", ")}.`]
+            ? [
+                t("scopedWrite.savedOn", {
+                  labels: savedEnvironments.map(({ label }) => label).join(", "),
+                }),
+              ]
             : []),
         ].join("\n"),
       });
