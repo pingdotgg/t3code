@@ -141,7 +141,8 @@ If a window still looks stale, refresh Limits to re-check every provider and hub
 Between those checks, an environment re-reads provider and hub quotas in the background only while
 a limits view is on screen: **Usage → Limits**, the `/usage-limits` result, or the thread details
 card. With none open its provider health checks continue without asking for usage, so the first
-reading after you open one can be a few minutes old.
+reading after you open one can be a few minutes old. An environment with a fallback model set keeps
+reading quotas while a client is in the foreground, because new threads switch models on them.
 
 Pick `/usage-limits` from the composer's command menu, or send it as a message, to check the
 current model's limits without leaving the conversation. The result opens above the composer and

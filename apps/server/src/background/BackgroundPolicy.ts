@@ -35,7 +35,7 @@ export class BackgroundPolicy extends Context.Service<
     ) => Effect.Effect<void>;
     readonly snapshot: Effect.Effect<BackgroundPolicySnapshot>;
     readonly shouldRunScopeWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
-    /** Whether a client that may run provider checks also has a usage limits view on screen. */
+    /** Whether a foreground client shows usage limits, or new threads depend on them for a fallback model. */
     readonly shouldPollUsageLimits: Effect.Effect<boolean>;
     readonly shouldRunOpportunisticWork: Effect.Effect<boolean>;
   }
@@ -269,11 +269,19 @@ export const make = Effect.fn("background.policy.make")(function* () {
   const shouldPollUsageLimits = Effect.gen(function* () {
     const [current, settings] = yield* Effect.all([snapshot, backgroundActivitySettings]);
     if (isHostConstrained(current.hostPower, settings)) return false;
+    // New threads move to the fallback model on these readings, with no limits view open.
+    const fallbackConfigured = yield* serverSettings.getSettings.pipe(
+      Effect.map((value) => value.fallbackModelSelection !== null),
+      Effect.orElseSucceed(() => false),
+    );
     return current.leases.some(
       (lease) =>
+        leaseMayRunScopedWork(lease, { type: "provider-status" }, current.updatedAt, settings) &&
         // A client that predates the field cannot say, so it keeps the readings it relied on.
-        lease.usageLimitsVisible !== false &&
-        leaseMayRunScopedWork(lease, { type: "provider-status" }, current.updatedAt, settings),
+        (lease.usageLimitsVisible === undefined ||
+          // Unlike health checks, quota reads need a client on screen under every profile.
+          (isForegroundLease(lease, current.updatedAt) &&
+            (lease.usageLimitsVisible || fallbackConfigured))),
     );
   });
 

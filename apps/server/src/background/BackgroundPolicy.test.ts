@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
   AuthSessionId,
+  ProviderInstanceId,
   RpcClientId,
   type HostPowerSnapshot,
   type ClientActivityReportInput,
@@ -222,6 +223,59 @@ describe("BackgroundPolicy", () => {
       yield* report({});
       assert.isTrue(yield* policy.shouldPollUsageLimits);
     }).pipe(Effect.provide(layerFor(nominalHostPower))),
+  );
+
+  it.effect("a hidden limits view stops usage polling under the performance profile", () =>
+    Effect.gen(function* () {
+      const policy = yield* BackgroundPolicy.BackgroundPolicy;
+      yield* policy.reportClientActivity(
+        AuthSessionId.make("session-1"),
+        RpcClientId.make(1),
+        makeReport({
+          scopes: [{ type: "provider-status" }],
+          usageLimitsVisible: true,
+          visible: false,
+          focused: false,
+          recentlyInteracted: false,
+        }),
+      );
+
+      assert.isTrue(yield* policy.shouldRunScopeWork({ type: "provider-status" }));
+      assert.isFalse(yield* policy.shouldPollUsageLimits);
+    }).pipe(
+      Effect.provide(layerFor(nominalHostPower, { backgroundActivityProfile: "performance" })),
+    ),
+  );
+
+  it.effect("a configured fallback model keeps usage polled without a limits view", () =>
+    Effect.gen(function* () {
+      const policy = yield* BackgroundPolicy.BackgroundPolicy;
+      const report = (overrides: Partial<ClientActivityReportInput>) =>
+        policy.reportClientActivity(
+          AuthSessionId.make("session-1"),
+          RpcClientId.make(1),
+          makeReport({
+            scopes: [{ type: "provider-status" }],
+            usageLimitsVisible: false,
+            ...overrides,
+          }),
+        );
+
+      yield* report({});
+      assert.isTrue(yield* policy.shouldPollUsageLimits);
+
+      yield* report({ visible: false, focused: false });
+      assert.isFalse(yield* policy.shouldPollUsageLimits);
+    }).pipe(
+      Effect.provide(
+        layerFor(nominalHostPower, {
+          fallbackModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.5",
+          },
+        }),
+      ),
+    ),
   );
 
   it.effect("battery saver profile pauses scoped work on battery", () =>
