@@ -75,7 +75,7 @@ import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
 } from "../../providerInstances";
-import { threadEnvironment } from "../../state/threads";
+import { threadEnvironment, threadFamilies } from "../../state/threads";
 import { orchestrationEnvironment, threadTitlesRead } from "../../state/orchestration";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
@@ -433,6 +433,16 @@ export function ThreadRelationshipsPanel(props: {
   const providersByEnvironment = useEnvironmentProviders();
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
   const relationshipShells = useThreadRelationshipShells(ref);
+  const family = useEnvironmentQuery(
+    props.showLineage &&
+      relationshipShells.some(
+        (thread) =>
+          thread.lineage.parentThreadId === props.threadId &&
+          thread.lineage.relationshipToParent === "subagent",
+      )
+      ? threadFamilies.familyAtom(props.environmentId, props.threadId)
+      : null,
+  );
   const hiddenKeys = useHiddenThreadKeys();
   const hidingAnywhere = useAnyEnvironmentHiding();
   const allProjects = useProjects();
@@ -510,6 +520,7 @@ export function ThreadRelationshipsPanel(props: {
   );
   const shells: ReadonlyArray<OrchestrationV2ThreadShell> = [
     ...relationshipShells,
+    ...(family.data?.threads ?? []),
     ...(archivedShells ?? []),
   ];
   const graph = deriveThreadRelationshipGraph({ threads: shells, projection });

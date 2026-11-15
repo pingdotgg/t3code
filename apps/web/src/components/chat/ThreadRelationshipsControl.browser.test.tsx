@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   relatedShells: [] as unknown[],
   threadTitles: {} as Record<string, string>,
   archivedThreads: [] as unknown[],
+  familyThreads: [] as unknown[],
 }));
 
 vi.mock(import("../../state/query"), async (original) => ({
@@ -21,7 +22,11 @@ vi.mock(import("../../state/query"), async (original) => ({
   useEnvironmentQuery: ((atom: unknown) =>
     atom === null
       ? { data: null, isSuccess: false, isPending: false }
-      : { data: state.threadTitles, isSuccess: true, isPending: false }) as never,
+      : {
+          data: { ...state.threadTitles, threads: state.familyThreads },
+          isSuccess: true,
+          isPending: false,
+        }) as never,
 }));
 
 vi.mock(import("@effect/atom-react"), async (original) => ({
@@ -71,6 +76,7 @@ function setup() {
   state.relatedShells = [];
   state.threadTitles = { source: "Source" };
   state.archivedThreads = [];
+  state.familyThreads = [];
   state.projection = {
     thread: {
       id: threadId,
@@ -422,10 +428,8 @@ it("nests a subagent's own subagents under it", async () => {
     forkedFrom: null,
   });
   state.projection = projection;
-  state.relatedShells = [
-    shell("child", "Camera", projection.thread.id),
-    shell("grandchild", "Research lighting", ThreadId.make("child")),
-  ];
+  state.relatedShells = [shell("child", "Camera", projection.thread.id)];
+  state.familyThreads = [shell("grandchild", "Research lighting", ThreadId.make("child"))];
   await using screen = await render(
     <ThreadRelationshipsPanel
       environmentId={environmentId}
