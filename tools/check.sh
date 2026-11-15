@@ -7,6 +7,11 @@
 # No check calls a model: the server checks use `examples/replay_server` (the engine's fake
 # provider), and `parity.mjs` calls none by default. Every server gets a temp state folder.
 set -u
+# The way out of the sealed cargo runner (tools/cargo-runner.mjs) is for hand runs only.
+if [ -n "${CONN_UNSEALED:-}" ]; then
+  echo "tools/check.sh: CONN_UNSEALED is set; checks never run unsealed. Unset it." >&2
+  exit 1
+fi
 # No check reaches the network for the model manifest: every server a check starts inherits
 # this (crates/conn-server/src/model_manifest.rs, the test seam), whatever the shell has.
 export CONN_MODEL_MANIFEST_URL=off
@@ -41,7 +46,10 @@ canary_watch=$!
 # Cargo reads ~/.gitconfig through HOME (its git library ignores GIT_CONFIG_GLOBAL), so cargo
 # runs with a throwaway HOME. A target runner gives the test and example binaries it starts
 # the decoy HOME back, so the canary still sees what the code under test reads; their `git`
-# runs get no global or system git configuration.
+# runs get no global or system git configuration. This runner, set in the environment, wins
+# over the sealed runner in .cargo/config.toml (proved by the sealed-run check): here the
+# binaries must see the decoys, or the canary would prove nothing about the code. Tools that
+# run cargo themselves drop it (sealedCargoEnv) and get the sealed runner.
 canary_cargo_home="$canary/cargo-home"
 mkdir -p "$canary_cargo_home"
 cat >"$canary/runner" <<'RUNNER'
@@ -234,6 +242,9 @@ else
   run "model-manifest-diff" \
     node crates/conn-server/tools/model-manifest-diff.mjs "$release/examples/model_manifest_cache"
 fi
+# Hand runs are sealed: plain `cargo test` with a decoy outer environment, the way out, and
+# the runner order (tools/sealed-run-check.mjs; needs no monorepo).
+run "sealed-run" node tools/sealed-run-check.mjs
 # orbit-flow needs no monorepo.
 run "orbit-flow (fake provider)" \
   node crates/conn-server/tools/orbit-flow.mjs "$release/examples/replay_server"

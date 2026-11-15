@@ -90,6 +90,17 @@ shutdown. Follow it byte for byte where a provider can see it.
   from `tools/sealed-env.mjs`. A `git` run gets `gitEnv`, and a `cargo build` gets
   `cargoBuildEnv`. Never pass the shell's environment, `HOME` or `SHELL` on, and never use
   `env -i` without `HOME=`.
+- **Hand runs are sealed.** `.cargo/config.toml` runs every binary that cargo starts (tests,
+  examples, benches, `cargo run`) through `tools/cargo-runner`: a throwaway HOME, the
+  allow-list environment of `tools/sealed-env.mjs` (`sealedRunEnv`), a stand-in `SHELL`, a
+  `PATH` without provider or host CLIs, no global git configuration, the status probes and the
+  manifest fetch off. It needs `node`. In a test binary, `conn_support::spawn_guard` stops the
+  run when a provider or host CLI would start from outside the temp folder or the workspace.
+  The `sealed-run` check proves both. **The way out** is `CONN_UNSEALED=1`, only for the live
+  tests (`--ignored`), the recorder with a live model, and the server by hand with a real
+  login; the runner prints a warning, and `tools/check.sh` and CI refuse it. Never set it in a
+  script. Cargo itself still reads `~/.gitconfig` through `HOME`: run it with
+  `sealedCargoEnv` or `cargoBuildEnv` from a tool.
 - **Model calls.** `tools/check.sh` calls no model, and a new check must not call one by
   default. A live proof uses the cheapest model (Claude Haiku), few turns, behind an explicit
   flag or `--ignored`.
@@ -104,7 +115,7 @@ tools/check.sh                                   # the Rust checks; says what it
 CONN_MONOREPO=<conn checkout> tools/check.sh     # every check that needs no model
 eval "$(tools/conn-checkout --source <conn git dir or URL>)"    # a Conn checkout at conn.pin
 CONN_MONOREPO=<checkout at the new commit> tools/bump-conn.sh <commit>   # move the pin, regenerate, check, report
-cargo run -p conn-server -- serve --state-dir /tmp/conn-state --project <dir>
+cargo run -p conn-server -- serve --state-dir /tmp/conn-state --project <dir>   # sealed; CONN_UNSEALED=1 for a real login
 (cd helpers/sdk-host && npm ci)                  # once, so Claude can run from a checkout
 CONN_MONOREPO=<conn checkout> crates/conn-provider-claude/tools/conformance/run.sh
 ```

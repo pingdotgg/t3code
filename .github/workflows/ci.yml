@@ -92,9 +92,16 @@ jobs:
         working-directory: helpers/sdk-host
         run: npm ci --no-audit --no-fund --ignore-scripts
 
+      # Every binary cargo runs goes through the sealed runner (.cargo/config.toml), which
+      # needs node; CONN_UNSEALED, its way out for hand runs, must never be set here.
       - name: Tests
         # --no-fail-fast: one run shows every failing crate, not only the first.
-        run: cargo test --locked --workspace --no-fail-fast
+        run: |
+          if [ -n "${CONN_UNSEALED:-}" ]; then echo "::error::CONN_UNSEALED is set"; exit 1; fi
+          cargo test --locked --workspace --no-fail-fast
+
+      - name: Sealed hand runs
+        run: node tools/sealed-run-check.mjs
 
       - name: Disk space after the tests
         if: ${{ !cancelled() }}

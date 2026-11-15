@@ -50,7 +50,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 39 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14). The branch with the container checks passes 41: `idle-diff` and the canary added. The Codex probe and wake branch (2026-11-15, merged with `main` at 958e748) passes 43: `codex model catalog --check` and `codex probe conformance` added; the canary is clean. The branch with provider instance settings passes 37 (`instances-flow` added).
+`main` is in a working state. `tools/check.sh` passes 39 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14). The branch with the container checks passes 41: `idle-diff` and the canary added. The Codex probe and wake branch (2026-11-15, merged with `main` at 958e748) passes 43: `codex model catalog --check` and `codex probe conformance` added; the canary is clean. The branch that seals hand runs (`t3/seal-cargo-hand-runs`, 2026-11-15) adds `sealed-run`: 44 pass, none skipped, the canary clean (`check exit: 0`). The branch with provider instance settings passes 37 (`instances-flow` added).
 
 | Part | State |
 | --- | --- |
@@ -1139,11 +1139,72 @@ Our Rust code finds a home only through `HOME` (`home.rs`, the providers' `expan
 started with `env_clear()` (`conn-provider-support::probe`, the ACP probe, the terminal) get an
 environment built from the server's, which holds `HOME`.
 
-**Not proven:** `cargo test` run by hand, outside `tools/check.sh`, still uses the shell's
-`HOME`, `SHELL` and git configuration: the git tests read `~/.gitconfig`, and a test that
-reaches the login PATH refresh (`methods/source_control.rs:254`) runs the real `$SHELL -ilc`. A `[env]` table in
-`.cargo/config.toml` would seal it, but it would also change `cargo run` of the server by hand.
-That is a decision for Nick.
+Hand runs (`cargo test`, `cargo run` typed in a shell) are sealed by the cargo runner since
+2026-11-15; see the next section.
+
+## Hand runs are sealed: the cargo runner (2026-11-15)
+
+On 2026-11-15 a hand run of `cargo test -p conn-provider-codex` started this machine's real
+`codex app-server` with the real home. A rule that holds only by care had failed three times in
+two days. Now the workspace seals every binary that cargo starts:
+
+- `.cargo/config.toml` sets `[target.'cfg(all())'] runner = "tools/cargo-runner"` (a POSIX
+  shell script that runs `tools/cargo-runner.mjs` with `node`). Node, not shell or Rust: the
+  runner imports the lists of `tools/sealed-env.mjs` itself (`sealedRunEnv`), so the runner and
+  the tools cannot drift, and nothing has to be built before the tests.
+- The binary gets a fresh HOME, a stand-in `SHELL`, `RUNTIME_VARIABLES` and what cargo and
+  libtest set (`CARGO_PKG_*`, `CARGO_MANIFEST_DIR`, `RUST_*`, ...), our test knobs
+  (`RUN_KNOBS`), a `PATH` without provider, host and VCS CLIs (`sealedPath`; `git`, `node`,
+  `sh` stay), `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM=/dev/null`, the Claude and Codex status
+  probes off, `CONN_MODEL_MANIFEST_URL=off`, and `CONN_NETWORK_LOG` (our HTTP client refuses
+  hosts outside loopback; the runner fails the run and names them).
+- The temp folder (`$TMPDIR/conn-run-<pid>-*`) is removed when the binary ends, also on
+  SIGINT, SIGTERM, SIGHUP or SIGQUIT (forwarded to the binary). After a SIGKILL of the runner,
+  the next run removes it.
+- **The way out:** `CONN_UNSEALED=1`, for the live tests (`--ignored`), the recorder with a live
+  model, and the server by hand with a real login. The runner prints
+  `cargo-runner: WARNING: CONN_UNSEALED=1: ...` and passes the shell's environment on. Any
+  other value is refused. `tools/check.sh` and the CI test step fail when it is set.
+- **The canary's runner wins.** `CARGO_TARGET_<HOST>_RUNNER` in the environment is preferred to
+  the config file's `cfg` runner; `tools/check.sh` sets it, so `cargo test` in a check still
+  sees the decoy HOME and the markers. Tools that run cargo themselves drop it
+  (`sealedCargoEnv`) and get the sealed runner.
+- **Second line:** `conn_support::spawn_guard::check` runs before each spawn that can start
+  `claude`, `codex`, `grok` or a host CLI (`conn-provider-support` process and probe,
+  the ACP probe, Codex text generation, `conn-vcs` process and discovery). In a test binary
+  (in a `deps` folder) of a debug build, it aborts with a message when the program resolves
+  outside the temp folder or the workspace. In a release build it is an empty inline
+  function; a debug server run by hand is not a test binary, so it is not affected.
+- **Proof:** the `sealed-run` check (`tools/sealed-run-check.mjs`, in `tools/check.sh` and
+  CI). Plain `cargo test -p conn-support --lib sealed_environment_report` with a decoy HOME, 8
+  marker variables, a decoy `SHELL` and 14 marker CLIs first on the outer `PATH`: the test
+  sees another HOME (gone after), no marker, no marker CLI on `PATH`, `GIT_CONFIG_GLOBAL=/dev/null`,
+  the network gate on, and `codex` not found; no marker CLI ran. With `CONN_UNSEALED=1` the
+  warning shows and the decoy reaches the test; `CONN_UNSEALED=yes` is refused; an
+  environment runner wins over the config. It also fails when `HOST_CLIS` in
+  `sealed-env.mjs` and `spawn_guard.rs` differ, or when our Rust code reads a variable that
+  the runner neither passes, sets nor drops on purpose (`RUN_DROPPED`). Without
+  `.cargo/config.toml` the check fails on 19 counts.
+- **The planted case:** `a_missing_binary_is_listed_with_an_error` as it was before its fix
+  (an instance that falls back to `codex` on `PATH`), with a recording `codex` first on the
+  outer `PATH`: under the runner the marker ran 0 times (the test fails: codex not found).
+  With `CONN_UNSEALED=1` the spawn guard aborted the test binary before the spawn
+  (`spawn guard: a test would start \`codex\` (...)`), the marker again ran 0 times.
+- **Counts:** `cargo test --workspace` by hand: 931 passed, 13 ignored before; 933 passed, 13
+  ignored after (the two new tests). The Claude and SDK host tests ran: no `skipped:` line
+  with `--nocapture`.
+- **Cost:** about 30 to 35 ms per test binary (once per binary, not per test), about 70 ms when
+  the shell's `PATH` has a large folder with a host CLI in it (the link folder); about 1 to 3 s
+  for the workspace's 40 test binaries.
+
+**What it cannot stop:** cargo itself (it reads `~/.gitconfig` through `HOME`, `~/.cargo`,
+and reaches crates.io; build scripts and proc macros run in cargo's environment); a binary run
+directly (`target/debug/conn-server`); a tool run with `node` by hand outside `tools/check.sh`
+(the tools seal their own children, but the tool process keeps the shell's environment); a
+connection that does not go through `conn_source_control::http` (the runner has no socket
+hook for Rust; Node processes get none outside the canary); a read of an absolute path that
+does not come from `HOME`; doc tests (the workspace has none; that rustdoc honours the runner
+is not checked). The runner needs `node` on `PATH`; without it no binary runs, never unsealed.
 ## Stop during a turn start, as the T3 server does it (2026-11-14)
 
 A Stop that arrives before the provider accepted the turn now ends the run at once, for every
