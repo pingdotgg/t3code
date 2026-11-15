@@ -181,6 +181,37 @@ describe("workspace area focus", () => {
     expect(document.activeElement).toBe(sideComposer.button);
     fixture.controller.move(-1);
     expect(document.activeElement).toBe(composer.button);
+
+    // A side chat in its own pane goes back to its main chat in one press from either area.
+    const original = useLayoutStore.getState().layout;
+    using _restore = { [Symbol.dispose]: () => useLayoutStore.setState({ layout: original }) };
+    const parentRef = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("parent"));
+    useLayoutStore
+      .getState()
+      .openTab({ kind: "chat", target: { kind: "server", threadRef: parentRef } });
+    const chatTab = selectFocusedTab(useLayoutStore.getState().layout)!;
+    useLayoutStore
+      .getState()
+      .openTab(
+        { kind: "surface", threadRef: parentRef, surfaceId: "side-chat:side" },
+        { placement: "new-column" },
+      );
+    const sideTab = selectFocusedTab(useLayoutStore.getState().layout)!;
+    const chatPane = fixture.append(`<div data-layout-tab-id="${chatTab.id}"></div>`);
+    fixture.area("conversation", 1, chatPane);
+    const chatComposer = fixture.area("composer", 2, chatPane);
+    const sidePane = fixture.append(`<div data-layout-tab-id="${sideTab.id}"></div>`);
+    const sidePanel = fixture.area("panel", 4, sidePane);
+    const sideChat = document.createElement("div");
+    sideChat.dataset.sideChatPane = "side";
+    sidePanel.element.append(sideChat);
+    const sideConversation = fixture.area("conversation", 1, sideChat);
+    const sideChatComposer = fixture.area("composer", 2, sideChat);
+    for (const start of [sideChatComposer.button, sideConversation.button]) {
+      start.focus();
+      fixture.controller.move(-1);
+      expect(document.activeElement).toBe(chatComposer.button);
+    }
   });
 
   it("skips hidden, inert, and maximized-away areas", () => {

@@ -1,5 +1,6 @@
 import type { AnyRouter } from "@tanstack/react-router";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { dismissContextMenu } from "../contextMenuFallback";
 import { findLayoutTab, selectFocusedTab } from "../layout/layoutModel";
 import { selectIntendedLayout, useLayoutStore } from "../layout/layoutStore";
@@ -45,6 +46,34 @@ function workspaceAreaKey(area: HTMLElement) {
 
 function paneId(element: Element | null | undefined): string | undefined {
   return element?.closest<HTMLElement>(PANE_SELECTOR)?.dataset.layoutTabId;
+}
+
+/** The message box of the main chat a side chat area belongs to, when that chat is on screen. */
+function sideChatParentComposer(area: HTMLElement, areas: HTMLElement[]) {
+  if (!area.closest("[data-side-chat-pane]")) return undefined;
+  const { layout } = useLayoutStore.getState();
+  const tabContent = (element: HTMLElement) => {
+    const id = paneId(element);
+    return id === undefined
+      ? undefined
+      : findLayoutTab(layout, (tab) => tab.id === id)?.tab.content;
+  };
+  const sideChat = tabContent(area);
+  if (sideChat?.kind !== "surface") return undefined;
+  const parentKey = scopedThreadKey(sideChat.threadRef);
+  return areas.find((candidate) => {
+    if (
+      candidate.dataset.workspaceArea !== "composer" ||
+      candidate.closest("[data-side-chat-pane]")
+    )
+      return false;
+    const content = tabContent(candidate);
+    return (
+      content?.kind === "chat" &&
+      content.target.kind === "server" &&
+      scopedThreadKey(content.target.threadRef) === parentKey
+    );
+  });
 }
 
 function claimWorkspacePane(area: HTMLElement) {
@@ -408,6 +437,12 @@ export function createWorkspaceFocusController(doc: Document) {
       exact === -1
         ? areas.findIndex((area) => !fromArea && workspaceAreaKey(area) === currentKey)
         : exact;
+    // Shift+F6 leaves a side chat for its main chat's message box in one press, as on main.
+    const parentComposer =
+      direction === -1 && current !== -1
+        ? sideChatParentComposer(areas[current]!, areas)
+        : undefined;
+    if (parentComposer && focusArea(parentComposer, true, false)) return true;
     const index =
       current === -1
         ? direction === 1
@@ -590,6 +625,15 @@ export function moveWorkspaceFocus(direction: 1 | -1, fromArea?: string): boolea
 export function requestWorkspaceFocus(target: WorkspaceFocusTarget) {
   focusRequestVersion++;
   controller?.request(target);
+}
+
+/** Puts the keyboard in the message box of the side chat a surface tab shows. */
+export function requestSideChatComposerFocus(threadRef: ScopedThreadRef, surfaceId: string) {
+  requestWorkspaceFocus({
+    area: "panel",
+    surface: { threadKey: scopedThreadKey(threadRef), surfaceId },
+    selector: `[data-side-chat-pane="${CSS.escape(surfaceId.slice("side-chat:".length))}"] [data-workspace-area="composer"] [contenteditable="true"]`,
+  });
 }
 
 export function requestWorkspaceContentFocus() {
