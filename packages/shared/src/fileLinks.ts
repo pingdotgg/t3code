@@ -26,10 +26,14 @@ export function parseFileUrlHref(
     if (parsed.protocol.toLowerCase() !== "file:") return null;
 
     const host = parsed.hostname.toLowerCase();
-    // URL parsing canonicalizes numeric hosts and internationalized names.
-    const localHost = localHostname
-      ? new URL(`file://${localHostname}/`).hostname.toLowerCase()
-      : "";
+    let localHost = "";
+    if (host && localHostname) {
+      try {
+        localHost = new URL(`file://${encodeURIComponent(localHostname)}/`).hostname;
+      } catch {
+        // System hostnames need not be valid URL authorities; they cannot match a file URI.
+      }
+    }
     const uncHostname = host === "localhost" || host === localHost ? "" : parsed.hostname;
     const path = uncHostname
       ? `\\\\${uncHostname}${parsed.pathname.replaceAll("/", "\\")}`
