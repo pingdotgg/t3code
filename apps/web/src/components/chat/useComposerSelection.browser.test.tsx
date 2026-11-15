@@ -85,7 +85,11 @@ function Picker(props: {
     draftThread: null,
     activeThread: props.thread,
     activeRuntime: props.runtime,
-    activeProjectSettings: { settings: { newWorktreesStartFromOrigin: false } },
+    activeProjectSettings: {
+      settings: { newWorktreesStartFromOrigin: false, newWorktreesBaseBranch: "" },
+    },
+    envMode: "local",
+    setPendingServerThreadBranch: () => {},
     settings: DEFAULT_UNIFIED_SETTINGS,
     providerStatuses: providers,
     lockedProvider: null,
