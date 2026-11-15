@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import {
   createThreadSearchResultsAtomFamily,
+  isThreadSearchUnreachable,
   makeThreadSearchKey,
   visibleThreadSearch,
   type EnvironmentThreadSearchMatch,
@@ -111,6 +112,8 @@ export function useThreadSearch(
   environmentIds: ReadonlyArray<EnvironmentId>,
   query: string,
   scope: ThreadSearchScope = {},
+  /** Environments the search covers before leaving out disconnected ones. */
+  environmentsInScope?: number,
 ): {
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
   readonly query: string;
@@ -171,7 +174,15 @@ export function useThreadSearch(
     matches: visible.matches,
     query: visible.query,
     isPending,
-    failed: settledQuery !== null && result.failed,
+    failed:
+      (settledQuery !== null && result.failed) ||
+      (normalizedQuery === debouncedQuery &&
+        isThreadSearchUnreachable(
+          normalizedQuery,
+          scope,
+          environmentIds.length,
+          environmentsInScope ?? environmentIds.length,
+        )),
     retry: () => {
       if (searchKey !== null) appAtomRegistry.refresh(threadSearch.results(searchKey));
     },

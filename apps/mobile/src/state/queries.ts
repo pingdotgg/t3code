@@ -21,6 +21,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   createThreadSearchResultsAtomFamily,
+  isThreadSearchUnreachable,
   makeThreadSearchKey,
   visibleThreadSearch,
   type EnvironmentThreadSearchMatch,
@@ -219,6 +220,8 @@ export function useThreadSearch(
   environmentIds: ReadonlyArray<EnvironmentId>,
   query: string,
   scope: ThreadSearchScope = {},
+  /** Environments the search covers before leaving out disconnected ones. */
+  environmentsInScope?: number,
 ): {
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
   /** The query `matches` are for, which lags the typed one while a search runs. */
@@ -280,7 +283,15 @@ export function useThreadSearch(
     matches: visible.matches,
     query: visible.query,
     isPending,
-    failed: settledQuery !== null && result.failed,
+    failed:
+      (settledQuery !== null && result.failed) ||
+      (normalizedQuery === debouncedQuery &&
+        isThreadSearchUnreachable(
+          normalizedQuery,
+          scope,
+          environmentIds.length,
+          environmentsInScope ?? environmentIds.length,
+        )),
     retry: () => {
       if (searchKey !== null) appAtomRegistry.refresh(threadSearch.results(searchKey));
     },

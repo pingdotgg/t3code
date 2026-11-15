@@ -346,6 +346,7 @@ export function HomeScreen(props: HomeScreenProps) {
     v2ScopedProjectGroup === null
       ? {}
       : { projectIds: v2ScopedProjectGroup.projectRefs.map((ref) => ref.projectId) },
+    props.environments.length,
   );
   const threadSearchMatchByKey = useThreadListSearchMatches(props.threads, threadSearch);
   const v2ProjectTitleByProjectKey = new Map(
@@ -705,9 +706,7 @@ export function HomeScreen(props: HomeScreenProps) {
         detail={`Looking for "${props.searchQuery}" in messages.`}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
-    ) : hasSearchQuery &&
-      (threadSearch.failed ||
-        (searchEnvironmentIds.length === 0 && props.environments.length > 0)) ? (
+    ) : hasSearchQuery && threadSearch.failed ? (
       <EmptyState
         title="Search failed"
         detail={`Couldn't reach the server to search messages for "${props.searchQuery}".`}

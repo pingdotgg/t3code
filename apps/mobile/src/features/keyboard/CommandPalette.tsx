@@ -267,6 +267,7 @@ export function CommandPalette(props: {
     searchEnvironmentIds,
     query.startsWith(">") ? "" : query,
     environmentLabels === undefined ? {} : { environmentLabels },
+    environments.length,
   );
   const serverConfigs = useServerConfigs();
   const startTriage = useStartTriage();

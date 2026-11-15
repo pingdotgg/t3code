@@ -14,6 +14,7 @@ import {
   claimThreadOpen,
   nextShownOrder,
   createThreadSearchResultsAtomFamily,
+  isThreadSearchUnreachable,
   makeThreadSearchKey,
   threadSearchMatchKey,
   threadSearchSubject,
@@ -138,6 +139,16 @@ it("says a search failed when no environment answered, so it does not read as no
     unmount();
     registry.dispose();
   }
+});
+
+it("says a message search failed when its only host dropped, not when nothing is in scope", () => {
+  // The host dropped mid-search: callers leave it out, so nothing is searched.
+  expect(isThreadSearchUnreachable("headlamp", {}, 0, 1)).toBe(true);
+  expect(isThreadSearchUnreachable("headlamp", {}, 1, 2)).toBe(false);
+  expect(isThreadSearchUnreachable("headlamp", {}, 0, 0)).toBe(false);
+  // Queries that search no messages lose nothing to a dropped host.
+  expect(isThreadSearchUnreachable("he", {}, 0, 1)).toBe(false);
+  expect(isThreadSearchUnreachable("headlamp", { titlesOnly: true }, 0, 1)).toBe(false);
 });
 
 it("asks environments that omit older settled threads for their rows, with the caller's scope", () => {

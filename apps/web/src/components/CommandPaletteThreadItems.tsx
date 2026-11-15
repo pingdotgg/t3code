@@ -86,6 +86,7 @@ function useConnectedThreadSearch(query: string) {
     environmentIds,
     query,
     environmentLabels === undefined ? {} : { environmentLabels },
+    environments.length,
   );
 }
 

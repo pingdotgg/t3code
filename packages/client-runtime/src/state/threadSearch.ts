@@ -87,6 +87,24 @@ const decodeThreadSearchKey = Schema.decodeUnknownOption(ThreadSearchKey);
 const EMPTY_SEARCH_ROWS: ThreadSearchResultsState["rows"] = [];
 const EMPTY_READS: ReadonlyArray<OrchestrationV2ThreadFamily> = [];
 
+/**
+ * Whether a message search could not be sent: its scope holds environments but none is connected,
+ * as when the only host drops mid-search. Unlike a search that found nothing.
+ */
+export function isThreadSearchUnreachable(
+  query: string,
+  scope: ThreadSearchScope,
+  connectedEnvironmentCount: number,
+  environmentsInScope: number,
+): boolean {
+  return (
+    connectedEnvironmentCount === 0 &&
+    environmentsInScope > 0 &&
+    scope.titlesOnly !== true &&
+    messageSearchTokens(query).long.length > 0
+  );
+}
+
 export function makeThreadSearchKey(
   environmentIds: ReadonlyArray<EnvironmentId>,
   query: string,

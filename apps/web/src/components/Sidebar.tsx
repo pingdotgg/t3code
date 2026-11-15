@@ -1191,6 +1191,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     scopedProjectGroups.length === 0
       ? {}
       : { projectIds: scopedProjectRefs.map((projectRef) => projectRef.projectId) },
+    environmentLabelById.size,
   );
   const routeDraftIdForRows = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
   const visibleDraftSessionCount = useComposerDraftStore((store) => {
@@ -3263,9 +3264,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   </ul>
                 </DndContext>
               </TooltipProvider>
-            ) : !threadSearch.isPending &&
-              (threadSearch.failed ||
-                (connectedEnvironmentIds.length === 0 && environmentLabelById.size > 0)) ? (
+            ) : !threadSearch.isPending && threadSearch.failed ? (
               <div
                 role="status"
                 className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
