@@ -22,6 +22,8 @@ export async function openThreadWithManyFiles(t3: T3) {
 
 /** Types a fourteen-line draft, then opens the `@` file suggestions at its end. */
 export async function openFileSuggestionsUnderTallDraft(browser: Browser, screen: Screen) {
+  // A phone-width window collapses the composer until it is tapped.
+  await screen.getByRole("button", "Expand composer").tap();
   await screen.getByRole("textbox").tap();
   for (let line = 1; line <= 14; line += 1) {
     await browser.keyboard.type(`line ${line}`);
