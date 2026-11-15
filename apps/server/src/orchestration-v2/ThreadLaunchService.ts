@@ -628,6 +628,7 @@ const make = Effect.gen(function* () {
             : null;
         const shouldFetch = remote !== null;
         yield* setupTracker.stageStatus(threadId, "fetch", shouldFetch ? "running" : "skipped");
+        let fetchedBase = false;
         if (remote !== null) {
           const remoteBase = yield* git
             .fetchWorktreeBaseCommit({
@@ -639,12 +640,14 @@ const make = Effect.gen(function* () {
           if (remoteBase !== null) {
             startRef = remoteBase.commitSha;
             baseRefName = `refs/remotes/${remoteBase.remoteRefName}`;
+            fetchedBase = true;
           }
         }
         if (shouldFetch) yield* setupTracker.stageStatus(threadId, "fetch", "done");
         // `:/text` bases are commit searches, not refs; `hasCommit` treats the appended
         // `^{commit}` as part of the pattern (same guard as checkWorktreeBase).
         const recordedBaseResolves =
+          fetchedBase ||
           startRef.startsWith(":") ||
           (yield* git
             .hasCommit({
