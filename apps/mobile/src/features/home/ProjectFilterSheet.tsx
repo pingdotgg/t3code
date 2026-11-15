@@ -1,5 +1,6 @@
+import { LegendList } from "@legendapp/list/react-native";
 import { useMemo, useRef, useState } from "react";
-import { FlatList, View, type TextInputInstance } from "react-native";
+import { View, type TextInputInstance } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ProjectFavicon } from "../../components/ProjectFavicon";
@@ -29,8 +30,9 @@ export function ProjectFilterSheet(props: {
   };
   return (
     <Sheet title="Filter by project" onClose={props.onClose}>
-      <FlatList
-        renderScrollComponent={(scrollProps) => <NativeScrollView {...scrollProps} />}
+      <LegendList
+        renderScrollComponent={NativeScrollView}
+        extraData={{ ...props, count: projects.length }}
         data={projects}
         keyExtractor={(item) => item.key}
         contentInsetAdjustmentBehavior="automatic"
