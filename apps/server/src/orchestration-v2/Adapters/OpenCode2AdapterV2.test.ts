@@ -5418,6 +5418,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ],
           {
             attachmentsDir,
+            // Image-resolution concurrency tests require a model that accepts images.
+            modelInputs: ["text", "image"],
             replayGate: gate,
             onPrompt: (input) => prompts.push(input),
             ...(lookup === "text"
