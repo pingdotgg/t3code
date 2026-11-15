@@ -608,6 +608,7 @@ function TerminalSessionViewport({
   const linkLocationFor = useEffectEvent(async (text: string): Promise<TerminalLinkLocation> => {
     const pid = readTerminalSession().pid;
     let shellCwd = cwd;
+    // Keep the platform skip aligned with Linux-only discovery in server terminal/foregroundCwd.ts.
     if (
       pid !== null &&
       !["darwin", "windows"].includes(serverConfig?.environment.platform.os ?? "unknown") &&
