@@ -379,14 +379,15 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         origin: hubOrigin,
         http,
         run,
-        // Keep probing negative reports so an SDK installed after connecting is still found.
-        androidAvailable: Effect.suspend(() =>
-          summary.platforms.some((p) => p.platform === "android" && p.available)
-            ? Effect.succeed(true)
-            : platformAvailability("android").pipe(
-                Effect.map((availability) => availability.available),
-              ),
-        ),
+        // Keep probing negative reports so tooling installed after connecting is still found.
+        platformAvailable: (platform) =>
+          Effect.suspend(() =>
+            summary.platforms.some((p) => p.platform === platform && p.available)
+              ? Effect.succeed(true)
+              : platformAvailability(platform).pipe(
+                  Effect.map((availability) => availability.available),
+                ),
+          ),
       }),
       ...(remote.daemonPort !== undefined &&
       remote.token !== undefined &&
@@ -472,13 +473,21 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     return next;
   });
 
+  const closeConnection = Effect.suspend(() => {
+    const failedScope = connectionScope;
+    connectionScope = null;
+    ready = null;
+    return failedScope ? Scope.close(failedScope, Exit.void) : Effect.void;
+  });
+
   const connect = Effect.fn("SshDeviceHost.connect")(function* () {
     for (let attempt = 0; ; attempt++) {
-      const result = yield* connectOnce().pipe(Effect.result);
+      const result = yield* connectOnce().pipe(
+        Effect.onInterrupt(() => closeConnection),
+        Effect.result,
+      );
       if (result._tag === "Success") return result.success;
-      const failedScope = connectionScope;
-      connectionScope = null;
-      if (failedScope) yield* Scope.close(failedScope, Exit.void);
+      yield* closeConnection;
       // SSH binds after the reservation is released, so a competing bind needs fresh ports.
       if (
         attempt >= 2 ||

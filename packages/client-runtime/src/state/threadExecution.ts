@@ -9,13 +9,16 @@ import {
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   latestProviderTurnForAttempt,
+  PROVIDER_DISPLAY_NAMES,
   type ModelSelection,
   type OrchestrationV2NotificationSource,
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderGoal,
+  type OrchestrationV2ProviderSession,
   type ServerProvider,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2LimitRecovery,
   type OrchestrationV2ThreadProjection,
   orchestrationV2RunWorkStartedAt,
   type RunId,
@@ -41,12 +44,54 @@ import {
   type ThreadRuntimeSummary,
   type ThreadStructure,
   type ThreadStructureRuntime,
+  type ThreadStructureTurnItem,
 } from "./models.ts";
 import { commandDisplayText } from "../work-log/commandLabel.ts";
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
+// Preparing runs show their workspace setup instead.
+const PROVIDER_STARTING_RUN_STATUSES = new Set(["starting", "running"]);
+
+const EMPTY_EXTENSION_STATUSES: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]> =
+  [];
+
+/** Only the selected provider's current session can supply transient extension status. */
+export function deriveProviderExtensionStatuses(
+  projection:
+    | (Pick<ThreadStructure, "thread"> & {
+        readonly providerThreads: ReadonlyArray<
+          Pick<
+            ThreadStructure["providerThreads"][number],
+            "id" | "providerSessionId" | "providerInstanceId"
+          >
+        >;
+        readonly providerSessions: ReadonlyArray<
+          Pick<
+            OrchestrationV2ProviderSession,
+            "id" | "providerInstanceId" | "status" | "extensionStatuses"
+          >
+        >;
+      })
+    | null,
+) {
+  if (projection === null) return EMPTY_EXTENSION_STATUSES;
+  const instanceId = projection.thread.modelSelection.instanceId;
+  const activeThread = projection.providerThreads.find(
+    (thread) => thread.id === projection.thread.activeProviderThreadId,
+  );
+  if (activeThread !== undefined && activeThread.providerInstanceId !== instanceId)
+    return EMPTY_EXTENSION_STATUSES;
+  const session = projection.providerSessions.findLast(
+    (session) =>
+      session.providerInstanceId === instanceId &&
+      (activeThread === undefined || session.id === activeThread.providerSessionId),
+  );
+  return session === undefined || session.status === "stopped"
+    ? EMPTY_EXTENSION_STATUSES
+    : (session.extensionStatuses ?? EMPTY_EXTENSION_STATUSES);
+}
 
 function latestMatchingRun(
   projection: ThreadStructure,
@@ -59,6 +104,17 @@ function latestMatchingRun(
         : latest,
     null,
   );
+}
+
+function providerStartingLabel(
+  projection: ThreadStructure,
+  run: OrchestrationV2ThreadProjection["runs"][number],
+): string {
+  const driver = projection.providerSessions.findLast(
+    (session) => session.providerInstanceId === run.providerInstanceId,
+  )?.driver;
+  const name = driver === undefined ? undefined : PROVIDER_DISPLAY_NAMES[driver];
+  return name === undefined ? "Starting" : `Starting ${name}`;
 }
 
 function summarizeThreadRun(
@@ -78,9 +134,15 @@ function summarizeThreadRun(
       projection.messages.findLast(
         (message) => message.runId === run.id && message.role === "assistant",
       )?.id ?? null,
-    ...(turnStatus === undefined || turnStatus === "pending" || turnStatus === "running"
-      ? {}
-      : { turnEnded: true }),
+    // A run counts as running before its provider opens; until a turn appears,
+    // the provider can still be launching for minutes.
+    ...(turnStatus === undefined
+      ? PROVIDER_STARTING_RUN_STATUSES.has(run.status)
+        ? { providerStartingLabel: providerStartingLabel(projection, run) }
+        : {}
+      : turnStatus === "pending" || turnStatus === "running"
+        ? {}
+        : { turnEnded: true }),
     ...(run.sourcePlanRef === undefined ? {} : { sourcePlanRef: run.sourcePlanRef }),
   };
 }
@@ -257,6 +319,19 @@ export function deriveResumableRunId(
     : null;
 }
 
+/**
+ * Whether Resume can start: the run's continuation, else the held queue. The server refuses that
+ * continuation while any request is pending, so the queue must not be released in its place.
+ */
+export function canResumeThread(
+  projection: Pick<ThreadStructure, "runtimeRequests">,
+  resumableRunId: RunId | null,
+  queueHeld: boolean,
+): boolean {
+  if (resumableRunId === null) return queueHeld;
+  return !projection.runtimeRequests.some((request) => request.status === "pending");
+}
+
 export function deriveThreadRuntime(
   projection: ThreadStructure & Pick<OrchestrationV2ThreadProjection, "updatedAt">,
 ): ThreadRuntimeSummary | null {
@@ -291,13 +366,7 @@ export function deriveThreadStructureRuntime(
     }),
   );
   // A pull request watch can hold a thread that never ran.
-  if (
-    latestRun === null &&
-    projection.thread.activeProviderThreadId === null &&
-    !backgroundWorkHoldsRun
-  ) {
-    return null;
-  }
+  if (latestRun === null && !backgroundWorkHoldsRun) return null;
   const activeRunId =
     latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
   return {
@@ -318,6 +387,100 @@ export function deriveThreadStructureRuntime(
       providerSession?.lastError ?? null,
     ),
   };
+}
+
+export interface UsageLimitNoticeRows {
+  readonly itemIds: ReadonlySet<ThreadStructureTurnItem["id"]>;
+  /** Hidden only when its text reads as the provider's limit message; see PROVIDER_LIMIT_NOTICE. */
+  readonly providerNoticeItemId: ThreadStructureTurnItem["id"] | null;
+}
+
+// Claude Code's own limit messages, such as "You've hit your 5-hour limit · resets 7:10am".
+const PROVIDER_LIMIT_NOTICE =
+  /^(?:You[’']ve hit your (?:(?:5-hour|session|weekly|usage) )?limit|You[’']re out of extra usage|Claude AI usage limit reached)(?: · resets (?:[1-9]|1[0-2])(?::[0-5]\d)?(?:am|pm)(?: \([A-Za-z0-9_+-]+(?:\/[A-Za-z0-9_+-]+)*\))?)?\.?$/i;
+
+/**
+ * The timeline rows that repeat a usage-limit pause while its recovery notice shows: the run's
+ * limit failure, Claude's pause notices, and the provider's own limit message. They return to
+ * history once another run executes.
+ */
+export function deriveUsageLimitNoticeRows(
+  projection: ThreadStructure,
+): UsageLimitNoticeRows | null {
+  const runtime = deriveThreadStructureRuntime(projection);
+  const run = presentedLatestRun(projection);
+  if (runtime?.status !== "failed" || runtime.lastErrorClass !== "usage_limit" || run === null) {
+    return null;
+  }
+  const failure = latestRootProviderFailure(run, projection.turnItems);
+  const itemIds = new Set<ThreadStructureTurnItem["id"]>();
+  let failedProviderTurnId: ThreadStructureTurnItem["providerTurnId"] = null;
+  for (const item of projection.turnItems) {
+    if (item.runId !== run.id) continue;
+    if (
+      item.type === "error" &&
+      item.status === "failed" &&
+      item.nodeId === run.rootNodeId &&
+      item.failure.class === "usage_limit"
+    ) {
+      itemIds.add(item.id);
+      if (item.failure === failure) failedProviderTurnId = item.providerTurnId;
+    }
+  }
+  let providerNotice: ThreadStructureTurnItem | null = null;
+  if (failedProviderTurnId !== null) {
+    for (const item of projection.turnItems) {
+      if (item.runId !== run.id || item.providerTurnId !== failedProviderTurnId) continue;
+      if (
+        item.type === "system_notice" &&
+        item.nodeId === run.rootNodeId &&
+        item.parentItemId === null &&
+        item.nativeItemRef?.driver === "claudeAgent" &&
+        item.nativeItemRef.nativeId?.startsWith(`usage-limit:${failedProviderTurnId}:`) === true
+      ) {
+        itemIds.add(item.id);
+      }
+      if (
+        item.type === "assistant_message" &&
+        item.parentItemId === null &&
+        (providerNotice === null || item.ordinal > providerNotice.ordinal)
+      ) {
+        providerNotice = item;
+      }
+    }
+  }
+  return { itemIds, providerNoticeItemId: providerNotice?.id ?? null };
+}
+
+export function withoutUsageLimitNoticeRows<
+  Row extends OrchestrationV2ThreadProjection["visibleTurnItems"][number],
+>(rows: ReadonlyArray<Row>, notice: UsageLimitNoticeRows | null): ReadonlyArray<Row> {
+  if (notice === null) return rows;
+  const hidden = ({ item }: Row) =>
+    notice.itemIds.has(item.id) ||
+    (item.id === notice.providerNoticeItemId &&
+      item.type === "assistant_message" &&
+      PROVIDER_LIMIT_NOTICE.test(item.text.trim()));
+  return rows.some(hidden) ? rows.filter((row) => !hidden(row)) : rows;
+}
+
+/** Whether a usage-limit recovery holds the thread's snooze, so its notice offers Wake now. */
+export function limitRecoveryOwnsSnooze(input: {
+  readonly runId: RunId | null | undefined;
+  readonly resetAt: string | null | undefined;
+  readonly recovery: OrchestrationV2LimitRecovery | null | undefined;
+  readonly snoozedUntil: string | null | undefined;
+}): boolean {
+  const { runId, resetAt, recovery, snoozedUntil } = input;
+  return (
+    recovery?.snooze === true &&
+    runId != null &&
+    recovery.runId === runId &&
+    resetAt != null &&
+    recovery.resetAt === resetAt &&
+    snoozedUntil != null &&
+    Date.parse(snoozedUntil) === Date.parse(resetAt)
+  );
 }
 
 export function threadRuntimeHasInterruptibleRun(
