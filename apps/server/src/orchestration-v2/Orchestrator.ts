@@ -15397,8 +15397,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     // The run-end release can lag behind a new send; start the queue first so the send waits behind it.
+    // A restart continuation resumes the ended run, so it must not be overtaken by the queue.
     if (
       command.type === "message.dispatch" &&
+      command.restartContinuationOfRunId === undefined &&
       (command.dispatchMode.type === "start_immediately" ||
         command.dispatchMode.type === "queue_after_active" ||
         command.dispatchMode.type === "defer_start")
