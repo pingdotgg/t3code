@@ -130,6 +130,7 @@ export function SentMessageTimelineRow({
       >
         <ChatMarkdown
           text={row.text}
+          className="font-reply text-(length:--font-size-reply,var(--text-sm)) leading-(--leading-reply)"
           cwd={ctx.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
           lineBreaks={shouldPreserveAssistantLineBreaks(row.text)}
