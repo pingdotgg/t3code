@@ -6538,6 +6538,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       readOnly: false,
     },
     {
+      case: "a deny rule for a tool on an unrelated server",
+      rules: [{ behavior: "deny", rule: "mcp__buildkite__create_build" }],
+      called: true,
+      readOnly: true,
+    },
+    {
       case: "an ask rule naming another tool, which may be a server-wide alias rule",
       rules: [{ behavior: "ask", rule: "mcp__probe_server__refresh" }],
       called: true,
