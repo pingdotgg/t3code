@@ -24,6 +24,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  findPosixLauncher,
   launcherOwnsVersionsDir,
   pinnedRuntimeCommand,
   isUnpublishedRelease,
@@ -34,6 +35,7 @@ import {
   recordPinnedRuntimeLauncher,
   resolveLauncherPath,
   windowsShimTarget,
+  writePosixLauncher,
 } from "../cloud/pinnedRuntime.ts";
 import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -46,6 +48,7 @@ import * as CliService from "./service.ts";
 
 export class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpdateError", {
   reason: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
     return this.reason;
@@ -179,20 +182,20 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     return Option.some(shimPath);
   }
 
-  const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
-  if (Option.isNone(linkTarget)) return Option.none<string>();
-  const resolvedTarget = path.resolve(path.dirname(input.launchedAs), linkTarget.value);
-  if (!ownsTarget(resolvedTarget)) return Option.none<string>();
-  yield* remember(input.launchedAs);
-  const tempLink = `${input.launchedAs}.${process.pid}.tmp`;
-  yield* fs.symlink(input.targetEntryPath, tempLink).pipe(
-    Effect.andThen(fs.rename(tempLink, input.launchedAs)),
+  const launcher = yield* findPosixLauncher({ launchedAs: input.launchedAs, versionsDir });
+  if (launcher === undefined) return Option.none<string>();
+  yield* remember(launcher);
+  yield* writePosixLauncher({
+    launcher,
+    executable: input.targetEntryPath,
+    exclusive: false,
+  }).pipe(
     Effect.mapError(
-      () =>
-        new CliUpdateError({ reason: `Could not repoint the t3 launcher at ${input.launchedAs}.` }),
+      (cause) =>
+        new CliUpdateError({ reason: `Could not repoint the t3 launcher at ${launcher}.`, cause }),
     ),
   );
-  return Option.some(input.launchedAs);
+  return Option.some(launcher);
 });
 
 /** Windows executables see their own path, so find the installer shim by matching t3.cmd targets on PATH. */

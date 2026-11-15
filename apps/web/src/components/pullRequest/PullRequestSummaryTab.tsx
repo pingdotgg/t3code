@@ -34,6 +34,8 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { RelativeTime } from "~/components/RelativeTime";
+import { useClientSettings } from "~/hooks/useSettings";
+import { formatFullTimestamp } from "~/timestampFormat";
 
 import { Button } from "../ui/button";
 import { PullRequestEditButton } from "./PullRequestEditButton";
@@ -95,6 +97,7 @@ import {
   pullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
 import { PullRequestReactionBar } from "./PullRequestReactions";
+import { canReactPullRequestComment } from "@t3tools/client-runtime/pull-request-reactions";
 import { PullRequestResolveThreadButton } from "./PullRequestResolveThreadButton";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
@@ -110,6 +113,7 @@ function CommentIdentity({
   comment: PullRequestComment;
   detail: PullRequestDetailView;
 }) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const actor = comment.author;
   const profileUrl = actor
     ? sourceControlClients.get(detail.provider).authorProfileUrl(actor.login, detail.url)
@@ -137,7 +141,7 @@ function CommentIdentity({
           </time>
         </TooltipTrigger>
         <TooltipPopup>
-          {new Date(comment.createdAt).toLocaleString()}
+          {formatFullTimestamp(comment.createdAt, timestampFormat)}
           {comment.url ? " · Open comment on host" : ""}
         </TooltipPopup>
       </Tooltip>
@@ -692,7 +696,7 @@ export function PullRequestSummaryTab({
     <PullRequestReactionBar
       className="ml-auto justify-end"
       reactions={comment.reactions ?? []}
-      canReact={detail.capabilities.reactions === true}
+      canReact={canReactPullRequestComment(detail, comment)}
       subjectId={comment.id}
       environmentId={environmentId}
       reference={reference}

@@ -17,6 +17,10 @@ import {
 } from "./mcpApp.ts";
 import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
 
+export const SEND_TO_USER_TOOL_NAME = "send_to_user";
+// 4,000 UTF-16 units stay inside MAX_PARSED_BYTES even as 3-byte characters.
+export const SEND_TO_USER_MAX_LENGTH = 4_000;
+
 const MAX_PARSED_BYTES = 16_384;
 const MAX_METADATA_BYTES = 8_192;
 const MAX_ID_LENGTH = 256;
@@ -50,6 +54,7 @@ interface CompactToolOutput {
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
   linkedCount?: number;
   unlinkedCount?: number;
+  sentMessage?: string;
 }
 
 function readResult(value: unknown, budget: ResultReadBudget, depth = 0): ResultEnvelope {
@@ -134,6 +139,13 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
       const count = data[key];
       if (typeof count === "number" && Number.isSafeInteger(count)) output[key] = count;
     }
+    if (
+      typeof data.sentMessage === "string" &&
+      data.sentMessage.trim() !== "" &&
+      data.sentMessage.length <= SEND_TO_USER_MAX_LENGTH
+    ) {
+      output.sentMessage = data.sentMessage;
+    }
     const htmlRender = readHtmlRenderReference(data.htmlRender);
     if (htmlRender !== undefined) output.htmlRender = htmlRender;
     const mcpApp = readMcpAppReference(data[MCP_APP_OUTPUT_KEY]);
@@ -202,6 +214,21 @@ export function htmlRenderFromToolItem(item: {
   }
   const output = compactDynamicToolOutput(item.output);
   return output?.isError ? undefined : output?.htmlRender;
+}
+
+/** The text `send_to_user` showed the user, which clients render as the agent's own words. */
+export function sentMessageFromToolItem(item: {
+  readonly toolName: string | null | undefined;
+  readonly output?: unknown;
+}): string | undefined {
+  if (
+    item.toolName !== OPENCODE_CODE_MODE_TOOL_NAME &&
+    resolveT3McpToolId(item.toolName) !== SEND_TO_USER_TOOL_NAME
+  ) {
+    return undefined;
+  }
+  const output = compactDynamicToolOutput(item.output);
+  return output?.isError ? undefined : output?.sentMessage;
 }
 
 /** The thread-owned file `preview_recording_stop` stored for the agent. */
@@ -299,10 +326,15 @@ export function mcpToolResultOutput(result: {
   readonly content?: unknown;
   readonly structuredContent?: unknown;
 }): unknown {
-  if (result.structuredContent != null && toolOutputImages(result.content).length > 0) {
-    return { content: result.content, structuredContent: result.structuredContent };
+  const structuredContent =
+    (Array.isArray(result.structuredContent) || Predicate.isObject(result.structuredContent)) &&
+    Object.keys(result.structuredContent).length === 0
+      ? undefined
+      : result.structuredContent;
+  if (structuredContent != null && toolOutputImages(result.content).length > 0) {
+    return { content: result.content, structuredContent };
   }
-  return result.structuredContent ?? result.content;
+  return structuredContent ?? result.content;
 }
 
 export function omitToolOutputImageData(value: unknown): unknown {

@@ -2004,8 +2004,9 @@ describe("orchestration v2 provider switching", () => {
         yield* Deferred.await(started);
         yield* Fiber.join(toolCallRunning);
 
-        const runFailed = yield* awaitEvent(
-          (event) => event.type === "run.updated" && event.payload.status === "failed",
+        // The handoff itself is not a failure: the run completes once the session closes.
+        const runSettled = yield* awaitEvent(
+          (event) => event.type === "run.updated" && event.payload.status === "waiting",
         );
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
@@ -2016,9 +2017,11 @@ describe("orchestration v2 provider switching", () => {
           expectedWorktreePath: null,
         });
         yield* worker.drain();
-        yield* Fiber.join(runFailed);
+        yield* Fiber.join(runSettled);
+        yield* worker.drain();
 
         const projection = yield* orchestrator.getThreadProjection(scenarioThreadId);
+        assert.equal(projection.runs.at(-1)?.status, "completed");
         const toolCall = projection.turnItems.find((item) => item.id === toolCallId);
         assert.equal(toolCall?.status, "interrupted");
         assert.isNotNull(toolCall?.completedAt);
@@ -3149,6 +3152,142 @@ describe("orchestration v2 provider switching", () => {
     }),
   );
 
+  // regression: a session kept by a queued hand-off is probed when a later change detaches it
+  it.live(
+    "refuses a later instance change while a retained hand-off session runs background work",
+    () =>
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("retained-session-background");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const codexBackgroundWork = yield* Ref.make(true);
+        const firstStarted = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const threadId = ThreadId.make("thread:retained-session-background");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const send = (ordinal: number, modelSelection: ModelSelection) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:retained-session-background:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`message:retained-session-background:${ordinal}`),
+              text: `Prompt ${ordinal}`,
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "queue_after_active" },
+            });
+          const selectGrok = (attempt: string) =>
+            orchestrator.dispatch({
+              type: "thread.model-selection.set",
+              commandId: CommandId.make(`command:retained-session-background:select:${attempt}`),
+              threadId,
+              modelSelection: GROK_MODEL_SELECTION,
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:retained-session-background:create"),
+            threadId,
+            projectId: ProjectId.make("project:retained-session-background"),
+            title: "Retained session with background work",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* send(1, CODEX_MODEL_SELECTION);
+          yield* Deferred.await(firstStarted);
+          yield* send(2, CLAUDE_MODEL_SELECTION);
+          yield* Deferred.succeed(releaseFirst, undefined);
+          yield* worker.drain();
+          const afterHandoff = yield* waitForIdle(threadId);
+          assert.deepEqual(
+            afterHandoff.runs.map((run) => [run.providerInstanceId, run.status]),
+            [
+              [CODEX_MODEL_SELECTION.instanceId, "completed"],
+              [CLAUDE_MODEL_SELECTION.instanceId, "completed"],
+            ],
+          );
+          // The queued hand-off kept the busy Codex session attached.
+          const codexSession = afterHandoff.providerSessions.find(
+            (session) => session.providerInstanceId === CODEX_MODEL_SELECTION.instanceId,
+          );
+          assert.equal(codexSession?.status, "ready");
+
+          const refused = yield* selectGrok("busy").pipe(Effect.flip);
+          assert.include(String(refused.cause), "still running background agents or commands");
+          yield* worker.drain();
+          const unchanged = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(unchanged.thread.providerInstanceId, CLAUDE_MODEL_SELECTION.instanceId);
+          assert.include(
+            unchanged.providerSessions.map((session) => session.id),
+            codexSession!.id,
+          );
+
+          yield* Ref.set(codexBackgroundWork, false);
+          yield* selectGrok("idle");
+          yield* worker.drain();
+          const switched = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(switched.thread.providerInstanceId, GROK_MODEL_SELECTION.instanceId);
+          assert.notInclude(
+            switched.providerSessions.map((session) => session.id),
+            codexSession!.id,
+          );
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "retained-session-background",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              ProviderAdapterRegistry.layerFromAdapters([
+                makeTestAdapter({
+                  instanceId: CODEX_MODEL_SELECTION.instanceId,
+                  driver: CODEX_DRIVER,
+                  capabilities: CodexProviderCapabilitiesV2,
+                  modelSelection: CODEX_MODEL_SELECTION,
+                  responseByRunOrdinal: { 1: "Codex started background work" },
+                  capturedTurns,
+                  pendingBackgroundWork: codexBackgroundWork,
+                  holdFirstTurn: firstStarted,
+                  releaseFirstTurn: releaseFirst,
+                }),
+                makeTestAdapter({
+                  instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+                  driver: CLAUDE_DRIVER,
+                  capabilities: ClaudeProviderCapabilitiesV2,
+                  modelSelection: CLAUDE_MODEL_SELECTION,
+                  responseByRunOrdinal: { 2: "Claude complete" },
+                  capturedTurns,
+                }),
+                makeTestAdapter({
+                  instanceId: GROK_MODEL_SELECTION.instanceId,
+                  driver: GROK_DRIVER,
+                  capabilities: AcpProviderCapabilitiesV2,
+                  modelSelection: GROK_MODEL_SELECTION,
+                  responseByRunOrdinal: {},
+                  capturedTurns,
+                }),
+              ]),
+            ),
+          ),
+        );
+      }),
+  );
+
   it.live.each(["immediately", "behind a running turn"] as const)(
     "starts a fresh provider session %s and never hands earlier runs to a later provider",
     (variant) =>
@@ -3415,6 +3554,138 @@ describe("orchestration v2 provider switching", () => {
           ),
         );
       }),
+  );
+
+  it.live("keeps the user's conversation after a scheduled fresh run in the same thread", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("scheduled-fresh-user-chat");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: ClaudeProviderCapabilitiesV2,
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: {},
+          capturedTurns,
+          nativeThreadGeneration: yield* Ref.make(0),
+        }),
+      ]);
+      const threadId = ThreadId.make("thread:scheduled-fresh-user-chat");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const send = (name: string, scheduled: boolean) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:scheduled-fresh-user-chat:${name}`),
+            threadId,
+            messageId: MessageId.make(`message:scheduled-fresh-user-chat:${name}`),
+            text: name,
+            attachments: [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "queue_after_active" },
+            ...(scheduled
+              ? {
+                  scheduledTaskId: ScheduledTaskId.make("scheduled-fresh-user-chat"),
+                  freshContext: true,
+                }
+              : {}),
+          });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:scheduled-fresh-user-chat:create"),
+          threadId,
+          projectId: ProjectId.make("project:scheduled-fresh-user-chat"),
+          title: "User chat with a fresh-session schedule",
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        const eventSink = yield* EventSink.EventSinkV2;
+        for (const [name, scheduled] of [
+          ["user-first", false],
+          ["scheduled", true],
+          ["user-second", false],
+          ["compaction", false],
+          ["scheduled-after-compaction", true],
+          ["user-third", false],
+        ] as const) {
+          if (name === "compaction") {
+            // The user's run compacts, so later dispatches no longer read the first scheduled run's message.
+            const run = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+            const compactedAt = yield* DateTime.now;
+            yield* eventSink.write({
+              events: [
+                {
+                  id: EventId.make("event:scheduled-fresh-user-chat:compaction"),
+                  type: "turn-item.updated",
+                  threadId,
+                  runId: run.id,
+                  nodeId: run.rootNodeId!,
+                  occurredAt: compactedAt,
+                  payload: {
+                    id: TurnItemId.make("item:scheduled-fresh-user-chat:compaction"),
+                    threadId,
+                    runId: run.id,
+                    nodeId: run.rootNodeId,
+                    providerThreadId: null,
+                    providerTurnId: null,
+                    nativeItemRef: null,
+                    parentItemId: null,
+                    ordinal: 1_000,
+                    status: "completed",
+                    title: null,
+                    startedAt: compactedAt,
+                    completedAt: compactedAt,
+                    updatedAt: compactedAt,
+                    type: "compaction",
+                    driver: CLAUDE_DRIVER,
+                  },
+                },
+              ],
+            });
+            continue;
+          }
+          yield* send(name, scheduled);
+          yield* worker.drain();
+          yield* waitForIdle(threadId);
+        }
+        const turns = yield* Ref.get(capturedTurns);
+        const turnFor = (name: string) => turns.find((turn) => turn.text.endsWith(name));
+        assert.notEqual(
+          turnFor("scheduled")!.nativeThreadId,
+          turnFor("user-first")!.nativeThreadId,
+        );
+        // The scheduled run's fresh session must not replace the user's conversation.
+        assert.equal(turnFor("user-second")!.nativeThreadId, turnFor("user-first")!.nativeThreadId);
+        assert.equal(turnFor("user-third")!.nativeThreadId, turnFor("user-first")!.nativeThreadId);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "scheduled-fresh-user-chat",
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
   );
 
   it.live("keeps the thread a queued fresh run reserved for that run", () =>
@@ -3940,6 +4211,8 @@ describe("orchestration v2 provider switching", () => {
         if (restored?.type === "turn-item.updated") {
           assert.deepEqual(restored.payload, {
             ...queuedItem,
+            // Its run is now the second one, so it moves into that run's positions.
+            ordinal: 2_000_001,
             status: "failed",
             completedAt: restored.occurredAt,
             updatedAt: restored.occurredAt,
@@ -3993,6 +4266,12 @@ describe("orchestration v2 provider switching", () => {
       assert.equal(
         failureItem?.type === "error" ? failureItem.failure.code : null,
         "context_handoff_unsupported",
+      );
+      assert.isBelow(
+        projection.turnItems.find(
+          (item) => item.type === "user_message" && item.messageId === rejectedMessageId,
+        )!.ordinal,
+        failureItem!.ordinal,
       );
       assert.isTrue(
         projection.visibleTurnItems.some(
@@ -4293,5 +4572,160 @@ describe("orchestration v2 provider switching", () => {
   it.live(
     "reissues imported v1 context when a queued provider starts after the first provider fails",
     () => importedFailureScenario(true),
+  );
+
+  it.live.each([
+    "immediately",
+    "behind a running turn",
+    "after a cancelled queued switch",
+  ] as const)(
+    "hands a portable fork's inherited conversation to a provider switched %s",
+    (variant) =>
+      Effect.gen(function* () {
+        const queued = variant !== "immediately";
+        const cancelled = variant === "after a cancelled queued switch";
+        const key = cancelled ? "cancelled" : queued ? "queued" : "immediate";
+        const cwd = yield* checkpointWorkspace(`fork-switch-history-${key}`);
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: { 1: "The release marker is violet." },
+            capturedTurns,
+          }),
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            ...(queued ? { holdFirstTurn: started, releaseFirstTurn: release } : {}),
+          }),
+        ]);
+        const sourceThreadId = ThreadId.make(`thread:fork-switch-history:${key}:source`);
+        const forkThreadId = ThreadId.make(`thread:fork-switch-history:${key}:fork`);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const send = (threadId: ThreadId, name: string, modelSelection: ModelSelection) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:fork-switch-history:${key}:${name}`),
+              threadId,
+              messageId: MessageId.make(`message:fork-switch-history:${key}:${name}`),
+              text: `Prompt ${name}`,
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+          const settle = (threadId: ThreadId) =>
+            worker.drain().pipe(
+              Effect.andThen(waitForIdle(threadId)),
+              Effect.tap(() => worker.drain()),
+            );
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:fork-switch-history:${key}:create`),
+            threadId: sourceThreadId,
+            projectId,
+            title: "Fork switch history",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* send(sourceThreadId, "source", CODEX_MODEL_SELECTION);
+          const source = yield* settle(sourceThreadId);
+          yield* orchestrator.dispatch({
+            type: "thread.fork",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:fork-switch-history:${key}:fork`),
+            sourceThreadId,
+            targetThreadId: forkThreadId,
+            sourcePoint: { type: "run", runId: source.runs[0]!.id },
+            title: "Fork",
+          });
+          // A first turn on another provider resolves the fork through portable context.
+          yield* send(forkThreadId, "fork-claude", CLAUDE_MODEL_SELECTION);
+          if (queued) {
+            yield* Deferred.await(started);
+            yield* worker.drain();
+            yield* send(
+              forkThreadId,
+              cancelled ? "fork-codex-cancelled" : "fork-codex",
+              CODEX_MODEL_SELECTION,
+            );
+            if (cancelled) {
+              // The cancelled run leaves its reserved Codex row behind without a native thread.
+              const pending = (yield* orchestrator.getThreadProjection(forkThreadId)).runs.at(-1)!;
+              yield* orchestrator.dispatch({
+                type: "queued-run.cancel",
+                commandId: CommandId.make(`command:fork-switch-history:${key}:cancel`),
+                threadId: forkThreadId,
+                runId: pending.id,
+              });
+            }
+            yield* Deferred.succeed(release, undefined);
+            if (cancelled) {
+              yield* settle(forkThreadId);
+              yield* send(forkThreadId, "fork-codex", CODEX_MODEL_SELECTION);
+            }
+          } else {
+            yield* settle(forkThreadId);
+            yield* send(forkThreadId, "fork-codex", CODEX_MODEL_SELECTION);
+          }
+          yield* settle(forkThreadId);
+          yield* send(forkThreadId, "fork-claude-again", CLAUDE_MODEL_SELECTION);
+          yield* settle(forkThreadId);
+
+          const turns = yield* Ref.get(capturedTurns);
+          const turnFor = (name: string) =>
+            turns.find((turn) => turn.text.endsWith(`Prompt ${name}`))!.text;
+          const switched = turnFor("fork-codex");
+          // The switched provider gets the conversation the fork shows, oldest first.
+          assert.include(switched, "Prompt source");
+          const positions = ["Prompt source", "release marker is violet", "Prompt fork-claude"].map(
+            (text) => switched.indexOf(text),
+          );
+          assert.deepEqual(
+            positions,
+            positions.toSorted((a, b) => a - b),
+          );
+          // Claude already saw the inherited rows, so its return only carries the Codex run.
+          const returned = turnFor("fork-claude-again");
+          assert.include(returned, "Prompt fork-codex");
+          assert.notInclude(returned, "Prompt source");
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: `fork-switch-history-${key}`,
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
   );
 });

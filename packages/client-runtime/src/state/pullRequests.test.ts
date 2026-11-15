@@ -1789,6 +1789,49 @@ it.effect("shares one refresh stream between independently created pull request 
   }),
 );
 
+it.effect.each([
+  { linkedThreadRefreshes: undefined, polledReads: 1, signalledReads: 0 },
+  { linkedThreadRefreshes: true, polledReads: 0, signalledReads: 1 },
+])(
+  "polls linked threads only on servers without linked-thread refreshes ($linkedThreadRefreshes)",
+  ({ linkedThreadRefreshes, polledReads, signalledReads }) =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const linkedThreadSignal = yield* SubscriptionRef.make(0);
+      const client = {
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.never,
+        [WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes]: () =>
+          SubscriptionRef.changes(linkedThreadSignal).pipe(Stream.filter((value) => value > 0)),
+        [WS_METHODS.pullRequestsLinkedThreads]: () =>
+          Effect.sync(() => {
+            reads++;
+            return { threads: [] };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      vi.useFakeTimers();
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      registry.set(initialConfigs(TARGET.environmentId), {
+        environment: { capabilities: { linkedThreadRefreshes } },
+      });
+      const linked = atoms.linkedThreads({
+        environmentId: TARGET.environmentId,
+        input: { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 1 },
+      });
+      const unmount = registry.mount(linked);
+      yield* Effect.addFinalizer(() => Effect.sync(unmount));
+      yield* AtomRegistry.getResult(registry, linked);
+      expect(reads).toBe(1);
+
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
+      expect(reads).toBe(1 + polledReads);
+
+      yield* SubscriptionRef.set(linkedThreadSignal, 1);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+      expect(reads).toBe(1 + polledReads + signalledReads);
+    }),
+);
+
 it.effect("shares close, reopen, and merge with an untouched client's mounted PR readers", () =>
   Effect.gen(function* () {
     const revision = yield* SubscriptionRef.make(0);
@@ -2107,8 +2150,12 @@ it.effect("updates cached labels after successful edits without rereading the ho
 );
 
 vi.mock("./session.ts", () => ({
-  createEnvironmentSessionAtoms: () => ({ sessionStateAtom: grantedSessions }),
+  createEnvironmentSessionAtoms: () => ({
+    sessionStateAtom: grantedSessions,
+    initialConfigValueAtom: initialConfigs,
+  }),
 }));
+const initialConfigs = Atom.family((_id: EnvironmentId) => Atom.make<unknown>(null));
 const grantedSessions = Atom.family((_id: EnvironmentId) =>
   Atom.make<AsyncResult.AsyncResult<AuthSessionState>>(
     AsyncResult.success({
