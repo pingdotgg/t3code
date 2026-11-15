@@ -142,7 +142,7 @@ import { useDictationSubmissionShortcut } from "../../speech/useDictationSubmiss
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
 import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import { shortcutLabelForCommand } from "../../keybindings";
+import { shortcutLabelForCommand, type ShortcutMatchContext } from "../../keybindings";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -420,6 +420,7 @@ export interface ChatComposerProps {
   resolvedTheme: "light" | "dark";
   settings: UnifiedSettings;
   keybindings: ResolvedKeybindingsConfig;
+  getShortcutContext: (eventTarget: EventTarget | null) => ShortcutMatchContext;
   terminalOpen: boolean;
   gitCwd: string | null;
   pullRequestProjectId: ProjectId | null;
@@ -533,6 +534,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     resolvedTheme,
     settings,
     keybindings,
+    getShortcutContext,
     terminalOpen,
     gitCwd,
     pullRequestProjectId,
@@ -2199,6 +2201,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const intent = composerSubmissionIntentForKey({
         event,
         keybindings,
+        context: getShortcutContext(event.target),
         isSoftwareKeyboardOpen,
         isDraftThread: routeKind === "draft",
         isRunning: phase === "running" || phase === "connecting",
@@ -2318,6 +2321,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) =>
     composerCommandKeyHandler({
       keybindings,
+      getShortcutContext,
       sendShortcut: settings.sendShortcut,
       routeKind,
       phase,
