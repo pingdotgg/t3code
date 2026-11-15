@@ -537,7 +537,7 @@ it.effect("keeps reporting the timeout when the first scan ends without a conten
             isWarmupComplete: false,
           },
         })),
-        grep,
+        grepAsync: grep,
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
@@ -547,7 +547,7 @@ it.effect("keeps reporting the timeout when the first scan ends without a conten
       expect(error).toMatchObject({ _tag: "WorkspaceSearchIndexScanTimedOut" });
       expect(grep).not.toHaveBeenCalled();
     }),
-  ),
+  ).pipe(Effect.provide(testLayer)),
 );
 
 it.effect("reports the finder's error when scan progress cannot be read", () =>
@@ -568,7 +568,7 @@ it.effect("reports the finder's error when scan progress cannot be read", () =>
         reason: "picker is gone",
       });
     }),
-  ),
+  ).pipe(Effect.provide(testLayer)),
 );
 
 it.effect("still fails index creation when the first scan reports a real error", () =>
@@ -589,5 +589,5 @@ it.effect("still fails index creation when the first scan reports a real error",
         reason: "walk failed",
       });
     }),
-  ),
+  ).pipe(Effect.provide(testLayer)),
 );
