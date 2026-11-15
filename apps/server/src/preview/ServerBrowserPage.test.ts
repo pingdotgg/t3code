@@ -797,15 +797,26 @@ describe("server browser action timeout", () => {
     {
       action: "hover",
       act: (page: Page) => ServerBrowserPage.hover(page, { selector: "#a", timeoutMs: 9_000 }),
-      last: ["#a.hover 1"],
+      expected: ["#a.scrollIntoViewIfNeeded 9000", "#a.boundingBox 4000", "#a.hover 1"],
     },
     {
       action: "drag",
       act: (page: Page) =>
         ServerBrowserPage.drag(page, { source: "#a", target: "#b", timeoutMs: 9_000 }),
-      last: ["#a.dragTo 1", "#b.boundingBox 1"],
+      expected: [
+        "#a.scrollIntoViewIfNeeded 9000",
+        "#a.boundingBox 4000",
+        "#a.dragTo 1",
+        "#b.boundingBox 1",
+      ],
     },
-  ])("gives the $action's steps one shared timeout", async ({ act, last }) => {
+    {
+      action: "select",
+      act: (page: Page) =>
+        ServerBrowserPage.select(page, { selector: "#a", values: ["x"], timeoutMs: 9_000 }),
+      expected: ["#a.evaluate 9000", "#a.selectOption 4000"],
+    },
+  ])("gives the $action's steps one shared timeout", async ({ act, expected }) => {
     let now = 0;
     using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
     const steps: Array<string> = [];
@@ -827,13 +838,40 @@ describe("server browser action timeout", () => {
           },
           hover: async (options: StepOptions) => record("hover", options),
           dragTo: async (_target: unknown, options: StepOptions) => record("dragTo", options),
+          evaluate: async (_fn: unknown, _arg: unknown, options: StepOptions = {}) => {
+            record("evaluate", options);
+            now += 5_000;
+            return [{ value: "x", label: "x" }];
+          },
+          selectOption: async (values: Array<string>, options: StepOptions) => {
+            record("selectOption", options);
+            return values;
+          },
         };
       },
     } as unknown as Page;
 
     await act(page);
 
-    expect(steps).toEqual(["#a.scrollIntoViewIfNeeded 9000", "#a.boundingBox 4000", ...last]);
+    expect(steps).toEqual(expected);
+  });
+
+  // press takes no timeoutMs input; like evaluate, it gets the request's remaining time.
+  it("ends a key press at its timeout when the page never answers", async () => {
+    const page = {
+      keyboard: { press: () => new Promise<void>(() => {}) },
+    } as unknown as Page;
+    vi.useFakeTimers();
+    try {
+      let failure: unknown;
+      void ServerBrowserPage.press(page, { key: "Enter" }, 300).catch(
+        (error: unknown) => (failure = error),
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      expect(failure).toMatchObject({ tag: "PreviewAutomationTimeoutError" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
