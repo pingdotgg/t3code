@@ -1080,6 +1080,12 @@ impl Engine for SqliteEngine {
         Box::pin(self.inner.close_all_sessions())
     }
 
+    fn begin_shutdown(&self) {
+        self.inner
+            .shutting_down
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     fn await_background_tasks(
         &self,
         thread_id: ThreadId,

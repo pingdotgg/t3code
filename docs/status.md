@@ -123,7 +123,8 @@ Not proven:
   systemd scope (not built; see below); the live permission test (it runs Claude with an
   isolated config folder that carries only `apiKeyHelper`, and on Beast that folder cannot
   sign in, so the turn ends without an approval); a live Codex turn; CI itself (the workflow
-  changes ran only as the same commands on Beast); Orbit in a real container; the cause of
+  changes ran only as the same commands on Beast); Orbit in a real container with a real
+  provider (with stand-ins it passed on 2026-11-15, "Proof on Beast"); the cause of
   the one `clears_and_reports_the_foreground_command` failure of the first pass (see above).
 - **The agent systemd scope on Linux.** The T3 server (`apps/server/src/process/agentScope.ts`,
   `packages/shared/src/AgentScope.ts`) wraps `claude` (a native binary given as
@@ -142,8 +143,133 @@ Not proven:
   port both files, compare the wrapped argv for `claude` and `codex` with the T3 server's on
   Linux (the conformance stub records argv), and test OOM and kill there.
 - Conn desktop and mobile against this server.
-- Orbit's flow in a real container.
+- Orbit's flow in a real container with a real provider (with stand-ins it passes: see "Proof
+  on Beast").
 - Codex on CLI 0.166 or 0.167 (the recordings are from 0.156).
+
+## Proof on Beast (2026-11-15)
+
+**Orbit's container flow and task-turn path work on this server in a container made from
+Orbit's own Instance image, after two fixes found here.** Before the fixes the server aborted
+5 minutes after every start, and a turn cut by `systemctl restart` was lost. Nick allowed the
+proof on Beast; everything ran in the Incus project `conn-server-proof`, which Orbit does not
+know. No model was called. `claude` and `codex` were stand-ins. No credential was in the
+container. The scripts are in `/tmp/conn-linux-proof` on Beast (`proof.mjs`, `hib.mjs`,
+`compare.mjs`).
+
+**The Linux pass** (the branch at `958e748`; Rust 1.99.1 as pinned). `tools/check.sh` without a
+Conn checkout: 8 of 8 checks pass, the canary included. `cargo test --workspace`: 5 of 5 runs
+green, 915 tests each (918 with the new tests). The canary works on Linux: it caught a decoy
+read in a negative test and passed a clean run. Could not run: the 31 checks that need
+`CONN_MONOREPO`, `cargo deny` (not installed on Beast), `instances-flow` (needs `npm ci` in the
+SDK host). A loop of `cargo test` outside `check.sh` failed one terminal test 5 times of 5: it
+kept `SHELL=/usr/bin/zsh` with an empty `HOME`, and zsh's first-run wizard ate the test's input.
+That is the harness, not the server; `check.sh` gives tests a stand-in shell.
+
+**The container.** Orbit's image `orbit-instance` (`455fc389e9e5`, 195 MiB, no credential file)
+copied into the project; one container with Orbit's limits shape (4 CPUs, 4 GiB here), Orbit's
+`t3.service` unit and drop-in, Orbit's agent bundle and runtime folder mounted read-only as
+Orbit mounts them, our musl binary as `/opt/orbit-agent/current/agent/bin/t3`, and the stock
+`t3` (T3 0.1.7, Orbit's bundle) beside it. Files written before the start as
+`instance_clone.py` writes them, with the task copies' five `claude*` provider instances.
+
+**Orbit's steps, ours against the stock server, same container** (42 steps, each command as
+Orbit's scripts issue it, through `incus exec`): every step has the same exit code or HTTP
+status on both, and every field Orbit's scripts read has the same value or form:
+`clone-t3` (unit start, two `auth session issue --token-only` while the server starts, the
+readiness `curl`, `project add`), `clone-sessions`, the Gateway's registration, the hourly
+renewal, the thread index, pairing, the held session (`/oauth/token`), revocation
+(`subscribeAuthAccess`, `clients/revoke`, `pairing-links/revoke`), and the task turn (model
+check, `thread start|send|list|show`, a turn that asks with exit 2, `t3_copy_rpc.mjs` read and
+interrupt, no session left). Differences Orbit reads nothing of: key order, fields one side
+has and the other lacks (the descriptor's capabilities, `projects[].repositoryIdentity`,
+`pullRequestCount`), id forms (`project:<hex>` and `mcp:launch:<uuid>` against UUIDs; Orbit
+takes ids as any non-blank string, `\S{1,255}`), `thread show`'s `branch`, the CLI's
+text when the server is gone, and the time to stop an asking run: 11 s here against 2 s,
+because the stand-in answers `turn/interrupt` with an error and this server then waits its
+10 s stop timeout (the helper allows about 40 s). **Version skew:** Orbit's bundle carries T3
+0.1.7; this server follows T3 at the Conn pin (contract 0.1.9). The two speak to Codex
+differently (0.1.7 sends no `config/read` and no `-c thread_unload_delay_secs=0`), so the
+provider wire is proven against T3 at the pin (the conformance checks), not against the image.
+
+**Measured, ours against stock, same container, 3 runs each:**
+
+| | Conn Server | Stock T3 0.1.7 |
+| --- | --- | --- |
+| Unit start to readiness answer | 90 to 92 ms | 1,111 to 2,030 ms (the first on a fresh home) |
+| Server process idle, `Pss` (`Private`) | 15.8 MiB (15.8); of it 2.8 MiB anon, 12.3 MiB the binary's own pages | 353 to 376 MiB (348 to 351) |
+| Server process after the task-turn sequence, `Pss` | 18.2 to 18.3 MiB | 312 to 366 MiB |
+| Container cgroup idle, `memory.current` (`anon`) | 145 MiB (33 MiB) | 503 to 505 MiB (378 to 381 MiB) |
+| CPU of the server for the sequence | 0.19 to 0.21 s | 6.9 to 7.3 s |
+| CPU of the unit (server and stand-ins) | 1.3 to 1.4 s | 8.8 to 9.2 s |
+| Binary | 22.9 MB, static musl, stripped | 168 MB |
+| `t3` CLI call (`auth session issue`, `thread list`) | 34 to 75 ms | 540 to 650 ms |
+| Threads | 1 | |
+
+For scale, Orbit's own T3 servers on Beast the same morning: 50 running, `Pss` 293 to 312 MiB
+for three picked at the quartiles, all anon, no swap.
+
+**Pauses** (`incus pause`, the cgroup freeze Orbit's sleep uses), our server:
+
+- The monotonic clock runs through a freeze: `CLOCK_MONOTONIC` and `CLOCK_BOOTTIME` moved
+  30.115 s, 180.17 s and 600.152 s, the same as the wall clock. So every monotonic deadline
+  that passed fires once at the thaw.
+- The server answers 2 to 23 ms after the resume. A turn held open by the stand-in stays
+  `running` through 30 s and 10 minutes and completes when released.
+- A scheduled `once` task due 2 minutes into a 3-minute pause runs at the thaw (running after
+  139 ms, completed after 1.2 s).
+- A 1-minute session works after 30 s and is refused after 10 minutes; the Gateway's 30-day
+  session works.
+- A client WebSocket on the host survives 30 s: the three pings it sent into the frozen server
+  are answered at the thaw, and the next auth change reaches it. After 10 minutes the server
+  closes it at the thaw (1001, "idle"): the 60 s idle timer has expired and wins over the
+  buffered pings, as the timer table above says. The client reconnects and gets a new snapshot;
+  the T3 client ends such a socket itself by its ping timeout.
+- The provider status probe does not run: it runs only while a client holds an activity lease.
+- Orbit's idle verdict (its `fromShell` rule, window 1 h): a fresh server may sleep; after a
+  turn it stays awake for 1 hour from the turn; a held turn keeps it awake; a turn that waits
+  for an answer reads `running` and keeps it awake, as T3 does (`idle-diff`).
+- 2 hours (the fixed server): the monotonic clock moved 7,201 s with the wall clock; the
+  server answered 1.1 s after the resume and did not restart; the held turn was `running` and
+  completed when released; the 1-minute session was refused, the Gateway session worked. The
+  host client's socket was dropped during the pause, about an hour in (close code 1006); the
+  cause was not traced. The client reconnects either way.
+
+**Restart and crash during a turn** (both servers):
+
+| | Conn Server (after the fix) | Stock T3 0.1.7 |
+| --- | --- | --- |
+| `systemctl restart` | the waiting `thread start --wait` exits 1 ("Could not reach the T3 Code server …"); ready again in 1.1 to 2.1 s; the next start continues the turn ("Continue where you left off …") and it completes | the CLI exits 1; ready again in 4.4 s; the next start continues the turn (here it failed, because the stand-in had no transcript for it) |
+| SIGKILL (`Restart=always` brings it back after 2 s) | CLI exits 1; ready in 2.2 to 2.4 s; the turn is continued and completes | not clean: T3 was still continuing the first thread, which took the stand-in's transcript |
+| Sessions | the Gateway session survives both | survives both |
+
+**Defects found and fixed here:**
+
+1. **The server aborted 5 minutes after every start** (`603f741`). The periodic provider tick
+   read `settings["backgroundActivity"]` from a `serde_json::Map`, which panics on a missing
+   key; Orbit's settings have none. With `panic = "abort"` the server died at 5:00 and systemd
+   restarted it, every 5 minutes, losing sockets, MCP sessions and running turns. Seen first at
+   the thaw of a 10-minute pause, then without a pause. No check ran a server that long with an
+   environment. Test: `the_periodic_tick_reads_settings_without_a_background_profile` (fails on
+   the old code with the same message). In the container the fixed binary ran past 5 minutes
+   and through the 10-minute pause.
+2. **A turn cut by a systemd stop was lost** (`a652873`). systemd sends SIGTERM to the whole
+   unit, so the Codex `app-server` exits within the server's 2 s connection drain; the engine
+   marked shutdown only after the drain and stored the turn `failed`. `Engine::begin_shutdown`
+   now marks it at the signal. `idle-diff` did not see it: there only the server gets the
+   signal. Tests: `a_provider_that_exits_with_the_server_leaves_the_run_for_the_next_start`
+   (fails without the fix) and `a_provider_that_exits_during_a_turn_fails_the_run`.
+
+**Not proven here:** a real Claude or Codex turn in a container (stand-ins only; a Claude turn
+needs the SDK host, which was not installed in the container); the WireGuard path and Orbit's
+proxy device (the container was reachable only from the host); the Gateway and Swamp
+themselves (their calls were replayed by hand from their code); a container under Orbit's
+memory limit of 8 GiB and its swap-out at sleep; T3 at the pin in a container (only T3 0.1.7
+from the bundle).
+
+**Left on Beast:** the project `conn-server-proof` with the image and the container
+`conn-proof`, running the fixed server (`a652873`); `~/conn-server-linux/README.txt` says how
+to remove it.
 
 ## Orbit's task-turn path (2026-11-14)
 
@@ -258,9 +384,11 @@ server reads the CLI's network state; both wait for the CLI to report.
   thaw. tokio's `timeout` polls the answer first; T3's Node event loop runs expired timers before
   it reads input, so T3 is likelier to fail such a request.
 
-Not proven: a real Orbit freeze and wake (all of this is on test clocks); that Orbit's freezer
-keeps `CLOCK_MONOTONIC` running (Linux's documented behaviour, not measured in a container); how
-the Claude and Codex CLIs behave when their API stream died during a freeze.
+Measured on 2026-11-15 ("Proof on Beast"): `incus pause` of an Instance container keeps
+`CLOCK_MONOTONIC` running (30 s, 3 min, 10 min); a held turn, a due scheduled task, session
+expiry and the WebSocket idle close behave as this table says. Not proven: Orbit's own sleep
+(it also swaps the container out); how the Claude and Codex CLIs behave when their API stream
+died during a freeze.
 
 ## Engine, part 3: buffered delivery (2026-11-14)
 

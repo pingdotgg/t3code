@@ -489,6 +489,80 @@ async fn a_shutdown_leaves_the_running_turn_for_the_next_start() {
     assert_eq!(p["runs"][1]["restartContinuationOfRunId"], "run:t1:1");
 }
 
+/// Under systemd the stop signal reaches the provider processes too, and they exit while the
+/// server still drains its connections, before [`Engine::shutdown`]. Once shutdown began, that
+/// exit must not end the run: the next start continues it, as after any clean stop. Before
+/// `begin_shutdown` the run was stored `failed` ("The provider session ended during the
+/// turn."), found on Beast with `systemctl restart t3.service` during a Codex turn.
+#[tokio::test(flavor = "current_thread")]
+async fn a_provider_that_exits_with_the_server_leaves_the_run_for_the_next_start() {
+    let db = TempDb::new("shutdown-provider-exit");
+    {
+        let exit = Arc::new(tokio::sync::Notify::new());
+        let (engine, _) = open_with(
+            &db,
+            FakeProvider::new("claudeAgent").with_process_exit(exit.clone()),
+        );
+        dispatch(&engine, create("t1", "c1")).await;
+        let mut thread = engine
+            .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+            .await
+            .unwrap();
+        next(&mut thread).await;
+        dispatch(&engine, message("t1", "c2", "hang")).await;
+        until_provider_turn(&mut thread).await;
+        engine.begin_shutdown();
+        exit.notify_waiters();
+        // Let the pump see the end of the stream before the server closes the sessions.
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        engine.shutdown().await;
+        let p = projection(&engine, "t1").await;
+        assert_eq!(
+            run_statuses(&p),
+            [("run:t1:1".into(), "running".into())],
+            "a provider exit after the signal ends no run"
+        );
+    }
+    let (engine, _) = open(&db);
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(p["runs"][1]["restartContinuationOfRunId"], "run:t1:1");
+}
+
+/// Without a shutdown, a provider process that exits during a turn fails the run.
+#[tokio::test(flavor = "current_thread")]
+async fn a_provider_that_exits_during_a_turn_fails_the_run() {
+    let db = TempDb::new("provider-exit");
+    let exit = Arc::new(tokio::sync::Notify::new());
+    let (engine, _) = open_with(
+        &db,
+        FakeProvider::new("claudeAgent").with_process_exit(exit.clone()),
+    );
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    exit.notify_waiters();
+    let mut status = String::new();
+    for _ in 0..200 {
+        tokio::task::yield_now().await;
+        let p = projection(&engine, "t1").await;
+        status = p["runs"][0]["status"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        if status != "running" {
+            break;
+        }
+    }
+    assert_eq!(status, "failed");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn restart_continuations_stop_after_three_in_a_row() {
     let db = TempDb::new("restart-loop");

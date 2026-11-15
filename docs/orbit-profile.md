@@ -38,7 +38,14 @@ Five points carry the rest of the document:
    the agent to call, is served as T3 serves it. A Stop during a Claude cold start now ends the
    run at once, as in T3 (it waited for the boot, up to about 6.5 minutes).
    Orbit's task-turn path also uses four CLI items; they are built (section 1b).
-2. **Selectivity buys little in bytes.** The macOS release binary is 17.1 MB. The generated
+   **Proven in a container on 2026-11-15** [measured, Beast]: in a container made from
+   Orbit's Instance image, Orbit's create flow and task-turn path give the same exit codes and
+   the same fields Orbit reads as the image's own T3, after two fixes found there (an abort 5
+   minutes after start; a turn lost to a systemd restart). The server holds 2.8 MiB anon
+   (15.8 MiB `Pss` with its binary's pages) against 353 to 376 MiB for T3, and answers 90 ms
+   after its start against 1.1 to 2.0 s. `docs/status.md`, "Proof on Beast".
+2. **Selectivity buys little in bytes.** The macOS release binary is 17.1 MB; the Linux musl
+   binary 22.9 MB [measured, 2026-11-15]. The generated
    contract is 36% of its code, and SQLite is 15%. Turning off everything a container does
    not need saves about 3 to 4% [estimate from a symbol map]. It saves about 8% of the
    upstream churn we follow. The real lever on upkeep is the loose fork, not a container
@@ -138,8 +145,14 @@ on the T3 server with its own `t3` and on the Conn Server with ours, with a stub
 T3's recorded transcripts: 30 steps, no difference beyond two fields the engine fills
 differently (`branch`, `itemCount`). It covers a turn that completes, fails or asks, a send,
 unknown thread, model and provider, and `t3_copy_rpc.mjs`'s read, interrupt and revoke.
-`orbit-flow.mjs` runs the path in Orbit's order on the fake provider. Not proven: Linux and a
-real container. `R/crates/conn-server/DROP-IN.md` section 1 has the table.
+`orbit-flow.mjs` runs the path in Orbit's order on the fake provider. `R/crates/conn-server/DROP-IN.md` section 1 has the table.
+
+**In a real container** [measured, Beast, 2026-11-15]: every call in the table above, issued as
+Orbit's scripts issue it through `incus exec` in a container from Orbit's image, on our musl
+binary and on the image's own T3 0.1.7 (42 steps): the same exit codes and HTTP statuses, and
+the same values or forms in every field Orbit reads. The rest differs only in key order, extra
+fields and id forms (Orbit takes ids as `\S{1,255}`). Codex was a stand-in, so a real model turn
+in a container is not proven. `docs/status.md`, "Proof on Beast".
 
 Section 4c proposes to replace the CLI path rather than copy it.
 
@@ -170,20 +183,24 @@ when its `turn/start` reached Codex anyway (Nick's decision; the T3 server leave
 | --- | --- |
 | Usable in 17 to 26 s | Not found. The docs say about 24 s to success, and the app answers 502 for 10 to 20 s more (`development-containers.md:1018,1038`). |
 | `clone-t3` took 6.9 s | Not found. The level that holds both `clone-workspace` and `clone-t3` takes 4.2 s (`:1014`). |
-| About 1 s per `t3` CLI call | Not found in the docs. |
+| About 1 s per `t3` CLI call | Not found in the docs. Measured in a container (2026-11-15): 0.54 to 0.65 s for T3 0.1.7, 34 to 75 ms for the Conn Server. |
 | About 6 s for 48 servers | **Contradicted.** 43 servers take 150 to 190 ms per pass, and 200 servers take 0.6 s (`conn.md:371-376`). The poll is off by default. |
-| A sleeping container frees 408 to 496 MiB | Not found. A frozen clone holds about 13 MiB of RAM and about 340 MiB of swap (`development-containers.md:1263`). |
+| A sleeping container frees 408 to 496 MiB | Not found. A frozen clone holds about 13 MiB of RAM and about 340 MiB of swap (`development-containers.md:1263`). Measured awake (2026-11-15): a container from Orbit's image with no app holds 503 to 505 MiB (`memory.current`; 378 to 381 MiB anon) with T3 0.1.7, and 145 MiB (33 MiB anon) with the Conn Server. |
 | Five `providerInstances` | Only for task copies. Every clone gets `{"linkedEnvironmentsEnabled": true}` (`InstanceContainer.php:461-485`). The Conn Server builds them since 2026-11-14. |
 | `401 invalid_mcp_credential` | Correct for T3: `M/apps/server/src/mcp/McpHttpServer.ts:132,288`. Orbit's docs only say "refused". |
 | Everything else (gate file, `model.env`, state path, label, ports, hourly renewal, two users, the AI router, the cloned files) | Confirmed in code. |
 
 **A container that freezes and wakes** [tests, `docs/status.md` "Timers after a clock
 jump"]. Every timer was tried on jumps of 10 minutes, 2 hours and 3 days. Under Orbit's cgroup
-freezer the monotonic clock runs on, so each deadline fires once at the thaw. Fixed: two
+freezer the monotonic clock runs on, so each deadline fires once at the thaw; measured with
+`incus pause` on Beast on 2026-11-15 (30 s, 3 min, 10 min) [measured]. Fixed: two
 periodic checks (the socket revocation check, the desktop parent watch) caught up with
 thousands of ticks at once; client activity leases and `/mcp` credential liveness counted only
 monotonic time. A turn that was running stays running at the thaw; whether it ends is the
-CLI's choice, as in T3.
+CLI's choice, as in T3. In a container on Beast a held turn stayed `running` through 10
+minutes and completed, a scheduled task due during a pause ran at the thaw, and a client
+socket open across a pause longer than 60 s was closed at the thaw (the client reconnects)
+[measured, `docs/status.md` "Proof on Beast"].
 
 **The checks touch nothing of the host** [check, `R/tools/canary.mjs`, the last check of
 `tools/check.sh`]: no read of a provider, `gh` or `git` setting or credential, no real provider
@@ -385,8 +402,8 @@ What dominates the binary [measured, same method]:
 **What a container build could drop:** the hosts beyond GitHub and GitLab, repository
 lookup, clone and publish, Kiro, fx and registry code once it exists, and maybe TLS. That is
 about 0.5 to 0.7 MB, **3 to 4% of the binary** [estimate]. Idle memory barely changes:
-unused code is mapped but never paged in. The server idles at about 4.3 MiB `Pss_Anon` on
-Linux [docs, `R/README.md`].
+unused code is mapped but never paged in. The server idles at 2.8 MiB `Pss_Anon` in an Orbit
+Instance container [measured, Beast, 2026-11-15].
 
 Commands that give the real numbers later, on a quiet machine or on Beast:
 
@@ -525,7 +542,7 @@ is effort per turn, token use, and the 4b verifier. **Orbit must change:** repla
 Why the profile: the bytes are not where the savings are, but the client's capability gates
 are. A profile also makes "advertise only what is served" (rule 6) true per place. The
 smallest sensible container build would be about 16.4 to 16.6 MB on macOS [estimate]. The
-musl build was 15.7 MB [docs, `R/docs/status.md`].
+musl build is 22.9 MB at `958e748` [measured, Beast, 2026-11-15]; it was 15.7 MB on 2026-11-13.
 
 ---
 
@@ -894,7 +911,8 @@ Surfaces Nick's container and host use need (the start list for a later client p
 5. Why does every clone set `linkedEnvironmentsEnabled: true`? Does any container use
    linked environments?
 6. Should default Instances sleep? A frozen clone holds about 13 MiB of RAM and about
-   340 MiB of swap [docs].
+   340 MiB of swap [docs]. Awake, a container from the image without an app holds 503 to
+   505 MiB with T3 and 145 MiB with the Conn Server [measured, 2026-11-15].
 7. Can Swamp call `link_pull_request` after it opens a PR?
 
 ---
@@ -904,7 +922,7 @@ Surfaces Nick's container and host use need (the start list for a later client p
 - **Real per-part sizes from a build with parts compiled out.** No such features exist, and
   the machine was loaded. The numbers come from a symbol map.
 - **Idle memory per part.**
-- **Linux sizes.**
+- **Linux sizes.** Measured since, on Beast on 2026-11-15: see section 3.
 - **Conn's own edits inside upstream files.** The checkout has no `upstream` remote, so I
   could not measure how far Conn has already moved from T3 Code.
 - **The client's churn per area.** The measurement did not finish in time.
