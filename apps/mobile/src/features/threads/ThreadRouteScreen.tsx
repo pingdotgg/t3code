@@ -451,12 +451,13 @@ function ThreadRouteContent(
   const selectDetail = useSelectWorkspaceDetail();
   const openPullRequest = useOpenPullRequest();
   const popOut = useAtomCommand(threadEnvironment.popOut, { reportFailure: false });
+  const popOutBusyRef = useRef(false);
   const popOutAvailability =
     selectedThread && canOperateThread
       ? threadPopOutAvailability(selectedThread.source)
       : "unsupported";
   const handlePopOut = () => {
-    if (!selectedThread) return;
+    if (!selectedThread || popOutBusyRef.current) return;
     if (popOutAvailability === "blocked") {
       Dialog.alert("Can't pop out yet", "Wait for it to finish or stop it first.");
       return;
@@ -468,16 +469,23 @@ function ThreadRouteContent(
       message:
         "It becomes an ordinary thread in your list and stops reporting to the thread that started it.",
       confirmText: "Pop out",
-      onConfirm: () =>
-        void popOut({ environmentId, input: { threadId } }).then((result) => {
-          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-            const error = squashAtomCommandFailure(result);
-            Dialog.alert(
-              "Could not pop out thread",
-              error instanceof Error ? error.message : "Try again.",
-            );
-          }
-        }),
+      onConfirm: () => {
+        if (popOutBusyRef.current) return;
+        popOutBusyRef.current = true;
+        void popOut({ environmentId, input: { threadId } })
+          .then((result) => {
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              Dialog.alert(
+                "Could not pop out thread",
+                error instanceof Error ? error.message : "Try again.",
+              );
+            }
+          })
+          .finally(() => {
+            popOutBusyRef.current = false;
+          });
+      },
     });
   };
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack, "merge thread back");
