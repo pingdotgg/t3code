@@ -4,6 +4,9 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  NodeId,
+  RuntimeRequestId,
+  ProviderSessionId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -250,6 +253,59 @@ it.effect(
         expect(registration.state).toBe("active");
         yield* f.api.runDueWork;
         expect(f.sent).toHaveLength(0);
+        const nodeId = NodeId.make("node:approval");
+        const requestId = RuntimeRequestId.make("request:approval");
+        for (const kind of ["other-run", "async", "blocking"] as const) {
+          yield* f.store.apply({
+            id: EventId.make(`event:approval-node:${kind}`),
+            type: "node.updated",
+            threadId,
+            nodeId,
+            occurredAt: f.now,
+            payload: {
+              id: nodeId,
+              threadId,
+              runId: kind === "other-run" ? RunId.make("run:other") : runId,
+              parentNodeId: null,
+              rootNodeId: nodeId,
+              kind: "approval_request",
+              status: "waiting",
+              countsForRun: true,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              runtimeRequestId: requestId,
+              checkpointScopeId: null,
+              startedAt: f.now,
+              completedAt: null,
+            },
+          });
+          yield* f.store.apply({
+            id: EventId.make(`event:approval-request:${kind}`),
+            type: "runtime-request.updated",
+            threadId,
+            nodeId,
+            occurredAt: f.now,
+            payload: {
+              id: requestId,
+              nodeId,
+              providerTurnId: null,
+              nativeRequestRef: null,
+              kind: "command",
+              status: "pending",
+              responseCapability:
+                kind === "async"
+                  ? { type: "message" }
+                  : { type: "live", providerSessionId: ProviderSessionId.make("session:approval") },
+              createdAt: f.now,
+              resolvedAt: null,
+            },
+          });
+          yield* TestClock.adjust("5 seconds");
+          yield* f.api.runDueWork;
+          expect(f.sent).toHaveLength(kind === "blocking" ? 1 : 0);
+        }
+        expect(decodeBody(f.sent[0]!.body).status).toBe("waiting");
         yield* f.store.apply({
           id: EventId.make("event:message"),
           type: "message.updated",
@@ -299,23 +355,23 @@ it.effect(
         yield* f.setStatus("completed");
         yield* TestClock.adjust("5 seconds");
         yield* f.api.runDueWork;
-        expect(f.sent).toHaveLength(1);
-        expect(decodeBody(f.sent[0]!.body)).toMatchObject({
+        expect(f.sent).toHaveLength(2);
+        expect(decodeBody(f.sent[1]!.body)).toMatchObject({
           threadId,
           runId,
           status: "completed",
           lastMessage: { id: "message:answer", role: "assistant" },
         });
-        expect(f.sent[0]!.body).not.toContain("Sensitive answer");
+        expect(f.sent[1]!.body).not.toContain("Sensitive answer");
         expect(f.sent[0]!.body).not.toContain(Redacted.value(endpoint.secret));
-        expect(decodeBody(f.sent[0]!.body).link).toContain("https://app.t3.codes");
+        expect(decodeBody(f.sent[1]!.body).link).toContain("https://app.t3.codes");
         const again = yield* f.call(subscribe);
         expect(again.structuredContent).toMatchObject({
           subscriptionId: registration.subscriptionId,
           state: "delivered",
         });
         yield* f.api.runDueWork;
-        expect(f.sent).toHaveLength(1);
+        expect(f.sent).toHaveLength(2);
       }),
     ),
 );

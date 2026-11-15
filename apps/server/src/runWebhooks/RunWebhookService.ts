@@ -245,8 +245,11 @@ const make = Effect.gen(function* () {
       const records = yield* threads
         .getProjectThreadRecords(
           { threadId: row.thread_id, projectId: shell.projectId },
-          ["runs"],
-          { runIds: [row.run_id] },
+          ["runs", "runtimeRequests"],
+          {
+            runIds: [row.run_id],
+            runtimeRequestStatuses: shell.pendingRuntimeRequest ? ["pending"] : [],
+          },
         )
         .pipe(Effect.mapError((cause) => new RunWebhookError({ reason: "thread", cause })));
       const run = records.runs.find((entry) => entry.id === row.run_id);
@@ -254,11 +257,27 @@ const make = Effect.gen(function* () {
         yield* sql`UPDATE run_webhook_subscriptions SET state = 'cancelled' WHERE id = ${row.id} AND state = 'active'`;
         return;
       }
-      const observation =
-        run.status === "waiting" ? `waiting:${shell.pendingRuntimeRequest?.id ?? ""}` : run.status;
+      const blocking = records.runtimeRequests.filter(
+        (request) => request.responseCapability.type !== "message",
+      );
+      const nodes =
+        !terminal(run.status) && blocking.length > 0
+          ? yield* threads
+              .getProjectThreadRecords(
+                { threadId: row.thread_id, projectId: shell.projectId },
+                ["nodes"],
+                { nodeIds: blocking.map((request) => request.nodeId) },
+              )
+              .pipe(Effect.mapError((cause) => new RunWebhookError({ reason: "thread", cause })))
+          : undefined;
+      const request = blocking.find((entry) =>
+        nodes?.nodes.some((node) => node.id === entry.nodeId && node.runId === row.run_id),
+      );
+      const status = !terminal(run.status) && request ? "waiting" : run.status;
+      const observation = status === "waiting" ? `waiting:${request?.id ?? ""}` : status;
       if (
         (observation === row.last_observation && body === null) ||
-        (!terminal(run.status) && run.status !== "waiting")
+        (!terminal(status) && status !== "waiting")
       ) {
         yield* sql`UPDATE run_webhook_subscriptions SET payload = NULL, last_observation = ${observation}, next_attempt_at = ${now + 5000}
           WHERE id = ${row.id} AND state = 'active'`;
@@ -281,7 +300,7 @@ const make = Effect.gen(function* () {
           subscriptionId: row.id,
           threadId: row.thread_id,
           runId: row.run_id,
-          status: run.status,
+          status,
           observedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
           link: row.link,
           lastMessage:
