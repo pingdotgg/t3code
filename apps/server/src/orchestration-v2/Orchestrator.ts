@@ -9834,6 +9834,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (cause) => new OrchestratorProjectionError({ threadId: command.parentThreadId, cause }),
         ),
       );
+    // One run there is one task: a send's reply and the watch for later runs can both report it.
+    const { runId: remoteRunId } = command.remoteChild;
+    if (
+      remoteRunId !== undefined &&
+      parentProjection.subagents.some(
+        (task) =>
+          task.remoteChild?.environmentId === command.remoteChild.environmentId &&
+          task.remoteChild.threadId === command.remoteChild.threadId &&
+          task.remoteChild.runId === remoteRunId,
+      )
+    ) {
+      return;
+    }
     const parentRun = parentProjection.runs.find(
       (candidate) => candidate.id === command.parentRunId,
     );
@@ -15425,6 +15438,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
+          // A run there that already has its task records nothing new.
+          command.type === "delegated_task.remote.request" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
           (command.type === "thread.delete" && command.onlyIfUnused === true),

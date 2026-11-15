@@ -141,6 +141,8 @@ interface BoxThread {
   readonly sent: Ref.Ref<ReadonlyArray<string>>;
   /** Runs as the launch there is answered, before the laptop hears back. */
   readonly afterLaunch: Ref.Ref<Effect.Effect<void>>;
+  /** Runs before a message sent there is answered, after the send was recorded. */
+  readonly beforeSendReply: Ref.Ref<Effect.Effect<void>>;
 }
 
 const makeBoxThread = Effect.gen(function* () {
@@ -179,6 +181,7 @@ const makeBoxThread = Effect.gen(function* () {
     releaseStop: yield* Deferred.make<void>(),
     sent: yield* Ref.make<ReadonlyArray<string>>([]),
     afterLaunch: yield* Ref.make<Effect.Effect<void>>(Effect.void),
+    beforeSendReply: yield* Ref.make<Effect.Effect<void>>(Effect.void),
   } satisfies BoxThread;
 });
 
@@ -498,6 +501,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
     stopDelegatedTasks: (input) => recordStop(input.commandId, "delegated-tasks"),
     sendToThread: (input) =>
       Ref.update(thread.sent, (seen) => [...seen, input.text]).pipe(
+        Effect.andThen(Effect.flatten(Ref.get(thread.beforeSendReply))),
         Effect.as(
           (input.mode === "queue"
             ? { run: { id: boxQueuedRunId, status: "queued" }, delivery: "queued" }
@@ -2360,6 +2364,70 @@ it.effect("a later run a provider wake starts there wakes the parent with its re
         Stream.runHead,
       );
       expect(Option.isSome(offered)).toBe(true);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a follow-up whose run ends there before its send is answered is one task", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* a.remote.start();
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const delegated = yield* delegateToBox(a);
+      yield* Ref.set(thread.reply, "All green.");
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      yield* taskResult(a, delegated.taskId);
+
+      // The sent run finishes there, and the watch for later runs records it, before the send
+      // is answered here.
+      const releaseSend = yield* Deferred.make<void>();
+      yield* Ref.set(
+        thread.beforeSendReply,
+        Effect.gen(function* () {
+          yield* Ref.set(thread.laterReply, "The slow suite passes too.");
+          yield* Deferred.succeed(thread.laterFinished, undefined);
+          yield* Deferred.await(releaseSend);
+        }),
+      );
+      const send = yield* a
+        .call("t3_thread_send", {
+          environmentId: box.environmentId,
+          threadId: delegated.remoteChild.threadId,
+          message: "Now run the slow suite too.",
+        })
+        .pipe(Effect.forkChild);
+      const watched = yield* a.orchestrator
+        .streamStoredEventsFrom({
+          threadId: parentThreadId,
+          afterSequence: 0,
+          eventType: "subagent.updated",
+        })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "subagent.updated" &&
+              stored.event.payload.remoteChild?.runId === boxLaterRunId,
+          ),
+          Stream.runHead,
+        );
+      yield* Deferred.succeed(releaseSend, undefined);
+      const sent = yield* Fiber.join(send);
+
+      const laterTaskId =
+        Option.isSome(watched) && watched.value.event.type === "subagent.updated"
+          ? watched.value.event.payload.id
+          : undefined;
+      expect((sent.structuredContent as { taskId?: NodeId }).taskId).toBe(laterTaskId);
+      expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents).toHaveLength(2);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
