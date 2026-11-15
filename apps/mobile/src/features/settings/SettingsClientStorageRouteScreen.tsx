@@ -5,7 +5,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { type EnvironmentMachineKind, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useMemo } from "react";
-import { Platform, View } from "react-native";
+import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -22,11 +22,9 @@ import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActi
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { formatBytes } from "../../lib/formatBytes";
-import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 
 export function SettingsClientStorageRouteScreen() {
   const insets = useSafeAreaInsets();
-  const workspace = useWorkspaceTabs();
   const summaryResult = useAtomValue(clientCacheSummaryAtom);
   const clearResult = useAtomValue(clearClientCacheAtom);
   const clearCache = useAtomSet(clearClientCacheAtom);
@@ -74,18 +72,10 @@ export function SettingsClientStorageRouteScreen() {
     <SettingsScreen title="Client Storage">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
-        contentInset={{ bottom: Math.max(insets.bottom, 18) }}
         showsVerticalScrollIndicator={false}
         className="flex-1"
         contentContainerClassName="gap-6 px-5 pt-4"
-        contentContainerStyle={{
-          // Android ignores contentInset, so the floating One UI tabs need container padding.
-          paddingBottom:
-            Platform.OS === "ios"
-              ? Math.max(Math.max(insets.bottom, 18) + 18, workspace?.bottomClearance ?? 0) -
-                Math.max(insets.bottom, 18)
-              : Math.max(Math.max(insets.bottom, 18) + 18, workspace?.bottomClearance ?? 0),
-        }}
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <SettingsSection title="Environment caches">
           {AsyncResult.isFailure(summaryResult) ? (
