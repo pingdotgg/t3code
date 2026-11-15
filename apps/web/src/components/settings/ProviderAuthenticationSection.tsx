@@ -88,7 +88,9 @@ export function ProviderAuthenticationSection({
           ? "Complete sign-in in the terminal below."
           : interaction?.type === "credentials"
             ? "Enter your credentials below."
-            : "Finish signing in in your browser."
+            : interaction
+              ? "Finish signing in in your browser."
+              : (auth?.message ?? "Finish signing in in your browser.")
     : signedIn
       ? "Signed in."
       : isDiscovering
