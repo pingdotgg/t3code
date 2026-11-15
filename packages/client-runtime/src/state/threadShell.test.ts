@@ -429,6 +429,17 @@ describe("v2 thread shell lists", () => {
     // parent's environment is switched off.
     registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [] });
     expect(listed()).toEqual([`${remoteEnvironmentId}/${task.id}`]);
+    // A parent left out with the older settled threads there still exists, so the task stays under it.
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [],
+      olderSettled: {
+        before: "2026-06-19T00:00:00.000Z",
+        asOfSequence: 0,
+        counts: [{ projectId: parent.projectId, count: 1 }],
+      },
+    });
+    expect(listed()).toEqual([]);
     // Archiving the parent here leaves the task there unarchived, so it is listed on its own.
     registry.set(snapshotAtom(environmentId), {
       ...v2ShellSnapshot,

@@ -58,8 +58,8 @@ const isChildRunLive = (
 /**
  * Whether a thread shows under its parent rather than in thread lists: a
  * subagent, a side chat, or a task a linked environment delegated here whose parent the
- * client lists (`delegatedUnderParent`, by thread key). A task whose parent
- * the client cannot list stays in the lists, so its work is never out of reach.
+ * client lists or its snapshot left out as older settled (`delegatedUnderParent`, by thread key).
+ * A task whose parent is gone stays in the lists, so its work is never out of reach.
  */
 export function isShownUnderParent(
   ref: ScopedThreadRef,
@@ -681,12 +681,18 @@ export function createEnvironmentThreadShellAtoms(input: {
     for (const environmentId of environmentIds) {
       for (const thread of get(environmentThreadsAtom(environmentId))) {
         const parent = thread.delegatedFrom;
+        if (parent === undefined || !environmentIds.has(parent.environmentId)) continue;
+        const parentShell = get(environmentThreadIndexAtom(parent.environmentId)).get(
+          parent.threadId,
+        );
         if (
-          parent !== undefined &&
-          environmentIds.has(parent.environmentId) &&
-          // An archived parent leaves navigation; its task there stays listed on its own.
-          get(environmentThreadIndexAtom(parent.environmentId)).get(parent.threadId)?.archivedAt ===
-            null
+          parentShell === undefined
+            ? // A snapshot that leaves out older settled threads may be leaving out the parent.
+              (get(input.snapshotAtom(parent.environmentId))?.olderSettled?.counts ?? []).some(
+                (count) => count.count > 0,
+              )
+            : // An archived parent leaves navigation; its task there stays listed on its own.
+              parentShell.archivedAt === null
         ) {
           next.add(threadKey({ environmentId, threadId: thread.id }));
         }
