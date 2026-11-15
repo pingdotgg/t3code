@@ -22,6 +22,8 @@ const CHUNK_WRITE_LENGTH = 1 << 20;
 export const writeFileStringAtomically = (input: {
   readonly filePath: string;
   readonly contents: string | Iterable<string>;
+  /** Permission bits for the replacement; ignored on Windows. */
+  readonly mode?: number;
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -65,7 +67,10 @@ export const writeFileStringAtomically = (input: {
           }),
         );
       }
-      if (platform !== "win32") return yield* fs.rename(tempPath, targetPath);
+      if (platform !== "win32") {
+        if (input.mode !== undefined) yield* fs.chmod(tempPath, input.mode);
+        return yield* fs.rename(tempPath, targetPath);
+      }
 
       // Stop retrying if another save changes the target; read-only targets also return permanent EPERM.
       const targetVersion = fs.stat(targetPath).pipe(
