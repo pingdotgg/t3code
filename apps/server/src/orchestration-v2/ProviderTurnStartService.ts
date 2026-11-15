@@ -1683,7 +1683,7 @@ export const layer: Layer.Layer<
           ? {}
           : { cwd: resolvedRuntimePolicy.cwd, repositoryRoot }),
         status: "running",
-        startedAt: now,
+        startedAt: run.startedAt ?? now,
       };
       const runningAttempt: OrchestrationV2RunAttempt = {
         ...attempt,
