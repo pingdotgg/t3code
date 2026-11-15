@@ -598,7 +598,7 @@ export function PullRequestFiltersMenu({
     <Menu onOpenChange={onOpenChange}>
       <MenuTrigger
         aria-label={"Filters" + (filterCount > 0 ? `, ${filterCount} active` : "")}
-        render={<Button variant="ghost" />}
+        render={<Button variant="secondary" />}
       >
         <ListFilterIcon aria-hidden className="size-4" />
         Filters
