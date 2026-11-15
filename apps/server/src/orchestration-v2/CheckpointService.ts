@@ -1599,6 +1599,8 @@ export const layer: Layer.Layer<
               submodulePath: submodules.path,
             });
           }
+          // Moved first: the restore then writes each submodule's own snapshot over its commit.
+          yield* submodules.move;
           const restored = yield* checkpointStore.restoreCheckpoint({
             cwd,
             checkpointRef: input.ref,
@@ -1611,7 +1613,6 @@ export const layer: Layer.Layer<
               reason: "checkpoint-missing",
             });
           }
-          yield* submodules.move;
         }),
       ).pipe(
         Effect.mapError((cause) =>
@@ -1659,6 +1660,8 @@ export const layer: Layer.Layer<
               cause: `Submodule ${submodules.path} was not moved: ${submodules.problem}.`,
             });
           }
+          // Moved first: the restore then writes each submodule's own snapshot over its commit.
+          if (submodules !== null) yield* submodules.move;
           const restored = yield* checkpointStore.restoreCheckpoint({
             cwd: input.scope.cwd,
             checkpointRef: input.checkpoint.ref,
@@ -1671,7 +1674,6 @@ export const layer: Layer.Layer<
               cause: "Checkpoint ref is unavailable.",
             });
           }
-          if (submodules !== null) yield* submodules.move;
         }),
       ).pipe(
         Effect.mapError((cause) =>
