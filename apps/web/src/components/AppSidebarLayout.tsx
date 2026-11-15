@@ -648,7 +648,7 @@ export function AppSidebarLayout({
         >
           {showSidebar ? (
             <>
-              <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
+              <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
               {chromeArtVariant ? <ChromeChannelArt variant={chromeArtVariant} /> : null}
               <Sidebar
                 side="left"
