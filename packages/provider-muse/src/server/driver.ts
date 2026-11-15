@@ -239,7 +239,14 @@ export const MuseDriver: ProviderDriver<
         );
         const { auth } = yield* snapshot.getSnapshot;
         // The probe may have advanced the generation before publishing its new account.
-        if (!newer || auth.type === "apiKey" || museUsageAccount(auth) !== account.identity) return;
+        const publishedIdentity = museUsageAccount(auth);
+        if (
+          !newer ||
+          auth.type === "apiKey" ||
+          auth.status === "unauthenticated" ||
+          (publishedIdentity !== undefined && publishedIdentity !== account.identity)
+        )
+          return;
         const now = yield* DateTime.now;
         const authLabel = museUsageAuth(auth, usage.tier).label;
         yield* snapshot.applyUsageLimits({

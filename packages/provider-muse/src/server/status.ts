@@ -165,8 +165,8 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
 
   const probe = yield* probeMuseHost(settings, museEnvironment, cwd, createHost).pipe(
     Effect.scoped,
-    // Startup shares the override, so the catalog keeps its 4 seconds on top of it.
-    Effect.timeoutOption(resolveMuseStartupTimeoutMs(museEnvironment) + 4_000),
+    // Reserve the catalog's four seconds and the optional account probe's two seconds.
+    Effect.timeoutOption(resolveMuseStartupTimeoutMs(museEnvironment) + 6_000),
     Effect.result,
   );
   if (Result.isFailure(probe) || Option.isNone(probe.success)) {

@@ -2,6 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { MuseSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { vi } from "vite-plus/test";
@@ -117,6 +119,62 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
       ).toEqual(["low", "medium", "high", "xhigh", "max"]);
       expect(host.connection.request).toHaveBeenCalledWith("model/list", {});
       expect(host.connection.command).not.toHaveBeenCalled();
+      expect(host.close).toHaveBeenCalledOnce();
+    }),
+  );
+
+  it.effect("keeps a slow catalog when the optional account probe never answers", () =>
+    Effect.gen(function* () {
+      const binaryPath = yield* fakeCli();
+      let markStarted = () => {};
+      let markCatalogRequested = () => {};
+      let markAccountRequested = () => {};
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      const catalogRequested = new Promise<void>((resolve) => {
+        markCatalogRequested = resolve;
+      });
+      const accountRequested = new Promise<void>((resolve) => {
+        markAccountRequested = resolve;
+      });
+      let finishStartup = () => {};
+      let finishCatalog = (_value: typeof metaCatalog) => {};
+      const host = makeHost(metaCatalog);
+      host.connection.request = vi.fn((method: string) => {
+        if (method === "account/read") {
+          markAccountRequested();
+          return new Promise<never>(() => {});
+        }
+        markCatalogRequested();
+        return new Promise<typeof metaCatalog>((resolve) => {
+          finishCatalog = resolve;
+        });
+      });
+      const probing = yield* checkMuseProviderStatus(
+        settings({ enabled: true, binaryPath }),
+        undefined,
+        undefined,
+        async () => {
+          markStarted();
+          await new Promise<void>((resolve) => {
+            finishStartup = resolve;
+          });
+          return host;
+        },
+      ).pipe(Effect.forkChild);
+      yield* Effect.promise(() => started);
+      yield* TestClock.adjust("7 seconds");
+      finishStartup();
+      yield* Effect.promise(() => catalogRequested);
+      yield* TestClock.adjust("3500 millis");
+      finishCatalog(metaCatalog);
+      yield* Effect.promise(() => accountRequested);
+      yield* TestClock.adjust("2 seconds");
+      const snapshot = yield* Fiber.join(probing);
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.auth).toEqual({ status: "unknown" });
+      expect(snapshot.models.map((model) => model.slug)).toEqual(["muse-wonder-1.0"]);
       expect(host.close).toHaveBeenCalledOnce();
     }),
   );
