@@ -2452,6 +2452,7 @@ export const layerWsRpc = (
                   cwd: input.cwd,
                   scanCwd: yield* projectService.workspaceScanDirectory(input.cwd),
                   fresh: input.fresh === true,
+                  untilPartial: input.acceptPartialWorkspaceSnapshot === true,
                 })
               : input.reloadSecrets === true
                 ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
