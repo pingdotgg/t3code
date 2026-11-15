@@ -7,11 +7,17 @@ import {
 import { readPreparedConnection } from "../state/session";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 
-function systemPlayback(text: string, voice: string, speed: number): SpeechPlayback {
+function systemPlayback(
+  text: string,
+  voice: string,
+  speed: number,
+  language: string,
+): SpeechPlayback {
   if (!("speechSynthesis" in window))
     throw new Error("System voices are not available in this browser.");
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.rate = speed;
+  if (language !== "auto") utterance.lang = language;
   utterance.voice = speechSynthesis.getVoices().find((entry) => entry.voiceURI === voice) ?? null;
   let done: () => void = () => {};
   let reject: (error: Error) => void = () => {};
@@ -44,7 +50,8 @@ function systemPlayback(text: string, voice: string, speed: number): SpeechPlayb
 const catalogs = new WeakMap<AbortSignal, Promise<SpeechSynthesisCatalog>>();
 
 export const readAloudController = createReadAloudController(async (text, settings, signal) => {
-  if (settings.provider === "system") return systemPlayback(text, settings.voice, settings.speed);
+  if (settings.provider === "system")
+    return systemPlayback(text, settings.voice, settings.speed, settings.language);
   if (settings.provider === "off") throw new Error("Enable read aloud in Settings → Voice.");
   const prepared = settings.environmentId ? readPreparedConnection(settings.environmentId) : null;
   if (!prepared)

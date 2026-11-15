@@ -455,11 +455,7 @@ export function ReadAloudSettingsSection() {
           {(settings.provider === "system" || catalog.supportsVoiceSelection) && (
             <SettingsRow
               title="Voice"
-              description={
-                settings.provider === "openrouter"
-                  ? "An empty value uses the first available OpenRouter voice."
-                  : "An empty value uses the provider's default voice."
-              }
+              description="An empty value uses the provider's default voice."
               control={
                 voices.length ? (
                   <Select
