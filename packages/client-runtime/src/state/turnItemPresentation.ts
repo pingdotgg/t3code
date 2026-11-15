@@ -21,20 +21,29 @@ export function workspacePreparationRetryRunIds(
   runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status" | "workspacePreparation">>,
   items: ReadonlyArray<ThreadStructureTurnItem>,
 ): ReadonlySet<OrchestrationV2Run["id"]> {
-  const failedRuns = new Set(
+  const endedRuns = new Map(
     runs.flatMap((run) =>
-      run.status === "failed" && run.workspacePreparation !== undefined ? [run.id] : [],
+      (run.status === "failed" || run.status === "interrupted") &&
+      run.workspacePreparation !== undefined
+        ? [[run.id, run.status] as const]
+        : [],
     ),
   );
   const retryable = new Set<OrchestrationV2Run["id"]>();
-  if (failedRuns.size === 0) return retryable;
+  if (endedRuns.size === 0) return retryable;
   for (const item of items) {
+    if (item.runId === null) continue;
+    const status = endedRuns.get(item.runId);
     if (
-      item.type === "error" &&
-      item.status === "failed" &&
-      item.failure.code === ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE &&
-      item.runId !== null &&
-      failedRuns.has(item.runId)
+      (status === "failed" &&
+        item.type === "error" &&
+        item.status === "failed" &&
+        item.failure.code === ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE) ||
+      // A stop during setup leaves the preparation itself interrupted.
+      (status === "interrupted" &&
+        item.type === "command_execution" &&
+        item.input === WORKSPACE_PREPARATION_INPUT &&
+        item.status === "interrupted")
     )
       retryable.add(item.runId);
   }

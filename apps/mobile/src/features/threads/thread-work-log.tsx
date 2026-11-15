@@ -1,3 +1,4 @@
+import { workspacePreparationRetryRunIds } from "@t3tools/client-runtime/state/turn-item-presentation";
 import { Button } from "../../components/ui/Button";
 import { ThreadSubagentGroup } from "./thread-subagent-group";
 import { ProposedPlanCard } from "./ProposedPlanCard";
@@ -777,7 +778,10 @@ function WorkspacePreparationRetryButton(props: {
     environmentThreadDetails.threadAtom(scopeThreadRef(props.environmentId, props.threadId)),
     (thread) => {
       const run = thread?.projection.runs.find((candidate) => candidate.id === props.runId);
-      return run?.status === "failed" && run.workspacePreparation !== undefined;
+      return (
+        run !== undefined &&
+        workspacePreparationRetryRunIds([run], thread?.projection.turnItems ?? []).has(run.id)
+      );
     },
   );
   const retry = useAtomCommand(threadEnvironment.retryWorkspacePreparation, "retry setup");
@@ -1157,6 +1161,14 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           </View>
         </View>
       </WorkLogPressable>
+      {row.projectedItem.item.type === "run_interrupt_result" &&
+      row.projectedItem.item.runId !== null ? (
+        <WorkspacePreparationRetryButton
+          environmentId={props.environmentId}
+          threadId={row.projectedItem.item.threadId}
+          runId={row.projectedItem.item.runId}
+        />
+      ) : null}
 
       {expanded &&
       (reasoning ||

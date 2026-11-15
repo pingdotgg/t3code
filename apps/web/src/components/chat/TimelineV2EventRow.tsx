@@ -7,8 +7,9 @@ import {
   summarizeSubagentStatuses,
 } from "@t3tools/client-runtime/state/subagent-display";
 import { memo, use, useState } from "react";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, RotateCcwIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
+import { Button } from "../ui/button";
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collapsible";
 import { EnvironmentSubagentAvatar, SubagentElapsed, V2LifecycleRow } from "./V2LifecycleRow";
 import { LinkRequestCard } from "./LinkRequestCard";
@@ -40,7 +41,7 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
       />
     );
   }
-  return (
+  const lifecycle = (
     <V2LifecycleRow
       environmentId={ctx.activeThreadEnvironmentId}
       item={item}
@@ -48,6 +49,25 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
       runs={ctx.runs}
       onOpenThread={ctx.onOpenThread}
     />
+  );
+  const retry = ctx.onRetryWorkspacePreparation;
+  const stoppedSetupRunId =
+    item.type === "run_interrupt_result" &&
+    item.runId !== null &&
+    ctx.retryableWorkspacePreparationRunIds.has(item.runId)
+      ? item.runId
+      : null;
+  if (stoppedSetupRunId === null || retry === null) return lifecycle;
+  return (
+    <div>
+      {lifecycle}
+      <div className="flex justify-center pb-1">
+        <Button type="button" size="xs" variant="outline" onClick={() => retry(stoppedSetupRunId)}>
+          <RotateCcwIcon aria-hidden />
+          Retry
+        </Button>
+      </div>
+    </div>
   );
 }
 

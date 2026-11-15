@@ -93,4 +93,18 @@ describe("workspacePreparationRetryRunIds", () => {
       ).size,
     ).toBe(0);
   });
+
+  it("offers a retry when setup was stopped before the workspace was ready", () => {
+    const stopped = { ...command("Preparing workspace"), status: "interrupted" as const };
+    expect([...workspacePreparationRetryRunIds([run("interrupted", worktree)], [stopped])]).toEqual(
+      [RunId.make("run-1")],
+    );
+    expect(
+      workspacePreparationRetryRunIds(
+        [run("interrupted", worktree)],
+        [command("Preparing workspace")],
+      ).size,
+    ).toBe(0);
+    expect(workspacePreparationRetryRunIds([run("failed", worktree)], [stopped]).size).toBe(0);
+  });
 });
