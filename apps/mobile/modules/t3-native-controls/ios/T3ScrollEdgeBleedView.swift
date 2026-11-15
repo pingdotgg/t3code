@@ -4,8 +4,9 @@ import UIKit
 /// Wraps a screen's header scroll view. Where a column pads its content away from the iPhone Duo's
 /// vertical bar, this widens the scroll view under the bar, like the system apps' lists. UIKit
 /// draws the header's scroll-edge effect inside the scroll view, so the blur reaches the bar while
-/// the content stays in the safe area. Everything happens in UIKit layout, so folds move the blur
-/// and the content together.
+/// the content stays in the safe area, and the scroll indicator runs along the screen edge past the
+/// bar, as in Messages. Everything happens in UIKit layout, so folds move the blur and the content
+/// together.
 final class T3ScrollEdgeBleedView: ExpoView {
   // Fabric recycles scroll views, so everything changed here is put back before this view leaves
   // the window, which unmounting does before any recycling.
@@ -19,7 +20,6 @@ final class T3ScrollEdgeBleedView: ExpoView {
   /// React Native's clipping, saved while bleeding. React Native only rewrites it when the
   /// `overflow` style changes, so it stays off while bleeding.
   private var containerClipped: Bool?
-  private var indicatorObservations: [NSKeyValueObservation] = []
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -137,29 +137,7 @@ final class T3ScrollEdgeBleedView: ExpoView {
       containerClipped = containerClipped ?? true
       container.layer.masksToBounds = false
     }
-    applyIndicatorInset()
-    // React Native rewrites every indicator inset when its `scrollIndicatorInsets` prop changes,
-    // which the keyboard-aware list animates while a reply streams; put the inset back at once.
-    if bleeding, indicatorObservations.isEmpty {
-      let keyPaths = [\UIScrollView.verticalScrollIndicatorInsets, \.scrollIndicatorInsets]
-      indicatorObservations = keyPaths.map {
-        scrollView.observe($0) { [weak self] _, _ in
-          MainActor.assumeIsolated { self?.applyIndicatorInset() }
-        }
-      }
-    } else if !bleeding {
-      indicatorObservations = []
-    }
     applied = bleeding
-  }
-
-  private func applyIndicatorInset() {
-    guard let scrollView else { return }
-    var indicators = scrollView.verticalScrollIndicatorInsets
-    if indicators.right != bleed.right {
-      indicators.right = bleed.right
-      scrollView.verticalScrollIndicatorInsets = indicators
-    }
   }
 
   private func detach() {

@@ -1,4 +1,5 @@
 import type { Processor } from "unified";
+import { decodeString } from "micromark-util-decode-string";
 import { isWindowsAbsolutePath } from "./path.ts";
 
 interface DestinationCompileContext {
@@ -11,9 +12,10 @@ function keepWindowsPathDestination(this: DestinationCompileContext, token: unkn
   const decoded = this.resume();
   const authored = this.sliceSerialize(token);
   const node = this.stack.at(-1);
-  // Character references still need decoding, so those destinations keep the parsed URL.
   if (node)
-    node.url = isWindowsAbsolutePath(authored) && !authored.includes("&") ? authored : decoded;
+    node.url = isWindowsAbsolutePath(authored)
+      ? decodeString(authored.replaceAll("\\", "\\\\"))
+      : decoded;
 }
 
 // A drive path that has not reached whitespace yet: `C:`, `C:\Users\me`, `C:/work`.

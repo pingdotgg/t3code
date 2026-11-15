@@ -74,6 +74,8 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       context.page.viewportSize.mockReturnValue(null);
       const browser = { close: vi.fn(async () => {}) };
       desktopConnections.push({ endpoint, context, browser });
+      desktopConnectionStarted?.resolve();
+      await desktopConnectionGate?.promise;
       return { browser, page: context.page as unknown as Page };
     }
     async close() {
@@ -401,6 +403,8 @@ let pageSetupFailure: Error | null = null;
 let initialNavigation: (() => Promise<void>) | null = null;
 let desktopRendersNext = false;
 let desktopPageUrl = "about:blank";
+let desktopConnectionGate: PromiseWithResolvers<void> | null = null;
+let desktopConnectionStarted: PromiseWithResolvers<void> | null = null;
 /** Replaces the answer to the desktop page's size reads. */
 let desktopSizeAnswer: (() => Promise<Record<string, unknown>>) | null = null;
 const desktopDetaches = new NodeEvents.EventEmitter();
@@ -593,6 +597,8 @@ beforeEach(() => {
   desktopAttachesLate = false;
   desktopAttachWaiting = Promise.withResolvers<void>();
   desktopPageUrl = "about:blank";
+  desktopConnectionGate = null;
+  desktopConnectionStarted = null;
   desktopSizeAnswer = null;
   desktopDetachReady = Promise.withResolvers<void>();
   desktopReleased = Promise.withResolvers<void>();
@@ -1833,44 +1839,109 @@ it.effect("closing a tab force-closes a page that never finishes unloading", () 
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect("closing a desktop tab waits for its page to unload before the desktop removes it", () =>
+it.effect("closing a desktop tab during setup unloads its page before disconnecting", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { broker } = yield* ready;
       const manager = yield* Manager.PreviewManager;
       desktopRendersNext = true;
-      const opened = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        operation: "open",
-        input: { reuseExistingTab: false, open: false },
-      });
-      const tabId = PreviewTabId.make(opened.tabId!);
+      const gate = (desktopConnectionGate = Promise.withResolvers<void>());
+      const started = (desktopConnectionStarted = Promise.withResolvers<void>());
+      yield* Effect.addFinalizer(() => Effect.sync(() => gate.resolve()));
+      const opening = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, open: false },
+        })
+        .pipe(Effect.result, Effect.forkScoped);
+      yield* Effect.promise(() => started.promise);
       const { context, browser } = desktopConnections[0]!;
       const page = context.page;
-      // The desktop removes the webview once the session closes, dropping an unload in progress.
-      const events = yield* manager.subscribeEvents;
-      const sessionClosed = Promise.withResolvers<void>();
-      yield* Effect.gen(function* () {
-        while ((yield* PubSub.take(events)).type !== "closed");
-        page.removed = true;
-        sessionClosed.resolve();
-      }).pipe(Effect.forkScoped);
       page.beforeUnload = "listen";
       page.unloadGate = Promise.withResolvers<void>();
-      const closing = yield* broker
-        .invoke({ scope, tabId, operation: "close", input: {} })
-        .pipe(Effect.forkScoped);
-      // The page finishes unloading once the server listens for it, or too late if it never does.
+      const { sessions } = yield* manager.list({ threadId: testThread.threadId });
+      const session = sessions.find((candidate) => !candidate.headless)!;
+      const closing = yield* manager
+        .close({ threadId: testThread.threadId, tabId: session.tabId })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      expect(page.isClosed()).toBe(false);
+      gate.resolve();
       yield* Effect.promise(() =>
-        Promise.race([page.pagehideWatched.promise, sessionClosed.promise]),
+        Promise.race([page.pagehideWatched.promise, desktopReleased.promise]),
       );
-      expect(browser.close).not.toHaveBeenCalled();
+      expect((yield* manager.list({ threadId: testThread.threadId })).sessions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ tabId: session.tabId })]),
+      );
       page.unloadGate.resolve();
       yield* Fiber.join(closing);
+      expect(yield* Fiber.join(opening)).toMatchObject({ _tag: "Failure" });
+      yield* Effect.promise(() => desktopReleased.promise);
       expect(page.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
-      expect(browser.close).toHaveBeenCalledTimes(1);
+      expect(page.isClosed()).toBe(true);
+      expect(browser.close).toHaveBeenCalled();
     }),
   ).pipe(Effect.provide(layer)),
+);
+
+it.effect.each(["agent", "client", "all", "concurrent"] as const)(
+  "closing a desktop tab waits for unload before removal (%s)",
+  (source) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker } = yield* ready;
+        const manager = yield* Manager.PreviewManager;
+        desktopRendersNext = true;
+        const opened = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, open: false },
+        });
+        const tabId = PreviewTabId.make(opened.tabId!);
+        const { context, browser } = desktopConnections[0]!;
+        const page = context.page;
+        // The desktop removes the webview once the session closes, dropping an unload in progress.
+        const events = yield* manager.subscribeEvents;
+        const sessionClosed = Promise.withResolvers<void>();
+        yield* Effect.gen(function* () {
+          while ((yield* PubSub.take(events)).type !== "closed");
+          page.removed = true;
+          sessionClosed.resolve();
+        }).pipe(Effect.forkScoped);
+        page.beforeUnload = "listen";
+        page.unloadGate = Promise.withResolvers<void>();
+        const close = () => manager.close({ threadId: testThread.threadId, tabId });
+        const closing = yield* (
+          source === "agent"
+            ? broker.invoke({ scope, tabId, operation: "close", input: {} })
+            : source === "all"
+              ? manager.close({ threadId: testThread.threadId })
+              : source === "concurrent"
+                ? Effect.all([close(), close()], { concurrency: "unbounded", discard: true })
+                : close()
+        ).pipe(Effect.forkScoped);
+        // The page finishes unloading once the server listens for it, or too late if it never does.
+        yield* Effect.promise(() =>
+          Promise.race([page.pagehideWatched.promise, sessionClosed.promise]),
+        );
+        expect(browser.close).not.toHaveBeenCalled();
+        const openedDuringClose =
+          source === "all"
+            ? yield* manager.open({ threadId: testThread.threadId, runtime: "server" })
+            : undefined;
+        page.unloadGate.resolve();
+        yield* Fiber.join(closing);
+        yield* Effect.promise(() => desktopReleased.promise);
+        expect(page.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
+        expect(browser.close).toHaveBeenCalledTimes(1);
+        if (openedDuringClose) {
+          const remaining = yield* manager.list({ threadId: testThread.threadId });
+          expect(remaining.sessions.map((session) => session.tabId)).toContain(
+            openedDuringClose.tabId,
+          );
+        }
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.effect("closing a tab with an unsaved-changes guard still closes it", () =>
@@ -3768,6 +3839,7 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
       expect(releasedDesktopTabs).toEqual([]);
       shownDesktopTabs.clear();
       shownDesktopTabs.add(opened[1]!);
+      desktopConnections[2]!.context.page.beforeUnload = "listen";
       const events = yield* manager.subscribeEvents;
       const releases = yield* Queue.unbounded<string>();
       const recordRelease = (tabId: string) => Queue.offerUnsafe(releases, tabId);
@@ -3778,6 +3850,11 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
       const fresh = yield* open("agent-new");
       expect(fresh.tabId).toBeDefined();
       expect(yield* Queue.take(releases)).toBe(opened[2]);
+      expect(desktopConnections[2]!.context.page.unloadEvents).toEqual([
+        "beforeunload",
+        "pagehide",
+        "visibilitychange",
+      ]);
       yield* Stream.fromSubscription(events).pipe(
         Stream.filter((event) => event.type === "closed" && event.tabId === opened[2]),
         Stream.runHead,
@@ -3787,6 +3864,54 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
       expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
         [...opened.filter((tabId) => tabId !== opened[2]), fresh.tabId!].toSorted(),
       );
+
+      // A second open must reclaim a different tab while the first page is unloading.
+      const closingPage = desktopConnections[3]!.context.page;
+      closingPage.beforeUnload = "listen";
+      closingPage.unloadGate = Promise.withResolvers<void>();
+      const closeRequests = yield* Queue.unbounded<void>();
+      const close = manager.close;
+      const closeSpy = vi
+        .spyOn(manager, "close")
+        .mockImplementation((input) =>
+          Queue.offer(closeRequests, undefined).pipe(Effect.andThen(close(input))),
+        );
+      yield* Effect.addFinalizer(() => Effect.sync(() => closeSpy.mockRestore()));
+      const firstOpen = yield* open("agent-concurrent").pipe(Effect.forkScoped);
+      yield* Queue.take(closeRequests);
+      yield* Effect.promise(() => closingPage.pagehideWatched.promise);
+      const secondOpen = yield* open("agent-concurrent").pipe(Effect.forkScoped);
+      yield* Queue.take(closeRequests);
+      closingPage.unloadGate.resolve();
+      const concurrent = yield* Effect.all([Fiber.join(firstOpen), Fiber.join(secondOpen)]);
+      expect(concurrent.every((status) => status.available)).toBe(true);
+      const remaining = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
+      expect(remaining).toHaveLength(32);
+      const closedBeforeReturn = yield* Deferred.make<void>();
+      const finishClose = yield* Deferred.make<void>();
+      let heldClose = false;
+      closeSpy.mockImplementation((input) => {
+        const hold = !heldClose;
+        heldClose = true;
+        return close(input).pipe(
+          Effect.andThen(
+            hold
+              ? Deferred.succeed(closedBeforeReturn, undefined).pipe(
+                  Effect.andThen(Deferred.await(finishClose)),
+                )
+              : Effect.void,
+          ),
+        );
+      });
+      const reclaimingOpen = yield* open("agent-reclaiming").pipe(Effect.forkScoped);
+      yield* Deferred.await(closedBeforeReturn);
+      const takingFreedSlot = yield* open("agent-taking-free-slot");
+      expect(takingFreedSlot.available).toBe(true);
+      yield* Deferred.succeed(finishClose, undefined);
+      expect((yield* Fiber.join(reclaimingOpen)).available).toBe(true);
+      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(32);
+      expect(remaining.some((session) => session.tabId === opened[3])).toBe(false);
+      expect(remaining.some((session) => session.tabId === opened[4])).toBe(false);
     }),
   ).pipe(Effect.provide(layer)),
 );

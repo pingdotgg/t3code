@@ -14,6 +14,7 @@ import { afterEach, vi } from "vite-plus/test";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
+import { posixLauncherScript } from "../cloud/pinnedRuntime.ts";
 import {
   findOwnedLauncher,
   findRecordedLaunchers,
@@ -102,6 +103,19 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: theirs, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: copy, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: undefined, versionsDir }));
+      // A script launcher execs by absolute path, so argv0 names the executable.
+      const scriptDir = path.join(root, "script-bin");
+      const script = path.join(scriptDir, "t3");
+      yield* fs.makeDirectory(scriptDir);
+      yield* fs.writeFileString(script, posixLauncherScript(exe), { mode: 0o755 });
+      assert.equal(
+        yield* findOwnedLauncher({ launchedAs: exe, versionsDir }).pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: scriptDir }),
+        ),
+        script,
+      );
+      const editedScript = path.join(scriptDir, "t3-edited");
+      yield* fs.writeFileString(editedScript, `${posixLauncherScript(exe)}# mine\n`);
 
       // On Windows, only the shim exactly as written is ours; a user's wrapper stays.
       const shimDir = path.join(root, "win-bin");
@@ -130,11 +144,25 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       yield* fs.symlink(path.join(versionsDir, "1.0.0/node"), sibling);
       yield* fs.writeFileString(
         path.join(root, "runtime/launchers"),
-        [ours, theirs, copy, throughAlias, pruned, sibling, path.join(root, "missing")].join("\n") +
-          "\n",
+        [
+          ours,
+          theirs,
+          copy,
+          throughAlias,
+          pruned,
+          sibling,
+          script,
+          editedScript,
+          path.join(root, "missing"),
+        ].join("\n") + "\n",
       );
       for (const dir of [versionsDir, path.join(root, "alias/runtime/versions")]) {
-        assert.deepStrictEqual(yield* findRecordedLaunchers(dir), [ours, throughAlias, pruned]);
+        assert.deepStrictEqual(yield* findRecordedLaunchers(dir), [
+          ours,
+          throughAlias,
+          pruned,
+          script,
+        ]);
       }
 
       // On Windows only an unedited t3.cmd is ours; a hand-edited wrapper belongs to the user.

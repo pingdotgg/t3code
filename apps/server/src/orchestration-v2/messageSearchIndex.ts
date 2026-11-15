@@ -48,13 +48,21 @@ const foldApostrophes = (text: string) => `replace(replace(${text}, '’', '''')
 const readableText = (row: string) =>
   `COALESCE(${row}.search_text, json_extract(${row}.payload_json, '$.text'))`;
 
+// A file mention stores `__init__.py` as `[\_\_init\_\_.py](...)`; the index
+// holds the label as it reads, so search can find the name as typed.
+const LINK_LABEL = /(!?\[)([^\]\n]*)(\]\([^)\s]*\))/g;
+
 /**
  * What search_text holds for a message: its text as it reads, a quote's
  * percent-encoded link replaced by its words and comment. NULL when that is
  * the stored text, so most messages store nothing extra.
  */
 export const readableSearchText = (text: string) => {
-  const readable = assistantCitationsToPlainText(text);
+  const readable = assistantCitationsToPlainText(text).replace(
+    LINK_LABEL,
+    (_link, open: string, label: string, close: string) =>
+      open + label.replace(/\\([*_])/g, "$1") + close,
+  );
   return readable === text ? null : readable;
 };
 

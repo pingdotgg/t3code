@@ -757,7 +757,7 @@ describe("DesktopRemoteUpdates", () => {
 
         const backgroundCheck = yield* updates.check("poll").pipe(Effect.forkChild);
         yield* Deferred.await(backgroundCheckStarted);
-        assert.equal((yield* updates.getState).status, "checking");
+        assert.isTrue(yield* updates.isActionActive);
 
         yield* Queue.offer(commits, {
           version: 1,
@@ -767,7 +767,6 @@ describe("DesktopRemoteUpdates", () => {
         yield* settle;
         assert.equal(harness.quitAndInstalls(), 0);
 
-        harness.emit("update-downloaded", { version: "1.2.4" });
         yield* Deferred.succeed(releaseBackgroundCheck, undefined);
         yield* Fiber.join(backgroundCheck);
         yield* settle;

@@ -299,6 +299,35 @@ export function resolveThreadListV2Status(
   return "ready";
 }
 
+export function threadListV2RowAccessibilityLabel(input: {
+  readonly title: string;
+  readonly variant: "card" | "slim";
+  readonly woke: boolean;
+  readonly statusLabel: string | undefined;
+  readonly timeLabel: string;
+  readonly snoozeWakeLabel: string | undefined;
+  readonly providerNameLabel: string | null;
+  readonly hasQueuedMessages: boolean;
+  readonly regeneratingTitle: boolean;
+}): string {
+  // Mirrors the row's meta line: a card shows Woke, else its status, else the time.
+  const meta =
+    input.variant === "slim"
+      ? (input.snoozeWakeLabel ?? input.timeLabel)
+      : input.woke
+        ? "Woke"
+        : (input.statusLabel ?? input.timeLabel);
+  return [
+    input.title,
+    meta,
+    input.providerNameLabel,
+    input.hasQueuedMessages ? "messages queued to send" : null,
+    input.regeneratingTitle ? "regenerating title" : null,
+  ]
+    .filter((part) => part !== null)
+    .join(", ");
+}
+
 /** Row status: a failure the user has already opened settles to ready, like Done. */
 export function resolveThreadListV2RowStatus(
   thread: Parameters<typeof resolveThreadListV2Status>[0] &

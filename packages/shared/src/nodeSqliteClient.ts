@@ -193,6 +193,9 @@ const hasLargeBinding = (params: ReadonlyArray<unknown>): boolean => {
   }
 };
 
+// A reader refuses a database outside WAL mode with this code; retrying cannot change that.
+const NOT_WAL = "ERR_SQLITE_NOT_WAL";
+
 // Inline worker source also runs in bundles and single-executable builds without module files.
 const workerSource = `
 const { parentPort, workerData } = require("node:worker_threads");
@@ -214,7 +217,9 @@ try {
   // Reads the header, so a file that is not a database fails here rather than on first use.
   const mode = String(next.prepare("PRAGMA journal_mode").get().journal_mode).toLowerCase();
   // Without WAL a reader's shared lock blocks the writer's commits, so refuse.
-  if (workerData.requireWal && mode !== "wal") throw new Error("database uses journal_mode " + mode + ", not wal");
+  if (workerData.requireWal && mode !== "wal") {
+    throw Object.assign(new Error("database uses journal_mode " + mode + ", not wal"), { code: ${JSON.stringify(NOT_WAL)} });
+  }
   db = next;
   parentPort.postMessage({ type: "ready" });
 } catch (error) {
@@ -345,6 +350,8 @@ const endsReadTransaction = (sql: string) => /^\s*ROLLBACK\b|^\s*COMMIT\b/i.test
 // WAL readers run concurrently; one worker serialized every read behind the slowest transaction.
 const READER_POOL_SIZE = 4;
 const READER_STARTUP_TIMEOUT = Duration.seconds(10);
+const READER_RETRY_DELAY = Duration.seconds(1);
+const READER_RETRY_MAX_DELAY = Duration.minutes(1);
 
 // Bind transactions to one worker; fail after its exit instead of resuming outside the transaction on a replacement.
 const makeWorkerConnection = Effect.fnUntraced(function* (options: {
@@ -566,9 +573,44 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
   });
 });
 
-// A reader that cannot start turns off the whole pool, so routing never picks a dead slot.
+const startFailure = (error: SqlError) => {
+  const cause = error.reason.cause;
+  return {
+    reason: cause instanceof Error ? cause.message : error.message,
+    permanent: Predicate.hasProperty(cause, "code") && cause.code === NOT_WAL,
+  };
+};
+
+// A reader that cannot start turns off the whole pool, so routing never picks a dead slot, until
+// one background retry starts it again.
 const makeReader = Effect.fnUntraced(function* (filename: string, pool: { unavailable: boolean }) {
   const acquire = yield* makeWorkerConnection({ filename, role: "reader", readOnly: true });
+  const scope = yield* Effect.scope;
+  const context = yield* Effect.context<never>();
+
+  const recover = (delay: Duration.Duration): Effect.Effect<void> =>
+    Effect.sleep(delay).pipe(
+      Effect.andThen(acquire),
+      Effect.matchEffect({
+        onSuccess: () =>
+          Effect.suspend(() => {
+            pool.unavailable = false;
+            return Effect.logInfo(
+              "SQLite reader worker available again; reads use the reader workers",
+            );
+          }),
+        onFailure: (error) => {
+          const { reason, permanent } = startFailure(error);
+          return permanent
+            ? Effect.logInfo(
+                "SQLite reader worker retries stopped permanently; reads use the writer",
+                { reason },
+              )
+            : recover(Duration.min(Duration.times(delay, 2), READER_RETRY_MAX_DELAY));
+        },
+      }),
+    );
+
   return Effect.suspend((): Effect.Effect<Connection | undefined> =>
     pool.unavailable
       ? Effect.undefined
@@ -577,10 +619,17 @@ const makeReader = Effect.fnUntraced(function* (filename: string, pool: { unavai
           Effect.catch((error) => {
             if (pool.unavailable) return Effect.undefined;
             pool.unavailable = true;
-            const cause = error.reason.cause;
+            const { reason, permanent } = startFailure(error);
+            // Pool state belongs to the client: never log or retry with the failed read's services.
             return Effect.logWarning("SQLite reader worker unavailable; reads use the writer", {
-              reason: cause instanceof Error ? cause.message : error.message,
-            }).pipe(Effect.as(undefined));
+              reason,
+            }).pipe(
+              Effect.andThen(
+                permanent ? Effect.void : Effect.forkIn(recover(READER_RETRY_DELAY), scope),
+              ),
+              Effect.updateContext((_: Context.Context<never>) => context),
+              Effect.as(undefined),
+            );
           }),
         ),
   );

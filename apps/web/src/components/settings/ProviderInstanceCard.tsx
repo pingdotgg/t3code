@@ -70,6 +70,12 @@ import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayo
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
+import {
+  type CustomModelSave,
+  customModelsKey,
+  pendingCustomModelSaves,
+  settleCustomModelSave,
+} from "./customModelSaves.logic";
 import { getProviderRestartNotice } from "../ProviderUpdateLaunchNotification.logic";
 import {
   getProviderVersionAdvisoryPresentation,
@@ -711,6 +717,33 @@ const EMPTY_ACP_PROJECTS: NonNullable<ProviderInstanceCardProps["acpProjects"]> 
 const NO_SECRET_SOURCES: ReadonlyArray<SecretSource> = [];
 const NO_CUSTOM_MODELS: ReadonlyArray<CustomModelDefinition> = [];
 
+/**
+ * Every custom model save writes the whole list, so the next edit starts from the last list sent
+ * until the config stream echoes it, which can land before or after the save's reply.
+ */
+function useCustomModelSaves(
+  stored: ReadonlyArray<CustomModelDefinition>,
+  save: (next: ReadonlyArray<CustomModelDefinition>) => Promise<boolean>,
+) {
+  const [saves, setSaves] = useState<ReadonlyArray<CustomModelSave>>([]);
+  const storedKey = customModelsKey(stored);
+  const [previousStoredKey, setPreviousStoredKey] = useState(storedKey);
+  if (previousStoredKey !== storedKey) {
+    setPreviousStoredKey(storedKey);
+    // Unchanged contents can match a queued restore, so only a stream change can be an echo.
+    setSaves((list) => pendingCustomModelSaves(list, storedKey));
+  }
+  const current = saves.at(-1)?.models ?? stored;
+  const update = useStableCallback(async (next: ReadonlyArray<CustomModelDefinition>) => {
+    const sent: CustomModelSave = { models: next, key: customModelsKey(next) };
+    setSaves((list) => [...list, sent]);
+    const saved = await save(next);
+    setSaves((list) => settleCustomModelSave(list, sent, saved));
+    return saved;
+  });
+  return [current, update] as const;
+}
+
 /** Unknown drivers stay read-only to preserve fork config. projectOverride switches affect only the
  * project, not instance.enabled. */
 export function ProviderInstanceCard({
@@ -825,10 +858,20 @@ export function ProviderInstanceCard({
     instance.config !== null && typeof instance.config === "object"
       ? (instance.config as Record<string, unknown>).customModels
       : undefined;
-  const customModels =
+  const [customModels, updateCustomModels] = useCustomModelSaves(
     instance.driver === "antigravity"
       ? NO_CUSTOM_MODELS
-      : readCustomModelEntries(storedCustomModels);
+      : readCustomModelEntries(storedCustomModels),
+    (next) => {
+      const nextConfig = nextConfigBlobWithValue(
+        instance.config,
+        "customModels",
+        next.map(toCustomModelSetting),
+      );
+      const { config: _omit, ...rest } = instance;
+      return onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
+    },
+  );
   const modelsForDisplay = deriveProviderModelsForDisplay({
     liveModels: liveProvider?.models,
     customModels,
@@ -869,16 +912,6 @@ export function ProviderInstanceCard({
         : (rest as ProviderInstanceConfig),
     );
   };
-
-  const updateCustomModels = useStableCallback((next: ReadonlyArray<CustomModelDefinition>) => {
-    const nextConfig = nextConfigBlobWithValue(
-      instance.config,
-      "customModels",
-      next.map(toCustomModelSetting),
-    );
-    const { config: _omit, ...rest } = instance;
-    return onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
-  });
 
   const updateEnvironment = (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => {
     const cleaned = environment.filter((variable) => variable.name.trim().length > 0);

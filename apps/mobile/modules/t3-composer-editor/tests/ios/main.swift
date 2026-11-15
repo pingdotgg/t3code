@@ -146,6 +146,31 @@ do {
   check(view.editor.accessibilityLabel == "Ask anything", "VoiceOver label: \(String(describing: view.editor.accessibilityLabel))")
 }
 
+// Cutting a chip is undoable: Undo restores the chip and tells the parent, Redo removes it again.
+// The parent echoes each edit with its re-derived chips; those echoes must not rebuild the text.
+do {
+  let view = makeEditor("hi @README.md ok", tokensJson: mention("README.md", at: 3))
+  func echo() {
+    let revision = view.onComposerChange.payloads.last?["eventCount"] as? Int ?? 0
+    let chips = view.text.contains("@README.md") ? mention("README.md", at: 3) : "[]"
+    view.setControlledDocumentJson(document(view.text, revision: revision, isNativeEcho: true, tokensJson: chips))
+  }
+  view.editor.selectedRange = NSRange(location: 3, length: 2)
+  view.editor.cut(nil)
+  check(view.text == "hi ok", "Cut left the selection behind: \(view.text)")
+  check(view.onComposerChange.payloads.last?["value"] as? String == "hi ok", "Cut did not emit the new value")
+  echo()
+  view.editor.undoManager?.undo()
+  check(view.text == "hi @README.md ok", "Undo did not restore the cut text: \(view.text)")
+  let restored = view.chip(at: 3)
+  check(restored is ComposerTextAttachment, "Undo did not restore the cut chip")
+  check(view.onComposerChange.payloads.last?["value"] as? String == "hi @README.md ok", "Undo did not emit the restored value")
+  echo()
+  check(view.chip(at: 3) === restored, "The parent's echo of the restored chip rebuilt the text and dropped Redo")
+  view.editor.undoManager?.redo()
+  check(view.text == "hi ok", "Redo did not cut again: \(view.text)")
+}
+
 print("composer editor tests passed")
 
 private let dropEditor = ComposerTextView()
@@ -212,6 +237,25 @@ for readOnly in [true, false] {
   check(provider.loadCount == 0, "Locked inputs must not load pasted image providers")
 }
 
+// Two-frame animated GIF: a mixed paste keeps the GIF's original bytes and the still image's PNG, in order.
+private let gifBytes = Data(base64Encoded: "R0lGODlhAQABAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAQABAAAIBAABBAQAIfkEAAoAAAAsAAAAAAEAAQCBAP8AAAAAAAAAAAAACAQAAQQEADs=")!
+private let gifProvider = NSItemProvider()
+gifProvider.registerDataRepresentation(forTypeIdentifier: UTType.gif.identifier, visibility: .all) { completion in
+  completion(gifBytes, nil)
+  return nil
+}
+private let gifEditor = ComposerTextView()
+gifEditor.onPasteImages = { urls in
+  let files = urls.compactMap(URL.init(string:))
+  let contents = files.compactMap { try? Data(contentsOf: $0) }
+  files.forEach { try? FileManager.default.removeItem(at: $0) }
+  check(files.map(\.pathExtension) == ["gif", "png"], "A mixed paste must keep each image's format, in order: \(urls)")
+  check(contents.first == gifBytes, "A pasted animated GIF must keep its original bytes")
+  check(contents.count == 2 && contents[1] == image.pngData(), "The still image beside a GIF must still attach as PNG")
+  print("Composer GIF-paste checks passed")
+  exit(0)
+}
+
 // Inline provider completion places the attachment callback before this main-queue check.
 DispatchQueue.main.async {
   check(pastedImages.count == 1, "An accepted provider-based paste must emit exactly one attachment batch")
@@ -228,6 +272,7 @@ DispatchQueue.main.async {
         "The attachment must contain the pasted image's pixels")
   check(pasteEditor.text == "Keep this draft", "Image paste must preserve the draft text")
   print("Composer provider-paste checks passed")
-  exit(0)
+  check(gifProvider.canLoadObject(ofClass: UIImage.self), "A GIF provider must take the image paste path")
+  gifEditor.paste(itemProviders: [gifProvider, ImmediateImageProvider(image: image)])
 }
 dispatchMain()

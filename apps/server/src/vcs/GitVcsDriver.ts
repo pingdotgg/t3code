@@ -937,6 +937,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "--git-common-dir",
         "--git-path",
         "index",
+        "--show-toplevel",
         "--show-prefix",
         "--verify",
         "--quiet",
@@ -947,11 +948,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     const headExists = result.exitCode === 0;
     const headChecked = headExists || result.exitCode === 1;
     const lines = result.stdout.split("\n");
-    const [gitCommonDir = "", indexPath = "", prefix = "", head = ""] = lines;
-    if (headChecked && lines.length === (headExists ? 5 : 4) && lines.at(-1) === "") {
+    const [gitCommonDir = "", indexPath = "", topLevel = "", prefix = "", head = ""] = lines;
+    if (headChecked && lines.length === (headExists ? 6 : 5) && lines.at(-1) === "") {
       return {
         gitCommonDir: gitCommonDir.trim(),
         indexPath: indexPath.trim(),
+        topLevel: topLevel.trim(),
         prefix,
         headExists,
         head: headExists ? head : undefined,
@@ -968,10 +970,24 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     return {
       gitCommonDir: fallbackCommonDir,
       indexPath: undefined,
+      topLevel: undefined,
       prefix: prefixResult.stdout.replace(/\n$/, ""),
       headExists: headChecked ? headExists : yield* hasHeadCommit(cwd),
       head: undefined,
     };
+  });
+
+  // $displaypath is relative to cwd, so "../" marks submodules outside a nested workspace.
+  const listSubmodules = Effect.fn("GitVcsDriver.listSubmodules")(function* (cwd: string) {
+    const result = yield* execute({
+      operation: "GitVcsDriver.checkpoints.listSubmodules",
+      cwd,
+      args: ["submodule", "foreach", "--quiet", 'printf "%s\\0" "$displaypath"'],
+    });
+    return result.stdout
+      .split("\0")
+      .filter((entry) => entry !== "" && !entry.startsWith("../"))
+      .map((entry) => path.join(cwd, entry));
   });
 
   // Git defaults and macOS writeout-only can leave empty refs after crashes; flush before publication.
@@ -1064,9 +1080,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "-c",
         "splitIndex.sharedIndexExpire=never",
       ];
-      const { gitCommonDir, indexPath, prefix, headExists, head } = yield* resolveCaptureRepository(
-        input.cwd,
-      );
+      const { gitCommonDir, indexPath, topLevel, prefix, headExists, head } =
+        yield* resolveCaptureRepository(input.cwd);
       // Read before the snapshot and pinned to the same HEAD: a switch that lands while files are
       // being staged then belongs to the next checkpoint instead of being applied to this one.
       const headMoves = head === undefined ? [] : yield* readHeadMoves(input.cwd);
@@ -1709,6 +1724,40 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
         });
       }).pipe(Effect.ensuring(cleanupTempIndex));
+
+      // The tree records only each submodule's HEAD, so submodules keep their own ref.
+      const hasSubmodules =
+        topLevel === undefined ||
+        (yield* fileSystem
+          .exists(path.join(topLevel, ".gitmodules"))
+          .pipe(Effect.orElseSucceed(() => true)));
+      if (!hasSubmodules) return;
+      // A submodule that cannot be captured drops its ref, so restore leaves it alone.
+      yield* listSubmodules(input.cwd).pipe(
+        Effect.flatMap((submodules) =>
+          Effect.forEach(
+            submodules,
+            (cwd) =>
+              checkpoints
+                .captureCheckpoint({ cwd, checkpointRef: input.checkpointRef })
+                .pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("submodule checkpoint capture failed", { cwd, cause }).pipe(
+                      Effect.andThen(
+                        checkpoints
+                          .deleteCheckpointRefs({ cwd, checkpointRefs: [input.checkpointRef] })
+                          .pipe(Effect.ignore),
+                      ),
+                    ),
+                  ),
+                ),
+            { discard: true },
+          ),
+        ),
+        Effect.catch((cause) =>
+          Effect.logWarning("submodule checkpoint capture failed", { cwd: input.cwd, cause }),
+        ),
+      );
     }, Effect.scoped),
 
     hasCheckpointRef: (input) =>
@@ -1914,6 +1963,32 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         }
       }
       yield* resetIndex;
+
+      // A submodule without this ref was not captured, and restoring it to HEAD would lose edits.
+      // The root is already restored, so a failing submodule must not hide that from the caller.
+      yield* listSubmodules(input.cwd).pipe(
+        Effect.flatMap((submodules) =>
+          Effect.forEach(
+            submodules,
+            (cwd) =>
+              checkpoints
+                .restoreCheckpoint({
+                  cwd,
+                  checkpointRef: input.checkpointRef,
+                  fallbackToHead: false,
+                })
+                .pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("submodule checkpoint restore failed", { cwd, cause }),
+                  ),
+                ),
+            { discard: true },
+          ),
+        ),
+        Effect.catch((cause) =>
+          Effect.logWarning("submodule checkpoint restore failed", { cwd: input.cwd, cause }),
+        ),
+      );
 
       return true;
     }, Effect.scoped),
@@ -2122,6 +2197,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             }),
           { discard: true },
         );
+        const submodules = yield* listSubmodules(input.cwd).pipe(Effect.orElseSucceed(() => []));
+        for (const cwd of submodules) {
+          yield* checkpoints.deleteCheckpointRefs({ cwd, checkpointRefs: input.checkpointRefs });
+        }
       },
     ),
   };

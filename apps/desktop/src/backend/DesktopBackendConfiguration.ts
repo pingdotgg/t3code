@@ -424,7 +424,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     const runtime = yield* wslEnv.prepareRuntime(runningDistro, input.runtimeArchive);
     if (runtime.ok) {
       // Staged runtimes bundle Node and node-pty; provider PATH discovery must not require them.
-      const stagedProbe = yield* wslEnv.probeRuntime(runningDistro, runtime.linuxAppRoot);
+      const stagedProbe = yield* wslEnv.probeRuntime(runningDistro);
       if (stagedProbe.ok) {
         yield* wslServerTree.cleanupLegacy;
         return {
@@ -437,7 +437,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
         } as const;
       }
       yield* Effect.logWarning(
-        "The staged WSL runtime did not start; retrying from the mounted server tree.",
+        "The staged WSL runtime probe failed; retrying from the mounted server tree.",
         { reason: stagedProbe.reason },
       );
       stagedFailure = { runtimeId: input.runtimeArchive.runtimeId, reason: stagedProbe.reason };
