@@ -64,6 +64,7 @@ import {
   ThreadListV2SnoozedShelfHeader,
   ThreadListV2WorkingShelfHeader,
   ThreadListV2FolderHeader,
+  ThreadListV2FolderParkedRow,
 } from "./thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
 import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
@@ -543,6 +544,10 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             onToggle={toggleSnoozedShelf}
             pane="sidebar"
           />
+        );
+      case "v2-folder-parked":
+        return (
+          <ThreadListV2FolderParkedRow item={item.header} onToggle={toggleFolder} pane="sidebar" />
         );
       case "v2-settled-shelf":
         return (

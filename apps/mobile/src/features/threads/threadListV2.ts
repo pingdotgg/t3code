@@ -255,6 +255,53 @@ export function threadHasUnseenCompletion(
   return completedAtMs > lastVisitedAtMs;
 }
 
+export type ThreadListV2FolderTallyStatus =
+  | "attention"
+  | "failed"
+  | "unread"
+  | "working"
+  | "waiting";
+
+const FOLDER_TALLY_ORDER: readonly ThreadListV2FolderTallyStatus[] = [
+  "attention",
+  "failed",
+  "unread",
+  "working",
+  "waiting",
+];
+
+/** A folder header's tally, like the web sidebar's: max 3 statuses, most urgent first. */
+export function resolveThreadListV2FolderTally(
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+): ThreadListV2FolderHeaderListItem["tally"] {
+  const counts = new Map<ThreadListV2FolderTallyStatus, number>();
+  for (const thread of threads) {
+    const status = resolveThreadListV2RowStatus(thread);
+    const tally: ThreadListV2FolderTallyStatus | null =
+      status === "input" || status === "approval" || status === "request" || status === "limited"
+        ? "attention"
+        : status === "failed"
+          ? "failed"
+          : status === "ready"
+            ? threadHasUnseenCompletion(thread)
+              ? "unread"
+              : null
+            : status === "working"
+              ? "working"
+              : "waiting";
+    if (tally !== null) counts.set(tally, (counts.get(tally) ?? 0) + 1);
+  }
+  return FOLDER_TALLY_ORDER.flatMap((status) => {
+    const count = counts.get(status);
+    return count === undefined ? [] : [{ status, count }];
+  }).slice(0, 3);
+}
+
+/** Key in the collapsed-folder set that marks an open folder's parked footer as expanded. */
+export function threadListV2ParkedKey(folderKey: string): string {
+  return `${folderKey}:parked`;
+}
+
 export function resolveThreadListV2WokeAt(
   thread: EnvironmentThreadShell,
   options: { readonly now: string },
@@ -493,6 +540,21 @@ export interface ThreadListV2FolderHeaderListItem {
   /** Members that can still be snoozed, and members now snoozed, for the folder menu. */
   readonly snoozableCount: number;
   readonly snoozedCount: number;
+  /** One count per status the live members show, most urgent first. */
+  readonly tally: ReadonlyArray<{
+    readonly status: ThreadListV2FolderTallyStatus;
+    readonly count: number;
+  }>;
+  /** Members a collapsed folder hides; the selected thread stays shown. */
+  readonly hiddenCount: number;
+  /** The soonest wake among snoozed members, for the header or footer. */
+  readonly nextWakeAt: string | null;
+  /** An open top folder's snoozed and settled members, folded into a footer line. */
+  readonly parked: {
+    readonly snoozedCount: number;
+    readonly settledCount: number;
+    readonly expanded: boolean;
+  } | null;
   /** The folders of this header's section, in screen order, for Move up/down. */
   readonly sectionFolders: ReadonlyArray<EnvironmentThreadFolder>;
   readonly key: string;
@@ -506,8 +568,15 @@ export interface ThreadListV2FolderHeaderListItem {
   readonly disabled: boolean;
 }
 
+export interface ThreadListV2FolderParkedListItem {
+  readonly type: "v2-folder-parked";
+  readonly key: string;
+  readonly header: ThreadListV2FolderHeaderListItem;
+}
+
 export type ThreadListV2ListItem =
   | ThreadListV2FolderHeaderListItem
+  | ThreadListV2FolderParkedListItem
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
   | ThreadListV2WorkingShelfListItem
@@ -519,6 +588,7 @@ export function isThreadListV2ListItem(value: {
 }): value is ThreadListV2ListItem {
   return (
     value.type === "v2-folder-header" ||
+    value.type === "v2-folder-parked" ||
     value.type === "v2-thread" ||
     value.type === "v2-pending" ||
     value.type === "v2-working-shelf" ||
@@ -544,9 +614,18 @@ export function threadListV2ListItemsAreEqual(
         previous.placement === item.placement &&
         previous.snoozableCount === item.snoozableCount &&
         previous.snoozedCount === item.snoozedCount &&
+        JSON.stringify(previous.tally) === JSON.stringify(item.tally) &&
+        previous.nextWakeAt === item.nextWakeAt &&
+        previous.hiddenCount === item.hiddenCount &&
+        JSON.stringify(previous.parked) === JSON.stringify(item.parked) &&
         previous.sectionFolders === item.sectionFolders &&
         previous.expanded === item.expanded &&
         previous.disabled === item.disabled
+      );
+    case "v2-folder-parked":
+      return (
+        previous.type === "v2-folder-parked" &&
+        threadListV2ListItemsAreEqual(previous.header, item.header)
       );
     case "v2-thread":
       return (
@@ -732,6 +811,27 @@ export function buildThreadListV2ListItems(input: {
       disabled: shelfDisabled,
     });
     pushRange(foldersAt("settled"), settledShelfHeaderIndex, threadItems.length);
+  }
+  // An open top folder ends with its parked footer, after its last shown member.
+  for (const header of input.folderHeaders ?? []) {
+    if (header.parked === null) continue;
+    const headerIndex = result.findIndex(
+      (entry) => entry.type === "v2-folder-header" && entry.folderKey === header.folderKey,
+    );
+    if (headerIndex === -1) continue;
+    let end = headerIndex + 1;
+    while (
+      end < result.length &&
+      result[end]!.type === "v2-thread" &&
+      (result[end] as ThreadListV2ThreadListItem).item.folderKey === header.folderKey
+    ) {
+      end += 1;
+    }
+    result.splice(end, 0, {
+      type: "v2-folder-parked",
+      key: `v2-folder-parked:${header.folderKey}`,
+      header: result[headerIndex] as ThreadListV2FolderHeaderListItem,
+    });
   }
   return result.map((entry, index) => {
     if (entry.type !== "v2-thread" && entry.type !== "v2-pending") return entry;
@@ -1045,6 +1145,29 @@ export function buildThreadListV2Items(input: {
     const expanded =
       (input.collapsedFolderKeys?.has(block.key) ?? false) === settled &&
       !(placement !== "open" && !shelfExpanded[placement]);
+    const parkedMembers = block.threads.filter(
+      (thread) => snoozedThreads.has(thread) || settledThreads.has(thread),
+    );
+    const snoozedMembers = parkedMembers.filter((thread) => snoozedThreads.has(thread));
+    let nextWakeAt: string | null = null;
+    for (const thread of snoozedMembers) {
+      if (
+        thread.snoozedUntil != null &&
+        (nextWakeAt === null ||
+          parseTimestampMs(thread.snoozedUntil) < parseTimestampMs(nextWakeAt))
+      ) {
+        nextWakeAt = thread.snoozedUntil;
+      }
+    }
+    // Only an open top folder folds its parked members; on a shelf they are the whole folder.
+    const parked =
+      expanded && placement === "open" && parkedMembers.length > 0
+        ? {
+            snoozedCount: snoozedMembers.length,
+            settledCount: parkedMembers.length - snoozedMembers.length,
+            expanded: input.collapsedFolderKeys?.has(threadListV2ParkedKey(block.key)) ?? false,
+          }
+        : null;
     folderHeaders.push({
       type: "v2-folder-header",
       key: `v2-folder:${block.key}`,
@@ -1060,13 +1183,29 @@ export function buildThreadListV2Items(input: {
           !snoozedThreads.has(thread) && !settledThreads.has(thread) && canSnooze(thread, { now }),
       ).length,
       snoozedCount: block.threads.filter((thread) => thread.snoozedUntil != null).length,
+      tally: resolveThreadListV2FolderTally(
+        block.threads.filter(
+          (thread) => !snoozedThreads.has(thread) && !settledThreads.has(thread),
+        ),
+      ),
+      nextWakeAt: placement === "snoozed" || parked !== null ? nextWakeAt : null,
+      hiddenCount: expanded
+        ? 0
+        : block.threads.filter(
+            (thread) => `${thread.environmentId}:${thread.id}` !== selectedThreadKey,
+          ).length,
+      parked,
       sectionFolders: blocksAt(placement).map((candidate) => candidate.folder),
       expanded,
       disabled: false,
       index: items.length,
     });
     for (const thread of block.threads) {
-      if (!expanded && `${thread.environmentId}:${thread.id}` !== selectedThreadKey) continue;
+      const selected = `${thread.environmentId}:${thread.id}` === selectedThreadKey;
+      if (!expanded && !selected) continue;
+      if (parked !== null && !parked.expanded && parkedMembers.includes(thread) && !selected) {
+        continue;
+      }
       items.push({
         thread,
         variant: snoozedThreads.has(thread) || settledThreads.has(thread) ? "slim" : "card",

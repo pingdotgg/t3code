@@ -1893,15 +1893,23 @@ describe("thread folders", () => {
       "v2-folder-header",
       pinned.id,
       filed.id,
-      snoozed.id,
-      settled.id,
+      "v2-folder-parked",
       "v2-folder-header",
       "v2-working-shelf",
       working.id,
     ]);
     expect(layout.folderHeaders.map((header) => header.count)).toEqual([4, 0]);
+    expect(layout.folderHeaders[0]).toMatchObject({
+      parked: { snoozedCount: 1, settledCount: 1, expanded: false },
+      nextWakeAt: snoozed.snoozedUntil,
+    });
+    // Pressing the footer lists the parked members after the live ones.
+    const parkedOpen = buildThreadListV2Items({
+      ...input,
+      collapsedFolderKeys: new Set([environmentId + ":folder:parked"]),
+    });
     expect(
-      layout.items.filter((item) => item.variant === "slim").map((item) => item.thread.id),
+      parkedOpen.items.filter((item) => item.variant === "slim").map((item) => item.thread.id),
     ).toEqual([snoozed.id, settled.id]);
     expect(layout.snoozedCount).toBe(0);
     expect(layout.settledCount).toBe(0);
@@ -1919,6 +1927,7 @@ describe("thread folders", () => {
       expect(
         selectedMember.items.filter((item) => item.folderKey).map((item) => item.thread.id),
       ).toEqual([member.id]);
+      expect(selectedMember.folderHeaders[0]?.hiddenCount).toBe(3);
     }
     const selected = buildThreadListV2Items({
       ...input,

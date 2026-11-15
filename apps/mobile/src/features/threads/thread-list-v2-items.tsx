@@ -96,6 +96,8 @@ import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2SnoozeMenuSelection,
+  threadListV2ParkedKey,
+  type ThreadListV2FolderTallyStatus,
   resolveThreadListV2SnoozePresets,
   threadHasUnseenCompletion,
   resolveThreadListV2RowStatus,
@@ -164,6 +166,56 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     iconTintClassName: "accent-warning-foreground",
   },
 };
+const FOLDER_TALLY_STYLE: Record<
+  ThreadListV2FolderTallyStatus,
+  {
+    readonly icon: AppSymbolName;
+    readonly className: string;
+    readonly tint: string;
+    readonly label: string;
+  }
+> = {
+  attention: {
+    icon: "exclamationmark.circle",
+    className: "text-warning-foreground",
+    tint: "accent-warning-foreground",
+    label: "need you",
+  },
+  failed: {
+    icon: "exclamationmark.circle",
+    className: "text-danger-foreground",
+    tint: "accent-danger-foreground",
+    label: "failed",
+  },
+  unread: {
+    icon: "checkmark.circle",
+    className: "text-adaptive-emerald-700-300",
+    tint: "accent-adaptive-emerald-700-300",
+    label: "done",
+  },
+  working: {
+    icon: "circle.dashed",
+    className: "text-adaptive-sky-600-400",
+    tint: "accent-adaptive-sky-600-400",
+    label: "working",
+  },
+  waiting: {
+    icon: "circle.dashed.inset.filled",
+    className: "text-foreground-muted",
+    tint: "accent-foreground-muted",
+    label: "waiting",
+  },
+};
+
+/** A short wake time for folder lines: "10:30 AM" today, else "Tue 10:30 AM". */
+function folderWakeLabel(wakeAt: string, nowMs: number): string {
+  const wake = new Date(wakeAt);
+  const time = wake.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return wake.toDateString() === new Date(nowMs).toDateString()
+    ? time
+    : `${wake.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
+}
+
 const DONE_STATUS_LABEL: StatusLabel = {
   label: "Done",
   icon: "checkmark.circle",
@@ -231,6 +283,7 @@ function ThreadListV2Section(props: {
   readonly onLongPress?: PressableProps["onLongPress"];
   readonly onTouchStart?: PressableProps["onTouchStart"];
   readonly onPress?: PressableProps["onPress"];
+  readonly trailing?: ReactNode;
 }) {
   const snoozed = props.tone === "snoozed";
   const sidebarPane = props.pane === "sidebar";
@@ -260,6 +313,7 @@ function ThreadListV2Section(props: {
           snoozed ? "bg-primary/20" : sidebarPane ? "bg-drawer-border" : "bg-border",
         )}
       />
+      {props.trailing}
       {props.disclosure ? (
         <SymbolView
           name="chevron.down"
@@ -533,8 +587,31 @@ export const ThreadListV2FolderHeader = memo(function ThreadListV2FolderHeader(p
       >
         <ThreadListV2Section
           pane={props.pane}
-          label={`${item.folder.name} (${item.count})${props.environmentLabel ? " · " + props.environmentLabel : ""}`}
+          label={`${item.folder.name}${props.environmentLabel ? " · " + props.environmentLabel : ""}`}
           onPress={() => props.onToggle(item.folderKey)}
+          trailing={
+            <View className="flex-row items-center gap-2">
+              {item.tally.map((entry) => {
+                const style = FOLDER_TALLY_STYLE[entry.status];
+                return (
+                  <View key={entry.status} className="flex-row items-center gap-0.5">
+                    <SymbolView name={style.icon} size={11} tintColorClassName={style.tint} />
+                    <Text className={cn("text-xs font-t3-medium", style.className)}>
+                      {entry.count}
+                    </Text>
+                  </View>
+                );
+              })}
+              {item.placement === "snoozed" && item.nextWakeAt !== null ? (
+                <Text className="text-xs text-foreground-muted">
+                  {folderWakeLabel(item.nextWakeAt, nowMinuteMs)}
+                </Text>
+              ) : null}
+              {item.hiddenCount > 0 ? (
+                <Text className="text-xs text-foreground-muted">{item.hiddenCount}</Text>
+              ) : null}
+            </View>
+          }
           leading={
             <View
               className={cn("h-7 w-7 items-center justify-center rounded-lg", colors.background)}
@@ -555,12 +632,64 @@ export const ThreadListV2FolderHeader = memo(function ThreadListV2FolderHeader(p
             expanded: item.expanded,
             disabled: item.disabled,
             onToggle: () => props.onToggle(item.folderKey),
-            accessibilityLabel: `${item.folder.name}, ${item.count} threads`,
+            accessibilityLabel: [
+              `${item.folder.name}, ${item.count} threads`,
+              ...item.tally.map(
+                (entry) => `${entry.count} ${FOLDER_TALLY_STYLE[entry.status].label}`,
+              ),
+              ...(item.placement === "snoozed" && item.nextWakeAt !== null
+                ? [`wakes ${folderWakeLabel(item.nextWakeAt, nowMinuteMs)}`]
+                : []),
+            ].join(", "),
             accessibilityHint: item.expanded ? "Collapse folder." : "Expand folder.",
           }}
         />
       </Menu>
     </>
+  );
+});
+
+/** An open folder's snoozed and settled members, folded into one line until pressed. */
+export const ThreadListV2FolderParkedRow = memo(function ThreadListV2FolderParkedRow(props: {
+  readonly item: ThreadListV2FolderHeaderListItem;
+  readonly pane?: "screen" | "sidebar";
+  readonly onToggle: (key: string) => void;
+}) {
+  const parked = props.item.parked;
+  const nowMinuteMs = useNowMinuteMs();
+  if (parked === null) return null;
+  const label = [
+    ...(parked.snoozedCount > 0 ? [`${parked.snoozedCount} snoozed`] : []),
+    ...(parked.snoozedCount > 0 && props.item.nextWakeAt !== null
+      ? [folderWakeLabel(props.item.nextWakeAt, nowMinuteMs)]
+      : []),
+    ...(parked.settledCount > 0 ? [`${parked.settledCount} settled`] : []),
+  ].join(" · ");
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ expanded: parked.expanded }}
+      accessibilityLabel={label}
+      onPress={() => props.onToggle(threadListV2ParkedKey(props.item.folderKey))}
+      className={cn(
+        "flex-row items-center gap-1.5 py-2",
+        props.pane === "sidebar" ? "px-3" : "px-5",
+      )}
+      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+    >
+      <SymbolView name="clock" size={11} tintColorClassName="accent-foreground-muted" />
+      <Text numberOfLines={1} className="shrink text-xs text-foreground-muted">
+        {label}
+      </Text>
+      <View className="flex-1" />
+      <SymbolView
+        name="chevron.down"
+        size={10}
+        tintColorClassName="accent-foreground-muted"
+        type="monochrome"
+        style={{ transform: [{ rotate: parked.expanded ? "180deg" : "-90deg" }] }}
+      />
+    </Pressable>
   );
 });
 

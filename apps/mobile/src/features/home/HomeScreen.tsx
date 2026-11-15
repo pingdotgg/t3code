@@ -78,6 +78,7 @@ import {
   ThreadListV2SnoozedShelfHeader,
   ThreadListV2WorkingShelfHeader,
   ThreadListV2FolderHeader,
+  ThreadListV2FolderParkedRow,
 } from "../threads/thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider-instance";
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
@@ -522,6 +523,9 @@ export function HomeScreen(props: HomeScreenProps) {
           }
         />
       );
+    }
+    if (item.type === "v2-folder-parked") {
+      return <ThreadListV2FolderParkedRow item={item.header} onToggle={toggleFolder} />;
     }
     if (item.type === "v2-working-shelf") {
       return (
