@@ -357,6 +357,37 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     }),
   );
 
+  it.effect("offers Auto once a native agy session advertises its auto mode", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.initialize;
+      const nextReady = yield* harness.nextPublish((snapshot) => snapshot.status === "ready");
+      yield* harness.provider.onSessionStarted(
+        {
+          ...started,
+          initializeResult: {
+            ...initializeResult,
+            agentInfo: { name: "Antigravity ACP Server", version: "1.5.6" },
+          },
+          sessionSetupResult: {
+            ...sessionSetupResult,
+            modes: {
+              currentModeId: "default",
+              availableModes: [
+                { id: "default", name: "Default" },
+                { id: "accept-edits", name: "Accept edits" },
+                { id: "auto", name: "Auto" },
+                { id: "plan", name: "Plan" },
+              ],
+            },
+          },
+        },
+        "/workspace",
+      );
+      expect((yield* nextReady).supportedRuntimeModes).toContain("auto");
+    }),
+  );
+
   it.effect("publishes session metadata and native commands without another health probe", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
