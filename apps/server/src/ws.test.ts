@@ -1126,7 +1126,7 @@ it.effect.each([
       assert.isEmpty(expectedSettings);
       assert.isEmpty(expectedKeybindings);
       const callsBeforeToggle = editorDiscoveryCalls;
-      for (const enabled of [true, false]) {
+      for (const enabled of [false, true]) {
         yield* settings.updateSettings({ pstackEnabled: enabled });
         const event = yield* Queue.take(responses);
         assert.equal(event.type, "snapshot");

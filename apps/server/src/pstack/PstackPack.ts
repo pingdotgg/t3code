@@ -28,8 +28,13 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import { readOrchestrationProviders } from "../provider/orchestrationTargets.ts";
 import { isProcessAlive } from "../serverRuntimeState.ts";
-import { planPstackComposer } from "./composer.ts";
-import { formatPstackBlock, parseModelsFile, resolveRoles } from "./pstackModels.ts";
+import { planPstackComposer, referencesPstack } from "./composer.ts";
+import {
+  formatPstackBlock,
+  formatPstackLocator,
+  parseModelsFile,
+  resolveRoles,
+} from "./pstackModels.ts";
 
 class PstackPackError extends Schema.TaggedError<PstackPackError>()("PstackPackError", {
   path: Schema.String,
@@ -299,10 +304,12 @@ const make = Effect.fn("PstackPack.make")(function* (sourceRoot?: string) {
   )(
     function* (input, message) {
       const plan = planPstackComposer(input, message);
-      if (plan === undefined) return input;
+      if (plan === undefined && !referencesPstack(input, message)) return input;
       const currentSettings = yield* settings.getSettings;
       if (!currentSettings.pstackEnabled) return input;
       const pack = yield* readPack();
+      if (plan === undefined)
+        return { ...input, text: `${input.text.trimEnd()}\n\n${formatPstackLocator(packDir)}` };
       const names = new Set(
         plan.skillNames.filter((name) => pack.skills.some((skill) => skill.name === name)),
       );

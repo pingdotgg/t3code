@@ -6,10 +6,10 @@ and runs it through its orchestration tools across supported providers. Its mult
 one `$pstack:architect` can run an Opus runner and a GPT runner side by side, whichever provider
 your thread uses.
 
-## Turn it on
+## Turn it off
 
-Open **Settings → Labs → Zack** and turn on **pstack**. The setting applies to one environment, so turn it on for each
-machine you want it on. Turning it off removes the `pstack:` skills from the composer
+pstack is on by default. To turn it off, open **Settings → Labs → Zack** and turn off **pstack**. The
+setting applies to one environment. Turning it off removes the `pstack:` skills from the composer
 and keeps your model choices.
 
 ## Choose models once
@@ -30,6 +30,7 @@ Type `$` or `/` in the composer and pick a `pstack:` skill, for example `$pstack
 cache layer`. Start rigorous work with `$pstack:poteto-mode`; it picks the other skills as it goes.
 Helper agents appear under the thread as tasks you can open, follow, or stop.
 Use `$pstack:automate-maintainer` or `$pstack:automate-team` to capture a maintainer’s or team’s engineering conventions.
+Mentioning pstack without a skill, such as “use pstack principles”, points the agent at T3 Code’s copy so it can read the skills, but runs no workflow.
 
 When a model becomes unavailable, pools use their remaining choices; if none remain, they use your
 thread’s model. Panels keep every seat, using your thread’s model for unavailable entries. The reply
@@ -39,7 +40,7 @@ the current capabilities before choosing another target.
 
 ## Good to know
 
-- pstack runs on the machine the thread runs on. A linked machine needs pstack turned on and its own
+- pstack runs on the machine the thread runs on. A linked machine needs pstack on and its own
   `$pstack:setup-pstack`, since its providers differ.
 - OpenCode sessions using an external **Server URL** do not expose T3's orchestration tools. Leave
   that setting blank to let T3 manage the server before running a pstack workflow.

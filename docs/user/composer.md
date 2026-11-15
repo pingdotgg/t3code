@@ -369,7 +369,7 @@ provider. On mobile, both are also available before starting a thread on
 
 The slash menu also includes skills unless you turn off **Settings → Chat →
 Show skills in slash menu**, under Advanced. Only skills enabled for the provider are listed.
-Built-in [pstack](./pstack.md) skills, once turned on, are listed for every
+Built-in [pstack](./pstack.md) skills, unless turned off, are listed for every
 provider.
 
 After you add or change skills, plugins, or MCP servers, use **Restart agent

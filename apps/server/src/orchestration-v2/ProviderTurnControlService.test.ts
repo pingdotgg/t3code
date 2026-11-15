@@ -605,7 +605,8 @@ it.effect.each([
         messageId,
       });
     }).pipe(Effect.provide(Layer.merge(layers, fixture.settingsLayer)));
-    assert.equal(threadReads, shouldExpand ? 1 : 0);
+    const locates = mode === "plain-name";
+    assert.equal(threadReads, shouldExpand || locates ? 1 : 0);
     assert.lengthOf(received, 1);
     assert.include(received[0]!, "native:review");
     if (mode === "pack-failure" || mode === "settings-failure") {
@@ -618,6 +619,9 @@ it.effect.each([
       else assert.notInclude(received[0]!, "Fallback:");
       assert.include(received[0]!, "<t3_pstack>");
       assert.notInclude(received[0]!, "$pstack:architect");
+    } else if (locates) {
+      assert.include(received[0]!, "pstack is built into T3 Code.");
+      assert.notInclude(received[0]!, "Resolved roles");
     } else {
       assert.notInclude(received[0]!, "<t3_pstack>");
       if (mode !== "no-mention") assert.include(received[0]!, "pstack:architect");

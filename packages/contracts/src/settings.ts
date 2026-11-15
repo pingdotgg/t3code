@@ -1496,7 +1496,7 @@ export const ServerSettings = Schema.Struct({
 
   enableAgentDeviceAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Offer the bundled pstack skills in every provider composer. */
-  pstackEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  pstackEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Off by default: turning it on moves skill folders out of the user's Claude and Codex homes. */
   skillsLibraryEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** On by default: each settled run costs a text generation call unless its project opts out. */

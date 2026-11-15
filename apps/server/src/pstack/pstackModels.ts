@@ -298,6 +298,16 @@ export function resolveRoles(input: {
   return { roles, diagnostics };
 }
 
+// Native pstack plugins are off in T3 sessions, so this is the agent's only pointer to the pack.
+export function formatPstackLocator(packDir: string): string {
+  return [
+    "<t3_pstack>",
+    `pstack is built into T3 Code. <pstack>: ${packDir}`,
+    "Read <pstack>/skills/<name>/SKILL.md for a pstack skill; its principles are the principle-* skills. Running a workflow with T3's model roles needs $pstack:<skill>.",
+    "</t3_pstack>",
+  ].join("\n");
+}
+
 export function formatPstackBlock(input: {
   readonly skillNames: ReadonlyArray<string>;
   readonly packDir: string;

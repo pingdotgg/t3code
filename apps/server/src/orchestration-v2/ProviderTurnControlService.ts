@@ -1,5 +1,5 @@
 import * as ServerSettings from "../serverSettings.ts";
-import { hasPstackComposerInvocation } from "../pstack/composer.ts";
+import { referencesPstack } from "../pstack/composer.ts";
 import * as PstackPack from "../pstack/PstackPack.ts";
 import {
   collectComposerContextReferences,
@@ -473,7 +473,7 @@ export const layer: Layer.Layer<
           }
           let composer = { text: message.text, records: message.context?.records ?? [] };
           if (
-            hasPstackComposerInvocation(composer, message) &&
+            referencesPstack(composer, message) &&
             (yield* settings.getSettings.pipe(
               Effect.map((current) => current.pstackEnabled),
               // Expansion reports settings failures without preventing message delivery.

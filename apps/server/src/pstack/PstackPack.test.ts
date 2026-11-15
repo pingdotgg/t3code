@@ -297,9 +297,19 @@ it.layer(NodeServices.layer)("PstackPack", (it) => {
             )).text,
             "$pstack:unknown",
           );
+          // T3 turns native pstack plugins off, so a plain mention must still find T3's pack.
+          const mention = { ...input, text: "use pstack principles" };
+          const located = (yield* pack.expandComposer(mention, { createdBy: "user" })).text;
+          assert.include(located, `<pstack>: ${directory}`);
+          assert.notInclude(located, "Resolved roles");
+          assert.strictEqual(yield* pack.expandComposer(mention, { createdBy: "agent" }), mention);
+          // Codex stores a goal's text as its objective.
+          const goal = { ...input, text: "/goal use pstack principles" };
+          assert.strictEqual(yield* pack.expandComposer(goal, { createdBy: "user" }), goal);
           yield* settings.updateSettings({ pstackEnabled: false });
           assert.equal(yield* pack.catalog, undefined);
           assert.strictEqual(yield* pack.expandComposer(input, { createdBy: "user" }), input);
+          assert.strictEqual(yield* pack.expandComposer(mention, { createdBy: "user" }), mention);
         }).pipe(Effect.provide(Layer.merge(fixture.layer, fixture.settingsLayer)));
       }),
   );
