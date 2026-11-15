@@ -2027,6 +2027,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const acceptsQueryReply = (sessionKey: string, viewerId: string | undefined) => {
     const viewers = terminalViewers.get(sessionKey);
     const viewer = viewerId === undefined ? undefined : viewers?.get(viewerId);
+    if (viewerId !== undefined && !viewer) return false;
     if (viewer?.answersQueries) return true;
     for (const other of viewers?.values() ?? []) {
       if (other.answersQueries) return false;

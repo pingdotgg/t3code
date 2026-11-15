@@ -774,7 +774,9 @@ describe("GhosttyTerminalSurface visibility", () => {
         return core;
       });
       let currentVisible = !visible;
+      const onReply = vi.fn();
       const pending = harness.create({
+        onReply,
         get visible() {
           return currentVisible;
         },
@@ -788,7 +790,8 @@ describe("GhosttyTerminalSurface visibility", () => {
       expect(harness.snapshot).toHaveBeenCalledTimes(visible ? 1 : 0);
       if (!visible) expect(harness.paint).not.toHaveBeenCalled();
       surface.write("ready\x1b[5n");
-      expect(harness.onData).toHaveBeenCalledWith("\x1b[0n");
+      expect(onReply).toHaveBeenCalledWith("\x1b[0n");
+      expect(harness.onData).not.toHaveBeenCalled();
       if (!visible) {
         expect(harness.frames.size).toBe(0);
         surface.setVisible(true);

@@ -767,6 +767,7 @@ it.layer(
       expect(other!.writes).toEqual([modeReply]);
 
       stopFirst();
+      yield* write(DEFAULT_TERMINAL_ID, "first", modeReply, true);
       yield* write(DEFAULT_TERMINAL_ID, "second", modeReply, true);
       yield* write(DEFAULT_TERMINAL_ID, "first", modeReply, true);
       expect(shared!.writes).toEqual([modeReply, "iHELLO", modeReply]);
