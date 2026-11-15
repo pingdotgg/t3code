@@ -99,8 +99,7 @@ function PopoverPopup({
             "will-change-[scale]",
             // Electron drag hit-testing ignores z-index; popups over a drag region would swallow hover.
             "[-webkit-app-region:no-drag]",
-            tooltipStyle &&
-              "surface-tooltip kbd-in-popover w-fit rounded-item text-meta",
+            tooltipStyle && "surface-tooltip kbd-in-popover w-fit rounded-item text-meta",
             width !== "auto" && ["max-w-[calc(100vw-2rem)]", popoverPopupWidthClassName[width]],
             variant === "panel" &&
               "w-full overflow-visible rounded-none border-0 bg-transparent shadow-none before:hidden [backdrop-filter:none] [-webkit-backdrop-filter:none]",
