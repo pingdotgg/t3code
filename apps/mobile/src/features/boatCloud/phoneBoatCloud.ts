@@ -236,10 +236,10 @@ export async function runPhoneBoatCloudSetup(): Promise<void> {
     await run(
       Effect.gen(function* () {
         const api = yield* phoneApi;
-        const release = yield* latestCliRelease(yield* HttpClient.HttpClient);
+        const version = yield* latestCliRelease(yield* HttpClient.HttpClient);
         yield* buildSnapshot({
           api,
-          version: release.version,
+          version,
           setStep: (step) =>
             Effect.sync(() =>
               setStatus((status) => ({

@@ -96,35 +96,29 @@ describe("startMachine on a running VM", () => {
 describe("latestCliRelease", () => {
   const github = (tag: string) =>
     HttpClient.make((request) =>
-      Effect.succeed(
-        HttpClientResponse.fromWeb(
-          request,
-          Response.json({ tag_name: tag, published_at: "2026-11-16T10:00:00Z" }),
-        ),
-      ),
+      Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ tag_name: tag }))),
     );
 
-  it.effect("finds the fork's build and rebuilds only snapshots saved before it", () =>
+  it.effect("finds the fork's build and refuses a latest release that is not one", () =>
     Effect.gen(function* () {
-      const release = yield* latestCliRelease(github("boat-cli-v0.1.9-boat.1"));
-      assert.deepStrictEqual(release, {
-        version: "0.1.9-boat.1",
-        publishedAt: "2026-11-16T10:00:00Z",
-      });
-      const saved = (createdAt: string | null) => ({ status: "ready", createdAt });
-      assert.isTrue(snapshotIsOutdated(saved("2026-11-14T08:00:00Z"), release));
-      assert.isTrue(snapshotIsOutdated(saved(null), release));
-      assert.isFalse(snapshotIsOutdated(saved("2026-11-16T10:05:00Z"), release));
-      assert.isFalse(snapshotIsOutdated({ status: "saving", createdAt: null }, release));
-    }),
-  );
-
-  it.effect("refuses a latest release that is not a Boat cloud build", () =>
-    Effect.gen(function* () {
+      assert.strictEqual(yield* latestCliRelease(github("boat-cli-v0.1.9-boat.1")), "0.1.9-boat.1");
       for (const tag of ["v0.1.9", "boat-cli-v0.1.9;reboot", "boat-cli-v1.2"]) {
         const error = yield* Effect.flip(latestCliRelease(github(tag)));
         assert.strictEqual(error.code, "cli_release");
       }
     }),
   );
+});
+
+describe("snapshotIsOutdated", () => {
+  it("rebuilds a snapshot this holder did not save with the latest build", () => {
+    const ready = { status: "ready", sourceSandboxId: "vm-2" };
+    const built = { sourceSandboxId: "vm-2", version: "0.1.9-boat.2" };
+    assert.isFalse(snapshotIsOutdated(ready, built, "0.1.9-boat.2"));
+    assert.isTrue(snapshotIsOutdated(ready, built, "0.1.9-boat.3"));
+    // Boat replaced it from another holder, or it predates the record.
+    assert.isTrue(snapshotIsOutdated(ready, { ...built, sourceSandboxId: "vm-1" }, "0.1.9-boat.2"));
+    assert.isTrue(snapshotIsOutdated(ready, null, "0.1.9-boat.2"));
+    assert.isFalse(snapshotIsOutdated({ ...ready, status: "saving" }, null, "0.1.9-boat.2"));
+  });
 });

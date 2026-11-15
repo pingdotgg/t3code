@@ -416,12 +416,7 @@ export const wakeMachine = Effect.fn("BoatCloud.wakeMachine")(function* (
   return { ...started, httpBaseUrl };
 });
 
-export interface CliRelease {
-  readonly version: string;
-  readonly publishedAt: string;
-}
-
-const LatestRelease = Schema.Struct({ tag_name: Schema.String, published_at: Schema.String });
+const LatestRelease = Schema.Struct({ tag_name: Schema.String });
 
 /** The newest Boat cloud build of t3, which every snapshot should carry. */
 export const latestCliRelease = Effect.fn("BoatCloud.latestCliRelease")(
@@ -436,7 +431,7 @@ export const latestCliRelease = Effect.fn("BoatCloud.latestCliRelease")(
     );
     const version = cliVersionOfTag(release.tag_name);
     if (version === null) return yield* Effect.fail(release.tag_name);
-    return { version, publishedAt: release.published_at } satisfies CliRelease;
+    return version;
   },
   Effect.timeout(Duration.seconds(30)),
   Effect.mapError((cause) =>
@@ -444,15 +439,31 @@ export const latestCliRelease = Effect.fn("BoatCloud.latestCliRelease")(
   ),
 );
 
-/** A snapshot saved before the latest build was published carries an older t3, or npm's. */
-export const snapshotIsOutdated = (snapshot: BoatSnapshot, release: CliRelease) =>
-  snapshot.status === "ready" &&
-  (snapshot.createdAt === null || Date.parse(snapshot.createdAt) < Date.parse(release.publishedAt));
+/** Which t3 build a holder saved in the snapshot, known only to the holder that saved it. */
+export interface SnapshotBuild {
+  readonly sourceSandboxId: string;
+  readonly version: string;
+}
 
-const waitSnapshot = (api: BoatApi) =>
+/**
+ * A ready snapshot this holder did not save, such as one from npm's t3 or another
+ * holder, or one with an older build, should be rebuilt.
+ */
+export const snapshotIsOutdated = (
+  snapshot: BoatSnapshot,
+  built: SnapshotBuild | null,
+  latestVersion: string,
+) =>
+  snapshot.status === "ready" &&
+  (built?.sourceSandboxId !== snapshot.sourceSandboxId || built.version !== latestVersion);
+
+// Until Boat starts saving, it still reports the previous snapshot as ready.
+const waitSnapshot = (api: BoatApi, sourceSandboxId: string) =>
   api.getSnapshot(BOAT_CLOUD_SNAPSHOT_NAME).pipe(
     Effect.flatMap((snapshot) => {
-      if (snapshot?.status === "ready") return Effect.void;
+      if (snapshot?.status === "ready" && snapshot.sourceSandboxId === sourceSandboxId) {
+        return Effect.void;
+      }
       if (snapshot?.status === "failed") {
         return Effect.fail(vmFailure("Boat could not save the snapshot."));
       }
@@ -492,13 +503,14 @@ export const buildSnapshot = Effect.fn("BoatCloud.buildSnapshot")(function* (inp
   yield* Effect.gen(function* () {
     yield* waitRunning(api, created.id);
     yield* input.setStep("install-server");
-    yield* exec(api, created.id, installCliScript(input.version), 900);
+    yield* exec(api, created.id, installCliScript(input.version), 600);
     yield* ensureServer(api, created.id);
     yield* input.setStep("copy-skills");
     if (input.copySkills) yield* input.copySkills(created.id);
     yield* input.setStep("save-snapshot");
     yield* exec(api, created.id, prepareSnapshotScript);
     yield* api.saveSnapshot(created.id, BOAT_CLOUD_SNAPSHOT_NAME);
-    yield* waitSnapshot(api);
+    yield* waitSnapshot(api, created.id);
   }).pipe(Effect.ensuring(api.delete(created.id).pipe(Effect.ignore)));
+  return { sourceSandboxId: created.id, version: input.version } satisfies SnapshotBuild;
 });

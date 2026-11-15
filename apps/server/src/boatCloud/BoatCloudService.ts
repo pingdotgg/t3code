@@ -99,6 +99,10 @@ const StoredState = Schema.Struct({
   machines: Schema.Array(StoredMachine),
   /** The Boat environment new VMs start on, by name, as Boat's create and list name it. */
   environment: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** The t3 build in the snapshot this machine last saved. */
+  snapshot: Schema.NullOr(
+    Schema.Struct({ sourceSandboxId: Schema.String, version: Schema.String }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
 });
 type StoredState = typeof StoredState.Type;
 const decodeStoredState = Schema.decodeUnknownOption(Schema.fromJsonString(StoredState));
@@ -163,7 +167,12 @@ const make = Effect.gen(function* () {
     Effect.map((text) => Option.getOrUndefined(decodeStoredState(text))),
     Effect.orElseSucceed(() => undefined),
   );
-  let state: StoredState = stored ?? { account: null, machines: [], environment: null };
+  let state: StoredState = stored ?? {
+    account: null,
+    machines: [],
+    environment: null,
+    snapshot: null,
+  };
   let setup: BoatCloudSetup = { status: "idle", step: null, error: null };
   let snapshotReady = false;
   let environments: ReadonlyArray<BoatCloudEnvironment> = [];
@@ -533,10 +542,10 @@ const make = Effect.gen(function* () {
     setup = { status: "running", step: "create-vm", error: null };
     yield* publish;
     yield* latestCliRelease(http).pipe(
-      Effect.flatMap((release) =>
+      Effect.flatMap((version) =>
         buildSnapshot({
           api,
-          version: release.version,
+          version,
           copySkills: (sandboxId) => copySkills(api, sandboxId),
           setStep: (step) =>
             Effect.suspend(() => {
@@ -545,6 +554,7 @@ const make = Effect.gen(function* () {
             }),
         }),
       ),
+      Effect.tap((snapshot) => commit((current) => ({ ...current, snapshot }))),
       Effect.matchCauseEffect({
         onSuccess: () => finishSetup(true, null),
         onFailure: (cause) =>
@@ -570,18 +580,19 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A snapshot saved before the latest t3 build is rebuilt from it, which also uploads
-   * this machine's skills again. VMs keep starting from the old one until the new one is saved.
+   * A snapshot this machine did not save with the latest t3 build is rebuilt with it, which
+   * also uploads this machine's skills again. VMs keep starting from the old one until the new one is saved.
    * A failed setup waits for the Rebuild button or a reconnect, so opening the page never loops.
    */
   const renewSnapshot = Effect.fn("BoatCloud.renewSnapshot")(
     function* (api: BoatApi) {
       const snapshot = yield* refreshSnapshot(api);
       if (snapshot === null || setup.status !== "idle") return;
-      const release = yield* latestCliRelease(http);
-      if (!snapshotIsOutdated(snapshot, release)) return;
-      yield* Effect.logInfo("boat cloud rebuilds a snapshot older than the latest t3 build", {
-        version: release.version,
+      const version = yield* latestCliRelease(http);
+      if (!snapshotIsOutdated(snapshot, state.snapshot, version)) return;
+      yield* Effect.logInfo("boat cloud rebuilds a snapshot without the latest t3 build", {
+        version,
+        saved: state.snapshot,
       });
       yield* startSetup(api);
     },

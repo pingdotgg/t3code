@@ -120,7 +120,7 @@ const FileUrl = Schema.Struct({ url: Schema.String });
 const HostResponse = Schema.Struct({ url: Schema.String });
 const SnapshotFields = {
   status: Schema.optional(Schema.String),
-  createdAt: Schema.optional(Schema.NullOr(Schema.String)),
+  sourceSandboxId: Schema.optional(Schema.NullOr(Schema.String)),
 };
 const SavedSnapshot = Schema.Struct({
   snapshot: Schema.optional(Schema.Struct(SnapshotFields)),
@@ -128,7 +128,8 @@ const SavedSnapshot = Schema.Struct({
 });
 export interface BoatSnapshot {
   readonly status: string;
-  readonly createdAt: string | null;
+  /** The VM it was saved from. Each save replaces it, while Boat keeps the first `createdAt`. */
+  readonly sourceSandboxId: string | null;
 }
 
 // Commands right after a create or resume can land while the VM mounts its files.
@@ -311,7 +312,7 @@ export function makeBoatApi(http: HttpClient.HttpClient, apiKey: string) {
         send(HttpClientRequest.get(url(`/saved-snapshots/${name}`)), SavedSnapshot).pipe(
           Effect.map((response): BoatSnapshot => ({
             status: response.snapshot?.status ?? response.status ?? "unknown",
-            createdAt: response.snapshot?.createdAt ?? response.createdAt ?? null,
+            sourceSandboxId: response.snapshot?.sourceSandboxId ?? response.sourceSandboxId ?? null,
           })),
         ),
       ),
