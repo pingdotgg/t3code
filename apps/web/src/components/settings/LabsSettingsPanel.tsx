@@ -27,6 +27,9 @@ export function LabsSettingsPanel() {
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
       </SettingsSection>
+      <SettingsSection id="redesign" title="Redesign">
+        <TurnWorkFoldRow />
+      </SettingsSection>
     </SettingsPageContainer>
   );
 }
@@ -45,6 +48,24 @@ function ScrollingWorkspacesRow() {
             updateSettings({ scrollingWorkspacesEnabled: Boolean(checked) })
           }
           aria-label="Scrolling workspaces"
+        />
+      }
+    />
+  );
+}
+
+function TurnWorkFoldRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("turn-work-fold")}
+      description="Gather a running turn's tool calls and notes under one Working line that folds into its Worked for row when the turn ends, with the tool calls inside shown open."
+      control={
+        <Switch
+          checked={settings.turnWorkFoldEnabled}
+          onCheckedChange={(checked) => updateSettings({ turnWorkFoldEnabled: Boolean(checked) })}
+          aria-label="Fold each turn's work"
         />
       }
     />
