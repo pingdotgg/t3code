@@ -5,13 +5,25 @@ import { codexAuthDeliveryUrl, readCodexAuthDelivery } from "@t3tools/shared/cod
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import { receiveCodexAuthCallback, cancelCodexAuthCallback } from "./CodexAuthCallback.ts";
 
+// Holds every probe socket until all ports are read, so one call never returns the same port twice.
+async function freePorts(count: number) {
+  const servers = Array.from({ length: count }, () => NodeHttp.createServer());
+  await Promise.all(
+    servers.map((server) => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))),
+  );
+  const ports = servers.map((server) => {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("address");
+    return address.port;
+  });
+  await Promise.all(
+    servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+  );
+  return ports;
+}
 async function freePort() {
-  const server = NodeHttp.createServer();
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("address");
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  return address.port;
+  const [port] = await freePorts(1);
+  return port!;
 }
 function request(port: number, state = "a".repeat(43)) {
   const url = new URL("https://auth.openai.com/api/accounts/authorize");
@@ -118,8 +130,9 @@ describe("desktop Codex callback helper", () => {
     }
   });
   it("allows two accounts to complete independently", async () => {
-    const a = request(await freePort(), "a".repeat(43));
-    const b = request(await freePort(), "c".repeat(43));
+    const [portA, portB] = await freePorts(2);
+    const a = request(portA!, "a".repeat(43));
+    const b = request(portB!, "c".repeat(43));
     const openedA = Promise.withResolvers<void>();
     const openedB = Promise.withResolvers<void>();
     const receiveA = receiveCodexAuthCallback(a, async () => {
