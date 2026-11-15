@@ -2188,9 +2188,9 @@ it.effect.each([null, "run:nested-sdk"] as const)(
     }),
 );
 
-it.effect.each([false, true])(
-  "drops a transferred child's pending snapshot (independent sibling pending=%s)",
-  (siblingPending) =>
+it.effect.each(["none", "sibling", "grandchild"] as const)(
+  "drops a transferred child's pending snapshot but keeps other owned pending work (%s)",
+  (otherPending) =>
     Effect.gen(function* () {
       const consumed = yield* Deferred.make<void>();
       const result = yield* Effect.raceFirst(
@@ -2200,7 +2200,7 @@ it.effect.each([false, true])(
             const childProviderThreadId = ProviderThreadId.make(
               "provider-thread:child-transfer-pending:child",
             );
-            const siblingThreadId = ThreadId.make("thread:child-transfer-pending:sibling");
+            const otherThreadId = ThreadId.make("thread:child-transfer-pending:other");
             const snapshot = (
               providerThreadId: ProviderThreadId,
               appThreadId: ThreadId,
@@ -2226,31 +2226,34 @@ it.effect.each([false, true])(
                 providerThreadId: childProviderThreadId,
               },
             };
-            const sibling = siblingPending
-              ? [
-                  {
-                    ...childThreadCreatedEvent(ids),
-                    appThread: {
-                      id: siblingThreadId,
-                      lineage: {
-                        parentThreadId: ids.threadId,
-                        relationshipToParent: "subagent",
-                        rootThreadId: ids.threadId,
+            // A grandchild stays with this run when its parent moves; a sibling was never the child's.
+            const other =
+              otherPending === "none"
+                ? []
+                : [
+                    {
+                      ...childThreadCreatedEvent(ids),
+                      appThread: {
+                        id: otherThreadId,
+                        lineage: {
+                          parentThreadId:
+                            otherPending === "grandchild" ? ids.childThreadId : ids.threadId,
+                          relationshipToParent: "subagent",
+                          rootThreadId: ids.threadId,
+                        },
                       },
-                    },
-                  } as ProviderAdapter.ProviderAdapterV2Event,
-                  snapshot(
-                    ProviderThreadId.make("provider-thread:child-transfer-pending:sibling"),
-                    siblingThreadId,
-                    true,
-                  ),
-                ]
-              : [];
+                    } as ProviderAdapter.ProviderAdapterV2Event,
+                    snapshot(
+                      ProviderThreadId.make("provider-thread:child-transfer-pending:other"),
+                      otherThreadId,
+                      true,
+                    ),
+                  ];
             return [
               childThreadCreatedEvent(ids),
               linked,
               snapshot(childProviderThreadId, ids.childThreadId, true),
-              ...sibling,
+              ...other,
               rootTerminalEvent(ids, "completed"),
               { ...linked, subagent: { ...linked.subagent, runId: RunId.make("run:replacement") } },
               snapshot(childProviderThreadId, ids.childThreadId, false),
@@ -2266,86 +2269,8 @@ it.effect.each([false, true])(
       );
       assert.strictEqual(
         Option.isSome(result),
-        !siblingPending,
-        "only the sibling's pending work may keep the prior subscription open",
-      );
-    }),
-);
-
-it.effect.each([true, false])(
-  "keeps a moved child's nested pending work on the prior subscription (grandchild pending=%s)",
-  (grandchildPending) =>
-    Effect.gen(function* () {
-      const consumed = yield* Deferred.make<void>();
-      const result = yield* Effect.raceFirst(
-        runBackgroundItemScenario(
-          "nested-transfer-pending",
-          (ids) => {
-            const childProviderThreadId = ProviderThreadId.make(
-              "provider-thread:nested-transfer-pending:child",
-            );
-            const grandchildThreadId = ThreadId.make("thread:nested-transfer-pending:grandchild");
-            const grandchildProviderThreadId = ProviderThreadId.make(
-              "provider-thread:nested-transfer-pending:grandchild",
-            );
-            const snapshot = (
-              providerThreadId: ProviderThreadId,
-              appThreadId: ThreadId,
-              pendingBackgroundWork: boolean,
-            ) => ({
-              type: "provider_thread.updated" as const,
-              driver,
-              providerThread: {
-                id: providerThreadId,
-                appThreadId,
-                status: "idle",
-              } as OrchestrationV2ProviderThread,
-              pendingBackgroundWork,
-            });
-            const running = subagentEvent(ids, "running");
-            if (running.type !== "subagent.updated") throw new Error("Missing subagent");
-            const linked = {
-              ...running,
-              subagent: {
-                ...running.subagent,
-                origin: "provider_native" as const,
-                childThreadId: ids.childThreadId,
-                providerThreadId: childProviderThreadId,
-              },
-            };
-            return [
-              childThreadCreatedEvent(ids),
-              linked,
-              snapshot(childProviderThreadId, ids.childThreadId, true),
-              {
-                ...childThreadCreatedEvent(ids),
-                appThread: {
-                  id: grandchildThreadId,
-                  lineage: {
-                    parentThreadId: ids.childThreadId,
-                    relationshipToParent: "subagent",
-                    rootThreadId: ids.threadId,
-                  },
-                },
-              } as ProviderAdapter.ProviderAdapterV2Event,
-              snapshot(grandchildProviderThreadId, grandchildThreadId, true),
-              rootTerminalEvent(ids, "completed"),
-              { ...linked, subagent: { ...linked.subagent, runId: RunId.make("run:replacement") } },
-              snapshot(grandchildProviderThreadId, grandchildThreadId, grandchildPending),
-            ];
-          },
-          {
-            keepEventStreamOpen: true,
-            hasPendingBackgroundWorkForThread: () => Effect.succeed(false),
-            onEventsConsumed: Deferred.succeed(consumed, undefined).pipe(Effect.asVoid),
-          },
-        ).pipe(Effect.asSome),
-        Deferred.await(consumed).pipe(Effect.as(Option.none())),
-      );
-      assert.strictEqual(
-        Option.isSome(result),
-        !grandchildPending,
-        "retained descendant work keeps the prior subscription open until its snapshot clears",
+        otherPending === "none",
+        "only pending work this run still owns may keep the prior subscription open",
       );
     }),
 );
