@@ -38,6 +38,7 @@ import { LastThreadTitleRegeneration, ThreadTitleRegeneration } from "./threadTi
 import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
+  OrchestrationV2DelegatedFrom,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
@@ -148,6 +149,7 @@ export type OrchestratorMcpTaskRole = typeof OrchestratorMcpTaskRole.Type;
 
 export const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
   "queued",
+  "starting",
   "running",
   "waiting",
   "completed",
@@ -184,7 +186,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
     }),
   ),
   timeoutMs: Schema.optional(Schema.Finite).annotate({
-    description: "Mode 'wait' only. Default 4 min. A timeout does not cancel the child.",
+    description: "Mode 'wait' only. At most 45 s. A timeout does not cancel the child.",
   }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   runtimeMode: Schema.optional(
@@ -199,8 +201,9 @@ export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTas
 
 // Set only on results for still-running tasks whose completion will wake the parent.
 export const ORCHESTRATOR_MCP_RUNNING_TASK_NEXT =
-  "Completion wakes this thread, so end your turn. Do not wait on it or poll it.";
-const OrchestratorMcpRunningTaskNext = Schema.Literal(ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
+  "Completion wakes this thread. Do not wait on it or poll it. Continue other work, and end your turn when none is left.";
+// A string, not a literal: linked environments on other versions send their own wording.
+const OrchestratorMcpRunningTaskNext = Schema.String;
 
 // Optional: linked environments on older versions omit it.
 const OrchestratorMcpExecutedModel = Schema.NullOr(Schema.String).annotate({
@@ -219,7 +222,10 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   link: Schema.optional(Schema.String),
   childRunId: Schema.NullOr(RunId),
   childNodeId: NodeId,
-  status: OrchestratorMcpDelegatedTaskStatus,
+  status: OrchestratorMcpDelegatedTaskStatus.annotate({
+    description:
+      "starting means the child's provider has not started its turn yet, so no work has begun.",
+  }),
   workState: Schema.Literals(["working", "waiting_for_children", "result_available"]),
   hasPendingChildRuns: Schema.Boolean,
   latestTerminalRunId: Schema.NullOr(RunId),
@@ -287,7 +293,6 @@ export type OrchestratorMcpCreateThreadsInput = typeof OrchestratorMcpCreateThre
 export const OrchestratorMcpCreatedThreadStatus = Schema.Union([
   Schema.Literal("idle"),
   Schema.Literal("preparing"),
-  Schema.Literal("starting"),
   OrchestratorMcpDelegatedTaskStatus,
   Schema.Literal("rolled_back"),
 ]);
@@ -335,6 +340,20 @@ export const OrchestratorMcpEnvironmentTarget = Schema.optional(
   }),
 );
 
+// Codex hides `minimum` and `maximum` from the model, so a value above the maximum clamps on
+// decode instead of failing the call; pagination returns the rest. Values below 1 still fail:
+// 0 asks for nothing, and answering it with one item would be a different request.
+export const clampedPositiveInt = (maximum: number) =>
+  PositiveInt.pipe(
+    Schema.decodeTo(
+      PositiveInt.check(Schema.isLessThanOrEqualTo(maximum)),
+      SchemaTransformation.transform({
+        decode: (value) => Math.min(value, maximum),
+        encode: (value) => value,
+      }),
+    ),
+  );
+
 export const OrchestratorMcpThreadListInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   projectId: OrchestratorMcpProjectTarget,
@@ -347,7 +366,7 @@ export const OrchestratorMcpThreadListInput = Schema.Struct({
   snoozed: Schema.optional(Schema.Boolean),
   includeSubagents: Schema.optional(Schema.Boolean),
   cursor: Schema.optional(NonNegativeInt),
-  limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(100))),
+  limit: Schema.optional(clampedPositiveInt(100)),
 });
 export type OrchestratorMcpThreadListInput = typeof OrchestratorMcpThreadListInput.Type;
 
@@ -396,11 +415,15 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
   /** Absent from linked environments that predate it. */
+  pinned: Schema.optional(Schema.Boolean),
+  /** Absent from linked environments that predate it. */
   blockedOnThreadWait: Schema.optional(Schema.Boolean),
   /** Absent from linked environments that predate it. */
   pendingBackgroundTasks: Schema.optional(Schema.Array(OrchestratorMcpThreadBackgroundTask)),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
+  /** The linked environment's thread that delegated this one; absent otherwise. */
+  delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
   itemCount: NonNegativeInt,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -416,20 +439,6 @@ export const OrchestratorMcpThreadListResult = Schema.Struct({
   total: NonNegativeInt,
 });
 export type OrchestratorMcpThreadListResult = typeof OrchestratorMcpThreadListResult.Type;
-
-// Codex hides `minimum` and `maximum` from the model, so a value above the maximum clamps on
-// decode instead of failing the call; pagination returns the rest. Values below 1 still fail:
-// 0 asks for nothing, and answering it with one item would be a different request.
-const clampedPositiveInt = (maximum: number) =>
-  PositiveInt.pipe(
-    Schema.decodeTo(
-      PositiveInt.check(Schema.isLessThanOrEqualTo(maximum)),
-      SchemaTransformation.transform({
-        decode: (value) => Math.min(value, maximum),
-        encode: (value) => value,
-      }),
-    ),
-  );
 
 export const OrchestratorMcpThreadReadInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
@@ -472,6 +481,8 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
+  /** The linked environment's thread that delegated this one; absent otherwise. */
+  delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
   runCount: NonNegativeInt,
   itemCount: NonNegativeInt,
   pendingRequestCount: NonNegativeInt,
@@ -480,6 +491,8 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
+  /** Absent from linked environments that predate it. */
+  pinned: Schema.optional(Schema.Boolean),
   /** Absent from linked environments that predate it. */
   blockedOnThreadWait: Schema.optional(Schema.Boolean),
   /** Absent from linked environments that predate it. */
@@ -737,7 +750,7 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   lastRunStatus: ScheduledTaskRunStatus,
   webhookUrl: Schema.optional(Schema.String).annotate({
     description:
-      "Public URL for the sender. Absent: no T3 Connect tunnel. The user must enable T3 Connect remote access.",
+      "Webhook bearer URL, returned only on task creation to callers allowed to run it. Lists and updates omit it; the user can copy it from Settings. Creation may omit it without T3 Connect remote access or run permission.",
   }),
   webhookSignature: Schema.optional(Schema.Literals(["none", "set"])),
   blockedByPolicy: Schema.optional(Schema.String).annotate({
@@ -756,6 +769,7 @@ export const OrchestratorMcpListScheduledTasksInput = Schema.Struct({
       description: "Default: your thread's project, or all outside a thread.",
     }),
   ),
+  scheduledTaskId: Schema.optional(ScheduledTaskId),
 });
 export type OrchestratorMcpListScheduledTasksInput =
   typeof OrchestratorMcpListScheduledTasksInput.Type;
