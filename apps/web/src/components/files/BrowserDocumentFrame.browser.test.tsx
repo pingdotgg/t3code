@@ -168,25 +168,41 @@ describe("BrowserDocumentFrame", () => {
 
     // The moment the next revision's frame is inserted, its page cannot have loaded yet. The
     // current page must still be there and visible, or the panel shows a blank white frame.
-    const atInsertion = new Promise<{ srcs: string[]; visible: string[] }>((resolve) => {
-      const observer = new MutationObserver(() => {
-        const current = frames();
-        if (!current.some((element) => element.src === second)) return;
-        observer.disconnect();
-        resolve({
-          srcs: current.map((element) => element.src),
-          visible: current.filter((element) => !element.inert).map((element) => element.src),
+    const atInsertion = new Promise<{ srcs: string[]; visible: string[]; loaded: Promise<void> }>(
+      (resolve) => {
+        const observer = new MutationObserver(() => {
+          const current = frames();
+          const incoming = current.find((element) => element.src === second);
+          if (!incoming) return;
+          observer.disconnect();
+          resolve({
+            loaded: new Promise<void>((resolveLoaded) =>
+              incoming.addEventListener("load", () => resolveLoaded(), { once: true }),
+            ),
+            srcs: current.map((element) => element.src),
+            visible: current.filter((element) => !element.inert).map((element) => element.src),
+          });
         });
-      });
-      observer.observe(screen.container, { childList: true, subtree: true });
-    });
+        observer.observe(screen.container, { childList: true, subtree: true });
+      },
+    );
     await screen.rerender(frame("2", second));
-    expect(await atInsertion).toEqual({ srcs: [second, first], visible: [first] });
+    const { loaded, ...inserted } = await atInsertion;
+    expect(inserted).toEqual({ srcs: [second, first], visible: [first] });
+    await loaded;
+    const oldPaints = paint.mock.calls.map(([callback]) => callback);
 
     await screen.rerender(frame("1", first));
     expect(frames()).toEqual([opened]);
-    paint.mockRestore();
     await screen.rerender(frame("2", second));
+    const queued = paint.mock.calls.length;
+    for (const callback of oldPaints) callback(0);
+    for (const [callback] of paint.mock.calls.slice(queued)) callback(0);
+    await screen.rerender(frame("2", second));
+    expect(frames().filter((element) => !element.inert)).toEqual([opened]);
+    const remainingPaints = paint.mock.calls.map(([callback]) => callback);
+    paint.mockRestore();
+    for (const callback of remainingPaints) callback(0);
     await vi.waitFor(() => expect(frames().map((element) => element.src)).toEqual([second]));
     expect(frames()[0]!.inert).toBe(false);
     expect(getComputedStyle(frames()[0]!).visibility).toBe("visible");

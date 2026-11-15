@@ -170,13 +170,13 @@ interface FileDocumentRevision {
 /** Marks a revision loaded and drops the older ones it now covers. */
 function withRevisionLoaded(
   revisions: ReadonlyArray<FileDocumentRevision>,
-  key: string,
+  loadedRevision: FileDocumentRevision,
 ): ReadonlyArray<FileDocumentRevision> {
-  const index = revisions.findIndex((revision) => revision.key === key);
+  const index = revisions.indexOf(loadedRevision);
   if (index === -1) return revisions;
   return revisions
     .slice(index)
-    .map((revision) => (revision.key === key ? { ...revision, loaded: true } : revision));
+    .map((revision) => (revision === loadedRevision ? { ...revision, loaded: true } : revision));
 }
 
 // A revision that has not fired load by now replaces the page anyway, so a stalled
@@ -207,16 +207,16 @@ function FileDocument(props: {
         : [...(shown ? [shown] : []), { key: props.documentKey, src: props.src, loaded: false }],
     );
   }
-  const pendingKey = revisions.length > 1 ? revisions.at(-1)?.key : undefined;
+  const pendingRevision = revisions.length > 1 ? revisions.at(-1) : undefined;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- swaps in a revision whose load event is slow to arrive
   useEffect(() => {
-    if (pendingKey === undefined) return;
+    if (pendingRevision === undefined) return;
     const timer = setTimeout(
-      () => setRevisions((current) => withRevisionLoaded(current, pendingKey)),
+      () => setRevisions((current) => withRevisionLoaded(current, pendingRevision)),
       FILE_DOCUMENT_SWAP_TIMEOUT_MS,
     );
     return () => clearTimeout(timer);
-  }, [pendingKey]);
+  }, [pendingRevision]);
   // The first revision shows as it loads, as before; later ones wait until they have loaded.
   const visibleKey = revisions.findLast((revision) => revision.loaded)?.key ?? revisions[0]?.key;
   return (
@@ -237,7 +237,7 @@ function FileDocument(props: {
             // Chromium must paint the incoming document before the old frame is removed.
             requestAnimationFrame(() => {
               requestAnimationFrame(() =>
-                setRevisions((current) => withRevisionLoaded(current, revision.key)),
+                setRevisions((current) => withRevisionLoaded(current, revision)),
               );
             });
           }}
