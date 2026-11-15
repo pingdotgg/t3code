@@ -1139,6 +1139,38 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       );
     }
   });
+  const checksLabel = "environment-data:pull-requests:checks";
+  const checksPersistence = persistQuery(Schema.NullOr(PullRequestChecks));
+  // Panels take the state from the newest of detail and checks, so checks show writes too.
+  const checks = normalizePullRequestQuery(
+    actionPatchedQuery(
+      createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: checksLabel,
+        persistence: checksPersistence,
+        tag: WS_METHODS.pullRequestsChecks,
+        execute: (input) => routedRequest(WS_METHODS.pullRequestsChecks, input),
+        staleTimeMs: 45_000,
+        refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+        ...(onAnswer.checks === undefined ? {} : { onAnswer: onAnswer.checks }),
+      }),
+      {
+        label: checksLabel,
+        persistence: checksPersistence,
+        onAnswer: onAnswer.checks,
+        concerns: samePullRequest,
+        patch: (_input, value, _reference, reply) =>
+          value === null || value.state === reply.state || isStalePullRequestReply(value, reply)
+            ? value
+            : { ...value, state: reply.state },
+        edit: (_input, value, edits) => {
+          const state = edits.findLast((edit) => edit.state !== undefined)?.state;
+          return value === null || state === undefined || value.state === state
+            ? value
+            : { ...value, state };
+        },
+      },
+    ),
+  );
   const acceptEdit = (
     registry: AtomRegistry.AtomRegistry,
     environmentId: EnvironmentId,
@@ -1225,17 +1257,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     detailReadVersion,
     preview,
     previewCard,
-    checks: normalizePullRequestQuery(
-      createEnvironmentRpcQueryAtomFamily(runtime, {
-        label: "environment-data:pull-requests:checks",
-        persistence: persistQuery(Schema.NullOr(PullRequestChecks)),
-        tag: WS_METHODS.pullRequestsChecks,
-        execute: (input) => routedRequest(WS_METHODS.pullRequestsChecks, input),
-        staleTimeMs: 45_000,
-        refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
-        ...(onAnswer.checks === undefined ? {} : { onAnswer: onAnswer.checks }),
-      }),
-    ),
+    checks,
     activity,
     threadComments: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:thread-comments",

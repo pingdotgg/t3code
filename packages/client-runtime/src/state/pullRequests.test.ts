@@ -2883,3 +2883,50 @@ it.effect.each(["loaded", "loading"] as const)(
       }),
     ),
 );
+
+it.effect.each(["accepted", "refused"] as const)(
+  "shows a close in the checks read the panel takes its state from (%s)",
+  (outcome) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const sent = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let reads = 0;
+        const client = actionReplyClient({
+          [WS_METHODS.pullRequestsChecks]: () =>
+            reads++ === 0
+              ? Effect.succeed({ state: "open", checks: [], observedAt: 100 })
+              : Effect.never,
+          [WS_METHODS.pullRequestsRunAction]: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(sent, undefined);
+              yield* Deferred.await(release);
+              if (outcome === "accepted") return { ...actionReply, state: "closed" as const };
+              return yield* new PullRequestOperationError({
+                operation: "runAction",
+                detail: "You cannot close this pull request.",
+              });
+            }),
+        });
+        const { atoms, registry } = yield* makeTestRuntime(client);
+        const target = { environmentId: TARGET.environmentId, input: actionReference };
+        const checks = atoms.checks(target);
+        registry.mount(checks);
+        yield* Effect.promise(() => executeAtomQuery(registry, checks));
+        const state = () => Option.getOrThrow(AsyncResult.value(registry.get(checks)))?.state;
+
+        const acting = yield* Effect.promise(() =>
+          atoms.runAction.run(registry, {
+            ...target,
+            input: { ...actionReference, action: "close" },
+          }),
+        ).pipe(Effect.forkScoped);
+        yield* Deferred.await(sent);
+        expect(state()).toBe("closed");
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(acting);
+        // An accepted close stays while the next checks read is still out.
+        expect(state()).toBe(outcome === "accepted" ? "closed" : "open");
+      }),
+    ),
+);
