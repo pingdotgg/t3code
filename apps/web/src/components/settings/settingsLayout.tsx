@@ -172,6 +172,8 @@ export function useSettingsSearchTarget<T extends HTMLElement>(id: string | unde
 
 export function SettingsSearchTarget({
   children,
+  // `searchableSetting` names the target for search; as an HTML title it shows a native tooltip.
+  title: _searchTitle,
   ...targetProps
 }: ComponentPropsWithoutRef<"div">) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(targetProps.id);
@@ -235,7 +237,7 @@ export function SettingsSection({
       ) : (
         <div
           data-settings-scroll-target
-          className="flex min-h-7 items-start justify-between gap-4 px-3 sm:px-4"
+          className="flex min-h-7 flex-wrap items-start justify-between gap-x-4 gap-y-1 px-3 sm:px-4"
         >
           <div className="flex min-w-0 items-center gap-1">
             <h2 className="flex min-h-7 items-center gap-2 text-base font-semibold text-foreground">
@@ -244,7 +246,9 @@ export function SettingsSection({
             </h2>
             {titleAction}
           </div>
-          <div className="flex min-h-7 min-w-7 items-center justify-end">{headerAction}</div>
+          {headerAction ? (
+            <div className="flex min-h-7 min-w-7 items-center justify-end">{headerAction}</div>
+          ) : null}
         </div>
       )}
       <SettingsGroup data-settings-scroll-target={hideTitle ? "" : undefined} variant={variant}>
@@ -308,6 +312,7 @@ export function SettingsRow({
   onResetOverride,
   control,
   serverScoped = false,
+  devicePreference = false,
   settingKeys = EMPTY_SETTING_KEYS,
   managedPaths = EMPTY_MANAGED_PATHS,
   mixed: mixedOverride,
@@ -323,6 +328,8 @@ export function SettingsRow({
   onResetOverride?: () => void;
   control?: ReactNode;
   serverScoped?: boolean;
+  /** Saved on this device, so a project cannot override it and the row is read-only there. */
+  devicePreference?: boolean;
   settingKeys?: readonly (keyof ServerSettings)[];
   /** Dot paths inside a setting, such as `storageCleanup.logsAfterDays`, an administrator can lock. */
   managedPaths?: readonly string[];
@@ -367,6 +374,7 @@ export function SettingsRow({
     context !== null && (context.scope.kind === "project" || context.scope.kind === "checkout");
   const scopedKeys = settingKeys.filter(isProjectScopedSettingKey);
   const environmentWide = isProjectScope && serverScoped && scopedKeys.length === 0;
+  const deviceReadOnly = isProjectScope && devicePreference;
   const mixed =
     mixedOverride ?? (context !== null && scopedSettingsAreMixed(context.targets, settingKeys));
   const source =
@@ -390,8 +398,10 @@ export function SettingsRow({
   );
   const overridingProjects = isProjectScope ? [] : projectOverrides(context, scopedKeys);
   const renderedReset =
-    unavailable || managedBy !== undefined || managed !== undefined ? null : isProjectScope &&
-      scopedKeys.length > 0 ? (
+    unavailable ||
+    deviceReadOnly ||
+    managedBy !== undefined ||
+    managed !== undefined ? null : isProjectScope && scopedKeys.length > 0 ? (
       source === "project" || source === "mixed" ? (
         <SettingResetButton
           label={typeof title === "string" ? title : "override"}
@@ -444,7 +454,9 @@ export function SettingsRow({
             )
           : environmentWide && control
             ? inertControl("Environment-wide setting. Select an environment to change it.")
-            : control;
+            : deviceReadOnly && control
+              ? inertControl("Saved on this device. Select All projects to change it.")
+              : control;
   const customized =
     context !== null &&
     settingKeys.some((key) =>
@@ -498,7 +510,7 @@ export function SettingsRow({
         className,
       )}
     >
-      <div className="flex flex-col gap-3 @min-[32rem]/settings-row:grid @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)] @min-[32rem]/settings-row:items-center @min-[32rem]/settings-row:gap-8">
+      <div className="flex flex-col gap-3 @min-[32rem]/settings-row:grid @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_auto] @min-[32rem]/settings-row:items-center @min-[32rem]/settings-row:gap-8">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
             <h3 className="text-sm font-medium text-foreground">{title}</h3>
@@ -520,7 +532,7 @@ export function SettingsRow({
             </span>
           </div>
           {description ? (
-            <p className="max-w-2xl text-balance text-xs leading-normal text-muted-foreground">
+            <p className="max-w-2xl text-pretty text-xs leading-normal text-muted-foreground">
               {description}
             </p>
           ) : null}
@@ -529,7 +541,7 @@ export function SettingsRow({
           ) : null}
         </div>
         {renderedControl ? (
-          <div className="flex w-full min-w-0 shrink-0 items-center gap-2 @min-[32rem]/settings-row:w-auto @min-[32rem]/settings-row:justify-end">
+          <div className="flex w-full min-w-0 shrink-0 items-center gap-2 @min-[32rem]/settings-row:w-auto @min-[32rem]/settings-row:justify-end @min-[32rem]/settings-row:[&_[data-slot=select-trigger]]:min-w-40">
             {renderedControl}
           </div>
         ) : null}
@@ -583,10 +595,12 @@ export function SettingsPageContainer({
   children,
   className,
   width = "readable",
+  searchTargetFallbacks,
 }: {
   children: ReactNode;
   className?: string;
   width?: WorkspacePageWidth;
+  searchTargetFallbacks?: Readonly<Record<string, string | undefined>>;
 }) {
   const navigate = useNavigate();
   const hash = useLocation({ select: (location) => location.hash });
@@ -606,7 +620,7 @@ export function SettingsPageContainer({
 
   return (
     <SettingsSearchTargetProvider
-      targetId={targetId}
+      targetId={targetId === null ? null : (searchTargetFallbacks?.[targetId] ?? targetId)}
       highlightTarget={highlightTarget}
       onTargetHandled={clearTargetHash}
     >

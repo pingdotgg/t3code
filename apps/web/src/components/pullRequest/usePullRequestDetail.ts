@@ -1,9 +1,12 @@
+import { useAtomValue } from "@effect/atom-react";
 import { resolvePullRequestDetailChecks } from "@t3tools/client-runtime/pull-request-checks";
+import { pullRequestPendingEditsFor } from "@t3tools/client-runtime/state/pull-requests";
 import {
   AuthSourceControlWriteScope,
   type EnvironmentId,
   type PullRequestListEntry,
   type PullRequestRef,
+  type ProjectId,
 } from "@t3tools/contracts";
 import { useState } from "react";
 
@@ -12,6 +15,7 @@ import { useServerConfigs } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
 import {
+  newestDisplayedPullRequestSummary,
   newestPullRequestSummary,
   pullRequestEnvironment,
   pullRequestListEntryToSummary,
@@ -21,6 +25,21 @@ import {
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
 } from "./pullRequestDetail.logic";
+
+// Query atoms key on JSON order, so the panel and the row prefetch must build the ref here.
+export function pullRequestPanelReference(target: {
+  readonly projectId: ProjectId;
+  readonly repository: string;
+  readonly number: number;
+  readonly host?: string | undefined;
+}): PullRequestRef {
+  return {
+    projectId: target.projectId,
+    repository: target.repository,
+    number: target.number,
+    ...(target.host ? { host: target.host } : {}),
+  };
+}
 
 export function pullRequestRefKey(reference: PullRequestRef) {
   return `${reference.projectId}:${reference.host ?? ""}:${reference.repository}#${reference.number}`;
@@ -89,6 +108,7 @@ export function usePullRequestDetail(
     setCachedDetail(detailQuery.data);
   }
   const observedSummary = useSharedPullRequestSummary(environmentId, reference);
+  const pendingEdits = useAtomValue(pullRequestPendingEditsFor(environmentId, reference));
   const activity = activityQuery.data;
   const resolvedCoreDetail = resolveDisplayedPullRequestDetail({
     live: liveDetail,
@@ -99,9 +119,12 @@ export function usePullRequestDetail(
   // `detail` would cost it its cache scope.
   const listSummary = listEntry === null ? null : pullRequestListEntryToSummary(listEntry);
   // The row can come from the page's stored snapshot, which no answer has published yet.
-  const sharedSummary = newestPullRequestSummary(
+  const sharedSummary = newestDisplayedPullRequestSummary(
     resolvedCoreDetail,
-    newestPullRequestSummary(observedSummary, listSummary),
+    liveDetail === null,
+    newestPullRequestSummary(listSummary, observedSummary),
+    reference,
+    pendingEdits,
   );
   const coreDetail =
     resolvedCoreDetail === null || sharedSummary === null || sharedSummary === resolvedCoreDetail
@@ -166,6 +189,9 @@ export function usePullRequestDetail(
           ),
           commentsTruncated: activity?.commentsTruncated ?? false,
           reviewThreads: activity?.reviewThreads ?? [],
+          ...(activity?.overviewThreads === undefined
+            ? {}
+            : { overviewThreads: activity.overviewThreads }),
           commits: activity?.commits ?? [],
           reactions: activity?.reactions ?? [],
         };

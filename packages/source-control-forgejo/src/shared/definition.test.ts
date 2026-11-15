@@ -104,6 +104,22 @@ describe("Forgejo change request URLs", () => {
   });
 });
 
+describe("Forgejo repository pages", () => {
+  it("reads the repository from branch, tag and commit views", () => {
+    const repositoryUrl = (url: string) => definition.repositoryUrlFromPage?.(new URL(url), true);
+    expect(repositoryUrl("https://codeberg.org/forgejo/forgejo/src/branch/forgejo/README.md")).toBe(
+      "https://codeberg.org/forgejo/forgejo",
+    );
+    expect(repositoryUrl("http://git.example.test:3000/git/team/repo/src/tag/v1.0")).toBe(
+      "http://git.example.test:3000/git/team/repo",
+    );
+    expect(repositoryUrl("https://codeberg.org/forgejo/forgejo/src/commit/abc123")).toBe(
+      "https://codeberg.org/forgejo/forgejo",
+    );
+    expect(repositoryUrl("https://codeberg.org/forgejo/forgejo")).toBeNull();
+  });
+});
+
 describe("Forgejo remotes", () => {
   it("recognises Codeberg and Forgejo or Gitea hosts, keeping an HTTP remote's origin", () => {
     for (const host of ["codeberg.org", "forgejo.example.test", "gitea.example.test"]) {
@@ -120,6 +136,32 @@ describe("Forgejo remotes", () => {
   });
 });
 
+describe("Forgejo CLI commands", () => {
+  it("recognizes shell merges and closes under every spelling tea accepts", () => {
+    for (const command of [
+      "tea pulls merge 7",
+      "tea pull merge 7",
+      "tea pr m 7",
+      "tea pull close 7",
+      "fj pr close 7",
+    ]) {
+      expect(definition.changeRequestCloseCommand.test(command), command).toBe(true);
+    }
+    expect(definition.changeRequestCloseCommand.test("tea pull checkout 7")).toBe(false);
+  });
+
+  it("reads the change request from every checkout spelling tea accepts", () => {
+    for (const command of [
+      "tea pulls checkout 7",
+      "tea pull checkout 7",
+      "tea pr co 7",
+      "tea pull co 7",
+    ]) {
+      expect(definition.checkoutCommandArgument(command), command).toBe("7");
+    }
+  });
+});
+
 describe("Forgejo change request host", () => {
   it("keeps an HTTP remote's port, because a server's identity includes it", () => {
     const project = identity("http://forge.example:3000/git/team/repo.git");
@@ -127,5 +169,12 @@ describe("Forgejo change request host", () => {
     expect(
       definition.changeRequestHost?.(identity("ssh://git@forge.example:2222/git/team/repo.git")),
     ).toBe("forge.example");
+    expect(
+      definition.changeRequestHost?.(
+        identity("ssh://git@ssh.forge.example:2222/git/team/repo.git", {
+          webUrl: "http://forge.example:3000/git/team/repo",
+        }),
+      ),
+    ).toBe("forge.example:3000");
   });
 });
