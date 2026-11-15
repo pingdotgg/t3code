@@ -92,14 +92,17 @@ import {
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -942,6 +945,14 @@ function delegatedCompletionWakeDetail(
     })
     .join("\n\n");
 }
+
+// Startup recovery settles whatever is still missed after this window.
+const parentTaskSyncRetry = Schedule.exponential("1 second").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+  ),
+  Schedule.upTo({ duration: Duration.hours(1) }),
+);
 
 function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]): boolean {
   return (
@@ -15770,13 +15781,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ),
           );
       }
-      const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
-      if (parentThreadId !== undefined) {
+      const syncParentTask = Effect.gen(function* () {
+        const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
+        if (parentThreadId === undefined) return;
         yield* threadDispatch.withLock(
           parentThreadId,
           finalizeAppOwnedSubagent(threadId, { syncRunId: run.id }),
         );
-      }
+      });
+      yield* syncParentTask.pipe(
+        // Only this reaction tells the parent before a restart; a dropped one leaves its task running.
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Retrying a delegated task update for its parent", {
+            threadId,
+            runId: run.id,
+            cause,
+          }).pipe(
+            Effect.andThen(
+              syncParentTask.pipe(
+                Effect.retry({ schedule: parentTaskSyncRetry }),
+                Effect.delay("1 second"),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Failed to update a delegated task for its parent", {
+                    threadId,
+                    runId: run.id,
+                    cause,
+                  }),
+                ),
+                FiberSet.run(parentTaskSyncRetries),
+              ),
+            ),
+          ),
+        ),
+      );
     },
     (effect, stored) =>
       effect.pipe(
@@ -15791,6 +15828,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
 
   // Projections already contain historical terminals; replaying them delays startup queue promotion with database size.
+  const parentTaskSyncRetries = yield* FiberSet.make();
   const terminalEventsAfterSequence = yield* eventSink.latestSequence().pipe(Effect.orDie);
   // Filter run updates before buffering so blocked queue promotion does not retain unrelated tool bodies.
   yield* eventSink
