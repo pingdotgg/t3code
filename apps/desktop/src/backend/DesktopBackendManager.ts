@@ -674,6 +674,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const state = yield* SubscriptionRef.make(initialState);
   const mutex = yield* Semaphore.make(1);
   const outputTail = yield* Ref.make("");
+  const migrationProgress = yield* Ref.make<DatabaseMigrationProgress | null>(null);
   // One streaming decoder per stream keeps UTF-8 characters split across chunks intact.
   const makeOutputDecoders = () => ({ stdout: new TextDecoder(), stderr: new TextDecoder() });
   let outputDecoders = makeOutputDecoders();
@@ -900,6 +901,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                 );
 
               if (isCurrentRun) {
+                yield* Ref.set(migrationProgress, null);
                 yield* spec.onMigrationProgress?.(null) ?? Effect.void;
                 yield* desktopTelemetryPublisher.removeControlSource(spec.id);
                 if (Option.isSome(pid)) {
@@ -944,6 +946,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               pid: Option.some(pid),
             }));
             yield* Ref.set(outputTail, "");
+            yield* Ref.set(migrationProgress, null);
             yield* spec.onMigrationProgress?.(null) ?? Effect.void;
             outputDecoders = makeOutputDecoders();
             yield* backendOutputLog.beginSession({
@@ -975,6 +978,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               return;
             }
 
+            yield* Ref.set(migrationProgress, null);
             yield* spec.onMigrationProgress?.(null) ?? Effect.void;
             yield* spec.onReady?.(config.value.httpBaseUrl, pid) ?? Effect.void;
             if (
@@ -1005,13 +1009,15 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             },
           ),
           onOutput: (streamName, chunk) =>
-            Ref.updateAndGet(outputTail, (tail) =>
-              // A cut through a surrogate pair would make encodeURIComponent throw when rendering.
-              (tail + outputDecoders[streamName].decode(chunk, { stream: true }))
-                .slice(-STARTUP_FAILURE_OUTPUT_CHARS)
-                .toWellFormed(),
-            ).pipe(
-              Effect.flatMap((tail) =>
+            Ref.modify(outputTail, (tail) => {
+              const output = tail + outputDecoders[streamName].decode(chunk, { stream: true });
+              return [
+                output,
+                // A cut through a surrogate pair would make encodeURIComponent throw when rendering.
+                output.slice(-STARTUP_FAILURE_OUTPUT_CHARS).toWellFormed(),
+              ];
+            }).pipe(
+              Effect.flatMap((output) =>
                 Effect.gen(function* () {
                   const latest = yield* SubscriptionRef.get(state);
                   if (
@@ -1019,9 +1025,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                     Option.isSome(latest.active) &&
                     latest.active.value.id === runId
                   ) {
-                    yield* (
-                      spec.onMigrationProgress?.(databaseMigrationProgress(tail)) ?? Effect.void
+                    const progress = yield* Ref.updateAndGet(migrationProgress, (previous) =>
+                      databaseMigrationProgress(output, previous),
                     );
+                    yield* spec.onMigrationProgress?.(progress) ?? Effect.void;
                   }
                 }),
               ),

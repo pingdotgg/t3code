@@ -15,8 +15,13 @@ export function isRunningDatabaseMigrations(output: string): boolean {
   );
 }
 
-export function databaseMigrationProgress(output: string): DatabaseMigrationProgress | null {
-  if (!isRunningDatabaseMigrations(output)) return null;
+export function databaseMigrationProgress(
+  output: string,
+  previous: DatabaseMigrationProgress | null = null,
+): DatabaseMigrationProgress | null {
+  if (!isRunningDatabaseMigrations(output)) {
+    return output.includes(DATABASE_MIGRATIONS_FINISHED_MESSAGE) ? null : previous;
+  }
   const start = output.lastIndexOf(DATABASE_MIGRATIONS_STARTED_MESSAGE);
   const line = output.slice(
     Math.max(start, output.lastIndexOf(DATABASE_MIGRATION_PROGRESS_MESSAGE)),

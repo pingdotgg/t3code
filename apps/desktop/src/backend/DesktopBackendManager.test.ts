@@ -721,7 +721,12 @@ describe("DesktopBackendManager", () => {
     Effect.gen(function* () {
       const reports = yield* Queue.unbounded<DesktopBackendManager.BackendStartupFailure>();
       const progress: Array<{ current: number; total: number } | null> = [];
-      const startInstance = (status: Ref.Ref<number>, onReady?: Effect.Effect<void>, stdout = "") =>
+      const outputProcessed = yield* Queue.unbounded<void>();
+      const startInstance = (
+        status: Ref.Ref<number>,
+        onReady?: Effect.Effect<void>,
+        stdout: string | Stream.Stream<Uint8Array> = "",
+      ) =>
         makeTestInstance({
           spawnerLayer: Layer.succeed(
             ChildProcessSpawner.ChildProcessSpawner,
@@ -729,7 +734,10 @@ describe("DesktopBackendManager", () => {
               Effect.succeed(
                 makeProcess({
                   exitCode: Effect.never,
-                  stdout: Stream.make(new TextEncoder().encode(stdout)),
+                  stdout:
+                    typeof stdout === "string"
+                      ? Stream.make(new TextEncoder().encode(stdout))
+                      : stdout,
                 }),
               ),
             ),
@@ -737,6 +745,9 @@ describe("DesktopBackendManager", () => {
           httpClientLayer: layerHttpClient((request) =>
             Ref.get(status).pipe(Effect.map((code) => responseForRequest(request, code))),
           ),
+          backendOutputLog: {
+            writeOutputChunk: () => Queue.offer(outputProcessed, undefined).pipe(Effect.asVoid),
+          },
           onMigrationProgress: (value) =>
             Effect.sync(() => {
               progress.push(value);
@@ -748,6 +759,7 @@ describe("DesktopBackendManager", () => {
       const slowStatus = yield* Ref.make(503);
       const ready = yield* Deferred.make<void>();
       yield* startInstance(slowStatus, Deferred.succeed(ready, undefined).pipe(Effect.asVoid));
+      yield* Queue.take(outputProcessed);
       yield* TestClock.adjust(Duration.seconds(66));
       yield* Ref.set(slowStatus, 200);
       yield* TestClock.adjust(Duration.millis(100));
@@ -756,9 +768,17 @@ describe("DesktopBackendManager", () => {
 
       const migratingStatus = yield* Ref.make(503);
       const migrated = yield* Deferred.make<void>();
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const writeOutput = (text: string) =>
+        Queue.offer(output, new TextEncoder().encode(text)).pipe(
+          Effect.andThen(Queue.take(outputProcessed)),
+        );
       yield* startInstance(
         migratingStatus,
         Deferred.succeed(migrated, undefined).pipe(Effect.asVoid),
+        Stream.fromQueue(output),
+      );
+      yield* writeOutput(
         // Enough progress lines that the start line scrolls out of the output tail.
         `INFO ${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n` +
           Array.from(
@@ -770,6 +790,24 @@ describe("DesktopBackendManager", () => {
       yield* TestClock.adjust(Duration.minutes(10));
       assert.deepStrictEqual(progress.at(-1), { current: 80, total: 80 });
       assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
+      const noise = "unrelated backend output\n".repeat(400);
+      yield* writeOutput(noise);
+      assert.deepStrictEqual(progress.at(-1), { current: 80, total: 80 });
+      yield* writeOutput(noise);
+      assert.deepStrictEqual(progress.at(-1), { current: 80, total: 80 });
+      yield* writeOutput(`${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n${noise}`);
+      assert.isNull(progress.at(-1));
+      yield* writeOutput(`${DATABASE_MIGRATION_PROGRESS_MESSAGE} (1 of 2)\n${noise}`);
+      assert.deepStrictEqual(progress.at(-1), { current: 1, total: 2 });
+      yield* writeOutput(DATABASE_MIGRATIONS_FINISHED_MESSAGE.slice(0, 12));
+      yield* writeOutput(`${DATABASE_MIGRATIONS_FINISHED_MESSAGE.slice(12)}\n${noise}`);
+      assert.isNull(progress.at(-1));
+      yield* writeOutput(noise);
+      assert.isNull(progress.at(-1));
+      yield* writeOutput(
+        `${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n${DATABASE_MIGRATION_PROGRESS_MESSAGE} (1 of 1)\n`,
+      );
+      assert.deepStrictEqual(progress.at(-1), { current: 1, total: 1 });
       yield* Ref.set(migratingStatus, 200);
       yield* TestClock.adjust(Duration.millis(100));
       yield* Deferred.await(migrated);
