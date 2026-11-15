@@ -1,4 +1,5 @@
-// Dev-only investigation aid; reads layout without asking the list to remeasure or repair it.
+// Investigation aid; reads layout without asking the list to remeasure or repair it.
+// Enable in production: localStorage.setItem("t3:timeline-gap-recorder", "1"), then reload.
 import type { LegendListRef } from "@legendapp/list/react";
 import { useEffect, useRef } from "react";
 
@@ -320,7 +321,7 @@ function confirm(monitor: Monitor, trigger: string, firstIds: Set<string>) {
   toastedThreads.add(monitor.threadKey);
   const id = toastManager.add({
     type: "warning",
-    title: "timeline gap recorded",
+    title: "timeline gap diagnostic recorded",
     timeout: 0,
     actionProps: {
       children: "copy report",
@@ -399,7 +400,7 @@ export function TimelineGapRecorder(props: {
     foldCollapsing: boolean;
   } | null>(null);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this list with the dev-only gap recorder and listens for the window becoming visible
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this list with the gap recorder and listens for the window becoming visible
   useEffect(() => {
     const monitor: Monitor = {
       threadKey,
@@ -424,7 +425,7 @@ export function TimelineGapRecorder(props: {
     };
   }, [listRef, threadKey]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules the dev-only gap check after a turn status, fold or row count change
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules the gap check after a turn status, fold or row count change
   useEffect(() => {
     const monitor = monitorRef.current;
     if (!monitor) return;

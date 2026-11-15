@@ -10,6 +10,9 @@ import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
 import { whenLocaleReady } from "./i18n/runtime";
 import { reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
+import { timelineGapRecorderEnabled } from "./components/chat/timelineGapRecorderEnabled";
+
+if (timelineGapRecorderEnabled) void import("./components/chat/timelineGapConsole");
 
 const router = startAppServices();
 
