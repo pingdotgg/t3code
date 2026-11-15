@@ -1,6 +1,5 @@
 import { rewindToMessage } from "./chat/chatViewSend";
 import * as session from "../state/session";
-import { useComposerDraftStore } from "../composerDraftStore";
 import {
   environmentContextRecord,
   environmentContextReference,
