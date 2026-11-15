@@ -936,8 +936,13 @@ export function GeneralSettingsPanel() {
           }
         />
         <SettingsRow
-          {...searchableSetting("local-machine-icon")}
-          description="Also show the machine icon on threads from this device. Threads from other environments always show theirs."
+          {...setting("local-machine-icon")}
+          description={
+            <T>
+              Also show the machine icon on threads from this device. Threads from other environments
+              always show theirs.
+            </T>
+          }
           resetAction={
             settings.sidebarLocalMachineIconEnabled !==
             DEFAULT_UNIFIED_SETTINGS.sidebarLocalMachineIconEnabled ? (
@@ -958,7 +963,7 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ sidebarLocalMachineIconEnabled: Boolean(checked) })
               }
-              aria-label="Machine icon on local threads"
+              aria-label={gt("Machine icon on local threads")}
             />
           }
         />

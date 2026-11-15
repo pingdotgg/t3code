@@ -467,7 +467,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "local-machine-icon",
-    title: "Machine icon on local threads",
+    title: msg("Machine icon on local threads"),
     to: "/settings/general",
     searchTerms: ["environment computer device laptop desktop remote server sidebar thread icon"],
   },
