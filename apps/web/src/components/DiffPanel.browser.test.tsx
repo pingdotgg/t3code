@@ -273,7 +273,8 @@ it("opens a repository-relative file from a nested project without a remote", as
       <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
     </RegistryContext.Provider>,
   );
-  await userEvent.click(screen.getByText(path, { exact: true }));
+  // A narrow header shows the redesign's basename, which carries the full path.
+  await userEvent.click(screen.getByText("back\\slash.txt", { exact: true }));
   expect(
     selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
   ).toMatchObject({ activeSurfaceId: "file:back\\slash.txt" });
