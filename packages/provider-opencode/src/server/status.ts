@@ -283,15 +283,16 @@ function openCodeCapabilitiesForModel(input: {
 
 interface OpenCodeRelease {
   readonly providerID: string;
+  readonly id: string;
   readonly family?: string | undefined;
   readonly released?: number | undefined;
   readonly deprecated?: boolean | undefined;
 }
 
 /**
- * OpenCode catalogs keep every release of a family, such as Claude Opus 4.5
- * through 5.5. Only the newest active release of each family within a
- * sub-provider stays current; older releases and deprecated models are legacy.
+ * Only the newest active release of each model line within a sub-provider stays
+ * current. One `family` can span lines (`gemini-4-carbon`, `gemini-4-hydrogen`),
+ * so a line is the family plus the model id without its version numbers.
  */
 function markOpenCodeLegacy(
   entries: ReadonlyArray<{
@@ -299,16 +300,21 @@ function markOpenCodeLegacy(
     readonly release: OpenCodeRelease;
   }>,
 ): Array<ServerProviderModel> {
-  const familyKey = ({ providerID, family }: OpenCodeRelease) =>
-    family ? `${providerID}/${family}` : undefined;
+  const lineKey = ({ providerID, id, family }: OpenCodeRelease) =>
+    family
+      ? `${providerID}/${family}/${id
+          .split("-")
+          .filter((part) => !/^[\d.]+$/.test(part))
+          .join("-")}`
+      : undefined;
   const newest = new Map<string, number>();
   for (const { release } of entries) {
-    const key = familyKey(release);
+    const key = lineKey(release);
     if (key === undefined || release.released === undefined || release.deprecated) continue;
     newest.set(key, Math.max(newest.get(key) ?? release.released, release.released));
   }
   return entries.map(({ model, release }) => {
-    const key = familyKey(release);
+    const key = lineKey(release);
     const latest = key === undefined ? undefined : newest.get(key);
     const superseded =
       latest !== undefined && release.released !== undefined && release.released < latest;
@@ -349,6 +355,7 @@ function flattenOpenCodeModels(
         },
         release: {
           providerID: provider.id,
+          id: model.id,
           family: model.family,
           released: Number.isNaN(released) ? undefined : released,
           deprecated: model.status === "deprecated",

@@ -918,7 +918,7 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
           .filter((model) => model.isLegacy)
           .map((model) => model.slug)
           .toSorted();
-      const expected = ["opencode/gemini-4-argon", "opencode/opus-4-5", "opencode/opus-preview"];
+      const expected = ["opencode/opus-4-5", "opencode/opus-preview"];
 
       runtimeMock.state.inventory = {
         providerList: {
