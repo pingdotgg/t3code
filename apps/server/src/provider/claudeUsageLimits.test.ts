@@ -406,6 +406,16 @@ describe("recordClaudeRateLimitEvent", () => {
         const after = yield* recordClaudeUsageResponse(names, { checkedAt, response: ultraUsage });
         expect(after.windows.map((w) => w.id)).toEqual(["seven_day", "seven_day_fable"]);
         expect((yield* Ref.get(names)).overageIncluded).toBe("Fable");
+        const switched = yield* recordClaudeUsageResponse(names, {
+          checkedAt,
+          response: ultraUsage,
+          accountKey: "different-account",
+        });
+        expect(switched.windows.map((w) => w.id)).toEqual([
+          "five_hour",
+          "seven_day",
+          "seven_day_fable",
+        ]);
       }),
   );
 });

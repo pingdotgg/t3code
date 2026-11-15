@@ -41,6 +41,7 @@ const decodeSpendBudget = Schema.decodeUnknownOption(
 
 export interface ClaudeScopedLimitNames {
   readonly overageIncluded: string | undefined;
+  readonly accountKey?: string | undefined;
   /**
    * Windows the last turn response listed in its rate-limit headers. Claude enforces only those:
    * a verified Ultra account streams `seven_day` alone while `get_usage` keeps reporting an idle
@@ -290,12 +291,18 @@ export function claudeUsageResponseToLimits(input: {
 
 export const recordClaudeUsageResponse = (
   namesRef: Ref.Ref<ClaudeScopedLimitNames>,
-  input: Omit<Parameters<typeof claudeUsageResponseToLimits>[0], "enforcedWindows">,
+  input: Omit<Parameters<typeof claudeUsageResponseToLimits>[0], "enforcedWindows"> & {
+    readonly accountKey?: string;
+  },
 ): Effect.Effect<ServerProviderUsageLimits> =>
   Ref.modify(namesRef, (names) => {
+    const current = names.accountKey === input.accountKey ? names : { overageIncluded: undefined };
     const { limits, names: probed } = claudeUsageResponseToLimits({
       ...input,
-      enforcedWindows: names.enforcedWindows,
+      enforcedWindows: "enforcedWindows" in current ? current.enforcedWindows : undefined,
     });
-    return [limits, { ...names, overageIncluded: probed.overageIncluded }] as const;
+    return [
+      limits,
+      { ...current, accountKey: input.accountKey, overageIncluded: probed.overageIncluded },
+    ] as const;
   });
