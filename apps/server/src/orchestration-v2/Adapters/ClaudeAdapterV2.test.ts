@@ -3550,6 +3550,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     > &
       Partial<Pick<ClaudeAdapterV2.ClaudeAgentSdkQuerySession, "listPermissionRules">>;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly onSessionInit?: (cwd: string) => Effect.Effect<void>;
     readonly subagentLaunchToolUseId?: string;
     readonly subagentModel?: string;
     readonly nativeSessionId?: string;
@@ -3625,6 +3626,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         path: yield* Path.Path,
         random: yield* SecureRandom.SecureRandom,
         idAllocator,
+        ...(options?.onSessionInit ? { onSessionInit: options.onSessionInit } : {}),
         ...(options?.routeModelCatalog ? { routeModelCatalog: options.routeModelCatalog } : {}),
         continuationRequests: {
           offer: (request) =>
@@ -4165,6 +4167,80 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("reports the session cwd on each process's first init, not on repeated inits", () =>
+    Effect.gen(function* () {
+      const initCwds: Array<string> = [];
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshQueueOnReopen: true,
+        close: (queue) => Queue.shutdown(queue),
+        onSessionInit: (cwd) =>
+          Effect.sync(() => {
+            initCwds.push(cwd);
+          }),
+      });
+      // The CLI may report a resolved path, not the cwd clients key their snapshots on.
+      const init = (uuid: string) =>
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          cwd: "/private/workspace",
+          session_id: WAKE_NATIVE_SESSION,
+          uuid,
+        });
+      const latest = (): OrchestrationV2ProviderThread => {
+        const event = harness.events.findLast(
+          (candidate) => candidate.type === "provider_thread.updated",
+        );
+        return event?.type === "provider_thread.updated"
+          ? event.providerThread
+          : harness.providerThread;
+      };
+      const turn = (ordinal: number) =>
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: latest(),
+          now: DateTime.makeUnsafe(0),
+          attemptId: RunAttemptId.make(`session-init-${ordinal}`),
+          text: `Turn ${ordinal}`,
+          attachments: [],
+          providerTurnOrdinal: ordinal,
+        });
+      yield* harness.runtime.startTurn(turn(1));
+      assert.deepEqual(initCwds, []);
+      yield* harness.offerAndWait(init("00000000-0000-4000-8000-000000000701"));
+      assert.deepEqual(initCwds, ["/workspace"]);
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      // The CLI repeats init on every turn of one process; its startup hooks ran once.
+      yield* harness.runtime.startTurn(turn(2));
+      yield* harness.offerAndWait(init("00000000-0000-4000-8000-000000000702"));
+      yield* harness.offerAndWait(
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000703", result: "Two." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      assert.deepEqual(initCwds, ["/workspace"]);
+      yield* harness.runtime.interruptTurn({
+        providerThread: latest(),
+        providerTurnId: lastProviderTurn(harness.events).id,
+        requestRuntimeRestart: true,
+      });
+      yield* harness.runtime.startTurn(turn(3));
+      assert.equal(harness.processQueues.length, 2);
+      yield* harness.offerAndWait(init("00000000-0000-4000-8000-000000000704"));
+      assert.deepEqual(initCwds, ["/workspace", "/workspace"]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   it.effect("resumes the session a /clear selected after the Claude process is replaced", () =>
