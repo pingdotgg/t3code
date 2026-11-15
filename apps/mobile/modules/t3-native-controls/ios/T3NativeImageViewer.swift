@@ -52,7 +52,7 @@ final class T3NativeImageViewer: NSObject {
     for (index, placeholder) in placeholders.enumerated() {
       if let placeholder { viewer.setImage(placeholder, at: index, full: false) }
     }
-    presenter.present(viewer, animated: false) { viewer.animateIn() }
+    presenter.present(T3ImageViewerNavigation(viewer: viewer), animated: false) { viewer.animateIn() }
     for index in urls.indices { load(index, retry: false) }
   }
 
@@ -433,16 +433,38 @@ private final class T3ImageViewerPage: UIView, UIScrollViewDelegate {
   }
 }
 
-/// Holds the controls over the whole screen while letting touches between them reach the image.
-private final class T3ImageViewerChrome: UIView {
-  override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-    let hit = super.hitTest(point, with: event)
-    return hit === self ? nil : hit
+/// System bars, so UIKit places Close, the title, Save and Share: at the top and bottom of an iPhone,
+/// and in the side bar of an unfolded iPhone Duo.
+private final class T3ImageViewerNavigation: UINavigationController {
+  init(viewer: T3ImageViewerController) {
+    super.init(rootViewController: viewer)
+    modalPresentationStyle = .overFullScreen
+    modalPresentationCapturesStatusBarAppearance = true
+    overrideUserInterfaceStyle = .dark
+    view.backgroundColor = .clear
+    let bar = UINavigationBarAppearance()
+    bar.configureWithDefaultBackground()
+    navigationBar.standardAppearance = bar
+    navigationBar.compactAppearance = bar
+    navigationBar.scrollEdgeAppearance = bar
+    let tools = UIToolbarAppearance()
+    tools.configureWithDefaultBackground()
+    toolbar.standardAppearance = tools
+    toolbar.compactAppearance = tools
+    toolbar.scrollEdgeAppearance = tools
+    setNavigationBarHidden(true, animated: false)
+    setToolbarHidden(true, animated: false)
   }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { nil }
+
+  override var childForStatusBarHidden: UIViewController? { topViewController }
+  override var childForStatusBarStyle: UIViewController? { topViewController }
+  override var childForHomeIndicatorAutoHidden: UIViewController? { topViewController }
 }
 
-final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIGestureRecognizerDelegate,
-  UINavigationBarDelegate {
+final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIGestureRecognizerDelegate {
   var sourceView: (Int) -> UIView? = { _ in nil }
   var fileForPage: (Int) -> URL? = { _ in nil }
   var onRetry: (Int) -> Void = { _ in }
@@ -454,11 +476,8 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   private let backdrop = UIView()
   private let pager = UIScrollView()
   private var pages: [T3ImageViewerPage] = []
-  private let chrome = T3ImageViewerChrome()
   private let titleLabel = UILabel()
   private let counterLabel = UILabel()
-  private let header = UINavigationBar()
-  private let headerItem = UINavigationItem()
   private lazy var dismissPan = UIPanGestureRecognizer(target: self, action: #selector(handleDismissPan(_:)))
   private var chromeHidden = false
   private var chromeHiddenBeforeDrag = false
@@ -468,16 +487,17 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   private var closing = false
   private var laidOutSize = CGSize.zero
   private var isLayingOut = false
-  private var shareButton: UIButton?
-  private var saveButton: UIButton?
+  private lazy var saveItem = UIBarButtonItem(
+    title: "Save to Photos", image: UIImage(systemName: "square.and.arrow.down"),
+    primaryAction: UIAction { [weak self] _ in self?.save() })
+  private lazy var shareItem = UIBarButtonItem(
+    systemItem: .action, primaryAction: UIAction { [weak self] _ in self?.share() })
   private static let pageGap: CGFloat = 20
 
   init(titles: [String], selectedIndex: Int) {
     self.titles = titles
     currentIndex = selectedIndex
     super.init(nibName: nil, bundle: nil)
-    modalPresentationStyle = .overFullScreen
-    modalPresentationCapturesStatusBarAppearance = true
   }
 
   @available(*, unavailable)
@@ -525,47 +545,8 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
     updateTitle()
   }
 
-  /// Laid out like Messages: a system navigation bar with Close and the title, and Save and Share in a capsule below.
   private func configureChrome() {
-    chrome.alpha = 0
-    chrome.frame = view.bounds
-    chrome.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-    view.addSubview(chrome)
-    configureHeader()
-    let save = makeToolbarButton(symbol: "square.and.arrow.down", label: "Save to Photos") { [weak self] in self?.save() }
-    let share = makeToolbarButton(symbol: "square.and.arrow.up", label: "Share") { [weak self] in self?.share() }
-    saveButton = save
-    shareButton = share
-    let toolbar = makeCapsule(containing: [save, share])
-    for subview in [header, toolbar] {
-      subview.translatesAutoresizingMaskIntoConstraints = false
-      chrome.addSubview(subview)
-    }
-    let guide = view.safeAreaLayoutGuide
-    let pinned = header.topAnchor.constraint(equalTo: guide.topAnchor)
-    pinned.priority = .defaultHigh
-    NSLayoutConstraint.activate([
-      pinned,
-      header.topAnchor.constraint(greaterThanOrEqualTo: guide.topAnchor),
-      // An unfolded iPhone Duo puts the status bar in its side bar and has no top inset.
-      header.topAnchor.constraint(greaterThanOrEqualTo: view.topAnchor, constant: 16),
-      header.leadingAnchor.constraint(equalTo: chrome.leadingAnchor),
-      header.trailingAnchor.constraint(equalTo: chrome.trailingAnchor),
-      toolbar.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
-      toolbar.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -8),
-    ])
-  }
-
-  /// A real navigation bar, so the header has the system's material, margins and close button.
-  private func configureHeader() {
-    header.delegate = self
-    header.overrideUserInterfaceStyle = .dark
-    let appearance = UINavigationBarAppearance()
-    appearance.configureWithDefaultBackground()
-    header.standardAppearance = appearance
-    header.compactAppearance = appearance
-    header.scrollEdgeAppearance = appearance
-    headerItem.leftBarButtonItem = UIBarButtonItem(
+    navigationItem.leftBarButtonItem = UIBarButtonItem(
       systemItem: .close, primaryAction: UIAction { [weak self] _ in self?.close() })
     if #unavailable(iOS 26.0) {
       // Before iOS 26 a navigation item has no subtitle, so the count sits under the title by hand.
@@ -580,65 +561,25 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
       let titles = UIStackView(arrangedSubviews: [titleLabel, counterLabel])
       titles.axis = .vertical
       titles.alignment = .center
-      headerItem.titleView = titles
+      navigationItem.titleView = titles
     }
-    header.items = [headerItem]
-    if #available(iOS 26.0, *) {
-      // iOS 26 bars draw no background; a screen's header stays legible through its scroll view's edge effect.
-      let edge = UIScrollEdgeElementContainerInteraction()
-      edge.scrollView = pager
-      edge.edge = .top
-      header.addInteraction(edge)
-    }
+    toolbarItems = [.flexibleSpace(), saveItem, shareItem]
+    setContentScrollView(pager, for: .top)
+    setContentScrollView(pager, for: .bottom)
   }
 
-  /// Extends the bar's background up under the status bar, like a screen's own navigation bar.
-  func position(for bar: UIBarPositioning) -> UIBarPosition { .topAttached }
-
-  private func makeToolbarButton(symbol: String, label: String, action: @escaping () -> Void) -> UIButton {
-    var configuration = UIButton.Configuration.plain()
-    configuration.baseForegroundColor = .white
-    configuration.image = UIImage(systemName: symbol,
-                                  withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .regular))
-    configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 14, bottom: 12, trailing: 14)
-    let button = UIButton(configuration: configuration, primaryAction: UIAction { _ in action() })
-    button.accessibilityLabel = label
-    return button
-  }
-
-  private func makeCapsule(containing buttons: [UIButton]) -> UIView {
-    let effect: UIVisualEffect
-    if #available(iOS 26.0, *) {
-      effect = UIGlassEffect()
-    } else {
-      effect = UIBlurEffect(style: .systemThinMaterialDark)
-    }
-    let capsule = UIVisualEffectView(effect: effect)
-    capsule.overrideUserInterfaceStyle = .dark
-    capsule.layer.cornerRadius = 24
-    capsule.layer.cornerCurve = .continuous
-    capsule.clipsToBounds = true
-    let stack = UIStackView(arrangedSubviews: buttons)
-    stack.axis = .horizontal
-    stack.spacing = 4
-    stack.translatesAutoresizingMaskIntoConstraints = false
-    capsule.contentView.addSubview(stack)
-    NSLayoutConstraint.activate([
-      stack.topAnchor.constraint(equalTo: capsule.contentView.topAnchor),
-      stack.bottomAnchor.constraint(equalTo: capsule.contentView.bottomAnchor),
-      stack.leadingAnchor.constraint(equalTo: capsule.contentView.leadingAnchor, constant: 4),
-      stack.trailingAnchor.constraint(equalTo: capsule.contentView.trailingAnchor, constant: -4),
-      stack.heightAnchor.constraint(equalToConstant: 48),
-    ])
-    return capsule
+  /// Shows or hides the bars through UIKit, which also moves them out of an iPhone Duo's side bar.
+  private func setBarsVisible(_ visible: Bool) {
+    navigationController?.setNavigationBarHidden(!visible, animated: true)
+    navigationController?.setToolbarHidden(!visible, animated: true)
   }
 
   private func updateTitle() {
     updateActions()
     let title = titles[safe: currentIndex]
     let counter = titles.count > 1 ? "\(currentIndex + 1) of \(titles.count)" : nil
-    headerItem.title = title
-    if #available(iOS 26.0, *) { headerItem.subtitle = counter }
+    navigationItem.title = title
+    if #available(iOS 26.0, *) { navigationItem.subtitle = counter }
     titleLabel.text = title
     counterLabel.text = counter
     counterLabel.isHidden = counter == nil
@@ -685,8 +626,8 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   /// Save and Share act on the original, so they wait until the current page shows it.
   private func updateActions() {
     let ready = pages[safe: currentIndex]?.isFull == true
-    saveButton?.isEnabled = ready
-    shareButton?.isEnabled = ready
+    saveItem.isEnabled = ready
+    shareItem.isEnabled = ready
   }
 
   // MARK: Transitions
@@ -716,7 +657,7 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
     transition.contentMode = .scaleAspectFill
     transition.clipsToBounds = true
     transition.frame = frame
-    view.insertSubview(transition, belowSubview: chrome)
+    view.addSubview(transition)
     return transition
   }
 
@@ -734,10 +675,10 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
     guard let image = page.image, let source = visibleSource(currentIndex) else {
       pager.isHidden = false
       pager.alpha = 0
+      setBarsVisible(true)
       UIView.animate(withDuration: reduceMotion ? 0.2 : 0.25, animations: {
         self.backdrop.alpha = 1
         self.pager.alpha = 1
-        self.chrome.alpha = 1
       }, completion: { _ in reveal() })
       return
     }
@@ -750,8 +691,8 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
       transition.frame = target
       transition.layer.cornerRadius = 0
       self.backdrop.alpha = 1
-      self.chrome.alpha = 1
     }
+    setBarsVisible(true)
     animator.addCompletion { _ in
       source.alpha = sourceAlpha
       transition.removeFromSuperview()
@@ -767,6 +708,7 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
     closing = true
     transitioning = true
     setNeedsStatusBarAppearanceUpdate()
+    setBarsVisible(false)
     let page = pages[currentIndex]
     guard let image = page.image else {
       UIView.animate(withDuration: 0.2, animations: { self.view.alpha = 0 }, completion: { _ in self.finishClose() })
@@ -779,7 +721,6 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
       let animator = UIViewPropertyAnimator(duration: 0.3, curve: .easeIn) {
         transition.center.y += direction * self.view.bounds.height
         self.backdrop.alpha = 0
-        self.chrome.alpha = 0
         if self.reduceMotion { transition.alpha = 0 }
       }
       animator.addCompletion { _ in self.finishClose() }
@@ -799,7 +740,6 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
       transition.frame = target
       transition.layer.cornerRadius = radius
       self.backdrop.alpha = 0
-      self.chrome.alpha = 0
     }
     animator.addCompletion { _ in
       source.alpha = sourceAlpha
@@ -869,11 +809,8 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   private func setChromeHidden(_ hidden: Bool) {
     guard chromeHidden != hidden else { return }
     chromeHidden = hidden
-    if #available(iOS 26.0, *) { pager.topEdgeEffect.isHidden = hidden }
-    UIView.animate(withDuration: 0.2) {
-      self.chrome.alpha = hidden ? 0 : 1
-      self.setNeedsStatusBarAppearanceUpdate()
-    }
+    setBarsVisible(!hidden)
+    UIView.animate(withDuration: 0.2) { self.setNeedsStatusBarAppearanceUpdate() }
     setNeedsUpdateOfHomeIndicatorAutoHidden()
   }
 
@@ -940,11 +877,9 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   private func confirmSaved() {
     UINotificationFeedbackGenerator().notificationOccurred(.success)
     UIAccessibility.post(notification: .announcement, argument: "Saved to Photos")
-    saveButton?.configuration?.image = UIImage(systemName: "checkmark",
-                                               withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .regular))
+    saveItem.image = UIImage(systemName: "checkmark")
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-      self?.saveButton?.configuration?.image = UIImage(
-        systemName: "square.and.arrow.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .regular))
+      self?.saveItem.image = UIImage(systemName: "square.and.arrow.down")
     }
   }
 
@@ -959,7 +894,7 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
     let item: Any? = fileForPage(currentIndex) ?? (page.isFull ? page.image : nil)
     guard let item else { return }
     let sheet = UIActivityViewController(activityItems: [item], applicationActivities: nil)
-    sheet.popoverPresentationController?.sourceView = shareButton ?? view
+    sheet.popoverPresentationController?.sourceItem = shareItem
     present(sheet, animated: true)
   }
 
