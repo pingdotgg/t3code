@@ -52,8 +52,8 @@ Resources whose provider has no local implementation deploy to
 the real cloud, into the [`dev_$USER` stage](/environments/stages)
 by default — separate from `alchemy deploy`'s `live_$USER` stage,
 so a bare `alchemy dev` cannot replace a stage you deployed. A
-stack that mixes emulated and live-only resources just works. Tear
-the local-dev stage down with `alchemy destroy --stage dev_$USER`.
+stack that mixes emulated and live-only resources just works. See
+[Dev vs deploy](#dev-vs-deploy) for tearing a dev stage down.
 
 ## Hot module reloading
 
@@ -142,28 +142,60 @@ dev session, or add/remove `remote()` — it's planned as a
 one (the workerd instance, the Docker container, the dev process)
 is torn down. Dev state never silently becomes cloud state.
 
-## Dev vs Deploy
+## Dev vs deploy
 
-|                     | `alchemy dev`                            | `alchemy deploy`   |
-| ------------------- | ---------------------------------------- | ------------------ |
-| Emulatable services | Local simulators (`remote()` for live)   | Deployed to cloud  |
-| Everything else     | Deployed to cloud (personal stage)       | Deployed to cloud  |
-| Application code    | Runs locally (workerd, Docker)           | Deployed to cloud  |
-| File watching       | Hot reload on change                     | Manual redeploy    |
-| Debugging           | Attach local debugger                    | Tail logs          |
-| Speed               | Milliseconds                             | Seconds to minutes |
+`alchemy dev` and `alchemy deploy` run the same stack into different
+[stages](/environments/stages). Without `--stage`, dev uses
+`dev_$USER` and deploy uses `live_$USER`, so a dev session never
+touches what you deployed.
 
-To automate the deploy side, see the [CI guide](/environments/ci).
+```sh
+alchemy dev       # stage dev_sam
+alchemy deploy    # stage live_sam
+```
+
+Every other command (`destroy`, `plan`, `logs`, `drift`) defaults to
+the deploy stage. Pass `--stage` to point one at a dev stage.
+
+```sh
+alchemy destroy                   # destroys live_sam
+alchemy destroy --stage dev_sam   # destroys your dev stage
+```
+
+A dev stage is worth destroying. Resources with no local emulator,
+and anything you pinned with `remote()`, are real cloud resources in
+that stage. They keep running after you stop `alchemy dev`.
+
+### One dev stage per worktree
+
+Every checkout on your machine shares `dev_$USER`, so two worktrees
+running `alchemy dev` fight over one stage. See
+[Worktrees](/environments/worktrees) to give each worktree its own
+dev, deploy, and test stages.
 
 ## Testing in dev mode
 
-The [test harness](/testing/test-harness) has the same switch:
-`Test.make({ dev: true })` (off by default, on both the Bun and
-Vitest adapters) runs a suite's `deploy(Stack)` against the local
-emulators — Cloudflare in workerd, AWS in Docker — instead of the
-real cloud, so integration tests run on your machine with no cloud
-calls and no separate `alchemy dev` terminal. See
-[Test harness → dev](/testing/test-harness#dev).
+The [test harness](/testing/test-harness) runs the same suite
+locally or live. Leave `dev` out of `Test.make` and the
+`ALCHEMY_DEV` env var picks the mode:
+
+```sh
+ALCHEMY_DEV=1 pnpm test   # local emulators, no cloud calls
+pnpm test                 # real cloud
+```
+
+Iterate with the local run, and run live when you need the real
+thing. A common split is local on pull requests and live on `main`:
+
+```yaml
+# .github/workflows/test.yml
+- run: pnpm test
+  env:
+    ALCHEMY_DEV: ${{ github.ref == 'refs/heads/main' && 'false' || 'true' }}
+```
+
+See [Test harness → dev](/testing/test-harness#dev) for the option
+itself.
 
 ## Where next
 

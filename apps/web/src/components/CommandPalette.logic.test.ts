@@ -3,6 +3,7 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import type { Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
+  newThreadNoProjectIndex,
   buildNestedSearchItems,
   resolveCommandPaletteProject,
   buildThreadActionItems,
@@ -794,6 +795,26 @@ describe("filterPinnedBrowseEntries", () => {
       visibleEntries: windowsEntries,
       exactEntry: windowsEntries[0],
     });
+    const decomposed = { name: "De\u0301veloppement", fullPath: "/Users/me/De\u0301veloppement" };
+    expect(
+      filterPinnedBrowseEntries({
+        browseEntries: [decomposed],
+        filterQuery: "D\u00e9veloppement",
+        pinnedDirectoryName: "repo",
+        caseSensitive: true,
+      }).exactEntry,
+    ).toBe(decomposed);
+    expect(
+      filterPinnedBrowseEntries({
+        browseEntries: [
+          { name: "\u212B", fullPath: "/home/me/\u212B" },
+          { name: "A\u030A", fullPath: "/home/me/A\u030A" },
+        ],
+        filterQuery: "\u00C5",
+        pinnedDirectoryName: "repo",
+        caseSensitive: true,
+      }).exactEntry,
+    ).toBeNull();
   });
 });
 
@@ -937,4 +958,26 @@ it("resolves project metadata and browse roots within the active environment", (
   );
   expect(resolveCommandPaletteProject(projects, null, sharedId)).toBeUndefined();
   expect(resolveCommandPaletteProject(projects, EnvironmentId.make("local"), null)).toBeUndefined();
+});
+
+describe("newThreadNoProjectIndex", () => {
+  const entry = (pinned = false, isPreferred = false, isScratch = false) => ({
+    pinned,
+    isPreferred,
+    isScratch,
+  });
+
+  it("goes after the pinned projects and the first unpinned one", () => {
+    expect(newThreadNoProjectIndex([entry(false, true), entry(true), entry(true), entry()])).toBe(
+      3,
+    );
+    expect(newThreadNoProjectIndex([entry(false, true), entry(), entry(false, false, true)])).toBe(
+      1,
+    );
+  });
+
+  it("keeps a pinned or current scratch project in its own place", () => {
+    expect(newThreadNoProjectIndex([entry(false, true, true), entry()])).toBe(0);
+    expect(newThreadNoProjectIndex([entry(true), entry(true, false, true), entry()])).toBe(1);
+  });
 });

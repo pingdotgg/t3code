@@ -26,10 +26,7 @@ export class AssetsManifest {
 export const hashPath = async (path: string) => {
   const encoder = new TextEncoder();
   const data = encoder.encode(path);
-  const hashBuffer = await crypto.subtle.digest(
-    "SHA-256",
-    data.buffer as ArrayBuffer,
-  );
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data.buffer as ArrayBuffer);
   return new Uint8Array(hashBuffer, 0, PATH_HASH_SIZE);
 };
 
@@ -40,14 +37,9 @@ export const hashPath = async (path: string) => {
  * @param pathHash the path hash to find in the manifest
  * @returns The content hash when the entry is found and `false` otherwise
  */
-export const binarySearch = (
-  manifest: Uint8Array,
-  pathHash: Uint8Array,
-): Uint8Array | false => {
+export const binarySearch = (manifest: Uint8Array, pathHash: Uint8Array): Uint8Array | false => {
   if (pathHash.byteLength !== PATH_HASH_SIZE) {
-    throw new TypeError(
-      `Search value should have a length of ${PATH_HASH_SIZE}`,
-    );
+    throw new TypeError(`Search value should have a length of ${PATH_HASH_SIZE}`);
   }
 
   const numberOfEntries = (manifest.byteLength - HEADER_SIZE) / ENTRY_SIZE;
@@ -122,6 +114,5 @@ function comparePathHashWithEntry(
  * @param array The content hash
  * @returns padded hex string
  */
-const Uint8ToHexString = (array: Uint8Array) => {
-  return [...array].map((b) => b.toString(16).padStart(2, "0")).join("");
-};
+const Uint8ToHexString = (array: Uint8Array) =>
+  [...array].map((b) => b.toString(16).padStart(2, "0")).join("");

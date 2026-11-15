@@ -1,0 +1,54 @@
+{
+  "contractVersion": 1,
+  "cases": [
+    { "name": "root", "input": "/", "valid": true, "canonical": "/" },
+    {
+      "name": "absolute",
+      "input": "/docs",
+      "valid": true,
+      "canonical": "/docs/"
+    },
+    {
+      "name": "relative",
+      "input": "./docs",
+      "valid": true,
+      "canonical": "/docs/"
+    },
+    {
+      "name": "duplicate segments",
+      "input": "/a//b",
+      "valid": true,
+      "canonical": "/a/b/"
+    },
+    {
+      "name": "dot segments",
+      "input": "/a/./b/../c",
+      "valid": true,
+      "canonical": "/a/c/"
+    },
+    {
+      "name": "above root",
+      "input": "../../docs",
+      "valid": true,
+      "canonical": "/docs/"
+    },
+    {
+      "name": "unicode",
+      "input": "/café/naïve",
+      "valid": true,
+      "canonical": "/café/naïve/"
+    },
+    { "name": "empty", "input": "", "valid": false },
+    { "name": "url", "input": "https://example.com/docs", "valid": false },
+    {
+      "name": "protocol relative url",
+      "input": "//example.com/docs",
+      "valid": false
+    },
+    { "name": "backslash", "input": "/a\\b", "valid": false },
+    { "name": "query", "input": "/docs?lang=en", "valid": false },
+    { "name": "fragment", "input": "/docs#intro", "valid": false },
+    { "name": "percent encoding", "input": "/docs%2Fapi", "valid": false },
+    { "name": "control character", "input": "/docs\u0001api", "valid": false }
+  ]
+}
