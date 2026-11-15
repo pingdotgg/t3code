@@ -50,7 +50,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-new(t3-mobil
   padding-inline: 0.25em;
   color: var(--destructive-foreground);
   box-shadow: 0 0 0 1px color-mix(in oklab, var(--destructive) 40%, transparent);
-  animation: composer-failed-file-glow 1.2s ease-out 2;
+  animation: composer-failed-file-glow 1.2s ease-out 750ms 2;
 }
 
 .composer-failed-file > button[aria-label^="Retry upload for "] {
