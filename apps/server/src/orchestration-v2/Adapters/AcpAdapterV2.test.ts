@@ -9462,7 +9462,7 @@ describe("AcpAdapterV2", () => {
   );
 
   it.effect(
-    "staggered pre-settle completion keeps midTurn marks until last background task ends post-finalize",
+    "staggered pre-settle completion waits for native wake output after the last background task ends",
     () =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -9655,12 +9655,19 @@ describe("AcpAdapterV2", () => {
           "mutation-only end-notice must not count as post-settle wake evidence",
         );
         yield* sessionUpdateHandler!(bEndNotice);
-        yield* Effect.yieldNow;
-        yield* Effect.yieldNow;
+        assert.lengthOf(continuationRequests, 0, "a task end notice alone cannot start a wake");
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Both background tasks finished." },
+          },
+        });
         assert.lengthOf(
           continuationRequests,
           1,
-          "exactly one continuation when the last running task ends post-finalize with kept midTurn marks",
+          "the native report must start exactly one continuation",
         );
       }).pipe(Effect.provide(layerTest)),
   );
@@ -10311,6 +10318,11 @@ describe("AcpAdapterV2", () => {
         yield* complete("early");
         assert.lengthOf(continuationRequests, 0);
 
+        yield* update({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "EARLY_SUCCESS_DONE" },
+        });
+
         let backgroundItem: ProviderAdapter.ProviderAdapterV2Event | undefined;
         let checkpoint = 0;
         const assertCommand = Effect.fnUntraced(function* (expectedStatus: string, output: string) {
@@ -10387,9 +10399,26 @@ describe("AcpAdapterV2", () => {
           }
           break;
         }
-        yield* Deferred.await(continuationOffered);
         yield* complete("early");
         yield* complete("blocker");
+        assert.lengthOf(
+          continuationRequests,
+          0,
+          "a task completion without native wake output must not replace the root answer",
+        );
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+
+        yield* update({
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "Preparing the background report" },
+        });
+        yield* complete("early");
+        assert.lengthOf(continuationRequests, 0, "reasoning alone is not a result-bearing wake");
+        yield* update({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "LATE_NATIVE_ANSWER" },
+        });
+        yield* Deferred.await(continuationOffered);
         assert.lengthOf(
           continuationRequests,
           1,
