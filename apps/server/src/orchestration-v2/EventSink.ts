@@ -368,14 +368,28 @@ const layerBase: Layer.Layer<
       return Effect.forEach(
         events,
         (event): Effect.Effect<OrchestrationV2DomainEvent, unknown> =>
-          event.type === "turn-item.updated"
-            ? turnItemPositions
-                .normalize(
-                  event.payload,
-                  event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
-                )
-                .pipe(Effect.map((payload) => ({ ...event, payload })))
-            : Effect.succeed(event),
+          event.type === "thread.note-updated"
+            ? projectionStore.getThread(event.threadId).pipe(
+                Effect.map((current) => {
+                  // Provider updates can commit after the command read its thread.
+                  const { note: _note, ...thread } = current;
+                  return {
+                    ...event,
+                    payload:
+                      event.payload.note === undefined
+                        ? thread
+                        : { ...thread, note: event.payload.note },
+                  };
+                }),
+              )
+            : event.type === "turn-item.updated"
+              ? turnItemPositions
+                  .normalize(
+                    event.payload,
+                    event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
+                  )
+                  .pipe(Effect.map((payload) => ({ ...event, payload })))
+              : Effect.succeed(event),
         { concurrency: 1 },
       );
     };

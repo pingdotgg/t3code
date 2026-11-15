@@ -3,7 +3,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { normalizeThreadNote, type ScopedThreadRef } from "@t3tools/contracts";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { useQuietThreadProjection } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
@@ -24,6 +24,15 @@ export function useThreadNoteSave(
     reportFailure: false,
   });
   const submittedRef = useRef<string | null | undefined>(undefined);
+  const editGenerationRef = useRef(0);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates asynchronous save recovery when this thread's editor unmounts
+  useEffect(
+    () => () => {
+      editGenerationRef.current += 1;
+    },
+    [],
+  );
 
   const save = (text: string) => {
     if (!canEdit) return;
@@ -32,11 +41,17 @@ export function useThreadNoteSave(
       submittedRef.current === undefined ? normalizeThreadNote(note) : submittedRef.current;
     if (next === current) return;
     submittedRef.current = next;
+    const editGeneration = editGenerationRef.current;
     void setThreadNote({
       environmentId: threadRef.environmentId,
       input: { threadId: threadRef.threadId, note: next },
     }).then((result) => {
-      if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+      if (
+        result._tag !== "Failure" ||
+        isAtomCommandInterrupted(result) ||
+        editGeneration !== editGenerationRef.current
+      )
+        return;
       const error = squashAtomCommandFailure(result);
       submittedRef.current = undefined;
       onFailure(text);
@@ -48,6 +63,7 @@ export function useThreadNoteSave(
     });
   };
   const beginEdit = () => {
+    editGenerationRef.current += 1;
     submittedRef.current = undefined;
   };
   return { note, save, beginEdit };

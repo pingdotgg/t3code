@@ -4,7 +4,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
@@ -218,6 +218,8 @@ export const ChatHeader = memo(function ChatHeader({
   };
   const handleHeaderContextMenu = (event: ReactMouseEvent) => {
     if (renamingTitle !== null) return;
+    if ((event.target as HTMLElement).closest("input, textarea, [contenteditable], a[href]"))
+      return;
     if (!isServerThread && onOpenProjectSettings === undefined) return;
     event.preventDefault();
     if (!isServerThread) {
@@ -383,7 +385,11 @@ export const ChatHeader = memo(function ChatHeader({
             </Tooltip>
           )}
           {renamingTitle === null && isServerThread ? (
-            <ThreadNoteButton threadRef={activeThreadRef} canEdit={canOperateThread} />
+            <ThreadNoteButton
+              key={scopedThreadKey(activeThreadRef)}
+              threadRef={activeThreadRef}
+              canEdit={canOperateThread}
+            />
           ) : null}
           {renamingTitle === null && activeThreadLinkOrigin ? (
             <Tooltip>

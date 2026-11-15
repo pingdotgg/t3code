@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { StickyNoteIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { Button } from "../ui/button";
@@ -43,6 +43,18 @@ export function ThreadNoteButton({
     openThread !== null &&
     openThread.environmentId === threadRef.environmentId &&
     openThread.threadId === threadRef.threadId;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the shared popover owner when navigating away from this thread
+  useEffect(
+    () => () => {
+      const current = appAtomRegistry.get(threadNoteOpenAtom);
+      if (
+        current?.environmentId === threadRef.environmentId &&
+        current.threadId === threadRef.threadId
+      )
+        closeThreadNote();
+    },
+    [threadRef.environmentId, threadRef.threadId],
+  );
   // Null means untouched, so a popover opened from the command palette shows the current note.
   const [draft, setDraft] = useState<string | null>(null);
   const { note, save, beginEdit } = useThreadNoteSave(threadRef, canEdit, (unsaved) => {
@@ -101,6 +113,7 @@ export function ThreadNoteButton({
           width="md"
           padding="compact"
           initialFocus={() => {
+            beginEdit();
             const textarea = textareaRef.current;
             textarea?.focus({ preventScroll: true });
             textarea?.setSelectionRange(textarea.value.length, textarea.value.length);
