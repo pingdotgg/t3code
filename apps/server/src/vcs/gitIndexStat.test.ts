@@ -30,6 +30,7 @@ const makeCopiedCheckout = Effect.acquireRelease(
     NodeFS.mkdirSync(NodePath.join(repo, "nested"));
     NodeFS.writeFileSync(NodePath.join(repo, "a.txt"), "alpha\n");
     NodeFS.writeFileSync(NodePath.join(repo, "nested", "b.txt"), "beta\n");
+    NodeFS.writeFileSync(NodePath.join(repo, "\uFEFFconfig.ts"), "export {};\n");
     NodeFS.writeFileSync(NodePath.join(repo, "run.sh"), "#!/bin/sh\n", { mode: 0o755 });
     NodeFS.symlinkSync("a.txt", NodePath.join(repo, "link"));
     git(repo, ["add", "."]);
@@ -45,7 +46,7 @@ const makeCopiedCheckout = Effect.acquireRelease(
       env,
     );
     // Old mtimes keep every entry clear of Git's racy-clean re-read.
-    for (const name of ["a.txt", "nested/b.txt", "run.sh", ".gitattributes"]) {
+    for (const name of ["a.txt", "nested/b.txt", "run.sh", ".gitattributes", "\uFEFFconfig.ts"]) {
       NodeFS.utimesSync(NodePath.join(source, name), 1_000_000, 1_000_000);
     }
     git(
@@ -79,7 +80,14 @@ describe.skipIf(!symlinksSupported)("restatIndex", () => {
       const parsed = parseIndex(NodeFS.readFileSync(sourceIndex));
       assert.isNotNull(parsed);
       const paths = parsed!.entries.map((entry) => entry.path);
-      assert.deepStrictEqual(paths, [".gitattributes", "a.txt", "link", "nested/b.txt", "run.sh"]);
+      assert.deepStrictEqual(paths, [
+        ".gitattributes",
+        "a.txt",
+        "link",
+        "nested/b.txt",
+        "run.sh",
+        "\uFEFFconfig.ts",
+      ]);
 
       const restated = restatIndex(parsed!, statAll(copy, paths), { verify: true });
       assert.isNotNull(restated);

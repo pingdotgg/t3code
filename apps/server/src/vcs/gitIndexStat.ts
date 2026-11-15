@@ -34,7 +34,7 @@ const EXTENDED_SKIP_WORKTREE = 0x4000;
 // Extensions that let Git trust an entry without checking the file, or that point at another index.
 const UNSAFE_EXTENSIONS = new Set(["link", "FSMN", "sdir", "UNTR"]);
 
-const decoder = new TextDecoder();
+const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 
 /**
  * Reads a SHA-1 index that T3 wrote itself (versions 2 and 3). Anything else, including
