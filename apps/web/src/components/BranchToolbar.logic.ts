@@ -288,6 +288,20 @@ export function resolveLocalCheckoutBranchMismatch(input: {
   return { threadBranch: activeThreadBranch, currentBranch: currentGitBranch };
 }
 
+/**
+ * Keeps a picked ref's worktree claim only when a read in that worktree finds it checked out.
+ * `freshRead` is `null` when the read failed.
+ */
+export function resolveConfirmedSelectedRef(
+  listedRef: VcsRef,
+  freshRead: { readonly refs: ReadonlyArray<VcsRef> } | null,
+): VcsRef {
+  const checkedOut =
+    freshRead?.refs.some((ref) => ref.name === listedRef.name && !ref.isRemote && ref.current) ??
+    false;
+  return checkedOut ? listedRef : { ...listedRef, worktreePath: null };
+}
+
 export function resolveBranchSelectionTarget(input: {
   activeProjectCwd: string;
   activeProjectCheckoutRoot?: string | undefined;

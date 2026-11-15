@@ -428,6 +428,7 @@ function pullRequestReference(input: PullRequestRef): PullRequestRef {
   };
 }
 
+/** What an action changes, left out where only the host knows, as when a queue takes a merge. */
 function actionEdit(input: PullRequestActionInput): PullRequestPendingEdit | null {
   if (input.stackNumber !== undefined) return null;
   const reference = pullRequestReference(input);
@@ -1459,7 +1460,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         scheduler: commandScheduler,
         concurrency: serialPerEnvironment,
       }),
-      (_registry, target) => actionEdit(target.input),
+      (_registry, { input }) => actionEdit(input),
     ),
     update: showWhileInFlight(
       createEnvironmentRpcCommand(runtime, {

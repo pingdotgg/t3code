@@ -139,6 +139,13 @@ do {
   check(view.text.utf16.elementsEqual("@e\u{0301}".utf16), "A renormalized chip source kept the old text")
 }
 
+// The placeholder label is hidden from VoiceOver, so the text view must carry it.
+do {
+  let view = makeEditor("")
+  view.setPlaceholder("Ask anything")
+  check(view.editor.accessibilityLabel == "Ask anything", "VoiceOver label: \(String(describing: view.editor.accessibilityLabel))")
+}
+
 print("composer editor tests passed")
 
 private let dropEditor = ComposerTextView()
