@@ -47,10 +47,12 @@ export function ComposerCommandMenuLayer(props: {
         return;
       }
       const composerOverlap = rootFontSizePx + 1;
+      const spaceAbove = rect.top + composerOverlap;
       const next = {
-        bottom: window.innerHeight - rect.top - composerOverlap,
+        bottom: window.innerHeight - spaceAbove,
         left: rect.left + drawerInset,
-        maxHeight: Math.max(96, rect.top - 24 + composerOverlap),
+        // Keeps a 24px gap to the window top, or up to 96px when cramped, but never past the top.
+        maxHeight: Math.min(spaceAbove, Math.max(96, spaceAbove - 24)),
         width,
       };
       setPosition((current) =>
