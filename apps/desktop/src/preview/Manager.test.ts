@@ -1970,6 +1970,7 @@ describe("PreviewManager", () => {
           const hostThrottling = vi.fn();
           yield* manager.setMainWindow({
             isDestroyed: () => false,
+            isVisible: () => false,
             once: vi.fn(),
             webContents: { setBackgroundThrottling: hostThrottling },
           } as never);
