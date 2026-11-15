@@ -125,6 +125,70 @@ describe("GitHubMediaFetch", () => {
     );
   });
 
+  it.effect("serves a Git LFS file's object, not the pointer a raw read returns", () => {
+    const object = "\x89PNG real object bytes";
+    const oid = "5a8f16132efe3eb67a8dea335571beac2745147010dabcedde78dbe708e6bccd";
+    const pointer = `version https://git-lfs.github.com/spec/v1\noid sha256:${oid}\nsize ${object.length}\n`;
+    return Effect.gen(function* () {
+      const fetchMedia = yield* GitHubMediaFetch.make;
+      const response = yield* fetchMedia({
+        url: "https://raw.githubusercontent.com/owner/repo/HEAD/art/background.png",
+        headers: {},
+      });
+      expect(response?.status).toBe(200);
+      expect(yield* response!.text).toBe(object);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(GitHubRest.GitHubRest)({}),
+          Layer.mock(GitHubCredentials.GitHubCredentials)({
+            get: (host) =>
+              Effect.succeed({
+                host,
+                token: Redacted.make("signed-in"),
+                source: "gh" as const,
+                fingerprint: "fingerprint",
+              }),
+          }),
+        ),
+      ),
+      // GitHub's two routes to the object: the LFS media host and the Git LFS batch API.
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          const url = new URL(request.url);
+          const respond = (body: string | null, init: ResponseInit) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body, init)));
+          if (url.hostname === "raw.githubusercontent.com") {
+            return respond(pointer, { headers: { "content-type": "text/plain; charset=utf-8" } });
+          }
+          if (
+            url.hostname === "media.githubusercontent.com" ||
+            url.hostname === "lfs.example.com"
+          ) {
+            return respond(object, { headers: { "content-type": "image/png" } });
+          }
+          if (url.pathname.endsWith(".git/info/lfs/objects/batch")) {
+            return respond(
+              JSON.stringify({
+                objects: [
+                  {
+                    oid,
+                    size: object.length,
+                    actions: { download: { href: `https://lfs.example.com/${oid}` } },
+                  },
+                ],
+              }),
+              { headers: { "content-type": "application/vnd.git-lfs+json" } },
+            );
+          }
+          return respond(null, { status: 404 });
+        }),
+      ),
+      Effect.scoped,
+    );
+  });
+
   it.effect("keeps the credential off the object store a redirect hands the media to", () => {
     const authorizations: Array<[string, string | undefined]> = [];
     return Effect.gen(function* () {

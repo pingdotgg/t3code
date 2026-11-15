@@ -214,6 +214,7 @@ const layerService = (input: {
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(Layer.succeed(HostProcess.Platform, input.platform ?? "linux")),
     Layer.provideMerge(Layer.succeed(HostProcess.Hostname, input.hostname ?? "usage-test-host")),
+    Layer.provideMerge(Layer.succeed(HostProcess.HomeDirectory, input.home)),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
     Layer.provideMerge(
       Layer.succeed(
@@ -1224,6 +1225,76 @@ describe("UsageService", () => {
           ),
         );
       }),
+  );
+
+  it.effect("prices Pi usage mapped onto a Pi model at that model's rate", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const dir = NodePath.join(home, "pi", "sessions", "project");
+      const message = (id: string, model: string) => ({
+        type: "message",
+        id,
+        timestamp: "2026-08-01T10:00:00Z",
+        message: {
+          role: "assistant",
+          provider: "anthropic",
+          model,
+          usage: { input: 10, output: 5 },
+        },
+      });
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(dir, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(dir, "session.jsonl"),
+          [
+            { type: "session", id: "session" },
+            message("released", "actual-model"),
+            message("preview", "actual-model-preview"),
+          ]
+            .map((line) => encodeUnknownJsonString(line))
+            .join("\n") + "\n",
+        );
+      });
+      const summary = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        return yield* service.readSummary(WINDOW);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerService({
+            prefix: "usage-pi-model-alias",
+            home,
+            ratesDocument: {
+              "actual-model": { input_cost_per_token: 1, output_cost_per_token: 4 },
+            },
+            settings: {
+              ...settings,
+              usageModelAliases: { "anthropic/actual-model-preview": "anthropic/actual-model" },
+            },
+          }),
+        ),
+      );
+      assert.deepStrictEqual(
+        summary.buckets
+          .filter((bucket) => bucket.provider === "pi")
+          .map(({ model, records, unpricedRecords, costUsd, costSource }) => ({
+            model,
+            records,
+            unpricedRecords,
+            costUsd,
+            costSource,
+          })),
+        [
+          {
+            model: "anthropic/actual-model",
+            records: 2,
+            unpricedRecords: 0,
+            costUsd: 60,
+            costSource: "modelPriced",
+          },
+        ],
+      );
+    }),
   );
 
   it.effect(
@@ -2490,6 +2561,34 @@ describe("UsageService", () => {
         sources.filter((source) => source.fingerprint.provider === "codex").length,
         1,
       );
+    }),
+  );
+
+  it.effect("keeps default-home history after the default account moves to a custom home", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const defaultHome = NodePath.join(home, "default-claude");
+      const defaultProjects = NodePath.join(defaultHome, "projects", "proj");
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(transcript, claudeLine(1, 5));
+        await NodeFSP.mkdir(defaultProjects, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(defaultProjects, "earlier.jsonl"),
+          claudeLine(2, 7, "claude-fable-5", "earlier-session"),
+        );
+      });
+      const summary = yield* UsageService.make.pipe(
+        Effect.flatMap((service) => service.readSummary(WINDOW)),
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-default-home-test",
+            home,
+            environment: { CLAUDE_CONFIG_DIR: defaultHome },
+            settings,
+          }),
+        ),
+      );
+      assert.strictEqual(totalOutputTokens(summary), 12);
     }),
   );
 

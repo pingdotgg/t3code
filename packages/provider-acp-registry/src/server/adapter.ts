@@ -7,6 +7,7 @@ import {
   normalizeDevinSessionUpdate,
   normalizeDevinToolCall,
   extractDevinSubagentUpdate,
+  devinAnswerablePermissionOptions,
 } from "./devinAcp.ts";
 import { extractDroidElicitationForm } from "./droidAcp.ts";
 import { extractOmpElicitationForm } from "./ompAcp.ts";
@@ -268,6 +269,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           normalizeSessionUpdate: normalizeDevinSessionUpdate,
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
+          answerablePermissionOptions: devinAnswerablePermissionOptions,
         }
       : {}),
     ...(copilotRouting === undefined
