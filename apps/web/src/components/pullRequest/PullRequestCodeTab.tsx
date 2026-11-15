@@ -1842,8 +1842,8 @@ function WithheldFileNotice({
   readonly onLoad: ((path: string) => void) | undefined;
 }) {
   return (
-    <div className="flex items-center gap-2 bg-warning/8 px-3 py-2 text-xs text-warning-foreground">
-      <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0 text-warning" />
+    <div className="flex items-center gap-2 bg-warning/8 px-3 py-2 text-meta text-warning-foreground">
+      <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
       <span>
         {status === "error"
           ? "Couldn't load this diff."

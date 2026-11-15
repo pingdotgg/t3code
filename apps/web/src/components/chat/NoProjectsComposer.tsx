@@ -175,11 +175,7 @@ export function NoProjectsComposer({
           pendingApprovals={[]}
           onHeldRequestIdsChange={noop}
           pendingUserInputs={[]}
-          activePendingProgress={null}
-          activePendingResolvedAnswers={null}
           activePendingIsResponding={false}
-          activePendingDraftAnswers={{}}
-          activePendingQuestionIndex={0}
           respondingRequestIds={[]}
           workspaceFileDragActive={false}
           runtimeMode={runtimeMode}
