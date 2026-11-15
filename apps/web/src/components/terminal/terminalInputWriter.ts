@@ -4,9 +4,8 @@ import { chunkTerminalWrite } from "@t3tools/contracts";
 type SendTerminalChunk = (chunk: string) => Promise<boolean>;
 
 /**
- * Orders one terminal's input into writes that fit `terminal.write`. Input that fits goes out at
- * once, as keystrokes always have. Longer input, such as a large paste, goes one chunk per round
- * trip, and input arriving meanwhile waits behind it so the paste reaches the program whole.
+ * Orders one terminal's input into writes that fit `terminal.write`. A split write goes one chunk
+ * per round trip and later input waits behind it; input that fits goes out at once otherwise.
  */
 export function createTerminalInputWriter() {
   let pending: Promise<void> | null = null;

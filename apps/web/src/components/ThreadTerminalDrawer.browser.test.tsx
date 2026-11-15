@@ -34,6 +34,7 @@ const fixture = vi.hoisted(() => ({
   surfaceOptions: [] as GhosttyTerminalSurfaceOptions[],
   reportedSize: null as { cols: number; rows: number } | null,
   resizeCommand: {},
+  runWrite: (): Promise<{ _tag: "Success" }> => Promise.resolve({ _tag: "Success" }),
   runResize: (_input: unknown): Promise<AsyncResult.AsyncResult<unknown, unknown>> =>
     Promise.resolve(AsyncResult.success(undefined)),
   metadata: new Map<
@@ -114,6 +115,7 @@ vi.mock("../state/use-atom-command", () => ({
       if (command === fixture.resizeCommand) return fixture.runResize(args);
       if (args.input.data !== undefined) {
         fixture.writes.push({ threadId: args.input.threadId, data: args.input.data });
+        return fixture.runWrite();
       }
       return { _tag: "Success" };
     },
@@ -212,6 +214,7 @@ function setup(originalStatus: "starting" | "exited" = "exited") {
   fixture.surfaceOptions = [];
   fixture.reportedSize = null;
   fixture.runResize = () => Promise.resolve(AsyncResult.success(undefined));
+  fixture.runWrite = () => Promise.resolve({ _tag: "Success" });
   fixture.metadata.clear();
   useRightPanelStore.setState(useRightPanelStore.getInitialState());
   useTerminalUiStateStore.setState(useTerminalUiStateStore.getInitialState());
@@ -375,6 +378,26 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
   expect(await validate("~/notes.ts:5:2")).toBe(true);
   await hover("~/notes.ts:5:2");
   expect(canActivate("~/notes.ts:5:2")).toBe(true);
+});
+
+it("drops the rest of a split paste when the shell restarts mid-paste", async () => {
+  const { other: threadRef } = setup();
+  let settleWrite = () => {};
+  fixture.runWrite = () =>
+    new Promise((resolve) => {
+      settleWrite = () => resolve({ _tag: "Success" });
+    });
+  await using _screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  fixture.typeIntoSurface?.("p".repeat(70_000));
+  await act(async () => {
+    fixture.setSession(threadRef, "running", 2, 1);
+    settleWrite();
+  });
+  fixture.typeIntoSurface?.("after");
+  expect(fixture.writes.map(({ data }) => data.length)).toEqual([65_536, 5]);
 });
 
 it("resends a failed resize once in each writable session", async () => {

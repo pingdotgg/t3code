@@ -46,6 +46,7 @@ test(
   "A web terminal paste larger than one write reaches the program intact",
   WEB,
   async ({ t3, app, browser, screen }) => {
+    await browser.emulateMedia({ colorScheme: "dark" });
     const project = await t3.project("demo", { "paste-probe.mjs": PROBE });
     const thread = await t3.thread({ project, title: "Paste", messages: ["hello"] });
     const read = (file: string) =>

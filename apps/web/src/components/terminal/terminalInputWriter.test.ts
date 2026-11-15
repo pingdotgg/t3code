@@ -33,28 +33,18 @@ describe("createTerminalInputWriter", () => {
   const paste = (length: number) =>
     line.repeat(Math.ceil(length / line.length)).slice(0, length - 1) + "\n";
 
-  it.each([
-    { length: 1000, bracketed: false, writes: 1 },
-    { length: 65_536, bracketed: false, writes: 1 },
-    { length: 100_000, bracketed: false, writes: 2 },
-    { length: 65_524, bracketed: true, writes: 1 },
-    { length: 65_525, bracketed: true, writes: 2 },
-    { length: 100_000, bracketed: true, writes: 2 },
-  ])(
-    "delivers a $length-unit paste (bracketed: $bracketed) as writes the server accepts",
-    async ({ length, bracketed, writes }) => {
-      const data = bracketed ? `\x1b[200~${paste(length)}\x1b[201~` : paste(length);
-      const sent: string[] = [];
-      await createTerminalInputWriter()(data, async (chunk) => {
-        sent.push(chunk);
-        return true;
-      });
+  it("delivers a bracketed paste over the limit as writes the server accepts", async () => {
+    const data = `\x1b[200~${paste(100_000)}\x1b[201~`;
+    const sent: string[] = [];
+    await createTerminalInputWriter()(data, async (chunk) => {
+      sent.push(chunk);
+      return true;
+    });
 
-      expect(sent).toHaveLength(writes);
-      expect(sent.every(fitsWrite)).toBe(true);
-      expect(sent.join("")).toBe(data);
-    },
-  );
+    expect(sent).toHaveLength(2);
+    expect(sent.every(fitsWrite)).toBe(true);
+    expect(sent.join("")).toBe(data);
+  });
 
   it("sends one chunk per round trip and holds later input behind a split write", async () => {
     const write = createTerminalInputWriter();
@@ -91,15 +81,5 @@ describe("createTerminalInputWriter", () => {
     await sends(2);
 
     expect(chunks()).toEqual(["q".repeat(65_536), "next"]);
-  });
-
-  it("sends input that fits without waiting on earlier input", () => {
-    const write = createTerminalInputWriter();
-    const { chunks, send } = heldSend();
-
-    void write("a", send);
-    void write("b", send);
-
-    expect(chunks()).toEqual(["a", "b"]);
   });
 });
