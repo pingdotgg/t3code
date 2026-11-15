@@ -20,6 +20,7 @@ const {
   attachRootNavigation,
   flushRootNavigationQueue,
   rootNavigationWindowId,
+  rootNavigationForWindow,
   rootNavigationWindowStatus,
   linkToRootPath,
   rootNavigationRef,
@@ -55,6 +56,8 @@ it("follows the window in use, and falls back when it closes", () => {
 
   activateAppWindow(2);
   expect(rootNavigationRef.current).toBe(second);
+  expect(rootNavigationForWindow(1)).toBe(first);
+  expect(rootNavigationForWindow(2)).toBe(second);
   activateAppWindow(1);
   expect(rootNavigationRef.current).toBe(first);
   expect(rootNavigationWindowId()).toBe(1);
@@ -64,6 +67,7 @@ it("follows the window in use, and falls back when it closes", () => {
   detachFirst();
   expect(rootNavigationRef.current).toBe(second);
   expect(rootNavigationWindowStatus(1)).toBe("closed");
+  expect(rootNavigationForWindow(1)).toBeNull();
   closeAppWindow(2);
   detachSecond();
   expect(rootNavigationRef.current).toBeNull();

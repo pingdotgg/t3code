@@ -51,6 +51,10 @@ export function attachRootNavigation(
   };
 }
 
+export function rootNavigationForWindow(windowId: AppWindowId): RootNavigation | null {
+  return containers.get(windowId) ?? null;
+}
+
 /** The window app-wide navigation, such as an opened link, currently goes to. */
 export function rootNavigationWindowId(): AppWindowId | null {
   for (const [windowId, container] of containers) {
