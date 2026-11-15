@@ -19,7 +19,8 @@ export function composerDraftContentChanged(
     before.previewAnnotations !== after.previewAnnotations ||
     before.reviewComments !== after.reviewComments ||
     before.threadContexts !== after.threadContexts ||
-    before.environmentContexts !== after.environmentContexts
+    before.environmentContexts !== after.environmentContexts ||
+    before.replyTo !== after.replyTo
   );
 }
 
