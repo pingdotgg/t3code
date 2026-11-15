@@ -746,8 +746,15 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           }).pipe(
             Effect.flatMap(({ commands, configuration, authAction }) => {
               const withCommands = applyAcpRegistryAvailableCommands(provider, commands);
+              const probed = openedModels(withCommands);
+              // Without a live configuration, learned models came from probes, so a fresh one wins.
               return Ref.update(learnedModels, (learned) =>
-                withOpenedModels(learned, withCommands),
+                withOpenedModels(
+                  Option.isNone(configuration)
+                    ? learned.filter(({ slug }) => !probed.some((model) => model.slug === slug))
+                    : learned,
+                  withCommands,
+                ),
               ).pipe(
                 Effect.andThen(
                   Option.match(configuration, {

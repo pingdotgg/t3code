@@ -1005,10 +1005,28 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     });
   } else if (method === "session/new") {
     const modelIds = JSON.parse(readFileSync(process.argv[2], "utf8"));
+    const effortModelIds = process.argv[3] ? JSON.parse(readFileSync(process.argv[3], "utf8")) : [];
     send({
       id,
       result: {
         sessionId: "probe-session",
+        ...(effortModelIds.includes(modelIds[0])
+          ? {
+              configOptions: [
+                {
+                  id: "effort",
+                  name: "effort",
+                  category: "thought_level",
+                  type: "select",
+                  currentValue: "high",
+                  options: [
+                    { value: "low", name: "Low" },
+                    { value: "high", name: "High" },
+                  ],
+                },
+              ],
+            }
+          : {}),
         models: {
           currentModelId: modelIds[0],
           availableModels: modelIds.map((modelId) => ({ modelId, name: modelId })),
@@ -1187,9 +1205,11 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-" });
       const agentPath = path.join(directory, "agent.mjs");
       const modelsPath = path.join(directory, "models.json");
-      const models = ["model-a", "model-b", "model-c", "model-d"];
+      const effortModelsPath = path.join(directory, "effort-models.json");
+      const models = ["model-e", "model-a", "model-b", "model-c", "model-d"];
       yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
-      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(models));
+      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(models.slice(1)));
+      yield* fileSystem.writeFileString(effortModelsPath, JSON.stringify([]));
       const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       let version = "1.0.0";
 
@@ -1217,7 +1237,10 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
           resolve: () =>
             Effect.succeed({
               distribution: "npx" as const,
-              spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+              spawn: {
+                command: process.execPath,
+                args: [agentPath, modelsPath, effortModelsPath],
+              },
             }),
         }),
       );
@@ -1277,8 +1300,17 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       yield* instance.snapshot.refresh;
       yield* Fiber.join(probed);
 
+      // A fresh probe's view replaces the older probe's.
+      yield* fileSystem.writeFileString(effortModelsPath, JSON.stringify(["model-a"]));
+      version = "1.0.1";
+      const effortProbed = yield* waitFor("model-a", "effort").pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* instance.snapshot.refresh;
+      yield* Fiber.join(effortProbed);
+
       // An update moves the agent's default; model-a still keeps what the probe saw.
-      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["model-e", ...models]));
+      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(models));
       version = "1.1.0";
       const reprobed = yield* waitFor("model-e", "").pipe(
         Effect.forkScoped({ startImmediately: true }),
@@ -1286,18 +1318,20 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       yield* instance.snapshot.refresh;
       yield* Fiber.join(reprobed);
 
-      // The probe saw model-a without effort; models no session opened borrow the current one's.
+      // The probe saw model-e without effort; models no session opened borrow the current one's.
       expect(yield* publish("model-b", "effort")).toBe(
-        "model-a:,model-b:effort,model-c:effort,model-d:effort",
+        "model-e:,model-a:effort,model-b:effort,model-c:effort,model-d:effort",
       );
-      expect(yield* publish("model-c")).toBe("model-a:,model-b:effort,model-c:,model-d:");
+      expect(yield* publish("model-c")).toBe(
+        "model-e:,model-a:effort,model-b:effort,model-c:,model-d:",
+      );
       expect(yield* publish("model-b", "thinking")).toBe(
-        "model-a:,model-b:thinking,model-c:,model-d:thinking",
+        "model-e:,model-a:effort,model-b:thinking,model-c:,model-d:thinking",
       );
 
       yield* instance.snapshot.refresh;
       expect(effortBySlug(yield* instance.snapshot.getSnapshot)).toBe(
-        "model-a:,model-b:thinking,model-c:,model-d:thinking",
+        "model-e:,model-a:effort,model-b:thinking,model-c:,model-d:thinking",
       );
     }),
   );
