@@ -85,7 +85,7 @@ export default function VirtualTablePreview(props: {
           "--preview-scroll-left",
           `${event.currentTarget.scrollLeft}px`,
         );
-        if (virtualColumns) setLeft(event.currentTarget.scrollLeft);
+        setLeft(event.currentTarget.scrollLeft);
       }}
     >
       {props.header && props.columns <= 30 && !measured && width > 0 ? (
