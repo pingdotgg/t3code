@@ -3634,6 +3634,27 @@ describe("parseAgentSessionTranscript", () => {
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
   });
 
+  it("titles a Claude session after the prompt inside a wake envelope", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: JSON.stringify({
+        type: "user",
+        sessionId: "claude-session",
+        timestamp: "2026-08-25T08:00:00.000Z",
+        message: {
+          role: "user",
+          content:
+            '<wake reason="mention" current-time="2026-08-25T08:00:00Z">\nFix the flaky login test\n</wake>',
+        },
+      }),
+      source: "claudeAgent",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("Fix the flaky login test");
+  });
+
   it.each([
     "Explain <external_codex_apps_open_page> in this transcript",
     "<external_codex_apps_open_page>Keep this incomplete example",
