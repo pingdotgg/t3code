@@ -35,6 +35,8 @@ interface ActiveDrag<T extends HTMLElement> {
 const THUMB_GRAB_OVERHANG_PX = 2;
 /** Covers the thumb's rounded ends and Chromium's rounding of its position, so its ends grab it. */
 const THUMB_GRAB_END_SLACK_PX = 4;
+/** Chromium draws a styled thumb at least this long, however long the content. */
+const MIN_THUMB_LENGTH_PX = 17;
 
 interface ScrollbarThumb {
   scroller: Element;
@@ -59,7 +61,11 @@ function scrollbarThumbAt(element: Element, x: number, y: number): ScrollbarThum
   const right = rect.right - Number.parseFloat(style.borderRightWidth);
   if (x < gutterLeft || x >= right) return null;
   const trackLength = element.clientHeight;
-  const thumbLength = (trackLength * element.clientHeight) / element.scrollHeight;
+  const thumbLength = Math.max(
+    (trackLength * element.clientHeight) / element.scrollHeight,
+    MIN_THUMB_LENGTH_PX,
+  );
+  if (thumbLength >= trackLength) return null;
   const thumbTop =
     rect.top + element.clientTop + ((trackLength - thumbLength) * element.scrollTop) / scrollRange;
   if (
@@ -217,7 +223,7 @@ function createResizeDrag<T extends HTMLElement>() {
     },
     begin(event: PointerEvent<T>, start: (event: PointerEvent<T>) => ResizeSession | null) {
       if (event.button !== 0 || drag || thumbDrag) return;
-      if (event.pointerType === "mouse") {
+      if (event.pointerType !== "touch") {
         const thumb = scrollbarThumbBeside(event.currentTarget, event.clientX, event.clientY);
         if (thumb) return beginThumbDrag(event, thumb);
       }
@@ -259,7 +265,7 @@ function createResizeDrag<T extends HTMLElement>() {
         return;
       }
       const active = drag;
-      if (!active && event.pointerType === "mouse") {
+      if (!active && event.pointerType !== "touch") {
         const handle = event.currentTarget;
         setHover(
           handle,
