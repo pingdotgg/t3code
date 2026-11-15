@@ -137,6 +137,65 @@ describe("Azure DevOps repository keys", () => {
     }
   });
 
+  it.each([
+    "git@ssh.dev.azure.com:v3/acme/platform/tool.git",
+    "https://dev.azure.com/acme/platform/_git/tool.git",
+  ])("preserves a literal .git in an Azure repository name: %s", (remoteUrl) => {
+    const canonicalKey = registry.repositoryKeyFromRemote(remoteUrl);
+    expect(canonicalKey).toBe("dev.azure.com/acme/platform/_git/tool.git");
+    const identity: ChangeRequestProjectIdentity = {
+      canonicalKey,
+      locator: { source: "git-remote", remoteName: "origin", remoteUrl },
+    };
+    const link = parse("https://dev.azure.com/acme/platform/_git/tool.git/pullrequest/7")!;
+    expect(definition.isChangeRequestInRepository(identity, link)).toBe(true);
+    expect(
+      definition.isChangeRequestInRepository(identity, {
+        ...link,
+        repository: "acme/platform/_git/tool",
+      }),
+    ).toBe(false);
+  });
+
+  it("matches a repository however its name is percent-encoded", () => {
+    const remoteUrl = "https://example@dev.azure.com/example/Sample%20(Beta)/_git/Sample%20(Beta)";
+    const canonicalKey = registry.repositoryKeyFromRemote(remoteUrl);
+    const identity: ChangeRequestProjectIdentity = {
+      canonicalKey,
+      locator: { source: "git-remote", remoteName: "origin", remoteUrl },
+    };
+    for (const url of [
+      "https://dev.azure.com/example/Sample%20%28Beta%29/_git/Sample%20%28Beta%29/pullrequest/7",
+      "https://dev.azure.com/example/Sample (Beta)/_git/Sample (Beta)/pullrequest/7",
+    ]) {
+      const link = parse(url)!;
+      expect(link.repository, url).toBe("example/sample%20(beta)/_git/sample%20(beta)");
+      expect(definition.isChangeRequestInRepository(identity, link), url).toBe(true);
+      expect(
+        definition.isChangeRequestInRepository(
+          {
+            ...identity,
+            canonicalKey: "dev.azure.com/example/sample%20%28beta%29/_git/sample%20%28beta%29",
+          },
+          link,
+        ),
+        url,
+      ).toBe(true);
+    }
+    // Links stored before keys had one spelling still resolve to their project.
+    expect(
+      registry.canonicalRepositoryKey(
+        "dev.azure.com/example/sample%20%28beta%29/_git/sample%20%28beta%29",
+      ),
+    ).toBe(canonicalKey);
+  });
+
+  it("still drops .git from other hosts' repository keys", () => {
+    expect(registry.repositoryKeyFromRemote("git@github.com:acme/tool.git")).toBe(
+      "github.com/acme/tool",
+    );
+  });
+
   it("keeps the organization in the host for the legacy visualstudio.com remotes", () => {
     for (const remote of [
       "T3Tools@vs-ssh.visualstudio.com:v3/T3Tools/Platform/T3Code",
