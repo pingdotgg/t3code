@@ -2071,6 +2071,38 @@ describe("deleted thread worktrees", () => {
     }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
+  it.effect(
+    "runs the settle script for a subagent worktree its settled parent does not share",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeSettledAfterDays: 0,
+        });
+        const root = shell({ settledAt: at(-20 * DAY_MS), settledOverride: "settled" });
+        const child = shell({
+          id: ThreadId.make("child"),
+          branch: "feature",
+          worktreePath: fixture.worktree,
+          lineage: {
+            parentThreadId: root.id,
+            rootThreadId: root.id,
+            relationshipToParent: "subagent",
+          },
+        });
+        fixture.setThreads([child, root]);
+        fixture.setSettleScript(Effect.never);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          threadId: child.id,
+          outcome: "kept",
+          reason: "Settle script is running",
+        });
+        expect(fixture.settleRuns()).toMatchObject([{ threadId: child.id }]);
+      }).pipe(Effect.provide(cleanupTestLayer)),
+  );
+
   it.effect("does not run the settle script for a deleted thread a restricted link started", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW_MS);

@@ -1216,7 +1216,13 @@ const make = Effect.gen(function* () {
       // Settlement runs the settle script; every other removal runs it here first.
       // Its terminal protects the worktree while it runs, and completion requests a new sweep.
       const settleScriptReason = Effect.fnUntraced(function* (projectRoot: string) {
-        if (settledThread?.settledOverride === "settled") return null;
+        // Settlement ran the script only in the settled thread's own worktree.
+        if (
+          settledThread?.settledOverride === "settled" &&
+          settledThread.worktreePath !== null &&
+          (yield* canonical(settledThread.worktreePath)) === worktreeKey
+        )
+          return null;
         // The runner cannot read a deleted thread's origin, so fence linked threads here.
         if (thread.linkOrigin !== undefined && linkOriginIsFenced(thread.linkOrigin)) return null;
         // Activity in the key reruns the script after a resumed turn recreates the checkout.
