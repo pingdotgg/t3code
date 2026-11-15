@@ -8,7 +8,8 @@
 
 // The control block and buffer layout mirror the JavaScript glue in
 // @pierre/highlights (`HighlightsHighlighter` in dist/highlighter.js).
-#define INPUT_OFFSET WASM_DEFAULT_PAGE_SIZE
+// INPUT_OFFSET is its `inputPtr`: the lexers' static data ends there.
+#define INPUT_OFFSET 81920u
 #define INPUT_PADDING 96u
 #define MODE_UTF16_LINE_RECORDS 3u
 // Like the JavaScript glue, a small input after a large one gets a fresh
@@ -107,7 +108,9 @@ int64_t t3_highlights_tokenize(const uint8_t* source, size_t length, uint8_t lan
   ensure_instance();
 
   wasm_rt_memory_t* memory = w2c_highlights_memory(&instance);
-  uint64_t needed_pages = 1 + (length + INPUT_PADDING + WASM_DEFAULT_PAGE_SIZE - 1) / WASM_DEFAULT_PAGE_SIZE;
+  uint64_t needed_pages =
+      ((uint64_t)INPUT_OFFSET + length + INPUT_PADDING + WASM_DEFAULT_PAGE_SIZE - 1) /
+      WASM_DEFAULT_PAGE_SIZE;
   if (needed_pages > memory->pages &&
       wasm_rt_grow_memory(memory, needed_pages - memory->pages) == (uint64_t)-1) {
     return -1;

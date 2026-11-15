@@ -70,7 +70,6 @@ function traitsInput(
     models,
     model: "fusion",
     modelOptions,
-    planModeEnabled: false,
     onModelOptionsChange,
   };
 }
