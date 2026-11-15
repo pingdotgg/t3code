@@ -9925,8 +9925,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (latch?.token !== token) return;
           const buffered = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages;
           const messages = buffered ?? [];
+          const lastRootFrame = messages.findLastIndex(isClaudeRootTurnFrame);
+          const holdsLaterCompletion = messages
+            .slice(lastRootFrame + 1)
+            .some(
+              (entry) =>
+                entry.type === "system" &&
+                entry.subtype === "task_notification" &&
+                awaitedCompletionsByNativeThread.get(nativeThreadId)?.has(entry.task_id),
+            );
           const endIndex =
-            latch.end === undefined ? messages.length - 1 : messages.indexOf(latch.end);
+            latch.end !== undefined
+              ? messages.indexOf(latch.end)
+              : lastRootFrame !== -1 && holdsLaterCompletion
+                ? lastRootFrame
+                : messages.length - 1;
           const retired = messages.slice(0, endIndex + 1);
           const later = messages.slice(endIndex + 1);
           const retiredTaskIds = new Set(
@@ -13229,7 +13242,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 const buffered = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
                 const latch = (yield* Ref.get(requestedContinuations)).get(nativeThreadId);
                 // Keep a later awaited completion for its own wake, as with Monitor progress.
-                const ownEndIndex = latch?.end !== undefined ? buffered.indexOf(latch.end) : -1;
+                const ownEndIndex =
+                  latch?.end !== undefined
+                    ? buffered.indexOf(latch.end)
+                    : buffered.findLastIndex(isClaudeRootTurnFrame);
                 const later = ownEndIndex === -1 ? [] : buffered.slice(ownEndIndex + 1);
                 const holdsLaterCompletion = later.some(
                   (entry) =>
@@ -13241,14 +13257,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ownEndIndex !== -1 &&
                   (holdsLaterCompletion ||
                     (latch?.monitorEvent === true &&
+                      latch.end !== undefined &&
                       (yield* holdsBufferedWake(nativeThreadId, later))));
-                const drained = leavesLaterWake ? buffered.slice(0, ownEndIndex + 1) : buffered;
-                const lastWakeStart = drained.findLastIndex(
+                const wakeMessages = leavesLaterWake
+                  ? buffered.slice(0, ownEndIndex + 1)
+                  : buffered;
+                const lastWakeStart = wakeMessages.findLastIndex(
                   (entry) =>
                     isClaudeRootTurnFrame(entry) ||
                     (entry.type === "result" && !isClaudeEmptyTaskNotificationSuccess(entry)),
                 );
                 const held = awaitedCompletionsByNativeThread.get(nativeThreadId);
+                const drained = wakeMessages.filter(
+                  (entry, index) =>
+                    index <= lastWakeStart ||
+                    !(
+                      entry.type === "system" &&
+                      entry.subtype === "task_notification" &&
+                      held?.has(entry.task_id)
+                    ),
+                );
                 let released = false;
                 for (const entry of drained.slice(0, lastWakeStart + 1)) {
                   if (entry.type === "system" && entry.subtype === "task_notification") {
@@ -13264,7 +13292,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 // A root frame clears the absorbed marker, so behind a split it is the later wake's
                 // and stays; the split wake was absorbed when its end is not a result.
                 const wakeAbsorbed = leavesLaterWake
-                  ? latch?.end?.type !== "result"
+                  ? latch?.end !== undefined && latch.end.type !== "result"
                   : (yield* Ref.get(absorbedWakes)).has(nativeThreadId);
                 if (!leavesLaterWake) yield* forgetAbsorbedWake(nativeThreadId);
                 if (drained.length === 0) {

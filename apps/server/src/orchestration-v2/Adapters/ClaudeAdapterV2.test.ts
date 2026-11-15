@@ -12191,8 +12191,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     "query-closed",
     "wake-discarded",
     "wake-discarded-late-completion",
+    "wake-discarded-late-notification",
     "later-wake",
+    "later-wake-before-result",
     "no-init",
+    "empty-before-init",
     "task-stopped",
   ] as const)(
     "holds only the background tasks the agent marks awaited through their wake: %s",
@@ -12317,9 +12320,36 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             return;
           }
 
+          if (order === "empty-before-init") {
+            yield* harness.offerAndWait(
+              makeResultFrame({
+                uuid: "00000000-0000-4000-8000-000000000307",
+                result: "",
+                numTurns: 0,
+                origin: { kind: "task-notification" },
+                terminalReason: null,
+              }),
+            );
+            yield* Queue.take(harness.continuationReceipts);
+            yield* harness.runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now,
+                attemptId: RunAttemptId.make("attempt-claude-empty-awaited-wake"),
+                text: "Background task completed.",
+                attachments: [],
+                providerTurnOrdinal: 2,
+                messageCreatedBy: "agent",
+                messageCreationSource: "provider",
+              }),
+            );
+            yield* Queue.take(harness.terminalReceipts);
+            assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          }
           yield* harness.offerAndWait(order === "no-init" ? wakeAssistant : wakeTurnInit);
           const continuation = yield* Queue.take(harness.continuationReceipts);
-          if (order === "wake-discarded-late-completion" || order === "later-wake") {
+          if (order.startsWith("wake-discarded-late-") || order.startsWith("later-wake")) {
             yield* awaitBackgroundTasks({
               providerThread: harness.providerThread,
               taskIds: ["dev-server"],
@@ -12328,8 +12358,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             yield* Queue.take(harness.providerThreadReceipts);
             yield* harness.offerAndWait(roster([], "00000000-0000-4000-8000-000000000305"));
             yield* Queue.take(harness.providerThreadReceipts);
-            if (order === "later-wake") {
-              yield* harness.offerAndWait(wakeResult);
+            if (order.startsWith("later-wake") || order === "wake-discarded-late-notification") {
+              if (order === "later-wake") yield* harness.offerAndWait(wakeResult);
               yield* harness.offerAndWait(
                 claudeSdkFrame({
                   ...wakeNotification,
@@ -12341,7 +12371,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }
             assert.lengthOf(harness.continuationRequests, 1);
           }
-          if (order === "wake-discarded" || order === "wake-discarded-late-completion") {
+          if (order.startsWith("wake-discarded")) {
             if (continuation.clearIfCurrent === undefined) {
               return yield* Effect.die("An awaited wake must release its hold when discarded.");
             }
@@ -12349,11 +12379,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             const remaining = yield* Queue.take(harness.providerThreadReceipts);
             assert.deepStrictEqual(
               marks(remaining.providerThread.pendingBackgroundTasks ?? []),
-              order === "wake-discarded-late-completion"
+              order.startsWith("wake-discarded-late-")
                 ? [["dev-server", true]]
                 : [["dev-server", false]],
             );
-            return;
+            if (order !== "wake-discarded-late-notification") return;
+            assert.isTrue(yield* harness.hasPendingBackgroundWork);
+            yield* harness.offerAndWait(wakeResult);
+            yield* harness.offerAndWait(wakeTurnInit);
+            yield* Queue.take(harness.continuationReceipts);
           }
           yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
@@ -12368,10 +12402,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               messageCreationSource: "provider",
             }),
           );
-          if (order === "later-wake") {
+          if (order === "wake-discarded-late-notification") {
+            assert.deepStrictEqual(marks(yield* nextRoster((tasks) => tasks.length === 0)), []);
+            assert.isFalse(yield* harness.hasPendingBackgroundWork);
+            return;
+          }
+          if (order.startsWith("later-wake")) {
             assert.deepStrictEqual(marks(yield* nextRoster((tasks) => tasks.length === 1)), [
               ["dev-server", true],
             ]);
+            if (order === "later-wake-before-result") {
+              assert.lengthOf(harness.terminalEvents(), 1);
+              yield* harness.offerAndWait(wakeResult);
+            }
             yield* Queue.take(harness.terminalReceipts);
             assert.isTrue(yield* harness.hasPendingBackgroundWork);
             assert.isTrue(
