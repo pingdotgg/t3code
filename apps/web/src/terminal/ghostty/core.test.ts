@@ -266,6 +266,14 @@ describe("GhosttyTerminalCore snapshots", () => {
     cells = core.snapshot().rowData[0]!.cells;
     expect(cells[0]!.foreground).toEqual({ r: 1, g: 9, b: 2 });
     expect(cells[1]!.foreground).toEqual({ r: 255, g: 0, b: 0 });
+
+    core.write("\x1b]10;rgb:11/22/33\x1b\\\x1b]11;rgb:44/55/66\x1b\\");
+    const snapshot = core.snapshot();
+    cells = snapshot.rowData[0]!.cells;
+    expect(snapshot.background).toEqual({ r: 0x44, g: 0x55, b: 0x66 });
+    expect(cells[0]!.background).toEqual({ r: 0x44, g: 0x55, b: 0x66 });
+    expect(cells[2]!.foreground).toEqual({ r: 0x11, g: 0x22, b: 0x33 });
+    expect(cells[2]!.background).toEqual({ r: 0x44, g: 0x55, b: 0x66 });
   });
 
   it("preserves Unicode and split ANSI parser state across batched renderer reads", async () => {
