@@ -6,6 +6,7 @@ import type {
   SnapShotSource,
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
+import { useTranslation } from "react-i18next";
 import { CircleAlertIcon, ImageIcon, PaperclipIcon, PlayIcon, XIcon } from "lucide-react";
 import { type ComponentProps, useLayoutEffect, useRef } from "react";
 
@@ -61,10 +62,11 @@ function ComposerAttachmentUploadProgress({
 }
 
 function ComposerImageFallback() {
+  const { t } = useTranslation("chat");
   return (
     <span
       role="img"
-      aria-label="Image attachment"
+      aria-label={t("attachments.imageAttachment")}
       className="flex size-full items-center justify-center p-3 text-secondary-label"
     >
       <ImageIcon aria-hidden="true" className="size-4" />
@@ -172,6 +174,7 @@ export function ComposerAttachmentMediaRow({
   readonly onRemoveImage: (imageId: string) => void;
   readonly onRemoveFile: (fileId: string) => void;
 }) {
+  const { t } = useTranslation("chat");
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   const pendingSnapShotIdSet = new Set(pendingSnapShotIds);
   const nonPersistedImageIdSet = new Set(nonPersistedImageIds);
@@ -266,16 +269,14 @@ export function ComposerAttachmentMediaRow({
                     render={
                       <span
                         role="img"
-                        aria-label="Draft attachment may not persist"
+                        aria-label={t("attachments.mayNotPersist")}
                         className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-warning-foreground"
                       >
                         <CircleAlertIcon className="size-3" />
                       </span>
                     }
                   />
-                  <TooltipPopup side="top">
-                    Draft attachment could not be saved locally and may be lost on navigation.
-                  </TooltipPopup>
+                  <TooltipPopup side="top">{t("attachments.mayNotPersistDetail")}</TooltipPopup>
                 </Tooltip>
               )}
               {(!ready || upload?.status === "uploading") && (
@@ -283,7 +284,7 @@ export function ComposerAttachmentMediaRow({
                   {upload?.status === "uploading" ? (
                     <ComposerAttachmentUploadProgress id={image.id} upload={upload} />
                   ) : (
-                    "Preparing"
+                    t("attachments.preparing")
                   )}
                 </span>
               )}
@@ -450,6 +451,7 @@ export function ComposerAttachmentFileList({
   readonly onPreviewFile: (fileId: string) => void;
   readonly onRemoveFile: (fileId: string) => void;
 }) {
+  const { t } = useTranslation("chat");
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   return (
     <div className="mb-3 flex flex-col gap-1">
@@ -478,9 +480,9 @@ export function ComposerAttachmentFileList({
             <span className="shrink-0 text-xs text-secondary-label">
               {needsReattach ? (
                 canReattachFile ? (
-                  "Attach again"
+                  t("attachments.attachAgain")
                 ) : (
-                  "Remove to send"
+                  t("attachments.removeToSend")
                 )
               ) : upload?.status === "uploading" ? (
                 <ComposerAttachmentUploadProgress
@@ -540,6 +542,7 @@ export function ComposerFilePreviewDialog({
   readonly onRemove: (fileId: string) => void;
   readonly onPreviewFileIdChange: (fileId: string | null) => void;
 }) {
+  const { t } = useTranslation("chat");
   const onClose = () => onPreviewFileIdChange(null);
   return (
     <Dialog
@@ -560,7 +563,7 @@ export function ComposerFilePreviewDialog({
           mimeType={file.mimeType}
           sizeBytes={file.sizeBytes}
           file={file.file}
-          origin="Draft"
+          origin={t("attachments.draft")}
           {...(file.uploadedAttachmentId && file.uploadEnvironmentId
             ? {
                 asset: {
@@ -706,6 +709,7 @@ export function ComposerAttachButton({
   readonly addComposerAttachments: (files: File[]) => Promise<boolean>;
   readonly focusComposer: () => void;
 }) {
+  const { t } = useTranslation("chat");
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <>
@@ -734,7 +738,7 @@ export function ComposerAttachButton({
               size="icon-sm"
               onPointerDown={(event) => event.preventDefault()}
               onClick={() => inputRef.current?.click()}
-              aria-label="Attach files"
+              aria-label={t("attachments.attachFiles")}
             />
           }
         >

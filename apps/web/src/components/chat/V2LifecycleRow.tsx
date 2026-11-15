@@ -149,7 +149,7 @@ export function V2LifecycleRow(props: {
         label={
           <>
             {t("lifecycle.createdThread")}
-            {item.title ? ` · ` : ""}
+            {item.title ? ` · ${item.title}` : ""}
           </>
         }
         trailing={

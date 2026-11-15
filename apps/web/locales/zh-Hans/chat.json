@@ -10,7 +10,9 @@
     "emptyState": "发送一条消息即可开始对话。",
     "workLoadFailed": "无法加载工作记录，点击重试。",
     "loadingWorkHistoryA11y": "正在加载工作记录",
-    "cutOffBySteer": "已被转向截断"
+    "cutOffBySteer": "已被转向截断",
+    "forkAria": "从此回复分叉",
+    "viewCited": "查看被引用的助手文本：{{label}}"
   },
   "contextCompaction": {
     "label": "上下文已压缩",
@@ -551,5 +553,42 @@
   "permissions": {
     "tooltip": "权限：{{mode}}。{{description}}",
     "aria": "权限"
+  },
+  "attachments": {
+    "imageAttachment": "图片附件",
+    "mayNotPersist": "草稿附件可能不会保留",
+    "mayNotPersistDetail": "草稿附件无法在本地保存，离开页面时可能丢失。",
+    "preparing": "准备中",
+    "attachAgain": "重新附加",
+    "removeToSend": "移除后再发送",
+    "attachFiles": "附加文件",
+    "draft": "草稿"
+  },
+  "stash": {
+    "empty": "（空）",
+    "attachmentsLabel": "个附件",
+    "attachmentLabel": "个附件",
+    "file": "个文件",
+    "image": "张图片",
+    "plural": "",
+    "closeAria": "关闭暂存",
+    "deleteAria": "删除暂存的提示词",
+    "stashedAria": "已暂存的提示词",
+    "nothingYet": "还没有暂存内容。",
+    "nothingYetHint": "在输入框中按 {{shortcut}} 即可暂存提示词。",
+    "restoreAria": "恢复暂存提示词：{{snippet}}"
+  },
+  "citation": {
+    "goToSource": "转到来源",
+    "editCommentAria": "编辑引用备注",
+    "addCommentAria": "为引用添加备注"
+  },
+  "snapshot": {
+    "accessibilityData": "无障碍数据",
+    "noAccessibilityData": "没有无障碍数据",
+    "viewAccessibility": "查看无障碍数据",
+    "a11yUnnamed": "已包含结构化无障碍元素，但它们没有可读取的名称或值。",
+    "a11yUnverified": "应用或截取后端未提供经验证的无障碍数据。",
+    "capturedWindow": "截取的窗口"
   }
 }

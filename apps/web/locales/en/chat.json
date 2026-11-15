@@ -10,7 +10,9 @@
     "emptyState": "Send a message to start the conversation.",
     "workLoadFailed": "Couldn't load work. Click to retry.",
     "loadingWorkHistoryA11y": "Loading work history",
-    "cutOffBySteer": "Cut off by a steer"
+    "cutOffBySteer": "Cut off by a steer",
+    "forkAria": "Fork from this response",
+    "viewCited": "View cited assistant text: {{label}}"
   },
   "contextCompaction": {
     "label": "Context compacted",
@@ -552,5 +554,42 @@
   "permissions": {
     "tooltip": "Permissions: {{mode}}. {{description}}",
     "aria": "Permissions"
+  },
+  "attachments": {
+    "imageAttachment": "Image attachment",
+    "mayNotPersist": "Draft attachment may not persist",
+    "mayNotPersistDetail": "Draft attachment could not be saved locally and may be lost on navigation.",
+    "preparing": "Preparing",
+    "attachAgain": "Attach again",
+    "removeToSend": "Remove to send",
+    "attachFiles": "Attach files",
+    "draft": "Draft"
+  },
+  "stash": {
+    "empty": "(empty)",
+    "attachmentsLabel": "attachment",
+    "attachmentLabel": "attachment",
+    "file": "file",
+    "image": "image",
+    "plural": "s",
+    "closeAria": "Close stash",
+    "deleteAria": "Delete stashed prompt",
+    "stashedAria": "Stashed prompts",
+    "nothingYet": "Nothing stashed yet.",
+    "nothingYetHint": " Press {{shortcut}} with a prompt in the composer to stash it.",
+    "restoreAria": "Restore stashed prompt: {{snippet}}"
+  },
+  "citation": {
+    "goToSource": "Go to source",
+    "editCommentAria": "Edit citation comment",
+    "addCommentAria": "Add comment to citation"
+  },
+  "snapshot": {
+    "accessibilityData": "Accessibility data",
+    "noAccessibilityData": "No accessibility data",
+    "viewAccessibility": "View accessibility data",
+    "a11yUnnamed": "Structured accessibility elements were included, but they have no readable names or values.",
+    "a11yUnverified": "The app or capture backend did not provide verified accessibility data.",
+    "capturedWindow": "Captured window"
   }
 }

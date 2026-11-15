@@ -889,7 +889,7 @@ export function ThreadRelationshipsPanel(props: {
                     part="secondary"
                     aria-label={
                       parentTitle
-                        ? `Merge back to ${parentTitle}`
+                        ? td("relations.mergeBackTo", { title: parentTitle })
                         : td("relations.mergeBackToSource")
                     }
                     disabled={!canMerge || busyAction !== null}
