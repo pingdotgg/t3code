@@ -1207,16 +1207,7 @@ private class DiffCanvasView(context: Context) : View(context) {
   }
 
   private fun drawNoticeRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {
-    val warning = row.tone == "warning"
-    val noticeColor = if (warning) theme.warningText else theme.mutedText
-    fill(
-      canvas,
-      if (warning) theme.warningBackground else theme.background,
-      0f,
-      top.toFloat(),
-      width.toFloat(),
-      bottom.toFloat(),
-    )
+    fill(canvas, drawing.noticeFill(row), 0f, top.toFloat(), width.toFloat(), bottom.toFloat())
     val iconSize = 16f * density
     val iconRect = RectF(
       style.fileHeaderHorizontalPaddingPx + 2f * density,
@@ -1224,10 +1215,10 @@ private class DiffCanvasView(context: Context) : View(context) {
       style.fileHeaderHorizontalPaddingPx + 2f * density + iconSize,
       (top + bottom + iconSize) / 2f,
     )
-    drawing.drawNoticeIcon(canvas, iconRect, noticeColor)
+    drawing.drawNoticeIcon(canvas, iconRect, drawing.noticeColor(row))
     drawing.configureUiPaint(
       paint = textPaint,
-      color = noticeColor,
+      color = drawing.noticeColor(row),
       size = style.fileHeaderSubtextFontSizePx,
       weight = style.fileHeaderSubtextFontWeight,
     )
@@ -1340,16 +1331,7 @@ private class DiffCanvasView(context: Context) : View(context) {
       drawing.configureCodePaint(theme.text, 0, style)
       drawing.drawWordDiffRanges(canvas, row, codeX, top, firstLineBottom, lines)
       val baseline = lines.baseline(top, firstLineBottom, textPaint)
-      drawing.drawCode(
-        canvas,
-        row.content,
-        tokensByRowId[row.id],
-        row.noteStart,
-        codeX,
-        baseline,
-        style,
-        lines,
-      )
+      drawing.drawCode(canvas, row, tokensByRowId[row.id], codeX, baseline, style, lines)
     }
 
     drawLineNumber(canvas, row, top, firstLineBottom)

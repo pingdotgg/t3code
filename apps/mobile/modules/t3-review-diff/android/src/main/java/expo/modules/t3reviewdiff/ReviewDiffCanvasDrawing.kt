@@ -402,9 +402,8 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
   @Suppress("LongParameterList")
   fun drawCode(
     canvas: Canvas,
-    content: String,
+    row: DiffRow,
     tokens: List<DiffToken>?,
-    noteStart: Int?,
     codeX: Float,
     baseline: Float,
     style: DiffStyle,
@@ -418,11 +417,11 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       canvas.restore()
       return
     }
-    val runs = if (tokens.isNullOrEmpty()) listOf(DiffToken(content, null, 0)) else tokens
+    val runs = if (tokens.isNullOrEmpty()) listOf(DiffToken(row.content, null, 0)) else tokens
     var line = 0
     var x = codeX
     var column = 0
-    splitAtNote(runs, noteStart).forEach { (run, note) ->
+    splitAtNote(runs, row.noteStart).forEach { (run, note) ->
       configureCodePaint(
         if (note) theme.warningText else run.color ?: theme.text,
         run.fontStyle,
@@ -439,24 +438,45 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
         if (lineBaseline + textPaint.fontMetrics.descent >= canvas.clipBounds.top &&
           lineBaseline + textPaint.fontMetrics.ascent <= canvas.clipBounds.bottom
         ) {
-          val runWidth = textPaint.measureText(run.content, start, end)
-          if (note) {
-            backgroundPaint.color = theme.warningBackground
-            canvas.drawRect(
-              x,
-              lineBaseline + textPaint.fontMetrics.ascent,
-              x + runWidth,
-              lineBaseline + textPaint.fontMetrics.descent,
-              backgroundPaint,
-            )
-          }
-          canvas.drawText(run.content, start, end, x, lineBaseline, textPaint)
-          x += runWidth
+          x += drawCodeSegment(canvas, run.content, start, end, x, lineBaseline, note)
         }
         start = end
       }
       column += run.content.length
     }
+  }
+
+  fun noticeColor(row: DiffRow): Int =
+    if (row.tone == "warning") theme.warningText else theme.mutedText
+
+  fun noticeFill(row: DiffRow): Int =
+    if (row.tone == "warning") theme.warningBackground else theme.background
+
+  /** Draws one wrapped segment of a color run and returns its width. */
+  @Suppress("LongParameterList")
+  private fun drawCodeSegment(
+    canvas: Canvas,
+    text: String,
+    start: Int,
+    end: Int,
+    x: Float,
+    baseline: Float,
+    note: Boolean
+  ): Float {
+    val segmentWidth = textPaint.measureText(text, start, end)
+    if (note) {
+      backgroundPaint.color = theme.warningBackground
+      val metrics = textPaint.fontMetrics
+      canvas.drawRect(
+        x,
+        baseline + metrics.ascent,
+        x + segmentWidth,
+        baseline + metrics.descent,
+        backgroundPaint,
+      )
+    }
+    canvas.drawText(text, start, end, x, baseline, textPaint)
+    return segmentWidth
   }
 
   fun drawFileHeaderPathScrollFades(
