@@ -113,20 +113,22 @@ const recordTwentyEvents = Effect.gen(function* () {
   }
 });
 
-const analyticsLayerWith = (client: HttpClient.HttpClient, policy?: ManagedPolicyDocument) =>
+const enabledTelemetryConfig = {
+  T3CODE_TELEMETRY_ENABLED: true,
+  T3CODE_POSTHOG_KEY: "phc_test_key",
+  T3CODE_POSTHOG_HOST: "http://localhost",
+};
+
+const analyticsLayerWith = (
+  client: HttpClient.HttpClient,
+  policy?: ManagedPolicyDocument,
+  config: Record<string, unknown> = enabledTelemetryConfig,
+) =>
   AnalyticsService.layer.pipe(
     Layer.provideMerge(
       ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-retry-" }),
     ),
-    Layer.provide(
-      ConfigProvider.layer(
-        ConfigProvider.fromUnknown({
-          T3CODE_TELEMETRY_ENABLED: true,
-          T3CODE_POSTHOG_KEY: "phc_test_key",
-          T3CODE_POSTHOG_HOST: "http://localhost",
-        }),
-      ),
-    ),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(config))),
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(HostProcess.Platform, "win32"),
@@ -392,6 +394,30 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
         ),
         true,
       );
+    }),
+  );
+
+  it.effect("sends nothing unless telemetry is enabled with an endpoint", () =>
+    Effect.gen(function* () {
+      const configs = [
+        {},
+        { T3CODE_TELEMETRY_ENABLED: true },
+        { T3CODE_TELEMETRY_ENABLED: true, T3CODE_POSTHOG_KEY: "phc_test_key" },
+        { T3CODE_TELEMETRY_ENABLED: true, T3CODE_POSTHOG_HOST: "http://localhost" },
+      ];
+      for (const config of configs) {
+        const sent: Array<string> = [];
+        const client = HttpClient.make((request) => {
+          sent.push(request.url);
+          return respondWithStatus(204)(request);
+        });
+        yield* Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          yield* analytics.record("test.default");
+          yield* analytics.flush;
+        }).pipe(Effect.provide(analyticsLayerWith(client, undefined, config)));
+        assert.deepEqual(sent, [], JSON.stringify(config));
+      }
     }),
   );
 
