@@ -32,6 +32,8 @@ import {
   applyWorkingWindow,
   attachSwitchHandoffs,
   applyBackgroundActivityGroups,
+  wakeUpsRailKey,
+  wakeUpsRailRows,
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
   timelineTurnFoldRunIdsByEntryId,
@@ -5930,6 +5932,13 @@ it.each([
   });
   expect(expanded.slice(1)).toEqual(original);
   expect(expanded.slice(1).every((row, index) => row === original[index])).toBe(true);
+  const railKey = wakeUpsRailKey(expanded);
+  const rail = wakeUpsRailRows(railKey);
+  expect(rail.size).toBeGreaterThan(0);
+  expect([...rail.values()].every((part) => part.foldId === collapsed[0]!.id)).toBe(true);
+  expect([...rail.values()].at(-1)?.position).toBe("end");
+  expect(rail.has(collapsed[0]!.id)).toBe(false);
+  expect(wakeUpsRailKey(expanded.map((row) => ({ ...row })))).toBe(railKey);
   expect(expanded[0]).toMatchObject({
     revealedRowIds: original
       .filter((row) => !keptAnswer(original).includes(row))

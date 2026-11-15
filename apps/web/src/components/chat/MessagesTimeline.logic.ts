@@ -3374,11 +3374,14 @@ export function applyBackgroundActivityGroups(
  * Takes the folds' row ids as one string (ids newline-joined, folds NUL-joined) so callers
  * can keep the map's identity while the rows around it stream.
  */
-export function wakeUpsRailRows(foldRowIds: string): ReadonlyMap<string, "body" | "end"> {
-  const rail = new Map<string, "body" | "end">();
+export function wakeUpsRailRows(foldRowIds: string) {
+  const rail = new Map<string, { foldId: string; position: "body" | "end" }>();
   for (const fold of foldRowIds.split("\0")) {
-    const ids = fold.split("\n").filter((id) => id.length > 0);
-    ids.forEach((id, index) => rail.set(id, index === ids.length - 1 ? "end" : "body"));
+    const [foldId, ...ids] = fold.split("\n").filter((id) => id.length > 0);
+    if (!foldId) continue;
+    ids.forEach((id, index) =>
+      rail.set(id, { foldId, position: index === ids.length - 1 ? "end" : "body" }),
+    );
   }
   return rail;
 }
@@ -3401,7 +3404,7 @@ export function wakeUpsRailKey(rows: readonly MessagesTimelineRow[]): string {
       span.push(next.id);
       if (revealed.has(next.id)) end = span.length;
     }
-    folds.push(span.slice(0, end).join("\n"));
+    folds.push([row.id, ...span.slice(0, end)].join("\n"));
   });
   return folds.join("\0");
 }

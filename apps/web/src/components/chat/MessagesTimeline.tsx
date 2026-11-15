@@ -24,6 +24,7 @@ import {
   type TimelineRowActivityState,
   TimelineRowCtx,
   TimelineWakeUpsRailCtx,
+  TimelineWakeUpsRailInteractionCtx,
   type TimelineRowSharedState,
   type TimelineUsageLimit,
   type WorkGroupViewState,
@@ -532,6 +533,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // The open history belongs to the prompt that opened it; sending closes it.
   const [workingHistoryKey, setWorkingHistoryKey] = useState<string | null>(null);
   const [workingHistoryMoving, setWorkingHistoryMoving] = useState(false);
+  const [hoveredWakeUpsFoldId, setHoveredWakeUpsFoldId] = useState<string | null>(null);
   const normalizedFindQuery = findQuery.trim();
   const findActive = findExpanded;
 
@@ -769,6 +771,20 @@ const ConversationTimeline = memo(function ConversationTimeline({
       }
       return next;
     });
+  });
+  const collapseWakeUpsFromRail = useStableCallback((foldId: string) => {
+    if (!expandedWorkGroupIds.has(foldId)) return;
+    const list = listRef.current;
+    const inset = readTimelineTopInset(list?.getScrollableNode());
+    const anchor = list?.anchorVisibleContent({ key: foldId, hold: false });
+    onToggleWorkGroup(foldId, foldId);
+    if (anchor && anchor.offset > -inset) {
+      void list?.scrollToKey({
+        key: foldId,
+        animated: false,
+        viewOffset: inset + CHAT_TIMELINE_ANCHOR_OFFSET,
+      });
+    }
   });
   const workingHistoryOpen = rows.some(
     (row) => row.kind === "working" && row.window?.historyOpen === true,
@@ -1267,6 +1283,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
       .map((approval) => [approval.requestId, approval]),
   );
   const wakeUpsRail = wakeUpsRailRows(wakeUpsRailKey(rows));
+  const wakeUpsRailInteraction = {
+    hoveredFoldId: hoveredWakeUpsFoldId,
+    onHover: setHoveredWakeUpsFoldId,
+    onCollapse: collapseWakeUpsFromRail,
+  };
   const sharedState: TimelineRowSharedState = {
     pendingApprovals: pendingApprovalsByRequestId,
     respondingRequestIds,
@@ -1692,79 +1713,81 @@ const ConversationTimeline = memo(function ConversationTimeline({
         />
       ) : null}
       <MarkdownFindContext value={findActive}>
-        <TimelineRowActivityCtx value={activityState}>
-          <TooltipScrollDismissArea
-            ref={attachTimelineViewportElement}
-            className="relative -mt-[var(--timeline-top-inset,0px)] h-[calc(100%+var(--timeline-top-inset,0px))] min-h-0"
-            data-assistant-citation-viewport="true"
-            data-sidebar-slide-track="end"
-            data-pane-slide-track="lane"
-          >
-            {onCiteAssistantText && citationThreadRef ? (
-              <AssistantSelectionToolbar
-                viewport={timelineViewportElement}
-                threadRef={citationThreadRef}
-                onCite={onCiteAssistantText}
+        <TimelineWakeUpsRailInteractionCtx value={wakeUpsRailInteraction}>
+          <TimelineRowActivityCtx value={activityState}>
+            <TooltipScrollDismissArea
+              ref={attachTimelineViewportElement}
+              className="relative -mt-[var(--timeline-top-inset,0px)] h-[calc(100%+var(--timeline-top-inset,0px))] min-h-0"
+              data-assistant-citation-viewport="true"
+              data-sidebar-slide-track="end"
+              data-pane-slide-track="lane"
+            >
+              {onCiteAssistantText && citationThreadRef ? (
+                <AssistantSelectionToolbar
+                  viewport={timelineViewportElement}
+                  threadRef={citationThreadRef}
+                  onCite={onCiteAssistantText}
+                />
+              ) : null}
+              <LegendList<MessagesTimelineRow>
+                ref={setTimelineList}
+                data={rows}
+                extraData={listExtraData}
+                keyExtractor={keyExtractor}
+                getItemType={getItemType}
+                renderItem={renderItem}
+                estimatedItemSize={90}
+                initialScrollAtEnd={
+                  !findActive && citationRequest === null && rememberedPosition?.atEnd !== false
+                }
+                // Legend needs a data refresh to mount new pins without a scroll event.
+                dataVersion={`${readyCitationRequest?.key ?? listIdentityKey}:${alwaysRenderKeys.join(",")}`}
+                {...(alwaysRender ? { alwaysRender } : {})}
+                onLoad={handleListLoad}
+                {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+                contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
+                maintainScrollAtEnd={maintainScrollAtEnd}
+                maintainVisibleContentPosition={
+                  findActive ||
+                  citationPositioning ||
+                  (restoringThreadPosition && rememberedPosition?.atEnd === false)
+                    ? false
+                    : maintainVisibleContentPosition
+                }
+                maintainScrollAtEndThreshold={1}
+                immediateWebShrinks={workingHistoryCollapsing}
+                onScroll={handleScroll}
+                onItemSizeChanged={scheduleMinimapRefresh}
+                onMetricsChange={scheduleMinimapRefresh}
+                // Keyboard scrolling only moves the focused element; F6 and clicks land here.
+                tabIndex={-1}
+                data-workspace-focus-default
+                className="messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 scroll-pt-[var(--timeline-top-inset,0px)] overflow-x-hidden overscroll-y-contain [overflow-anchor:none]"
+                ListHeaderComponent={listHeader}
+                ListFooterComponent={timelineListFooter}
               />
-            ) : null}
-            <LegendList<MessagesTimelineRow>
-              ref={setTimelineList}
-              data={rows}
-              extraData={listExtraData}
-              keyExtractor={keyExtractor}
-              getItemType={getItemType}
-              renderItem={renderItem}
-              estimatedItemSize={90}
-              initialScrollAtEnd={
-                !findActive && citationRequest === null && rememberedPosition?.atEnd !== false
-              }
-              // Legend needs a data refresh to mount new pins without a scroll event.
-              dataVersion={`${readyCitationRequest?.key ?? listIdentityKey}:${alwaysRenderKeys.join(",")}`}
-              {...(alwaysRender ? { alwaysRender } : {})}
-              onLoad={handleListLoad}
-              {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-              contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
-              maintainScrollAtEnd={maintainScrollAtEnd}
-              maintainVisibleContentPosition={
-                findActive ||
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false)
-                  ? false
-                  : maintainVisibleContentPosition
-              }
-              maintainScrollAtEndThreshold={1}
-              immediateWebShrinks={workingHistoryCollapsing}
-              onScroll={handleScroll}
-              onItemSizeChanged={scheduleMinimapRefresh}
-              onMetricsChange={scheduleMinimapRefresh}
-              // Keyboard scrolling only moves the focused element; F6 and clicks land here.
-              tabIndex={-1}
-              data-workspace-focus-default
-              className="messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 scroll-pt-[var(--timeline-top-inset,0px)] overflow-x-hidden overscroll-y-contain [overflow-anchor:none]"
-              ListHeaderComponent={listHeader}
-              ListFooterComponent={timelineListFooter}
-            />
-            <TimelineMinimap
-              items={minimapItems}
-              hasPersistentGutter={minimapHasPersistentGutter}
-              hitStripWidth={minimapHitStripWidth}
-              currentIndex={minimapCurrentIndex}
-              atEnd={minimapAtEnd}
-              stripMap={minimapStripMap}
-              onWheel={forwardMinimapWheel}
-              onSelect={(item) => {
-                navigateTimeline();
-                void listRef.current?.scrollToIndex({
-                  index: item.rowIndex,
-                  animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-                  viewOffset:
-                    TIMELINE_MINIMAP_TARGET_OFFSET +
-                    readTimelineTopInset(listRef.current?.getScrollableNode()),
-                });
-              }}
-            />
-          </TooltipScrollDismissArea>
-        </TimelineRowActivityCtx>
+              <TimelineMinimap
+                items={minimapItems}
+                hasPersistentGutter={minimapHasPersistentGutter}
+                hitStripWidth={minimapHitStripWidth}
+                currentIndex={minimapCurrentIndex}
+                atEnd={minimapAtEnd}
+                stripMap={minimapStripMap}
+                onWheel={forwardMinimapWheel}
+                onSelect={(item) => {
+                  navigateTimeline();
+                  void listRef.current?.scrollToIndex({
+                    index: item.rowIndex,
+                    animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+                    viewOffset:
+                      TIMELINE_MINIMAP_TARGET_OFFSET +
+                      readTimelineTopInset(listRef.current?.getScrollableNode()),
+                  });
+                }}
+              />
+            </TooltipScrollDismissArea>
+          </TimelineRowActivityCtx>
+        </TimelineWakeUpsRailInteractionCtx>
       </MarkdownFindContext>
     </>
   );
@@ -1917,14 +1940,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           row.kind === "assistant-meta"
           ? "group/assistant"
           : null,
-        // The rail drops from the fold's bell, through each row's bottom gap, to the last row.
-        wakeUpsRail &&
-          "relative ps-6 before:absolute before:start-[11px] before:top-0 before:w-px before:bg-border",
-        wakeUpsRail === "body" && "before:bottom-0",
-        wakeUpsRail === "end" &&
-          (row.kind === "turn-fold" && !row.expanded && row.ending === "worked"
-            ? "before:bottom-1.5 before:w-[13px] before:rounded-bl-md before:border-b before:border-s before:border-border before:bg-transparent"
-            : "before:bottom-3"),
+        wakeUpsRail && "relative ps-6",
       )}
       data-superseded-content={row.superseded || undefined}
       data-timeline-row-id={row.id}
@@ -1934,6 +1950,13 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       }
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
+      {wakeUpsRail ? (
+        <WakeUpsRail
+          foldId={wakeUpsRail.foldId}
+          position={wakeUpsRail.position}
+          bend={row.kind === "turn-fold" && !row.expanded && row.ending === "worked"}
+        />
+      ) : null}
       {isWorkLogRow ? (
         <WorkLogBlock
           continues={row.continuesWorkLog}
@@ -1980,6 +2003,67 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     </div>
   );
 });
+
+function WakeUpsRail({
+  foldId,
+  position,
+  bend,
+}: {
+  foldId: string;
+  position: "body" | "end";
+  bend: boolean;
+}) {
+  const { hoveredFoldId, onHover, onCollapse } = use(TimelineWakeUpsRailInteractionCtx);
+  const press = useRef<{ x: number; y: number } | null>(null);
+  const hovered = hoveredFoldId === foldId;
+  return (
+    <div
+      aria-hidden="true"
+      data-wake-ups-rail={foldId}
+      className={cn(
+        "absolute inset-y-0 start-0 w-6 cursor-pointer before:pointer-events-none before:absolute before:start-[11px] before:top-0 before:w-px",
+        hovered ? "before:bg-dim-foreground/50" : "before:bg-border",
+        position === "body"
+          ? "before:bottom-0"
+          : bend
+            ? cn(
+                "before:bottom-1.5 before:w-[13px] before:rounded-bl-md before:border-b before:border-s before:bg-transparent",
+                hovered ? "before:border-dim-foreground/50" : "before:border-border",
+              )
+            : "before:bottom-3",
+      )}
+      onPointerEnter={() => onHover(foldId)}
+      onPointerLeave={() => {
+        press.current = null;
+        onHover(null);
+      }}
+      onPointerDown={(event) => {
+        press.current = event.button === 0 ? { x: event.clientX, y: event.clientY } : null;
+      }}
+      onPointerMove={(event) => {
+        if (
+          press.current &&
+          Math.hypot(event.clientX - press.current.x, event.clientY - press.current.y) > 5
+        )
+          press.current = null;
+      }}
+      onPointerCancel={() => {
+        press.current = null;
+      }}
+      onPointerUp={(event) => {
+        const start = press.current;
+        press.current = null;
+        if (
+          event.button === 0 &&
+          start &&
+          Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 5 &&
+          !window.getSelection()?.toString()
+        )
+          onCollapse(foldId);
+      }}
+    />
+  );
+}
 
 function WorktreeSetupTimelineRow({
   row,
