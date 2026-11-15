@@ -244,10 +244,17 @@ const make = Effect.gen(function* () {
           input,
           target,
           project: projectForPullRequest(known, target, callerProject),
+          callerProject,
           failure: null,
         })),
         Effect.catch((error) =>
-          Effect.succeed({ input, target: null, project: undefined, failure: error.message }),
+          Effect.succeed({
+            input,
+            target: null,
+            project: undefined,
+            callerProject,
+            failure: error.message,
+          }),
         ),
       ),
     );
@@ -492,18 +499,25 @@ const make = Effect.gen(function* () {
         if (entry !== undefined && entry.target === null) {
           return yield* new PullRequestGuideFailedError({ detail: entry.failure ?? "" });
         }
-        if (entry === undefined || entry.target === null || entry.project === undefined) {
+        // Hosts readable without a checkout (GitHub, Bitbucket, Forgejo) are read through the
+        // caller's project; PullRequestService decides whether the host allows that.
+        const project = entry?.project ?? entry?.callerProject;
+        if (entry === undefined || entry.target === null || project === undefined) {
           return yield* new PullRequestProjectNotFoundError({
             repository: entry?.target.repository ?? input.repository ?? "",
           });
         }
-        const result = yield* reviewGuides.get(guideReference(entry.project, entry.target)).pipe(
-          Effect.mapError(
-            (error) =>
-              new PullRequestGuideFailedError({
-                detail: guideFailureDetail(error),
-                cause: error,
-              }),
+        const target = entry.target;
+        const result = yield* reviewGuides.get(guideReference(project, target)).pipe(
+          Effect.mapError((error) =>
+            entry.project === undefined &&
+            error._tag === "PullRequestUnavailableError" &&
+            error.reason === "provider-unsupported"
+              ? new PullRequestProjectNotFoundError({ repository: target.repository })
+              : new PullRequestGuideFailedError({
+                  detail: guideFailureDetail(error),
+                  cause: error,
+                }),
           ),
         );
         return {
