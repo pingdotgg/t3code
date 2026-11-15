@@ -1104,6 +1104,10 @@ export const DESKTOP_EXTRA_RESOURCES = [
     to: "resource-monitor",
   },
 ] as const;
+/** `contin`, the Terminal launcher the Homebrew cask links onto PATH. */
+export const MAC_LAUNCHER_EXTRA_RESOURCES = [
+  { from: "apps/desktop/resources/macos/bin", to: "bin" },
+] as const;
 export const LINUX_CAPTURE_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/hyprland-capture",
@@ -2813,6 +2817,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       : { asarUnpack: ["**/node_modules/@transcribe-cpp/**/*.{dylib,so,so.*}"] }),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "mac" ? MAC_LAUNCHER_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
@@ -2875,7 +2880,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           role: "Viewer",
         },
       ],
-      ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      // Without a Developer ID, sign ad hoc so Apple silicon runs the modified bundle; the
+      // hardened runtime's library validation rejects ad hoc signatures, so it stays off.
+      ...(signed
+        ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") }
+        : { identity: "-", hardenedRuntime: false }),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
