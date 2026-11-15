@@ -57,6 +57,8 @@ export const FX_SUPPORTED_RUNTIME_MODES = [
 ] as const satisfies ReadonlyArray<RuntimeMode>;
 /** fx 0.0.13 answers a cancelled prompt with `stopReason: cancelled`. */
 export const FX_ACP_CANCEL_BEHAVIOR = "wait-for-prompt" as const;
+/** fx inherits the user's `~/.fx/mcp.json` servers only when session setup asks for them. */
+export const FX_SESSION_META = { fx: { profileMcpServers: true, ...FX_HOOKS_SESSION_META.fx } };
 
 /**
  * Supervised runs fx's `ask` mode and Auto its automatic review. An explicit
@@ -233,7 +235,7 @@ export const makeFxAcpRuntime = Effect.fn("makeFxAcpRuntime")(function* (
         env: { ...environment },
       },
       cancelBehavior: FX_ACP_CANCEL_BEHAVIOR,
-      sessionMeta: () => FX_HOOKS_SESSION_META,
+      sessionMeta: () => FX_SESSION_META,
     }),
   );
   return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));
