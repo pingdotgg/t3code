@@ -18,7 +18,7 @@ const parts = {
   heading:
     "flex min-w-0 flex-1 items-center gap-2 rounded-md text-left text-caption text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
   usage:
-    "col-span-4 grid min-w-0 grid-cols-subgrid items-center rounded-md text-left text-meta text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+    "col-span-full col-start-1 row-start-1 grid min-w-0 grid-cols-subgrid items-center rounded-md text-left text-meta text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
   choice: THREAD_DETAILS_PANEL_CHOICE_ROW_CLASS,
   icon: THREAD_DETAILS_PANEL_ICON_ACTION_CLASS,
   meta: THREAD_DETAILS_PANEL_META_ACTION_CLASS,

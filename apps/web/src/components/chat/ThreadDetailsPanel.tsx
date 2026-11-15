@@ -307,7 +307,7 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                       />
                     ) : null}
                   </div>
-                  <div className="grid grid-cols-[1rem_max-content_minmax(0,1fr)_max-content_max-content] gap-x-1 ps-3 pe-2">
+                  <div className="grid grid-cols-[1rem_minmax(0,max-content)_minmax(min-content,1fr)] gap-x-1.5 ps-3 pe-2">
                     {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
                     {visible.context ? (
                       <ThreadDetailsContext
