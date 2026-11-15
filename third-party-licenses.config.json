@@ -237,7 +237,7 @@
     },
     {
       "name": "@nodable/entities",
-      "version": "2.1.1",
+      "version": "3.1.0",
       "sourceUrl": "https://github.com/nodable/val-parsers",
       "generatedNotice": {
         "licenseId": "MIT",
