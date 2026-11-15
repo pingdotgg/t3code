@@ -300,7 +300,11 @@ export function makeFxSubagentHookRouter() {
     const reply = fxSubagentReply({ ...call.state, output });
     return [
       // The reply goes in before the call settles, so the child thread ends on it.
-      ...(childSessionId === undefined || phase === "yielded" || reply.length === 0
+      ...(childSessionId === undefined ||
+      phase === "yielded" ||
+      phase === "failed" ||
+      fxSubagentOutcome(output)?.ok === false ||
+      reply.length === 0
         ? []
         : [
             {

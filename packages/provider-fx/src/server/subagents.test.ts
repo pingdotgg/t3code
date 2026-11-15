@@ -262,6 +262,11 @@ describe("fx sub-agent hooks", () => {
       settle("failed", [{ acp: preview("completed", failure) }], rootResult(failure)),
       { status: "failed", result: "No package.json" },
     );
+    for (const phase of ["failed", "cancelled", "completed"]) {
+      const failed = settle(phase, [], rootResult(failure));
+      assert.lengthOf(failed.steps, 0, "a failed result is a diagnostic, not an assistant reply");
+      assert.equal(failed.result, "No package.json");
+    }
     const yielded = JSON.stringify({ ok: true, result: "Still running.", pending: true });
     const pending = settle(
       "yielded",

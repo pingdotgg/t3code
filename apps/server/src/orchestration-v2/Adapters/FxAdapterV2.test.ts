@@ -489,6 +489,17 @@ describe("FxAdapterV2", () => {
           const settled = terminal.at(-1);
           assert.equal(settled?.result, reply);
           assert.equal(settled?.completedAt, terminal[0]?.completedAt);
+          if (phase === "failed") {
+            assert.isFalse(
+              events.some(
+                (event) =>
+                  event.type === "message.updated" &&
+                  event.message.threadId === settled?.childThreadId &&
+                  event.message.role === "assistant",
+              ),
+              "a failed result stays on the task without inventing an assistant reply",
+            );
+          }
           assert.isTrue(
             events.some(
               (event) =>
