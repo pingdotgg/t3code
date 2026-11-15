@@ -41,6 +41,34 @@ const interactiveBash = Effect.fn("test.interactiveBash")(function* (cwd: string
 });
 
 describe("foregroundProcessCwd", () => {
+  it.effect.each(["shell", "foreground"] as const)(
+    "rejects a changed %s process snapshot",
+    (changed) =>
+      Effect.gen(function* () {
+        const snapshots = new Map<string, number>();
+        const stat = (pid: number, start: number) =>
+          `${pid} (nested (shell)) S 1 ${pid} 1 1 456 ${"0 ".repeat(13)}${start}`;
+        const result = yield* foregroundProcessCwd(123, "linux").pipe(
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.makeNoop({
+              readFileString: (path) => {
+                const key = String(path);
+                const count = snapshots.get(key) ?? 0;
+                snapshots.set(key, count + 1);
+                const pid = key.includes("/123/") ? 123 : 456;
+                return Effect.succeed(
+                  stat(pid, count > 0 && pid === (changed === "shell" ? 123 : 456) ? 20 : 10),
+                );
+              },
+              readLink: () => Effect.succeed("/reused-pid"),
+            }),
+          ),
+        );
+        assert.strictEqual(result, null);
+      }),
+  );
+
   it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
     "follows the foreground process of a live shell, and has no answer for a gone one",
     () =>

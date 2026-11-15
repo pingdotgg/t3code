@@ -590,6 +590,64 @@ it.layer(
     }),
   );
 
+  for (const action of ["restart", "close"] as const) {
+    it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+      `discards foreground discovery completed after ${action}`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const snapshot = "123 (shell) S 1 123 123 1 123 " + "0 ".repeat(13) + "10";
+          const { manager, ptyAdapter } = yield* createManager().pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              readFileString: (path, options) =>
+                String(path).startsWith("/proc/")
+                  ? Effect.succeed(snapshot)
+                  : fs.readFileString(path, options),
+              readLink: (path) =>
+                String(path).startsWith("/proc/")
+                  ? Effect.gen(function* () {
+                      yield* Deferred.succeed(entered, undefined);
+                      yield* Deferred.await(release);
+                      return "/old-shell";
+                    })
+                  : fs.readLink(path),
+            }),
+          );
+          ptyAdapter.nextPid = 123;
+          yield* manager.open(openInput());
+          const pid = ptyAdapter.processes[0]!.pid;
+          const pending = yield* manager
+            .foregroundCwd({
+              threadId: "thread-1",
+              terminalId: DEFAULT_TERMINAL_ID,
+              pid,
+            })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(entered);
+          if (action === "close")
+            yield* manager.close({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+          else {
+            ptyAdapter.nextPid = pid;
+            const exited = yield* Deferred.make<void>();
+            const unsubscribe = yield* manager.subscribe((event) =>
+              event.type === "exited"
+                ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            );
+            ptyAdapter.processes[0]!.emitExit({ exitCode: 0, signal: 0 });
+            yield* Deferred.await(exited);
+            unsubscribe();
+            yield* manager.open(openInput());
+          }
+          yield* Deferred.succeed(release, undefined);
+          assert.equal(yield* Fiber.join(pending), null);
+        }),
+    );
+  }
+
   it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
     "says where a terminal's own shell is, and nothing for an ended or replaced one",
     () =>
@@ -598,7 +656,9 @@ it.layer(
         const shellDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-shell-cwd-" });
         // A real process stands in for the shell, so procfs has a directory to report.
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const shell = yield* spawner.spawn(ChildProcess.make("sleep", ["60"], { cwd: shellDir }));
+        const shell = yield* spawner.spawn(
+          ChildProcess.make("sleep", ["60"], { cwd: shellDir, detached: true }),
+        );
         const pid = Number(shell.pid);
         const { manager, ptyAdapter } = yield* createManager();
         ptyAdapter.nextPid = pid;

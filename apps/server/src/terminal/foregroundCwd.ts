@@ -13,17 +13,34 @@ export const foregroundProcessCwd = Effect.fn("terminal.foregroundProcessCwd")(f
 ) {
   if (platform !== "linux") return null;
   const fileSystem = yield* FileSystem.FileSystem;
-  const stat = yield* fileSystem
-    .readFileString(`/proc/${shellPid}/stat`)
-    .pipe(Effect.orElseSucceed(() => null));
-  if (stat === null) return null;
-  // The command name may hold spaces and parentheses, so fields count from its last `)`.
-  // After it come state, ppid, pgrp, session, tty_nr and tpgid, the foreground group.
-  const foregroundGroup = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[5]);
+  const readStat = (pid: number) =>
+    fileSystem.readFileString(`/proc/${pid}/stat`).pipe(
+      Effect.map((stat) => {
+        // The command name can contain spaces and parentheses; field 22 is starttime.
+        const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+        const startTime = fields[19];
+        return startTime && /^\d+$/.test(startTime)
+          ? { startTime, foregroundGroup: Number(fields[5]) }
+          : null;
+      }),
+      Effect.orElseSucceed(() => null),
+    );
+  const shell = yield* readStat(shellPid);
+  if (shell === null) return null;
   const cwdOf = (pid: number) =>
     fileSystem.readLink(`/proc/${pid}/cwd`).pipe(Effect.orElseSucceed(() => null));
+  const group = shell.foregroundGroup;
+  let cwd: string | null = null;
+  if (Number.isInteger(group) && group > 0 && group !== shellPid) {
+    const before = yield* readStat(group);
+    if (before !== null) {
+      cwd = yield* cwdOf(group);
+      const after = yield* readStat(group);
+      if (after?.startTime !== before.startTime) return null;
+    }
+  }
   // A group whose leader already exited has no directory to read; the shell's stands in.
-  const foreground =
-    Number.isInteger(foregroundGroup) && foregroundGroup > 0 ? yield* cwdOf(foregroundGroup) : null;
-  return foreground ?? (yield* cwdOf(shellPid));
+  cwd ??= yield* cwdOf(shellPid);
+  const after = yield* readStat(shellPid);
+  return after?.startTime === shell.startTime && after.foregroundGroup === group ? cwd : null;
 });

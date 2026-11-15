@@ -608,7 +608,11 @@ function TerminalSessionViewport({
   const linkLocationFor = useEffectEvent(async (text: string): Promise<TerminalLinkLocation> => {
     const pid = readTerminalSession().pid;
     let shellCwd = cwd;
-    if (pid !== null && isCwdRelativeTerminalPath(text)) {
+    if (
+      pid !== null &&
+      !["darwin", "windows"].includes(serverConfig?.environment.platform.os ?? "unknown") &&
+      isCwdRelativeTerminalPath(text)
+    ) {
       const result = await runForegroundCwd({
         environmentId,
         input: { threadId, terminalId, pid },
@@ -650,7 +654,6 @@ function TerminalSessionViewport({
       !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
     )
       return false;
-    const request = ++linkLocationRequestRef.current;
     const location = await linkLocationFor(text);
     const query = getFileMetadataQueryAtom(
       environmentId,
@@ -663,8 +666,7 @@ function TerminalSessionViewport({
     const exists =
       result._tag === "Success" &&
       (result.value?.kind === "file" || result.value?.kind === "directory");
-    if (exists && request === linkLocationRequestRef.current) showLinkLocation(location);
-    return exists;
+    return exists ? location : false;
   });
   const checkedLinkTarget = useEffectEvent((text: string) => {
     const location = linkLocationRef.current;
@@ -775,7 +777,11 @@ function TerminalSessionViewport({
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
         canActivateLink: (text) => canActivateTerminalLink(text),
-        validateLink: (text) => validateTerminalLink(text),
+        validateLink: async (text) => {
+          const validated = await validateTerminalLink(text);
+          if (typeof validated === "boolean") return validated;
+          return (event: MouseEvent) => handleLinkActivate(text, event, validated.target);
+        },
         onLinkHover: (text) => hoverTerminalLink(text),
         // Surface listeners start before WASM loading finishes and the terminal handler exists.
         onContextMenu: (event) => {
@@ -1080,7 +1086,7 @@ function TerminalSessionViewport({
         return false;
       }
 
-      function handleLinkActivate(text: string, event: MouseEvent): void {
+      function handleLinkActivate(text: string, event: MouseEvent, validatedTarget?: string): void {
         if (
           !isTerminalUrl(text) &&
           !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
@@ -1119,7 +1125,7 @@ function TerminalSessionViewport({
           return;
         }
         // Only the location whose existence was checked opens, never a fresh guess.
-        const target = checkedLinkTarget(text);
+        const target = validatedTarget ?? checkedLinkTarget(text);
         if (target === null) return;
         void (async () => {
           const result = await openTerminalPath(target);

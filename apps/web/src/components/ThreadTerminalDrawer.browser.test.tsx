@@ -416,7 +416,7 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
     appAtomRegistry.set(pending, AsyncResult.success({ kind: "file" }));
   });
   expect(canActivate("src/main.ts:12:7")).toBe(true);
-  expect(await pressedValidation).toBe(true);
+  expect(typeof (await pressedValidation)).toBe("function");
   expect(canActivate("missing/file.ts")).toBe(false);
   await hover("missing/file.ts");
   expect(canActivate("missing/file.ts")).toBe(false);
@@ -440,7 +440,7 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
   await act(async () => {
     fixture.pendingSurfaces.shift()?.();
   });
-  expect(await validate("~/notes.ts:5:2")).toBe(true);
+  expect(typeof (await validate("~/notes.ts:5:2"))).toBe("function");
   await hover("~/notes.ts:5:2");
   expect(canActivate("~/notes.ts:5:2")).toBe(true);
 });
@@ -583,8 +583,9 @@ it("opens a relative terminal path where the shell is when the link is used", as
   await openAfterHover("./package.json:2");
   // A press before the hover settles validates and opens the same location.
   await hover(null);
-  expect(await surface().validateLink!("./package.json:2")).toBe(true);
-  await activate("./package.json:2");
+  const validated = await surface().validateLink!("./package.json:2");
+  expect(typeof validated).toBe("function");
+  if (typeof validated === "function") await act(async () => validated(new MouseEvent("click")));
   shellCwd = Promise.resolve(AsyncResult.success("/repo/sub/deeper"));
   await openAfterHover("../package.json");
   expect(fixture.opened).toEqual([
@@ -596,6 +597,39 @@ it("opens a relative terminal path where the shell is when the link is used", as
     environmentId: threadRef.environmentId,
     input: { threadId: threadRef.threadId, terminalId: "term-1", pid: 4242 },
   });
+
+  // The same text may resolve elsewhere while the press waits for cwd or stat.
+  for (const hoverCompletion of ["pending", "before-cwd", "before-stat"]) {
+    const pendingStat = Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+      AsyncResult.initial(),
+    );
+    fixture.metadata.set(
+      JSON.stringify([threadRef.environmentId, "/repo/sub/package.json"]),
+      pendingStat,
+    );
+    let finishPress = (_cwd: string) => {};
+    shellCwd = new Promise((resolve) => {
+      finishPress = (cwd) => resolve(AsyncResult.success(cwd));
+    });
+    const pressed = surface().validateLink!("./package.json:2");
+    let finishHover = (_cwd: string) => {};
+    shellCwd = new Promise((resolve) => {
+      finishHover = (cwd) => resolve(AsyncResult.success(cwd));
+    });
+    await hover("./package.json:2");
+    if (hoverCompletion === "before-cwd") await act(async () => finishHover("/repo"));
+    await act(async () => finishPress("/repo/sub"));
+    if (hoverCompletion === "before-stat") await act(async () => finishHover("/repo"));
+    await act(async () => appAtomRegistry.set(pendingStat, AsyncResult.success({ kind: "file" })));
+    const validatedPress = await pressed;
+    expect(typeof validatedPress).toBe("function");
+    const openedCount = fixture.opened.length;
+    if (typeof validatedPress === "function")
+      await act(async () => validatedPress(new MouseEvent("click")));
+    expect(fixture.opened).toHaveLength(openedCount + 1);
+    expect(fixture.opened.at(-1)).toBe("/repo/sub/package.json:2");
+    if (hoverCompletion === "pending") await act(async () => finishHover("/repo"));
+  }
 
   // Absolute targets never ask where the shell is.
   const asked = lookups.length;

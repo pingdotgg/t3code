@@ -3785,9 +3785,18 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     ) {
       return null;
     }
-    return yield* foregroundProcessCwd(input.pid, platform).pipe(
+    const process = session.value.process;
+    const cwd = yield* foregroundProcessCwd(input.pid, platform).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
     );
+    const current = yield* getSession(input.threadId, input.terminalId);
+    return Option.isSome(current) &&
+      current.value === session.value &&
+      current.value.status === "running" &&
+      current.value.pid === input.pid &&
+      current.value.process === process
+      ? cwd
+      : null;
   });
 
   const close: TerminalManager["Service"]["close"] = (input) =>

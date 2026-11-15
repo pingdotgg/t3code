@@ -65,14 +65,14 @@ test(
     await browser.keyboard.press("Enter");
     await expect.poll(() => read(`${project}/grep-done`), { timeout: 15_000 }).toBe("done\n");
 
-    // The hidden input follows the cursor, now on the prompt row just below grep's line.
+    // Grep is on the first row; the cursor can still reflect output pending in the client.
     const point = await browser.evaluate(() => {
       const input = document.querySelector<HTMLElement>('[aria-label="Terminal input"]');
       const canvas = input?.parentElement?.querySelector("canvas");
       if (!input || !canvas) return null;
       const cursor = input.getBoundingClientRect();
       const bounds = canvas.getBoundingClientRect();
-      return { x: bounds.left + 24, y: cursor.top - cursor.height / 2 };
+      return { x: bounds.left + 24, y: bounds.top + cursor.height / 2 };
     });
     expect(point).not.toBeNull();
     if (!point) return;

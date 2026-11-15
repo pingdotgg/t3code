@@ -516,6 +516,8 @@ export interface GhosttySelectionPosition {
   readonly end: { readonly x: number; readonly y: number };
 }
 
+type LinkValidation = boolean | ((event: MouseEvent) => void);
+
 export interface GhosttyTerminalSurfaceOptions {
   readonly theme: GhosttyTheme;
   readonly font?: GhosttyTerminalFont;
@@ -527,7 +529,8 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly beforeKey: (event: KeyboardEvent) => boolean;
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
   readonly canActivateLink?: (text: string) => boolean;
-  readonly validateLink?: (text: string) => Promise<boolean>;
+  /** A successful check can bind its own activation so hover cannot replace the target. */
+  readonly validateLink?: (text: string) => Promise<LinkValidation>;
   /** Reports hovered candidates once their rendered text is stable for 250 ms; null cancels. */
   readonly onLinkHover?: (text: string | null) => void;
   /** The host must prevent the default menu; native Paste cannot reach a canvas terminal. */
@@ -590,7 +593,7 @@ export class GhosttyTerminalSurface {
   private mouseReportingButton: number | null = null;
   private linkActivationPointerId: number | null = null;
   private linkActivationLink: TerminalLinkWithRange | null = null;
-  private linkActivationValidation: Promise<boolean> | undefined;
+  private linkActivationValidation: Promise<LinkValidation> | undefined;
   private linkActivationRequestId = 0;
   private linkActivationOrigin: {
     x: number;
@@ -2149,7 +2152,7 @@ export class GhosttyTerminalSurface {
     };
   }
 
-  private validateLink(text: string): Promise<boolean> | undefined {
+  private validateLink(text: string): Promise<LinkValidation> | undefined {
     if (this.options.canActivateLink?.(text) !== false) return;
     const validation = this.options.validateLink?.(text);
     // A drag can abandon the press before activateLink subscribes to its result.
@@ -2176,7 +2179,8 @@ export class GhosttyTerminalSurface {
           !isSameTerminalLink(link, this.findLinkAt(event.clientX, event.clientY))
         )
           return;
-        if (valid) this.options.onLinkActivate(link.text, event);
+        if (typeof valid === "function") valid(event);
+        else if (valid) this.options.onLinkActivate(link.text, event);
         else this.clearSelection();
       },
       () => {},
