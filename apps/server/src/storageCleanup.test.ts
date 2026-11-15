@@ -38,6 +38,7 @@ import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import { CodexProviderCapabilitiesV2 } from "./orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ServerActivation } from "./serverActivation.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
@@ -372,6 +373,7 @@ const cleanupFixture = (
     let snapshotReads = 0;
     let terminalListener: ((event: TerminalMetadataStreamEvent) => Effect.Effect<void>) | undefined;
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
+    const scriptRuns: Array<{ trigger: string | undefined; worktreeExisted: boolean }> = [];
     const activated = yield* Deferred.make<void>();
     const context = yield* Layer.build(StorageCleanup.layer).pipe(
       Effect.provideService(GitVcsDriver.GitVcsDriver, {
@@ -526,10 +528,21 @@ const cleanupFixture = (
             return () => {};
           }),
       } as unknown as TerminalManager.TerminalManager["Service"]),
+      Effect.provideService(ProjectSetupScriptRunner.ProjectSetupScriptRunner, {
+        runForThread: (input: ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput) =>
+          Effect.gen(function* () {
+            scriptRuns.push({
+              trigger: input.trigger,
+              worktreeExisted: yield* fs.exists(input.worktreePath),
+            });
+            return { status: "no-script" } as const;
+          }),
+      } as unknown as ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]),
       Effect.provideService(ServerActivation, Deferred.await(activated)),
     );
     return {
       service: Context.get(context, StorageCleanup.StorageCleanup),
+      scriptRuns,
       repo,
       setTerminals: (terminals: TerminalSummary[]) =>
         terminalListener?.({ type: "snapshot", terminals }) ?? Effect.void,
@@ -1639,6 +1652,21 @@ describe("deleted thread worktrees", () => {
         });
         expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
       }).pipe(Effect.provide(cleanupTestLayer)),
+  );
+
+  it.effect("runs the settle script in a deleted thread's worktree before removing it", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture({
+        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+        worktreeAfterDays: null,
+        worktreeOnDelete: true,
+      });
+      fixture.setDeletedThreads([parent(fixture.worktree)]);
+      fixture.setThreads([]);
+      yield* fixture.service.runNow;
+      expect(fixture.scriptRuns).toEqual([{ trigger: "settle", worktreeExisted: true }]);
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect("leaves a deleted owner's subagent on the owner's saved branch", () =>
