@@ -55,6 +55,7 @@ pub(crate) async fn spawn_and_collect(
     }
     #[cfg(unix)]
     command.process_group(0);
+    conn_support::spawn_guard::check(command.as_std());
     let mut child = command.spawn().map_err(|error| match error.kind() {
         std::io::ErrorKind::NotFound => CommandError::NotFound,
         _ => CommandError::Failed(error.to_string()),

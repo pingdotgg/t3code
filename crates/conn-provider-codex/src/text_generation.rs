@@ -339,6 +339,7 @@ async fn run(
     for (key, value) in env {
         command.env(key, value);
     }
+    conn_support::spawn_guard::check(command.as_std());
     let mut child = command.spawn()?;
     let pid = child.id().unwrap_or(0);
     let input = child.stdin.take();

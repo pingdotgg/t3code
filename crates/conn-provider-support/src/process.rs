@@ -104,6 +104,7 @@ impl Process {
         for (key, value) in &spec.env_set {
             command.env(key, value);
         }
+        conn_support::spawn_guard::check(command.as_std());
         let mut child = command.spawn()?;
         let pid = child.id().unwrap_or(0);
         let (Some(stdin), Some(stdout), Some(stderr)) =

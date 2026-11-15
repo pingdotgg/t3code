@@ -8,6 +8,7 @@ pub mod hmac;
 pub mod ids;
 pub mod login_env;
 pub mod secret_store;
+pub mod spawn_guard;
 pub mod time;
 pub mod url;
 
@@ -24,6 +25,9 @@ pub fn uuid_v4() -> String {
         .into_uuid()
         .to_string()
 }
+
+#[cfg(test)]
+mod sealed_probe;
 
 #[cfg(test)]
 mod tests {

@@ -246,6 +246,7 @@ async fn run(command: GitCommand, scan: Option<Scanner<'_>>) -> Result<GitOutput
     for (key, value) in &command.env {
         child.env(key, value);
     }
+    conn_support::spawn_guard::check(child.as_std());
     let mut child = child.spawn().map_err(|e| ProcessError::Spawn {
         context: context.clone(),
         message: e.to_string(),

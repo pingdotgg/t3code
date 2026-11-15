@@ -36,19 +36,20 @@ enum ProbeError {
 }
 
 async fn probe(cwd: &Path, exe: &str, args: &[&str]) -> Result<Probe, ProbeError> {
-    let mut child = tokio::process::Command::new(exe)
+    let mut command = tokio::process::Command::new(exe);
+    command
         .args(args)
         .current_dir(cwd)
         .envs(conn_support::login_env::vars())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => ProbeError::Missing,
-            _ => ProbeError::Failed(format!("`{exe} {}` failed.", args.join(" "))),
-        })?;
+        .kill_on_drop(true);
+    conn_support::spawn_guard::check(command.as_std());
+    let mut child = command.spawn().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => ProbeError::Missing,
+        _ => ProbeError::Failed(format!("`{exe} {}` failed.", args.join(" "))),
+    })?;
     let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
     let work = async {
         let (out, err) = tokio::join!(
