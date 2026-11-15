@@ -8,6 +8,10 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
+/** The launcher install.sh, `t3 install`, and `t3 update` write; exec by absolute path. */
+const launcherScript = (executable: string) =>
+  `#!/bin/sh\nexec '${executable.replaceAll("'", "'\\''")}' "$@"\n`;
+
 const nightlies = Array.from({ length: 100 }, (_, index) => ({
   tag_name: `v1.2.4-nightly.20261020.${200 - index}`,
 }));
@@ -29,10 +33,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home
       await NodeFSP.writeFile(NodePath.join(target, "t3"), "#!/bin/sh\necho 't3 v1.2.3'\n", {
         mode: 0o755,
       });
-      const { status, stdout, stderr } = NodeChildProcess.spawnSync(
-        "sh",
-        [NodePath.resolve(import.meta.dirname, "install.sh")],
-        {
+      const install = () =>
+        NodeChildProcess.spawnSync("sh", [NodePath.resolve(import.meta.dirname, "install.sh")], {
           cwd: root,
           env: {
             ...process.env,
@@ -43,11 +45,16 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home
             T3CODE_RELEASE_BASE_URL: "http://127.0.0.1:1",
           },
           encoding: "utf8",
-        },
-      );
+        });
+      // The second run replaces the launcher the first wrote, newlines in its path and all.
+      const first = install();
+      expect(first.status, first.stdout + first.stderr).toBe(0);
+      const { status, stdout, stderr } = install();
       expect(status, stdout + stderr).toBe(0);
       expect(stderr).toContain(`Installed T3 Code ${version}`);
-      expect(await NodeFSP.readlink(launcher)).toBe(NodePath.join(target, "t3"));
+      expect(await NodeFSP.readFile(launcher, "utf8")).toBe(
+        launcherScript(NodePath.join(target, "t3")),
+      );
       expect(
         NodeChildProcess.execFileSync(launcher, ["--version"], {
           cwd: NodeOS.tmpdir(),
@@ -63,12 +70,14 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home
 // regression: #22490
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer channel lookup", () => {
   it.each([
-    ["stable", "1.2.3"],
-    ["preview", "1.2.4-preview.20261019.50"],
-  ])("finds the newest %s release behind a full page of nightlies", async (channel, version) => {
+    // regression: #32897
+    ["stable", "1.2.3", 1],
+    ["preview", "1.2.4-preview.20261019.50", 0],
+  ])("finds %s %s behind nightlies and %i HTTP 504s", async (channel, version, failures) => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-index-"));
     const target = NodePath.join(root, "home/runtime/versions", version);
     const server = NodeHttp.createServer((request, response) => {
+      if (failures-- > 0) return response.writeHead(504).end();
       const url = new URL(request.url ?? "/", "http://fixture");
       const body =
         url.pathname === "/pingdotgg/t3code/releases/latest" &&
@@ -128,6 +137,58 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chan
   });
 });
 
+// regression: #35834
+describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "installer archive download",
+  () => {
+    it("names the archive when it returns 404", async () => {
+      const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-archive-"));
+      const arch = HostProcess.Architecture.defaultValue() === "arm64" ? "arm64" : "x64";
+      const archive = `t3-1.2.3-linux-${arch}.tar.gz`;
+      const server = NodeHttp.createServer((request, response) => {
+        if (request.url === "/v1.2.3/SHA256SUMS")
+          return response.end(`${"0".repeat(64)}  ${archive}\n`);
+        response.writeHead(404).end();
+      });
+      try {
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("Expected a TCP listener");
+        const { code, output } = await new Promise<{ code: number | null; output: string }>(
+          (resolve, reject) => {
+            const child = NodeChildProcess.spawn(
+              "sh",
+              [NodePath.resolve(import.meta.dirname, "install.sh")],
+              {
+                env: {
+                  ...process.env,
+                  T3CODE_CHANNEL: "",
+                  T3CODE_VERSION: "1.2.3",
+                  T3CODE_HOME: NodePath.join(root, "home"),
+                  T3CODE_INSTALL_BIN_DIR: NodePath.join(root, "bin"),
+                  T3CODE_RELEASE_BASE_URL: `http://127.0.0.1:${address.port}`,
+                },
+                stdio: ["ignore", "pipe", "pipe"],
+              },
+            );
+            let output = "";
+            child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
+            child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
+            child.on("error", reject);
+            child.on("close", (code) => resolve({ code, output }));
+          },
+        );
+        expect(code, output).not.toBe(0);
+        expect(output).toMatch(new RegExp(`t3 install: .*${archive.replaceAll(".", "\\.")}`));
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await NodeFSP.rm(root, { recursive: true, force: true });
+      }
+    });
+  },
+);
+
 /** Runs an installer for a version that is already unpacked, so only the t3 command step runs. */
 async function installOver(input: {
   readonly script: "install.sh" | "install.ps1";
@@ -161,7 +222,7 @@ async function installOver(input: {
 }
 
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 command", () => {
-  it("replaces only this home's own links and prints a PATH command", async () => {
+  it("replaces only this home's own launchers and prints a PATH command", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-link-"));
     try {
       const home = NodePath.join(root, "home");
@@ -213,8 +274,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         env: { HOME: root, SHELL: "/bin/zsh", PATH: "/usr/bin:/bin" },
       });
       expect(upgrade.code, upgrade.output).toBe(0);
-      expect(await NodeFSP.readlink(link)).toBe(
-        NodePath.join(root, "alias/runtime/versions/1.2.3/t3"),
+      expect(await NodeFSP.readFile(link, "utf8")).toBe(
+        launcherScript(NodePath.join(root, "alias/runtime/versions/1.2.3/t3")),
       );
       expect(upgrade.output).toContain(
         `printf '\\n%s\\n' 'export PATH="$PATH:$HOME/bin"' >> ~/.zshrc`,
@@ -251,6 +312,13 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
       expect(relative.code, relative.output).toBe(0);
       expect(relative.output).toContain(`'export PATH="$PATH:$HOME/bin"'`);
 
+      // A launcher script someone edited is theirs now.
+      const edited = `${launcherScript(NodePath.join(home, "runtime/versions/1.2.3/t3"))}# mine\n`;
+      await NodeFSP.writeFile(link, edited);
+      const overEdited = await installOver({ script: "install.sh", home, binDir });
+      expect(overEdited.code).not.toBe(0);
+      expect(await NodeFSP.readFile(link, "utf8")).toBe(edited);
+
       await NodeFSP.rm(link);
       await NodeFSP.symlink(NodePath.join(home, "bin/t3"), link);
       const overDesktop = await installOver({
@@ -259,7 +327,9 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         binDir: `${binDir}/`,
       });
       expect(overDesktop.code, overDesktop.output).toBe(0);
-      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/1.2.3/t3"));
+      expect(await NodeFSP.readFile(link, "utf8")).toBe(
+        launcherScript(NodePath.join(home, "runtime/versions/1.2.3/t3")),
+      );
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }
@@ -385,6 +455,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chec
             "rm",
             "mv",
             "ln",
+            "chmod",
+            "sed",
             checksumTool,
           ]) {
             const executable = NodeChildProcess.execFileSync(
