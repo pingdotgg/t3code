@@ -2936,5 +2936,25 @@
     "amount": "数量",
     "increase": "增加",
     "unit": "单位"
+  },
+  "voiceModel": {
+    "recommended": "推荐",
+    "recommendedTooltip": "适合作为其支持语言的默认选择。",
+    "livePreview": "实时预览",
+    "livePreviewTooltip": "录音时会即时显示识别出的文字，无需等待录音结束。",
+    "translate": "翻译",
+    "translateTooltip": "可将其他语言的语音转写为英文。开启“翻译为英文”即可使用。",
+    "usingFileAt": "正在使用此文件：{{path}}",
+    "languages_one": "{{count}} 种语言",
+    "languages_other": "{{count}} 种语言",
+    "downloadProgress": "正在下载 {{name}}",
+    "verifyingDownload": "正在验证下载…",
+    "downloadedPercent": "已下载 {{percent}}%",
+    "cancelDownload": "取消下载 {{name}}",
+    "download": "下载",
+    "selected": "已选中",
+    "useModel": "使用此模型",
+    "stopUsingFile": "停止使用 {{name}} 文件；文件仍会保留在磁盘上",
+    "deleteModel": "删除 {{name}}"
   }
 }

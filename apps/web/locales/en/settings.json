@@ -2956,5 +2956,25 @@
     "amount": "Amount",
     "increase": "Increase",
     "unit": "Unit"
+  },
+  "voiceModel": {
+    "recommended": "Recommended",
+    "recommendedTooltip": "A good default pick for the languages it covers.",
+    "livePreview": "Live preview",
+    "livePreviewTooltip": "Shows words in your draft as you speak, before the recording finishes.",
+    "translate": "Translate",
+    "translateTooltip": "Can write English text from speech in another language. Turn on Translate to English to use it.",
+    "usingFileAt": "Using your file at {{path}}",
+    "languages_one": "{{count}} language",
+    "languages_other": "{{count}} languages",
+    "downloadProgress": "{{name}} download progress",
+    "verifyingDownload": "Verifying download…",
+    "downloadedPercent": "{{percent}}% downloaded",
+    "cancelDownload": "Cancel {{name}} download",
+    "download": "Download",
+    "selected": "Selected",
+    "useModel": "Use model",
+    "stopUsingFile": "Stop using your {{name}} file; the file stays on disk",
+    "deleteModel": "Delete {{name}}"
   }
 }

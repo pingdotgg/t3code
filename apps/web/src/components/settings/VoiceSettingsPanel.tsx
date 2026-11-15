@@ -48,6 +48,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { listBrowserMicrophones, type BrowserMicrophone } from "../../speech/browserMicrophones";
@@ -187,6 +188,7 @@ function ModelBadge(props: { icon: ReactNode; label: string; tooltip: string }) 
 }
 
 function ModelCard(props: ModelCardProps) {
+  const { t } = useTranslation("settings");
   const { model } = props;
   const downloading = model.state === "downloading" || model.state === "verifying";
   const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
@@ -198,29 +200,29 @@ function ModelCard(props: ModelCardProps) {
           {model.recommended ? (
             <ModelBadge
               icon={<StarIcon className="mr-1 size-3" />}
-              label="Recommended"
-              tooltip="A good default pick for the languages it covers."
+              label={t("voiceModel.recommended")}
+              tooltip={t("voiceModel.recommendedTooltip")}
             />
           ) : null}
           {model.supportsStreaming ? (
             <ModelBadge
               icon={<AudioLinesIcon className="mr-1 size-3" />}
-              label="Live preview"
-              tooltip="Shows words in your draft as you speak, before the recording finishes."
+              label={t("voiceModel.livePreview")}
+              tooltip={t("voiceModel.livePreviewTooltip")}
             />
           ) : null}
           {model.supportsTranslation ? (
             <ModelBadge
               icon={<LanguagesIcon className="mr-1 size-3" />}
-              label="Translate"
-              tooltip="Can write English text from speech in another language. Turn on Translate to English to use it."
+              label={t("voiceModel.translate")}
+              tooltip={t("voiceModel.translateTooltip")}
             />
           ) : null}
         </div>
         <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{model.description}</p>
         {model.linkedFrom ? (
           <p className="mt-0.5 break-all text-2xs text-muted-foreground">
-            Using your file at {model.linkedFrom}
+            {t("voiceModel.usingFileAt", { path: model.linkedFrom })}
           </p>
         ) : null}
         <ModelBenchmarks
@@ -229,7 +231,7 @@ function ModelCard(props: ModelCardProps) {
           tier={props.benchmarkTier}
           facts={[
             ...(model.languages.length > 1
-              ? [`${model.languages.length} languages`]
+              ? [t("voiceModel.languages", { count: model.languages.length })]
               : model.benchmark
                 ? []
                 : [languageLabel(model.languages[0] ?? "")]),
@@ -240,7 +242,7 @@ function ModelCard(props: ModelCardProps) {
           <div className="mt-2">
             <div
               role="progressbar"
-              aria-label={`${model.name} download progress`}
+              aria-label={t("voiceModel.downloadProgress", { name: model.name })}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={Math.round(progress)}
@@ -253,8 +255,8 @@ function ModelCard(props: ModelCardProps) {
             </div>
             <p className="mt-1 text-2xs text-muted-foreground">
               {model.state === "verifying"
-                ? "Verifying download…"
-                : `${Math.round(progress)}% downloaded`}
+                ? t("voiceModel.verifyingDownload")
+                : t("voiceModel.downloadedPercent", { percent: Math.round(progress) })}
             </p>
           </div>
         ) : null}
@@ -265,7 +267,7 @@ function ModelCard(props: ModelCardProps) {
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label={`Cancel ${model.name} download`}
+            aria-label={t("voiceModel.cancelDownload", { name: model.name })}
             disabled={!props.canCancel}
             onClick={props.onCancel}
           >
@@ -274,16 +276,16 @@ function ModelCard(props: ModelCardProps) {
         ) : model.state === "downloadable" ? (
           <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onDownload}>
             <DownloadIcon className="mr-1.5 size-3.5" />
-            Download
+            {t("voiceModel.download")}
           </Button>
         ) : model.active ? (
           <Button size="sm" variant="secondary" disabled>
             <CheckIcon className="mr-1.5 size-3.5" />
-            Selected
+            {t("voiceModel.selected")}
           </Button>
         ) : (
           <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onSelect}>
-            Use model
+            {t("voiceModel.useModel")}
           </Button>
         )}
         {model.state === "installed" ? (
@@ -293,8 +295,8 @@ function ModelCard(props: ModelCardProps) {
             disabled={props.busy}
             aria-label={
               model.linkedFrom
-                ? `Stop using your ${model.name} file; the file stays on disk`
-                : `Delete ${model.name}`
+                ? t("voiceModel.stopUsingFile", { name: model.name })
+                : t("voiceModel.deleteModel", { name: model.name })
             }
             onClick={props.onDelete}
           >
