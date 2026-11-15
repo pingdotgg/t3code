@@ -143,7 +143,7 @@ import {
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
-import { CUT_LINE_NOTE_CSS, markCutLineNotes } from "./cutLineNotes";
+import { CUT_LINE_NOTE_CSS, hasCutLineNotes, markCutLineNotes } from "./cutLineNotes";
 import {
   nextPendingReviewCommentId,
   pullRequestReviewKey,
@@ -662,6 +662,7 @@ function PullRequestCodeTab({
   );
   const withheldStatuses = new Map<string, WithheldFileStatus>();
   const withheldFiles = new Map<string, (typeof pagedFiles)[number]>();
+  const cutFiles = new Set<FileDiffMetadata>();
   withheldPaths.forEach((path, index) => {
     const result = withheldResults[index];
     if (result === undefined) return;
@@ -685,8 +686,10 @@ function PullRequestCodeTab({
       false,
     );
     const file = parsed?.kind === "files" ? parsed.files[0] : undefined;
-    if (file !== undefined && file.hunks.length > 0) withheldFiles.set(path, file);
-    else withheldStatuses.set(path, "empty");
+    if (file !== undefined && file.hunks.length > 0) {
+      withheldFiles.set(path, file);
+      if (hasCutLineNotes(data.patch)) cutFiles.add(file);
+    } else withheldStatuses.set(path, "empty");
   });
   // Fold choices follow render keys, so a loaded or refetched patch would otherwise fold again
   // when marked Viewed: it opens on first load and keeps its earlier key's choice after.
@@ -1155,7 +1158,11 @@ function PullRequestCodeTab({
     preferredHighlighter: PREFERRED_HIGHLIGHTER,
     themeType: resolvedTheme,
     stickyHeaders: true,
-    loadDiffFiles,
+    // Full contents would not match the cut lines, and would bring back the lines just cut.
+    loadDiffFiles: (fileDiff: FileDiffMetadata) =>
+      cutFiles.has(fileDiff)
+        ? Promise.reject(new Error("Unchanged lines are unavailable in a file with cut lines."))
+        : loadDiffFiles(fileDiff),
     enableGutterUtility: canSelectLines && draft === null,
     enableLineSelection: canSelectLines && draft === null,
     onGutterUtilityClick: beginComment,

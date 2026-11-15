@@ -2,6 +2,10 @@
 const CUT_LINE_NOTE = / …\[[\d,]+ more characters\]$/;
 const HIGHLIGHT_NAME = "t3-cut-line-note";
 
+export function hasCutLineNotes(patch: string): boolean {
+  return new RegExp(CUT_LINE_NOTE.source, "m").test(patch);
+}
+
 /** Goes in the diff's shadow root, where the highlighted text lives. */
 export const CUT_LINE_NOTE_CSS = `
 ::highlight(${HIGHLIGHT_NAME}) {
