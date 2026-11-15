@@ -39,7 +39,6 @@ const THUMB_GRAB_END_SLACK_PX = 4;
 interface ScrollbarThumb {
   scroller: Element;
   scrollPerPixel: number;
-  right: number;
 }
 
 interface ThumbDrag<T extends HTMLElement> {
@@ -69,7 +68,7 @@ function scrollbarThumbAt(element: Element, x: number, y: number): ScrollbarThum
   ) {
     return null;
   }
-  return { scroller: element, scrollPerPixel: scrollRange / (trackLength - thumbLength), right };
+  return { scroller: element, scrollPerPixel: scrollRange / (trackLength - thumbLength) };
 }
 
 /**
@@ -77,11 +76,12 @@ function scrollbarThumbAt(element: Element, x: number, y: number): ScrollbarThum
  * handle grabs the thumb instead, which also widens the thumb's grab area a little.
  */
 function scrollbarThumbBeside(handle: HTMLElement, x: number, y: number): ScrollbarThumb | null {
-  const probeX = handle.getBoundingClientRect().left + 0.5;
-  for (const element of document.elementsFromPoint(probeX, y)) {
-    if (handle.contains(element)) continue;
-    const thumb = scrollbarThumbAt(element, probeX, y);
-    if (thumb) return x < thumb.right + THUMB_GRAB_OVERHANG_PX ? thumb : null;
+  for (const probeX of [x, x - THUMB_GRAB_OVERHANG_PX]) {
+    for (const element of document.elementsFromPoint(probeX, y)) {
+      if (handle.contains(element)) continue;
+      const thumb = scrollbarThumbAt(element, probeX, y);
+      if (thumb) return thumb;
+    }
   }
   return null;
 }

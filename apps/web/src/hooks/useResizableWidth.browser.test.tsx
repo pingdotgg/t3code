@@ -34,9 +34,10 @@ function ScrollerBesideHandle() {
       <div data-testid="scroller" style={{ height: 100, overflowY: "scroll" }}>
         <div style={{ height: 1000 }} />
       </div>
+      {/* The coarse-pointer handle starts left of the 6px scrollbar gutter. */}
       <div
         role="separator"
-        style={{ position: "absolute", top: 0, bottom: 0, right: -4, width: 8 }}
+        style={{ position: "absolute", top: 0, bottom: 0, right: -8, width: 16 }}
         {...handlers}
       />
     </div>
