@@ -356,6 +356,21 @@ describe("resolvePathLinkTarget", () => {
     expect(
       resolveTerminalLinkTarget("file://remote.invalid/var/tmp/report.txt", "/workspace/project"),
     ).not.toMatch(/^\/workspace\/project\//);
+    // GNU `ls --hyperlink` names the environment's own hostname; other hosts stay network paths.
+    expect(
+      resolveTerminalLinkTarget(
+        "file://box-node/var/tmp/report.txt",
+        "/workspace/project",
+        "Box-Node",
+      ),
+    ).toBe("/var/tmp/report.txt");
+    expect(
+      resolveTerminalLinkTarget(
+        "file://forge/var/tmp/report.txt",
+        "/workspace/project",
+        "box-node",
+      ),
+    ).toBe(String.raw`\\forge\var\tmp\report.txt`);
     expect(resolvePathLinkTarget("file:notes.md", "/workspace/project")).toBe(
       "/workspace/project/file:notes.md",
     );
