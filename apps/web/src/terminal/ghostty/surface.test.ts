@@ -452,27 +452,171 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
   });
 
-  it.each(["V keyup", "blur", "Meta keyup without V keyup"])(
-    "accepts a later identical menu paste after %s",
-    async (end) => {
+  it("accepts a later identical menu paste after blur", async () => {
+    const harness = createHarness();
+    const read = Promise.resolve("echo hi");
+    vi.stubGlobal("navigator", {
+      platform: "MacIntel",
+      clipboard: { readText: () => read },
+    });
+    const surface = await harness.create({ beforeKey: () => true });
+
+    key(surface, "v", "KeyV", { metaKey: true });
+    await read;
+    expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
+    surface.input.dispatchEvent(new Event("blur"));
+    paste(surface, "echo hi");
+
+    expect(harness.onData.mock.calls).toEqual([["echo hi"], ["echo hi"]]);
+  });
+
+  it.each([
+    ["blur, then a menu paste", "menu"],
+    ["the gesture window, then a menu paste", "menu"],
+    ["an empty native paste, blur, then a menu paste", "menu"],
+    ["a middle-click selection paste", "selection"],
+  ])("a pending shortcut read gives way to %s", async (scenario, pasted) => {
+    const harness = createHarness();
+    let resolveRead: (text: string) => void = () => {};
+    const read = new Promise<string>((resolve) => {
+      resolveRead = resolve;
+    });
+    vi.stubGlobal("navigator", { platform: "Linux x86_64", clipboard: { readText: () => read } });
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.write("selection");
+    surface.selectAll();
+
+    key(surface, "V", "KeyV", { ctrlKey: true, shiftKey: true });
+    key(surface, "V", "KeyV", { ctrlKey: true, shiftKey: true }, "keyup");
+    if (scenario.startsWith("an empty")) paste(surface, "");
+    if (scenario.includes("blur")) surface.input.dispatchEvent(new Event("blur"));
+    if (scenario.startsWith("the gesture window")) vi.advanceTimersByTime(2_001);
+    if (scenario.startsWith("a middle-click")) harness.pointer("pointerdown", 5, 0, {}, 1);
+    else paste(surface, "menu");
+    resolveRead("stale shortcut");
+    await read;
+
+    expect(harness.onData.mock.calls).toEqual([[pasted]]);
+  });
+
+  // A dictation tool posts Cmd+V and lets go of V at once; Chromium's native paste comes last.
+  it("pastes once when V comes up before the late native paste", async () => {
+    const harness = createHarness();
+    const read = Promise.resolve("echo hi");
+    vi.stubGlobal("navigator", { platform: "MacIntel", clipboard: { readText: () => read } });
+    const surface = await harness.create({ beforeKey: () => true });
+
+    key(surface, "v", "KeyV", { metaKey: true });
+    key(surface, "v", "KeyV", { metaKey: true }, "keyup");
+    await read;
+    paste(surface, "echo hi");
+
+    expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
+  });
+
+  it("pastes once when the clipboard changed between the read and the native paste", async () => {
+    const harness = createHarness();
+    const read = Promise.resolve("You said it");
+    vi.stubGlobal("navigator", { platform: "MacIntel", clipboard: { readText: () => read } });
+    const surface = await harness.create({ beforeKey: () => true });
+
+    key(surface, "v", "KeyV", { metaKey: true });
+    await read;
+    // Another clipboard writer replaced the text before Chromium read it for the native paste.
+    paste(surface, "you said it");
+
+    expect(harness.onData.mock.calls).toEqual([["You said it"]]);
+  });
+
+  it("pairs each native paste with its own press, oldest first", async () => {
+    const harness = createHarness();
+    let resolveFirst: (text: string) => void = () => {};
+    const first = new Promise<string>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const reads = [first, Promise.resolve("two")];
+    let next = 0;
+    vi.stubGlobal("navigator", {
+      platform: "MacIntel",
+      clipboard: { readText: () => reads[next++] },
+    });
+    const surface = await harness.create({ beforeKey: () => true });
+
+    key(surface, "v", "KeyV", { metaKey: true });
+    key(surface, "v", "KeyV", { metaKey: true });
+    await reads[1];
+    // The first press's read is slow, so its native paste pastes; the second's is a duplicate.
+    paste(surface, "one");
+    paste(surface, "two");
+    resolveFirst("one");
+    await first;
+
+    // Each press pastes once, in the order the pastes arrive: the second press's read came first.
+    expect(harness.onData.mock.calls).toEqual([["two"], ["one"]]);
+  });
+
+  it("closes the gesture on an empty native paste, so an identical menu paste after it pastes", async () => {
+    const harness = createHarness();
+    const read = Promise.resolve("echo hi");
+    vi.stubGlobal("navigator", { platform: "MacIntel", clipboard: { readText: () => read } });
+    const surface = await harness.create({ beforeKey: () => true });
+
+    key(surface, "v", "KeyV", { metaKey: true });
+    await read;
+    paste(surface, "");
+    paste(surface, "echo hi");
+
+    expect(harness.onData.mock.calls).toEqual([["echo hi"], ["echo hi"]]);
+  });
+
+  it("leaves a pending read alive after an empty native paste", async () => {
+    const harness = createHarness();
+    const read = Promise.resolve("echo hi");
+    vi.stubGlobal("navigator", { platform: "MacIntel", clipboard: { readText: () => read } });
+    const surface = await harness.create({ beforeKey: () => true });
+
+    key(surface, "v", "KeyV", { metaKey: true });
+    paste(surface, "");
+    await read;
+
+    expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
+  });
+
+  it.each(["denied", "empty"])(
+    "pastes the native text once when the read is %s",
+    async (outcome) => {
+      const harness = createHarness();
+      const read = outcome === "denied" ? Promise.reject(new Error("denied")) : Promise.resolve("");
+      read.catch(() => {});
+      vi.stubGlobal("navigator", { platform: "MacIntel", clipboard: { readText: () => read } });
+      const surface = await harness.create({ beforeKey: () => true });
+
+      key(surface, "v", "KeyV", { metaKey: true });
+      await read.catch(() => {});
+      paste(surface, "echo hi");
+
+      expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
+    },
+  );
+
+  it.each([
+    [1_999, 1],
+    [2_001, 2],
+  ])(
+    "after a read that pasted, a native paste %i ms later pastes %i time(s) in all",
+    async (after, pastes) => {
       const harness = createHarness();
       const read = Promise.resolve("echo hi");
-      vi.stubGlobal("navigator", {
-        platform: "MacIntel",
-        clipboard: { readText: () => read },
-      });
+      vi.stubGlobal("navigator", { platform: "MacIntel", clipboard: { readText: () => read } });
       const surface = await harness.create({ beforeKey: () => true });
 
       key(surface, "v", "KeyV", { metaKey: true });
       await read;
-      expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
-      if (end === "blur") surface.input.dispatchEvent(new Event("blur"));
-      else if (end === "V keyup") key(surface, "v", "KeyV", { metaKey: true }, "keyup");
-      // macOS can omit V keyup while Command is held.
-      else key(surface, "Meta", "MetaLeft", {}, "keyup");
+      // The harness's fake timers also move performance.now(), which the gesture window reads.
+      vi.advanceTimersByTime(after);
       paste(surface, "echo hi");
 
-      expect(harness.onData.mock.calls).toEqual([["echo hi"], ["echo hi"]]);
+      expect(harness.onData).toHaveBeenCalledTimes(pastes);
     },
   );
 
