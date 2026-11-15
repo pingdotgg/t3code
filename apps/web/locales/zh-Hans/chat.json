@@ -17,6 +17,9 @@
     "workingFor": "已运行"
   },
   "approval": {
+    "childAria": "来自 {{title}} 的审批",
+    "childNeededFrom": "需要 {{title}} 审批",
+    "childProcessGone": "Provider 进程已退出。中断或重启子线程才能响应。",
     "command": "命令审批",
     "commandDetail": "命令",
     "fileChange": "文件修改审批",
@@ -100,6 +103,10 @@
     "refresh": "刷新",
     "subagentWork": "子代理工作",
     "subagentWorkDetail": "只读。这些子代理无法接收消息。"
+  },
+  "childWork": {
+    "earlierStepsHidden": "未显示更早的步骤。",
+    "noTranscriptYet": "还没有对话记录。"
   },
   "citation": {
     "addCommentAria": "为引用添加备注",
@@ -558,6 +565,14 @@
     "stopWatchingAria": "停止监视 #{{number}}",
     "watching": "监视中：检查完成、有人评论或分支出现冲突时，代理会被唤醒。点击以停止。"
   },
+  "providerSubagent": {
+    "openParent": "打开父级",
+    "runsOnItsOwn": "独立运行"
+  },
+  "queuedRuns": {
+    "count": "{{count}} 条排队中",
+    "sentBy": "由 T3 Code 发送"
+  },
   "relations": {
     "contextTransfer": "上下文转移",
     "disconnectFailed": "无法断开代理会话",
@@ -585,14 +600,21 @@
     "showMore": "显示更多 {{count}} 条",
     "runsOn": "在 {{label}} 上"
   },
+  "secretRequest": {
+    "decline": "拒绝",
+    "open": "打开 {{host}}",
+    "saveSecurely": "安全保存"
+  },
   "sideChat": {
     "addToMainDetail": "把这条旁路对话加进主线程的下一条消息。",
     "afterReply": "收到一条完整回复后可用。",
+    "bringBack": "带回",
     "bringBackFailed": "无法带回旁路对话",
     "broughtBack": "已带回",
     "broughtBackDetail": "主线程会在你下次发送消息时收到这条旁路对话。",
     "clearDetail": "这会永久清除它的对话历史。",
     "clearFailed": "无法删除旁路对话",
+    "deleted": "这条旁路对话已被删除。",
     "closeAria": "关闭旁路对话",
     "connectionCannotChange": "此连接无法更改线程。",
     "deleteAria": "删除旁路对话",
@@ -628,12 +650,14 @@
     "contextFrom": "上下文来自",
     "cutOffBySteer": "已被转向截断",
     "dividerDetail": "{{title}}（{{environment}}）",
+    "dropFilesToAttach": "拖放文件以添加附件",
     "emptyState": "发送一条消息即可开始对话。",
     "forkAria": "从此回复分叉",
     "loadEarlierTurns": "加载更早的对话轮",
     "loadingEarlierTurns": "正在加载更早的对话轮…",
     "loadingWorkHistoryA11y": "正在加载工作记录",
     "openParentThread": "打开父线程",
+    "scrollToEnd": "滚动到末尾",
     "subagentOf": "子代理所属",
     "systemDividerA11y": "{{label}}: {{detail}}",
     "viewCited": "查看被引用的助手文本：{{label}}",

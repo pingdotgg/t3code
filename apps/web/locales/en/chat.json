@@ -17,6 +17,9 @@
     "workingFor": "Working for"
   },
   "approval": {
+    "childAria": "Approval from {{title}}",
+    "childNeededFrom": "Approval needed from {{title}}",
+    "childProcessGone": "Provider process is gone. Interrupt or restart the child thread to respond.",
     "command": "Command approval",
     "commandDetail": "Command",
     "fileChange": "File change approval",
@@ -99,6 +102,10 @@
     "refresh": "Refresh",
     "subagentWork": "Subagent work",
     "subagentWorkDetail": "Read only. These subagents cannot take messages."
+  },
+  "childWork": {
+    "earlierStepsHidden": "Earlier steps are not shown.",
+    "noTranscriptYet": "No transcript yet."
   },
   "citation": {
     "addCommentAria": "Add comment to citation",
@@ -564,6 +571,14 @@
     "stopWatchingAria": "Stop watching #{{number}}",
     "watching": "Watching: the agent wakes when checks finish, someone comments, or the branch conflicts. Click to stop."
   },
+  "providerSubagent": {
+    "openParent": "Open parent",
+    "runsOnItsOwn": "Runs on its own"
+  },
+  "queuedRuns": {
+    "count": "{{count}} queued",
+    "sentBy": "Sent by T3 Code"
+  },
   "relations": {
     "contextTransfer": "Context transfer",
     "disconnectFailed": "Could not disconnect agent session",
@@ -591,14 +606,21 @@
     "showMore": "Show {{count}} more",
     "runsOn": "on {{label}}"
   },
+  "secretRequest": {
+    "decline": "Decline",
+    "open": "Open {{host}}",
+    "saveSecurely": "Save securely"
+  },
   "sideChat": {
     "addToMainDetail": "Adds this side chat to the main thread's next message.",
     "afterReply": "Available after a finished reply.",
+    "bringBack": "Bring back",
     "bringBackFailed": "Could not bring back the side chat",
     "broughtBack": "Brought back",
     "broughtBackDetail": "The main thread gets this side chat with your next message there.",
     "clearDetail": "This permanently clears its conversation history.",
     "clearFailed": "Could not delete the side chat",
+    "deleted": "This side chat was deleted.",
     "closeAria": "Close side chat",
     "connectionCannotChange": "This connection cannot change threads.",
     "deleteAria": "Delete side chat",
@@ -634,12 +656,14 @@
     "contextFrom": "Context from",
     "cutOffBySteer": "Cut off by a steer",
     "dividerDetail": "{{title}} on {{environment}}",
+    "dropFilesToAttach": "Drop files to attach",
     "emptyState": "Send a message to start the conversation.",
     "forkAria": "Fork from this response",
     "loadEarlierTurns": "Load earlier turns",
     "loadingEarlierTurns": "Loading earlier turns…",
     "loadingWorkHistoryA11y": "Loading work history",
     "openParentThread": "Open parent thread",
+    "scrollToEnd": "Scroll to end",
     "subagentOf": "Subagent of",
     "systemDividerA11y": "{{label}}: {{detail}}",
     "viewCited": "View cited assistant text: {{label}}",

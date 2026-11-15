@@ -142,7 +142,7 @@ export default function SideChatPane(props: {
                 aria-disabled={bringBackBlockedReason !== null || bringingBack || undefined}
                 onClick={() => void bringBack()}
               >
-                Bring back
+                {t("sideChat.bringBack")}
               </Button>
             }
           />
@@ -170,7 +170,7 @@ export default function SideChatPane(props: {
       </div>
       {shell === null ? (
         snapshotLoaded ? (
-          <p className="p-3 text-xs text-muted-foreground">This side chat was deleted.</p>
+          <p className="p-3 text-xs text-muted-foreground">{t("sideChat.deleted")}</p>
         ) : null
       ) : (
         <BackgroundThreadContext value>
